@@ -6929,9 +6929,31 @@ CREATE TABLE IF NOT EXISTS passkeys (
   -- Set when the signature counter went backwards (a possible copy of the credential): refused from then on,
   -- until the owner or an administrator removes it.
   flagged_at TEXT,
-  flag_reason TEXT
+  flag_reason TEXT,
+  -- The attestation verified at enrolment under the authenticator allow-list (docs/FINGERPRINT.md, "Authenticator
+  -- allow-list"): JSON { verified, fmt, type, aaguid, mds_no, verified_at }. NULL for a passkey added while the list
+  -- was off (attestation 'none': its AAGUID is only what the device said), which the list, once on, does not accept.
+  -- The attestation certificate itself is not kept (migration 63).
+  attestation TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
+
+-- What SUDS keeps of the FIDO Metadata Service BLOB an administrator uploaded, for the authenticator allow-list
+-- (server/authenticator-allowlist.js): per authenticator model (an AAGUID, or for a U2F key its attestation key
+-- identifiers), its description, the root certificates its attestation must chain to, its status reports and
+-- attestation types. Public data about products, no PHI and nothing about any person. Replaced whole by each upload;
+-- the BLOB's number and dates are the setting authn_mds. Office server only, never synchronised (migration 63).
+CREATE TABLE IF NOT EXISTS authenticator_metadata (
+  id TEXT PRIMARY KEY,                 -- the AAGUID, or 'u2f:' and the first key identifier
+  aaguid TEXT,
+  key_ids TEXT NOT NULL DEFAULT '[]',  -- JSON array of hex SHA-1 key identifiers (fido-u2f)
+  description TEXT NOT NULL DEFAULT '',
+  root_certificates TEXT NOT NULL,     -- JSON array of base64 DER certificates
+  status_reports TEXT NOT NULL,        -- JSON array of { status, effectiveDate }
+  attestation_types TEXT NOT NULL DEFAULT '[]',
+  mds_no INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_authenticator_metadata_aaguid ON authenticator_metadata(aaguid);
 
 -- WebAuthn challenges waiting for an answer: stored by SHA-256 of the challenge (never the challenge itself),
 -- single-use (used_at), bound to a purpose and, once signed in, to the user and session; two minutes to live.
@@ -10863,6 +10885,21 @@ var require_http = __commonJS({
   }
 });
 
+// local/shims/passkeys.js
+var require_passkeys = __commonJS({
+  "local/shims/passkeys.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var { HttpError: HttpError3 } = require_http();
+    var unavailable = () => {
+      throw new HttpError3(404, "Fingerprint sign-in is not available on this device");
+    };
+    module.exports = new Proxy({ remove: () => 0, adoption: () => ({ active: 0, with_passkey: 0, total: 0, flagged: 0, sign_ins_30d: 0, confirmations_30d: 0 }), configuredRpId: () => "", PURPOSES: [] }, {
+      get: (t, k) => k in t ? t[k] : k === "__esModule" ? false : unavailable
+    });
+  }
+});
+
 // server/permissions.js
 var require_permissions = __commonJS({
   "server/permissions.js"(exports, module) {
@@ -10984,21 +11021,6 @@ var require_permissions = __commonJS({
       return KNOWN.has(name);
     }
     module.exports = { PERMISSION_CATALOG, PRIVILEGED_PERMISSIONS, READ_SCOPE_PERMS, CASELOAD_PERMS, isKnownPermission, grantProblem };
-  }
-});
-
-// local/shims/passkeys.js
-var require_passkeys = __commonJS({
-  "local/shims/passkeys.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var { HttpError: HttpError3 } = require_http();
-    var unavailable = () => {
-      throw new HttpError3(404, "Fingerprint sign-in is not available on this device");
-    };
-    module.exports = new Proxy({ remove: () => 0, adoption: () => ({ active: 0, with_passkey: 0, total: 0, flagged: 0, sign_ins_30d: 0, confirmations_30d: 0 }), configuredRpId: () => "", PURPOSES: [] }, {
-      get: (t, k) => k in t ? t[k] : k === "__esModule" ? false : unavailable
-    });
   }
 });
 
@@ -12533,7 +12555,10 @@ var require_sync_tables = __commonJS({
         // passkey is made for the office server's host and answers only there; SUDS on a device does not offer it.
         "passkeys",
         "webauthn_challenges",
-        "signature_evidence"
+        "signature_evidence",
+        // authenticator_metadata (the authenticator allow-list, docs/FINGERPRINT.md): what the office keeps of the FIDO
+        // Metadata Service file its administrator uploaded. Public data about authenticator models; a device has no passkeys.
+        "authenticator_metadata"
       ],
       // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
       // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
@@ -12559,6 +12584,7 @@ var require_sync_tables = __commonJS({
         passkeys: [],
         webauthn_challenges: [],
         signature_evidence: ["evidence_enc"],
+        authenticator_metadata: [],
         idempotency_keys: ["response_enc"]
       },
       // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
@@ -20289,6 +20315,7 @@ var require_compliance_rules = __commonJS({
       { id: "app.idp_mfa", item: "Identity provider's multi-factor sign-in", rules: ["hipaa-312d"], info: "pass", remediation: "Trust the provider's MFA only where it enforces MFA for this application (conditional access)." },
       { id: "app.deprovisioning", item: "Deprovisioning", rules: ["hipaa-308a3iiC", "hipaa-308a4iiC"], info: "warn", remediation: 'Create a SCIM token or set "Disable single sign-on accounts not seen for (days)".' },
       { id: "app.passkeys", item: "Fingerprint sign-in (passkeys)", rules: ["hipaa-312d"], info: "pass", remediation: "Optional: staff add a passkey under My profile \u2192 Fingerprint sign-in (needs HTTPS and WEBAUTHN_RP_ID matching the server's name, docs/FINGERPRINT.md)." },
+      { id: "app.authenticator_allowlist", item: "Authenticator allow-list (passkeys)", rules: ["hipaa-312d"], info: "pass", remediation: "Optional (off by default): Settings \u2192 Authenticator allow-list accepts only the authenticator models the programme lists, proven by attestation; keep its FIDO Metadata Service file current (docs/FINGERPRINT.md)." },
       { id: "app.password_signin", item: "Password sign-in", rules: ["hipaa-312d"], info: "pass", remediation: 'Settings \u2192 Security policy \u2192 "Require single sign-on" with named break-glass administrators.' },
       { id: "app.password_policy", item: "Password policy", rules: ["hipaa-308a5iiD"], info: "pass", remediation: "Enforced in code (server/auth.js); nothing to configure." },
       { id: "app.session_timeout", item: "Session timeouts", rules: ["hipaa-312a2iii"], remediation: "Settings \u2192 Security policy: idle timeout 15 minutes or less." },
@@ -22494,6 +22521,22 @@ var require_security_status = __commonJS({
             "SUDS stores no fingerprint: only each passkey's public key."
           ].filter(Boolean).join(" "),
           "server/passkeys.js, server/webauthn.js; Settings \u2192 Security policy"
+        );
+        const al = require_passkeys().allowlist.status();
+        const meta = al.metadata;
+        const soon = meta && !meta.expired && Date.parse(`${meta.next_update}T00:00:00Z`) - Date.now() < 7 * DAY;
+        const notOk = al.models.filter((m) => m.standing !== "ok");
+        add(
+          "Identity",
+          "Authenticator allow-list (passkeys)",
+          !al.enabled ? "info" : !meta || meta.expired || notOk.length ? "bad" : soon ? "warn" : "ok",
+          !al.enabled ? "off: any authenticator may hold a passkey (attestation is not asked for)" : `on: ${al.models.length} model${al.models.length === 1 ? "" : "s"} accepted${meta ? `; metadata file number ${meta.no}, next update ${meta.next_update}${meta.expired ? " (out of date: no passkey can be added until the current one is loaded)" : ""}` : "; no metadata file loaded"}`,
+          [
+            al.enabled && notOk.length ? `${notOk.map((m) => m.name).join(", ")}: ${notOk.length === 1 ? "is" : "are"} missing from the metadata file or reported compromised or revoked, so no passkey on ${notOk.length === 1 ? "it" : "them"} is accepted.` : "",
+            al.enabled ? "Download the current file from the FIDO Metadata Service (https://mds3.fidoalliance.org/) each month and load it under Settings \u2192 Authenticator allow-list; SUDS makes no outbound call." : "Settings \u2192 Authenticator allow-list: accept only the authenticator models the programme lists, each proven by its attestation against the FIDO Metadata Service.",
+            meta && meta.test_root ? "The loaded file was signed by a test root (development only)." : ""
+          ].filter(Boolean).join(" "),
+          "server/authenticator-allowlist.js, server/attestation.js"
         );
       }
       {
@@ -48942,7 +48985,7 @@ var require_auth2 = __commonJS({
     function passkeyCount(userId) {
       if (config2.local || !userId) return 0;
       try {
-        return db3.one(`SELECT COUNT(*) n FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, userId).n;
+        return require_passkeys().usableCount(userId);
       } catch {
         return 0;
       }
@@ -51050,6 +51093,15 @@ var require_db = __commonJS({
         addColumn(d, "clients", "participant_code_enc", "TEXT");
         addColumn(d, "clients", "participant_code_idx", "TEXT");
         createIndexesFromSchema(d, safeSchema(), ["idx_clients_participant_code"]);
+      },
+      // 63: the authenticator allow-list for passkeys (built for 1.21.0, not yet released; docs/FINGERPRINT.md
+      //     "Authenticator allow-list"): passkeys.attestation (the attestation verified at enrolment under the list; NULL
+      //     for every passkey added before, which is right: none was attested) and authenticator_metadata (what SUDS keeps
+      //     of an uploaded FIDO Metadata Service BLOB). Office server only. Self-contained and idempotent, so it can be
+      //     renumbered.
+      (d) => {
+        addColumn(d, "passkeys", "attestation", "TEXT");
+        createTablesFromSchema(d, safeSchema(), ["authenticator_metadata"], 63);
       }
     ];
     var PERF_INDEXES_47 = [

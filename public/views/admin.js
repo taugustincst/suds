@@ -1,4 +1,4 @@
-import { h, route, api, get, post, put, del, state, form, modal, toast, table, badge, flag, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear, pageTabs, moduleOn, roleOptions, roleSummary, ROLE_SUMMARY } from '../app.js';
+import { h, route, api, get, post, put, del, state, form, modal, toast, table, badge, flag, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear, pageTabs, moduleOn, roleOptions, roleSummary, ROLE_SUMMARY, announce } from '../app.js';
 import { qrSvg } from '../qr.js';
 import { listsTab } from './lists.js';
 import { securityTab, drillCard } from './security.js';
@@ -357,6 +357,103 @@ function programmeCard(s, refresh) {
 }
 // On a device copy, the settings the office server has elsewhere: backups and restore are on This device,
 // and staff reach SUDS on a phone or tablet through get-app.html (not /app, which only an office has).
+// The authenticator allow-list for passkeys (docs/FINGERPRINT.md, "Authenticator allow-list"): office server only,
+// off by default. The administrator loads the FIDO Metadata Service file (SUDS makes no outbound call), lists the
+// accepted models, sees whose passkeys would stop working, and saves with the password (or code) again.
+const AAGUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
+const REASON_TEXT = { unattested: 'added before the list, model never proven', 'not listed': 'model not on the list', status: 'model reported compromised or revoked', 'not in metadata': 'model not in the metadata file' };
+/** "Name, AAGUID" lines → [{ name, aaguid }]; a line with no AAGUID is reported, not dropped. */
+function parseModelLines(text) {
+  const out = []; const bad = [];
+  for (const line of String(text || '').split('\n').map(l => l.trim()).filter(Boolean)) {
+    const m = line.match(AAGUID_RE);
+    if (!m) { bad.push(line); continue; }
+    out.push({ name: line.replace(m[0], '').replace(/[,;:\s–—-]+$/, '').replace(/^[,;:\s–—-]+/, '').trim(), aaguid: m[0].toLowerCase() });
+  }
+  return { models: out, bad };
+}
+async function allowlistCard(refresh) {
+  let s;
+  try { s = await get('/api/admin/authenticator-allowlist', { quiet: true }); } catch { return null; }
+  const meta = s.metadata;
+  const standingBadge = (m) => m.standing === 'ok' ? badge('In the metadata file', 'ok') : m.standing === 'refused' ? flag('Reported compromised or revoked', true, 'no passkey on it is accepted') : flag('Not in the metadata file', true, 'no passkey on it can be checked', 'warn');
+  const confirmIdentity = async (title, verb, send) => {
+    const { signatureDialog } = await import('./notes.js');
+    return signatureDialog({ title, submitText: title, verb, fresh: true, returnTo: '#/admin/allowlist', send, done: refresh });
+  };
+  // ---- the metadata file ----
+  const upload = form([
+    { name: 'blob_file', label: 'FIDO Metadata Service file (blob.jwt)', type: 'file', span: true,
+      help: 'Download it from https://mds3.fidoalliance.org/ (about once a month: each file says when the next is due) and choose it here. SUDS checks its signature against the FIDO Alliance\'s root certificate and makes no connection of its own.' },
+  ], { submitText: 'Load the metadata file', onSubmit: async () => {
+    const file = upload.inputs.blob_file.files && upload.inputs.blob_file.files[0];
+    if (!file) throw Object.assign(new Error('Choose the file first'), { data: { fields: { blob_file: 'choose the file you downloaded' } } });
+    const blob = await file.text();
+    await confirmIdentity('Load the metadata file', 'load the authenticator metadata', async (body) => {
+      const r = await post('/api/admin/authenticator-metadata', { ...body, blob });
+      toast(`Metadata file number ${r.metadata.no} loaded: ${r.metadata.entries} authenticator models, next update due ${r.metadata.next_update}.`, 'ok');
+    });
+  } });
+  upload.inputs.blob_file.setAttribute('accept', '.jwt,.txt,application/jwt,text/plain');
+  // ---- the list ----
+  const lines = s.models.map(m => `${m.name}, ${m.aaguid}`).join('\n');
+  const result = h('div', { 'data-allowlist-preview': '1', role: 'status', 'aria-live': 'polite' });
+  const f = form([
+    { name: 'enabled', label: 'Only allow these authenticator models', type: 'select', noBlank: true, value: s.enabled ? '1' : '0', span: true,
+      options: [{ value: '0', label: 'Off — any authenticator may hold a passkey (recommended unless your programme must restrict them)' }, { value: '1', label: 'On — only the models listed below, each proven by its attestation' }],
+      help: 'Passkeys kept in a password manager or synced between devices (iCloud Keychain, Google Password Manager) cannot prove their model and are refused while this is on.' },
+    { name: 'models', label: 'Accepted authenticator models (one a line: name, AAGUID)', type: 'textarea', rows: 5, value: lines, span: true, placeholder: 'Security key model, 00000000-0000-0000-0000-000000000000',
+      help: `At most ${s.max_models}. An AAGUID names a model (8-4-4-4-12 hexadecimal digits). The all-zero AAGUID accepts FIDO U2F security keys the metadata file lists.` },
+    ...(s.catalog.length ? [{ name: 'catalog_pick', label: 'Add a model from the metadata file', type: 'select', span: true, placeholder: '— choose a model —',
+      options: s.catalog.map(c => ({ value: c.aaguid, label: `${c.description}${c.refused.length ? ' (reported compromised or revoked)' : ''}`, disabled: !!c.refused.length })) }] : []),
+    { name: 'acknowledge', label: 'I have checked who is affected, and their passkeys will stop working', type: 'checkbox', span: true },
+  ], { submitText: 'Save the allow-list', onSubmit: async (d) => {
+    const { models, bad } = parseModelLines(d.models);
+    if (bad.length) throw Object.assign(new Error('Some lines have no AAGUID'), { data: { fields: { models: `no AAGUID on: ${bad.slice(0, 3).join(' | ')}` } } });
+    const enabled = d.enabled === '1';
+    const pv = await post('/api/admin/authenticator-allowlist/preview', { enabled, models });
+    showPreview(pv);
+    if (pv.affected.passkey_count && !d.acknowledge) throw Object.assign(new Error(`${pv.affected.passkey_count} passkey${pv.affected.passkey_count === 1 ? '' : 's'} would stop working: check the list below, then tick the box to confirm.`), { data: { fields: { acknowledge: 'confirm that you have checked who is affected' } } });
+    await confirmIdentity('Save the allow-list', 'change the authenticator allow-list', async (body) => {
+      await put('/api/admin/authenticator-allowlist', { ...body, enabled, models, acknowledge_affected: pv.affected.passkey_count });
+      toast(enabled ? `Authenticator allow-list on: ${models.length} model${models.length === 1 ? '' : 's'} accepted.` : 'Authenticator allow-list saved (off).', 'ok');
+    });
+  }, extra: h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn', 'data-allowlist-check': '1', onClick: async () => {
+    const { models, bad } = parseModelLines(f.inputs.models.value);
+    try { showPreview(await post('/api/admin/authenticator-allowlist/preview', { enabled: f.inputs.enabled.value === '1', models }), bad); }
+    catch (e) { result.replaceChildren(h('p', { class: 'err' }, e.message)); }
+  } }, 'Check who would be affected')) });
+  if (f.inputs.catalog_pick) f.inputs.catalog_pick.addEventListener('change', () => {
+    const c = s.catalog.find(x => x.aaguid === f.inputs.catalog_pick.value);
+    if (!c) return;
+    const cur = f.inputs.models.value.trim();
+    if (!cur.toLowerCase().includes(c.aaguid)) f.inputs.models.value = `${cur ? `${cur}\n` : ''}${c.description.replace(/,/g, ' ')}, ${c.aaguid}`;
+    f.inputs.catalog_pick.value = '';
+    announce(`${c.description} added to the list`);
+  });
+  function showPreview(pv, bad = []) {
+    const a = pv.affected;
+    // replaceChildren writes a null as the text "null": the parts that may be absent are filtered out.
+    result.replaceChildren(...[
+      h('h3', { class: 'eyebrow' }, 'Who would be affected'),
+      bad.length ? h('p', { class: 'err' }, `No AAGUID on ${bad.length} line${bad.length === 1 ? '' : 's'}: ${bad.slice(0, 3).join(' | ')}`) : null,
+      pv.models.length ? table([{ label: 'Model', render: m => m.name }, { label: 'AAGUID', render: m => h('code', {}, m.aaguid) }, { label: 'Metadata', render: standingBadge }], pv.models) : null,
+      h('p', { 'data-affected-count': String(a.passkey_count) }, a.passkey_count ? `${a.passkey_count} passkey${a.passkey_count === 1 ? '' : 's'} of ${a.account_count} account${a.account_count === 1 ? '' : 's'} would stop working for sign-in and signing at their next use. Their owners sign in with the password (and code) and add a passkey on an accepted authenticator.` : 'No one\'s passkeys would stop working.'),
+      a.accounts.length ? table([{ label: 'Person', render: x => h('span', {}, h('b', {}, x.display_name), ' ', h('span', { class: 'small muted' }, x.username)) },
+        { label: 'Passkeys that stop', render: x => x.passkeys.map(p => h('div', { class: 'small' }, `${p.name} — ${REASON_TEXT[p.reason] || p.reason}`)) },
+        { label: 'Other second factor', render: x => x.other_factor ? badge('Authenticator app', 'ok') : flag('None', true, 'asked to set one up at their next sign-in if their role requires it', 'warn') }], a.accounts) : null].filter(Boolean));
+  }
+  if (s.enabled && s.affected && s.affected.passkey_count) showPreview({ models: s.models, affected: s.affected });
+  return h('div', { class: 'card', 'data-allowlist-card': '1' }, h('h2', {}, 'Authenticator allow-list (passkeys)'),
+    h('p', { class: 'small' }, 'Off by default. When it is on, a passkey can be added only on an authenticator model listed here, and the authenticator must prove its model (attestation), checked against the FIDO Metadata Service. Passkeys added before it was turned on stop working at their next use.'),
+    kv([['Status', s.enabled ? badge('On', 'ok') : badge('Off')],
+      ['Metadata file', meta ? h('span', {}, `Number ${meta.no}, ${meta.entries} models, loaded ${fmt.dt(meta.loaded_at)}; next update due ${meta.next_update} `, meta.expired ? flag('Out of date', true, 'no passkey can be added until the current file is loaded') : null, meta.test_root ? ' (signed by a test root: development only)' : '') : 'None loaded yet'],
+      ['Trusted root', h('span', { class: 'small' }, `${s.trust_root.subject}; SHA-256 `, h('code', { style: { overflowWrap: 'anywhere' } }, s.trust_root.sha256))],
+      ['Formats checked', s.formats.join(', ')]]),
+    h('h3', { class: 'eyebrow' }, 'Metadata file'), upload,
+    h('h3', { class: 'eyebrow' }, 'Accepted models'), f, result);
+}
+
 function deviceSettingsCard() {
   const onStatic = !!window.SUDS_STATIC_HOST;
   return h('div', { class: 'card', 'data-device-settings': '1' }, h('h2', {}, 'Backups and other devices'),
@@ -371,9 +468,11 @@ route('admin', async (r) => {
   const ssoBack = r.query.get('sso_reauth');
   if (ssoBack) {
     history.replaceState(history.state, '', `${location.pathname}${location.search}#/admin?tab=system`);
-    if (ssoBack === 'ok') setTimeout(() => downloadKeyBackup(), 0); else (await import('./notes.js')).ssoReauthNotice(r.query);
+    // From the authenticator allow-list (#/admin/allowlist): back on the Settings tab, to save or load again.
+    if (r.id === 'allowlist') { history.replaceState(history.state, '', `${location.pathname}${location.search}#/admin?tab=settings`); if (ssoBack === 'ok') toast('Confirmed with single sign-on. Save the allow-list, or load the metadata file, again within a few minutes.', 'ok'); else (await import('./notes.js')).ssoReauthNotice(r.query); }
+    else if (ssoBack === 'ok') setTimeout(() => downloadKeyBackup(), 0); else (await import('./notes.js')).ssoReauthNotice(r.query);
   }
-  const tab = ssoBack ? 'system' : r.query.get('tab') || 'users';
+  const tab = ssoBack ? (r.id === 'allowlist' ? 'settings' : 'system') : r.query.get('tab') || 'users';
   const refresh = () => nav(`admin?tab=${tab}&_=${Date.now()}`);
   const body = h('div', {});
   const T = {
@@ -470,7 +569,8 @@ route('admin', async (r) => {
         ]),
       ], { values: s, submitText: 'Save settings', onSubmit: async (d) => { await put('/api/admin/settings', d); toast('Settings saved', 'ok'); },
         extra: state.local ? null : h('p', { class: 'small', 'data-backup-link': '1' }, 'To back up now, download a backup or restore one, open ', h('a', { href: '#/admin?tab=system' }, 'System & backups'), '.') });
-      return h('div', { class: 'grid cols-2' }, s.programme ? programmeCard(s, refresh) : null, h('div', { class: 'card' }, h('h2', {}, 'Program settings'), f), state.local ? deviceSettingsCard() : null, await instrumentsCard(refresh), await sampleDataCard(refresh),
+      return h('div', { class: 'grid cols-2' }, s.programme ? programmeCard(s, refresh) : null, h('div', { class: 'card' }, h('h2', {}, 'Program settings'), f), state.local ? deviceSettingsCard() : null,
+        state.local ? null : await allowlistCard(refresh), await instrumentsCard(refresh), await sampleDataCard(refresh),
         h('div', { class: 'card' }, h('h2', {}, 'Server security configuration'), h('p', { class: 'small muted' }, 'Set via environment variables (see .env.example and docs/DEPLOYMENT.md).'),
           kv([['Environment', s.env.env], ['HTTPS', s.env.tls ? badge(s.env.tls_mode === 'selfsigned' ? 'Self-signed certificate' : 'Enabled', 'ok') : badge('Off — enable under Network', 'danger')], ['Encryption keys', s.env.key_source === 'file' ? 'data/keys.json (back it up under System)' : s.env.key_source === 'devfile' ? 'Development key files in data/' : 'Environment variables'], ['Addresses', (s.env.listener?.urls || []).join(', ')], ['OneNote (Graph) sync', s.env.ms_graph_configured ? badge('Configured', 'ok') : badge('Not configured', 'warn')],
             ['Single sign-on (OIDC)', s.env.oidc_configured ? badge(`Configured — "${s.env.oidc_label}"`, 'ok') : badge('Not configured — set OIDC_ISSUER etc. (see docs/DEPLOYMENT.md)', 'warn')]])));

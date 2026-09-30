@@ -153,7 +153,10 @@ module.exports = {
     'county_connect_tokens', 'county_connection', 'county_connect_sends',
     // passkeys, webauthn_challenges and signature_evidence (fingerprint sign-in and signing, docs/FINGERPRINT.md): a
     // passkey is made for the office server's host and answers only there; SUDS on a device does not offer it.
-    'passkeys', 'webauthn_challenges', 'signature_evidence'],
+    'passkeys', 'webauthn_challenges', 'signature_evidence',
+    // authenticator_metadata (the authenticator allow-list, docs/FINGERPRINT.md): what the office keeps of the FIDO
+    // Metadata Service file its administrator uploaded. Public data about authenticator models; a device has no passkeys.
+    'authenticator_metadata'],
   // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
   // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
   // list against the schema, so a table with PHI is always either synchronised or deliberately kept apart.
@@ -164,7 +167,7 @@ module.exports = {
     caloms_submission_events: [], referral_links: ['packet_enc', 'ack_by_enc', 'ack_note_enc'],
     county_signing_keys: ['private_key_enc'], county_programmes: [], county_programme_keys: [], county_submissions: ['payload_enc', 'source_ref_enc'],
     county_connect_tokens: [], county_connection: ['token_enc'], county_connect_sends: [],
-    passkeys: [], webauthn_challenges: [], signature_evidence: ['evidence_enc'],
+    passkeys: [], webauthn_challenges: [], signature_evidence: ['evidence_enc'], authenticator_metadata: [],
     idempotency_keys: ['response_enc'],
   },
   // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds

@@ -786,6 +786,15 @@ const migrations = [
     addColumn(d, 'clients', 'participant_code_idx', 'TEXT');
     createIndexesFromSchema(d, safeSchema(), ['idx_clients_participant_code']);
   },
+  // 63: the authenticator allow-list for passkeys (built for 1.21.0, not yet released; docs/FINGERPRINT.md
+  //     "Authenticator allow-list"): passkeys.attestation (the attestation verified at enrolment under the list; NULL
+  //     for every passkey added before, which is right: none was attested) and authenticator_metadata (what SUDS keeps
+  //     of an uploaded FIDO Metadata Service BLOB). Office server only. Self-contained and idempotent, so it can be
+  //     renumbered.
+  (d) => {
+    addColumn(d, 'passkeys', 'attestation', 'TEXT');
+    createTablesFromSchema(d, safeSchema(), ['authenticator_metadata'], 63);
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

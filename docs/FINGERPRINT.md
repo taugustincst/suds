@@ -1,6 +1,7 @@
 # Fingerprint sign-in, authorization and signing (passkeys)
 
-Released in 1.19.0. Office server only.
+Released in 1.19.0. Office server only. The **authenticator allow-list** (below) is built for 1.21.0, not yet
+released.
 
 Staff can sign in to SUDS, finish two-step verification, sign and countersign notes, approve time and spending, and
 download the key backup with their **fingerprint** — or with whatever else their device uses to unlock (Face ID, a
@@ -13,6 +14,10 @@ them with Node's built-in `node:crypto` only (`server/webauthn.js`), in keeping 
   `auth.verifySigner` / `auth.verifyApprover` (the signing and approval step), migration 58.
 - Browser: `public/passkey.js`; My profile → **Fingerprint sign-in**; the sign-in page; the second sign-in step;
   the signature and approval dialogs; Settings → Security policy.
+- The authenticator allow-list (built for 1.21.0, not yet released): `server/attestation.js` (attestation formats,
+  certificate chains, the FIDO Metadata Service BLOB), `server/authenticator-allowlist.js` (the setting, the loaded
+  metadata, enrolment and use under the list), Settings → **Authenticator allow-list**, migration 63;
+  `test/attestation.test.js` with certificates made by `test/x509.js`.
 - Tests: `test/fingerprint.test.js` with a software authenticator (`test/authenticator.js`);
   `test/fingerprint-review.test.js` for the review's fixes, with outside test vectors (`test/fixtures/webauthn/`: real
   browser and authenticator responses from py_webauthn's suite, BSD-licensed and attributed, and RFC 8949 Appendix A's
@@ -35,7 +40,8 @@ What SUDS **does** store, per passkey (table `passkeys`, office server only, nev
 | The credential's **public key** (SPKI, base64) and its **algorithm** (ES256, EdDSA or RS256) | To check its signatures. A public key opens nothing. |
 | The **credential id** (random bytes the authenticator chose) | To find the public key |
 | The **signature counter** | Clone detection (below) |
-| **Transports** (`internal`) and the **AAGUID** the device reported | Which kind of authenticator it is, for information (not verified: attestation is not requested) |
+| **Transports** (`internal`) and the **AAGUID** the device reported | Which kind of authenticator it is, for information (not verified: attestation is not requested), except under the authenticator allow-list |
+| Under the **authenticator allow-list** only: the **attestation verified** at enrolment (`attestation`: format, type, AAGUID, the metadata file's number, when) | Whether the passkey proved its model; the attestation certificate itself is not kept |
 | Whether it is **backed up / synced** (the BE/BS flags) | Information for the owner (a synced passkey, in iCloud Keychain or Google Password Manager, lives on their other devices too) |
 | The **host it was made for** (the relying party ID) | An assertion must be for the same host |
 | A **name** its owner gave it ("Maria's iPhone") | So people can tell their devices apart |
@@ -70,10 +76,11 @@ Every request SUDS makes asks for `userVerification: 'required'`, and SUDS **che
 authenticator data itself (it does not trust the browser to have asked). A passkey used without the device verifying
 its user (presence only, a tap) is **refused**, at sign-in, as a second step and for a signature alike.
 
-The UV flag is **self-asserted by the authenticator**: SUDS asks for no attestation (below), so nothing proves the
-device is the kind that really checks a finger or a PIN; a counterfeit or software authenticator could set the flag
-without asking anyone. SUDS relies on the flag as every relying party that does not verify attestation must, and
-states it here so a programme that needs more can add device management or an attestation policy.
+The UV flag is **self-asserted by the authenticator**: by default SUDS asks for no attestation (below), so nothing
+proves the device is the kind that really checks a finger or a PIN; a counterfeit or software authenticator could set
+the flag without asking anyone. SUDS relies on the flag as every relying party that does not verify attestation must,
+and states it here so a programme that needs more can turn on the **authenticator allow-list** (below) or add device
+management.
 
 WebAuthn cannot tell SUDS *how* the device verified its user: most platform authenticators accept the device's
 **PIN, pattern or password** in place of the finger (or face), and some fall back to it after failed finger
@@ -124,13 +131,13 @@ or lower**, the passkey may have been copied: the sign-in or signature is **refu
 `auth.passkey.clone_suspected`; Settings → Security status counts flagged passkeys. Many platform authenticators
 (synced passkeys especially) always report 0; a counter that stays at 0 is accepted.
 
-### Attestation: none
+### Attestation: none, unless the programme keeps an allow-list
 
-SUDS asks for `attestation: 'none'` and records the AAGUID the device reports, for information only. It does not
-ask the device to prove its make and model: that would identify the device more precisely than a sign-in needs, and
-SUDS does not restrict which authenticators staff may use (the owner's decision). **An allow-list of authenticator
-models** (by AAGUID, with attestation verified against the FIDO Metadata Service) is the option for a programme that
-must: it is not built, and would be a setting beside the others, off by default.
+By default SUDS asks for `attestation: 'none'` and records the AAGUID the device reports, for information only. It
+does not ask the device to prove its make and model: that would identify the device more precisely than a sign-in
+needs, and SUDS does not restrict which authenticators staff may use (the owner's decision). A programme that must
+restrict them turns on the **authenticator allow-list** (below): only then is attestation asked for (`'direct'`) and
+verified.
 
 ### What the verifier accepts
 
@@ -142,6 +149,92 @@ EdDSA with a 32-byte Ed25519 key, reported as `-8` or as the fully specified Ed2
 exponent **65537**. The same key checks apply when a stored key is used again (evidence included). Authenticator
 data: `BS` (backed up) without `BE` (backup eligible) is refused, and so is attested credential data (`AT`) in an
 assertion.
+
+## Authenticator allow-list
+
+Built for 1.21.0, not yet released. **Off by default**; office server only (SUDS on this device has no passkeys, and
+none of this code is in its browser kernel). Settings → **Authenticator allow-list (passkeys)**, administrators only
+(`settings:manage`).
+
+With it **on**, a passkey can be added only on an authenticator model the programme lists (by **AAGUID**, with a name),
+and the authenticator must **prove its model**: the registration asks for `attestation: 'direct'`, and SUDS verifies
+the attestation statement (`server/attestation.js`, `node:crypto` only, `X509Certificate` for the chains) and its
+certificate chain against the **root certificates the FIDO Metadata Service lists for that model**. With it on, the
+registration no longer asks for the platform authenticator only (`authenticatorAttachment` is left out), so a
+programme can list security keys: the list, not the kind of authenticator, decides.
+
+**Formats verified**
+
+| Format | What is checked | Under the list |
+| --- | --- | --- |
+| `packed`, full attestation (x5c) | The signature over authenticator data and the client data hash with the certificate's key; the certificate is X.509 v3, its subject has C, O, OU "Authenticator Attestation" and CN, it is not a CA, and its FIDO AAGUID extension (when present, not critical) names the model the authenticator data reports | Accepted when the chain reaches the model's roots |
+| `packed`, self attestation (no x5c) | The signature with the credential's own key, with the same algorithm | **Refused**: it proves nothing about the model |
+| `fido-u2f` | One P-256 certificate; the signature over `0x00 ‖ rpIdHash ‖ clientDataHash ‖ credentialId ‖ public key`; the credential is ES256. A U2F key has no AAGUID: it is the **all-zero AAGUID**, and its metadata entry is found by the certificate's key identifier (SHA-1 of the public key) | Accepted when the all-zero AAGUID is listed and the chain reaches that entry's roots |
+| `tpm` (TPM 2.0) | `pubArea` holds the credential's key; `certInfo` is TPM-generated (`TPM_GENERATED_VALUE`), a certification (`TPM_ST_ATTEST_CERTIFY`), its `extraData` is the hash of authenticator data ‖ client data hash, and it names `pubArea` (nameAlg SHA-256/384/512); the attestation identity key's certificate signed `certInfo`, has an empty subject, a subject alternative name naming the TPM (manufacturer `id:XXXXXXXX`, model, version), the extended key usage 2.23.133.8.3, is not a CA, and its AAGUID extension matches | Accepted when the chain reaches the model's roots. The manufacturer id's format is checked, not TCG's vendor list: the model's roots are the trust decision |
+| `android-key` | The signature with the certificate's key, which is the credential's key; the key description's challenge is the client data hash; not for all applications; generated (`origin` 0) and a signing key (`purpose` 2) **in the secure hardware's list** (`teeEnforced`) | Accepted when the chain reaches the model's roots. A key only the software list vouches for is refused |
+| `none`, `apple`, `android-safetynet`, others | — | **Refused** with the reason (`none`: passkeys kept in a password manager or synced between devices, such as iCloud Keychain and Google Password Manager, give none) |
+
+ECDAA and signatures with SHA-1 are refused. The chain: every certificate in date, each issued and signed by the next
+(a CA), ending at one of the model's roots or at a certificate a root issued. No revocation list is fetched (SUDS makes
+no outbound call): the Metadata Service's status reports stand for revocation.
+
+**The FIDO Metadata Service file.** The administrator downloads the Metadata Service BLOB (`blob.jwt`) from
+<https://mds3.fidoalliance.org/> and loads it on the card (the password again; SUDS makes no outbound call). SUDS
+checks that it is a signed JWT (RS256, ES256 or PS256) whose `x5c` chain leads to the **FIDO Alliance's Metadata
+Service root**, embedded in `server/attestation.js` as a constant: GlobalSign Root CA - R3, valid to 2029-03-18,
+SHA-256 `CB:B5:22:D7:B7:F1:27:AD:6A:01:13:86:5B:DF:1C:D4:10:2E:7D:07:59:AF:63:5A:7C:F4:72:0D:C9:63:C5:3B`
+(`test/attestation.test.js` checks the constant against it); that the signing certificate is for
+**mds.fidoalliance.org** (the same root signs many other sites); that the signature verifies; that its `nextUpdate`
+has not passed; and that its number (`no`) is not lower than the one already loaded (an older file could hide a newer
+revocation). It keeps, per model, the description, the attestation root certificates, the status reports and the
+attestation types (`authenticator_metadata`); the file's number, dates and SHA-256 are the setting `authn_mds`. Loading
+is audited (`security.authenticator_metadata`, and `.refused` with the reason). When the FIDO Alliance changes its root
+(R3 expires in 2029), a SUDS release changes the constant. The test and browser suites sign files of their own under a
+TEST-ONLY root (`test/fixtures/fido-mds/`, whose key is committed for that reason) named by `SUDS_TEST_FIDO_MDS_ROOT`,
+which SUDS honours only with `SUDS_ENV` `test` or `development`, never in production.
+
+**Statuses refused.** A model whose status reports include `REVOKED`, `USER_VERIFICATION_BYPASS`,
+`ATTESTATION_KEY_COMPROMISE`, `USER_KEY_REMOTE_COMPROMISE` or `USER_KEY_PHYSICAL_COMPROMISE` **anywhere in its history**
+is refused, even after a later `UPDATE_AVAILABLE` (the devices already made are not fixed by it): no new passkey on it,
+and its passkeys stop at their next use (the owner's decision, conservative).
+
+**Turning it on.** The list needs a current metadata file and at least one model, and every listed model must be in
+the file and not refused (otherwise no passkey could ever be checked for it). Before saving, **Check who would be
+affected** lists every active account whose passkeys the list would refuse, which ones and why, and whether the person
+has an authenticator app as well; the save is refused (`409`) unless the administrator confirms that number
+(`acknowledge_affected`, the checkbox on the card). Changing the list or turning it on or off takes the **password (or
+authenticator code) with the request, every time**, as the key backup does (`auth.verifySigner` `fresh`; an account
+that signs in only through single sign-on confirms with its provider); a fingerprint is not accepted for it. Audited
+as `security.authenticator_allowlist` (on or off, the AAGUIDs, how many accounts and passkeys it affected and which
+accounts), a wrong password as `security.authenticator_allowlist.failed`. The generic settings route cannot change it.
+
+**Passkeys already there when it is turned on (the owner's decision, conservative).** A passkey counts under the list
+only if its attestation was **verified at enrolment** for a listed model (`passkeys.attestation`). Every passkey added
+while the list was off was not (its AAGUID is only what the device said), so it **stops working for sign-in, the second
+sign-in step and signing at its next use**: refused (`403`, `passkeyError: "not_allowed"`) with a message that says why
+and what to do (sign in with the password, remove it, add one on an accepted authenticator), audited as
+`auth.passkey.not_allowed` (with the reason: `unattested`, `not listed`, `status`, `not in metadata`) beside the usual
+`auth.login.failed`. It is checked after the signature verifies, so only the passkey's holder learns why, and it does
+not count toward the lockout (nothing was guessed). It no longer counts as the account's second factor
+(`auth.passkeyCount`), is not offered for the second step or for "Confirm with fingerprint", and My profile marks it
+"Not accepted" and names the accepted models. The passkey is not deleted: turning the list off, or listing its model
+and adding it again with attestation, brings it back. A person whose role requires two-step verification and whose
+only second factor was such a passkey is treated as not enrolled and is asked to set one up (the preview says which
+people have no authenticator app).
+
+**When the metadata file is out of date** (past its `nextUpdate`): no passkey can be **added** (the registration
+options are refused, with the reason), and Settings → Security status shows the allow-list line in red; passkeys
+already proven keep working, checked against the statuses of the file last loaded (the owner's decision: an
+administrator late with a monthly download must not lock every passkey out). A newer file whose statuses refuse a model
+stops that model's passkeys at once.
+
+**Privacy.** Attestation tells SUDS the authenticator's model and, for `packed`/`fido-u2f`/`android-key`, its batch
+certificate (shared by a large batch of devices, by FIDO's rules); SUDS keeps the model (AAGUID) and the format, not
+the certificate. A `tpm` attestation's identity key certificate is the TPM's own; it is checked and not kept. None of
+this is biometric.
+
+**Not claimed.** The list does not make SUDS claim NIST AAL3: that also needs every authenticator to be hardware-bound
+and non-exportable, which is the programme's choice of models, not something SUDS checks beyond the formats above.
 
 ## Enrolment
 
@@ -379,6 +472,7 @@ fingerprint is accepted there because each confirmation is a fresh, single-use c
 | --- | --- | --- |
 | **Allow fingerprint sign-in** (`passkey_signin`) | On | Sign in with a passkey, and count it as two-step verification |
 | **Allow fingerprint to confirm signatures and approvals** (`passkey_signing`) | On | "Confirm with fingerprint" in the signature and approval dialogs |
+| **Authenticator allow-list** (Settings → Authenticator allow-list; `authn_allowlist`, `authn_allowlist_models`; built for 1.21.0, not yet released) | Off | Only the listed authenticator models may hold a passkey, each proven by its attestation against the loaded FIDO Metadata Service file; passkeys it does not accept stop working at their next use (above). Changed only on its own card, with the password again |
 | **Require fingerprint or authenticator for signing** (`sign_strong_required`) | Off | Signing, countersigning, approving time or spending **and downloading the key backup** need a fingerprint or an authenticator code; the password alone is refused. A note signed on a device and synced lands as a draft. Staff with neither must set one up (the dialogs link to My profile). |
 
 Changing any of them is audited on its own line (`security.passkey_policy`). **Settings → Security status** shows
@@ -400,7 +494,9 @@ passkey adoption (accounts with one, sign-ins and confirmations in 30 days, flag
 - **Changing the password** and **turning two-step verification off** still take the password (and the code): a
   fingerprint does not replace them.
 - **Knowing it was a finger** (not the device PIN): not possible with WebAuthn (above).
-- **Attestation and an allow-list of authenticator models**: not done (above); the option is described there.
+- **Attestation and an allow-list of authenticator models**: built for 1.21.0, not yet released (Authenticator
+  allow-list, above), off by default. Not covered: the `apple` and `android-safetynet` formats, ECDAA, revocation lists
+  (the Metadata Service's statuses stand for them), and a fingerprint as the proof for changing the list.
 
 ## Review of the fingerprint work (before 1.19.0)
 
