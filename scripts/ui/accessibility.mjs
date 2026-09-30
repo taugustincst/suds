@@ -36,6 +36,9 @@
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { makeChecks, settle, until, passRecoveryCode, strayText } from './assert.mjs';
 
 const require = createRequire(import.meta.url);
@@ -246,6 +249,8 @@ async function pagesFor(page) {
       if (a.can('reports:read') && (a.can('reports:internal') || a.can('clients:read'))) out.push('supplies?tab=ssp');
     }
     if (out.includes('supervision') && a.can('audit:read')) out.push('supervision?tab=breakglass');
+    // The county view's other sections (docs/COUNTY-VIEW.md).
+    if (out.includes('county')) out.push('county?tab=submissions', 'county?tab=programmes');
     if (a.state.local) out.push('sync');
     // State reporting (CalOMS Tx and the county EHR hand-off) is reached from Reports, not the navigation.
     if (a.can('episodes:read') || a.can('episodes:write') || a.can('export:identified')) out.push('caloms');
@@ -291,6 +296,19 @@ async function prepareOffice() {
   // The DAST-10 is optional and off by default (its licence); switched on here so its form is audited too.
   must(await api(page, 'PUT', '/api/admin/instruments/dast10', { enabled: true, confirm_rights: true }), 'the DAST-10 is on');
   must(await api(page, 'POST', '/api/admin/fhir-clients', { name: 'County EHR', recipient: 'County Behavioral Health', purpose: 'TREAT', scopes: ['system/*.read'] }), 'a FHIR client exists');
+  // The county view (docs/COUNTY-VIEW.md) with rows in it: this server's county signing key (so Settlement outcomes
+  // shows its fingerprint and public key), and the three fictional programmes of scripts/county-sample.js registered,
+  // with their files imported (all but one programme's latest, so the view has one "not submitted").
+  must(await api(page, 'POST', '/api/county-submission/key', {}), 'this server has a county signing key');
+  const sampleDir = fs.mkdtempSync(path.join(process.env.SUDS_UI_TMP || os.tmpdir(), 'suds-a11y-county-'));
+  execFileSync(process.execPath, ['--no-warnings', path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'county-sample.js'), sampleDir], { stdio: 'ignore' });
+  for (const p of JSON.parse(fs.readFileSync(path.join(sampleDir, 'programmes.json'), 'utf8'))) must(await api(page, 'POST', '/api/county/programmes', { name: p.name, public_key: p.public_key }), `county programme ${p.name}`);
+  const sampleFiles = fs.readdirSync(sampleDir).filter(f => f.endsWith('.json') && f !== 'programmes.json').sort();
+  const hillviewLatest = sampleFiles.filter(f => f.startsWith('hillview-')).pop();
+  for (const f of sampleFiles.filter(f => f !== hillviewLatest)) {
+    must(await api(page, 'POST', '/api/county/submissions', { text: fs.readFileSync(path.join(sampleDir, f), 'utf8') }), `county submission ${f}`);
+  }
+  fs.rmSync(sampleDir, { recursive: true, force: true });
   // A supervisor (clients:all, care plan, assessments, Part 2 registers) records the clinical and Part 2 records.
   await as('jwalker', PW);
   const fresh = must(await api(page, 'POST', '/api/clients', { first_name: 'Ada', last_name: 'Audit', status: 'waitlist', confirm_duplicate: true }), 'a client with no episode');
@@ -445,6 +463,8 @@ const BUTTON_DIALOGS = [
   // Settings: an access request, a FHIR client, the recovery drill.
   ['admin?tab=users', 'Approve'], ['admin?tab=fhir', '+ New FHIR client'], ['admin?tab=fhir', 'Edit'],
   ['reports', 'Identified Excel workbook'], ['admin?tab=lists', '+ Add funding source'],
+  // The county view: registering and editing a programme, and withdrawing an imported file.
+  ['county?tab=programmes', 'Register a programme'], ['county?tab=programmes', 'Edit'], ['county?tab=submissions', 'Withdraw'],
   // The supervision queue: countersigning one note (the note's text, a comment, the signature step).
   ['supervision', 'Countersign'],
 ];
@@ -452,6 +472,8 @@ const BUTTON_DIALOGS = [
 const EXPANDED = [
   ['compliance?tab=notice', 'details[data-notice-editor] > summary', 'notice editor open'],
   ['admin?tab=lists', 'details.list-card > summary', 'a list open'],
+  // Settlement outcomes › Send to the county: this server's public key.
+  ['settlement', '[data-so-county-key] details > summary', 'the county public key open'],
   // Settings › Programme is folded into sections (views/admin.js): every one of them opened.
   ['admin?tab=settings', 'details.section[data-section] > summary', 'every programme settings section open', { all: true }],
 ];
