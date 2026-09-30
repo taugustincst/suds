@@ -269,8 +269,11 @@ function tpmSan(details) {
   for (const gn of derChildren(derRead(ext.value).value)) {
     if (gn.cls !== 2 || gn.tag !== 4) continue;
     for (const rdn of derChildren(derRead(gn.value).value)) for (const atv of derChildren(rdn.value)) {
+      // An AttributeTypeAndValue is SEQUENCE { type OID, value }: anything else is refused as not understood (a
+      // certificate the device made up need not be well formed where OpenSSL does not look).
       const [oid, val] = derChildren(atv.value);
-      const k = { '2.23.133.2.1': 'manufacturer', '2.23.133.2.2': 'model', '2.23.133.2.3': 'version' }[oidString(oid.value)];
+      if (!oid || !val || oid.tag !== 6) fail('attestation_cert', 'The TPM attestation certificate\'s subject alternative name is not understood');
+      const k ={ '2.23.133.2.1': 'manufacturer', '2.23.133.2.2': 'model', '2.23.133.2.3': 'version' }[oidString(oid.value)];
       if (k) out[k] = val.value.toString('utf8');
     }
   }

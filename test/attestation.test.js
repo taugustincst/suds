@@ -61,7 +61,7 @@ function tpmAttest(issuer, bend = {}) {
     const certInfo = Buffer.concat([u32(bend.magic || 0xff544347), u16(0x8017), sized(Buffer.concat([u16(0x000b), crypto.randomBytes(32)])), sized(extra), Buffer.alloc(17), Buffer.alloc(8), sized(nm), sized(Buffer.concat([u16(0x000b), crypto.randomBytes(32)]))]);
     const aik = X.rsaKeys();
     const der = X.cert({ subject: bend.subject || [], issuer: issuer.subject, publicKey: aik.publicKey, signKey: issuer.keys.privateKey,
-      extensions: [X.EXT.basicConstraints(false), ...(bend.noSan ? [] : [X.EXT.sanTpm()]), ...(bend.noEku ? [] : [X.EXT.eku('2.23.133.8.3')]), X.EXT.aaguid(a.aaguid)] });
+      extensions: [X.EXT.basicConstraints(false), ...(bend.noSan ? [] : [bend.san || X.EXT.sanTpm()]), ...(bend.noEku ? [] : [X.EXT.eku('2.23.133.8.3')]), X.EXT.aaguid(a.aaguid)] });
     const sig = crypto.sign('sha256', certInfo, aik.privateKey);
     return { fmt: 'tpm', attStmt: new Map([['ver', '2.0'], ['alg', -257], ['x5c', [der]], ['sig', sig], ['certInfo', certInfo], ['pubArea', pubArea]]) };
   };
@@ -152,6 +152,12 @@ test('tpm: the key certified is the credential, for this registration, by an att
   assert.throws(() => A.verifyAttestation(made(a, tpmAttest(root, { subject: [['CN', 'not empty']] }))), /empty subject/);
   assert.throws(() => A.verifyAttestation(made(a, tpmAttest(root, { noSan: true }))), /does not name the TPM/);
   assert.throws(() => A.verifyAttestation(made(a, tpmAttest(root, { noEku: true }))), /2\.23\.133\.8\.3/);
+  // A malformed name inside the subject alternative name (the device makes its own certificate before the chain is
+  // checked): refused as not understood, never a crash (it was a TypeError, a 500 at enrolment).
+  const sanOf = (atv) => X.ext('2.5.29.17', X.seq(X.ctx(4, X.seq(X.set(atv)))), true);
+  assert.throws(() => A.verifyAttestation(made(a, tpmAttest(root, { san: sanOf(X.seq()) }))), code('attestation_cert'), 'an empty AttributeTypeAndValue');
+  assert.throws(() => A.verifyAttestation(made(a, tpmAttest(root, { san: sanOf(X.seq(X.oid('2.23.133.2.1'))) }))), code('attestation_cert'), 'a type with no value');
+  assert.throws(() => A.verifyAttestation(made(a, tpmAttest(root, { san: sanOf(X.seq(X.utf8('x'), X.utf8('y'))) }))), code('attestation_cert'), 'a value where the type should be');
 });
 
 test('android-key: the certificate is for the credential key, this challenge, generated and held by the secure hardware', () => {
