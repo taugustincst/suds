@@ -124,10 +124,13 @@ SUDS should purge them automatically (it does not today).
 Encrypted backups, verified on write, kept locally and copied offsite; optional snapshots every few minutes; a
 recovery drill that restores the newest backup into a throwaway copy, verifies it end to end, measures RTO and RPO
 and writes an Ed25519-signed report. SUDS Server starts with backups every 4 hours and a monthly drill. Drill
-evidence: two development drills in [../../evidence/](../../evidence/README.md) (the latest 11 of 11 checks, RTO
-3.8 s at 20,000 fictional clients). **These are development drills, not a drill of the county's own deployment**,
-which the pilot does. Evidence: [../../security/BACKUP-AND-DR.md](../../security/BACKUP-AND-DR.md);
-[../../evidence/dr-drill-2026-09-29.md](../../evidence/dr-drill-2026-09-29.md).
+evidence: four development drills in [../../evidence/](../../evidence/README.md) at 20,000 fictional clients; the
+latest, on the released 1.20.0, passed 11 of 11 checks with a drill RTO of 3.6 s and a host-procedure RTO of 2.8 s
+(on 1.19.0 the same day: 5 s and 3.7 s). An upgrade drill opened 1.16.2, 1.18.0 and 1.19.0 databases with 1.20.0 and
+drilled them (11 of 11 each). **These are development drills, not a drill of the county's own deployment**, which
+the pilot does. Evidence: [../../security/BACKUP-AND-DR.md](../../security/BACKUP-AND-DR.md);
+[../../evidence/dr-drill-2026-09-30-v1.20.0/](../../evidence/dr-drill-2026-09-30-v1.20.0/README.md);
+[../../evidence/upgrade-drill-2026-09-30-v1.20.0/](../../evidence/upgrade-drill-2026-09-30-v1.20.0/README.md).
 
 **Q. High availability?** Single instance by design; a documented warm standby; no automatic failover
 ([../../security/BACKUP-AND-DR.md](../../security/BACKUP-AND-DR.md), *Single-site risk and standby*).
@@ -147,10 +150,11 @@ remediation.** A scope for a county-commissioned test, including the county view
 endpoint, is in [../../security/PEN-TEST-SCOPE.md](../../security/PEN-TEST-SCOPE.md). The project's own reviews
 and the attack classes fixed are in [../../security/THREAT-MODEL.md](../../security/THREAT-MODEL.md).
 
-**Q. How are vulnerabilities reported and fixed?** Privately through GitHub's vulnerability reporting; fixed in a
-security release with an advisory; the latest minor line gets every fix
-([../../SUPPORT.md](../../SUPPORT.md); [../../RELEASE.md](../../RELEASE.md), *Supported versions*).
-**[owner to complete]: a named security contact address.**
+**Q. How are vulnerabilities reported and fixed?** Privately through GitHub's private vulnerability reporting, as
+[../../../SECURITY.md](../../../SECURITY.md) (the security policy and contact) describes; fixed in a security release
+with an advisory; the latest minor line gets every fix ([../../SUPPORT.md](../../SUPPORT.md);
+[../../RELEASE.md](../../RELEASE.md), *Supported versions*). **[owner to complete]: a named security contact
+address** (SECURITY.md has none yet; a programme with a support agreement uses the contact it names).
 
 ## Incident response
 
