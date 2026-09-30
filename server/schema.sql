@@ -112,9 +112,74 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- When this session last proved who is using it: the sign-in (password, and the second factor when there is
   -- one), or the password or code given again to sign a note. A signature within sign_reauth_minutes of it
   -- needs only the signer's confirmation (server/routes/notes.js verifyIdentity).
-  reauth_at TEXT
+  reauth_at TEXT,
+  -- How reauth_at was last proved: 'password', 'totp', 'passkey' (a fingerprint or the device's screen lock,
+  -- docs/FINGERPRINT.md) or 'sso'. "Require fingerprint or authenticator for signing" counts only a recent
+  -- 'passkey' or 'totp' towards the quick-signing window (migration 58).
+  reauth_method TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+
+-- Passkeys (WebAuthn credentials on a platform authenticator: Touch ID, Windows Hello, an Android fingerprint;
+-- docs/FINGERPRINT.md). SUDS never receives or stores a fingerprint or any biometric template: the device matches
+-- the finger and signs. What is kept is the credential's public key (SPKI DER, base64) and id, the signature
+-- counter, the transports and AAGUID the device reported, the name its owner gave it and dates. No PHI and no
+-- secret: a public key opens nothing. Office server only, never synchronised (migration 58).
+CREATE TABLE IF NOT EXISTS passkeys (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  credential_id TEXT NOT NULL UNIQUE,  -- base64url, as the authenticator gave it
+  public_key TEXT NOT NULL,            -- SPKI DER, base64
+  alg INTEGER NOT NULL,                -- COSE algorithm: -7 ES256, -8 EdDSA, -257 RS256
+  sign_count INTEGER NOT NULL DEFAULT 0,
+  transports TEXT,                     -- JSON array, as reported
+  aaguid TEXT,                         -- the authenticator model, as reported (attestation 'none': unverified)
+  backup_eligible INTEGER NOT NULL DEFAULT 0,
+  backed_up INTEGER NOT NULL DEFAULT 0,
+  rp_id TEXT NOT NULL,                 -- the host it was made for; an assertion must be for the same one
+  name TEXT NOT NULL,                  -- "Maria's iPhone": its owner's name for it
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  last_used_at TEXT,
+  -- Set when the signature counter went backwards (a possible copy of the credential): refused from then on,
+  -- until the owner or an administrator removes it.
+  flagged_at TEXT,
+  flag_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
+
+-- WebAuthn challenges waiting for an answer: stored by SHA-256 of the challenge (never the challenge itself),
+-- single-use (used_at), bound to a purpose and, once signed in, to the user and session; two minutes to live.
+-- `statement`: for a signature or an approval, the canonical statement the challenge is the hash of (ids,
+-- hashes and dates: no PHI). Office server only, never synchronised (migration 58).
+CREATE TABLE IF NOT EXISTS webauthn_challenges (
+  id TEXT PRIMARY KEY,                 -- hex SHA-256 of the challenge bytes
+  purpose TEXT NOT NULL,
+  user_id TEXT,
+  session_id TEXT,
+  statement TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  expires_at TEXT NOT NULL,
+  used_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_webauthn_challenges_expiry ON webauthn_challenges(expires_at);
+
+-- The evidence of a signature or approval confirmed with a passkey: the statement signed (purpose, record type and
+-- ids, the content hash, the signer, when, a nonce), and the assertion (credential id, authenticator data with its
+-- flags and counter, client data, signature) with the credential's public key, so it can be verified again later,
+-- offline, even once the passkey has been removed (server/webauthn.js verifyEvidence). evidence_enc is that JSON,
+-- encrypted; record_ids names the records (ids only). Office server only, never synchronised (migration 58).
+CREATE TABLE IF NOT EXISTS signature_evidence (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  passkey_id TEXT,
+  purpose TEXT NOT NULL,
+  record_type TEXT NOT NULL,
+  record_ids TEXT NOT NULL,
+  statement_hash TEXT NOT NULL,
+  evidence_enc TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_signature_evidence_record ON signature_evidence(record_type, created_at);
 
 CREATE TABLE IF NOT EXISTS api_keys (
   id TEXT PRIMARY KEY,

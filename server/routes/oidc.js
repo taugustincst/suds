@@ -72,7 +72,7 @@ async function finishReauth(ctx, saved) {
   if (!user.oidc_subject || claims.sub !== user.oidc_subject) { failed('different_identity'); return back('mismatch'); }
   const at = Number(claims.auth_time) * 1000;
   if (!Number.isFinite(at) || at < saved.at - AUTH_TIME_SKEW_MS || at > Date.now() + AUTH_TIME_SKEW_MS) { failed('auth_time_not_fresh'); return back('stale'); }
-  db.run(`UPDATE sessions SET reauth_at=? WHERE id=?`, db.now(), session.id);
+  db.run(`UPDATE sessions SET reauth_at=?, reauth_method='sso' WHERE id=?`, db.now(), session.id);
   // A fresh proof as well, good for one key-backup download in the next few minutes (auth.verifySigner `fresh`).
   auth.noteSsoProof(session.id);
   db.run(`UPDATE users SET idp_seen_at=? WHERE id=?`, db.now(), user.id);
@@ -148,7 +148,7 @@ module.exports = (r) => {
     const idp = trust.trusted ? oidc.idpMfa(claims, { acrValues: trust.acrValues }) : null;
     const viaIdp = !!(idp && idp.ok);
     const mfaPending = !viaIdp && !!user.mfa_enabled;
-    const token = auth.createSession(user, ctx, { mfaPending, mfaSource: viaIdp ? 'idp' : null });
+    const token = auth.createSession(user, ctx, { mfaPending, mfaSource: viaIdp ? 'idp' : null, reauthMethod: 'sso' });
     audit.log({ user, action: mfaPending ? 'auth.oidc.login.mfa_pending' : 'auth.oidc.login', ip: ctx.ip,
       details: idp ? { mfa: viaIdp ? 'idp' : 'not asserted by the identity provider', via: idp.via || undefined, amr: idp.amr.slice(0, 10), acr: idp.acr || undefined } : undefined });
     const cookies = [auth.cookieHeader(token), oidc.stateCookie('', { clear: true })];

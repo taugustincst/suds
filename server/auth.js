@@ -28,6 +28,7 @@ function policy() {
     // sign a note with a confirmation alone. 0: the password (or code) every time. At most an hour.
     signReauthMinutes: Math.min(60, num('sign_reauth_minutes', 10, { zero: true })),
     ...ssoPolicy(),
+    ...passkeyPolicy(),
   };
 }
 
@@ -40,6 +41,21 @@ function ssoPolicy() {
   const wanted = db.getSetting('sso_required', '0') === '1';
   const emergency = String(db.getSetting('sso_emergency_accounts', '') || '').split(',').map(x => x.trim().toLowerCase()).filter(Boolean);
   return { ssoRequiredSetting: wanted, ssoRequired: wanted && !config.local && !!(config.oidc && config.oidc.enabled), ssoEmergencyAccounts: emergency };
+}
+
+// Fingerprint sign-in and signing with passkeys (docs/FINGERPRINT.md, server/passkeys.js). Office server only: SUDS on
+// a device offers neither. passkeySignin: "Sign in with fingerprint", which also counts as two-step verification;
+// passkeySigning: "Confirm with fingerprint" for signatures and approvals. Both on unless switched off.
+// signStrongRequired: a signature or approval needs a fingerprint or an authenticator code, not the password alone
+// (off unless switched on); the quick-signing window then counts only when a fingerprint or code opened it.
+function passkeyPolicy() {
+  if (config.local) return { passkeySignin: false, passkeySigning: false, signStrongRequired: false };
+  return { passkeySignin: db.getSetting('passkey_signin', '1') !== '0', passkeySigning: db.getSetting('passkey_signing', '1') !== '0', signStrongRequired: db.getSetting('sign_strong_required', '0') === '1' };
+}
+/** How many passkeys this user has that can still be used (not flagged as a possible copy). 0 on a device. */
+function passkeyCount(userId) {
+  if (config.local || !userId) return 0;
+  try { return db.one(`SELECT COUNT(*) n FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, userId).n; } catch { return 0; }
 }
 
 // ---- Role-based permissions (minimum necessary) ----
@@ -267,13 +283,14 @@ function caseloadFilter(user, col = 'c.id') {
 
 // ---- Sessions ----
 const COOKIE = 'suds_session';
-function createSession(user, ctx, { mfaPending = false, mfaSource = null } = {}) {
+function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauthMethod = 'password' } = {}) {
   const token = randomToken(32);
   const now = new Date();
   const expires = new Date(now.getTime() + policy().absoluteHours * 3600 * 1000);
-  // Creating a session is the moment its user proved who they are (a password, or the identity provider).
-  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200), mfaSource, now.toISOString());
+  // Creating a session is the moment its user proved who they are (a password, a passkey, or the identity provider).
+  // reauth_method says which: "Require fingerprint or authenticator for signing" counts only a passkey or a code.
+  db.run(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    sha256(token), user.id, now.toISOString(), now.toISOString(), expires.toISOString(), mfaPending ? 1 : 0, ctx.ip, (ctx.headers['user-agent'] || '').slice(0, 200), mfaSource, now.toISOString(), reauthMethod);
   return token;
 }
 // ---- recent re-authentication (the electronic-signature step) ----
@@ -295,7 +312,9 @@ function noteSsoProof(sessionId) {
 }
 function ssoProofFresh(ctx) { const at = ctx.session && ssoProofs.get(ctx.session.id); return !!at && Date.now() - at <= SSO_PROOF_MS; }
 function takeSsoProof(ctx) { const ok = ssoProofFresh(ctx); if (ctx.session) ssoProofs.delete(ctx.session.id); return ok; }
-function markReauth(ctx) { if (ctx.session) { const at = db.now(); db.run(`UPDATE sessions SET reauth_at=? WHERE id=?`, at, ctx.session.id); ctx.session.reauth_at = at; } }
+function markReauth(ctx, method = 'password') { if (ctx.session) { const at = db.now(); db.run(`UPDATE sessions SET reauth_at=?, reauth_method=? WHERE id=?`, at, method, ctx.session.id); ctx.session.reauth_at = at; ctx.session.reauth_method = method; } }
+// The methods that count as a fingerprint or an authenticator code (policy().signStrongRequired).
+const STRONG_METHODS = ['passkey', 'totp'];
 function reauthStatus(ctx) {
   const minutes = policy().signReauthMinutes;
   const at = ctx.session && ctx.session.reauth_at ? Date.parse(ctx.session.reauth_at) : NaN;
@@ -307,7 +326,15 @@ function reauthStatus(ctx) {
   const u = ctx.user ? db.one(`SELECT mfa_enabled, password_hash, oidc_subject FROM users WHERE id=?`, ctx.user.id) : null;
   const sso = !!(u && u.oidc_subject && config.oidc && config.oidc.enabled);
   const method = u && u.mfa_enabled ? 'totp' : sso && !hasLocalPassword(u.password_hash) ? 'sso' : 'password';
-  return { recent: until > Date.now(), until: until ? new Date(until).toISOString() : null, window_minutes: minutes, method, sso, sso_fresh: sso && ssoProofFresh(ctx) };
+  // passkey: "Confirm with fingerprint" is offered as an equal alternative (the user has a passkey and the programme
+  // allows it). strong_required: the password alone is not enough (policy().signStrongRequired); then the quick
+  // window counts only when a fingerprint or code opened it (recent_method).
+  const pol = policy();
+  const passkey = pol.passkeySigning && passkeyCount(ctx.user && ctx.user.id) > 0;
+  const recentMethod = ctx.session ? ctx.session.reauth_method || null : null;
+  const recent = until > Date.now() && (!pol.signStrongRequired || STRONG_METHODS.includes(recentMethod));
+  return { recent, until: until ? new Date(until).toISOString() : null, window_minutes: minutes, method, sso, sso_fresh: sso && ssoProofFresh(ctx),
+    passkey, strong_required: pol.signStrongRequired, recent_method: recentMethod, totp: !!(u && u.mfa_enabled) };
 }
 /** Whether a password hash is a real one (an SSO-provisioned account's is a marker nobody can match). */
 function hasLocalPassword(hash) { return /^scrypt\$/.test(String(hash || '')); }
@@ -318,9 +345,11 @@ function hasLocalPassword(hash) { return /^scrypt\$/.test(String(hash || '')); }
  * the messages ("Enter your password to ..."): signing a note, or downloading the key backup. `fresh`: no
  * recent-authentication window at all (the key backup); 'sso' is then returned for a single sign-on round-trip.
  */
-async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 'sign', fresh = false } = {}) {
+async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 'sign', fresh = false, bind = null } = {}) {
   const password = typeof body.password === 'string' && body.password ? body.password : null;
   const code = typeof body.code === 'string' && body.code.trim() ? body.code.trim() : null;
+  const passkey = body.passkey && typeof body.passkey === 'object' ? body.passkey : null;
+  const pol = policy();
   const u = db.one(`SELECT id, password_hash, mfa_enabled, mfa_secret_enc, failed_attempts, locked_until FROM users WHERE id=?`, ctx.user.id);
   // A signature is a password / authenticator check like the sign-in, with the sign-in's protections: a
   // locked account cannot sign by any route (including the quick confirmation), and every failure below
@@ -335,6 +364,23 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 
     audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details });
     throw forbidden(message);
   };
+  // "Confirm with fingerprint": a passkey assertion over a challenge bound to exactly what is being signed (`bind`:
+  // the purpose, the record and its content hash; server/passkeys.js). Equal to the password or the code, and like
+  // them it opens the quick-signing window. The evidence is kept (signature_evidence) and its id left on ctx for the
+  // route's audit entry.
+  if (passkey) {
+    if (!bind) throw badRequest('A fingerprint confirmation is not accepted here');
+    ctx.signatureEvidence = require('./passkeys').confirm(ctx, passkey, bind, { action });
+    markReauth(ctx, 'passkey'); return 'passkey';
+  }
+  // The programme requires a fingerprint or an authenticator code for signatures and approvals: the password alone
+  // is refused (not a failed attempt: nothing was guessed).
+  const strongHow = (st) => (st.passkey && st.totp ? 'Confirm with your fingerprint or enter the code from your authenticator app' : st.passkey ? 'Confirm with your fingerprint' : st.totp ? 'Enter the code from your authenticator app' : 'Set up fingerprint sign-in or two-step verification under My profile, then try again');
+  if (pol.signStrongRequired && password && !code) {
+    const st = reauthStatus(ctx);
+    audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'password alone not accepted' } });
+    throw new HttpError(403, `Your programme requires your fingerprint or an authenticator code to ${purpose}; your password alone is not enough. ${strongHow(st)}.`, { reauthRequired: true, strongRequired: true, method: st.method, passkey: st.passkey, totp: st.totp });
+  }
   if (password) {
     const limit = config.loginRateLimit;
     const app = require('./app');
@@ -345,7 +391,7 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 
       failed(locked ? { reason: 'locked after failures' } : undefined, locked ? 'Password verification failed. The account is now locked after too many failed attempts.' : 'Password verification failed');
     }
     clearFailures(u.id);
-    markReauth(ctx); return 'password';
+    markReauth(ctx, 'password'); return 'password';
   }
   if (code) {
     if (!u.mfa_enabled || !u.mfa_secret_enc) throw badRequest('Two-step verification is not set up for your account; give your password instead');
@@ -357,7 +403,7 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 
       failed({ method: 'totp', ...(locked ? { reason: 'locked after failures' } : {}) }, locked ? 'That code is not right. The account is now locked after too many failed attempts.' : 'That code is not right. Enter the current code from your authenticator app.');
     }
     clearFailures(u.id);
-    markReauth(ctx); return 'totp';
+    markReauth(ctx, 'totp'); return 'totp';
   }
   const st = reauthStatus(ctx);
   // Key custody (fresh: the key backup) has no window: the password or code with this very request, or, for an
@@ -373,10 +419,28 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 
   // validate() stores booleans as 1/0 (SQLite); either spelling is the confirmation.
   if (body.confirm !== true && body.confirm !== 1) throw badRequest(st.recent ? `Confirm the attestation to ${purpose}` : st.method === 'totp' ? `Enter the code from your authenticator app to ${purpose}` : st.method === 'sso' ? `Confirm with single sign-on, then ${purpose}` : `Your password is required to ${purpose}`);
   if (!st.recent) {
+    if (pol.signStrongRequired) throw new HttpError(403, `Your programme requires your fingerprint or an authenticator code to ${purpose}. ${strongHow(st)}.`, { reauthRequired: true, strongRequired: true, method: st.method, sso: st.sso, passkey: st.passkey, totp: st.totp });
     const how = { totp: `Enter the code from your authenticator app to ${purpose}.`, sso: `Confirm with single sign-on to ${purpose}.`, password: `Enter your password to ${purpose}.` }[st.method];
-    throw new HttpError(403, `It has been a while since you last confirmed it is you. ${how}`, { reauthRequired: true, method: st.method, sso: st.sso });
+    throw new HttpError(403, `It has been a while since you last confirmed it is you. ${how}${st.passkey ? ' Or confirm with your fingerprint.' : ''}`, { reauthRequired: true, method: st.method, sso: st.sso, passkey: st.passkey });
   }
   return 'recent_auth';
+}
+/**
+ * An approval (time, spending): it asked for no proof of identity before 1.19.0 and asks for none by default now.
+ * Proof is taken when it is given — "Confirm with fingerprint" (a passkey assertion bound to exactly what is
+ * approved), or the password or code, checked as for a signature — and required, as a fingerprint or an
+ * authenticator code, when the programme turns on "Require fingerprint or authenticator for signing". Returns how
+ * identity was established ('passkey', 'totp', 'password', 'recent_auth') or null when none was asked for or given.
+ */
+async function verifyApprover(ctx, body, { action, purpose, bind }) {
+  const given = (body.passkey && typeof body.passkey === 'object') || (typeof body.password === 'string' && body.password) || (typeof body.code === 'string' && body.code.trim());
+  if (!given && !policy().signStrongRequired) return null;
+  if (!given && body.confirm !== true && body.confirm !== 1) {
+    // Required and not given: say how (a fingerprint or a code), so the approval dialog can ask for it.
+    const st = reauthStatus(ctx);
+    throw new HttpError(403, `Your programme requires your fingerprint or an authenticator code to ${purpose}.`, { reauthRequired: true, strongRequired: true, method: st.method, passkey: st.passkey, totp: st.totp, recent: st.recent });
+  }
+  return verifySigner(ctx, body, { action, purpose, bind });
 }
 const LOCKED_MESSAGE = 'Account locked after too many failed attempts. Try again later or contact an administrator.';
 /**
@@ -494,7 +558,8 @@ function requireAuth(ctx) {
     // expired password) was bounced straight back to the sign-in form, forever. Reads of those two — no PHI
     // — and nothing else, get through.
     const shellOnly = ctx.method === 'GET' && (ctx.path === '/api/meta/constants' || ctx.path === '/api/me/prefs');
-    const due = ctx.session?.mfa_source === 'idp' ? null : mfaDeadline(ctx.user);
+    // A passkey sign-in (mfa_source 'passkey') was two factors in one: the device held the key and verified the person.
+    const due = ctx.session?.mfa_source === 'idp' || ctx.session?.mfa_source === 'passkey' ? null : mfaDeadline(ctx.user);
     if (due && Date.now() > Date.parse(due) && !shellOnly) {
       throw new HttpError(403, 'Two-step verification must be set up for your role before you can continue', { mfaSetupRequired: true, mfaSetupDeadline: due });
     }
@@ -511,6 +576,10 @@ function requireAuth(ctx) {
 function mfaDeadline(user) {
   if (!user || user.mfa_enabled) return null;
   if (!policy().mfaRequiredRoles.includes(user.role)) return null;
+  // A passkey with user verification (the fingerprint, or the device's screen lock) is multi-factor on its own
+  // (NIST SP 800-63B: a multi-factor cryptographic authenticator, AAL2; docs/FINGERPRINT.md): an account that has
+  // one has set up two-step verification, as long as fingerprint sign-in is allowed here.
+  if (policy().passkeySignin && passkeyCount(user.id) > 0) return null;
   const created = Date.parse(user.created_at || 0) || Date.now();
   return new Date(created + policy().mfaGraceDays * 86400000).toISOString();
 }
@@ -626,13 +695,24 @@ async function login({ username, password, ctx }) {
     if (device.wipe_requested_at) { pendingWipe = device; wipeRequired(true); }
   }
   const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
-  const mfaPending = !!user.mfa_enabled;
+  // The second step is the authenticator code, or the fingerprint: with two-step verification on, either; for a role
+  // that requires it, an account whose only second factor is a passkey finishes signing in with it (a password alone
+  // is one factor, and the passkey is what counts as that account's enrolment in mfaDeadline).
+  const passkeyStep = policy().passkeySignin && passkeyCount(user.id) > 0;
+  const mfaPending = !!user.mfa_enabled || (mfaRequiredForRole && passkeyStep);
   const token = createSession(user, ctx, { mfaPending });
   // A password sign-in while SSO is required is the break-glass path: said so in the audit trail and the log.
   if (emergency) console.warn(`[suds] emergency (break-glass) password sign-in by ${user.username} while single sign-on is required`);
   audit.log({ user, action: mfaPending ? 'auth.login.mfa_pending' : 'auth.login', ip: ctx.ip, details: emergency ? { emergency_account: true } : undefined });
   const deadline = mfaDeadline(user);
-  return { token, user: publicUser(user), mfaPending, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled, mfaSetupDeadline: deadline };
+  return { token, user: publicUser(user), mfaPending, mfaMethods: mfaPending ? mfaMethods(user) : undefined, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled && !passkeyStep, mfaSetupDeadline: deadline };
+}
+/** The ways this account may finish the second step of signing in: 'totp', 'passkey'. */
+function mfaMethods(user) {
+  const out = [];
+  if (user.mfa_enabled) out.push('totp');
+  if (policy().passkeySignin && passkeyCount(user.id) > 0) out.push('passkey');
+  return out;
 }
 
 function verifyMfa(ctx, code) {
@@ -652,7 +732,7 @@ function verifyMfa(ctx, code) {
     throw unauthorized(r === 'replay' ? 'That code has already been used. Wait for the next code from your authenticator app.' : 'Invalid verification code');
   }
   clearFailures(user.id);
-  db.run(`UPDATE sessions SET mfa_pending=0, reauth_at=? WHERE id=?`, db.now(), ctx.session.id);
+  db.run(`UPDATE sessions SET mfa_pending=0, reauth_at=?, reauth_method='totp' WHERE id=?`, db.now(), ctx.session.id);
   audit.log({ user, action: 'auth.login', ip: ctx.ip, details: { mfa: true } });
   return publicUser(user);
 }
@@ -662,7 +742,9 @@ function publicUser(u) {
   return { id: u.id, username: u.username, display_name: u.display_name, email: u.email, title: u.title, role: u.role,
     mfa_enabled: !!u.mfa_enabled, must_change_password: !!u.must_change_password, permissions: eff.allow,
     denied_permissions: eff.deny,
-    mfa_required: policy().mfaRequiredRoles.includes(u.role), mfa_setup_deadline: mfaDeadline(u), caseload_restricted: caseloadRestricted(u) };
+    mfa_required: policy().mfaRequiredRoles.includes(u.role), mfa_setup_deadline: mfaDeadline(u), caseload_restricted: caseloadRestricted(u),
+    // How many passkeys (fingerprint sign-in, docs/FINGERPRINT.md) the account has; 0 on a device.
+    passkeys: passkeyCount(u.id) };
 }
 
 function passwordPolicy(pw) {
@@ -675,4 +757,4 @@ function passwordPolicy(pw) {
 }
 
 module.exports = { auditUsername, policy, PERMS, WIDENED_1_16, asBefore1_16, hasPerm, rolePerms, effectivePerms, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
-  createSession, markReauth, noteSsoProof, reauthStatus, verifySigner, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
+  createSession, markReauth, noteSsoProof, takeSsoProof, reauthStatus, verifySigner, verifyApprover, passkeyCount, mfaMethods, hasLocalPassword, clearReauth, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

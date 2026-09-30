@@ -13,6 +13,10 @@ const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'progra
   'backup_schedule_hours', 'backup_retain_count', 'backup_offsite_dir', 'client_retention_years', 'org_timezone',
   // Minutes after proving identity during which a note is signed with a confirmation alone (auth.verifySigner).
   'sign_reauth_minutes',
+  // Fingerprint sign-in and signing with passkeys (docs/FINGERPRINT.md, auth.passkeyPolicy): sign-in allowed, signatures
+  // and approvals confirmed with it allowed (both on unless switched off), and a fingerprint or authenticator code
+  // required for signatures and approvals (off unless switched on).
+  'passkey_signin', 'passkey_signing', 'sign_strong_required',
   // Identity and recovery controls (server/security-status.js validates them together).
   'mfa_require_all', 'sso_required', 'sso_emergency_accounts', 'dr_drill_monthly', 'dr_rto_target_minutes', 'dr_rpo_target_hours',
   // Frequent online snapshots (server/scheduled-backup.js snapshot).
@@ -71,7 +75,7 @@ module.exports = (r) => {
         if (k === 'self_signup' && v !== '' && !['0', '1'].includes(v)) throw badRequest('self_signup must be 1 (on) or 0 (off)');
         // The programme's calendar (server/routes/budget.js orgTimezone): an IANA name this server knows.
         if (k === 'org_timezone' && v !== '' && !require('./budget').validTimezone(v)) throw badRequest('org_timezone must be a time zone name such as America/Los_Angeles');
-        if (['mfa_require_all', 'sso_required', 'dr_drill_monthly'].includes(k) && v !== '' && !['0', '1'].includes(v)) throw badRequest(`${k} must be 1 (on) or 0 (off)`);
+        if (['mfa_require_all', 'sso_required', 'dr_drill_monthly', 'passkey_signin', 'passkey_signing', 'sign_strong_required'].includes(k) && v !== '' && !['0', '1'].includes(v)) throw badRequest(`${k} must be 1 (on) or 0 (off)`);
         if (['dr_rto_target_minutes', 'dr_rpo_target_hours'].includes(k) && v !== '' && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
         if (k === 'mfa_required_roles') v = v.split(',').map(x => x.trim()).filter(x => ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'].includes(x)).join(',');
         if (k === 'sign_reauth_minutes' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 60)) throw badRequest('sign_reauth_minutes must be a whole number of minutes from 0 (always ask) to 60');
@@ -105,6 +109,8 @@ module.exports = (r) => {
       if (!config.local && [db.getSetting('sso_required', '0'), db.getSetting('sso_emergency_accounts', '')].join('|') !== ssoBefore) require('../security-status').validateSettings();
     });
     audit.log({ user: ctx.user, action: 'settings.update', ip: ctx.ip, details: { changed } });
+    // Who may sign in or sign with a fingerprint, and whether the password alone still signs: their own audit entry.
+    if (['passkey_signin', 'passkey_signing', 'sign_strong_required'].some(k => changed.includes(k))) { const pol = auth.policy(); audit.log({ user: ctx.user, action: 'security.passkey_policy', ip: ctx.ip, details: { signin: pol.passkeySignin, signing: pol.passkeySigning, strong_required: pol.signStrongRequired } }); }
     const P = require('../programme');
     if (changed.some(k => P.SETTING_KEYS.includes(k))) audit.log({ user: ctx.user, action: 'settings.programme', ip: ctx.ip, details: { profile: P.profile(), modules: P.modules() } });
     // Trusting the identity provider's second factor changes who can reach records without SUDS's own: its
@@ -280,8 +286,11 @@ module.exports = (r) => {
   // `fresh`). A POST, so no link, prefetch or image tag can fetch it. Every attempt is audited.
   r.post('/api/admin/keys-backup', auth.requireAuth, auth.requirePerm('settings:manage'), async (ctx) => {
     if (config.keySource !== 'file') throw badRequest('Keys are provided by the environment on this server');
-    const method = await auth.verifySigner(ctx, ctx.body || {}, { action: 'keys.download.failed', purpose: 'download the key backup', fresh: true });
-    audit.log({ user: ctx.user, action: 'keys.download', ip: ctx.ip, details: { method } });
+    const body = ctx.body || {};
+    // A fingerprint is a fresh proof by nature (a single-use challenge bound to this download: server/passkeys.js).
+    const bind = body.passkey && typeof body.passkey === 'object' ? require('../passkeys').bindingFor(ctx, 'keys.download') : null;
+    const method = await auth.verifySigner(ctx, body, { action: 'keys.download.failed', purpose: 'download the key backup', fresh: true, bind });
+    audit.log({ user: ctx.user, action: 'keys.download', ip: ctx.ip, details: { method, evidence: ctx.signatureEvidence || undefined } });
     // Remembered so the dashboard can stop asking — and so an admin can see when it was last done.
     db.setSetting('keys_backup_at', db.now());
     ctx.res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Disposition': 'attachment; filename="suds-keys-KEEP-SECRET.json"' }); ctx.res.end(fs.readFileSync(config.keysJsonPath));

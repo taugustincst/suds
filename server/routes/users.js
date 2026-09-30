@@ -48,9 +48,11 @@ module.exports = (r) => {
     const full = auth.hasPerm(ctx.user, 'users:manage');
     const rows = db.all(full
       // override_count: how many individual permission overrides the person has, for the badge on their row in
-      // Users & permissions (the overrides themselves are GET /api/users/:id/permissions).
+      // Users & permissions (the overrides themselves are GET /api/users/:id/permissions). passkey_count: how many
+      // passkeys (fingerprint sign-in) they have; GET/DELETE /api/users/:id/passkeys lists and revokes them.
       ? `SELECT id,username,display_name,email,title,role,is_active,mfa_enabled,last_login_at,locked_until,hourly_cost,created_at,oidc_subject,requires_cosign,supervisor_id,access_status,default_fund_id,
-          (SELECT COUNT(*) FROM user_permission_overrides o WHERE o.user_id=users.id) AS override_count FROM users WHERE access_status<>'pending' ORDER BY display_name`
+          (SELECT COUNT(*) FROM user_permission_overrides o WHERE o.user_id=users.id) AS override_count,
+          (SELECT COUNT(*) FROM passkeys p WHERE p.user_id=users.id) AS passkey_count FROM users WHERE access_status<>'pending' ORDER BY display_name`
       : `SELECT id,display_name,title,role,is_active FROM users WHERE is_active=1 ORDER BY display_name`);
     // Which clients each person reaches, for the Clients column of Users & permissions (1.17.0): every client,
     // only their caseload (held_by_default: by the programme default's deny, server/caseload-default.js), client
@@ -162,6 +164,8 @@ module.exports = (r) => {
     if (v.is_active === 0) auth.revokeAllForUser(u.id);
     // Their secure referral links that could still be opened are withdrawn (server/referral-links.js).
     if (v.is_active === 0 && u.is_active) require('../referral-links').revokeForUser(u.id, ctx.user);
+    // And their passkeys (fingerprint sign-in, docs/FINGERPRINT.md): re-enabling the account later does not bring them back.
+    const passkeysRemoved = v.is_active === 0 && !require('../config').local ? require('../passkeys').remove(u.id, { actor: ctx.user, ip: ctx.ip, cause: 'deactivated' }) : 0;
     // Deactivating someone, or resetting their password from here, ends their hold on client records on
     // every phone they sync from too: each of their devices is told to erase itself at its next sync. The
     // wipe is answered before the credentials are (server/auth.js login()), so an inactive account or an
@@ -185,7 +189,7 @@ module.exports = (r) => {
     // Into navigator or clinician: the programme's least-privilege default applies as to a new account; out of
     // them, its own deny of clients:all goes (server/caseload-default.js onRoleChange).
     const caseload = v.role !== undefined ? caseloadDefault.onRoleChange(u.id, u.role, v.role, { actor: ctx.user, ip: ctx.ip }) : null;
-    audit.log({ user: ctx.user, action: 'user.update', entity: 'user', entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter(k => k !== 'password'), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length, wipe_devices: wipeDevices } });
+    audit.log({ user: ctx.user, action: 'user.update', entity: 'user', entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter(k => k !== 'password'), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length, wipe_devices: wipeDevices, passkeys_removed: passkeysRemoved || undefined } });
     return { ok: true, devices_wiped: wiped.length, ...(caseload ? { caseload_default: caseload } : {}) };
   });
 

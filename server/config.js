@@ -205,6 +205,16 @@ const config = {
     redirectUri: process.env.OIDC_REDIRECT_URI || '',
     label: process.env.OIDC_LABEL || 'Sign in with county SSO',
   },
+  // Fingerprint sign-in and signing with passkeys (docs/FINGERPRINT.md, server/passkeys.js). The relying party ID is
+  // the office server's host name, the one in the address staff open and on its TLS certificate (WEBAUTHN_RP_ID, or
+  // "webauthnRpId" in server.json); unset, it is the host each request was addressed to. A passkey made for one host
+  // answers only there, so set it before anyone enrols if the server has more than one name. WEBAUTHN_ORIGINS lists
+  // the exact origins pages are served from (https://suds.county.gov, with a port if one shows), comma separated, when
+  // a proxy makes them differ from what SUDS sees. Passkeys need HTTPS; plain http only on localhost in development.
+  webauthn: {
+    rpId: String(process.env.WEBAUTHN_RP_ID || fileCfg.webauthnRpId || '').trim().toLowerCase(),
+    origins: String(process.env.WEBAUTHN_ORIGINS || fileCfg.webauthnOrigins || '').split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean),
+  },
   trustProxy: process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true' || !!fileCfg.trustProxy,
   // A restore uploads a whole database as base64 through the browser; the ordinary body cap (60 MB) fits
   // roughly a 45 MB database. Larger ones go through here, or through scripts/backup.js --restore on the

@@ -30,7 +30,8 @@ function validateSettings() {
 function mfaReport() {
   const pol = auth.policy();
   const users = db.all(`SELECT id, username, display_name, role, mfa_enabled, created_at, last_login_at, oidc_subject FROM users WHERE is_active=1 ORDER BY display_name`);
-  const without = users.filter((u) => !u.mfa_enabled).map((u) => {
+  // A passkey with user verification is two-step verification of its own (docs/FINGERPRINT.md; auth.mfaDeadline).
+  const without = users.filter((u) => !u.mfa_enabled && !(pol.passkeySignin && auth.passkeyCount(u.id) > 0)).map((u) => {
     const deadline = auth.mfaDeadline(u);
     return { id: u.id, username: u.username, display_name: u.display_name, role: u.role, required: pol.mfaRequiredRoles.includes(u.role), deadline, overdue: !!deadline && Date.now() > Date.parse(deadline), sso_linked: !!u.oidc_subject, emergency_account: pol.ssoEmergencyAccounts.includes(String(u.username).toLowerCase()), last_login_at: u.last_login_at };
   });
@@ -122,6 +123,18 @@ function status({ host = true } = {}) {
     const viaIdp = trusted ? db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='auth.oidc.login' AND at >= ? AND details LIKE '%"mfa":"idp"%'`, since).n : 0;
     add('Identity', "Identity provider's multi-factor sign-in", trusted ? 'info' : 'ok', trusted ? `trusted in place of SUDS two-step verification (amr mfa or two factor kinds such as pwd+otp${acr ? `, or acr ${acr}` : ''}); ${viaIdp} sign-in${viaIdp === 1 ? '' : 's'} in 30 days` : 'not trusted: SSO sign-ins still need the SUDS second factor',
       trusted ? 'A sign-in the provider does not mark as multi-factor still needs the SUDS code. Every trusted sign-in is audited (auth.oidc.login with mfa "idp"). Make sure the provider enforces MFA for this application (conditional access).' : 'Settings → Security policy → "Trust the identity provider\'s multi-factor sign-in" (off by default).', 'server/routes/oidc.js mfaTrust; server/oidc.js idpMfa');
+  }
+  // Fingerprint sign-in (passkeys, docs/FINGERPRINT.md): adoption, and whether it can work on this server at all.
+  if (!config.local) {
+    const a = require('./passkeys').adoption();
+    const off = !pol.passkeySignin && !pol.passkeySigning;
+    const httpsOk = !!config.tls.cert || !!config.trustProxy || !config.isProd;
+    add('Identity', 'Fingerprint sign-in (passkeys)', a.flagged ? 'warn' : 'info',
+      off ? 'turned off' : `${a.with_passkey} of ${a.active} active accounts have one (${a.total} passkey${a.total === 1 ? '' : 's'}); ${a.sign_ins_30d} sign-in${a.sign_ins_30d === 1 ? '' : 's'} and ${a.confirmations_30d} signature${a.confirmations_30d === 1 ? '' : 's'} or approval${a.confirmations_30d === 1 ? '' : 's'} with one in 30 days`,
+      [a.flagged ? `${a.flagged} passkey${a.flagged === 1 ? ' was' : 's were'} disabled because a signature counter went backwards (a possible copy): see the audit log (auth.passkey.clone_suspected).` : '',
+        `Sign-in ${pol.passkeySignin ? 'on' : 'off'}; signatures and approvals ${pol.passkeySigning ? 'on' : 'off'}; fingerprint or authenticator code required for signing: ${pol.signStrongRequired ? 'yes' : 'no'}.`,
+        config.webauthn && config.webauthn.rpId ? `Relying party ${config.webauthn.rpId}.` : 'WEBAUTHN_RP_ID is not set: passkeys are made for whichever host name each person used.',
+        httpsOk ? '' : 'Passkeys need HTTPS, which is not on.', 'SUDS stores no fingerprint: only each passkey\'s public key.'].filter(Boolean).join(' '), 'server/passkeys.js, server/webauthn.js; Settings → Security policy');
   }
   {
     const dp = require('./deprovision').report();

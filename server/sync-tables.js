@@ -143,7 +143,10 @@ module.exports = {
     'county_signing_keys', 'county_programmes', 'county_programme_keys', 'county_submissions',
     // county_connect_* and county_connection (the county connection, docs/COUNTY-VIEW.md "Connecting"): the machine
     // tokens a county issues, and on a programme's server the county it sends to and its send log. A device has none.
-    'county_connect_tokens', 'county_connection', 'county_connect_sends'],
+    'county_connect_tokens', 'county_connection', 'county_connect_sends',
+    // passkeys, webauthn_challenges and signature_evidence (fingerprint sign-in and signing, docs/FINGERPRINT.md): a
+    // passkey is made for the office server's host and answers only there; SUDS on a device does not offer it.
+    'passkeys', 'webauthn_challenges', 'signature_evidence'],
   // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
   // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
   // list against the schema, so a table with PHI is always either synchronised or deliberately kept apart.
@@ -154,6 +157,7 @@ module.exports = {
     caloms_submission_events: [], referral_links: ['packet_enc', 'ack_by_enc', 'ack_note_enc'],
     county_signing_keys: ['private_key_enc'], county_programmes: [], county_programme_keys: [], county_submissions: ['payload_enc'],
     county_connect_tokens: [], county_connection: ['token_enc'], county_connect_sends: [],
+    passkeys: [], webauthn_challenges: [], signature_evidence: ['evidence_enc'],
     idempotency_keys: ['response_enc'],
   },
   // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
@@ -188,6 +192,7 @@ module.exports = {
     ['county_signing_keys', 'created_by'], ['county_signing_keys', 'retired_by'], ['county_programmes', 'created_by'], ['county_programme_keys', 'added_by'], ['county_programme_keys', 'replaced_by'],
     ['county_programme_keys', 'compromised_by'], ['county_submissions', 'received_by'], ['county_submissions', 'withdrawn_by'],
     ['county_connect_tokens', 'created_by'], ['county_connect_tokens', 'revoked_by'], ['county_connection', 'updated_by'], ['county_connect_sends', 'sent_by'],
+    ['passkeys', 'user_id'], ['signature_evidence', 'user_id'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.

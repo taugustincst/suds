@@ -154,10 +154,17 @@ module.exports = (r) => {
     return { ok: true, submitted: res.changes };
   });
 
-  r.post('/api/time/:id/approve', auth.requireAuth, auth.requirePerm('time:approve'), (ctx) => {
+  // Approving may be confirmed with a fingerprint, or the password or code (auth.verifyApprover): taken when given,
+  // and required (a fingerprint or a code) when the programme turns on "Require fingerprint or authenticator for
+  // signing". Returning time needs no proof: it changes nothing but sends it back with a reason.
+  const IDENTITY = { password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' }, passkey: { type: 'object' } };
+  const approver = (ctx, v, ids) => (v.decision === 'approved'
+    ? auth.verifyApprover(ctx, v, { action: 'time.approve.failed', purpose: 'approve time', bind: v.passkey ? require('../passkeys').bindingFor(ctx, 'time.approve', { ids, decision: v.decision }) : null })
+    : null);
+  r.post('/api/time/:id/approve', auth.requireAuth, auth.requirePerm('time:approve'), async (ctx) => {
     require('../rules/shared').assertRulingHere('Approving or returning time');
     const t = loadEntry(ctx, ctx.params.id);
-    const v = validate(ctx.body, { decision: { type: 'string', required: true, enum: ['approved', 'rejected'] }, note: { type: 'string', maxLen: 500 } });
+    const v = validate(ctx.body, { decision: { type: 'string', required: true, enum: ['approved', 'rejected'] }, note: { type: 'string', maxLen: 500 }, ...IDENTITY });
     // The same rule as expenditures: nobody signs off their own claim.
     if (t.user_id === ctx.user.id) throw forbidden('You cannot approve your own time');
     // Nor time they recorded for someone else, or changed (security review of 1.16.0, M7). Returning it is still theirs.
@@ -167,18 +174,20 @@ module.exports = (r) => {
     const reopening = t.status === 'approved' && v.decision === 'rejected';
     if (t.status !== 'submitted' && !reopening) throw badRequest(t.status === 'approved' ? 'This time is already approved; return it with a reason to reopen it for correction' : 'Only submitted time can be approved or returned');
     if (v.decision === 'rejected' && !v.note) throw badRequest(NO_REASON);
+    const identity = await approver(ctx, v, [t.id]);
     // The reviewer's note can name the client ("J. was seen Tuesday"): encrypted, and not in the audit entry.
     const note = v.note ? encrypt(v.note) : null;
     db.run(`UPDATE time_entries SET status=?, approved_by=?, approved_at=?, approval_note_enc=?, updated_at=? WHERE id=?`, v.decision, ctx.user.id, db.now(), note, db.now(), t.id);
     const task = v.decision === 'rejected' ? tellWorker(ctx, t.user_id, [t], v.note, reopening) : null;
-    audit.log({ user: ctx.user, action: `time.${v.decision}`, entity: 'time_entry', entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes, note_recorded: v.note ? true : undefined, reopened: reopening || undefined, task: task || undefined } });
+    audit.log({ user: ctx.user, action: `time.${v.decision}`, entity: 'time_entry', entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { worker: t.user_id, minutes: t.minutes, note_recorded: v.note ? true : undefined, reopened: reopening || undefined, task: task || undefined, identity: identity || undefined, evidence: ctx.signatureEvidence || undefined } });
     return { ok: true };
   });
 
-  r.post('/api/time/approve-batch', auth.requireAuth, auth.requirePerm('time:approve'), (ctx) => {
+  r.post('/api/time/approve-batch', auth.requireAuth, auth.requirePerm('time:approve'), async (ctx) => {
     require('../rules/shared').assertRulingHere('Approving or returning time');
-    const v = validate(ctx.body, { ids: { type: 'array', required: true, maxLen: 500 }, decision: { type: 'string', required: true, enum: ['approved', 'rejected'] }, note: { type: 'string', maxLen: 500 } });
+    const v = validate(ctx.body, { ids: { type: 'array', required: true, maxLen: 500 }, decision: { type: 'string', required: true, enum: ['approved', 'rejected'] }, note: { type: 'string', maxLen: 500 }, ...IDENTITY });
     if (v.decision === 'rejected' && !v.note) throw badRequest(NO_REASON);
+    const identity = await approver(ctx, v, v.ids);
     let n = 0; const skipped = []; const byWorker = new Map(); const tasks = [];
     db.transaction(() => {
       for (const id of v.ids) {
@@ -194,7 +203,7 @@ module.exports = (r) => {
       // One to-do per worker for what was returned to them.
       for (const [worker, entries] of byWorker) { const id = tellWorker(ctx, worker, entries, v.note, false); if (id) tasks.push(id); }
     });
-    audit.log({ user: ctx.user, action: `time.${v.decision}.batch`, ip: ctx.ip, details: { count: n, skipped: skipped.length, tasks: tasks.length || undefined } });
+    audit.log({ user: ctx.user, action: `time.${v.decision}.batch`, ip: ctx.ip, details: { count: n, skipped: skipped.length, tasks: tasks.length || undefined, identity: identity || undefined, evidence: ctx.signatureEvidence || undefined } });
     return { ok: true, [v.decision]: n, skipped };
   });
 };

@@ -29,7 +29,7 @@ function rateLimitReset(key) { buckets.delete(key); }
 // Every route module, in one place. The local kernel builds its router from LOCAL_ROUTE_MODULES below and
 // fails loudly if it is missing a loader for one, so adding a route file cannot silently leave the feature
 // out of the local-mode kernel.
-const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
+const ROUTE_MODULES = ['setup', 'auth', 'passkeys', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
   'interventions', 'overdose', 'prevention', 'calls', 'time', 'supervision', 'resources', 'referrals', 'referral-links', 'tasks', 'budget', 'notes',
   'consents', 'patient-requests', 'part2', 'compliance', 'careplan', 'assessments', 'suprt', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'security', 'options', 'regions', 'intake', 'client-errors', 'fhir', 'scim', 'ai', 'county', 'county-connect'];
 
@@ -46,8 +46,9 @@ const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport
 // county is the county view and the programme's Send to the county file (server/county.js): SUDS on this device has
 // no county relationship, signs nothing for one and imports nothing from one. county-connect is the connection between
 // a programme's office server and its county's (server/county-connect.js): the same, and a device has no address a
-// county could reach.
-const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir', 'security', 'scim', 'ai', 'referral-links', 'county', 'county-connect'].includes(m));
+// county could reach. passkeys is fingerprint sign-in and signing (docs/FINGERPRINT.md): a passkey is made for the
+// office server's host, and SUDS on this device does not offer one (deferred: unlocking a device with one).
+const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir', 'security', 'scim', 'ai', 'referral-links', 'county', 'county-connect', 'passkeys'].includes(m));
 
 // Served in place of the app shell when local mode is off (the wizard's answer in server.json, or LOCAL_MODE_ENABLED). No scripts, nothing to configure.
 const LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS — local mode is off</title>

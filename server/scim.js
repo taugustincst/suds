@@ -161,6 +161,8 @@ function guard(u) {
 /** Disable an account and everything that keeps it signed in: sessions now, devices on their next sync (wiped). */
 function cutOff(userId, actor) {
   require('./auth').revokeAllForUser(userId);
+  // Their passkeys go (docs/FINGERPRINT.md): a leaver's phone must not sign anyone in again if the account is re-enabled.
+  if (!require('./config').local) require('./passkeys').remove(userId, { actor, cause: 'deactivated' });
   // Their secure referral links that could still be opened are withdrawn (server/referral-links.js).
   require('./referral-links').revokeForUser(userId, actor);
   return db.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?), wipe_requested_at=COALESCE(wipe_requested_at, ?) WHERE user_id=?`, db.now(), db.now(), userId).changes;

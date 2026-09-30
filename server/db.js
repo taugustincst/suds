@@ -758,6 +758,21 @@ const migrations = [
       for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
     }
   },
+  // 58: fingerprint sign-in and signing with passkeys (1.19.0, docs/FINGERPRINT.md): passkeys (each credential's
+  //     public key, id, counter and its owner's name for it; never a fingerprint), webauthn_challenges (hashed,
+  //     single-use, two minutes) and signature_evidence (a passkey-confirmed signature's statement and assertion,
+  //     encrypted), all office-server only; and sessions.reauth_method, how the session last proved who is using it.
+  //     New tables and a new column: nothing to backfill. Self-contained and idempotent, so it can be renumbered.
+  (d) => {
+    addColumn(d, 'sessions', 'reauth_method', 'TEXT');
+    const schemaText = safeSchema();
+    for (const t of ['passkeys', 'webauthn_challenges', 'signature_evidence']) {
+      const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+      if (!m) throw new Error(`migration 58: no definition for ${t} in schema`);
+      d.exec(m[0]);
+      for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
+    }
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

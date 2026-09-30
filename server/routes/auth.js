@@ -18,7 +18,7 @@ module.exports = (r) => {
     catch (e) { rateLimit(`login:${ctx.ip}`, limit, 15 * 60_000); throw e; }
     ctx.res.setHeader('Set-Cookie', auth.cookieHeader(result.token));
     // Sync clients (local-mode devices) authenticate with a bearer token instead of the cookie
-    const out = { user: result.user, mfaPending: result.mfaPending, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline };
+    const out = { user: result.user, mfaPending: result.mfaPending, mfaMethods: result.mfaMethods, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline };
     if (ctx.headers['x-sync-client']) out.token = result.token;
     return out;
   });
@@ -85,7 +85,8 @@ module.exports = (r) => {
     if (!ctx.user) throw unauthorized();
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
     // default_fund_id: what the visit form pre-fills its funding source with (the worker's, else the programme's).
-    return { user: auth.publicUser(u), mfaPending: !!ctx.session.mfa_pending, org_name: db.getSetting('org_name', 'SUDS'), idle_minutes: auth.policy().idleMinutes, setup_needed: false,
+    // mfa_methods: how a session still owing its second step may finish it ('totp', 'passkey').
+    return { user: auth.publicUser(u), mfaPending: !!ctx.session.mfa_pending, mfa_methods: ctx.session.mfa_pending ? auth.mfaMethods(u) : undefined, org_name: db.getSetting('org_name', 'SUDS'), idle_minutes: auth.policy().idleMinutes, setup_needed: false,
       default_fund_id: require('./budget').defaultFundFor(u.id),
       // The programme profile and the modules in force (server/programme.js): what the navigation shows.
       programme: { profile: require('../programme').profile(), modules: require('../programme').modules(),

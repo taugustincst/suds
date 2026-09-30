@@ -258,10 +258,12 @@ module.exports = (r) => {
   // approved afterwards; a reimbursed one could be un-reimbursed by approving it again. Money that has
   // moved keeps the record of who moved it.
   const TRANSITIONS = { pending: ['approved', 'rejected'], approved: ['reimbursed'] };
-  r.post('/api/budget/expenditures/:id/approve', auth.requireAuth, auth.requirePerm('budget:approve'), (ctx) => {
+  r.post('/api/budget/expenditures/:id/approve', auth.requireAuth, auth.requirePerm('budget:approve'), async (ctx) => {
     require('../rules/shared').assertRulingHere('Approving, rejecting or reimbursing spending');
     const e = db.one(`SELECT * FROM expenditures WHERE id=?`, ctx.params.id); if (!e) throw notFound();
-    const { status, note, force } = validate(ctx.body, { status: { type: 'string', required: true, enum: ['approved', 'rejected', 'reimbursed'] }, note: { type: 'string', maxLen: 500 }, force: { type: 'boolean' } });
+    const body = validate(ctx.body, { status: { type: 'string', required: true, enum: ['approved', 'rejected', 'reimbursed'] }, note: { type: 'string', maxLen: 500 }, force: { type: 'boolean' },
+      password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' }, passkey: { type: 'object' } });
+    const { status, note, force } = body;
     if (!(TRANSITIONS[e.status] || []).includes(status)) {
       const by = e.approved_by ? db.one(`SELECT display_name FROM users WHERE id=?`, e.approved_by) : null;
       throw new HttpError(409, `This expenditure is already ${e.status}${by ? ` (by ${by.display_name})` : ''}; it cannot be marked ${status}`, { current_status: e.status, approved_by: e.approved_by || null });
@@ -275,6 +277,13 @@ module.exports = (r) => {
     // The note can name the client ("receipt shows J.'s name"): encrypted on the row, and the audit entry
     // records only that one was given.
     const details = { note_recorded: note ? true : undefined, amount: e.amount };
+    // Committing or paying out money may be confirmed with a fingerprint, or the password or code (auth.verifyApprover),
+    // and must be, with a fingerprint or a code, under "Require fingerprint or authenticator for signing". Checked
+    // before the budget line (the line check only reads).
+    if (status !== 'rejected') {
+      const identity = await auth.verifyApprover(ctx, body, { action: 'expenditure.approve.failed', purpose: `mark this expenditure ${status}`, bind: body.passkey ? require('../passkeys').bindingFor(ctx, 'expenditure.approve', { id: e.id, status }) : null });
+      if (identity) { details.identity = identity; if (ctx.signatureEvidence) details.evidence = ctx.signatureEvidence; }
+    }
     if (status === 'approved' && e.budget_line_id) {
       // Overspending a line is not something a reviewer does by accident. Recording the expense already
       // warned; approving it is where the money is committed, so it takes a supervisor or administrator

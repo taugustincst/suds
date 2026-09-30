@@ -30,11 +30,15 @@ function linkedProblems(ctx, n) {
 
 function kindPerm(kind, rw) { return `notes:${kind}:${rw}`; }
 // The electronic-signature act: the signer's confirmation of the attestation, with their identity proved
-// by the password (or authenticator code) given now or within the last few minutes (auth.verifySigner).
-// Checked the same way for a signature and a countersignature; returns how identity was established.
-function verifyIdentity(ctx) {
-  const body = validate(ctx.body || {}, { password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' } }, { partial: true });
-  return auth.verifySigner(ctx, body);
+// by the password (or authenticator code) given now or within the last few minutes (auth.verifySigner), or by a
+// fingerprint: a passkey assertion over a challenge bound to exactly this signature (`purpose` and its parameters:
+// the note, its content hash, the signer; server/passkeys.js bindingFor, docs/FINGERPRINT.md). Checked the same way
+// for a signature and a countersignature; returns how identity was established, and leaves the fingerprint
+// evidence's id on ctx.signatureEvidence.
+function verifyIdentity(ctx, purpose, params) {
+  const body = validate(ctx.body || {}, { password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' }, passkey: { type: 'object' } }, { partial: true });
+  const bind = body.passkey ? require('../passkeys').bindingFor(ctx, purpose, params) : null;
+  return auth.verifySigner(ctx, body, { bind });
 }
 
 // Emergency access needs a reason a privacy officer can act on. "x" is not one: the header has to carry a
@@ -254,12 +258,12 @@ module.exports = (r) => {
     // A note with AI-drafted text is signed only with the author's statement that they reviewed it (docs/AI-COPILOT.md).
     const aiReviewed = require('../rules/notes').aiReviewed(ctx.body && ctx.body.ai_reviewed); // the same values sync push accepts
     if (Number(n.ai_assisted) && !aiReviewed) throw badRequest('This note includes text drafted by the AI copilot. Confirm you have reviewed and corrected it before signing.', { ai_review_required: true, fields: { ai_reviewed: 'confirm you reviewed the AI-drafted text' } });
-    const identity = await verifyIdentity(ctx);
+    const identity = await verifyIdentity(ctx, 'note.sign', { note_id: n.id });
     const hash = sha256(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ''}`);
     db.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db.now(), ctx.user.id, hash, db.now(), n.id);
     // The supervisor's "Finish and sign your note" reminder has done its job (server/rules/notes.js).
     const reminders = require('../rules/notes').closeSignReminders(ctx.user.id, n.id, n.client_id);
-    audit.log({ user: ctx.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash, cosign_required: !!n.cosign_required, identity, reminders_closed: reminders.length ? reminders : undefined, ai_assisted: Number(n.ai_assisted) ? true : undefined, ai_reviewed: Number(n.ai_assisted) ? true : undefined } });
+    audit.log({ user: ctx.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash, cosign_required: !!n.cosign_required, identity, evidence: ctx.signatureEvidence || undefined, reminders_closed: reminders.length ? reminders : undefined, ai_assisted: Number(n.ai_assisted) ? true : undefined, ai_reviewed: Number(n.ai_assisted) ? true : undefined } });
     return { ok: true, signature_hash: hash, awaiting_cosign: !!n.cosign_required };
   });
 
@@ -277,7 +281,7 @@ module.exports = (r) => {
     const hash = sha256(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ''}`);
     db.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note_enc=?, updated_at=? WHERE id=?`, ctx.user.id, db.now(), hash, note ? encrypt(note) : null, db.now(), n.id);
     // The countersigner's comment is about the client's care: encrypted on the note, never in the audit entry.
-    audit.log({ user: ctx.user, action: 'note.cosign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash, note_recorded: note ? true : undefined, identity, batch: batch || undefined } });
+    audit.log({ user: ctx.user, action: 'note.cosign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash, note_recorded: note ? true : undefined, identity, evidence: ctx.signatureEvidence || undefined, batch: batch || undefined } });
     return hash;
   }
   r.post('/api/notes/:id/cosign', auth.requireAuth, auth.requirePerm('notes:cosign'), async (ctx) => {
@@ -285,8 +289,8 @@ module.exports = (r) => {
     const n = load(ctx, ctx.params.id);
     const why = cosignRefusal(ctx, n);
     if (why) { if (/cannot read/.test(why)) throw forbidden(why); throw badRequest(why); }
-    const { note } = validate(ctx.body, { password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' }, note: { type: 'string', maxLen: 1000 } });
-    const identity = await verifyIdentity(ctx);
+    const { note } = validate(ctx.body, { password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' }, passkey: { type: 'object' }, note: { type: 'string', maxLen: 1000 } });
+    const identity = await verifyIdentity(ctx, 'note.cosign', { note_id: n.id });
     return { ok: true, cosignature_hash: applyCosign(ctx, n, note, identity, false) };
   });
 
@@ -297,7 +301,7 @@ module.exports = (r) => {
   // care, and one text copied onto every note in a batch could put one client's details on another's record.
   // A shared `note` is therefore refused when the batch covers more than one client.
   r.post('/api/notes/cosign-batch', auth.requireAuth, auth.requirePerm('notes:cosign'), async (ctx) => {
-    const v = validate(ctx.body, { ids: { type: 'array', required: true, maxLen: 100, of: 'string' }, password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' }, note: { type: 'string', maxLen: 1000 }, comments: { type: 'object' } });
+    const v = validate(ctx.body, { ids: { type: 'array', required: true, maxLen: 100, of: 'string' }, password: { type: 'string', maxLen: 500 }, code: { type: 'string', maxLen: 10 }, confirm: { type: 'boolean' }, passkey: { type: 'object' }, note: { type: 'string', maxLen: 1000 }, comments: { type: 'object' } });
     if (!v.ids.length) throw badRequest('Choose at least one note to countersign');
     const ids = [...new Set(v.ids)];
     const comments = {};
@@ -314,7 +318,7 @@ module.exports = (r) => {
       const clients = new Set(ids.map(id => (db.one(`SELECT client_id FROM notes WHERE id=? AND deleted_at IS NULL`, id) || {}).client_id).filter(Boolean));
       if (clients.size > 1) throw badRequest('One comment cannot be applied to notes about different clients. Give each note its own comment, or countersign it on its own.', { fields: { note: 'one comment for several clients' } });
     }
-    const identity = await verifyIdentity(ctx);
+    const identity = await verifyIdentity(ctx, 'note.cosign-batch', { ids });
     const cosigned = []; const skipped = [];
     for (const id of ids) {
       const n = db.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id);
@@ -357,6 +361,15 @@ module.exports = (r) => {
     if (n.cosignature_hash) {
       out.cosigner = n.cosigner; out.cosigned_at = n.cosigned_at;
       out.cosignature_intact = sha256(`${n.id}|${n.cosigned_by}|cosign|${n.content_enc}|${n.structured_enc || ''}`) === n.cosignature_hash;
+    }
+    // A signature confirmed with a fingerprint (docs/FINGERPRINT.md): its stored evidence is verified again — the
+    // statement names this note and the hash the note carries now, and the device's signature over it checks out
+    // under the passkey's public key. Office server only (a device keeps no such evidence).
+    if (!require('../config').local) {
+      const P = require('../passkeys');
+      const fp = (purpose, signer, want) => { const ev = P.evidenceFor('note', n.id, { purpose }).filter(e => e.user_id === signer).pop(); return ev ? { verified: ev.verified && !!ev.evidence && ev.evidence.statement.content === want && ev.evidence.statement.record_ids.includes(n.id), at: ev.created_at, reason: ev.reason } : null; };
+      const s = fp('note.sign', n.signed_by, n.signature_hash); if (s) out.fingerprint = s;
+      if (n.cosignature_hash) { const c = fp('note.cosign', n.cosigned_by, n.cosignature_hash) || (() => { const ev = P.evidenceFor('note', n.id, { purpose: 'note.cosign-batch' }).filter(e => e.user_id === n.cosigned_by).pop(); return ev ? { verified: ev.verified, at: ev.created_at, reason: ev.reason } : null; })(); if (c) out.cosign_fingerprint = c; }
     }
     return out;
   });
