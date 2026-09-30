@@ -1,5 +1,4 @@
-// GENERATED FILE — do not edit. Regenerate with: node scripts/gen-county-periods.js (npm run build:local)
-// Source: server/county-periods.js
+'use strict';
 // Reporting periods for the county view, the Send to the county card and the county connection (docs/COUNTY-VIEW.md):
 // calendar quarters, California fiscal years (July 1 to June 30; "FY 2025-26" starts 2025-07-01, and its Q1 is July
 // to September) and their quarters, months, calendar years. Pure functions on YYYY-MM-DD strings, so a day is never a
@@ -101,4 +100,4 @@ function submissionPeriods(today) {
   return out;
 }
 
-export { calendarQuarter, lastCompleteQuarter, completeQuarters, completeMonths, fiscalYearOf, fyLabel, fiscalYear, fiscalQuarter, monthsLabel, describe, isQuarter, presets, submissionPeriods };
+module.exports = { calendarQuarter, lastCompleteQuarter, completeQuarters, completeMonths, fiscalYearOf, fyLabel, fiscalYear, fiscalQuarter, monthsLabel, describe, isQuarter, presets, submissionPeriods };

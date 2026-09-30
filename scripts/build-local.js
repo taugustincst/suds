@@ -10,6 +10,8 @@ process.chdir(root);
 // The browser has no filesystem, so it reads the schema from a generated JS copy. Regenerate it here so a
 // schema change can never ship to local-mode devices as a stale duplicate.
 require('./gen-schema-text.js');
+// The browser's copy of the period helpers the server uses too (server/county-periods.js), the same way.
+require('./gen-county-periods.js').run();
 const out = path.join(root, 'public', 'local');
 fs.mkdirSync(out, { recursive: true });
 (async () => {
