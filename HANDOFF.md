@@ -41,6 +41,16 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-09-30 — Claude: the fingerprint review's second pass (branch `fix/fingerprint-r1`, not pushed)
+
+- N1–N7 (docs/FINGERPRINT.md, *Second review*). **Migration 59** adds `sessions.sync_client` (a device's sync
+  sign-in, for which a passkey is not a second factor). N2 changes the note content hash (no `client_id`): evidence
+  recorded on a development database before this change reads `reason: "content"` — unreleased, so not migrated.
+- Not changed, for the owner: a **single sign-on** session (no MFA asserted by the identity provider) of someone in a
+  role requiring two-step verification whose only second factor is a passkey is not asked for the fingerprint and is
+  not held to the enrolment deadline (the passkey counts as enrolment, `auth.mfaDeadline`), as it was for password
+  sign-ins before the fingerprint work made them owe the fingerprint. Worth deciding before release.
+
 ### 2026-09-30 — Claude: the fingerprint review's fixes (branch `fix/fingerprint-r1`, not pushed)
 
 - On `feat/fingerprint` + released 1.18.0. Owner decisions implemented: **D1** `WEBAUTHN_RP_ID` required in

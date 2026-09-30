@@ -280,6 +280,8 @@ systemctl start suds
 
 The columns to re-encrypt are discovered from the database, not from a list in the script, so every encrypted field — including completed county forms and their attachments — is covered.
 
+Signed notes: a note's signature hash is taken over its ciphertext, so the rotation checks each one under the old key and recomputes those that were intact (the `security.key_rotated` entry counts `signature_hashes_recomputed` and `signature_hashes_left_broken`). A rotation run with SUDS 1.18.0 or earlier did not, and the notes it left "not intact" are **not repaired** by a later one: a note that Verify signature reports as not intact and that was signed before such a rotation (its `security.key_rotated` entry has no `signature_hashes_recomputed`) was left stale by it; one signed after it has been changed. docs/FINGERPRINT.md, "The note's signature hash and key rotation", has the details.
+
 **2. The index key**
 
 ```bash

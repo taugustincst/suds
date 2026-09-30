@@ -108,6 +108,10 @@ cannot get that from WebAuthn and should rely on device management instead.
   **bound to its purpose** and, once signed in, **to the user and the session**, and good for **two minutes**.
 - The assertion is checked against the **stored** challenge (its hash, `webauthn.js verifyAssertion` `challengeHash`),
   never against a value read from the response itself.
+- A signature's challenge keeps its statement **without the content hashes** (`content`, and a batch's `items`): a
+  note's content hash is an unkeyed SHA-256 of its plaintext, so it is not left in `webauthn_challenges` for the hour
+  the row is kept. When the confirmation arrives, the statement is completed with the hashes of the record as it is
+  then and must hash to the challenge; a record that changed in between is refused as "record changed".
 - **Before anyone has signed in** (the sign-in page's options), at most **20 unanswered challenges per address** and
   5,000 in all may wait; more are refused (`429`). A sweep at most once an hour deletes challenges that expired over
   an hour ago (a used one is kept that long so a replay is told it was used).
@@ -163,9 +167,11 @@ adding an authenticator app as well**, so a lost or replaced phone does not lock
 can revoke them (Edit → "Revoke this person's passkeys"; `DELETE /api/users/:id/passkeys`), audited as
 `user.passkeys.revoked`. **Resetting a person's two-step verification or their password** (Users → Edit) removes their
 passkeys too (audited as `auth.passkey.removed` with the cause): both are how an account someone else may have had is
-recovered. **Removing a passkey ends the sessions it opened** (`sessions.passkey_id`; when every passkey goes, every
-session a passkey opened): a lost phone's passkey revoked does not leave that phone signed in. The owner's own session,
-which has just given the password to remove it, stays. **Offboarding removes them**: deactivating an account, SCIM
+recovered. So does **`npm run reset-admin`** (the locked-out administrator's recovery on the server itself; audited as
+`auth.passkey.removed` with cause `cli reset`). **Removing a passkey ends the sessions it opened** (`sessions.passkey_id`;
+when every passkey goes, every session a passkey opened): a lost phone's passkey revoked does not leave that phone
+signed in. The owner's own session, which has just given the password to remove it, stays; so does the session of an
+administrator who resets **their own** two-step verification under Users → Edit (their other passkey sessions end). **Offboarding removes them**: deactivating an account, SCIM
 deactivation (`cutOff`) and deprovisioning by absence delete the account's passkeys, so re-enabling the account does
 not bring them back.
 
@@ -189,8 +195,15 @@ not bring them back.
 - The sign-in's protections apply as to a password: the per-address limit, the **lockout** (a locked account cannot
   sign in with a passkey either; a signature that does not verify, or a missing fingerprint check, counts toward
   it), inactive and pending accounts, and **"Require single sign-on"** — where it is on, passkey sign-in is refused
-  like a password, except for the named emergency (break-glass) administrators, as for passwords. A device syncing
-  in local mode still signs in with its password.
+  like a password, except for the named emergency (break-glass) administrators, as for passwords.
+- **A device syncing in local mode** signs in with the password and, with an authenticator app, its code — never a
+  fingerprint (the passkey routes refuse a sync client). For a device's sign-in (`X-Sync-Client`; the session is
+  marked, `sessions.sync_client`) a passkey therefore **does not count** as the second step or as enrolment:
+  everything is as it was before passkeys. With an authenticator app, the device is asked for the code. Without one,
+  in a role that requires two-step verification, the device syncs during the enrolment grace period and is stopped
+  after it (`403`), with the message "Fingerprint sign-in does not work for syncing a device … Add an authenticator app
+  under My profile to sync this device" (`deviceNeedsAuthenticator`) for someone whose passkey counts in the browser.
+  The browser sign-in of the same person still takes the fingerprint.
 - Audited as `auth.login` with `method: "passkey"` (and `mfa: true` for the second step); failures as
   `auth.login.failed` / `auth.mfa.failed` with `method: "passkey"` and a reason code.
 
@@ -203,7 +216,8 @@ unlocks it — the verification is done by the authenticator, and SUDS checks th
 - A passkey **keeps counting as two-step verification** (the owner's decision, with no authenticator allow-list). A
   passkey sign-in **satisfies `MFA_REQUIRED_ROLES`** ("Require two-step verification for every role") on its own:
   the session records `mfa_source = 'passkey'`, and an account with a passkey counts as enrolled (it is not given an
-  enrolment deadline, and Security status does not list it as without two-step verification).
+  enrolment deadline, and Security status does not list it as without two-step verification) — in the browser. Not
+  for a device's sync sign-in, which cannot use a passkey (Sign-in, above).
 - SUDS claims **AAL2**: phishing-resistant (the origin and RP ID are bound into what is signed), replay-resistant
   (single-use challenges), with UV. It does not claim AAL3: SUDS does not require a hardware-bound, non-exportable key
   (synced passkeys are exportable to the person's other devices, which NIST's 2024 supplement on syncable
@@ -230,8 +244,13 @@ Time and spending approval asked for no proof before 1.19.0 and still ask for no
 password or code) is taken when given and recorded, and **required** — as a fingerprint or an authenticator code —
 when the programme turns on **"Require fingerprint or authenticator for signing"**. Returning time or rejecting
 spending never needs proof. The approval dialog asks only when it must (the policy, outside the quick-signing window)
-or when the person chose **"Confirm my approvals of time and spending with my fingerprint"** on My profile; within the
-quick-signing window a fingerprint or code gave, an approval goes with a confirmation alone.
+or when the person chose **"Confirm my approvals of time and spending with my fingerprint"** on My profile. Within the
+quick-signing window an approval goes without the dialog: under the policy, only a window a fingerprint or an
+authenticator code opened counts (and the approval carries a confirmation); with the policy off, **any** recent proof
+opens it — a password too, as for a signature — so the opt-in fingerprint prompt is skipped then as well. That is the
+simpler rule and the one the approval has always had outside the policy (none asked at all): the opt-in is a personal
+preference for recording a fingerprint, not a control, and the server accepts an approval without proof whenever the
+policy is off (`public/passkey.js approvalProof`, `auth.verifyApprover`).
 
 **A code that is given must verify.** Wherever a password and an authenticator code are both sent, both are checked,
 and a wrong code refuses the request (a failed attempt, audited, counted toward the lockout) — a password with a
@@ -266,8 +285,11 @@ The browser asks for a challenge for a purpose and its records (`POST /api/auth/
 
 For a note, `content` is the note's **plaintext content hash** (`server/note-signature.js contentHash`, the owner's
 decision): SHA-256 over the canonical JSON of what is signed — the note id, the signer, the act (`sign` or `cosign`),
-the note's kind, title, text, structured sections, when it happened (`occurred_at`) and whose record it is
-(`client_id`). It does not change when the encryption key does, so the evidence verifies after a key rotation. For
+the note's kind, title, text, structured sections and when it happened (`occurred_at`). It does not change when the
+encryption key does, so the evidence verifies after a key rotation. It does **not** include the client record the note
+is filed under (`client_id`): the note id names the record, and merging a duplicate client moves its notes to the
+record kept, which must not make a signature read as changed (the ciphertext signature hash never included it
+either). For
 countersignatures given together (`note.cosign-batch`) the statement also carries `items`, each note id with its own
 content hash, and `content` is the hash of that list. For time and spending, `content` hashes the decision and the
 entries' fields as listed above (none encrypted).
@@ -318,7 +340,17 @@ back-compatibility: every signed note, audit entry and export names it. Before t
 (`npm run rotate-key`) re-encrypted every note and left that hash stale, so **Verify signature** said every signed note
 had been changed. `scripts/rotate-key.js` now checks each hash under the old ciphertext first and, for every one that
 was intact, recomputes it over the new ciphertext; one that was not intact is left as it was (a note changed after it
-was signed still shows it), and the rotation's audit entry counts both. The fingerprint evidence does not depend on it:
+was signed still shows it), and the rotation's audit entry counts both.
+
+**Notes left "not intact" by an earlier rotation are not repaired.** A rotation run before this fix (SUDS 1.18.0 or
+earlier) left the hash of every note signed before it stale, and the next rotation, finding those hashes do not match,
+leaves them as they are — the script cannot tell a hash a rotation left stale from a note changed after signing.
+An administrator can tell which is which: the audit log has a `security.key_rotated` entry without
+`signature_hashes_recomputed` in its details for each such earlier rotation; a note that **Verify signature** reports
+as not intact and that was signed (`signed_at`, `cosigned_at`) **before** that entry's time is one the rotation left
+stale, and one signed after it has been changed. To confirm a particular note, restore a backup taken before that
+rotation under the retired key (DEPLOYMENT.md, "Key rotation runbook") and run Verify signature there. A fingerprint
+signature is unaffected either way (its evidence is bound to the plaintext content hash). The fingerprint evidence does not depend on it:
 it is bound to the plaintext content hash above. (A device's copy of a note is encrypted under the device's own key,
 so the ciphertext hash is only meaningful at the office, where Verify signature runs.)
 
@@ -379,3 +411,20 @@ The review's findings and what changed, with the owner's decisions (D1–D4); ea
   (11); order-independent tests and a real key rotation in them (12); one migration helper and the challenge's user as
   a user reference (13); the documents and a test that keeps the browser suite's count true (14; the suite is 54
   scripts with `fingerprint.mjs`, as RELEASE.md says — the review's count of 55 included the `assert.mjs` helper).
+
+## Second review of the fingerprint work (before 1.19.0)
+
+Each fix is tested in `test/fingerprint-r2.test.js` (N3 in `test/reset-admin.test.js`), and
+`test/fingerprint-regression.test.js` checks that people **without** passkeys (password only, password and an
+authenticator app, single sign-on) sign in in the browser and on a device, sign, countersign, approve time and
+spending and download the key backup exactly as on 1.18.0 — the same status codes and fields, a table produced by
+running that file against 1.18.0 — under every combination of the two fingerprint settings, with "Require fingerprint
+or authenticator for signing" off.
+
+- **N1** a device's sync sign-in is not given a fingerprint step it cannot take: as before passkeys (Sign-in, above).
+- **N2** a note's content hash no longer includes `client_id`, so a client merge leaves fingerprint evidence verifiable.
+- **N3** `npm run reset-admin` removes the administrator's passkeys (cause `cli reset`).
+- **N4** an administrator resetting their own two-step verification keeps the session they did it from.
+- **N5** a waiting signature challenge keeps its statement without the content hashes (Challenges, above).
+- **N6** notes an earlier key rotation left "not intact" are not repaired; how to tell (key rotation, above).
+- **N7** the quick-signing window and the opt-in approval prompt: the document now says what the code does (above).

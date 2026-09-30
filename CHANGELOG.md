@@ -93,6 +93,24 @@ For the feature release after 1.18.0 (a migration and new routes; no new permiss
   better default name, an SVG icon, and a specific toast on revocation.
 - **Tests**: `test/fingerprint-review.test.js`, with outside vectors (py_webauthn's real responses, RFC 8949 Appendix
   A); `test/fingerprint.test.js` order-independent, with no fixed dates; `scripts/ui/fingerprint.mjs` for the screens.
+
+### Security: the fingerprint review, second pass (r2; before release; docs/FINGERPRINT.md, *Second review*)
+
+- **Devices sync as before passkeys.** A device's sync sign-in (`X-Sync-Client`, now recorded on the session:
+  `sessions.sync_client`, migration 59) is never given the fingerprint as its second step, which it cannot take: with an
+  authenticator app it is asked for the code; without one, in a role that requires two-step verification, it syncs in
+  the grace period and is then stopped, told to add an authenticator app under My profile. Before, a clinician in such a
+  role who added a passkey could no longer sync at all.
+- **A client merge no longer breaks fingerprint evidence**: the note's plaintext content hash does not include the
+  client it is filed under (the note id names the record).
+- **`npm run reset-admin` removes the administrator's passkeys** (audited, cause `cli reset`).
+- **An administrator resetting their own two-step verification stays signed in** (their other passkey sessions end).
+- **A waiting signature challenge no longer keeps the note's content hash** (an unkeyed SHA-256 of its plaintext); the
+  statement is completed from the record when the confirmation arrives.
+- **Docs**: notes an earlier key rotation left "not intact" are not repaired, and how an administrator tells them from
+  changed notes; the quick-signing window skips the opt-in approval prompt whatever opened it when the policy is off.
+- **Tests**: `test/fingerprint-r2.test.js`; `test/fingerprint-regression.test.js`, the flows of people without
+  passkeys compared with a table produced on 1.18.0, under every fingerprint setting.
   The browser kernel is now built without the WebAuthn code. The browser suite is still 54 scripts: 1.18.0's
   documents said 53, which was right for 1.18.0 (the review counted the `assert.mjs` helper); a test now also checks
   the newest count in HANDOFF.md and CHANGELOG.md.
