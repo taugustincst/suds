@@ -26,6 +26,10 @@ function kernelBuildOptions(outfile) {
         b.onResolve({ filter: /(^|[\\/])(mdns|selfsigned)(\.js)?$/ }, (a) => (a.importer.includes(path.join('server')) ? { path: shim('empty.js') } : undefined));
         b.onResolve({ filter: /(^|[\\/])bootstrap(\.js)?$/ }, (a) => (a.importer.includes(path.join('server')) ? { path: shim('bootstrap.js') } : undefined));
         b.onResolve({ filter: /package\.json$/ }, () => ({ path: shim('package.js') }));
+        // Fingerprint sign-in and signing are office-server only (docs/FINGERPRINT.md): the kernel gets a stand-in
+        // that says so, and none of the WebAuthn code (server/passkeys.js, server/webauthn.js, the passkey routes).
+        b.onResolve({ filter: /(^|[\\/])(passkeys|webauthn)(\.js)?$/ }, (a) => (a.importer.includes(path.join('server')) ? { path: shim('passkeys.js') } : undefined));
+        b.onLoad({ filter: /[\\/]server[\\/]routes[\\/]passkeys\.js$/ }, () => ({ contents: "'use strict';\n// Not on a device: fingerprint sign-in is office-server only (local/shims/passkeys.js).\nmodule.exports = () => {};\n", loader: 'js' }));
       },
     }],
   };

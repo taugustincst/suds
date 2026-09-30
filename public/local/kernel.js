@@ -6883,7 +6883,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- How reauth_at was last proved: 'password', 'totp', 'passkey' (a fingerprint or the device's screen lock,
   -- docs/FINGERPRINT.md) or 'sso'. "Require fingerprint or authenticator for signing" counts only a recent
   -- 'passkey' or 'totp' towards the quick-signing window (migration 58).
-  reauth_method TEXT
+  reauth_method TEXT,
+  -- The passkey that signed this session in (or finished its second step), when one did: removing that passkey
+  -- ends the session (server/passkeys.js remove; migration 58).
+  passkey_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
@@ -6917,13 +6920,16 @@ CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
 -- WebAuthn challenges waiting for an answer: stored by SHA-256 of the challenge (never the challenge itself),
 -- single-use (used_at), bound to a purpose and, once signed in, to the user and session; two minutes to live.
 -- \`statement\`: for a signature or an approval, the canonical statement the challenge is the hash of (ids,
--- hashes and dates: no PHI). Office server only, never synchronised (migration 58).
+-- hashes and dates: no PHI). \`ip\`: the address that asked, for one asked for before anyone signed in (the sign-in
+-- page), so how many wait unanswered per address can be capped. session_id is a sessions.id (a hash), not a user.
+-- Office server only, never synchronised (migration 58).
 CREATE TABLE IF NOT EXISTS webauthn_challenges (
   id TEXT PRIMARY KEY,                 -- hex SHA-256 of the challenge bytes
   purpose TEXT NOT NULL,
-  user_id TEXT,
+  user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
   session_id TEXT,
   statement TEXT,
+  ip TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   expires_at TEXT NOT NULL,
   used_at TEXT
@@ -10913,318 +10919,18 @@ var require_permissions = __commonJS({
   }
 });
 
-// server/webauthn.js
-var require_webauthn = __commonJS({
-  "server/webauthn.js"(exports, module) {
+// local/shims/passkeys.js
+var require_passkeys = __commonJS({
+  "local/shims/passkeys.js"(exports, module) {
     "use strict";
     init_globals_inject();
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var FLAGS = { UP: 1, UV: 4, BE: 8, BS: 16, AT: 64, ED: 128 };
-    var ALGS = { ES256: -7, EdDSA: -8, RS256: -257 };
-    var ALG_NAMES = { [-7]: "ES256", [-8]: "EdDSA", [-257]: "RS256" };
-    var WebAuthnError = class extends Error {
-      /** `code` is a short machine name for the failure (for tests and the audit entry); the message is for people. */
-      constructor(code, message) {
-        super(message);
-        this.code = code;
-      }
+    var { HttpError: HttpError3 } = require_http();
+    var unavailable = () => {
+      throw new HttpError3(404, "Fingerprint sign-in is not available on this device");
     };
-    var fail = (code, message) => {
-      throw new WebAuthnError(code, message);
-    };
-    function b64url(buf) {
-      return import_buffer.Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-    }
-    function fromB64url(s) {
-      if (typeof s !== "string" || !/^[A-Za-z0-9_-]*={0,2}$/.test(s)) fail("encoding", "A value is not base64url");
-      return import_buffer.Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
-    }
-    function cborDecode(buf, offset = 0, depth = 0) {
-      if (depth > 16) fail("cbor", "CBOR nested too deeply");
-      let p = offset;
-      const need = (n) => {
-        if (p + n > buf.length) fail("cbor", "CBOR data ends early");
-      };
-      need(1);
-      const ib = buf[p++];
-      const major = ib >> 5;
-      const info = ib & 31;
-      const arg = () => {
-        if (info < 24) return info;
-        if (info === 24) {
-          need(1);
-          return buf[p++];
-        }
-        if (info === 25) {
-          need(2);
-          const v = buf.readUInt16BE(p);
-          p += 2;
-          return v;
-        }
-        if (info === 26) {
-          need(4);
-          const v = buf.readUInt32BE(p);
-          p += 4;
-          return v;
-        }
-        if (info === 27) {
-          need(8);
-          const v = buf.readBigUInt64BE(p);
-          p += 8;
-          if (v > BigInt(Number.MAX_SAFE_INTEGER)) fail("cbor", "CBOR integer too large");
-          return Number(v);
-        }
-        fail("cbor", "CBOR indefinite lengths are not accepted");
-      };
-      switch (major) {
-        case 0:
-          return { value: arg(), end: p };
-        case 1:
-          return { value: -1 - arg(), end: p };
-        case 2: {
-          const n = arg();
-          need(n);
-          const v = import_buffer.Buffer.from(buf.subarray(p, p + n));
-          return { value: v, end: p + n };
-        }
-        case 3: {
-          const n = arg();
-          need(n);
-          const v = buf.subarray(p, p + n).toString("utf8");
-          return { value: v, end: p + n };
-        }
-        case 4: {
-          const n = arg();
-          if (n > 1024) fail("cbor", "CBOR array too long");
-          const out2 = [];
-          for (let i = 0; i < n; i++) {
-            const r = cborDecode(buf, p, depth + 1);
-            out2.push(r.value);
-            p = r.end;
-          }
-          return { value: out2, end: p };
-        }
-        case 5: {
-          const n = arg();
-          if (n > 256) fail("cbor", "CBOR map too long");
-          const m = /* @__PURE__ */ new Map();
-          for (let i = 0; i < n; i++) {
-            const k = cborDecode(buf, p, depth + 1);
-            const v = cborDecode(buf, k.end, depth + 1);
-            if (m.has(k.value)) fail("cbor", "CBOR map has a duplicate key");
-            m.set(k.value, v.value);
-            p = v.end;
-          }
-          return { value: m, end: p };
-        }
-        case 6: {
-          arg();
-          return cborDecode(buf, p, depth + 1);
-        }
-        // a tag: its content
-        case 7: {
-          if (info === 20) return { value: false, end: p };
-          if (info === 21) return { value: true, end: p };
-          if (info === 22 || info === 23) return { value: null, end: p };
-          fail("cbor", "CBOR floating-point and simple values are not accepted");
-        }
-      }
-      fail("cbor", "CBOR item not understood");
-    }
-    function cborDecodeAll(buf) {
-      const r = cborDecode(buf, 0);
-      if (r.end !== buf.length) fail("cbor", "CBOR data has bytes left over");
-      return r.value;
-    }
-    function parseAuthData(buf) {
-      if (!import_buffer.Buffer.isBuffer(buf) || buf.length < 37) fail("authdata", "Authenticator data is too short");
-      const out2 = { rpIdHash: buf.subarray(0, 32), flags: buf[32], signCount: buf.readUInt32BE(33) };
-      out2.up = !!(out2.flags & FLAGS.UP);
-      out2.uv = !!(out2.flags & FLAGS.UV);
-      out2.be = !!(out2.flags & FLAGS.BE);
-      out2.bs = !!(out2.flags & FLAGS.BS);
-      let p = 37;
-      if (out2.flags & FLAGS.AT) {
-        if (buf.length < p + 18) fail("authdata", "Attested credential data is too short");
-        out2.aaguid = buf.subarray(p, p + 16);
-        p += 16;
-        const len = buf.readUInt16BE(p);
-        p += 2;
-        if (len < 1 || len > 1023 || buf.length < p + len) fail("authdata", "The credential id is not a valid length");
-        out2.credentialId = import_buffer.Buffer.from(buf.subarray(p, p + len));
-        p += len;
-        const k = cborDecode(buf, p);
-        out2.coseKey = k.value;
-        out2.coseKeyBytes = import_buffer.Buffer.from(buf.subarray(p, k.end));
-        p = k.end;
-      }
-      if (out2.flags & FLAGS.ED) {
-        const e = cborDecode(buf, p);
-        out2.extensions = e.value;
-        p = e.end;
-      }
-      if (p !== buf.length) fail("authdata", "Authenticator data has bytes left over");
-      return out2;
-    }
-    function aaguidString(b) {
-      const h = import_buffer.Buffer.from(b).toString("hex");
-      return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-    }
-    function coseToKey(cose) {
-      if (!(cose instanceof Map)) fail("cose", "The credential public key is not a COSE key");
-      const kty = cose.get(1);
-      const alg = cose.get(3);
-      if (!ALG_NAMES[alg]) fail("alg", "The credential uses an algorithm SUDS does not accept (ES256, EdDSA or RS256)");
-      let jwk;
-      if (alg === ALGS.ES256) {
-        const x = cose.get(-2), y = cose.get(-3);
-        if (kty !== 2 || cose.get(-1) !== 1 || !import_buffer.Buffer.isBuffer(x) || !import_buffer.Buffer.isBuffer(y) || x.length !== 32 || y.length !== 32) fail("cose", "The ES256 key is not a P-256 key");
-        jwk = { kty: "EC", crv: "P-256", x: b64url(x), y: b64url(y) };
-      } else if (alg === ALGS.EdDSA) {
-        const x = cose.get(-2);
-        if (kty !== 1 || cose.get(-1) !== 6 || !import_buffer.Buffer.isBuffer(x) || x.length !== 32) fail("cose", "The EdDSA key is not an Ed25519 key");
-        jwk = { kty: "OKP", crv: "Ed25519", x: b64url(x) };
-      } else {
-        const n = cose.get(-1), e = cose.get(-2);
-        if (kty !== 3 || !import_buffer.Buffer.isBuffer(n) || !import_buffer.Buffer.isBuffer(e) || n.length < 256) fail("cose", "The RS256 key is not an RSA key of 2048 bits or more");
-        jwk = { kty: "RSA", n: b64url(n), e: b64url(e) };
-      }
-      let key;
-      try {
-        key = crypto3.createPublicKey({ key: jwk, format: "jwk" });
-      } catch {
-        fail("cose", "The credential public key could not be read");
-      }
-      return { key, alg, spki: key.export({ type: "spki", format: "der" }).toString("base64") };
-    }
-    function keyFromSpki(spkiB64) {
-      return crypto3.createPublicKey({ key: import_buffer.Buffer.from(spkiB64, "base64"), format: "der", type: "spki" });
-    }
-    function verifySignature(alg, key, authData, clientDataJSON, signature) {
-      const data = import_buffer.Buffer.concat([authData, crypto3.createHash("sha256").update(clientDataJSON).digest()]);
-      try {
-        if (alg === ALGS.ES256) return crypto3.verify("sha256", data, { key, dsaEncoding: "der" }, signature);
-        if (alg === ALGS.RS256) return crypto3.verify("sha256", data, key, signature);
-        if (alg === ALGS.EdDSA) return crypto3.verify(null, data, key, signature);
-      } catch {
-        return false;
-      }
-      return false;
-    }
-    function parseClientData(buf, { type, challenge, origins }) {
-      let c;
-      try {
-        c = JSON.parse(buf.toString("utf8"));
-      } catch {
-        fail("clientdata", "The client data is not JSON");
-      }
-      if (!c || typeof c !== "object") fail("clientdata", "The client data is not an object");
-      if (c.type !== type) fail("type", `The client data is for ${String(c.type).slice(0, 40)}, not ${type}`);
-      if (typeof c.challenge !== "string") fail("challenge", "The client data has no challenge");
-      if (challenge !== void 0 && (c.challenge.length !== challenge.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(c.challenge), import_buffer.Buffer.from(challenge)))) fail("challenge", "The challenge does not match");
-      if (!origins.includes(c.origin)) fail("origin", "The request came from a page SUDS does not serve (origin mismatch)");
-      if (c.crossOrigin === true) fail("origin", "Passkeys are not accepted from an embedded page");
-      return c;
-    }
-    var sha2562 = (b) => crypto3.createHash("sha256").update(b).digest();
-    function checkAuthFlags(ad, rpId) {
-      if (!crypto3.timingSafeEqual(ad.rpIdHash, sha2562(import_buffer.Buffer.from(rpId, "utf8")))) fail("rpid", "The passkey belongs to a different site (RP ID mismatch)");
-      if (!ad.up) fail("up", "The authenticator did not confirm a person was present");
-      if (!ad.uv) fail("uv", "The device did not verify you (fingerprint or screen lock). Passkeys are accepted only with that check.");
-    }
-    function verifyRegistration({ id, response, transports: given }, { challenge, rpId, origins, algs = [ALGS.ES256, ALGS.EdDSA, ALGS.RS256] }) {
-      if (!response || typeof response !== "object") fail("shape", "The passkey response is missing");
-      const clientDataJSON = fromB64url(response.clientDataJSON || "");
-      parseClientData(clientDataJSON, { type: "webauthn.create", challenge, origins });
-      const att = cborDecodeAll(fromB64url(response.attestationObject || ""));
-      if (!(att instanceof Map) || typeof att.get("fmt") !== "string" || !import_buffer.Buffer.isBuffer(att.get("authData"))) fail("attestation", "The attestation object is not understood");
-      const ad = parseAuthData(att.get("authData"));
-      checkAuthFlags(ad, rpId);
-      if (!ad.credentialId) fail("authdata", "The authenticator did not return a new credential");
-      if (id !== void 0 && b64url(ad.credentialId) !== id) fail("credential", "The credential id does not match the authenticator data");
-      const k = coseToKey(ad.coseKey);
-      if (!algs.includes(k.alg)) fail("alg", "The credential uses an algorithm SUDS did not ask for");
-      const known = ["internal", "hybrid", "usb", "nfc", "ble", "smart-card"];
-      const transports = given || response.transports;
-      return {
-        credentialId: b64url(ad.credentialId),
-        publicKey: k.spki,
-        alg: k.alg,
-        signCount: ad.signCount,
-        aaguid: ad.aaguid ? aaguidString(ad.aaguid) : null,
-        backupEligible: ad.be,
-        backedUp: ad.bs,
-        fmt: att.get("fmt"),
-        transports: Array.isArray(transports) ? transports.filter((t) => known.includes(t)) : []
-      };
-    }
-    function verifyAssertion({ response }, stored, { challenge, rpId, origins }) {
-      if (!response || typeof response !== "object") fail("shape", "The passkey response is missing");
-      const clientDataJSON = fromB64url(response.clientDataJSON || "");
-      const authData = fromB64url(response.authenticatorData || "");
-      const signature = fromB64url(response.signature || "");
-      const clientData = parseClientData(clientDataJSON, { type: "webauthn.get", challenge, origins });
-      const ad = parseAuthData(authData);
-      checkAuthFlags(ad, rpId);
-      if (!verifySignature(stored.alg, keyFromSpki(stored.publicKey), authData, clientDataJSON, signature)) fail("signature", "The passkey signature is not valid");
-      const prev = Number(stored.signCount) || 0;
-      const cloned = (prev > 0 || ad.signCount > 0) && ad.signCount <= prev;
-      return { signCount: ad.signCount, flags: ad.flags, uv: ad.uv, up: ad.up, backedUp: ad.bs, clientData, cloned, authData, clientDataJSON, signature };
-    }
-    function canonical(v) {
-      if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
-      if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
-      return JSON.stringify(v === void 0 ? null : v);
-    }
-    function statementChallenge(statement) {
-      return sha2562(import_buffer.Buffer.from(canonical(statement), "utf8"));
-    }
-    function verifyEvidence(ev) {
-      const checks = { statement: false, type: false, rp: false, flags: false, signature: false };
-      try {
-        const clientDataJSON = fromB64url(ev.client_data_json);
-        const authData = fromB64url(ev.authenticator_data);
-        const signature = fromB64url(ev.signature);
-        const cd = JSON.parse(clientDataJSON.toString("utf8"));
-        const want = b64url(statementChallenge(ev.statement));
-        checks.statement = cd.challenge === want && (!ev.statement_hash || ev.statement_hash === statementChallenge(ev.statement).toString("hex"));
-        checks.type = cd.type === "webauthn.get";
-        const ad = parseAuthData(authData);
-        let host = "";
-        try {
-          host = new URL(cd.origin).hostname;
-        } catch {
-          host = "";
-        }
-        checks.rp = sha2562(import_buffer.Buffer.from(ev.rp_id, "utf8")).equals(ad.rpIdHash) && (host === ev.rp_id || host.endsWith("." + ev.rp_id));
-        checks.flags = ad.up && ad.uv;
-        checks.signature = verifySignature(ev.alg, keyFromSpki(ev.public_key), authData, clientDataJSON, signature);
-        const ok = Object.values(checks).every(Boolean);
-        return { ok, checks, reason: ok ? null : Object.keys(checks).find((k) => !checks[k]) };
-      } catch (e) {
-        return { ok: false, checks, reason: e.message };
-      }
-    }
-    module.exports = {
-      FLAGS,
-      ALGS,
-      ALG_NAMES,
-      WebAuthnError,
-      b64url,
-      fromB64url,
-      cborDecode,
-      cborDecodeAll,
-      parseAuthData,
-      aaguidString,
-      coseToKey,
-      keyFromSpki,
-      verifySignature,
-      verifyRegistration,
-      verifyAssertion,
-      canonical,
-      statementChallenge,
-      verifyEvidence
-    };
+    module.exports = new Proxy({ remove: () => 0, adoption: () => ({ active: 0, with_passkey: 0, total: 0, flagged: 0, sign_ins_30d: 0, confirmations_30d: 0 }), configuredRpId: () => "", PURPOSES: [] }, {
+      get: (t, k) => k in t ? t[k] : k === "__esModule" ? false : unavailable
+    });
   }
 });
 
@@ -12906,7 +12612,8 @@ var require_sync_tables = __commonJS({
         ["county_connection", "updated_by"],
         ["county_connect_sends", "sent_by"],
         ["passkeys", "user_id"],
-        ["signature_evidence", "user_id"]
+        ["signature_evidence", "user_id"],
+        ["webauthn_challenges", "user_id"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -13495,6 +13202,53 @@ var require_client_revisions = __commonJS({
   }
 });
 
+// server/canonical.js
+var require_canonical = __commonJS({
+  "server/canonical.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    function canonical(v) {
+      if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+      if (v && typeof v === "object") return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`;
+      return JSON.stringify(v === void 0 ? null : v);
+    }
+    module.exports = { canonical };
+  }
+});
+
+// server/note-signature.js
+var require_note_signature = __commonJS({
+  "server/note-signature.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var { sha256: sha2562, decrypt: decrypt3 } = require_crypto();
+    var { canonical } = require_canonical();
+    function signatureHash(n, signerId) {
+      return sha2562(`${n.id}|${signerId}|${n.content_enc}|${n.structured_enc || ""}`);
+    }
+    function cosignatureHash(n, signerId) {
+      return sha2562(`${n.id}|${signerId}|cosign|${n.content_enc}|${n.structured_enc || ""}`);
+    }
+    function signedContent(n, signerId, act = "sign") {
+      const dec2 = (v) => v ? decrypt3(v) : null;
+      let structured = null;
+      if (n.structured_enc) {
+        const t = decrypt3(n.structured_enc);
+        try {
+          structured = JSON.parse(t);
+        } catch {
+          structured = t;
+        }
+      }
+      return { v: 1, act, note_id: n.id, signer_id: signerId, kind: n.kind, title: dec2(n.title_enc), content: dec2(n.content_enc), structured, occurred_at: n.occurred_at, client_id: n.client_id };
+    }
+    function contentHash(n, signerId, act = "sign") {
+      return sha2562(canonical(signedContent(n, signerId, act)));
+    }
+    module.exports = { signatureHash, cosignatureHash, signedContent, contentHash };
+  }
+});
+
 // server/rules/notes.js
 var require_notes = __commonJS({
   "server/rules/notes.js"(exports, module) {
@@ -13569,6 +13323,8 @@ var require_notes = __commonJS({
     var useDraft = (userId, clientId) => pendingDrafts.delete(draftKey(userId, clientId));
     var writesText = (c) => !c.existing || c.existing.status === "draft" && c.changed().some((k) => ["title_enc", "content_enc", "structured_enc"].includes(k));
     var signs = (row, c) => !!row.status && row.status !== "draft" && (!c.existing || c.existing.status === "draft");
+    var strongSigningRequired = () => !require_config().local && auth3.policy().signStrongRequired;
+    var STRONG_SIGNING_FLAG = "was saved as a draft, not signed: your programme requires your fingerprint or an authenticator code to sign a note, which cannot be given from a device. Open the note in SUDS at the office address and sign it there.";
     module.exports = define2({
       table: "notes",
       deviceColumns: ["status", "signed_at", "signed_by", "signature_hash", "cosign_required", "cosigned_by", "cosigned_at", "cosignature_hash", "cosign_note_enc", "import_item_id", "deleted_at"],
@@ -13663,6 +13419,12 @@ var require_notes = __commonJS({
           row.cosign_note_enc = void 0;
           row.cosign_required = e.cosign_required;
         }
+        const flags = [];
+        if (signs(row, c) && c.via === "sync" && strongSigningRequired()) {
+          row.status = "draft";
+          c.signRefused = true;
+          flags.push(flag(STRONG_SIGNING_FLAG, { code: "strong_signing" }));
+        }
         if (signs(row, c)) {
           const now2 = db3.now();
           const ms = row.signed_at ? Date.parse(row.signed_at) : NaN;
@@ -13684,7 +13446,8 @@ var require_notes = __commonJS({
           const author = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, row.author_id || c.user.id);
           row.cosign_required = author && author.requires_cosign ? 1 : 0;
         }
-        return asserted ? flag("was accepted, but not the countersignature on it: a supervisor countersigns at the office, never by sync", { code: "ruling" }) : null;
+        if (asserted) flags.push(flag("was accepted, but not the countersignature on it: a supervisor countersigns at the office, never by sync", { code: "ruling" }));
+        return flags.length ? flags : null;
       },
       // A note signed on a device closes its reminder at the office too, as signing here does (routes/notes.js).
       // The signature is recomputed as POST /api/notes/:id/sign computes it, and audited as that route audits it.
@@ -13694,10 +13457,11 @@ var require_notes = __commonJS({
           require_audit().log({ user: c.user, action: "note.ai_assisted", entity: "note", entityId: row.id, clientId: c.existing ? c.existing.client_id : row.client_id, ip: "device", details: { via: "sync", cause: "copilot_draft" } });
         }
         if (c.existing) reissueAddenda(row.id, c.existing.counseling_note, o.counseling_note ?? c.existing.counseling_note);
+        if (c.signRefused) require_audit().log({ user: c.user, action: "note.sign.failed", entity: "note", entityId: row.id, clientId: c.existing ? c.existing.client_id : row.client_id, ip: "device", success: false, details: { via: "sync", reason: "fingerprint or authenticator code required", kept: "draft" } });
         if (c.existing && c.existing.status !== "draft") return;
         const n = db3.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required, ai_assisted FROM notes WHERE id=?`, row.id);
         if (!n || n.status === "draft") return;
-        const hash2 = require_crypto().sha256(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ""}`);
+        const hash2 = require_note_signature().signatureHash(n, n.signed_by);
         db3.run(`UPDATE notes SET signature_hash=? WHERE id=?`, hash2, n.id);
         const reminders = closeSignReminders(n.author_id, n.id, n.client_id);
         require_audit().log({ user: c.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: "device", details: { hash: hash2, via: "sync", cosign_required: !!n.cosign_required, reminders_closed: reminders.length ? reminders : void 0, ai_assisted: Number(n.ai_assisted) ? true : void 0, ai_reviewed: Number(n.ai_assisted) ? true : void 0 } });
@@ -13705,7 +13469,7 @@ var require_notes = __commonJS({
     });
     module.exports.closeSignReminders = closeSignReminders;
     module.exports.reissueAddenda = reissueAddenda;
-    Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts, aiReviewed, keepAiAssisted });
+    Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts, aiReviewed, keepAiAssisted, strongSigningRequired });
     var readsCounseling = (user) => auth3.hasPerm(user, "notes:clinical:write");
     var mayReadCounseling = (user, n) => !Number(n.counseling_note) || readsCounseling(user) || n.author_id === user.id || !!n.cosigned_by && n.cosigned_by === user.id;
     function counselingFilter(user, alias = "n") {
@@ -19464,7 +19228,7 @@ var require_budget = __commonJS({
           }
         }
         if (status !== "rejected") {
-          const identity = await auth3.verifyApprover(ctx, body, { action: "expenditure.approve.failed", purpose: `mark this expenditure ${status}`, bind: body.passkey ? require_passkeys2().bindingFor(ctx, "expenditure.approve", { id: e.id, status }) : null });
+          const identity = await auth3.verifyApprover(ctx, body, { action: "expenditure.approve.failed", purpose: `mark this expenditure ${status}`, bind: body.passkey ? require_passkeys().bindingFor(ctx, "expenditure.approve", { id: e.id, status }) : null });
           if (identity) {
             details.identity = identity;
             if (ctx.signatureEvidence) details.evidence = ctx.signatureEvidence;
@@ -20124,7 +19888,7 @@ var require_scim = __commonJS({
     }
     function cutOff(userId, actor) {
       require_auth2().revokeAllForUser(userId);
-      if (!require_config().local) require_passkeys2().remove(userId, { actor, cause: "deactivated" });
+      if (!require_config().local) require_passkeys().remove(userId, { actor, cause: "deactivated" });
       require_referral_links().revokeForUser(userId, actor);
       return db3.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?), wipe_requested_at=COALESCE(wipe_requested_at, ?) WHERE user_id=?`, db3.now(), db3.now(), userId).changes;
     }
@@ -22465,18 +22229,20 @@ var require_security_status = __commonJS({
         );
       }
       if (!config2.local) {
-        const a = require_passkeys2().adoption();
+        const a = require_passkeys().adoption();
         const off = !pol.passkeySignin && !pol.passkeySigning;
         const httpsOk = !!config2.tls.cert || !!config2.trustProxy || !config2.isProd;
+        const rpId = require_passkeys().configuredRpId();
+        const unconfigured = config2.isProd && !rpId && !off;
         add(
           "Identity",
           "Fingerprint sign-in (passkeys)",
-          a.flagged ? "warn" : "info",
-          off ? "turned off" : `${a.with_passkey} of ${a.active} active accounts have one (${a.total} passkey${a.total === 1 ? "" : "s"}); ${a.sign_ins_30d} sign-in${a.sign_ins_30d === 1 ? "" : "s"} and ${a.confirmations_30d} signature${a.confirmations_30d === 1 ? "" : "s"} or approval${a.confirmations_30d === 1 ? "" : "s"} with one in 30 days`,
+          unconfigured ? "bad" : a.flagged ? "warn" : "info",
+          off ? "turned off" : unconfigured ? "not working: WEBAUTHN_RP_ID is not set" : `${a.with_passkey} of ${a.active} active accounts have one (${a.total} passkey${a.total === 1 ? "" : "s"}); ${a.sign_ins_30d} sign-in${a.sign_ins_30d === 1 ? "" : "s"} and ${a.confirmations_30d} signature${a.confirmations_30d === 1 ? "" : "s"} or approval${a.confirmations_30d === 1 ? "" : "s"} with one in 30 days`,
           [
             a.flagged ? `${a.flagged} passkey${a.flagged === 1 ? " was" : "s were"} disabled because a signature counter went backwards (a possible copy): see the audit log (auth.passkey.clone_suspected).` : "",
             `Sign-in ${pol.passkeySignin ? "on" : "off"}; signatures and approvals ${pol.passkeySigning ? "on" : "off"}; fingerprint or authenticator code required for signing: ${pol.signStrongRequired ? "yes" : "no"}.`,
-            config2.webauthn && config2.webauthn.rpId ? `Relying party ${config2.webauthn.rpId}.` : "WEBAUTHN_RP_ID is not set: passkeys are made for whichever host name each person used.",
+            rpId ? `Relying party ${rpId}.` : config2.isProd ? "WEBAUTHN_RP_ID is not set, so no one can add or use a passkey on this production server: set it to the server's name, as in the address staff open and on its certificate (docs/SELF-HOSTING.md), and restart." : "WEBAUTHN_RP_ID is not set: outside production, passkeys are made for the host name each request was addressed to (the Host header). Production requires it.",
             httpsOk ? "" : "Passkeys need HTTPS, which is not on.",
             "SUDS stores no fingerprint: only each passkey's public key."
           ].filter(Boolean).join(" "),
@@ -24114,7 +23880,7 @@ var require_admin = __commonJS({
       r.post("/api/admin/keys-backup", auth3.requireAuth, auth3.requirePerm("settings:manage"), async (ctx) => {
         if (config2.keySource !== "file") throw badRequest("Keys are provided by the environment on this server");
         const body = ctx.body || {};
-        const bind = body.passkey && typeof body.passkey === "object" ? require_passkeys2().bindingFor(ctx, "keys.download") : null;
+        const bind = body.passkey && typeof body.passkey === "object" ? require_passkeys().bindingFor(ctx, "keys.download") : null;
         const method = await auth3.verifySigner(ctx, body, { action: "keys.download.failed", purpose: "download the key backup", fresh: true, bind });
         audit3.log({ user: ctx.user, action: "keys.download", ip: ctx.ip, details: { method, evidence: ctx.signatureEvidence || void 0 } });
         db3.setSetting("keys_backup_at", db3.now());
@@ -39522,7 +39288,8 @@ var require_notes2 = __commonJS({
     var C = require_constants();
     var { badRequest, notFound, forbidden } = require_http();
     var { validate, paging } = require_validate();
-    var { encrypt: encrypt3, decrypt: decrypt3, sha256: sha2562, uuid: uuid2 } = require_crypto();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var NS = require_note_signature();
     var rules = require_rules();
     var shape = rules.forTable("notes").fields;
     function problemIds(ids, clientId) {
@@ -39554,7 +39321,7 @@ var require_notes2 = __commonJS({
     }
     function verifyIdentity(ctx, purpose, params) {
       const body = validate(ctx.body || {}, { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, passkey: { type: "object" } }, { partial: true });
-      const bind = body.passkey ? require_passkeys2().bindingFor(ctx, purpose, params) : null;
+      const bind = body.passkey ? require_passkeys().bindingFor(ctx, purpose, params) : null;
       return auth3.verifySigner(ctx, body, { bind });
     }
     var BREAK_GLASS_MIN = 15;
@@ -39804,7 +39571,7 @@ var require_notes2 = __commonJS({
         const aiReviewed = require_notes().aiReviewed(ctx.body && ctx.body.ai_reviewed);
         if (Number(n.ai_assisted) && !aiReviewed) throw badRequest("This note includes text drafted by the AI copilot. Confirm you have reviewed and corrected it before signing.", { ai_review_required: true, fields: { ai_reviewed: "confirm you reviewed the AI-drafted text" } });
         const identity = await verifyIdentity(ctx, "note.sign", { note_id: n.id });
-        const hash2 = sha2562(`${n.id}|${ctx.user.id}|${n.content_enc}|${n.structured_enc || ""}`);
+        const hash2 = NS.signatureHash(n, ctx.user.id);
         db3.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db3.now(), ctx.user.id, hash2, db3.now(), n.id);
         const reminders = require_notes().closeSignReminders(ctx.user.id, n.id, n.client_id);
         audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2, cosign_required: !!n.cosign_required, identity, evidence: ctx.signatureEvidence || void 0, reminders_closed: reminders.length ? reminders : void 0, ai_assisted: Number(n.ai_assisted) ? true : void 0, ai_reviewed: Number(n.ai_assisted) ? true : void 0 } });
@@ -39819,7 +39586,7 @@ var require_notes2 = __commonJS({
         return null;
       }
       function applyCosign(ctx, n, note, identity, batch) {
-        const hash2 = sha2562(`${n.id}|${ctx.user.id}|cosign|${n.content_enc}|${n.structured_enc || ""}`);
+        const hash2 = NS.cosignatureHash(n, ctx.user.id);
         db3.run(`UPDATE notes SET cosigned_by=?, cosigned_at=?, cosignature_hash=?, cosign_note_enc=?, updated_at=? WHERE id=?`, ctx.user.id, db3.now(), hash2, note ? encrypt3(note) : null, db3.now(), n.id);
         audit3.log({ user: ctx.user, action: "note.cosign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { author_id: n.author_id, hash: hash2, note_recorded: note ? true : void 0, identity, evidence: ctx.signatureEvidence || void 0, batch: batch || void 0 } });
         return hash2;
@@ -39901,26 +39668,18 @@ var require_notes2 = __commonJS({
         const n = load(ctx, ctx.params.id);
         if (!canRead(ctx, n)) throw forbidden();
         if (!n.signature_hash) return { signed: false, ...signatureState(n) };
-        const hash2 = sha2562(`${n.id}|${n.signed_by}|${n.content_enc}|${n.structured_enc || ""}`);
-        const out2 = { signed: true, intact: hash2 === n.signature_hash, signed_at: n.signed_at, signer: n.signer, ...signatureState(n) };
+        const out2 = { signed: true, intact: NS.signatureHash(n, n.signed_by) === n.signature_hash, signed_at: n.signed_at, signer: n.signer, ...signatureState(n) };
         if (n.cosignature_hash) {
           out2.cosigner = n.cosigner;
           out2.cosigned_at = n.cosigned_at;
-          out2.cosignature_intact = sha2562(`${n.id}|${n.cosigned_by}|cosign|${n.content_enc}|${n.structured_enc || ""}`) === n.cosignature_hash;
+          out2.cosignature_intact = NS.cosignatureHash(n, n.cosigned_by) === n.cosignature_hash;
         }
         if (!require_config().local) {
-          const P2 = require_passkeys2();
-          const fp = (purpose, signer, want) => {
-            const ev = P2.evidenceFor("note", n.id, { purpose }).filter((e) => e.user_id === signer).pop();
-            return ev ? { verified: ev.verified && !!ev.evidence && ev.evidence.statement.content === want && ev.evidence.statement.record_ids.includes(n.id), at: ev.created_at, reason: ev.reason } : null;
-          };
-          const s = fp("note.sign", n.signed_by, n.signature_hash);
+          const P2 = require_passkeys();
+          const s = P2.noteEvidence(n, "sign", n.signed_by);
           if (s) out2.fingerprint = s;
           if (n.cosignature_hash) {
-            const c = fp("note.cosign", n.cosigned_by, n.cosignature_hash) || (() => {
-              const ev = P2.evidenceFor("note", n.id, { purpose: "note.cosign-batch" }).filter((e) => e.user_id === n.cosigned_by).pop();
-              return ev ? { verified: ev.verified, at: ev.created_at, reason: ev.reason } : null;
-            })();
+            const c = P2.noteEvidence(n, "cosign", n.cosigned_by);
             if (c) out2.cosign_fingerprint = c;
           }
         }
@@ -41105,122 +40864,11 @@ var require_overdose = __commonJS({
 });
 
 // server/routes/passkeys.js
-var require_passkeys = __commonJS({
+var require_passkeys2 = __commonJS({
   "server/routes/passkeys.js"(exports, module) {
     "use strict";
     init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth2();
-    var audit3 = require_audit();
-    var P2 = require_passkeys2();
-    var { HttpError: HttpError3, badRequest, notFound } = require_http();
-    var { validate } = require_validate();
-    var csrf = (ctx) => {
-      if (ctx.headers["x-requested-with"] !== "suds") throw new HttpError3(403, "Missing CSRF header");
-    };
-    var credential = { type: "object", required: true };
-    module.exports = (r) => {
-      r.get("/api/auth/passkeys/status", (ctx) => {
-        const pol = auth3.policy();
-        const here = P2.availability(ctx);
-        return { signin: pol.passkeySignin && here.ok, signing: pol.passkeySigning && here.ok, available: here.ok, reason: here.ok ? null : here.reason };
-      });
-      r.post("/api/auth/passkeys/login/options", (ctx) => {
-        csrf(ctx);
-        const v = validate(ctx.body || {}, { username: { type: "string", maxLen: 100 } }, { partial: true });
-        return P2.loginOptions(ctx, { username: v.username });
-      });
-      r.post("/api/auth/passkeys/login", (ctx) => {
-        csrf(ctx);
-        const v = validate(ctx.body || {}, { credential });
-        const out2 = P2.loginFinish(ctx, { credential: v.credential });
-        if (out2.token) ctx.res.setHeader("Set-Cookie", auth3.cookieHeader(out2.token));
-        return { user: out2.user, mfaPending: false, mfaSetupRequired: false, mfaSetupDeadline: null };
-      });
-      r.get("/api/auth/passkeys", (ctx) => {
-        auth3.requireAuth(ctx);
-        const pol = auth3.policy();
-        const here = P2.availability(ctx);
-        return {
-          passkeys: P2.list(ctx.user.id),
-          max: P2.MAX_PER_USER,
-          signin: pol.passkeySignin,
-          signing: pol.passkeySigning,
-          strong_required: pol.signStrongRequired,
-          available: here.ok,
-          reason: here.ok ? null : here.reason,
-          totp: !!db3.one(`SELECT mfa_enabled FROM users WHERE id=?`, ctx.user.id).mfa_enabled
-        };
-      });
-      r.post("/api/auth/passkeys/register/options", async (ctx) => {
-        auth3.requireAuth(ctx);
-        const v = validate(ctx.body || {}, { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 } }, { partial: true });
-        return P2.registrationOptions(ctx, { password: v.password, code: v.code });
-      });
-      r.post("/api/auth/passkeys/register", (ctx) => {
-        auth3.requireAuth(ctx);
-        const v = validate(ctx.body || {}, { credential, name: { type: "string", maxLen: 60 } });
-        ctx.status = 201;
-        return { passkey: P2.registrationFinish(ctx, { credential: v.credential, name: v.name }) };
-      });
-      r.put("/api/auth/passkeys/:id", (ctx) => {
-        auth3.requireAuth(ctx);
-        const v = validate(ctx.body || {}, { name: { type: "string", required: true, maxLen: 60 } });
-        return { passkey: P2.rename(ctx, ctx.params.id, v.name) };
-      });
-      r.delete("/api/auth/passkeys/:id", async (ctx) => {
-        auth3.requireAuth(ctx);
-        const v = validate(ctx.body || {}, { password: { type: "string", maxLen: 500 }, confirm: { type: "boolean" } }, { partial: true });
-        const p = db3.one(`SELECT id FROM passkeys WHERE id=? AND user_id=?`, ctx.params.id, ctx.user.id);
-        if (!p) throw notFound("Passkey not found");
-        const u = db3.one(`SELECT password_hash FROM users WHERE id=?`, ctx.user.id);
-        if (auth3.hasLocalPassword(u.password_hash)) {
-          if (!v.password) throw badRequest("Enter your password to remove a passkey", { fields: { password: "required" } });
-          await auth3.confirmPassword(ctx, v.password, { action: "auth.passkey.remove.failed" });
-          auth3.clearFailures(ctx.user.id);
-        } else if (!v.confirm) throw badRequest("Confirm that you want to remove this passkey");
-        P2.remove(ctx.user.id, { id: p.id, actor: ctx.user, ip: ctx.ip, cause: "owner" });
-        return { ok: true };
-      });
-      r.post("/api/auth/passkeys/challenge", (ctx) => {
-        auth3.requireAuth(ctx);
-        const v = validate(ctx.body || {}, {
-          purpose: { type: "string", required: true, enum: P2.PURPOSES },
-          note_id: { type: "string", maxLen: 64 },
-          id: { type: "string", maxLen: 64 },
-          ids: { type: "array", maxLen: 500, of: "string" },
-          decision: { type: "string", enum: ["approved", "rejected"] },
-          status: { type: "string", enum: ["approved", "rejected", "reimbursed"] }
-        });
-        return P2.signingOptions(ctx, v.purpose, v);
-      });
-      r.get("/api/users/:id/passkeys", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
-        const u = db3.one(`SELECT id FROM users WHERE id=?`, ctx.params.id);
-        if (!u) throw notFound("User not found");
-        const passkeys = P2.list(u.id);
-        return { count: passkeys.length, passkeys };
-      });
-      r.delete("/api/users/:id/passkeys", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
-        const u = db3.one(`SELECT id FROM users WHERE id=?`, ctx.params.id);
-        if (!u) throw notFound("User not found");
-        const removed = P2.remove(u.id, { actor: ctx.user, ip: ctx.ip, cause: "administrator" });
-        audit3.log({ user: ctx.user, action: "user.passkeys.revoked", entity: "user", entityId: u.id, ip: ctx.ip, details: { count: removed } });
-        return { ok: true, removed };
-      });
-      r.delete("/api/users/:id/passkeys/:pid", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
-        const removed = P2.remove(ctx.params.id, { id: ctx.params.pid, actor: ctx.user, ip: ctx.ip, cause: "administrator" });
-        if (!removed) throw notFound("Passkey not found");
-        audit3.log({ user: ctx.user, action: "user.passkeys.revoked", entity: "user", entityId: ctx.params.id, ip: ctx.ip, details: { count: removed, passkey: ctx.params.pid } });
-        return { ok: true, removed };
-      });
-      r.get("/api/admin/signature-evidence", auth3.requireAuth, auth3.requirePerm("audit:read"), (ctx) => {
-        const type = ctx.query.get("record_type");
-        const id = ctx.query.get("record_id");
-        if (!type || !id) throw badRequest("record_type and record_id are required");
-        const rows = P2.evidenceFor(String(type).slice(0, 40), String(id).slice(0, 64));
-        audit3.log({ user: ctx.user, action: "signature_evidence.view", entity: type, entityId: id, ip: ctx.ip, details: { count: rows.length } });
-        return { rows };
-      });
+    module.exports = () => {
     };
   }
 });
@@ -46015,7 +45663,7 @@ Open My time, correct ${entries2.length === 1 ? "the entry" : "them"} and submit
         return { ok: true, submitted: res.changes };
       });
       const IDENTITY = { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, passkey: { type: "object" } };
-      const approver = (ctx, v, ids) => v.decision === "approved" ? auth3.verifyApprover(ctx, v, { action: "time.approve.failed", purpose: "approve time", bind: v.passkey ? require_passkeys2().bindingFor(ctx, "time.approve", { ids, decision: v.decision }) : null }) : null;
+      const approver = (ctx, v, ids) => v.decision === "approved" ? auth3.verifyApprover(ctx, v, { action: "time.approve.failed", purpose: "approve time", bind: v.passkey ? require_passkeys().bindingFor(ctx, "time.approve", { ids, decision: v.decision }) : null }) : null;
       r.post("/api/time/:id/approve", auth3.requireAuth, auth3.requirePerm("time:approve"), async (ctx) => {
         require_shared().assertRulingHere("Approving or returning time");
         const t = loadEntry(ctx, ctx.params.id);
@@ -47181,7 +46829,8 @@ var require_users2 = __commonJS({
         }
         if (v.is_active === 0) auth3.revokeAllForUser(u.id);
         if (v.is_active === 0 && u.is_active) require_referral_links().revokeForUser(u.id, ctx.user);
-        const passkeysRemoved = v.is_active === 0 && !require_config().local ? require_passkeys2().remove(u.id, { actor: ctx.user, ip: ctx.ip, cause: "deactivated" }) : 0;
+        const passkeyCause = v.is_active === 0 ? "deactivated" : ctx.body.reset_mfa ? "two-step verification reset" : v.password ? "password reset" : null;
+        const passkeysRemoved = passkeyCause && !require_config().local ? require_passkeys().remove(u.id, { actor: ctx.user, ip: ctx.ip, cause: passkeyCause }) : 0;
         let wiped2 = [];
         const wipeDevices = v.wipe_devices === void 0 ? true : !!v.wipe_devices;
         if ((v.is_active === 0 || v.password) && wipeDevices) wiped2 = devices.requestWipeForUser(u.id, { actor: ctx.user, ip: ctx.ip, reason: v.is_active === 0 ? "deactivated" : "password_reset" });
@@ -47349,7 +46998,7 @@ var init_ = __esm({
       "./routes/options.js": () => require_options2(),
       "./routes/overdose.js": () => require_overdose(),
       "./routes/part2.js": () => require_part2(),
-      "./routes/passkeys.js": () => require_passkeys(),
+      "./routes/passkeys.js": () => require_passkeys2(),
       "./routes/patient-requests.js": () => require_patient_requests2(),
       "./routes/prevention.js": () => require_prevention2(),
       "./routes/referral-links.js": () => require_referral_links2(),
@@ -47710,508 +47359,6 @@ var require_app2 = __commonJS({
   }
 });
 
-// server/passkeys.js
-var require_passkeys2 = __commonJS({
-  "server/passkeys.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var db3 = require_db();
-    var config2 = require_config();
-    var audit3 = require_audit();
-    var W = require_webauthn();
-    var { encrypt: encrypt3, decrypt: decrypt3, sha256: sha2562, uuid: uuid2 } = require_crypto();
-    var { HttpError: HttpError3, badRequest, forbidden, notFound } = require_http();
-    var CHALLENGE_MS = 2 * 6e4;
-    var MAX_PER_USER = 10;
-    var TIMEOUT_MS = 12e4;
-    var auth3 = () => require_auth2();
-    function hostParts(ctx) {
-      const raw = String(config2.trustProxy && ctx.headers["x-forwarded-host"] || ctx.headers.host || "").split(",")[0].trim();
-      let url;
-      try {
-        url = new URL(`http://${raw}`);
-      } catch {
-        return null;
-      }
-      return { host: url.host, hostname: url.hostname.replace(/^\[|\]$/g, "").toLowerCase() };
-    }
-    function secureRequest(ctx) {
-      if (config2.tls && config2.tls.cert) return true;
-      const proto = String(ctx.headers["x-forwarded-proto"] || "").split(",")[0].trim().toLowerCase();
-      return !!config2.trustProxy && proto === "https";
-    }
-    var LOOPBACK = ["localhost", "127.0.0.1", "::1"];
-    function relyingParty(ctx) {
-      if (config2.local) throw new HttpError3(404, "Fingerprint sign-in is not available on this device");
-      const hp = hostParts(ctx);
-      if (!hp || !hp.hostname) throw badRequest("The request did not say which address it was sent to");
-      const wc = config2.webauthn || { rpId: "", origins: [] };
-      const rpId = wc.rpId || hp.hostname;
-      if (hp.hostname !== rpId && !hp.hostname.endsWith("." + rpId)) throw new HttpError3(403, `Fingerprint sign-in is set up for ${rpId}; open SUDS at that address to use it.`, { passkeyUnavailable: "address" });
-      const secure = secureRequest(ctx);
-      const devLoopback = LOOPBACK.includes(hp.hostname) && !config2.isProd;
-      if (!wc.rpId && !devLoopback && (/^\d{1,3}(\.\d{1,3}){3}$/.test(hp.hostname) || hp.hostname.includes(":"))) throw new HttpError3(403, "Fingerprint sign-in needs SUDS to be opened by its name, not an IP address. Ask your administrator for the address (docs/SELF-HOSTING.md).", { passkeyUnavailable: "address" });
-      if (!secure && !devLoopback) throw new HttpError3(403, "Fingerprint sign-in needs HTTPS. Ask your administrator to turn on HTTPS for SUDS (docs/SELF-HOSTING.md).", { passkeyUnavailable: "https" });
-      const origins = wc.origins && wc.origins.length ? wc.origins : [`${secure ? "https" : "http"}://${hp.host}`];
-      return { rpId, origins, rpName: db3.getSetting("org_name", "SUDS") || "SUDS" };
-    }
-    function availability(ctx) {
-      try {
-        relyingParty(ctx);
-        return { ok: true };
-      } catch (e) {
-        return { ok: false, reason: e.message, code: e.extra && e.extra.passkeyUnavailable || "unavailable" };
-      }
-    }
-    function purge() {
-      db3.run(`DELETE FROM webauthn_challenges WHERE expires_at < ?`, new Date(Date.now() - 60 * 6e4).toISOString());
-    }
-    function issue({ purpose, userId = null, sessionId = null, statement = null }) {
-      purge();
-      const bytes3 = statement ? W.statementChallenge(statement) : crypto3.randomBytes(32);
-      const now2 = Date.now();
-      db3.run(
-        `INSERT INTO webauthn_challenges(id,purpose,user_id,session_id,statement,created_at,expires_at) VALUES(?,?,?,?,?,?,?)`,
-        sha2562(bytes3),
-        purpose,
-        userId,
-        sessionId,
-        statement ? JSON.stringify(statement) : null,
-        new Date(now2).toISOString(),
-        new Date(now2 + CHALLENGE_MS).toISOString()
-      );
-      return W.b64url(bytes3);
-    }
-    function challengeOf(credential) {
-      try {
-        const cd = JSON.parse(W.fromB64url(credential.response.clientDataJSON).toString("utf8"));
-        if (typeof cd.challenge === "string" && cd.challenge.length <= 100) return cd.challenge;
-      } catch {
-      }
-      throw new W.WebAuthnError("challenge", "The passkey response has no challenge");
-    }
-    function take(challenge, { purpose, userId = null, sessionId = null }) {
-      const id = sha2562(W.fromB64url(challenge));
-      const row = db3.one(`SELECT * FROM webauthn_challenges WHERE id=?`, id);
-      if (!row) throw new W.WebAuthnError("challenge", "This confirmation is not one SUDS asked for. Try again.");
-      const used = db3.run(`UPDATE webauthn_challenges SET used_at=? WHERE id=? AND used_at IS NULL`, db3.now(), id);
-      if (!used.changes) throw new W.WebAuthnError("challenge_used", "This confirmation has already been used. Try again.");
-      if (Date.parse(row.expires_at) < Date.now()) throw new W.WebAuthnError("challenge_expired", "The confirmation took too long (over two minutes). Try again.");
-      if (row.purpose !== purpose) throw new W.WebAuthnError("challenge_purpose", "This confirmation was asked for something else. Try again.");
-      if (row.user_id && row.user_id !== userId) throw new W.WebAuthnError("challenge_user", "This confirmation was asked for by another account.");
-      if (row.session_id && row.session_id !== sessionId) throw new W.WebAuthnError("challenge_session", "This confirmation was asked for in another session.");
-      const statement = row.statement ? JSON.parse(row.statement) : null;
-      if (statement && sha2562(W.statementChallenge(statement)) !== id) throw new W.WebAuthnError("challenge", "The stored statement does not match its challenge");
-      return { ...row, statement };
-    }
-    var present = (p) => ({
-      id: p.id,
-      name: p.name,
-      created_at: p.created_at,
-      last_used_at: p.last_used_at,
-      transports: p.transports ? JSON.parse(p.transports) : [],
-      aaguid: p.aaguid,
-      algorithm: W.ALG_NAMES[p.alg] || String(p.alg),
-      synced: !!p.backed_up,
-      flagged: !!p.flagged_at,
-      flagged_at: p.flagged_at || null,
-      flag_reason: p.flag_reason || null
-    });
-    function list(userId) {
-      return db3.all(`SELECT * FROM passkeys WHERE user_id=? ORDER BY created_at`, userId).map(present);
-    }
-    function findByCredential(credentialId) {
-      return typeof credentialId === "string" && credentialId.length <= 1400 ? db3.one(`SELECT * FROM passkeys WHERE credential_id=?`, credentialId) : null;
-    }
-    var descriptor = (p) => ({ type: "public-key", id: p.credential_id, ...p.transports ? { transports: JSON.parse(p.transports) } : {} });
-    var userHandle = (userId) => W.b64url(import_buffer.Buffer.from(String(userId), "utf8"));
-    var cleanName = (name) => String(name || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, 60);
-    function requirePolicy(which) {
-      const pol = auth3().policy();
-      if (which === "signin" && !pol.passkeySignin) throw new HttpError3(403, "Fingerprint sign-in is turned off for this programme.", { passkeyDisabled: true });
-      if (which === "signing" && !pol.passkeySigning) throw new HttpError3(403, "Confirming with a fingerprint is turned off for this programme. Use your password or authenticator code.", { passkeyDisabled: true });
-      if (which === "any" && !pol.passkeySignin && !pol.passkeySigning) throw new HttpError3(403, "Fingerprint sign-in and signing are turned off for this programme.", { passkeyDisabled: true });
-      return pol;
-    }
-    async function registrationOptions(ctx, { password, code }) {
-      requirePolicy("any");
-      const rp = relyingParty(ctx);
-      const A = auth3();
-      const u = db3.one(`SELECT id, username, display_name, password_hash, mfa_enabled, oidc_subject FROM users WHERE id=?`, ctx.user.id);
-      const action = "auth.passkey.enrol.failed";
-      if (!A.hasLocalPassword(u.password_hash) && u.oidc_subject) {
-        if (!A.takeSsoProof(ctx)) throw new HttpError3(403, "Confirm with single sign-on first, then add the passkey.", { reauthRequired: true, method: "sso" });
-      } else {
-        if (!password) throw badRequest("Enter your password to add a passkey", { fields: { password: "required" } });
-        await A.confirmPassword(ctx, password, { action });
-        if (u.mfa_enabled) {
-          if (!code || !String(code).trim()) throw badRequest("Enter the code from your authenticator app as well as your password", { fields: { code: "required" } });
-          A.confirmCode(ctx, code, { action });
-        }
-      }
-      A.clearFailures(u.id);
-      const existing = db3.all(`SELECT * FROM passkeys WHERE user_id=?`, u.id);
-      if (existing.length >= MAX_PER_USER) throw badRequest(`You already have ${MAX_PER_USER} passkeys, the most one account may have. Remove one you no longer use first.`);
-      const challenge = issue({ purpose: "register", userId: u.id, sessionId: ctx.session.id });
-      return { publicKey: {
-        challenge,
-        rp: { id: rp.rpId, name: rp.rpName },
-        user: { id: userHandle(u.id), name: u.username, displayName: u.display_name || u.username },
-        pubKeyCredParams: [{ type: "public-key", alg: W.ALGS.ES256 }, { type: "public-key", alg: W.ALGS.EdDSA }, { type: "public-key", alg: W.ALGS.RS256 }],
-        timeout: TIMEOUT_MS,
-        attestation: "none",
-        // The device's own authenticator (Touch ID, Windows Hello, an Android fingerprint), discoverable where it can be,
-        // and always with user verification: a passkey used without the fingerprint (or screen lock) is refused.
-        authenticatorSelection: { authenticatorAttachment: "platform", residentKey: "preferred", requireResidentKey: false, userVerification: "required" },
-        excludeCredentials: existing.map(descriptor)
-      } };
-    }
-    function registrationFinish(ctx, { credential, name }) {
-      requirePolicy("any");
-      const rp = relyingParty(ctx);
-      try {
-        if (!credential || typeof credential !== "object") throw new W.WebAuthnError("shape", "The passkey response is missing");
-        take(challengeOf(credential), { purpose: "register", userId: ctx.user.id, sessionId: ctx.session.id });
-        const reg = W.verifyRegistration(credential, { challenge: challengeOf(credential), rpId: rp.rpId, origins: rp.origins });
-        if (findByCredential(reg.credentialId)) throw new HttpError3(409, "This passkey is already registered.");
-        if (db3.one(`SELECT COUNT(*) n FROM passkeys WHERE user_id=?`, ctx.user.id).n >= MAX_PER_USER) throw badRequest(`You already have ${MAX_PER_USER} passkeys.`);
-        const id = uuid2();
-        const label = cleanName(name) || "Passkey";
-        db3.run(
-          `INSERT INTO passkeys(id,user_id,credential_id,public_key,alg,sign_count,transports,aaguid,backup_eligible,backed_up,rp_id,name) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-          id,
-          ctx.user.id,
-          reg.credentialId,
-          reg.publicKey,
-          reg.alg,
-          reg.signCount,
-          JSON.stringify(reg.transports),
-          reg.aaguid,
-          reg.backupEligible ? 1 : 0,
-          reg.backedUp ? 1 : 0,
-          rp.rpId,
-          label
-        );
-        audit3.log({ user: ctx.user, action: "auth.passkey.enrolled", entity: "passkey", entityId: id, ip: ctx.ip, details: { algorithm: W.ALG_NAMES[reg.alg], aaguid: reg.aaguid, synced: reg.backedUp, count: db3.one(`SELECT COUNT(*) n FROM passkeys WHERE user_id=?`, ctx.user.id).n } });
-        return present(db3.one(`SELECT * FROM passkeys WHERE id=?`, id));
-      } catch (e) {
-        if (!(e instanceof W.WebAuthnError)) throw e;
-        audit3.log({ user: ctx.user, action: "auth.passkey.enrol.failed", ip: ctx.ip, success: false, details: { reason: e.code } });
-        throw badRequest(`The passkey could not be added: ${e.message}`, { passkeyError: e.code });
-      }
-    }
-    function rename(ctx, id, name) {
-      const p = db3.one(`SELECT * FROM passkeys WHERE id=? AND user_id=?`, id, ctx.user.id);
-      if (!p) throw notFound("Passkey not found");
-      const label = cleanName(name);
-      if (!label) throw badRequest("Give the passkey a name", { fields: { name: "required" } });
-      db3.run(`UPDATE passkeys SET name=? WHERE id=?`, label, p.id);
-      audit3.log({ user: ctx.user, action: "auth.passkey.renamed", entity: "passkey", entityId: p.id, ip: ctx.ip });
-      return present(db3.one(`SELECT * FROM passkeys WHERE id=?`, p.id));
-    }
-    function remove(userId, { id = null, actor, ip, cause }) {
-      const rows = id ? db3.all(`SELECT id FROM passkeys WHERE id=? AND user_id=?`, id, userId) : db3.all(`SELECT id FROM passkeys WHERE user_id=?`, userId);
-      for (const r of rows) db3.run(`DELETE FROM passkeys WHERE id=?`, r.id);
-      if (rows.length) audit3.log({ user: actor, action: "auth.passkey.removed", entity: "user", entityId: userId, ip, details: { count: rows.length, passkeys: rows.map((r) => r.id), cause } });
-      return rows.length;
-    }
-    function checkAssertion(ctx, credential, pk, rp, challenge) {
-      if (pk.flagged_at) throw new W.WebAuthnError("flagged", "This passkey has been disabled because it may have been copied. Remove it under My profile and add it again.");
-      if (pk.rp_id !== rp.rpId) throw new W.WebAuthnError("rpid", `This passkey was made for ${pk.rp_id}.`);
-      if (credential.rawId !== void 0 && credential.rawId !== credential.id) throw new W.WebAuthnError("credential", "The credential ids do not match");
-      const uh = credential.response && credential.response.userHandle;
-      if (uh && uh !== userHandle(pk.user_id)) throw new W.WebAuthnError("user_handle", "The passkey belongs to another account");
-      const r = W.verifyAssertion(credential, { publicKey: pk.public_key, alg: pk.alg, signCount: pk.sign_count }, { challenge, rpId: rp.rpId, origins: rp.origins });
-      if (r.cloned) {
-        db3.run(`UPDATE passkeys SET flagged_at=?, flag_reason=? WHERE id=?`, db3.now(), `signature counter went from ${pk.sign_count} to ${r.signCount}`, pk.id);
-        audit3.log({ user: { id: pk.user_id }, action: "auth.passkey.clone_suspected", entity: "passkey", entityId: pk.id, ip: ctx.ip, success: false, details: { stored_count: pk.sign_count, presented_count: r.signCount } });
-        throw new W.WebAuthnError("counter", "This passkey's counter went backwards, which can mean it was copied. It has been disabled; tell your administrator.");
-      }
-      db3.run(`UPDATE passkeys SET sign_count=?, backed_up=?, last_used_at=? WHERE id=?`, r.signCount, r.backedUp ? 1 : 0, db3.now(), pk.id);
-      return r;
-    }
-    function loginOptions(ctx, { username } = {}) {
-      requirePolicy("signin");
-      const rp = relyingParty(ctx);
-      const app = require_app2();
-      if (!app.rateLimit(`passkey-options:${ctx.ip}`, 60, 6e4)) throw new HttpError3(429, "Too many attempts. Try again later.");
-      if (ctx.user && ctx.session && ctx.session.mfa_pending) {
-        const creds = db3.all(`SELECT * FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, ctx.user.id);
-        if (!creds.length) throw badRequest("Your account has no passkey. Enter the code from your authenticator app.");
-        return { purpose: "mfa", publicKey: { challenge: issue({ purpose: "mfa", userId: ctx.user.id, sessionId: ctx.session.id }), rpId: rp.rpId, timeout: TIMEOUT_MS, userVerification: "required", allowCredentials: creds.map(descriptor) } };
-      }
-      let allow = [];
-      const name = typeof username === "string" ? username.trim().slice(0, 100) : "";
-      if (name) {
-        const u = db3.one(`SELECT id, is_active FROM users WHERE username=?`, name);
-        const creds = u && u.is_active ? db3.all(`SELECT * FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, u.id) : [];
-        allow = creds.length ? creds.map(descriptor) : [{ type: "public-key", id: W.b64url(crypto3.createHmac("sha256", config2.indexKey).update(`suds-no-passkey:${name.toLowerCase()}`).digest()), transports: ["internal"] }];
-      }
-      return { purpose: "login", publicKey: { challenge: issue({ purpose: "login" }), rpId: rp.rpId, timeout: TIMEOUT_MS, userVerification: "required", allowCredentials: allow } };
-    }
-    function loginFinish(ctx, { credential }) {
-      requirePolicy("signin");
-      const rp = relyingParty(ctx);
-      const A = auth3();
-      const app = require_app2();
-      const limit2 = config2.loginRateLimit;
-      if (app.rateLimited(`login:${ctx.ip}`, limit2)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
-      if (ctx.headers["x-sync-client"]) throw badRequest("A device syncs with a username and password");
-      const second = !!(ctx.user && ctx.session && ctx.session.mfa_pending);
-      const failedAttempt = (who2, reason, message, status = 401) => {
-        app.rateLimit(`login:${ctx.ip}`, limit2, 15 * 6e4);
-        audit3.log({ user: who2, action: second ? "auth.mfa.failed" : "auth.login.failed", ip: ctx.ip, success: false, details: { method: "passkey", reason } });
-        throw new HttpError3(status, message, { passkeyError: reason });
-      };
-      if (!credential || typeof credential !== "object" || !credential.response) failedAttempt(ctx.user || null, "shape", "The passkey response is missing", 400);
-      let challenge;
-      try {
-        challenge = challengeOf(credential);
-        take(challenge, second ? { purpose: "mfa", userId: ctx.user.id, sessionId: ctx.session.id } : { purpose: "login" });
-      } catch (e) {
-        if (e instanceof W.WebAuthnError) failedAttempt(ctx.user || null, e.code, e.message);
-        throw e;
-      }
-      const pk = findByCredential(credential.id);
-      if (!pk) failedAttempt(ctx.user || null, "unknown passkey", "That passkey is not registered with SUDS here. Sign in with your password, then add it under My profile.");
-      const user = db3.one(`SELECT * FROM users WHERE id=?`, pk.user_id);
-      const who = { id: user.id, username: user.username };
-      if (second && user.id !== ctx.user.id) failedAttempt(who, "another account", "That passkey belongs to a different account.");
-      if (!user.is_active) failedAttempt(who, user.access_status === "active" ? "inactive" : `access ${user.access_status}`, "This account cannot sign in. Contact a SUDS administrator.", 403);
-      if (A.isLocked(user)) {
-        audit3.log({ user: who, action: "auth.login.locked", ip: ctx.ip, success: false, details: { method: "passkey" } });
-        throw new HttpError3(423, "Account locked. Try again later or contact an administrator.");
-      }
-      try {
-        checkAssertion(ctx, credential, pk, rp, challenge);
-      } catch (e) {
-        if (!(e instanceof W.WebAuthnError)) throw e;
-        const counts = !["flagged", "counter", "rpid"].includes(e.code);
-        const locked = counts ? A.recordPasswordFailure(user) : false;
-        failedAttempt(who, locked ? `${e.code}; locked after failures` : e.code, e.message, e.code === "counter" || e.code === "flagged" ? 403 : 401);
-      }
-      const pol = A.policy();
-      if (second) {
-        A.clearFailures(user.id);
-        db3.run(`UPDATE sessions SET mfa_pending=0, mfa_source='passkey', reauth_at=?, reauth_method='passkey' WHERE id=?`, db3.now(), ctx.session.id);
-        audit3.log({ user: who, action: "auth.login", ip: ctx.ip, details: { mfa: true, method: "passkey", passkey: pk.id } });
-        return { user: A.publicUser(user), mfaPending: false };
-      }
-      const emergency = pol.ssoRequired && pol.ssoEmergencyAccounts.includes(String(user.username).toLowerCase());
-      if (pol.ssoRequired && !emergency) {
-        audit3.log({ user: who, action: "auth.login.sso_required", ip: ctx.ip, success: false, details: { method: "passkey" } });
-        throw new HttpError3(403, "This organisation requires single sign-on. Use the county sign-in button instead.", { ssoRequired: true });
-      }
-      db3.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db3.now(), user.id);
-      const token2 = A.createSession(user, ctx, { mfaPending: false, mfaSource: "passkey", reauthMethod: "passkey" });
-      if (emergency) console.warn(`[suds] emergency (break-glass) passkey sign-in by ${user.username} while single sign-on is required`);
-      audit3.log({ user: who, action: "auth.login", ip: ctx.ip, details: { method: "passkey", passkey: pk.id, ...emergency ? { emergency_account: true } : {} } });
-      return { token: token2, user: A.publicUser(user), mfaPending: false, mfaSetupRequired: false, mfaSetupDeadline: null };
-    }
-    var noteHash = (n, userId) => sha2562(`${n.id}|${userId}|${n.content_enc}|${n.structured_enc || ""}`);
-    var cosignHash = (n, userId) => sha2562(`${n.id}|${userId}|cosign|${n.content_enc}|${n.structured_enc || ""}`);
-    var listHash = (rows) => sha2562(W.canonical(rows));
-    function loadNote(ctx, id) {
-      const n = typeof id === "string" ? db3.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id) : null;
-      if (!n) throw notFound("Note not found");
-      auth3().assertClientAccess(ctx, n.client_id);
-      return n;
-    }
-    var idList = (ids, max2) => {
-      if (!Array.isArray(ids) || !ids.length || ids.length > max2 || ids.some((x) => typeof x !== "string" || x.length > 64)) throw badRequest(`ids must list 1 to ${max2} records`);
-      return [...new Set(ids)].sort();
-    };
-    var BINDINGS = {
-      "note.sign": (ctx, p) => {
-        const n = loadNote(ctx, p.note_id);
-        if (n.author_id !== ctx.user.id) throw forbidden("Only the author can sign a note");
-        return { record_type: "note", record_ids: [n.id], content: noteHash(n, ctx.user.id) };
-      },
-      "note.cosign": (ctx, p) => {
-        const n = loadNote(ctx, p.note_id);
-        if (!auth3().hasPerm(ctx.user, "notes:cosign")) throw forbidden();
-        return { record_type: "note", record_ids: [n.id], content: cosignHash(n, ctx.user.id) };
-      },
-      "note.cosign-batch": (ctx, p) => {
-        if (!auth3().hasPerm(ctx.user, "notes:cosign")) throw forbidden();
-        const ids = idList(p.ids, 100);
-        return { record_type: "note", record_ids: ids, content: listHash(ids.map((id) => {
-          const n = db3.one(`SELECT * FROM notes WHERE id=? AND deleted_at IS NULL`, id);
-          return [id, n && auth3().canAccessClient(ctx.user, n.client_id) ? cosignHash(n, ctx.user.id) : null];
-        })) };
-      },
-      "time.approve": (ctx, p) => {
-        if (!auth3().hasPerm(ctx.user, "time:approve")) throw forbidden();
-        const ids = idList(p.ids, 500);
-        const decision = p.decision === "rejected" ? "rejected" : "approved";
-        return { record_type: "time_entry", record_ids: ids, content: listHash({ decision, entries: ids.map((id) => {
-          const t = db3.one(`SELECT id,user_id,work_date,minutes,category,funding_source_id,client_id,status,updated_at FROM time_entries WHERE id=?`, id);
-          return t ? [t.id, t.user_id, t.work_date, t.minutes, t.category, t.funding_source_id, t.client_id, t.status, t.updated_at] : [id, null];
-        }) }) };
-      },
-      "expenditure.approve": (ctx, p) => {
-        if (!auth3().hasPerm(ctx.user, "budget:approve")) throw forbidden();
-        const e = typeof p.id === "string" ? db3.one(`SELECT id,user_id,funding_source_id,budget_line_id,amount,spent_at,status,updated_at FROM expenditures WHERE id=?`, p.id) : null;
-        if (!e) throw notFound();
-        const status = ["approved", "rejected", "reimbursed"].includes(p.status) ? p.status : "approved";
-        return { record_type: "expenditure", record_ids: [e.id], content: listHash({ status, expenditure: [e.id, e.user_id, e.funding_source_id, e.budget_line_id, e.amount, e.spent_at, e.status, e.updated_at] }) };
-      },
-      "keys.download": (ctx) => {
-        if (!auth3().hasPerm(ctx.user, "settings:manage")) throw forbidden();
-        return { record_type: "keys", record_ids: ["keys-backup"], content: sha2562("suds-keys-backup") };
-      }
-    };
-    var PURPOSES = Object.keys(BINDINGS);
-    function bindingFor(ctx, purpose, params = {}) {
-      const f = BINDINGS[purpose];
-      if (!f) throw badRequest(`purpose must be one of ${PURPOSES.join(", ")}`);
-      return { purpose, ...f(ctx, params || {}) };
-    }
-    function signingOptions(ctx, purpose, params) {
-      requirePolicy("signing");
-      const rp = relyingParty(ctx);
-      const b = bindingFor(ctx, purpose, params);
-      const creds = db3.all(`SELECT * FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, ctx.user.id);
-      if (!creds.length) throw badRequest("You have no passkey yet. Add one under My profile \u2192 Fingerprint sign-in.");
-      const statement = {
-        v: 1,
-        purpose: b.purpose,
-        record_type: b.record_type,
-        record_ids: b.record_ids,
-        content: b.content,
-        user_id: ctx.user.id,
-        rp_id: rp.rpId,
-        issued_at: (/* @__PURE__ */ new Date()).toISOString(),
-        nonce: crypto3.randomBytes(16).toString("hex")
-      };
-      const challenge = issue({ purpose: `sign:${b.purpose}`, userId: ctx.user.id, sessionId: ctx.session.id, statement });
-      return { statement_hash: W.fromB64url(challenge).toString("hex"), publicKey: { challenge, rpId: rp.rpId, timeout: TIMEOUT_MS, userVerification: "required", allowCredentials: creds.map(descriptor) } };
-    }
-    function confirm(ctx, credential, bind, { action }) {
-      requirePolicy("signing");
-      const rp = relyingParty(ctx);
-      const A = auth3();
-      const refuse = (reason, message, { counts = true } = {}) => {
-        const u = db3.one(`SELECT id, failed_attempts FROM users WHERE id=?`, ctx.user.id);
-        const locked = counts ? A.recordPasswordFailure(u) : false;
-        A.clearReauth(ctx);
-        audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { method: "passkey", reason, ...locked ? { locked: true } : {} } });
-        if (locked) throw new HttpError3(423, `${message} The account is now locked after too many failed attempts.`);
-        throw new HttpError3(403, message, { passkeyError: reason });
-      };
-      let row, challenge;
-      try {
-        if (!credential || typeof credential !== "object" || !credential.response) throw new W.WebAuthnError("shape", "The passkey response is missing");
-        challenge = challengeOf(credential);
-        row = take(challenge, { purpose: `sign:${bind.purpose}`, userId: ctx.user.id, sessionId: ctx.session && ctx.session.id });
-      } catch (e) {
-        if (e instanceof W.WebAuthnError) refuse(e.code, e.message, { counts: false });
-        throw e;
-      }
-      const st = row.statement || {};
-      if (st.record_type !== bind.record_type || W.canonical(st.record_ids) !== W.canonical(bind.record_ids)) refuse("another record", "That fingerprint confirmation was for a different record. Confirm again for this one.", { counts: false });
-      if (st.content !== bind.content) refuse("record changed", "The record changed after you confirmed. Check it and confirm again.", { counts: false });
-      if (st.user_id !== ctx.user.id || st.rp_id !== rp.rpId) refuse("statement", "That fingerprint confirmation is not valid here.", { counts: false });
-      const pk = findByCredential(credential.id);
-      if (!pk || pk.user_id !== ctx.user.id) refuse("unknown passkey", "That passkey is not one of yours on SUDS.", { counts: false });
-      let r;
-      try {
-        r = checkAssertion(ctx, credential, pk, rp, challenge);
-      } catch (e) {
-        if (e instanceof W.WebAuthnError) refuse(e.code, e.message, { counts: !["flagged", "counter", "rpid"].includes(e.code) });
-        throw e;
-      }
-      A.clearFailures(ctx.user.id);
-      const statementHash = W.statementChallenge(st).toString("hex");
-      const evidence = {
-        v: 1,
-        statement: st,
-        statement_hash: statementHash,
-        rp_id: rp.rpId,
-        origin: r.clientData.origin,
-        credential_id: pk.credential_id,
-        passkey_id: pk.id,
-        passkey_name: pk.name,
-        public_key: pk.public_key,
-        alg: pk.alg,
-        authenticator_data: W.b64url(r.authData),
-        client_data_json: W.b64url(r.clientDataJSON),
-        client_data_hash: crypto3.createHash("sha256").update(r.clientDataJSON).digest("hex"),
-        signature: W.b64url(r.signature),
-        flags: r.flags,
-        sign_count: r.signCount,
-        user_verified: r.uv,
-        user_present: r.up,
-        verified_at: db3.now()
-      };
-      const id = uuid2();
-      db3.run(
-        `INSERT INTO signature_evidence(id,user_id,passkey_id,purpose,record_type,record_ids,statement_hash,evidence_enc) VALUES(?,?,?,?,?,?,?,?)`,
-        id,
-        ctx.user.id,
-        pk.id,
-        bind.purpose,
-        bind.record_type,
-        JSON.stringify(bind.record_ids),
-        statementHash,
-        encrypt3(JSON.stringify(evidence))
-      );
-      return id;
-    }
-    function evidenceFor(recordType, recordId, { purpose = null } = {}) {
-      const rows = db3.all(
-        `SELECT * FROM signature_evidence WHERE record_type=? AND EXISTS (SELECT 1 FROM json_each(signature_evidence.record_ids) WHERE value=?) ${purpose ? "AND purpose=?" : ""} ORDER BY created_at`,
-        recordType,
-        recordId,
-        ...purpose ? [purpose] : []
-      );
-      return rows.map((r) => {
-        let ev = null;
-        try {
-          ev = JSON.parse(decrypt3(r.evidence_enc));
-        } catch {
-          ev = null;
-        }
-        const check = ev ? W.verifyEvidence(ev) : { ok: false, reason: "unreadable" };
-        return { id: r.id, purpose: r.purpose, user_id: r.user_id, created_at: r.created_at, statement_hash: r.statement_hash, evidence: ev, verified: check.ok, checks: check.checks, reason: check.reason };
-      });
-    }
-    function adoption() {
-      const active = db3.one(`SELECT COUNT(*) n FROM users WHERE is_active=1`).n;
-      const withKey = db3.one(`SELECT COUNT(DISTINCT p.user_id) n FROM passkeys p JOIN users u ON u.id=p.user_id WHERE u.is_active=1 AND p.flagged_at IS NULL`).n;
-      const total = db3.one(`SELECT COUNT(*) n FROM passkeys`).n;
-      const flagged = db3.one(`SELECT COUNT(*) n FROM passkeys WHERE flagged_at IS NOT NULL`).n;
-      const since = new Date(Date.now() - 30 * 864e5).toISOString();
-      const signIns = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE action='auth.login' AND at >= ? AND details LIKE '%"method":"passkey"%'`, since).n;
-      const signatures = db3.one(`SELECT COUNT(*) n FROM signature_evidence WHERE created_at >= ?`, since).n;
-      return { active, with_passkey: withKey, total, flagged, sign_ins_30d: signIns, confirmations_30d: signatures };
-    }
-    module.exports = {
-      CHALLENGE_MS,
-      MAX_PER_USER,
-      PURPOSES,
-      relyingParty,
-      availability,
-      issue,
-      take,
-      list,
-      remove,
-      rename,
-      registrationOptions,
-      registrationFinish,
-      loginOptions,
-      loginFinish,
-      bindingFor,
-      signingOptions,
-      confirm,
-      evidenceFor,
-      adoption,
-      userHandle
-    };
-  }
-});
-
 // server/auth.js
 var require_auth2 = __commonJS({
   "server/auth.js"(exports, module) {
@@ -48554,12 +47701,12 @@ var require_auth2 = __commonJS({
       return { sql: `${col} IN (SELECT client_id FROM assignments WHERE user_id=? AND ${activeAssignment()})`, params: [user.id] };
     }
     var COOKIE = "suds_session";
-    function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauthMethod = "password" } = {}) {
+    function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauthMethod = "password", passkeyId = null } = {}) {
       const token2 = randomToken(32);
       const now2 = /* @__PURE__ */ new Date();
       const expires = new Date(now2.getTime() + policy().absoluteHours * 3600 * 1e3);
       db3.run(
-        `INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method,passkey_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
         sha2562(token2),
         user.id,
         now2.toISOString(),
@@ -48570,7 +47717,8 @@ var require_auth2 = __commonJS({
         (ctx.headers["user-agent"] || "").slice(0, 200),
         mfaSource,
         now2.toISOString(),
-        reauthMethod
+        reauthMethod,
+        passkeyId
       );
       return token2;
     }
@@ -48643,17 +47791,13 @@ var require_auth2 = __commonJS({
       };
       if (passkey) {
         if (!bind) throw badRequest("A fingerprint confirmation is not accepted here");
-        ctx.signatureEvidence = require_passkeys2().confirm(ctx, passkey, bind, { action });
+        if (password || code) throw badRequest("Confirm with your fingerprint, or with your password or code, not both at once");
+        ctx.signatureEvidence = require_passkeys().confirm(ctx, passkey, bind, { action });
         markReauth(ctx, "passkey");
         return "passkey";
       }
       const strongHow = (st2) => st2.passkey && st2.totp ? "Confirm with your fingerprint or enter the code from your authenticator app" : st2.passkey ? "Confirm with your fingerprint" : st2.totp ? "Enter the code from your authenticator app" : "Set up fingerprint sign-in or two-step verification under My profile, then try again";
-      if (pol.signStrongRequired && password && !code) {
-        const st2 = reauthStatus(ctx);
-        audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: "password alone not accepted" } });
-        throw new HttpError3(403, `Your programme requires your fingerprint or an authenticator code to ${purpose}; your password alone is not enough. ${strongHow(st2)}.`, { reauthRequired: true, strongRequired: true, method: st2.method, passkey: st2.passkey, totp: st2.totp });
-      }
-      if (password) {
+      const checkPassword = async () => {
         const limit2 = config2.loginRateLimit;
         const app = require_app2();
         if (app.rateLimited(`login:${ctx.ip}`, limit2)) throw new HttpError3(429, "Too many attempts. Try again later.");
@@ -48662,12 +47806,13 @@ var require_auth2 = __commonJS({
           const locked = recordPasswordFailure(u);
           failed(locked ? { reason: "locked after failures" } : void 0, locked ? "Password verification failed. The account is now locked after too many failed attempts." : "Password verification failed");
         }
-        clearFailures(u.id);
-        markReauth(ctx, "password");
-        return "password";
-      }
+      };
       if (code) {
-        if (!u.mfa_enabled || !u.mfa_secret_enc) throw badRequest("Two-step verification is not set up for your account; give your password instead");
+        if (!u.mfa_enabled || !u.mfa_secret_enc) {
+          audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { method: "totp", reason: "no authenticator set up" } });
+          throw badRequest(pol.signStrongRequired ? `Two-step verification is not set up for your account, and your programme requires your fingerprint or an authenticator code to ${purpose}. ${strongHow(reauthStatus(ctx))}.` : "Two-step verification is not set up for your account; give your password instead");
+        }
+        if (password) await checkPassword();
         if (!require_app2().rateLimit(`mfa:${ctx.user.id}`, 10, 10 * 6e4)) throw new HttpError3(429, "Too many attempts");
         const r = useTotp(u.id, u.mfa_secret_enc, code);
         if (r !== "ok") {
@@ -48678,6 +47823,17 @@ var require_auth2 = __commonJS({
         clearFailures(u.id);
         markReauth(ctx, "totp");
         return "totp";
+      }
+      if (password) {
+        if (pol.signStrongRequired) {
+          const st2 = reauthStatus(ctx);
+          audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: "password alone not accepted" } });
+          throw new HttpError3(403, `Your programme requires your fingerprint or an authenticator code to ${purpose}; your password alone is not enough. ${strongHow(st2)}.`, { reauthRequired: true, strongRequired: true, method: st2.method, passkey: st2.passkey, totp: st2.totp });
+        }
+        await checkPassword();
+        clearFailures(u.id);
+        markReauth(ctx, "password");
+        return "password";
       }
       const st = reauthStatus(ctx);
       if (fresh) {
@@ -48944,8 +48100,10 @@ var require_auth2 = __commonJS({
         mfa_required: policy().mfaRequiredRoles.includes(u.role),
         mfa_setup_deadline: mfaDeadline(u),
         caseload_restricted: caseloadRestricted(u),
-        // How many passkeys (fingerprint sign-in, docs/FINGERPRINT.md) the account has; 0 on a device.
-        passkeys: passkeyCount(u.id)
+        // How many passkeys (fingerprint sign-in, docs/FINGERPRINT.md) the account has; 0 on a device. passkey_mfa: whether
+        // they count as its two-step verification, which they do only while fingerprint sign-in is allowed (mfaDeadline).
+        passkeys: passkeyCount(u.id),
+        passkey_mfa: policy().passkeySignin && passkeyCount(u.id) > 0
       };
     }
     function passwordPolicy(pw) {
@@ -50268,13 +49426,7 @@ var require_db = __commonJS({
         addColumn(d, "caloms_submissions", "uploaded_at", "TEXT");
         addColumn(d, "caloms_submissions", "uploaded_by", "TEXT REFERENCES users(id)");
         addColumn(d, "caloms_submissions", "dhcs_reference", "TEXT");
-        const schemaText = safeSchema();
-        for (const t of ["caloms_submission_events", "referral_links"]) {
-          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-          if (!m) throw new Error(`migration 55: no definition for ${t} in schema`);
-          d.exec(m[0]);
-          for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
-        }
+        createTablesFromSchema(d, safeSchema(), ["caloms_submission_events", "referral_links"], 55);
       },
       // 56: the county view (docs/COUNTY-VIEW.md): county_signing_keys (the keys a programme signs its county
       //     submission files with, current and retired), and on a county's server county_programmes (the programmes
@@ -50282,13 +49434,7 @@ var require_db = __commonJS({
       //     county_submissions (the files it imported). Office server only. Self-contained and idempotent, so it can be
       //     renumbered.
       (d) => {
-        const schemaText = safeSchema();
-        for (const t of ["county_signing_keys", "county_programmes", "county_programme_keys", "county_submissions"]) {
-          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-          if (!m) throw new Error(`migration 56: no definition for ${t} in schema`);
-          d.exec(m[0]);
-          for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
-        }
+        createTablesFromSchema(d, safeSchema(), ["county_signing_keys", "county_programmes", "county_programme_keys", "county_submissions"], 56);
       },
       // 57: the county connection (docs/COUNTY-VIEW.md, "Connecting"): county_connect_tokens (on a county's server, the
       //     connection and read tokens it issues, hashed), county_connection and county_connect_sends (on a programme's
@@ -50296,28 +49442,18 @@ var require_db = __commonJS({
       //     Kept apart from 56 (the county view) so the two can be reviewed and renumbered separately; self-contained
       //     and idempotent.
       (d) => {
-        const schemaText = safeSchema();
-        for (const t of ["county_connect_tokens", "county_connection", "county_connect_sends"]) {
-          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-          if (!m) throw new Error(`migration 57: no definition for ${t} in schema`);
-          d.exec(m[0]);
-          for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
-        }
+        createTablesFromSchema(d, safeSchema(), ["county_connect_tokens", "county_connection", "county_connect_sends"], 57);
       },
       // 58: fingerprint sign-in and signing with passkeys (1.19.0, docs/FINGERPRINT.md): passkeys (each credential's
       //     public key, id, counter and its owner's name for it; never a fingerprint), webauthn_challenges (hashed,
       //     single-use, two minutes) and signature_evidence (a passkey-confirmed signature's statement and assertion,
-      //     encrypted), all office-server only; and sessions.reauth_method, how the session last proved who is using it.
+      //     encrypted), all office-server only; and sessions.reauth_method, how the session last proved who is using it,
+      //     and sessions.passkey_id, the passkey that signed it in (removing the passkey ends the session).
       //     New tables and a new column: nothing to backfill. Self-contained and idempotent, so it can be renumbered.
       (d) => {
         addColumn(d, "sessions", "reauth_method", "TEXT");
-        const schemaText = safeSchema();
-        for (const t of ["passkeys", "webauthn_challenges", "signature_evidence"]) {
-          const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
-          if (!m) throw new Error(`migration 58: no definition for ${t} in schema`);
-          d.exec(m[0]);
-          for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
-        }
+        addColumn(d, "sessions", "passkey_id", "TEXT");
+        createTablesFromSchema(d, safeSchema(), ["passkeys", "webauthn_challenges", "signature_evidence"], 58);
       }
     ];
     var PERF_INDEXES_47 = [
@@ -50335,6 +49471,14 @@ var require_db = __commonJS({
       "idx_supply_ledger_item_created",
       "idx_suprt_assessments_sync"
     ];
+    function createTablesFromSchema(d, schemaText, tables, n) {
+      for (const t of tables) {
+        const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
+        if (!m) throw new Error(`migration ${n}: no definition for ${t} in schema`);
+        d.exec(m[0]);
+        for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
+      }
+    }
     function createIndexesFromSchema(d, schemaText, names) {
       for (const name of names) {
         const line = schemaText.split("\n").map((l) => l.trim()).find((l) => l.startsWith(`CREATE INDEX IF NOT EXISTS ${name} ON `));
