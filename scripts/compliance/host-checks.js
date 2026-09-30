@@ -27,6 +27,7 @@ function realRun(cmd, args = [], { timeoutMs = 15000 } = {}) {
 const at = (ctx, p) => path.join(ctx.root || '/', p);
 function readText(ctx, p) { try { return fs.readFileSync(at(ctx, p), 'utf8'); } catch { return null; } }
 function statOf(ctx, p) { try { return { st: fs.statSync(at(ctx, p)) }; } catch (e) { return { err: e.code || String(e.message) }; } }
+function lstatOf(ctx, p) { try { return { st: fs.lstatSync(at(ctx, p)) }; } catch (e) { return { err: e.code || String(e.message) }; } }
 function listDir(ctx, p) { try { return fs.readdirSync(at(ctx, p)); } catch { return null; } }
 const octal = (m) => '0' + (m & 0o777).toString(8).padStart(3, '0');
 const ok = (id, evidence) => ({ id, result: 'pass', evidence });
@@ -86,9 +87,10 @@ function checkDataDir(ctx) {
   if (svcUid === undefined) problems.push(`no ${c.serviceUser} user in /etc/passwd`);
   let dbSeen = false;
   for (const f of ['suds.db', 'suds.db-wal', 'suds.db-shm', 'keys.json', 'server.json']) {
-    const s = statOf(ctx, path.join(c.dataDir, f));
+    const s = lstatOf(ctx, path.join(c.dataDir, f));
     if (s.err === 'ENOENT') continue;
     if (s.err) { problems.push(`${f}: ${s.err}`); continue; }
+    if (!s.st.isFile()) { problems.push(`${f} is not a regular file (${s.st.isSymbolicLink() ? 'a symbolic link' : 'type ' + (s.st.mode & 0o170000).toString(8)})`); continue; }
     if (f === 'suds.db') dbSeen = true;
     const m = s.st.mode & 0o777;
     seen.push(`${f} ${octal(m)}`);
@@ -120,6 +122,8 @@ function checkDiskEncryption(ctx) {
   if (!cs.missing && cs.code === 0) {
     const kv = Object.fromEntries(cs.stdout.split('\n').map((l) => /^\s*([a-z ]+):\s*(.+)$/.exec(l)).filter(Boolean).map((m) => [m[1].trim(), m[2].trim()]));
     detail = `; cryptsetup: type ${kv.type || '?'}, cipher ${kv.cipher || '?'}, key ${kv.keysize || '?'}`;
+    // cipher_null is dm-crypt with no encryption at all (LUKS allows it): a crypt layer that protects nothing.
+    if (/(^|[^a-z])(cipher_null|null)([^a-z]|$)/i.test(kv.cipher || '')) return accepted(`${c.dataDir} is on dm-crypt ${crypt.name} with cipher ${kv.cipher}: no encryption at all${detail}`);
     if (kv.type && !/^LUKS/.test(kv.type)) return warn(id, `${c.dataDir} is on dm-crypt ${crypt.name} of type ${kv.type} (not LUKS: no key slots or header to manage)${detail}`);
   } else detail = cs.missing ? '; cryptsetup not installed' : '; cryptsetup status needs root (device type from lsblk)';
   return ok(id, `${c.dataDir} on ${source} (${fstype}); chain ${path_}${detail}`);
@@ -520,10 +524,21 @@ function checkJournald(ctx) {
   const storage = eff.Storage || 'auto';
   const persistent = storage === 'persistent' || (storage === 'auto' && statOf(ctx, '/var/log/journal').st);
   const ret = timespanDays(eff.MaxRetentionSec);
-  const ev = `Storage=${storage}; MaxRetentionSec=${eff.MaxRetentionSec || '(unset)'}; SystemMaxUse=${eff.SystemMaxUse || '(default)'}`;
+  // The oldest entry actually in the journal: the evidence of how far back the logs really go (a size cap,
+  // SystemMaxUse, can delete entries long before MaxRetentionSec would). Only its timestamp is read.
+  const first = ctx.run('sh', ['-c', 'journalctl -q --no-pager -o short-unix 2>/dev/null | head -n 1']);
+  const m = !first.missing && first.code === 0 ? /^\s*(\d{9,})(?:\.\d+)?\s/.exec(first.stdout || '') : null;
+  const oldest = m ? Number(m[1]) * 1000 : null;
+  const oldestDays = oldest !== null ? (ctx.now - oldest) / DAY : null;
+  const installed = Date.parse(c.installedAt || '');
+  const installedDays = Number.isFinite(installed) ? (ctx.now - installed) / DAY : null;
+  const ev = `Storage=${storage}; MaxRetentionSec=${eff.MaxRetentionSec || '(unset)'}; SystemMaxUse=${eff.SystemMaxUse || '(default)'}; ${oldest !== null ? `oldest entry ${new Date(oldest).toISOString().slice(0, 10)} (${Math.floor(oldestDays)} days ago)` : 'oldest entry could not be read'}`;
   if (!persistent) return fail(id, `the journal is not persistent (${ev}): logs are lost at reboot`);
   if (ret === null) return warn(id, `persistent, but no time-based retention: the size cap decides how long logs stay (${ev}); policy ${c.logRetentionDays} days`);
   if (ret < c.logRetentionDays) return fail(id, `logs kept ${Math.floor(ret)} days, under the ${c.logRetentionDays}-day policy (${ev})`);
+  if (oldestDays !== null && installedDays !== null && installedDays > c.logRetentionDays && oldestDays < c.logRetentionDays - 1) {
+    return warn(id, `the journal reaches back only ${Math.floor(oldestDays)} days although this server was installed ${Math.floor(installedDays)} days ago: entries are being removed before the ${c.logRetentionDays}-day target (raise SystemMaxUse, install.sh --journal-max-use, or forward the journal to the SIEM) (${ev})`);
+  }
   return ok(id, `${ev}; policy ${c.logRetentionDays} days`);
 }
 function checkAuditd(ctx) {
@@ -567,12 +582,23 @@ function checkSudsVersion(ctx) {
   return fail(id, `${ev}: no longer supported (docs/RELEASE.md, "Supported versions")`);
 }
 
+/** How the installed release's zip was checked (install.sh / upgrade.sh record it in suds-server.conf). */
+function checkReleaseIntegrity(ctx) {
+  const c = ctx.conf; const id = 'host.release_integrity';
+  const src = c.releaseChecksumSource;
+  if (!src) return nc(id, 'no SUDS_RELEASE_CHECKSUM_SOURCE in suds-server.conf (not installed or upgraded by deploy/linux/install.sh or upgrade.sh of this version)');
+  if (src === 'operator') return ok(id, 'the release zip was checked against a SHA-256 the operator supplied (--release-sha256), from a channel independent of the download');
+  if (src === 'local-tree') return ok(id, 'installed from the unpacked release the installer ran from; the operator checked its zip before unpacking it (docs/SELF-HOSTING.md, Install)');
+  if (src === 'same-release') return warn(id, 'the release zip was checked only against the .sha256 file published beside it in the same GitHub release (--trust-release-checksum): whoever can replace the zip can replace that file too');
+  return warn(id, `unrecognised SUDS_RELEASE_CHECKSUM_SOURCE=${String(src).slice(0, 40)}`);
+}
+
 /** Every host check, in catalogue order. */
 async function run(ctx) {
   const out = [];
   const steps = [['host.os', checkOs], ['host.data_dir', checkDataDir], ['host.disk_encryption', checkDiskEncryption], ['host.keys', checkKeys], ['host.service', checkService],
     ['host.tls', checkTls], ['host.http_redirect', checkHttpRedirect], ['host.bind', checkBind], ['host.firewall', checkFirewall], ['host.time_sync', checkTimeSync],
-    ['host.security_updates', checkSecurityUpdates], ['host.journald', checkJournald], ['host.auditd', checkAuditd], ['host.node', checkNode], ['host.suds_version', checkSudsVersion]];
+    ['host.security_updates', checkSecurityUpdates], ['host.journald', checkJournald], ['host.auditd', checkAuditd], ['host.node', checkNode], ['host.suds_version', checkSudsVersion], ['host.release_integrity', checkReleaseIntegrity]];
   for (const [id, f] of steps) {
     try { out.push(await f(ctx)); }
     catch (e) { out.push(nc(id, `the check itself failed: ${e.message}`)); }
@@ -581,4 +607,4 @@ async function run(ctx) {
 }
 
 module.exports = { run, realRun, osInfo, parseKv, parseUfw, parseFirewalld, parseIni, timespanDays, listeners, hexToIp, supportOf, nodePin,
-  checkOs, checkDataDir, checkDiskEncryption, checkKeys, checkService, checkTls, checkHttpRedirect, checkBind, checkFirewall, checkTimeSync, checkSecurityUpdates, checkJournald, checkAuditd, checkNode, checkSudsVersion };
+  checkOs, checkDataDir, checkDiskEncryption, checkKeys, checkService, checkTls, checkHttpRedirect, checkBind, checkFirewall, checkTimeSync, checkSecurityUpdates, checkJournald, checkAuditd, checkNode, checkSudsVersion, checkReleaseIntegrity };

@@ -280,6 +280,13 @@ const config = {
   // table is detectable. Unset, anchors go to <data>/audit-anchors, which catches a rewrite of the
   // database alone but not of the whole data directory; the Security status page says which it is.
   auditAnchorDir: process.env.AUDIT_ANCHOR_DIR ? path.resolve(process.env.AUDIT_ANCHOR_DIR) : path.join(dataDir, 'audit-anchors'),
+  // Where the host compliance check (scripts/compliance-check.js) leaves its signed reports, and the public key
+  // they are verified with. SUDS Server (deploy/linux/install.sh) puts them outside the data directory, in
+  // /var/lib/suds-compliance (root-owned, readable by the suds group), signed with a key only root holds
+  // (/etc/suds/compliance-signing-key): the service being audited cannot write or sign its own report.
+  // Unset: <data>/compliance, verified with this server's own evidence signing key.
+  complianceDir: process.env.SUDS_COMPLIANCE_DIR ? path.resolve(process.env.SUDS_COMPLIANCE_DIR) : path.join(dataDir, 'compliance'),
+  compliancePublicKeyFile: process.env.SUDS_COMPLIANCE_PUBLIC_KEY_FILE ? path.resolve(process.env.SUDS_COMPLIANCE_PUBLIC_KEY_FILE) : '',
   auditAnchorDirConfigured: !!process.env.AUDIT_ANCHOR_DIR,
   // Hourly by default (it was 6): the newest entries after the last anchor are what someone holding the database
   // and the index key could delete undetected. An anchor costs ~0.1 s and ~500 bytes even with a year of them.

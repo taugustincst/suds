@@ -154,6 +154,8 @@ test('the compliance check reads a real database read-only: app lines, the chain
   const hash = (f) => (fs.existsSync(f) ? crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex') : null);
   const walBytes = () => (fs.existsSync(path.join(data, 'suds.db-wal')) ? fs.statSync(path.join(data, 'suds.db-wal')).size : 0);
   const before = [hash(path.join(data, 'suds.db')), walBytes()];
+  const journals = () => ['suds.db-wal', 'suds.db-shm'].filter((f) => fs.existsSync(path.join(data, f)));
+  const journalsBefore = journals();
   const run = () => spawnSync(process.execPath, ['--no-warnings=ExperimentalWarning', path.join(REPO, 'scripts/compliance-check.js'), '--no-host', '--no-write', '--json'], { env, encoding: 'utf8', timeout: 60000 });
   let r = run();
   assert.equal(r.status, 1, 'backups are off in this database, so the run fails');
@@ -166,8 +168,9 @@ test('the compliance check reads a real database read-only: app lines, the chain
   assert.equal(by['host.dr_evidence'].result, 'fail');
   assert.equal(by['app.local_mode'].result, 'pass');
   assert.ok(by['app.mfa_required'].rules.some((x) => x.cite === '45 CFR §164.312(d)'));
-  // SQLite may create an empty -wal/-shm pair for a read-only reader of a WAL database; nothing is written to either.
   assert.deepEqual([hash(path.join(data, 'suds.db')), walBytes()], before, 'the database was not written');
+  // Never opened in place: as root, a reader's -wal/-shm would be root's (and SUDS could not open its database).
+  assert.deepEqual(journals(), journalsBefore, 'no -wal/-shm created beside the live database');
   const pem = signing.publicInfo(crypto.createHash('sha256').update('test-signing-key').digest()).public_key_pem;
   assert.equal(cr.verifyDoc(doc, { publicKeyPem: pem }).ok, true, 'signed with this server\'s signing key');
   // An audit entry rewritten in place: the check fails the chain.
@@ -178,4 +181,73 @@ test('the compliance check reads a real database read-only: app lines, the chain
   assert.equal(again['host.audit_verify'].result, 'fail');
   assert.match(again['host.audit_verify'].evidence, /the audit chain does not verify/);
   fs.rmSync(work, { recursive: true, force: true });
+});
+
+test('Security status verifies the report with the compliance check\'s own public key when one is configured, never the service key', async () => {
+  const cseed = crypto.randomBytes(32);
+  const pub = path.join(dir, 'compliance-signing-key.pub.pem'); fs.writeFileSync(pub, signing.publicInfo(cseed).public_key_pem);
+  const saved = config.compliancePublicKeyFile;
+  config.compliancePublicKeyFile = pub;
+  try {
+    const { id } = writeReport({ stamp: new Date(Date.now() + 5000).toISOString(), seed: cseed, checks: [{ id: 'host.os', title: 'OS', result: 'pass', rules: [], evidence: 'Ubuntu', remediation: '' }] });
+    let head = (await admin.get('/api/admin/security/status')).data.items.find((i) => i.check_id === 'host.report');
+    assert.equal(head.level, 'ok', head.detail); assert.match(head.detail, /compliance check's own key/);
+    const j = await admin.get('/api/admin/security/compliance-report');
+    assert.equal(j.data.report.report_id, id); assert.equal(j.data.verification.ok, true); assert.equal(j.data.verification.key_source, 'compliance');
+    // A report the service could have signed itself (its own key) does not verify once the compliance key is configured.
+    writeReport({ stamp: new Date(Date.now() + 6000).toISOString(), seed: config.signingKey });
+    head = (await admin.get('/api/admin/security/status')).data.items.find((i) => i.check_id === 'host.report');
+    assert.equal(head.level, 'bad'); assert.match(head.detail, /does not verify/);
+    config.compliancePublicKeyFile = path.join(dir, 'missing.pem');
+    head = (await admin.get('/api/admin/security/status')).data.items.find((i) => i.check_id === 'host.report');
+    assert.match(head.detail, /cannot be read/);
+  } finally { config.compliancePublicKeyFile = saved; }
+});
+
+test('app checks: the drill report name from the database is never a path, and a planted symlink is neither followed nor echoed', () => {
+  const ac = require('../scripts/compliance/app-checks');
+  const saved = db.getSetting('dr_last_drill', null);
+  const last = (report_file) => db.setSetting('dr_last_drill', JSON.stringify({ at: new Date().toISOString(), ok: true, checks_passed: 9, checks_total: 9, report_file, backup_copy: 'offsite', keys_source: 'escrowed key file' }));
+  const name = 'dr-drill-2026-09-30T00-00-00-000Z.json';
+  try {
+    const secret = path.join(dir, 'secret.txt'); fs.writeFileSync(secret, 'TOP-SECRET-CONTENT');
+    last('../../../../etc/shadow');
+    let c = ac.drEvidence({ config, now: Date.now(), keys: {}, conf: {} });
+    assert.equal(c.result, 'fail'); assert.match(c.evidence, /not a drill report file name/);
+    fs.mkdirSync(path.join(dir, 'backups'), { recursive: true });
+    fs.symlinkSync(secret, path.join(dir, 'backups', name));
+    last(name);
+    c = ac.drEvidence({ config, now: Date.now(), keys: {}, conf: {} });
+    assert.equal(c.result, 'fail'); assert.match(c.evidence, /symbolic link/); assert.ok(!c.evidence.includes('TOP-SECRET'));
+    fs.unlinkSync(path.join(dir, 'backups', name));
+    fs.writeFileSync(path.join(dir, 'backups', name), 'TOP-SECRET-CONTENT');
+    c = ac.drEvidence({ config, now: Date.now(), keys: {}, conf: {} });
+    assert.match(c.evidence, /not valid JSON/); assert.ok(!c.evidence.includes('TOP-SECRET'));
+    fs.unlinkSync(path.join(dir, 'backups', name));
+  } finally { db.run(`DELETE FROM settings WHERE key='dr_last_drill'`); if (saved) db.setSetting('dr_last_drill', saved); }
+});
+
+test('app checks: on a new server no backup and no drill yet is "pending first run", not a failure; later it fails', () => {
+  const ac = require('../scripts/compliance/app-checks');
+  const saved = db.getSetting('dr_last_drill', null);
+  db.run(`DELETE FROM settings WHERE key='dr_last_drill'`);
+  const now = Date.now();
+  const ago = (h) => ({ installedAt: new Date(now - h * 3600_000).toISOString() });
+  try {
+    let c = ac.drEvidence({ config, now, keys: {}, conf: ago(1) });
+    assert.equal(c.result, 'warn'); assert.match(c.evidence, /pending first run \(expected on day one\)/);
+    c = ac.drEvidence({ config, now, keys: {}, conf: ago(60 * 24) });
+    assert.equal(c.result, 'fail'); assert.match(c.evidence, /no recovery drill has been run/);
+    assert.equal(ac.drEvidence({ config, now, keys: {}, conf: {} }).result, 'fail', 'no install date: no allowance');
+    const offsite = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-offsite-'));
+    db.setSetting('backup_schedule_hours', '4'); db.setSetting('backup_offsite_dir', offsite);
+    fs.rmSync(path.join(dir, 'backups'), { recursive: true, force: true });
+    c = ac.backupFiles({ config, db, now, conf: ago(1) });
+    assert.equal(c.result, 'warn', c.evidence); assert.match(c.evidence, /pending first run/);
+    c = ac.backupFiles({ config, db, now, conf: ago(48) });
+    assert.equal(c.result, 'fail', 'two days on, still no backup: a failure');
+    fs.rmSync(offsite, { recursive: true, force: true });
+    c = ac.backupFiles({ config, db, now, conf: ago(1) });
+    assert.equal(c.result, 'fail', 'an offsite share that is not there is never "pending"'); assert.match(c.evidence, /is the share mounted/);
+  } finally { if (saved) db.setSetting('dr_last_drill', saved); }
 });

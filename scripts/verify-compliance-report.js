@@ -4,9 +4,12 @@
 //
 //   npm run verify-compliance-report -- <report.json | report.html> [--public-key <signing-key.pem>] [--json]
 //
-// --public-key is the key the server publishes (Settings → Security status → "Download signing public key",
-// or GET /api/admin/security/signing-key), obtained independently of the report. Without it the key embedded
-// in the report is used, which proves the report was not edited but not who signed it; the output says so.
+// --public-key is the public half of the key that signed the report, obtained independently of it. On SUDS
+// Server that is the compliance check's own key, /etc/suds/compliance-signing-key.pub.pem (the installer prints
+// its key id; record both at install): the SUDS service never holds its private half, so it cannot sign a
+// report about itself. A report from a wizard or Docker install (report.host.signed_with says which) is
+// signed with the server's evidence key (Settings → Security status → "Download signing public key").
+// Without it the key embedded in the report is used, which proves the report was not edited but not who signed it; the output says so.
 // For an HTML report, the page must also be exactly what the signed report embedded in it renders to, so
 // an edit to what the page shows fails as surely as an edit to the data. Exit: 0 verified, 1 not, 2 usage.
 const fs = require('node:fs');
@@ -34,6 +37,7 @@ function main(argv, log = console.log) {
   const rep = doc && doc.report;
   log(`SUDS compliance report (${isHtml ? 'HTML' : 'JSON'}): ${a.file}`);
   if (rep && rep.summary) log(`  ${rep.summary.overall} on ${rep.host && rep.host.hostname} at ${rep.generated_at}: ${rep.summary.counts.pass} pass, ${rep.summary.counts.fail} fail, ${rep.summary.counts.warn} warning, ${rep.summary.counts['not-checked']} could not check`);
+  if (rep && rep.host && rep.host.signed_with) log(`  signed with: ${rep.host.signed_with}`);
   log(`  public key: ${r.key_source || 'none'}${r.key_id ? ` (key id ${r.key_id})` : ''}`);
   for (const w of r.warnings || []) log(`  note: ${w}`);
   for (const e of r.errors) log(`  FAIL: ${e}`);

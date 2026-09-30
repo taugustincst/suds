@@ -19765,7 +19765,7 @@ var require_compliance_report = __commonJS({
         const pub = signing.publicInfo(seed);
         Object.assign(out2, { ed25519_signature: signing.sign(body, seed), signing_key_id: pub.key_id, public_key_pem: pub.public_key_pem });
       }
-      out2.algorithm = 'SHA-256 and an Ed25519 signature (the SUDS evidence signing key) over the canonical JSON of "report" (keys sorted)';
+      out2.algorithm = 'SHA-256 and an Ed25519 signature (report.host.signed_with names the key) over the canonical JSON of "report" (keys sorted)';
       return out2;
     }
     function verifyDoc(doc, { publicKeyPem = null } = {}) {
@@ -19850,7 +19850,7 @@ ${rows}
 <h2>Scope</h2>
 <p>${esc(report.scope)}</p>
 <h2>Verifying this report</h2>
-<p>The signed report is embedded in this page. Verify it with the public key published by the server (Settings \u2192 Security status \u2192 Download signing public key, or GET /api/admin/security/signing-key): <code>node scripts/verify-compliance-report.js ${esc(report.report_id)}.html --public-key suds-signing-key.pem</code>. The verifier also re-renders this page from the signed report and fails if what it shows was edited.</p>
+<p>The signed report is embedded in this page. Verify it with the public key of the key that signed it, obtained independently of this page: on SUDS Server the compliance key's public half (/etc/suds/compliance-signing-key.pub.pem, recorded at install), elsewhere the server's signing key (Settings \u2192 Security status \u2192 Download signing public key): <code>node scripts/verify-compliance-report.js ${esc(report.report_id)}.html --public-key &lt;public key&gt;.pem</code>. The verifier also re-renders this page from the signed report and fails if what it shows was edited.</p>
 </main>
 <script type="application/json" id="suds-compliance-report">${embedded}<\/script>
 </body>
@@ -19938,16 +19938,17 @@ var require_compliance_rules = __commonJS({
       { id: "host.disk_encryption", title: "Data on an encrypted block device", rules: ["hipaa-312a2iv", "hipaa-310d1", "part2-16a2i", "cmia-56101a"], remediation: 'Put the data directory on a LUKS (dm-crypt) volume. This cannot be done in place: attach a new encrypted disk, stop SUDS, move /var/lib/suds onto it and start SUDS again (docs/SELF-HOSTING.md, "Prerequisites").' },
       { id: "host.keys", title: "Keys kept out of readable files and the environment", rules: ["hipaa-312a2iv", "hipaa-312a1"], remediation: "Keep each key in /etc/suds/credentials/<name> (root, 0600, directory 0700) loaded with LoadCredential= (deploy/linux/suds.service); remove any SUDS_*_KEY from Environment= and from environment files." },
       { id: "host.service", title: "Service sandboxing (systemd unit)", rules: ["hipaa-312a1", "hipaa-308a1iiB"], remediation: "Install deploy/linux/suds.service unchanged (deploy/linux/install.sh) and keep local changes in a drop-in that does not weaken it." },
-      { id: "host.tls", title: "HTTPS: TLS 1.2 or newer, valid certificate, HSTS", rules: ["hipaa-312e1", "hipaa-312e2ii", "part2-16a2i"], remediation: "Terminate TLS with Caddy (deploy/linux/Caddyfile: TLS 1.2+ only, HSTS) or a county certificate; renew the certificate before it has 14 days left." },
+      { id: "host.tls", title: "HTTPS: TLS 1.2 or newer, valid certificate, HSTS", rules: ["hipaa-312e1", "hipaa-312e2ii", "part2-16a2i"], remediation: "Terminate TLS with Caddy (the repository's Caddyfile, installed as /etc/caddy/Caddyfile: TLS 1.2+ only, HSTS) or a county certificate; renew the certificate before it has 14 days left." },
       { id: "host.http_redirect", title: "Plain HTTP only redirects to HTTPS", rules: ["hipaa-312e1"], remediation: "Serve nothing but a redirect (and ACME challenges) on port 80; close it when the certificate is county-issued." },
       { id: "host.bind", title: "SUDS listens on this machine only (127.0.0.1)", rules: ["hipaa-312e1", "hipaa-312a1"], remediation: "Set HOST=127.0.0.1 in the unit (deploy/linux/suds.service) so only the TLS proxy on this host can reach SUDS." },
       { id: "host.firewall", title: "Host firewall active with only the expected ports", rules: ["hipaa-312e1", "hipaa-308a1iiB"], remediation: "ufw (Ubuntu) or firewalld (RHEL): deny incoming by default, allow 443 (and 80 while it only redirects), SSH only from the administration network (deploy/linux/install.sh --admin-cidr)." },
       { id: "host.time_sync", title: "Clock synchronised (audit timestamps)", rules: ["hipaa-312b", "cmia-56101b1B"], remediation: "Enable chrony (RHEL) or systemd-timesyncd/chrony (Ubuntu) against the county time source: timedatectl set-ntp true." },
-      { id: "host.security_updates", title: "Automatic security updates", rules: ["hipaa-308a5iiB", "hipaa-308a1iiB"], remediation: "Ubuntu: unattended-upgrades with the -security origin and apt-daily-upgrade.timer; RHEL: dnf-automatic with upgrade_type = security and dnf-automatic-install.timer." },
+      { id: "host.security_updates", title: "Automatic security updates", rules: ["hipaa-308a5iiB", "hipaa-308a1iiB"], remediation: "Ubuntu: unattended-upgrades with the -security origin and apt-daily-upgrade.timer; RHEL: dnf-automatic with upgrade_type = security, apply_updates = yes and dnf-automatic.timer (as deploy/linux/install.sh sets it)." },
       { id: "host.journald", title: "System journal persistent and retained", rules: ["hipaa-312b", "hipaa-308a1iiD"], remediation: "Storage=persistent and MaxRetentionSec at least the log retention policy (default 400 days) in /etc/systemd/journald.conf.d/suds.conf; forward to the county SIEM for longer." },
       { id: "host.auditd", title: "Linux audit daemon (recommended)", rules: ["hipaa-312b", "hipaa-308a1iiD"], remediation: "Recommended, not required: install and enable auditd so logins, sudo and changes to /etc/suds are recorded by the OS as well." },
       { id: "host.node", title: "Node.js is the pinned, checksum-verified release", rules: ["hipaa-308a1iiB"], remediation: "Install the release pinned in deploy/linux/pins (the one CI tests) with deploy/linux/install.sh or upgrade.sh." },
       { id: "host.suds_version", title: "SUDS release is supported", rules: ["hipaa-308a1iiB", "hipaa-308a5iiB"], remediation: 'Upgrade to the latest minor release (docs/RELEASE.md, "Supported versions") with deploy/linux/upgrade.sh.' },
+      { id: "host.release_integrity", title: "SUDS release checked against an independently published checksum", rules: ["hipaa-308a1iiB", "hipaa-308a5iiB"], remediation: "Upgrade with --release-sha256=<hex> taken from a channel other than the download (the release notes and the CHANGELOG entry at the release tag: docs/SELF-HOSTING.md, Upgrading), not --trust-release-checksum." },
       { id: "host.backup_files", title: "Latest backup is recent and the offsite copy exists", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Scheduled backups (Settings \u2192 Scheduled backups) with the offsite directory on the mounted offsite share; check the share is mounted." },
       { id: "host.dr_evidence", title: "Recovery drill within 90 days, signed report verifies", rules: ["hipaa-308a7iiD", "hipaa-308a7iiB"], remediation: "Run a recovery drill with the escrowed key file against the offsite copy (Settings \u2192 System & backups, or npm run dr-drill); turn the monthly drill on." },
       { id: "host.audit_verify", title: "Audit chain and external anchors verify now", rules: ["hipaa-312b", "hipaa-312c1", "hipaa-312c2", "cmia-56101b1B", "part2-16a2iii"], remediation: 'A failure is a possible incident: follow docs/security/INCIDENT-RESPONSE.md. "Could not check" means the check ran without the index key (run it as root, or from suds-compliance.service).' }
@@ -21701,14 +21702,35 @@ var require_security_status = __commonJS({
       const r = db3.one(`SELECT updated_at FROM settings WHERE key=?`, key);
       return r ? r.updated_at : null;
     }
-    var complianceDir = () => path.join(config2.dataDir, "compliance");
+    var complianceDir = () => config2.complianceDir || path.join(config2.dataDir, "compliance");
+    function complianceKey() {
+      if (config2.compliancePublicKeyFile) {
+        try {
+          const pem = fs.readFileSync(config2.compliancePublicKeyFile, "utf8");
+          if (!/-----BEGIN PUBLIC KEY-----/.test(pem)) return { error: `${config2.compliancePublicKeyFile} is not a PEM public key` };
+          return { pem, source: "compliance" };
+        } catch (e) {
+          return { error: `the compliance public key ${config2.compliancePublicKeyFile} cannot be read (${e.code || e.message})` };
+        }
+      }
+      return { pem: require_signing().publicInfo().public_key_pem, source: "service" };
+    }
+    function noReportLevel({ isProd = config2.isProd, confFile = proc.env.SUDS_SERVER_CONF || "/etc/suds/suds-server.conf" } = {}) {
+      let installed = false;
+      try {
+        installed = fs.existsSync(confFile);
+      } catch {
+      }
+      return isProd && installed ? "warn" : "info";
+    }
     function hostCompliance({ record = true } = {}) {
       const rep = require_compliance_report();
       const found = rep.latest(complianceDir());
       if (!found) return null;
       let verification;
+      const key = complianceKey();
       try {
-        verification = rep.verifyDoc(found.doc, { publicKeyPem: require_signing().publicInfo().public_key_pem });
+        verification = key.error ? { ok: false, errors: [key.error], warnings: [] } : rep.verifyDoc(found.doc, { publicKeyPem: key.pem });
       } catch (e) {
         verification = { ok: false, errors: [String(e.message || e)], warnings: [] };
       }
@@ -21728,6 +21750,7 @@ var require_security_status = __commonJS({
           console.error("[suds] could not audit the compliance report:", e && e.message);
         }
       }
+      verification.key_source = key.source || null;
       return { ...found, verification };
     }
     function status({ host = true } = {}) {
@@ -21954,7 +21977,7 @@ var require_security_status = __commonJS({
         const hc = hostCompliance();
         const G = "Host (last compliance check)";
         if (!hc) {
-          items.push({ group: G, name: "Host compliance check", level: config2.isProd ? "warn" : "info", value: "no report yet", detail: `No report in ${complianceDir()}. Run npm run compliance-check on the server (deploy/linux/install.sh schedules it weekly: suds-compliance.timer).`, evidence: "scripts/compliance-check.js", check_id: "host.report", rules: rules.cite(["hipaa-308a8"]) });
+          items.push({ group: G, name: "Host compliance check", level: noReportLevel(), value: "no report yet", detail: `No report in ${complianceDir()}. Run npm run compliance-check on the server (deploy/linux/install.sh schedules it weekly: suds-compliance.timer).`, evidence: "scripts/compliance-check.js", check_id: "host.report", rules: rules.cite(["hipaa-308a8"]) });
         } else {
           const r = hc.doc.report || {};
           const age = ageDays(r.generated_at);
@@ -21966,7 +21989,7 @@ var require_security_status = __commonJS({
             name: "Host compliance check",
             level: !signed || overall === "fail" ? "bad" : age === null || age > 8 || overall !== "pass" ? "warn" : "ok",
             value: `${overall} on ${String(r.generated_at || "?").slice(0, 10)}${age !== null ? ` (${Math.floor(age)} day${Math.floor(age) === 1 ? "" : "s"} ago)` : ""}`,
-            detail: [signed ? "The report's Ed25519 signature verifies with this server's signing key." : `The report does not verify: ${(hc.verification.errors || []).join("; ")}.`, age !== null && age > 8 ? "Older than a week: is suds-compliance.timer running?" : "", ...(r.risk_accepted || []).map((x) => `RISK ACCEPTED: ${x}`)].filter(Boolean).join(" "),
+            detail: [signed ? `The report's Ed25519 signature verifies with ${hc.verification.key_source === "compliance" ? "the compliance check's own key (root-only; not this service's)" : "this server's signing key"}.` : `The report does not verify: ${(hc.verification.errors || []).join("; ")}.`, age !== null && age > 8 ? "Older than a week: is suds-compliance.timer running?" : "", ...(r.risk_accepted || []).map((x) => `RISK ACCEPTED: ${x}`)].filter(Boolean).join(" "),
             evidence: `compliance/${hc.file}`,
             check_id: "host.report",
             rules: rules.cite(["hipaa-308a8"])
@@ -21985,7 +22008,7 @@ var require_security_status = __commonJS({
     function plainCopiesAdvice(plain) {
       return plain.map((p) => `${p.path} (${p.kind === "restore" ? "the database as it was before a restore, kept to undo it" : "a snapshot taken before a schema upgrade"}; since ${p.since}) holds every record unencrypted${p.error ? `; sealing it failed: ${p.error.error}` : ""}.`).join(" ") + " SUDS tries again every hour. Make room on the disk and check that SUDS can write to that folder; the next hourly try (or a restart) then seals it. If it is not needed, delete it securely instead (shred -u, or your platform's secure delete).";
     }
-    module.exports = { status, mfaReport, validateSettings, plainCopiesAdvice, hostCompliance, complianceDir };
+    module.exports = { status, mfaReport, validateSettings, plainCopiesAdvice, hostCompliance, complianceDir, complianceKey, noReportLevel };
   }
 });
 
@@ -42504,7 +42527,7 @@ var require_security = __commonJS({
           ctx.res.end(page);
           return;
         }
-        return { file: hc.file, verification: { ok: hc.verification.ok, errors: hc.verification.errors, key_id: hc.verification.key_id }, ...hc.doc };
+        return { file: hc.file, verification: { ok: hc.verification.ok, errors: hc.verification.errors, key_id: hc.verification.key_id, key_source: hc.verification.key_source }, ...hc.doc };
       });
       r.get("/api/admin/security/mfa-report", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
         const rep = require_security_status().mfaReport();

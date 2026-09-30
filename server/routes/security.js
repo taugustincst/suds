@@ -38,7 +38,7 @@ module.exports = (r) => {
       ctx.res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Disposition': `attachment; filename="${hc.file.replace(/\.json$/, '.html')}"`, 'Cache-Control': 'no-store' });
       ctx.res.end(page); return;
     }
-    return { file: hc.file, verification: { ok: hc.verification.ok, errors: hc.verification.errors, key_id: hc.verification.key_id }, ...hc.doc };
+    return { file: hc.file, verification: { ok: hc.verification.ok, errors: hc.verification.errors, key_id: hc.verification.key_id, key_source: hc.verification.key_source }, ...hc.doc };
   });
 
   r.get('/api/admin/security/mfa-report', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {

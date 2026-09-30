@@ -6,7 +6,8 @@
 //
 // A report file is { report, integrity }, exactly the shape of a recovery-drill report, and is signed the
 // same way: Ed25519 over the canonical JSON of `report` (server/dr-report.js canonical, keys sorted) with the
-// server's evidence signing key (server/signing.js). The HTML page embeds that signed document and is itself
+// compliance check's own key on SUDS Server (/etc/suds/compliance-signing-key, root-only, never given to the
+// service it audits), or the server's evidence signing key (server/signing.js) elsewhere. The HTML page embeds that signed document and is itself
 // a pure function of it, so the verifier re-renders the page and compares: an edit to what the page shows is
 // caught as surely as an edit to the JSON.
 const crypto = require('node:crypto');
@@ -27,7 +28,7 @@ function seal(report, seed) {
     const pub = signing.publicInfo(seed);
     Object.assign(out, { ed25519_signature: signing.sign(body, seed), signing_key_id: pub.key_id, public_key_pem: pub.public_key_pem });
   }
-  out.algorithm = 'SHA-256 and an Ed25519 signature (the SUDS evidence signing key) over the canonical JSON of "report" (keys sorted)';
+  out.algorithm = 'SHA-256 and an Ed25519 signature (report.host.signed_with names the key) over the canonical JSON of "report" (keys sorted)';
   return out;
 }
 
@@ -120,7 +121,7 @@ ${rows}
 <h2>Scope</h2>
 <p>${esc(report.scope)}</p>
 <h2>Verifying this report</h2>
-<p>The signed report is embedded in this page. Verify it with the public key published by the server (Settings → Security status → Download signing public key, or GET /api/admin/security/signing-key): <code>node scripts/verify-compliance-report.js ${esc(report.report_id)}.html --public-key suds-signing-key.pem</code>. The verifier also re-renders this page from the signed report and fails if what it shows was edited.</p>
+<p>The signed report is embedded in this page. Verify it with the public key of the key that signed it, obtained independently of this page: on SUDS Server the compliance key's public half (/etc/suds/compliance-signing-key.pub.pem, recorded at install), elsewhere the server's signing key (Settings → Security status → Download signing public key): <code>node scripts/verify-compliance-report.js ${esc(report.report_id)}.html --public-key &lt;public key&gt;.pem</code>. The verifier also re-renders this page from the signed report and fails if what it shows was edited.</p>
 </main>
 <script type="application/json" id="suds-compliance-report">${embedded}</script>
 </body>

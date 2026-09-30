@@ -1,7 +1,7 @@
 'use strict';
 // App-level checks for scripts/compliance-check.js. The app's own controls are read through the same code as
 // Settings → Security status (server/security-status.js status(), mapped by server/compliance-rules.js), on
-// a READ-ONLY connection to the live database (server/db.js openReadOnly): nothing is migrated or written,
+// a READ-ONLY connection to a private copy of the live database (server/db.js openReadOnly; safe-fs.js snapshotDb): nothing is migrated or written,
 // and the server holding the database is not disturbed. Three checks go further than the page, because a
 // weekly evidence run should re-verify rather than repeat what was recorded: the audit chain and its
 // external anchors are verified now (server/audit.js verifyChain, server/audit-anchor.js verify), the last
@@ -59,11 +59,19 @@ const nc = (id, evidence) => ({ id, result: 'not-checked', evidence, source: 'ap
 function newestIn(dir, re) {
   let names; try { names = fs.readdirSync(dir).filter((f) => re.test(f)); } catch (e) { return { error: e.code || e.message }; }
   let best = null;
-  for (const f of names) { try { const m = fs.statSync(path.join(dir, f)).mtimeMs; if (!best || m > best.mtime) best = { file: f, mtime: m }; } catch {} }
+  // lstat: a symlink planted among the backups is not followed, and does not count as a backup.
+  for (const f of names) { try { const s = fs.lstatSync(path.join(dir, f)); if (!s.isFile()) continue; if (!best || s.mtimeMs > best.mtime) best = { file: f, mtime: s.mtimeMs }; } catch {} }
   return { newest: best, count: names.length };
 }
 
-function backupFiles({ config, db, now }) {
+/** Hours since SUDS Server was installed (suds-server.conf SUDS_INSTALLED_AT), or null when unknown. */
+function installedHoursAgo(conf, now) {
+  const t = Date.parse((conf && conf.installedAt) || '');
+  return Number.isFinite(t) ? (now - t) / 3600_000 : null;
+}
+const PENDING = 'pending first run (expected on day one)';
+
+function backupFiles({ config, db, now, conf }) {
   const id = 'host.backup_files';
   const sb = require('../../server/scheduled-backup');
   const s = sb.settings();
@@ -84,13 +92,25 @@ function backupFiles({ config, db, now }) {
     else { const h = (now - off.newest.mtime) / 3600_000; bits.push(`newest offsite ${off.newest.file} (${h.toFixed(1)} h old)`); if (h > policyH) bad.push(`the newest offsite copy is ${h.toFixed(1)} h old (policy ${policyH} h)`); }
   }
   void db;
-  return bad.length ? { id, result: 'fail', evidence: `${bad.join('; ')}${bits.length ? ` [${bits.join('; ')}]` : ''}`, source: 'app' } : { id, result: 'pass', evidence: bits.join('; '), source: 'app' };
+  // A new server has no backup yet: the first scheduled one runs within the interval. Until twice the
+  // interval has passed since the install, "nothing yet" is expected, not a failure; anything else is.
+  const age = installedHoursAgo(conf, now);
+  const firstRunOnly = bad.length && bad.every((b) => /no backup has ever been taken|no backup file in|no backup on the offsite share/.test(b));
+  if (firstRunOnly && age !== null && age >= 0 && age < policyH) return { id, result: 'warn', evidence: `${PENDING}: installed ${age.toFixed(1)} h ago, the first scheduled backup is due within ${s.hours || '?'} h [${bad.join('; ')}${bits.length ? `; ${bits.join('; ')}` : ''}]`, source: 'app' };
+  return bad.length ?{ id, result: 'fail', evidence: `${bad.join('; ')}${bits.length ? ` [${bits.join('; ')}]` : ''}`, source: 'app' } : { id, result: 'pass', evidence: bits.join('; '), source: 'app' };
 }
 
-function drEvidence({ config, now, keys }) {
+const DRILL_REPORT_RE = /^dr-drill-[0-9A-Za-z-]+\.json$/;
+
+function drEvidence({ config, now, keys, conf }) {
   const id = 'host.dr_evidence';
   const last = require('../../server/dr-drill').lastDrill();
-  if (!last) return { id, result: 'fail', evidence: 'no recovery drill has been run', source: 'app' };
+  if (!last) {
+    // The monthly drill runs within a month of the install (after the first backup): until then, expected.
+    const age = installedHoursAgo(conf, now);
+    if (age !== null && age >= 0 && age < 31 * 24) return { id, result: 'warn', evidence: `${PENDING}: installed ${Math.floor(age / 24)} days ago, no recovery drill yet; the monthly drill runs within a month, or run one now (Settings → System & backups)`, source: 'app' };
+    return { id, result: 'fail', evidence: 'no recovery drill has been run', source: 'app' };
+  }
   const age = (now - Date.parse(last.at)) / DAY;
   const bits = [`last drill ${last.ok ? 'passed' : 'FAILED'} ${String(last.at).slice(0, 10)} (${Math.floor(age)} days ago), ${last.checks_passed}/${last.checks_total} checks, the ${last.backup_copy || 'local'} copy, keys from ${last.keys_source || 'server memory'}`];
   const bad = [];
@@ -98,14 +118,20 @@ function drEvidence({ config, now, keys }) {
   if (age > 90) bad.push(`older than 90 days`);
   let verified = null;
   if (last.report_file) {
+    // The name comes from the database, which the suds user can write: only a bare drill-report name is
+    // accepted, the file is read without following a symlink, and a problem is named without its content.
+    const name = path.basename(String(last.report_file));
     let doc = null;
-    try { doc = JSON.parse(fs.readFileSync(path.join(config.dataDir, 'backups', last.report_file), 'utf8')); } catch (e) { bad.push(`its report ${last.report_file} cannot be read (${e.code || e.message})`); }
+    if (name !== String(last.report_file) || !DRILL_REPORT_RE.test(name)) bad.push('the recorded report name is not a drill report file name');
+    else {
+      try { doc = require('./safe-fs').readJson(path.join(config.dataDir, 'backups', name), { maxBytes: 4 * 1024 * 1024 }); } catch (e) { bad.push(`its report ${name} cannot be read (${e.code === 'ENOENT' ? 'ENOENT' : e.message})`); }
+    }
     if (doc) {
       const pem = keys.SUDS_SIGNING_KEY ? require('../../server/signing').publicInfo().public_key_pem : null;
       const v = require('../../server/dr-report').verifyDoc(doc, { publicKeyPem: pem });
       verified = v.ok;
       if (!v.ok) bad.push(`its signed report does not verify: ${v.errors[0]}`);
-      else bits.push(`report ${last.report_file} verifies${pem ? ' with this server\'s signing key' : ' (embedded key only: the signing key was not available)'}`);
+      else bits.push(`report ${name} verifies${pem ? ' with this server\'s signing key' : ' (embedded key only: the signing key was not available)'}`);
     }
   } else bad.push('the drill wrote no report');
   if (bad.length) return { id, result: 'fail', evidence: `${bad.join('; ')} [${bits.join('; ')}]`, source: 'app' };
@@ -139,27 +165,30 @@ function auditVerify({ keys }) {
  * Load the app read-only and run every app-level check. `keys` is prepareEnv()'s answer. Returns
  * { checks, signingSeed (null unless the real key is available), version, updateFeedUrl }.
  */
-function run({ keys, now = Date.now() }) {
+function run({ keys, now = Date.now(), conf = {} }) {
   const config = require('../../server/config');
   const db = require('../../server/db');
-  if (config.dbPath !== ':memory:' && !fs.existsSync(config.dbPath)) throw Object.assign(new Error(`no database at ${config.dbPath}`), { code: 'NODB' });
-  db.openReadOnly(config.dbPath);
+  // Never opened in place: SQLite would create -wal/-shm files beside a WAL database for a reader, and as
+  // root they would be root's (SUDS could not open its own database) or, through a symlink the suds user
+  // planted, anyone's. The database and its write-ahead log are copied through descriptors into a private
+  // directory (PrivateTmp= in suds-compliance.service) and the copy is opened.
+  let snap = null;
+  if (config.dbPath !== ':memory:') {
+    if (!fs.existsSync(config.dbPath)) throw Object.assign(new Error(`no database at ${config.dbPath}`), { code: 'NODB' });
+    snap = require('./safe-fs').snapshotDb(config.dbPath);
+  }
+  db.openReadOnly(snap ? snap.file : config.dbPath);
   try {
     const st = require('../../server/security-status').status({ host: false });
     const checks = fromStatus(st);
     for (const f of [backupFiles, drEvidence, auditVerify]) {
-      try { checks.push(f({ config, db, now, keys })); } catch (e) { checks.push(nc(f === backupFiles ? 'host.backup_files' : f === drEvidence ? 'host.dr_evidence' : 'host.audit_verify', `the check itself failed: ${e.message}`)); }
+      try { checks.push(f({ config, db, now, keys, conf })); } catch (e) { checks.push(nc(f === backupFiles ? 'host.backup_files' : f === drEvidence ? 'host.dr_evidence' : 'host.audit_verify', `the check itself failed: ${e.message}`)); }
     }
     return { checks, signingSeed: keys.SUDS_SIGNING_KEY ? config.signingKey : null, version: config.version, updateFeedUrl: config.updateFeedUrl, isProd: config.isProd };
   } finally {
     try { db.close(); } catch {}
-    // A reader of a WAL database may create the -wal/-shm pair when SUDS is not running. Run as root, they
-    // would be root's, and SUDS (the suds user) could not open its own database at the next start: hand
-    // them to the database file's owner.
-    if (config.dbPath !== ':memory:' && process.getuid && process.getuid() === 0) {
-      try { const o = fs.statSync(config.dbPath); for (const f of [`${config.dbPath}-wal`, `${config.dbPath}-shm`]) { try { const s = fs.statSync(f); if (s.uid !== o.uid) fs.chownSync(f, o.uid, o.gid); } catch {} } } catch {}
-    }
+    if (snap) { try { require('../../server/backup').secureRemoveDir(snap.dir); } catch { fs.rmSync(snap.dir, { recursive: true, force: true }); } }
   }
 }
 
-module.exports = { prepareEnv, fromStatus, run, backupFiles, drEvidence, auditVerify, KEY_VARS };
+module.exports = { prepareEnv, fromStatus, run, backupFiles, drEvidence, auditVerify, installedHoursAgo, KEY_VARS };

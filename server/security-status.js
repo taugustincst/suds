@@ -41,7 +41,33 @@ function lastAudit(action) { return db.one(`SELECT at, details FROM audit_log WH
 function settingUpdatedAt(key) { const r = db.one(`SELECT updated_at FROM settings WHERE key=?`, key); return r ? r.updated_at : null; }
 
 // Where scripts/compliance-check.js writes its signed reports by default (and where this page reads the last).
-const complianceDir = () => path.join(config.dataDir, 'compliance');
+const complianceDir = () => config.complianceDir || path.join(config.dataDir, 'compliance');
+
+/**
+ * The public key a compliance report must verify with: SUDS Server's separate compliance key when the
+ * installer configured one (SUDS_COMPLIANCE_PUBLIC_KEY_FILE; its private half is root-only and never given to
+ * this service), else this server's own evidence signing key. { pem, source } or { error }.
+ */
+function complianceKey() {
+  if (config.compliancePublicKeyFile) {
+    try {
+      const pem = fs.readFileSync(config.compliancePublicKeyFile, 'utf8');
+      if (!/-----BEGIN PUBLIC KEY-----/.test(pem)) return { error: `${config.compliancePublicKeyFile} is not a PEM public key` };
+      return { pem, source: 'compliance' };
+    } catch (e) { return { error: `the compliance public key ${config.compliancePublicKeyFile} cannot be read (${e.code || e.message})` }; }
+  }
+  return { pem: require('./signing').publicInfo().public_key_pem, source: 'service' };
+}
+
+/**
+ * How "no report yet" counts: a warning on a production server the Linux installer set up (it schedules
+ * the check, so a missing report means the timer is not running), information anywhere else (a wizard or
+ * Docker install has no host check to run). The installer leaves /etc/suds/suds-server.conf.
+ */
+function noReportLevel({ isProd = config.isProd, confFile = process.env.SUDS_SERVER_CONF || '/etc/suds/suds-server.conf' } = {}) {
+  let installed = false; try { installed = fs.existsSync(confFile); } catch {}
+  return isProd && installed ? 'warn' : 'info';
+}
 
 /**
  * The newest host compliance report (scripts/compliance-check.js) in the data directory: { file, doc,
@@ -54,7 +80,8 @@ function hostCompliance({ record = true } = {}) {
   const found = rep.latest(complianceDir());
   if (!found) return null;
   let verification;
-  try { verification = rep.verifyDoc(found.doc, { publicKeyPem: require('./signing').publicInfo().public_key_pem }); }
+  const key = complianceKey();
+  try { verification = key.error ? { ok: false, errors: [key.error], warnings: [] } : rep.verifyDoc(found.doc, { publicKeyPem: key.pem }); }
   catch (e) { verification = { ok: false, errors: [String(e.message || e)], warnings: [] }; }
   const r = found.doc && found.doc.report;
   if (record && r && r.report_id && db.getSetting('compliance_report_seen', null) !== r.report_id) {
@@ -64,6 +91,7 @@ function hostCompliance({ record = true } = {}) {
         success: verification.ok && r.summary && r.summary.overall !== 'fail', details: { file: found.file, generated_at: r.generated_at, overall: r.summary && r.summary.overall, counts: r.summary && r.summary.counts, signature: verification.ok ? 'verified' : 'does not verify' } });
     } catch (e) { console.error('[suds] could not audit the compliance report:', e && e.message); }
   }
+  verification.key_source = key.source || null;
   return { ...found, verification };
 }
 
@@ -199,7 +227,7 @@ function status({ host = true } = {}) {
     const hc = hostCompliance();
     const G = 'Host (last compliance check)';
     if (!hc) {
-      items.push({ group: G, name: 'Host compliance check', level: config.isProd ? 'warn' : 'info', value: 'no report yet', detail: `No report in ${complianceDir()}. Run npm run compliance-check on the server (deploy/linux/install.sh schedules it weekly: suds-compliance.timer).`, evidence: 'scripts/compliance-check.js', check_id: 'host.report', rules: rules.cite(['hipaa-308a8']) });
+      items.push({ group: G, name: 'Host compliance check', level: noReportLevel(), value: 'no report yet', detail: `No report in ${complianceDir()}. Run npm run compliance-check on the server (deploy/linux/install.sh schedules it weekly: suds-compliance.timer).`, evidence: 'scripts/compliance-check.js', check_id: 'host.report', rules: rules.cite(['hipaa-308a8']) });
     } else {
       const r = hc.doc.report || {};
       const age = ageDays(r.generated_at);
@@ -208,7 +236,7 @@ function status({ host = true } = {}) {
       compliance = { file: hc.file, generated_at: r.generated_at || null, overall, signature_ok: signed, report_id: r.report_id || null };
       items.push({ group: G, name: 'Host compliance check', level: !signed || overall === 'fail' ? 'bad' : age === null || age > 8 || overall !== 'pass' ? 'warn' : 'ok',
         value: `${overall} on ${String(r.generated_at || '?').slice(0, 10)}${age !== null ? ` (${Math.floor(age)} day${Math.floor(age) === 1 ? '' : 's'} ago)` : ''}`,
-        detail: [signed ? 'The report\'s Ed25519 signature verifies with this server\'s signing key.' : `The report does not verify: ${(hc.verification.errors || []).join('; ')}.`, age !== null && age > 8 ? 'Older than a week: is suds-compliance.timer running?' : '', ...(r.risk_accepted || []).map((x) => `RISK ACCEPTED: ${x}`)].filter(Boolean).join(' '),
+        detail: [signed ? `The report's Ed25519 signature verifies with ${hc.verification.key_source === 'compliance' ? 'the compliance check\'s own key (root-only; not this service\'s)' : 'this server\'s signing key'}.` : `The report does not verify: ${(hc.verification.errors || []).join('; ')}.`, age !== null && age > 8 ? 'Older than a week: is suds-compliance.timer running?' : '', ...(r.risk_accepted || []).map((x) => `RISK ACCEPTED: ${x}`)].filter(Boolean).join(' '),
         evidence: `compliance/${hc.file}`, check_id: 'host.report', rules: rules.cite(['hipaa-308a8']) });
       if (signed) {
         for (const k of (r.checks || []).filter((x) => String(x.id).startsWith('host.'))) {
@@ -229,4 +257,4 @@ function plainCopiesAdvice(plain) {
     + ' SUDS tries again every hour. Make room on the disk and check that SUDS can write to that folder; the next hourly try (or a restart) then seals it. If it is not needed, delete it securely instead (shred -u, or your platform\'s secure delete).';
 }
 
-module.exports = { status, mfaReport, validateSettings, plainCopiesAdvice, hostCompliance, complianceDir };
+module.exports = { status, mfaReport, validateSettings, plainCopiesAdvice, hostCompliance, complianceDir, complianceKey, noReportLevel };
