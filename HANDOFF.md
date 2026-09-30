@@ -49,7 +49,7 @@ _(Append replies here, newest first.)_
   prints); the programme releases' models set none, so their releases are unchanged.
 - Owner decisions taken with conservative defaults are listed in COUNTY-VIEW *Publication* (seven, e.g. overlapping
   periods refused even after a withdrawal, and every programme figure of 0 or at least T assumed published exactly).
-- The browser suite is **55 scripts** with `county-publication.mjs`. `test/county-publication-sdc.test.js` joins the
+- The browser suite is **56 scripts** with `county-publication.mjs` and `field-device.mjs`. `test/county-publication-sdc.test.js` joins the
   SDC sweeps (`thorough-sdc`; about 70 s at full size).
 
 ### 2026-09-30 — Claude: 1.20.0 (documentation pass, evidence, installer fixes, county kit, county-entered figures)

@@ -219,7 +219,7 @@ makes a screened, publishable release of a county's combined figures for a perio
 - Tests: `test/county-publication.test.js` (permissions, screening, a differencing attack, refusal, determinism, the
   record, withdrawal, entered figures, files, the read API) and the algorithm-aware differencing attacker
   `test/county-publication-sdc.test.js`, one of the SDC sweeps. Browser script `scripts/ui/county-publication.mjs`
-  (the suite is now 55 scripts), and the Publish tab and its dialogs in `scripts/ui/accessibility.mjs`.
+  (the suite is now 56 scripts, with `field-device.mjs`), and the Publish tab and its dialogs in `scripts/ui/accessibility.mjs`.
 
 ## 1.20.0 — 2026-09-30
 

@@ -250,6 +250,9 @@ The database's schema version is the number of the newest migration it has run (
 | Migration 58 | 1.19.0 | Passkeys: `passkeys` (public keys and credential ids; no biometric data), `webauthn_challenges` (hashes, two minutes), `signature_evidence` (`evidence_enc`), and `sessions.reauth_method` and `sessions.passkey_id` |
 | Migration 59 | 1.19.0 | `sessions.sync_client`: marks a device's sync sign-in. No new data about people |
 | Migration 60 | 1.20.0 | County-entered figures: `county_programmes.on_suds`, and `county_submissions` rebuilt so a row the county entered has no key or signature, with `source`, `entered_via` and `source_ref_enc` (the source document, encrypted). No client data |
+| Migration 61 | 1.21.0 | County publication releases: `county_publications` (append-only by triggers: each screened release's period, method parameters, canonical JSON of aggregates and its SHA-256; a withdrawal's reason `reason_enc`). No client data |
+| Migration 62 | 1.21.0 | Field devices and participant codes: `devices.sync_scope`, `scope_changed_at`, `field_applied_at`; `sessions.device_id`; `clients.participant_code_enc` and `participant_code_idx` (the SSP participant code, encrypted, with its blind index) |
+| Migration 63 | 1.21.0 | The authenticator allow-list: `passkeys.attestation` (the attestation verified at enrolment under the list: format, AAGUID, trust path hash; no certificate or biometric data) and `authenticator_metadata` (what SUDS keeps of an uploaded FIDO Metadata Service file) |
 
 `test/doc-content-currency.test.js` fails when the newest migration, or one the newest stamped release's CHANGELOG section names, is not in this table.
 
