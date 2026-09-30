@@ -510,7 +510,7 @@ const BUTTON_DIALOGS = [
   // The county view: registering and editing a programme, and withdrawing an imported file.
   ['county?tab=programmes', 'Register a program'], ['county?tab=programmes', 'Edit'], ['county?tab=programmes', 'Keys'], ['county?tab=submissions', 'Withdraw'],
   // Figures the county enters for a programme not on SUDS (built for 1.20.0): adding one, entering, importing, correcting.
-  ['county?tab=programmes', 'Add a program not on SUDS'], ['county?tab=programmes', 'Enter figures'], ['county?tab=programmes', 'Import a CSV'], ['county?tab=submissions', 'Correct'],
+  ['county?tab=programmes', 'Add a program not on SUDS'], ['county?tab=programmes', 'Enter figures'], ['county?tab=programmes', 'Import a CSV'], ['county?tab=programmes', 'Add its key'], ['county?tab=submissions', 'Correct'],
   // Settlement outcomes › Send to the county: Make a new key (its confirmation).
   ['settlement', 'Make a new key'],
   // The county connection: issuing a connection or read token, and connecting this server to a county.

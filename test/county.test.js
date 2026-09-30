@@ -683,11 +683,12 @@ test('the combined view as Excel, CSV and a tidy CSV: labelled internal and exac
   const t = await fin.get(`/api/county/view/export?from=${Q1.from}&to=${Q2.to}&format=tidy`);
   assert.equal(t.status, 200); assert.match(t.headers.get('content-disposition'), /-tidy-internal-exact\.csv/);
   const lines = t.data.trim().split(/\r?\n/);
-  assert.equal(lines[0], 'program,period_from,period_to,fund,grant_number,measure_code,measure_label,value,source', 'the layout county-entered figures are imported in, and who each figure is from');
+  assert.equal(lines[0], 'program,period_from,period_to,fund,grant_number,measure_code,measure_label,value,source,source_label', 'the layout county-entered figures are imported in, and who each figure is from (a code, and in words)');
   const f = sampleFile(0, Q1).file.payload;
   const kitsRow = lines.find(l => l.startsWith(`${samples[0].name},2026-01-01,2026-03-31,County settlement share,OSF-RB-1,naloxone_kits,`));
   assert.ok(kitsRow, 'a fund\'s measure'); assert.equal(Number(kitsRow.split(',')[7]), f.funds[0].values.naloxone_kits);
-  assert.equal(kitsRow.split(',')[8], 'signed by the program', 'a signed file\'s figure says so');
+  assert.equal(kitsRow.split(',')[8], 'signed', 'a signed file\'s figure says so, as the read API\'s code');
+  assert.equal(kitsRow.split(',')[9], 'signed by the program', 'and in words');
   assert.ok(lines.some(l => l.startsWith(`${samples[0].name},2026-01-01,2026-03-31,All funds in the submission,,spend_approved,`)));
   assert.ok(!lines.some(l => l.startsWith(samples[2].name)), 'a program with nothing counted has no rows');
   assert.ok(!/unduplicated/i.test(t.data));

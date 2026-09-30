@@ -277,7 +277,9 @@ function expectedPeriods(c = cadence(), day = today(), start = startDate()) {
  */
 function statusFor(t, who = {}) {
   const prog = db.one(`SELECT id, name, active, keep_files FROM county_programmes WHERE id=?`, t.programme_id);
-  const counting = K.filesCount(prog) ? K.countingSubs(prog.id) : [];
+  // Only files the programme signed count toward what it is expected to send: figures the county entered for it
+  // (before it ran SUDS) never make a period "received" or take it off the outstanding list (COUNTY-VIEW.md).
+  const counting = K.filesCount(prog) ? K.countingSubs(prog.id).filter(s => !K.isEntered(s)) : [];
   const expected = expectedPeriods().map(p => { const cov = K.coverage(counting, p.from, p.to); return { ...p, received: cov.status === 'whole', coverage: cov.status }; });
   const files = db.all(`${K.SUBS} WHERE s.programme_id=? ORDER BY s.received_at DESC, s.id LIMIT 40`, prog.id).map(K.summary);
   return {
@@ -285,7 +287,7 @@ function statusFor(t, who = {}) {
     programme: { id: prog.id, name: prog.name, active: !!prog.active, files_count: K.filesCount(prog) },
     cadence: cadence(), cadence_label: CADENCES[cadence()], start: startDate(), today: today(),
     expected, outstanding: expected.filter(p => !p.received).map(({ received, ...p }) => p), // eslint-disable-line no-unused-vars
-    received: files.map(s => ({ from: s.period_from, to: s.period_to, sha256: s.sha256, received_at: s.received_at, generated_at: s.generated_at, status: s.status })),
+    received: files.map(s => ({ from: s.period_from, to: s.period_to, sha256: s.sha256, received_at: s.received_at, generated_at: s.generated_at, status: s.status, source: s.source })),
     max_file_bytes: MAX_PUSH_BYTES,
   };
 }

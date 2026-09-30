@@ -274,10 +274,13 @@ export function toast(msg, kind = '', { ms } = {}) {
  * the Undo button has focus (WCAG 2.2.1); focus moves to Undo, since the button that did the action is usually
  * gone once the list redraws; Escape puts it away. `onUndo` makes the request that reverses it.
  */
-export function undoToast(msg, onUndo, { ms = 10000 } = {}) {
+export function undoToast(msg, onUndo, { ms = 10000, action = null } = {}) {
   const host = document.getElementById('toasts'); if (!host) return null;
   const back = () => { const h1 = document.querySelector('.main h1'); if (h1) { if (!h1.hasAttribute('tabindex')) h1.setAttribute('tabindex', '-1'); try { h1.focus({ preventScroll: true }); } catch { /* ignore */ } } };
-  const btn = h('button', { class: 'btn sm', type: 'button', 'data-undo': '1', 'aria-label': `Undo: ${msg}` }, 'Undo');
+  // `action: { text, key }`: the same toast offering the next step instead of an Undo (the button says `text`, and
+  // pressing it does `onUndo` and puts the toast away; nothing is undone and no "Undone" follows).
+  const label = action ? action.text : 'Undo';
+  const btn = h('button', { class: 'btn sm', type: 'button', 'data-undo': action ? null : '1', 'data-toast-action': action ? (action.key || '1') : null, 'aria-label': `${label}: ${msg}` }, label);
   const t = h('div', { class: 'toast undo-toast', 'data-undo-toast': '1' }, h('span', {}, msg), btn);
   let left = ms, started = 0, timer = null;
   const gone = () => { clearTimeout(timer); t.remove(); };
@@ -288,11 +291,11 @@ export function undoToast(msg, onUndo, { ms = 10000 } = {}) {
   t.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); gone(); back(); } });
   btn.addEventListener('click', async () => {
     btn.disabled = true;
-    try { await onUndo(); gone(); back(); toast('Undone', 'ok'); }
-    catch (e) { btn.disabled = false; toast((e && e.message) || 'It could not be undone.', 'error'); }
+    try { await onUndo(); gone(); if (!action) { back(); toast('Undone', 'ok'); } }
+    catch (e) { btn.disabled = false; toast((e && e.message) || (action ? 'That did not work.' : 'It could not be undone.'), 'error'); }
   });
   host.append(t);
-  announce(`${msg} Undo is available for ${Math.round(ms / 1000)} seconds.`);
+  announce(`${msg} ${label} is available for ${Math.round(ms / 1000)} seconds.`);
   arm();
   setTimeout(() => { if (t.isConnected) btn.focus({ preventScroll: true }); }, 0);
   return t;

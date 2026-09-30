@@ -1,4 +1,4 @@
-import { h, route, get, post, put, fmt, can, pageHead, pageTabs, table, kv, nav, toast, modal, form, confirmDialog, emptyState, badge, loadingFor, announce, state } from '../app.js';
+import { h, route, get, post, put, fmt, can, pageHead, pageTabs, table, kv, nav, toast, undoToast, modal, form, confirmDialog, emptyState, badge, loadingFor, announce, state } from '../app.js';
 import { fetchDownload } from './reports.js';
 import { presets, lastCompleteQuarter, monthsLabel, describe } from '../county-periods.js';
 // The county connection's Connection tokens card (views/countyconnect.js; built for 1.18.0), under the programmes.
@@ -54,8 +54,8 @@ route('county', async (r) => {
   const tab = ['submissions', 'programmes'].includes(r.query.get('tab')) ? r.query.get('tab') : 'view';
   const tabs = pageTabs([['view', 'Combined view'], ['submissions', 'Submissions'], ['programmes', 'Programs']], tab,
     (k) => nav(k === 'view' ? 'county' : `county?tab=${k}`), { label: 'County view sections', wrap: true });
-  const intro = h('p', { class: 'small', 'data-county-intro': '1' }, 'The settlement spending and outcomes the programs the county funds send it, each as a file its own SUDS signed. Exact aggregate figures for authorised county staff: no client of any program is ever in them, and nothing here is for publication.');
-  const body = tab === 'programmes' ? await programmesTab() : tab === 'submissions' ? await submissionsTab() : await viewTab(r);
+  const intro = h('p', { class: 'small', 'data-county-intro': '1' }, `The settlement spending and outcomes the programs the county funds send it, each as a file its own SUDS signed, and the figures the county's staff enter for a program not on SUDS, marked "${ENTERED_WORDS}". Exact aggregate figures for authorised county staff: no client of any program is ever in them, and nothing here is for publication.`);
+  const body = tab === 'programmes' ? await programmesTab() : tab === 'submissions' ? await submissionsTab(r) : await viewTab(r);
   return h('div', { 'data-county': tab }, pageHead('County view'), tabs, intro, body);
 });
 
@@ -129,7 +129,7 @@ async function viewTab(r) {
     d.inactive_left_out.length ? h('p', { class: 'small', 'data-cv-inactive': '1' }, `Left out: ${d.inactive_left_out.map(p => p.name).join(', ')} (inactive; the county chose not to keep counting ${d.inactive_left_out.length === 1 ? 'its' : 'their'} files).`) : null,
     table([{ label: 'Program', render: p => p.name }, { label: 'For this period', render: p => statusBadge(p.status) }, { label: 'Source', render: p => sourceTag(p.source) },
       { label: 'Files counted', render: p => (p.submissions.length ? p.submissions.map(s => h('div', {}, `${periodText(s)} · received ${fmt.date(s.received_at)}`)) : '—') },
-      { label: 'Left out', render: p => (p.left_out.length ? p.left_out.map(s => h('div', { class: 'small' }, `${periodText(s)}: ${s.why === 'overlaps' ? 'inside a longer file that counts' : 'not wholly inside this period'}`)) : '—') }], d.programmes, { empty: 'No programs.' }));
+      { label: 'Left out', render: p => (p.left_out.length ? p.left_out.map(s => h('div', { class: 'small', 'data-cv-left-out': s.why }, `${periodText(s)}${s.source === 'county_entered' ? ' (entered by the county)' : ''}: ${s.reason}`)) : '—') }], d.programmes, { empty: 'No programs.' }));
   const figure = (x, v) => (x.money ? money(v) : num(v));
   // A program with nothing for the period has no figure: "—" and the words, never a greyed 0 alone (M6).
   // A program's figures the county entered carry "(entered)" in every cell, and its column says what that means.
@@ -137,7 +137,9 @@ async function viewTab(r) {
   const progCell = (p) => (x) => (x.by[p.id] === null ? h('span', { class: 'muted', 'data-cv-none': '1' }, '— ', h('span', { class: 'small' }, 'not submitted'))
     : marks(p).length ? h('span', {}, figure(x, x.by[p.id]), h('span', { class: 'small muted', 'data-cv-cell-entered': isEnteredSource(p.source) ? '1' : null }, ` (${marks(p).join(', ')})`)) : figure(x, x.by[p.id]));
   const progHead = (p) => (isEnteredSource(p.source) ? h('span', {}, p.name, h('span', { class: 'small muted', 'data-cv-entered-mark': p.id }, p.source === 'mixed' ? ` (some figures ${ENTERED_WORDS})` : ` (${ENTERED_WORDS})`)) : p.name);
-  const totalCell = (x) => h('span', {}, h('b', {}, figure(x, x.total)), x.total_entered ? h('span', { class: 'small muted', 'data-cv-total-entered': '1' }, ` (incl. ${figure(x, x.total_entered)} entered by the county)`) : null);
+  // The entered part goes on a line of its own under the total, and wraps: at phone width it is never one long line.
+  const enteredPart = (x, v, attr) => h('div', { class: 'small muted', [attr]: '1', style: { whiteSpace: 'normal' } }, `(incl. ${figure(x, v)} entered by the county)`);
+  const totalCell = (x) => h('span', {}, h('b', {}, figure(x, x.total)), x.total_entered ? enteredPart(x, x.total_entered, 'data-cv-total-entered') : null);
   // A column heading with a marker is an element, and an element can be in one table only: each table gets its own.
   const cols = () => [{ label: 'Measure', render: x => x.label },
     ...d.programmes.map(p => ({ label: progHead(p), cardLabel: isEnteredSource(p.source) ? `${shorts[p.id]} (entered)` : shorts[p.id], num: true, render: progCell(p) })),
@@ -160,7 +162,7 @@ function quarterView(d) {
   if (!d.quarters.length) return h('div', { class: 'banner info', role: 'status', 'data-cv-no-quarters': '1' }, 'No whole quarter lies inside this period. Choose a period that starts on the first day of a quarter (January, April, July or October 1) and ends on the last day of one.');
   const figure = (x, v) => (x.money ? money(v) : num(v));
   const qLabel = (q) => monthsLabel(q.from, q.to);
-  const qCell = (i) => (x) => h('span', {}, figure(x, x.by_quarter[i]), x.by_quarter_entered && x.by_quarter_entered[i] ? h('span', { class: 'small muted', 'data-cq-entered': '1' }, ` (incl. ${figure(x, x.by_quarter_entered[i])} entered by the county)`) : null);
+  const qCell = (i) => (x) => h('span', {}, figure(x, x.by_quarter[i]), x.by_quarter_entered && x.by_quarter_entered[i] ? h('div', { class: 'small muted', 'data-cq-entered': '1', style: { whiteSpace: 'normal' } }, `(incl. ${figure(x, x.by_quarter_entered[i])} entered by the county)`) : null);
   const cols = [{ label: 'Measure', render: x => x.label },
     ...d.quarters.map((q, i) => ({ label: `${qLabel(q)} (${q.whole} of ${q.of} complete${q.entered_programmes ? `; ${q.entered_programmes} entered by the county` : ''})`, cardLabel: qLabel(q), num: true, render: qCell(i) }))];
   const section = (g, title, id) => { const rows = d.rows.filter(x => x.group === g); return rows.length ? h('section', { class: 'card mb', 'aria-labelledby': id, 'data-cv-quarter-group': g }, h('div', { class: 'card-head' }, h('h2', { id }, title)), table(cols, rows)) : null; };
@@ -186,7 +188,7 @@ function quarterView(d) {
 // ---- submissions: import, and every file received ----
 const SUB_STATUS = { current: ['Current', 'ok'], superseded: ['Replaced', ''], withdrawn: ['Withdrawn', 'warn'], key_compromised: ['Not counted: key compromised', 'danger'] };
 const subSource = (s) => h('div', {}, sourceTag(s.source), s.source === 'county_entered' && s.source_ref ? h('div', { class: 'small muted', 'data-cs-source-ref': s.id }, `From: ${s.source_ref}`) : null);
-async function submissionsTab() {
+async function submissionsTab(r) {
   const list = h('div', { 'data-cs-rows': '1' });
   const heading = h('h2', { id: 'cs-list-h', tabindex: '-1' }, 'Files received');
   const refresh = async () => {
@@ -198,10 +200,15 @@ async function submissionsTab() {
       can('county:manage') ? { label: '', srLabel: 'Actions', render: s => h('div', { class: 'row' }, s.status === 'current' || s.status === 'key_compromised'
         ? h('button', { class: 'btn sm ghost', 'data-cs-withdraw': s.id, 'aria-label': `Withdraw ${s.programme}'s ${s.source === 'county_entered' ? 'figures' : 'file'} for ${periodText(s)}`, onClick: () => withdraw(s, refresh, heading) }, 'Withdraw')
         : s.status === 'withdrawn' ? h('button', { class: 'btn sm ghost', 'data-cs-reinstate': s.id, 'aria-label': `Reinstate ${s.programme}'s ${s.source === 'county_entered' ? 'figures' : 'file'} for ${periodText(s)}`, onClick: () => reinstate(s, refresh, heading) }, 'Reinstate') : null,
-        s.source === 'county_entered' && s.status === 'current' ? h('button', { class: 'btn sm ghost', 'data-cs-correct': s.id, 'aria-label': `Correct ${s.programme}'s figures for ${periodText(s)}`, onClick: () => correctEntry(s) }, 'Correct') : null) } : null].filter(Boolean),
+        // Figures of a program that has since joined SUDS can be withdrawn or reinstated, not corrected (it signs its own now).
+        s.source === 'county_entered' && s.status === 'current' && s.programme_on_suds === false ? h('button', { class: 'btn sm ghost', 'data-cs-correct': s.id, 'aria-label': `Correct ${s.programme}'s figures for ${periodText(s)}`, onClick: () => correctEntry(s) }, 'Correct') : null,
+        s.source === 'county_entered' && s.programme_on_suds !== false ? h('span', { class: 'small muted', 'data-cs-no-correct': s.id }, 'The program now runs SUDS: withdraw or reinstate, not correct') : null) } : null].filter(Boolean),
     rows, { empty: 'No files received yet.' }));
   };
   await refresh();
+  // Arrived here after saving or importing figures (focus=list): the keyboard goes to the list they are now in (U5),
+  // once the page is drawn, not to the top of the document.
+  if (r && r.query.get('focus') === 'list') setTimeout(() => { if (heading.isConnected) heading.focus(); }, 0);
   return h('div', {}, can('county:manage') ? importCard(refresh) : null,
     h('section', { class: 'card mb', 'aria-labelledby': 'cs-list-h', 'data-cs-list': '1' }, h('div', { class: 'card-head' }, heading),
       h('p', { class: 'small muted' }, 'Current: the file that counts for its program and period. Replaced: a file made later for the same period counts instead. Withdrawn: taken out by the county; it can be reinstated. Which files count toward a period you choose is on the Combined view. Figures the county entered for a program not on SUDS are listed here too, marked as such.'),
@@ -252,7 +259,8 @@ async function withdraw(s, refresh, heading) {
   try {
     const out = await post(`/api/county/submissions/${s.id}/withdraw`, { reason });
     await refresh(); focusList(heading);
-    const msg = out.restored ? `Withdrawn. The earlier file for ${periodText(out.restored)} counts again.` : 'Withdrawn. It no longer counts.';
+    const earlier = out.restored ? (out.restored.source === 'county_entered' ? `The figures entered for ${periodText(out.restored)} count again.` : `The earlier file for ${periodText(out.restored)} counts again.`) : '';
+    const msg = s.source === 'county_entered' ? `Withdrawn. These figures no longer count.${earlier ? ` ${earlier}` : ''}` : `Withdrawn.${earlier ? ` ${earlier}` : ' It no longer counts.'}`;
     toast(msg, 'ok'); announce(msg);
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -283,7 +291,8 @@ async function programmesTab() {
         manage ? { label: '', srLabel: 'Actions', render: p => h('div', { class: 'row' }, h('button', { class: 'btn sm', 'data-cp-edit': p.id, 'aria-label': `Edit ${p.name}`, onClick: () => programmeForm(p) }, 'Edit'),
           p.on_suds === false ? [
             h('button', { class: 'btn sm', 'data-cp-enter': p.id, 'aria-label': `Enter figures for ${p.name}`, disabled: !p.active, onClick: () => enterFiguresDialog(p) }, 'Enter figures'),
-            h('button', { class: 'btn sm', 'data-cp-import': p.id, 'aria-label': `Import a CSV of ${p.name}'s figures`, disabled: !p.active, onClick: () => importCsvDialog(p) }, 'Import a CSV')]
+            h('button', { class: 'btn sm', 'data-cp-import': p.id, 'aria-label': `Import a CSV of ${p.name}'s figures`, disabled: !p.active, onClick: () => importCsvDialog(p) }, 'Import a CSV'),
+            h('button', { class: 'btn sm ghost', 'data-cp-join': p.id, 'aria-label': `Add its key: ${p.name} now runs SUDS`, onClick: () => keysDialog(p) }, 'Add its key')]
             : h('button', { class: 'btn sm', 'data-cp-keys': p.id, 'aria-label': `Keys of ${p.name}`, onClick: () => keysDialog(p) }, 'Keys')) } : null].filter(Boolean),
       rows, { empty: 'No programs registered yet.' })),
     // County connection hook (views/countyconnect.js): each program's connection token, for county:manage. A program
@@ -339,15 +348,20 @@ function keysDialog(p) {
       try { await put(`/api/county/programmes/${p.id}/keys/${k.id}`, { compromised: !k.compromised_at }); m.close(); toast(k.compromised_at ? 'Its files count again.' : 'Its files no longer count.', 'ok'); nav('county?tab=programmes&t=' + Date.now()); }
       catch (e) { toast(e.message, 'error'); }
     } }, k.compromised_at ? 'Trust again' : 'Old key compromised')) }], p.keys);
-  const f = form([...KEY_FIELDS, { name: 'old_compromised', label: 'The old key was compromised: stop counting the files it signed', type: 'checkbox', span: true }],
-    { submitText: 'Replace the key', onCancel: () => m.close(), onSubmit: async (d) => {
-      await post(`/api/county/programmes/${p.id}/keys`, { public_key: d.public_key, fingerprint: d.fingerprint || undefined, compared: !!d.compared, old_compromised: !!d.old_compromised });
-      m.close(); toast(`${p.name}'s key replaced. New files must be signed with it.`, 'ok'); nav('county?tab=programmes&t=' + Date.now());
+  // A program not on SUDS that now runs it: its first key (D5). It is then on SUDS for good: the figures the county
+  // entered for it stay, marked, and can be withdrawn or reinstated but no longer corrected, and its signed files
+  // outrank them wherever the two overlap.
+  const joins = p.on_suds === false;
+  const f = form(joins ? KEY_FIELDS : [...KEY_FIELDS, { name: 'old_compromised', label: 'The old key was compromised: stop counting the files it signed', type: 'checkbox', span: true }],
+    { submitText: joins ? 'Add the key' : 'Replace the key', onCancel: () => m.close(), onSubmit: async (d) => {
+      await post(`/api/county/programmes/${p.id}/keys`, { public_key: d.public_key, fingerprint: d.fingerprint || undefined, compared: !!d.compared, old_compromised: joins ? false : !!d.old_compromised });
+      m.close(); toast(joins ? `${p.name} is now on SUDS. Its files must be signed with this key.` : `${p.name}'s key replaced. New files must be signed with it.`, 'ok'); nav('county?tab=programmes&t=' + Date.now());
     } });
   f.querySelector('[data-field=public_key]').append(fingerprintPreview(f.inputs.public_key));
-  const m = modal(`Keys of ${p.name}`, h('div', { 'data-cp-keys-dialog': '1' },
-    h('p', { class: 'small' }, `When ${p.name} makes a new key, add it here. Files its old key signed that are already here keep counting, unless you say the old key was compromised. New files must be signed with the current key.`),
-    history, h('h3', {}, 'Replace the key'), f), { wide: true });
+  const m = modal(joins ? `Add ${p.name}'s key` : `Keys of ${p.name}`, h('div', { 'data-cp-keys-dialog': '1' },
+    joins ? h('p', { class: 'small', 'data-cp-join-note': '1' }, `When ${p.name} starts running SUDS, add the public key it gives you. It is then on SUDS for good: it signs its own files, and a signed file outranks figures the county entered wherever the two overlap. The figures the county entered for it stay, marked "${ENTERED_WORDS}": they can be withdrawn or reinstated, but no longer corrected, and no more are entered.`)
+      : h('p', { class: 'small' }, `When ${p.name} makes a new key, add it here. Files its old key signed that are already here keep counting, unless you say the old key was compromised. New files must be signed with the current key.`),
+    joins ? null : history, h('h3', {}, joins ? 'Its key' : 'Replace the key'), f), { wide: true });
 }
 
 // ---- programs not on SUDS: figures the county enters (built for 1.20.0; server/county-entry.js) ----
@@ -362,17 +376,25 @@ function notOnSudsForm() {
   const f = form([{ name: 'name', label: 'Program name', required: true, span: true }, { name: 'notes', label: 'Notes', type: 'textarea', rows: 2, span: true }], {
     submitText: 'Add the program', onCancel: () => m.close(),
     onSubmit: async (d) => {
-      await post('/api/county/programmes', { name: d.name, notes: d.notes || undefined, not_on_suds: true });
-      m.close(); const msg = `Added ${d.name}, not on SUDS. Enter its figures from the Programs list.`; toast(msg, 'ok'); announce(msg); nav('county?tab=programmes&t=' + Date.now());
+      const added = await post('/api/county/programmes', { name: d.name, notes: d.notes || undefined, not_on_suds: true });
+      m.close(); nav('county?tab=programmes&t=' + Date.now());
+      // The next step, offered where the person is: the toast's own Enter figures button (it holds while focused).
+      undoToast(`Added ${added.name}, not on SUDS.`, () => enterFiguresDialog(added), { action: { text: 'Enter figures', key: 'enter-figures' } });
     } });
   const m = modal('Add a program not on SUDS', h('div', { 'data-cp-entered-dialog': '1' },
     h('p', { class: 'small' }, `For a grantee that does not run SUDS. It has no key, so it sends no signed file: the county's own staff enter its figures (or import them as a CSV) from what it sends. Every view and file marks them "${ENTERED_WORDS}", and the combined view can leave them out.`), f), { wide: true });
 }
 const FUND_TEXT = ['name', 'grant_number', 'category', 'hiaa'];
+/** Exhibit E's uses, each named with its schedule as the fund form names them (budget.js settlementFields). */
+const useKind = (code) => (code.startsWith('core_') ? 'Core strategy ' : code.startsWith('approved_') ? 'Approved use ' : '');
+const useOptions = () => ((state.constants || {}).SETTLEMENT_USES || []).map(x => ({ value: x.code, label: `${useKind(x.code)}${x.label}` }));
 const SPEND = [['spend_own_category', 'Spent under the fund\'s own category ($)'], ['spend_other_categories', 'Spent under other categories ($)'], ['spend_pending', 'Pending approval ($)']];
-/** The form's values from an entry to correct ({ from, to, source_ref, funds }): "funds.0.contacts" and so on. */
+/**
+ * The form's values from an entry to correct ({ from, to, funds }): "funds.0.contacts" and so on. The source
+ * document is not carried over: a correction comes from a document of its own (the earlier one is said under it).
+ */
 function flatEntry(e) {
-  const v = { from: e.from, to: e.to, source_ref: e.source_ref || '' };
+  const v = { from: e.from, to: e.to, source_ref: '' };
   e.funds.forEach((f, i) => { for (const [k, x] of Object.entries(f)) v[`funds.${i}.${k}`] = x === null || x === undefined ? '' : String(x); });
   return v;
 }
@@ -386,7 +408,7 @@ async function enterFiguresDialog(p, { initial = null } = {}) {
   const M = await measures();
   const C = state.constants || {};
   // The blank choice is "no category" (uncategorised) and "not recorded": the server's defaults for them.
-  const useOpts = (C.SETTLEMENT_USES || []).map(x => ({ value: x.code, label: x.label }));
+  const useOpts = useOptions();
   const hiaaOpts = [...(C.SETTLEMENT_HIAA || []).map(x => ({ value: x.code, label: x.label })), { value: 'none', label: 'Not a High Impact Abatement Activity' }];
   const lq = lastCompleteQuarter(fmt.today());
   let values = initial ? flatEntry(initial) : { from: lq.from, to: lq.to };
@@ -398,7 +420,8 @@ async function enterFiguresDialog(p, { initial = null } = {}) {
       { type: 'section', label: 'The period and where the figures come from' },
       { name: 'from', label: 'From', type: 'date', required: true },
       { name: 'to', label: 'To', type: 'date', required: true },
-      { name: 'source_ref', label: 'Source document', required: true, span: true, maxLen: 200, help: 'Which document the figures come from, so anyone can check them later: for example "Q2 report emailed 3 July 2026".' },
+      { name: 'source_ref', label: 'Source document', required: true, span: true, maxLen: 200,
+        help: initial ? `Which document the corrected figures come from: for example "Corrected Q2 report emailed 20 July 2026".${initial.source_ref ? ` The figures being corrected came from: ${initial.source_ref}.` : ''}` : 'Which document the figures come from, so anyone can check them later: for example "Q2 report emailed 3 July 2026".' },
     ];
     for (let i = 0; i < n; i++) {
       const pre = `funds.${i}.`;
@@ -407,9 +430,9 @@ async function enterFiguresDialog(p, { initial = null } = {}) {
         { name: `${pre}grant_number`, label: 'Grant or agreement number (optional)', maxLen: 100 },
         { name: `${pre}category`, label: 'Exhibit E allowable use', type: 'select', options: useOpts, placeholder: 'No settlement category recorded', span: true },
         { name: `${pre}hiaa`, label: 'High Impact Abatement Activity', type: 'select', options: hiaaOpts, placeholder: '— not recorded —', span: true },
-        ...SPEND.map(([k, label]) => ({ name: `${pre}${k}`, label })),
+        ...SPEND.map(([k, label]) => ({ name: `${pre}${k}`, label, required: true })),
         { type: 'section', label: `Fund ${i + 1}: outcomes` },
-        ...M.map(x => ({ name: `${pre}${x.key}`, label: x.label })));
+        ...M.map(x => ({ name: `${pre}${x.key}`, label: x.label, required: true })));
     }
     const more = h('div', { class: 'btn-row', 'data-ce-funds': String(n) },
       h('button', { class: 'btn sm', type: 'button', 'data-ce-add-fund': '1', onClick: () => { values = f.read(true); n++; build(); const el = holder.querySelector(`[name="funds.${n - 1}.name"]`); if (el) el.focus(); announce(`Fund ${n} added.`); } }, 'Add another fund'),
@@ -418,11 +441,12 @@ async function enterFiguresDialog(p, { initial = null } = {}) {
       onSubmit: async (d) => {
         const funds = Array.from({ length: n }, (_, i) => Object.fromEntries([...FUND_TEXT, ...numeric].map(k => [k, d[`funds.${i}.${k}`] ?? ''])));
         const res = await post(`/api/county/programmes/${p.id}/entries`, { from: d.from, to: d.to, source_ref: d.source_ref, funds });
-        m.close(); toast(res.message, 'ok'); announce(res.message); nav(`county?tab=submissions&t=${Date.now()}`);
+        m.close(); toast(res.message, 'ok'); nav(`county?tab=submissions&focus=list&t=${Date.now()}`);
       } });
-    // Figures are typed as text so SUDS, not the browser, says what is wrong with "1,200" or "$5".
-    for (let i = 0; i < n; i++) for (const k of numeric) { const el = f.inputs[`funds.${i}.${k}`]; if (el) { el.setAttribute('inputmode', 'decimal'); el.setAttribute('aria-required', 'true'); } }
-    holder.replaceChildren(h('p', { class: 'small' }, `Figures ${ENTERED_WORDS}: every view and file marks them so. Type each figure as digits (up to two decimals for money and hours), 0 where the program reported none. Saving figures for a period that already has some replaces them; the earlier ones are kept.`), f);
+    // Figures are typed as text so SUDS, not the browser, says what is wrong with "1,200" or "$5". Every one is
+    // required (marked *, as every form marks a required field): 0 where the program reported none.
+    for (let i = 0; i < n; i++) for (const k of numeric) { const el = f.inputs[`funds.${i}.${k}`]; if (el) el.setAttribute('inputmode', 'decimal'); }
+    holder.replaceChildren(h('p', { class: 'small' }, `Figures ${ENTERED_WORDS}: every view and file marks them so. Fields marked * are required. Type each figure as digits (up to two decimals for money and hours), 0 where the program reported none. Saving figures for a period that already has some replaces them; the earlier ones are kept.`), f);
   };
   build();
   const m = modal(`${initial ? 'Correct' : 'Enter'} figures for ${p.name}`, holder, { wide: true });
@@ -435,9 +459,11 @@ async function correctEntry(s) {
   } catch (err) { toast(err.message, 'error'); }
 }
 /**
- * Import a CSV of a program's figures, in the long ("tidy") layout the combined view downloads. Check the file
- * first: its problems are listed by row and column (nothing is saved), or what it holds is shown, with each fund's
- * Exhibit E category and HIAA to choose (the layout has neither). Then import: every period at once, or none.
+ * Import a CSV of a program's figures, in the long ("tidy") layout the combined view downloads (or the template
+ * offered here). Check the file first: its problems are listed by row and column (nothing is saved), or what it
+ * holds is shown, with each fund's Exhibit E category and HIAA to choose (the layout has neither). Then import:
+ * every period at once, or none. Only this program's rows are read; another program's are said in one line and
+ * never imported. Choosing another file clears the check; Import makes sure the file chosen is still the one checked.
  */
 function importCsvDialog(p) {
   const C = state.constants || {};
@@ -445,34 +471,50 @@ function importCsvDialog(p) {
   const refI = h('input', { type: 'text', id: 'ci-ref', maxlength: 200, autocomplete: 'off', 'aria-required': 'true', 'aria-describedby': 'ci-ref-help' });
   const result = h('div', { class: 'hidden', tabindex: '-1', 'data-ci-result': '1' });
   const previewBox = h('div', { 'data-ci-preview': '1' });
-  let text = ''; let preview = null; let selects = [];
+  // What was checked: the text sent for the preview, and which file it came from (name, size, time), so Import
+  // sends exactly what was previewed, and only while that file is still the one chosen.
+  let text = ''; let preview = null; let selects = []; let checked = null;
   const say = (message, ok, extra = null) => {
     result.setAttribute('role', ok ? 'status' : 'alert'); result.className = `banner ${ok ? 'info' : 'danger'}`; result.setAttribute('data-ci-outcome', ok ? 'ok' : 'refused');
     result.replaceChildren(...[h('p', {}, message), extra].filter(Boolean)); result.focus();
   };
+  const clear = () => {
+    text = ''; preview = null; selects = []; checked = null;
+    previewBox.replaceChildren();
+    result.replaceChildren(); result.className = 'hidden'; result.removeAttribute('role'); result.removeAttribute('data-ci-outcome');
+  };
+  // A new file chosen: the last one's check, preview and categories no longer apply.
+  fileI.addEventListener('change', clear);
+  const sameFile = (f) => !!(f && checked && f.name === checked.name && f.size === checked.size && f.lastModified === checked.lastModified);
   const errorsTable = (errors) => (errors && errors.length ? table([{ label: 'Row', render: e => (e.row ? String(e.row) : '—') }, { label: 'Column', render: e => e.column || '—' }, { label: 'Problem', render: e => e.message }], errors, { wrap: false }) : null);
   const funds = () => selects.map(x => ({ name: x.fund.name, grant_number: x.fund.grant_number, category: x.cat.value || 'uncategorised', hiaa: x.hiaa.value || null }));
   const importBtn = h('button', { class: 'btn primary', type: 'button', 'data-ci-import': '1', onClick: async () => {
     refI.removeAttribute('aria-invalid');
+    const file = fileI.files && fileI.files[0];
+    // The file chosen must be the one checked, unchanged: otherwise what was previewed is not what would be saved.
+    let same = sameFile(file) && !!preview;
+    if (same) { try { same = (await file.text()) === text; } catch { same = false; } }
+    if (!same) { clear(); say('The file chosen is not the one that was checked (or it changed since). Nothing was saved. Check the file again, then import it.', false); fileI.focus(); return; }
     if (refI.value.trim().length < 3) { refI.setAttribute('aria-invalid', 'true'); say('Say which document the figures come from (Source document), then import.', false); refI.focus(); return; }
     importBtn.disabled = true;
     try {
       const res = await post(`/api/county/programmes/${p.id}/entries/import`, { text, source_ref: refI.value, funds: funds() }, { quiet: true });
-      m.close(); toast(res.message, 'ok'); announce(res.message); nav(`county?tab=submissions&t=${Date.now()}`);
+      m.close(); toast(res.message, 'ok', { ms: 8000 }); nav(`county?tab=submissions&focus=list&t=${Date.now()}`);
     } catch (err) {
       const d = err.data || {};
       if (d.fields && d.fields.source_ref) refI.setAttribute('aria-invalid', 'true');
-      say(`Not imported. ${err.message}`, false, errorsTable(d.errors));
+      say(err.message, false, errorsTable(d.errors));
     } finally { importBtn.disabled = false; }
   } }, 'Import');
   const showPreview = (pv) => {
-    const useOpts = [...(C.SETTLEMENT_USES || []).map(x => [x.code, x.label]), ['uncategorised', 'No settlement category recorded']];
+    const useOpts = [...useOptions().map(x => [x.value, x.label]), ['uncategorised', 'No settlement category recorded']];
     const hiaaOpts = [['', '— not recorded —'], ...(C.SETTLEMENT_HIAA || []).map(x => [x.code, x.label]), ['none', 'Not a High Impact Abatement Activity']];
     selects = pv.funds.map((fund, i) => ({ fund,
       cat: h('select', { id: `ci-cat-${i}`, 'data-ci-category': String(i) }, useOpts.map(([v, l]) => h('option', { value: v, selected: v === 'uncategorised' }, l))),
       hiaa: h('select', { id: `ci-hiaa-${i}`, 'data-ci-hiaa': String(i) }, hiaaOpts.map(([v, l]) => h('option', { value: v }, l))) }));
     const money = (n) => fmt.money(n);
-    previewBox.replaceChildren(h('h3', {}, 'What the file holds'),
+    previewBox.replaceChildren(...[h('h3', {}, 'What the file holds'),
+      (pv.warnings || []).length ? h('div', { class: 'banner warn', 'data-ci-warnings': '1' }, pv.warnings.map(w => h('p', {}, w))) : null,
       table([{ label: 'Period', render: x => `${fmt.date(x.from)} – ${fmt.date(x.to)}` }, { label: 'Funds', render: x => x.funds.map(f => f.name).join('; ') },
         { label: 'Spent (approved)', num: true, render: x => money(x.total.spend_approved) }, { label: 'Pending', num: true, render: x => money(x.total.spend_pending) },
         { label: 'People served', num: true, render: x => fmt.num(x.total.values.people_served) }], pv.periods, { wrap: false }),
@@ -481,29 +523,37 @@ function importCsvDialog(p) {
       ...selects.map((x, i) => h('fieldset', { class: 'mb', 'data-ci-fund': String(i) }, h('legend', {}, x.fund.grant_number ? `${x.fund.name} (${x.fund.grant_number})` : x.fund.name),
         h('div', { class: 'field' }, h('label', { for: `ci-cat-${i}` }, 'Exhibit E allowable use'), x.cat),
         h('div', { class: 'field' }, h('label', { for: `ci-hiaa-${i}` }, 'High Impact Abatement Activity'), x.hiaa))),
-      h('div', { class: 'btn-row' }, importBtn));
+      h('div', { class: 'btn-row' }, importBtn)].filter(Boolean));
   };
   const checkBtn = h('button', { class: 'btn primary', type: 'submit', 'data-ci-check': '1' }, 'Check the file');
   const f = h('form', { noValidate: true, onSubmit: async (e) => {
     e.preventDefault();
     const file = fileI.files && fileI.files[0];
-    previewBox.replaceChildren(); preview = null;
+    clear();
     if (!file) { say('Choose a CSV file first.', false); fileI.focus(); return; }
     checkBtn.disabled = true;
     try {
-      text = await file.text();
-      preview = await post(`/api/county/programmes/${p.id}/entries/import`, { text, preview: true }, { quiet: true });
-      showPreview(preview);
-      say(`The file holds ${preview.periods.length} period${preview.periods.length === 1 ? '' : 's'} of ${p.name}'s figures (${preview.rows} rows). Nothing is saved until you import it.`, true);
+      const t = await file.text();
+      const pv = await post(`/api/county/programmes/${p.id}/entries/import`, { text: t, preview: true }, { quiet: true });
+      text = t; preview = pv; checked = { name: file.name, size: file.size, lastModified: file.lastModified };
+      showPreview(pv);
+      say(`The file holds ${pv.periods.length} period${pv.periods.length === 1 ? '' : 's'} of ${p.name}'s figures (${pv.rows} rows). Nothing is saved until you import it.`, true);
     } catch (err) {
-      say(`Not imported. ${err.message}`, false, errorsTable(err.data && err.data.errors));
+      say(err.message, false, errorsTable(err.data && err.data.errors));
     } finally { checkBtn.disabled = false; }
   } },
-  h('div', { class: 'field' }, h('label', { for: 'ci-file' }, 'CSV file'), fileI,
-    h('div', { class: 'help', id: 'ci-file-help' }, 'Columns program, period_from, period_to, fund, grant_number, measure_code, measure_label, value (the Long CSV the Combined view downloads). Every figure of every fund is needed; the program column must be this program\'s name.')),
+  h('div', { class: 'field' }, h('label', { for: 'ci-file' }, 'CSV file *'), fileI,
+    h('div', { class: 'help', id: 'ci-file-help' }, `Columns program, period_from, period_to, fund, grant_number, measure_code, measure_label, value (the Long CSV the Combined view downloads, or the template below). Every figure of every fund is needed. Only rows whose program is ${p.name} are read; another program's rows are never imported.`)),
   h('div', { class: 'field' }, h('label', { for: 'ci-ref' }, 'Source document *'), refI,
     h('div', { class: 'help', id: 'ci-ref-help' }, 'Which document the figures come from: for example "FY 2025-26 report, emailed 3 July 2026".')),
   h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', onClick: () => m.close() }, 'Cancel'), checkBtn));
+  // A template for this program: its name, the last complete quarter (change the dates for another period), its
+  // funds as last entered, every measure, and the values left for the county to fill in from the program's report.
+  const lq = lastCompleteQuarter(fmt.today());
+  const template = h('button', { class: 'btn sm', type: 'button', 'data-ci-template': '1', onClick: () => fetchDownload(`/api/county/programmes/${p.id}/entries/template?from=${lq.from}&to=${lq.to}`)
+    .then(() => toast(`Downloaded a template of ${p.name}'s figures for ${fmt.date(lq.from)} – ${fmt.date(lq.to)}.`, 'ok')).catch(e => toast(e.message, 'error')) }, 'Download a template for this program');
   const m = modal(`Import a CSV of ${p.name}'s figures`, h('div', { 'data-ci-dialog': '1' },
-    h('p', { class: 'small' }, `Figures ${ENTERED_WORDS}: every view and file marks them so. A period that already has figures is replaced (the earlier ones are kept).`), result, f, previewBox), { wide: true });
+    h('p', { class: 'small' }, `Figures ${ENTERED_WORDS}: every view and file marks them so. A period that already has figures is replaced (the earlier ones are kept). Fields marked * are required.`),
+    h('div', { class: 'btn-row mb' }, template, h('span', { class: 'small muted' }, `${fmt.date(lq.from)} – ${fmt.date(lq.to)}, with ${p.name}'s funds as last entered; change the dates in it for another period.`)),
+    result, f, previewBox), { wide: true });
 }

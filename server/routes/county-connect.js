@@ -157,7 +157,10 @@ module.exports = (r) => {
     if (!['json', 'tidy-csv'].includes(format)) throw badRequest('format must be json or tidy-csv');
     // Figures the county entered for a programme not on SUDS are counted unless ?entered=exclude, and each programme
     // and figure says where it came from (source: signed, county_entered or mixed).
-    const entered = ctx.query.get('entered') !== 'exclude';
+    // Only include or exclude (none counts them): anything else is refused, never read as include (routes/county.js).
+    const ev = ctx.query.get('entered');
+    if (ev !== null && ev !== 'include' && ev !== 'exclude') throw badRequest('entered must be include or exclude');
+    const entered = ev !== 'exclude';
     const d = K.combined(from, to, { entered });
     audit.log({ user: CC.actor(t), action: 'county.api.read', ip: ctx.ip, details: { what: 'combined', token_id: t.id, from, to, format, programmes: d.programmes.length, submitted: d.submitted, entered_excluded: !entered || undefined } });
     const notes = { counts: 'exact', purpose: 'internal', classification: 'Exact, internal, not for publication: for authorised county staff and systems only.', unduplicated: false,

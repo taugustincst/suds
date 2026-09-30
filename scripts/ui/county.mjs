@@ -337,6 +337,8 @@ try {
   await adm.fill('.modal [name=name]', CANYON);
   await adm.click('.modal button[type=submit]');
   ok(await toast(adm, new RegExp(`Added ${CANYON}, not on SUDS`)), 'it is added, and says so');
+  // The toast offers the next step, Enter figures, with the keyboard on it (it holds while focused).
+  ok(await until(async () => adm.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-toast-action') === 'enter-figures')), 'the toast offers Enter figures, with the focus on it');
   await settle(adm);
   ok(/Not on SUDS: figures entered by the county/.test(await adm.textContent('[data-cp-list]')), 'the list says it is not on SUDS in place of a fingerprint');
   const canyonId = await adm.$eval('[data-cp-enter]', b => b.getAttribute('data-cp-enter'));
@@ -345,8 +347,11 @@ try {
   // Enter figures: the last complete quarter by default; "1,200" is refused at its field, with the focus there.
   const measures = (await api(adm, 'GET', '/api/county/programmes')).data.measures.map(m => m.key);
   eq(measures.length, 13, 'the form asks for the thirteen outcomes');
-  await adm.focus(`[data-cp-enter="${canyonId}"]`); await adm.keyboard.press('Enter');
+  await adm.focus('[data-toast-action="enter-figures"]'); await adm.keyboard.press('Enter');
   await adm.waitForSelector('[data-ce-dialog]');
+  ok(/Enter figures for Canyon Mobile Outreach/.test(await adm.textContent('.modal h2')), 'the toast\'s Enter figures opens the dialog for the program just added');
+  ok(/\*/.test(await adm.textContent('.modal [data-field="funds.0.naloxone_kits"] label')), 'every figure is marked required (*), as every form marks one');
+  ok((await adm.$$eval('.modal [name="funds.0.category"] option', os => os.map(o => o.textContent))).some(t => /^Core strategy /.test(t)) && (await adm.$$eval('.modal [name="funds.0.category"] option', os => os.map(o => o.textContent))).some(t => /^Approved use /.test(t)), 'Exhibit E\'s uses say their schedule, as the fund form does');
   eq(await adm.inputValue('.modal [name=from]'), lq.from, 'Enter figures defaults to the last complete quarter');
   await axe(adm, 'Enter figures dialog (1280)');
   await adm.fill('.modal [name=source_ref]', 'Q report emailed by the program (fictional)');
@@ -372,6 +377,7 @@ try {
   await adm.click('.modal button[type=submit]');
   ok(await toast(adm, new RegExp(`Saved ${CANYON}'s figures for .*entered by the county — not signed by the program`)), 'the figures are saved, marked as entered by the county');
   await settle(adm);
+  eq(await until(async () => adm.evaluate(() => (document.activeElement && document.activeElement.id) || null)), 'cs-list-h', 'after saving, the keyboard is on the list the figures are now in');
   // Submissions: marked, with the source document; Correct reopens the form filled in.
   await go(adm, 'county?tab=submissions');
   const canyonSub = await adm.$$eval('[data-cs-list] tbody tr', (trs, n) => { const tr = trs.find(t => t.cells[0].textContent.includes(n)); return tr ? tr.textContent : ''; }, CANYON);
@@ -380,6 +386,8 @@ try {
   await adm.click(`[data-cs-correct="${correctId}"]`); await adm.waitForSelector('[data-ce-dialog]');
   eq(await adm.inputValue('.modal [name="funds.0.naloxone_kits"]'), '120', 'Correct opens the form with the figures entered');
   ok(/Correct figures for/.test(await adm.textContent('.modal h2')), 'titled as a correction');
+  eq(await adm.inputValue('.modal [name=source_ref]'), '', 'but not the old source document: a correction comes from a document of its own');
+  ok(/came from: Q report emailed by the program/.test(await adm.textContent('.modal [data-field=source_ref]')), 'the earlier one is said under the field');
   await adm.keyboard.press('Escape'); await until(async () => !(await adm.$('.modal-bg')));
   await axe(adm, 'county submissions with entered figures (1280)');
   // The combined view: the headline counts them separately; the column, every figure and the total are marked.
@@ -391,6 +399,7 @@ try {
   ok(await adm.$('[data-cv-group=outcome] [data-cv-cell-entered]'), 'each of its figures is marked (entered)');
   const kitsTotal = await adm.$$eval('[data-cv-group=outcome] tbody tr', (trs) => { const tr = trs.find(t => /^Naloxone kits distributed/.test(t.cells[0].textContent)); return tr ? tr.cells[tr.cells.length - 1].textContent : ''; });
   ok(/incl\. 120 entered by the county/.test(kitsTotal), 'and the total says how much of it was entered by the county', kitsTotal);
+  eq(await adm.$eval('[data-cv-group=outcome] [data-cv-total-entered]', e => e.tagName), 'DIV', 'on a line of its own under the total');
   ok(await adm.isVisible('[data-cv-entered-note]'), 'the page says what "entered by the county" means');
   await axe(adm, 'county combined view with entered figures (1280)');
   // Leave them out: with the keyboard (Space on the box, Enter to apply).
@@ -414,12 +423,20 @@ try {
   const tidyRows = (program, value) => { const out = ['program,period_from,period_to,fund,grant_number,measure_code,measure_label,value'];
     for (const [k, v] of [['spend_own_category', 3100], ['spend_other_categories', 0], ['spend_approved', 3100], ['spend_pending', 50], ...measures.map(m => [m, m === 'naloxone_kits' ? value : 4])]) out.push([program, prev.from, prev.to, 'County settlement share', 'OSF-CM-3', k, 'label', v].join(','));
     return out.join('\r\n'); };
-  const badCsv = path.join(tmp, 'canyon-bad.csv'); fs.writeFileSync(badCsv, tidyRows('Some Other Program', '9x'));
+  // The bad file: a figure that is not a number, and another program's rows (never read, said in one line).
+  const badCsv = path.join(tmp, 'canyon-bad.csv'); fs.writeFileSync(badCsv, [tidyRows(CANYON, '9x'), ...tidyRows('Some Other Program', 3).split('\r\n').slice(1)].join('\r\n'));
   const goodCsv = path.join(tmp, 'canyon.csv'); fs.writeFileSync(goodCsv, tidyRows(CANYON, 95));
+  const secondCsv = path.join(tmp, 'canyon-second.csv'); fs.writeFileSync(secondCsv, tidyRows(CANYON, 96));
+  const changingCsv = path.join(tmp, 'canyon-changing.csv'); fs.writeFileSync(changingCsv, tidyRows(CANYON, 97));
   await go(adm, 'county?tab=programmes');
   await adm.focus(`[data-cp-import="${canyonId}"]`); await adm.keyboard.press('Enter');
   await adm.waitForSelector('[data-ci-dialog]');
   await axe(adm, 'Import a CSV dialog (1280)');
+  // A template for this program: its name, a period, every measure, values empty.
+  const [tpl] = await Promise.all([adm.waitForEvent('download'), adm.click('[data-ci-template]')]);
+  ok(/^suds-county-entry-template-.*\.csv$/.test(tpl.suggestedFilename()), 'Download a template for this program gives a CSV', tpl.suggestedFilename());
+  const tplText = fs.readFileSync(await tpl.path(), 'utf8').replace(/^\uFEFF/, '');
+  ok(tplText.startsWith('program,period_from,period_to,fund,grant_number,measure_code,measure_label,value') && tplText.includes(`${CANYON},`) && tplText.includes('County settlement share'), 'with the layout, the program and its funds as last entered');
   const checkCsv = async (file) => {
     await adm.evaluate(() => { const e = document.querySelector('[data-ci-result]'); if (e) e.removeAttribute('data-ci-outcome'); });
     await adm.setInputFiles('#ci-file', file); await adm.click('[data-ci-check]');
@@ -427,20 +444,41 @@ try {
   };
   let c = await checkCsv(badCsv);
   eq(c.outcome, 'refused', 'a file with problems is refused'); eq(c.role, 'alert', 'as an alert'); ok(c.focused, 'which takes the focus');
-  ok(/not Canyon Mobile Outreach/.test(c.text) && /not a whole number/.test(c.text), 'listing each problem by row and column', c.text);
+  ok(/not a whole number/.test(c.text) && /rows for other programs \(Some Other Program\) were not read/.test(c.text), 'listing each problem by row and column, and another program\'s rows in one line', c.text);
+  ok(!/Not imported\. The file was not imported/.test(c.text) && !/has no naloxone/.test(c.text), 'said once, with no knock-on "has no" for the same figure', c.text);
   ok(await adm.$('[data-ci-result] table'), 'in a table');
   await axe(adm, 'Import a CSV dialog with problems listed (1280)');
+  // Choosing another file after a check clears the check: its preview, its categories and its Import go (U-HIGH).
+  c = await checkCsv(secondCsv);
+  eq(c.outcome, 'ok', 'a file is checked'); ok(await adm.$('[data-ci-import]'), 'and offers Import');
+  await adm.setInputFiles('#ci-file', goodCsv);
+  ok(await until(async () => !(await adm.$('[data-ci-import]')) && !(await adm.$('[data-ci-fund]'))), 'choosing another file clears the preview and its Import');
+  eq(await adm.getAttribute('[data-ci-result]', 'data-ci-outcome'), null, 'and the last check\'s result');
+  // A file changed on disk after its check (same name, chosen once) is not imported: Import checks it is the one previewed.
+  c = await checkCsv(changingCsv);
+  eq(c.outcome, 'ok', 'a file is checked');
+  fs.writeFileSync(changingCsv, tidyRows(CANYON, 1234));
+  await adm.fill('#ci-ref', 'A report (fictional)');
+  await adm.evaluate(() => { const e = document.querySelector('[data-ci-result]'); if (e) e.removeAttribute('data-ci-outcome'); });
+  await adm.click('[data-ci-import]');
+  const changed = await until(async () => { const o = await adm.getAttribute('[data-ci-result]', 'data-ci-outcome'); return o ? await adm.textContent('[data-ci-result]') : null; });
+  ok(/not the one that was checked/.test(changed || ''), 'Import refuses a file that is not the one checked, and says so', changed);
+  eq((await api(adm, 'GET', '/api/county/submissions')).data.rows.filter(s => s.programme === CANYON).length, 1, 'nothing was saved');
+  await adm.fill('#ci-ref', '');
   c = await checkCsv(goodCsv);
   eq(c.outcome, 'ok', 'a good file is checked'); ok(/holds 1 period/.test(c.text), 'and said what it holds', c.text);
   ok(await adm.$('[data-ci-fund="0"] legend') && await adm.$('[data-ci-category="0"]'), 'each fund\'s category is asked for, in a fieldset named after the fund');
   await adm.selectOption('[data-ci-category="0"]', 'core_h'); await adm.selectOption('[data-ci-hiaa="0"]', 'hiaa_4');
   await axe(adm, 'Import a CSV dialog with the preview (1280)');
   await adm.click('[data-ci-import]');
-  ok(/Source document/.test(await adm.textContent('[data-ci-result]')), 'importing without the source document is refused at it');
+  // Import first makes sure the file is the one checked (it reads it), so the answer comes a moment later.
+  ok(await until(async () => /Source document/.test(await adm.textContent('[data-ci-result]'))), 'importing without the source document is refused at it');
   eq(await adm.getAttribute('#ci-ref', 'aria-invalid'), 'true', 'which is marked invalid');
   await adm.fill('#ci-ref', 'Annual report (fictional)');
   await adm.click('[data-ci-import]');
   ok(await toast(adm, /Imported Canyon Mobile Outreach's figures for 1 period, entered by the county — not signed by the program/), 'the file is imported, marked');
+  await settle(adm);
+  eq(await until(async () => adm.evaluate(() => (document.activeElement && document.activeElement.id) || null)), 'cs-list-h', 'after importing, the keyboard is on the list');
   const entered = (await api(adm, 'GET', '/api/county/submissions')).data.rows.filter(s => s.programme === CANYON);
   eq(entered.map(s => s.entered_via).sort().join(','), 'csv,form', 'one period entered in the form, one imported');
   // Phone widths: the dialogs and the marked view.

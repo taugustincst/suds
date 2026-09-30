@@ -29039,9 +29039,10 @@ var require_county = __commonJS({
     var CURRENT = `SELECT id FROM county_submissions WHERE programme_id=? AND period_from=? AND period_to=? AND superseded_by IS NULL AND withdrawn_at IS NULL AND (key_id IS NULL OR key_id IN (SELECT id FROM county_programme_keys WHERE compromised_at IS NULL))`;
     var subById = (id) => db3.one(`${SUBS} WHERE s.id=?`, id);
     var byMade = (a, b) => Date.parse(b.generated_at) - Date.parse(a.generated_at) || String(b.received_at).localeCompare(String(a.received_at)) || String(b.id).localeCompare(String(a.id));
+    var signedFirst = (a, b) => (isEntered(a) ? 1 : 0) - (isEntered(b) ? 1 : 0);
     function resettle(programmeId, from, to) {
       const rows = db3.all(`${SUBS} WHERE s.programme_id=? AND s.period_from=? AND s.period_to=?`, programmeId, from, to);
-      const can = rows.filter((r) => !r.withdrawn_at && !r.key_compromised_at).sort(byMade);
+      const can = rows.filter((r) => !r.withdrawn_at && !r.key_compromised_at).sort((a, b) => signedFirst(a, b) || byMade(a, b));
       const winner = can[0] ? can[0].id : null;
       for (const r of rows) {
         const want = r.withdrawn_at || r.key_compromised_at || r.id === winner ? null : winner;
@@ -29091,7 +29092,8 @@ var require_county = __commonJS({
         winner = resettle(prog.id, p.period.from, p.period.to);
       });
       const status = winner !== id ? "older" : before ? "superseded" : "imported";
-      return { status, submission: summary(subById(id)), programme: prog, replaced: status === "superseded" ? before : null, counting: status === "older" ? summary(subById(winner)) : null };
+      const replacedSource = status === "superseded" ? subById(before).source || "signed" : null;
+      return { status, submission: summary(subById(id)), programme: prog, replaced: status === "superseded" ? before : null, replaced_source: replacedSource, counting: status === "older" ? summary(subById(winner)) : null };
     }
     function importMessage(out2, { audience = "county" } = {}) {
       const s = out2.submission;
@@ -29101,6 +29103,7 @@ var require_county = __commonJS({
         if (s.status !== "withdrawn") return `This file was already imported on ${humanDay(s.received_at)}; nothing changed.`;
         return audience === "county" ? `This file was already imported on ${humanDay(s.received_at)} and withdrawn on ${humanDay(s.withdrawn_at)}; nothing changed. To count it again, Reinstate it under Files received.` : `The county already had this file (imported on ${humanDay(s.received_at)}) and withdrew it on ${humanDay(s.withdrawn_at)}; nothing changed. Ask the county whether it should count.`;
       }
+      if (out2.status === "superseded" && out2.replaced_source === ENTERED) return `Imported ${who}'s submission for ${period}. A signed file outranks figures the county entered: it replaces the figures entered for the same period, which are kept but no longer count.`;
       if (out2.status === "superseded") return `Imported ${who}'s submission for ${period}. It replaces the one made earlier for the same period, which is kept but no longer counts.`;
       if (out2.status === "older") return `Imported ${who}'s submission for ${period}, but it does not count: it was made on ${humanDay(s.generated_at)}, before the one that counts for that period (made on ${humanDay(out2.counting.generated_at)}). It is kept as replaced.${audience === "county" ? " If the older file is the right one, withdraw the newer one." : ""}`;
       return `Imported ${who}'s submission for ${period}.`;
@@ -29129,7 +29132,13 @@ var require_county = __commonJS({
         db3.run(`UPDATE county_submissions SET withdrawn_at=NULL, withdrawn_by=NULL WHERE id=?`, id);
         winner = resettle(s.programme_id, s.period_from, s.period_to);
       });
-      return { submission: summary(subById(id)), counts: winner === id, displaced: winner === id && before ? before : null, programme_id: s.programme_id };
+      return {
+        submission: summary(subById(id)),
+        counts: winner === id,
+        displaced: winner === id && before ? before : null,
+        programme_id: s.programme_id,
+        counting: winner && winner !== id ? summary(subById(winner)) : null
+      };
     }
     function summary(s) {
       const status = s.withdrawn_at ? "withdrawn" : s.superseded_by ? "superseded" : s.key_compromised_at ? "key_compromised" : "current";
@@ -29191,13 +29200,21 @@ var require_county = __commonJS({
     function choose(subs, from, to) {
       const inside = subs.filter((s) => s.period_from >= from && s.period_to <= to);
       const outside = subs.filter((s) => !(s.period_from >= from && s.period_to <= to));
-      const order = [...inside].sort((a, b) => daysIn(b.period_from, b.period_to) - daysIn(a.period_from, a.period_to) || a.period_from.localeCompare(b.period_from) || b.received_at.localeCompare(a.received_at));
+      const order = [...inside].sort((a, b) => signedFirst(a, b) || daysIn(b.period_from, b.period_to) - daysIn(a.period_from, a.period_to) || a.period_from.localeCompare(b.period_from) || b.received_at.localeCompare(a.received_at));
       const used = [];
       const overlapped = [];
-      for (const s of order) (used.some((u) => s.period_from <= u.period_to && u.period_from <= s.period_to) ? overlapped : used).push(s);
+      const covered = [];
+      const hits = (s, u) => s.period_from <= u.period_to && u.period_from <= s.period_to;
+      for (const s of order) {
+        const over = used.filter((u) => hits(s, u));
+        if (!over.length) used.push(s);
+        else if (isEntered(s) && over.some((u) => !isEntered(u))) covered.push(s);
+        else overlapped.push(s);
+      }
       used.sort((a, b) => a.period_from.localeCompare(b.period_from));
-      return { used, overlapped, outside };
+      return { used, overlapped, covered, outside };
     }
+    var LEFT_OUT = { overlaps: "overlaps a longer file that counts", signed_covers: "a signed file covers this", outside: "not wholly inside this period" };
     function countingSubs(programmeId = null) {
       const where = "s.superseded_by IS NULL AND s.withdrawn_at IS NULL AND k.compromised_at IS NULL";
       return programmeId ? db3.all(`${SUBS} WHERE s.programme_id=? AND ${where} ORDER BY s.period_from, s.received_at`, programmeId) : db3.all(`${SUBS} WHERE ${where} ORDER BY s.period_from, s.received_at`);
@@ -29253,7 +29270,7 @@ var require_county = __commonJS({
         }
       };
       for (const p of programmes) {
-        const { used, overlapped, outside, days_covered: covered, status } = coverage(byProg.get(p.id), from, to);
+        const { used, overlapped, covered, outside, days_covered: daysCovered, status } = coverage(byProg.get(p.id), from, to);
         if (!filesCount(p)) {
           if (used.length) inactiveLeftOut.push({ id: p.id, name: p.name, files: used.length });
           continue;
@@ -29279,11 +29296,15 @@ var require_county = __commonJS({
           keep_files: !!p.keep_files,
           on_suds: p.on_suds !== 0,
           status,
-          days_covered: covered,
+          days_covered: daysCovered,
           days_in_period: period,
           source,
           submissions: used.map(summary),
-          left_out: [...overlapped.map((s) => ({ ...summary(s), why: "overlaps" })), ...outside.filter((s) => s.period_from <= to && s.period_to >= from).map((s) => ({ ...summary(s), why: "outside" }))],
+          left_out: [
+            ...overlapped.map((s) => ({ ...summary(s), why: "overlaps", reason: LEFT_OUT.overlaps })),
+            ...covered.map((s) => ({ ...summary(s), why: "signed_covers", reason: LEFT_OUT.signed_covers })),
+            ...outside.filter((s) => s.period_from <= to && s.period_to >= from).map((s) => ({ ...summary(s), why: "outside", reason: LEFT_OUT.outside }))
+          ],
           agg: used.length ? agg : null,
           aggEntered: source === ENTERED || source === "mixed" ? aggEntered : null
         });
@@ -29378,7 +29399,7 @@ var require_county = __commonJS({
       "Exact figures, including small numbers, as each program sends them under its funding contract. For authorised county staff only: not for publication or sharing.",
       "Each figure is what the program recorded in SUDS for the work charged to the opioid settlement funds it chose to report to the county, from its own Settlement outcomes page. Money is exact; a cost per outcome is not calculated across programs."
     ];
-    var PERIOD_RULE = `A program's submission counts when its whole period lies inside the period chosen here; nothing is pro-rated. Where two of one program's submissions overlap (a quarter and a month inside it), the longer one counts. A program whose submissions cover only part of the period is marked "part of the period". An inactive program's files count only if the county chose to keep counting them.`;
+    var PERIOD_RULE = `A program's submission counts when its whole period lies inside the period chosen here; nothing is pro-rated. Where two of one program's submissions overlap (a quarter and a month inside it), the longer one counts, except that a signed file always counts over figures the county entered. A program whose submissions cover only part of the period is marked "part of the period". An inactive program's files count only if the county chose to keep counting them.`;
     var PUBLICATION_NOTE = "Publishing these figures needs the publication screen over the combined release (planned). Until then nothing here is for publication.";
     module.exports = {
       FORMAT: FORMAT2,
@@ -29397,6 +29418,7 @@ var require_county = __commonJS({
       ENTERED,
       ENTERED_LABEL,
       ENTERED_NOTE,
+      LEFT_OUT,
       USE_CODES,
       HIAA_CODES,
       CURRENT,
@@ -29840,7 +29862,7 @@ var require_county_connect = __commonJS({
     }
     function statusFor(t, who = {}) {
       const prog = db3.one(`SELECT id, name, active, keep_files FROM county_programmes WHERE id=?`, t.programme_id);
-      const counting = K.filesCount(prog) ? K.countingSubs(prog.id) : [];
+      const counting = K.filesCount(prog) ? K.countingSubs(prog.id).filter((s) => !K.isEntered(s)) : [];
       const expected = expectedPeriods().map((p) => {
         const cov = K.coverage(counting, p.from, p.to);
         return { ...p, received: cov.status === "whole", coverage: cov.status };
@@ -29856,7 +29878,7 @@ var require_county_connect = __commonJS({
         expected,
         outstanding: expected.filter((p) => !p.received).map(({ received, ...p }) => p),
         // eslint-disable-line no-unused-vars
-        received: files.map((s) => ({ from: s.period_from, to: s.period_to, sha256: s.sha256, received_at: s.received_at, generated_at: s.generated_at, status: s.status })),
+        received: files.map((s) => ({ from: s.period_from, to: s.period_to, sha256: s.sha256, received_at: s.received_at, generated_at: s.generated_at, status: s.status, source: s.source })),
         max_file_bytes: MAX_PUSH_BYTES
       };
     }
@@ -34715,7 +34737,9 @@ var require_county_connect2 = __commonJS({
         const { from, to } = period(ctx.query.get("from") || "", ctx.query.get("to") || "");
         const format = ctx.query.get("format") || "json";
         if (!["json", "tidy-csv"].includes(format)) throw badRequest("format must be json or tidy-csv");
-        const entered = ctx.query.get("entered") !== "exclude";
+        const ev = ctx.query.get("entered");
+        if (ev !== null && ev !== "include" && ev !== "exclude") throw badRequest("entered must be include or exclude");
+        const entered = ev !== "exclude";
         const d = K.combined(from, to, { entered });
         audit3.log({ user: CC.actor(t), action: "county.api.read", ip: ctx.ip, details: { what: "combined", token_id: t.id, from, to, format, programmes: d.programmes.length, submitted: d.submitted, entered_excluded: !entered || void 0 } });
         const notes = {
@@ -34871,6 +34895,11 @@ var require_county_entry = __commonJS({
     var K = require_county();
     var MAP = require_settlement_outcome_map();
     var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
+    var SOURCE_WORDS = { "": null, signed: "signed", county_entered: K.ENTERED, "signed by the program": "signed", [K.ENTERED_LABEL]: K.ENTERED };
+    var othersLine = (list) => {
+      const n = list.reduce((x, o) => x + o.rows, 0);
+      return `${n} row${n === 1 ? "" : "s"} for other programs (${list.slice(0, 5).map((o) => o.name).join(", ")}${list.length > 5 ? ` and ${list.length - 5} more` : ""}) ${n === 1 ? "was" : "were"} not read: import each program's figures from its own row of Programs.`;
+    };
     var CSV_COLUMNS = ["program", "period_from", "period_to", "fund", "grant_number", "measure_code", "measure_label", "value"];
     var TOTAL_FUND = "All funds in the submission";
     var SPEND_CODES = ["spend_own_category", "spend_other_categories", "spend_approved", "spend_pending"];
@@ -35000,7 +35029,14 @@ var require_county_entry = __commonJS({
       );
       const winner = K.resettle(prog.id, payload.period.from, payload.period.to);
       const status = winner !== id ? "older" : before ? "superseded" : "entered";
-      return { id, sha256: sha2562, status, replaced: status === "superseded" ? before.id : null, replaced_source: status === "superseded" ? K.subById(before.id).source || "signed" : null };
+      return {
+        id,
+        sha256: sha2562,
+        status,
+        replaced: status === "superseded" ? before.id : null,
+        replaced_source: status === "superseded" ? K.subById(before.id).source || "signed" : null,
+        counting_source: status === "older" && winner ? K.subById(winner).source || "signed" : null
+      };
     }
     function checkRef(raw) {
       const ref = K.cleanText(raw, REF_MAX);
@@ -35043,7 +35079,7 @@ var require_county_entry = __commonJS({
       db3.transaction(() => {
         out2 = insert(prog, payload, user, { via: "form", ref });
       });
-      return { programme: prog, submission: K.summary(K.subById(out2.id)), status: out2.status, replaced: out2.replaced, replaced_source: out2.replaced_source };
+      return { programme: prog, submission: K.summary(K.subById(out2.id)), status: out2.status, replaced: out2.replaced, replaced_source: out2.replaced_source, counting_source: out2.counting_source };
     }
     var cellText = (v) => {
       const t = String(v === void 0 || v === null ? "" : v);
@@ -35056,9 +35092,11 @@ var require_county_entry = __commonJS({
       if (!rows.length) throw new EntryError("csv", "The file has no rows.");
       const head = rows[0].map((h) => String(h).trim().toLowerCase());
       const want = CSV_COLUMNS.join(",");
-      if (!(head.join(",") === want || head.length === 9 && head.slice(0, 8).join(",") === want && head[8] === "source")) {
-        throw new EntryError("csv", `The first row must name the columns ${CSV_COLUMNS.join(", ")} (and optionally source), in that order, as County view's long CSV does. This file's first row is: ${head.slice(0, 10).join(", ").slice(0, 200)}.`);
+      const extra = head.slice(8).join(",");
+      if (!(head.slice(0, 8).join(",") === want && ["", "source", "source,source_label"].includes(extra))) {
+        throw new EntryError("csv", `The first row must name the columns ${CSV_COLUMNS.join(", ")} (and optionally source and source_label), in that order, as County view's long CSV does. This file's first row is: ${head.slice(0, 10).join(", ").slice(0, 200)}.`);
       }
+      const hasSource = head.length > 8;
       const body = rows.slice(1);
       if (!body.length) throw new EntryError("csv", "The file has a header but no figures.");
       if (body.length > MAX_CSV_ROWS) throw new EntryError("csv", `The file has ${body.length} rows; at most ${MAX_CSV_ROWS} are read at once.`);
@@ -35069,14 +35107,28 @@ var require_county_entry = __commonJS({
       const progName = K.cleanText(prog.name, 200).toLowerCase();
       const periods = /* @__PURE__ */ new Map();
       const seen2 = /* @__PURE__ */ new Set();
+      const others = /* @__PURE__ */ new Map();
+      let mine = 0;
+      let signedRows = 0;
       body.forEach((r, i) => {
         const line = i + 2;
         if (r.length !== head.length) {
           err2(line, null, `has ${r.length} columns; the header has ${head.length}. A quote may be missing, or a comma is inside a value that is not quoted.`);
           return;
         }
-        const [program, from, to, fund, grant, code, , value] = r.map(cellText);
-        if (K.cleanText(program, 200).toLowerCase() !== progName) err2(line, "program", `is "${K.cleanText(program, 60)}", not ${prog.name}. Import each program's figures on its own row of Programs.`);
+        const [program, from, to, fund, grant, code, , value, source] = r.map(cellText);
+        const pname = K.cleanText(program, 200);
+        if (pname.toLowerCase() !== progName) {
+          const k = pname || "(no program named)";
+          others.set(k, (others.get(k) || 0) + 1);
+          return;
+        }
+        mine++;
+        if (hasSource) {
+          const src = SOURCE_WORDS[String(source || "").trim().toLowerCase()];
+          if (src === void 0) err2(line, "source", `is "${K.cleanText(source, 40)}": it must be signed or ${K.ENTERED} (or empty).`);
+          else if (src === "signed") signedRows++;
+        }
         const pf = checkPeriod(from.trim(), to.trim(), today);
         if (pf) {
           if (pf.from) err2(line, "period_from", pf.from);
@@ -35096,12 +35148,12 @@ var require_county_entry = __commonJS({
           err2(line, "measure_code", `"${K.cleanText(mcode, 40)}" is not a measure a county submission carries${isTotal ? " in its totals" : ""}.`);
           return;
         }
-        let n;
+        let n = null;
+        let badValue = null;
         try {
           n = strictNumber(value, mcode);
         } catch (e) {
-          err2(line, "value", e.message);
-          return;
+          badValue = e.message;
         }
         const pkey = `${from.trim()}_${to.trim()}`;
         const fkey = isTotal ? "\0total" : `${fname.toLowerCase()}\0${(gnum || "").toLowerCase()}`;
@@ -35113,6 +35165,15 @@ var require_county_entry = __commonJS({
         seen2.add(dup);
         if (!periods.has(pkey)) periods.set(pkey, { from: from.trim(), to: to.trim(), funds: /* @__PURE__ */ new Map(), total: {}, firstRow: line });
         const per = periods.get(pkey);
+        if (badValue) {
+          err2(line, "value", badValue);
+          if (isTotal) per.totalBad = true;
+          else {
+            if (!per.funds.has(fkey)) per.funds.set(fkey, { name: fname, grant_number: gnum, m: {}, firstRow: line });
+            per.funds.get(fkey).bad = true;
+          }
+          return;
+        }
         if (isTotal) {
           per.total[mcode] = { n, line };
           return;
@@ -35120,6 +35181,10 @@ var require_county_entry = __commonJS({
         if (!per.funds.has(fkey)) per.funds.set(fkey, { name: fname, grant_number: gnum, m: {}, firstRow: line });
         per.funds.get(fkey).m[mcode] = n;
       });
+      const otherList = [...others.entries()].map(([name, n]) => ({ name, rows: n }));
+      if (!mine && !errors.length) {
+        throw new EntryError("csv", `The file has no rows for ${prog.name}${otherList.length ? `: its rows are for ${otherList.slice(0, 5).map((o) => o.name).join(", ")}${otherList.length > 5 ? ` and ${otherList.length - 5} more` : ""}` : ""}. The program column must be ${prog.name} exactly, as registered. Nothing was saved.`, { errors: [{ row: 2, column: "program", message: `is not ${prog.name}` }] });
+      }
       if (periods.size > MAX_PERIODS) err2(null, "period_from", `The file has ${periods.size} periods; import at most ${MAX_PERIODS} at once.`);
       const distinct = /* @__PURE__ */ new Map();
       const out2 = [];
@@ -35130,6 +35195,7 @@ var require_county_entry = __commonJS({
         }
         const pf = [];
         for (const f of per.funds.values()) {
+          if (f.bad) continue;
           const where = `${f.name} in ${K.humanPeriod(per.from, per.to)}`;
           const missing = [...K.VALUE_KEYS, "spend_pending"].filter((k) => f.m[k] === void 0);
           if (f.m.spend_own_category === void 0 && f.m.spend_approved === void 0) missing.unshift("spend_own_category (or spend_approved)");
@@ -35159,7 +35225,7 @@ var require_county_entry = __commonJS({
         }
         let totalValues = null;
         const t = per.total;
-        if (Object.keys(t).length) {
+        if (Object.keys(t).length && !per.totalBad) {
           const miss = TOTAL_CODES.filter((k) => t[k] === void 0);
           const first = Math.min(...Object.values(t).map((x) => x.line));
           if (miss.length) err2(first, "measure_code", `The totals for ${K.humanPeriod(per.from, per.to)} have no ${miss.slice(0, 5).join(", ")}: give every total, or leave the totals out (SUDS then adds the funds up).`);
@@ -35171,9 +35237,12 @@ var require_county_entry = __commonJS({
         }
         out2.push({ from: per.from, to: per.to, funds: pf, totalValues });
       }
-      if (errors.length) throw new EntryError("csv", `The file was not imported: ${errors.length >= MAX_ERRORS ? `at least ${MAX_ERRORS}` : errors.length} problem${errors.length === 1 ? "" : "s"} (the first ${Math.min(errors.length, MAX_ERRORS)} listed). Nothing was saved.`, { errors });
+      if (errors.length) throw new EntryError("csv", `The file has ${errors.length >= MAX_ERRORS ? `at least ${MAX_ERRORS}` : errors.length} problem${errors.length === 1 ? "" : "s"}${errors.length > 1 ? ` (the first ${Math.min(errors.length, MAX_ERRORS)} listed)` : ""}. Nothing was saved.${otherList.length ? ` ${othersLine(otherList)}` : ""}`, { errors });
       out2.sort((a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
-      return { periods: out2, rows: body.length, funds: [...distinct.values()] };
+      const warnings = [];
+      if (signedRows) warnings.push(`${signedRows} row${signedRows === 1 ? " says" : "s say"} "signed" in the source column. Once imported, these figures are ${K.ENTERED_LABEL}: no key of the program signs them.`);
+      if (otherList.length) warnings.push(othersLine(otherList));
+      return { periods: out2, rows: mine, funds: [...distinct.values()], others: otherList, signed_rows: signedRows, warnings };
     }
     function importCsv(programmeId, body, user, { today }) {
       const prog = programmeFor(programmeId);
@@ -35193,7 +35262,8 @@ var require_county_entry = __commonJS({
         total: { spend_approved: round2(x.funds.reduce((n, f) => n + f.spend.approved, 0)), spend_pending: round2(x.funds.reduce((n, f) => n + f.spend.pending, 0)), values: x.totalValues || Object.fromEntries(K.VALUE_KEYS.map((k) => [k, round2(x.funds.reduce((n, f) => n + f.values[k], 0))])) },
         totals_given: !!x.totalValues
       });
-      if (b.preview) return { programme: prog, preview: true, rows: parsed.rows, funds: parsed.funds, periods: built.map(describe2), entries: [] };
+      const said = { others: parsed.others, warnings: parsed.warnings };
+      if (b.preview) return { programme: prog, preview: true, rows: parsed.rows, funds: parsed.funds, periods: built.map(describe2), entries: [], ...said };
       const ref = checkRef(b.source_ref);
       if (!ref) throw new EntryError("invalid", "Say which document the figures come from.", { fields: { source_ref: 'is required: say which document the figures come from (for example "FY 2025-26 report, emailed 3 July 2026")' } });
       const now2 = (/* @__PURE__ */ new Date()).toISOString();
@@ -35210,7 +35280,7 @@ var require_county_entry = __commonJS({
       db3.transaction(() => {
         for (const p of payloads) entries2.push({ ...insert(prog, p, user, { via: "csv", ref }), from: p.period.from, to: p.period.to });
       });
-      return { programme: prog, preview: false, rows: parsed.rows, funds: parsed.funds, periods: built.map(describe2), entries: entries2.map((e) => ({ ...e, submission: K.summary(K.subById(e.id)) })) };
+      return { programme: prog, preview: false, rows: parsed.rows, funds: parsed.funds, periods: built.map(describe2), entries: entries2.map((e) => ({ ...e, submission: K.summary(K.subById(e.id)) })), ...said };
     }
     function entryForm(id) {
       const s = K.subById(id);
@@ -35232,13 +35302,13 @@ var require_county_entry = __commonJS({
       if (!ids.length) return /* @__PURE__ */ new Map();
       return new Map(db3.all(`SELECT id, source_ref_enc FROM county_submissions WHERE source=? AND id IN (SELECT value FROM json_each(?))`, K.ENTERED, JSON.stringify(ids)).map((r) => [r.id, r.source_ref_enc ? decrypt3(r.source_ref_enc) : ""]));
     }
-    function entryMessage(prog, from, to, status, replacedSource) {
+    function entryMessage(prog, from, to, status, replacedSource, counting = null) {
       const period = K.humanPeriod(from, to);
       if (status === "superseded") return `Saved ${prog.name}'s figures for ${period}, ${K.ENTERED_LABEL}. They replace the ${replacedSource === K.ENTERED ? "figures entered earlier" : "file"} for the same period, which ${replacedSource === K.ENTERED ? "are" : "is"} kept but no longer count${replacedSource === K.ENTERED ? "" : "s"}.`;
-      if (status === "older") return `Saved ${prog.name}'s figures for ${period}, but they do not count: a file made later for that period counts.`;
+      if (status === "older") return `Saved ${prog.name}'s figures for ${period}, but they do not count: ${counting === "signed" ? "a signed file for that period counts, and a signed file outranks figures the county entered" : "figures entered later for that period count"}.`;
       return `Saved ${prog.name}'s figures for ${period}, ${K.ENTERED_LABEL}.`;
     }
-    module.exports = { CSV_COLUMNS, TOTAL_FUND, SPEND_CODES, TOTAL_CODES, MAX_CSV_BYTES, MAX_PERIODS, MAX_FUNDS, EntryError, strictNumber, kindOf, checkPeriod, readCsv, enter, importCsv, entryForm, sourceRefs, entryMessage, payloadFor, INDICATORS: MAP.INDICATORS };
+    module.exports = { SOURCE_WORDS, CSV_COLUMNS, TOTAL_FUND, SPEND_CODES, TOTAL_CODES, MAX_CSV_BYTES, MAX_PERIODS, MAX_FUNDS, EntryError, strictNumber, kindOf, checkPeriod, readCsv, enter, importCsv, entryForm, sourceRefs, entryMessage, payloadFor, INDICATORS: MAP.INDICATORS };
   }
 });
 
@@ -35260,6 +35330,7 @@ var require_county2 = __commonJS({
     var WINDOW_MS = 10 * 6e4;
     var IS_FUND = `(source_type='opioid_settlement' OR settlement_use IS NOT NULL OR settlement_hiaa IS NOT NULL)`;
     var today = () => require_budget().localDate();
+    var spendMeasures = [["spend_own_category", "Spent under the fund's own Exhibit E category ($)"], ["spend_other_categories", "Spent under other categories ($)"], ["spend_approved", "Spent, approved or reimbursed ($)"], ["spend_pending", "Pending approval ($)"]];
     function periodOf(ctx) {
       const from = ctx.query.get("from") || "";
       const to = ctx.query.get("to") || "";
@@ -35267,7 +35338,21 @@ var require_county2 = __commonJS({
       if (from > to) throw badRequest(`The start date (${K.humanDay(from)}) is after the end date (${K.humanDay(to)}). Choose a start date on or before the end date.`);
       return { from, to };
     }
-    var enteredOf = (ctx) => ctx.query.get("entered") !== "exclude";
+    function enteredOf(ctx) {
+      const v = ctx.query.get("entered");
+      if (v === null || v === "include") return true;
+      if (v === "exclude") return false;
+      throw badRequest("entered must be include or exclude (leave it out to count figures entered by the county).", { fields: { entered: "must be include or exclude" } });
+    }
+    function throttle(ctx, bucket, action, message) {
+      const { rateLimit, rateLimited } = require_app2();
+      const key = `${bucket}:${ctx.user.id}`;
+      if (rateLimited(key, REFUSALS_PER_10_MIN)) {
+        if (rateLimit(`${bucket}-throttle-audit:${ctx.user.id}`, 1, WINDOW_MS)) audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { refusals: REFUSALS_PER_10_MIN, window_minutes: WINDOW_MS / 6e4 } });
+        throw new HttpError3(429, message);
+      }
+      return () => rateLimit(key, REFUSALS_PER_10_MIN, WINDOW_MS);
+    }
     function recipients() {
       try {
         const o = JSON.parse(db3.getSetting("county_submission_recipients", "{}"));
@@ -35360,6 +35445,11 @@ var require_county2 = __commonJS({
         const taken = db3.one(`SELECT k.programme_id, p.name FROM county_programme_keys k JOIN county_programmes p ON p.id=k.programme_id WHERE k.fingerprint=?`, k.fingerprint);
         return { k, taken };
       };
+      const uniqueName = (name, exceptId = null) => {
+        const want = name.trim().toLowerCase();
+        const other = db3.all(`SELECT id, name FROM county_programmes`).find((x) => x.id !== exceptId && K.cleanText(x.name, 200).toLowerCase() === want);
+        if (other) throw new HttpError3(409, `A program named "${other.name}" is already registered. Give each program its own name (add the city or the service, for example): the county's files and the long CSV tell programs apart by name.`, { fields: { name: "is already another program's name" }, reason: "duplicate_name" });
+      };
       const keyFields = { public_key: { type: "string", required: true, maxLen: 4e3 }, fingerprint: { type: "string", maxLen: 100 }, compared: { type: "boolean" } };
       r.get("/api/county/code", ...view, (ctx) => {
         const c = code(ctx);
@@ -35388,6 +35478,7 @@ var require_county2 = __commonJS({
           const v2 = validate(ctx.body, { name: { type: "string", required: true, maxLen: 200 }, notes: { type: "string", maxLen: 2e3 }, not_on_suds: { type: "boolean" } });
           const name2 = K.cleanText(v2.name, 200);
           if (!name2) throw badRequest("Give the program's name", { fields: { name: "required" } });
+          uniqueName(name2);
           const id2 = require_crypto().uuid();
           const now3 = db3.now();
           db3.run(`INSERT INTO county_programmes(id,name,active,keep_files,notes,created_at,created_by,updated_at,on_suds) VALUES(?,?,1,0,?,?,?,?,0)`, id2, name2, v2.notes || null, now3, ctx.user.id, now3);
@@ -35398,6 +35489,7 @@ var require_county2 = __commonJS({
         const v = validate(ctx.body, { name: { type: "string", required: true, maxLen: 200 }, notes: { type: "string", maxLen: 2e3 }, ...keyFields });
         const name = K.cleanText(v.name, 200);
         if (!name) throw badRequest("Give the program's name", { fields: { name: "required" } });
+        uniqueName(name);
         const { k, taken } = checkedKey(v);
         if (taken) throw conflict(`This key is already registered, for ${taken.name}.`);
         const id = require_crypto().uuid();
@@ -35415,6 +35507,7 @@ var require_county2 = __commonJS({
         const v = validate(ctx.body, { name: { type: "string", maxLen: 200 }, notes: { type: "string", maxLen: 2e3 }, active: { type: "boolean" }, keep_files: { type: "boolean" } }, { partial: true });
         const name = v.name !== void 0 && v.name !== null ? K.cleanText(v.name, 200) : p.name;
         if (!name) throw badRequest("Give the program's name", { fields: { name: "required" } });
+        uniqueName(name, p.id);
         const active = v.active === void 0 || v.active === null ? !!p.active : !!v.active;
         const keep = v.keep_files === void 0 || v.keep_files === null ? !!p.keep_files : !!v.keep_files;
         db3.run(`UPDATE county_programmes SET name=?, notes=?, active=?, keep_files=?, updated_at=? WHERE id=?`, name, v.notes !== void 0 ? v.notes || null : p.notes, active ? 1 : 0, keep ? 1 : 0, db3.now(), p.id);
@@ -35460,19 +35553,16 @@ var require_county2 = __commonJS({
       });
       r.get("/api/county/submissions", ...view, (ctx) => {
         const pid = ctx.query.get("programme_id");
-        const rows = db3.all(`SELECT s.*, p.name programme, k.fingerprint key_fingerprint, k.replaced_at key_replaced_at, k.compromised_at key_compromised_at FROM county_submissions s JOIN county_programmes p ON p.id=s.programme_id
+        const rows = db3.all(`SELECT s.*, p.name programme, p.on_suds programme_on_suds, k.fingerprint key_fingerprint, k.replaced_at key_replaced_at, k.compromised_at key_compromised_at FROM county_submissions s JOIN county_programmes p ON p.id=s.programme_id
       LEFT JOIN county_programme_keys k ON k.id=s.key_id ${pid ? "WHERE s.programme_id=?" : ""} ORDER BY s.received_at DESC LIMIT 500`, ...pid ? [pid] : []);
-        const refs = E.sourceRefs(rows.filter((s) => s.source === K.ENTERED).map((s) => s.id));
-        audit3.log({ user: ctx.user, action: "county.view", ip: ctx.ip, details: { what: "submissions", count: rows.length, entered: refs.size || void 0 } });
-        return { rows: rows.map((s) => ({ ...K.summary(s), programme: s.programme, ...refs.has(s.id) ? { source_ref: refs.get(s.id) } : {} })) };
+        const manages = auth3.hasPerm(ctx.user, "county:manage");
+        const entered = rows.filter((s) => s.source === K.ENTERED);
+        const refs = manages ? E.sourceRefs(entered.map((s) => s.id)) : /* @__PURE__ */ new Map();
+        audit3.log({ user: ctx.user, action: "county.view", ip: ctx.ip, details: { what: "submissions", count: rows.length, entered: entered.length || void 0, source_refs: refs.size || void 0 } });
+        return { rows: rows.map((s) => ({ ...K.summary(s), programme: s.programme, programme_on_suds: s.programme_on_suds !== 0, ...refs.has(s.id) ? { source_ref: refs.get(s.id) } : {} })) };
       });
       r.post("/api/county/submissions", ...manage, (ctx) => {
-        const { rateLimit, rateLimited } = require_app2();
-        const key = `county-refuse:${ctx.user.id}`;
-        if (rateLimited(key, REFUSALS_PER_10_MIN)) {
-          if (rateLimit(`county-throttle-audit:${ctx.user.id}`, 1, WINDOW_MS)) audit3.log({ user: ctx.user, action: "county.submission.throttled", ip: ctx.ip, success: false, details: { refusals: REFUSALS_PER_10_MIN, window_minutes: WINDOW_MS / 6e4 } });
-          throw new HttpError3(429, "Too many files were refused in the last few minutes. Wait ten minutes, and check with the program that it sent the file SUDS made.");
-        }
+        const refused = throttle(ctx, "county-refuse", "county.submission.throttled", "Too many files were refused in the last few minutes. Wait ten minutes, and check with the program that it sent the file SUDS made.");
         const textIn = ctx.body && typeof ctx.body.text === "string" ? ctx.body.text : "";
         const fileSha = textIn ? require_crypto().sha256(textIn) : null;
         try {
@@ -35487,7 +35577,7 @@ var require_county2 = __commonJS({
           return { status: out2.status, message: said, submission: { ...s, programme: who }, replaced: out2.replaced, counting: out2.counting };
         } catch (e) {
           if (!(e instanceof K.SubmissionError)) throw e;
-          rateLimit(key, REFUSALS_PER_10_MIN, WINDOW_MS);
+          refused();
           audit3.log({ user: ctx.user, action: "county.submission.refuse", ip: ctx.ip, success: false, details: { reason: e.code, file_sha256: fileSha, bytes: textIn ? import_buffer.Buffer.byteLength(textIn) : 0 } });
           throw new HttpError3(e.code === "too_large" ? 413 : 422, e.message, { reason: e.code });
         }
@@ -35519,7 +35609,7 @@ var require_county2 = __commonJS({
         if (!out2) throw notFound("Submission not found");
         audit3.log({ user: ctx.user, action: out2.submission.source === K.ENTERED ? "county.entry.reinstate" : "county.submission.reinstate", entity: "county_submission", entityId: out2.submission.id, ip: ctx.ip, details: { programme_id: out2.programme_id, from: out2.submission.period_from, to: out2.submission.period_to, sha256: out2.submission.sha256, counts: out2.counts, replaces: out2.displaced } });
         const s = out2.submission;
-        const message = out2.counts ? `Reinstated. It counts again for ${K.humanPeriod(s.period_from, s.period_to)}${out2.displaced ? ", in place of the file that counted" : ""}.` : s.status === "key_compromised" ? "Reinstated, but it does not count: the key that signed it is marked compromised." : `Reinstated, but it does not count: a file made later for ${K.humanPeriod(s.period_from, s.period_to)} counts. It is kept as replaced.`;
+        const message = out2.counts ? `Reinstated. It counts again for ${K.humanPeriod(s.period_from, s.period_to)}${out2.displaced ? ", in place of the file that counted" : ""}.` : s.status === "key_compromised" ? "Reinstated, but it does not count: the key that signed it is marked compromised." : out2.counting && out2.counting.source !== K.ENTERED && s.source === K.ENTERED ? `Reinstated, but the figures do not count: a signed file for ${K.humanPeriod(s.period_from, s.period_to)} counts, and a signed file outranks figures the county entered. They are kept as replaced.` : `Reinstated, but it does not count: a file made later for ${K.humanPeriod(s.period_from, s.period_to)} counts. It is kept as replaced.`;
         return { ...s, counts: out2.counts, message };
       });
       const entryRefused = (ctx, e, programmeId, via, extra = {}) => {
@@ -35536,12 +35626,17 @@ var require_county2 = __commonJS({
         if (e.code === "invalid") return badRequest(e.message, { reason: e.code, fields: e.fields || {} });
         return new HttpError3(422, e.message, { reason: e.code, errors: e.errors || [] });
       };
+      const ENTRY_THROTTLED = "Too many entries were refused in the last few minutes. Wait ten minutes, then check the figures against the program's document.";
       r.post("/api/county/programmes/:id/entries", ...manage, (ctx) => {
+        const refused = throttle(ctx, "county-entry-refuse", "county.entry.throttled", ENTRY_THROTTLED);
         let out2;
         try {
           out2 = E.enter(ctx.params.id, ctx.body, ctx.user, { today: today() });
         } catch (e) {
-          if (e instanceof E.EntryError) throw entryRefused(ctx, e, ctx.params.id, "form");
+          if (e instanceof E.EntryError) {
+            refused();
+            throw entryRefused(ctx, e, ctx.params.id, "form");
+          }
           throw e;
         }
         if (!out2) throw notFound("Program not found");
@@ -35555,9 +35650,10 @@ var require_county2 = __commonJS({
           details: { programme_id: out2.programme.id, from: s.period_from, to: s.period_to, sha256: s.sha256, via: "form", status: out2.status, replaces: out2.replaced || void 0, replaces_source: out2.replaced_source || void 0 }
         });
         ctx.status = 201;
-        return { status: out2.status, message: E.entryMessage(out2.programme, s.period_from, s.period_to, out2.status, out2.replaced_source), submission: { ...s, programme: out2.programme.name }, replaced: out2.replaced };
+        return { status: out2.status, message: E.entryMessage(out2.programme, s.period_from, s.period_to, out2.status, out2.replaced_source, out2.counting_source), submission: { ...s, programme: out2.programme.name }, replaced: out2.replaced };
       });
       r.post("/api/county/programmes/:id/entries/import", ...manage, (ctx) => {
+        const refused = throttle(ctx, "county-entry-refuse", "county.entry.throttled", ENTRY_THROTTLED);
         const text = ctx.body && typeof ctx.body.text === "string" ? ctx.body.text : "";
         const fileSha = text ? require_crypto().sha256(text) : null;
         const preview = !!(ctx.body && ctx.body.preview);
@@ -35565,29 +35661,54 @@ var require_county2 = __commonJS({
         try {
           out2 = E.importCsv(ctx.params.id, ctx.body, ctx.user, { today: today() });
         } catch (e) {
-          if (e instanceof E.EntryError) throw entryRefused(ctx, e, ctx.params.id, "csv", { file_sha256: fileSha, bytes: text ? import_buffer.Buffer.byteLength(text) : 0, preview: preview || void 0 });
+          if (e instanceof E.EntryError) {
+            refused();
+            throw entryRefused(ctx, e, ctx.params.id, "csv", { file_sha256: fileSha, bytes: text ? import_buffer.Buffer.byteLength(text) : 0, preview: preview || void 0 });
+          }
           throw e;
         }
         if (!out2) throw notFound("Program not found");
-        if (out2.preview) return { preview: true, rows: out2.rows, funds: out2.funds, periods: out2.periods };
+        if (out2.preview) return { preview: true, rows: out2.rows, funds: out2.funds, periods: out2.periods, warnings: out2.warnings, others: out2.others };
         audit3.log({
           user: ctx.user,
           action: "county.entry.import",
           entity: "county_programme",
           entityId: out2.programme.id,
           ip: ctx.ip,
-          details: { programme_id: out2.programme.id, via: "csv", file_sha256: fileSha, rows: out2.rows, entries: out2.entries.map((e) => ({ id: e.id, from: e.from, to: e.to, sha256: e.sha256, status: e.status, replaces: e.replaced || void 0 })) }
+          details: { programme_id: out2.programme.id, via: "csv", file_sha256: fileSha, rows: out2.rows, other_rows: out2.others.reduce((n2, o) => n2 + o.rows, 0) || void 0, entries: out2.entries.map((e) => ({ id: e.id, from: e.from, to: e.to, sha256: e.sha256, status: e.status, replaces: e.replaced || void 0 })) }
         });
         ctx.status = 201;
         const n = out2.entries.length;
         const counting = out2.entries.filter((e) => e.status !== "older").length;
+        const othersSaid = out2.others.length ? ` ${out2.warnings[out2.warnings.length - 1]}` : "";
         return {
           preview: false,
           rows: out2.rows,
           periods: out2.periods,
+          others: out2.others,
           entries: out2.entries.map((e) => ({ ...e.submission, programme: out2.programme.name, status_on_entry: e.status })),
-          message: `Imported ${out2.programme.name}'s figures for ${n} period${n === 1 ? "" : "s"}, ${K.ENTERED_LABEL}.${counting < n ? ` ${n - counting} of them do${n - counting === 1 ? "es" : ""} not count: a file made later for that period counts.` : ""}`
+          message: `Imported ${out2.programme.name}'s figures for ${n} period${n === 1 ? "" : "s"}, ${K.ENTERED_LABEL}.${counting < n ? ` ${n - counting} of them do${n - counting === 1 ? "es" : ""} not count: ${out2.entries.some((e) => e.status === "older" && e.counting_source === "signed") ? "a signed file counts for that period, and a signed file outranks figures the county entered" : "figures entered later for that period count"}.` : ""}${othersSaid}`
         };
+      });
+      r.get("/api/county/programmes/:id/entries/template", ...manage, (ctx) => {
+        const p = programme(ctx.params.id);
+        if (p.on_suds !== 0) throw conflict(`${p.name} runs SUDS and signs its own files: it has no template of figures to enter.`);
+        const { from, to } = periodOf(ctx);
+        const last = db3.one(`SELECT payload_enc FROM county_submissions WHERE programme_id=? AND source=? ORDER BY received_at DESC, id DESC LIMIT 1`, p.id, K.ENTERED);
+        const funds = last ? JSON.parse(require_crypto().decrypt(last.payload_enc)).funds.map((f) => ({ name: f.name, grant_number: f.grant_number || "" })) : [{ name: "", grant_number: "" }];
+        const rows = [];
+        for (const f of funds) {
+          const b = { program: p.name, period_from: from, period_to: to, fund: f.name, grant_number: f.grant_number, value: "" };
+          for (const [code2, label] of spendMeasures) rows.push({ ...b, measure_code: code2, measure_label: label });
+          for (const k of K.VALUE_KEYS) rows.push({ ...b, measure_code: k, measure_label: K.measureLabel(k) });
+        }
+        audit3.log({ user: ctx.user, action: "county.entry.template", entity: "county_programme", entityId: p.id, ip: ctx.ip, details: { from, to, funds: funds.length } });
+        ctx.res.writeHead(200, {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Content-Disposition": `attachment; filename="suds-county-entry-template-${K.slug(p.name)}-${from}_${to}.csv"`
+        });
+        ctx.res.end(require_spreadsheet().toCsv(rows, E.CSV_COLUMNS.map((key) => ({ key, label: key }))));
       });
       r.get("/api/county/entries/:id", ...manage, (ctx) => {
         const f = E.entryForm(ctx.params.id);
@@ -35633,7 +35754,7 @@ var require_county2 = __commonJS({
           ...anyEntered ? [{ key: "total_entered", label: `Of the total, ${K.ENTERED_LABEL}` }] : []
         ];
         const about = [
-          { k: "Report", v: "County view: settlement spending and outcomes from the programs' signed submissions" },
+          { k: "Report", v: `County view: settlement spending and outcomes from the programs' signed submissions${anyEntered ? `, and figures ${K.ENTERED_LABEL}` : ""}` },
           { k: "Period", v: `${from} to ${to}` },
           { k: "County", v: db3.getSetting("org_name", "") || "" },
           { k: "Who submitted", v: d.headline },
@@ -35641,23 +35762,23 @@ var require_county2 = __commonJS({
           ...d.caveats.map((c, i) => ({ k: `Caveat ${i + 1}`, v: c })),
           { k: "Which submissions count", v: d.rule },
           { k: "Publication", v: d.publication_note },
+          { k: "Source (long CSV and Tidy sheet)", v: `The source column is "signed" (a file the program's key signed) or "${K.ENTERED}" (${K.ENTERED_LABEL}), as the read API says it; source_label says the same in words.` },
           { k: "Figures entered by the county", v: entered ? `Counted, and marked "${K.ENTERED_LABEL}". ${d.entered_note}` : `Left out${d.entered_left_out.length ? `: ${d.entered_left_out.map((p) => p.name).join("; ")}` : ""}. Only files the programs signed are counted.` },
           ...d.inactive_left_out.length ? [{ k: "Inactive programs left out", v: d.inactive_left_out.map((p) => p.name).join("; ") }] : [],
           { k: "Generated", v: db3.now() },
           { k: "Generated by", v: ctx.user.display_name || ctx.user.username }
         ];
-        const subs = d.programmes.flatMap((p) => [...p.submissions.map((s) => ({ ...s, used: "Counted" })), ...p.left_out.map((s) => ({ ...s, used: s.why === "overlaps" ? "Left out: overlaps a longer submission" : "Left out: not wholly inside the period" }))].map((s) => ({ programme: p.name, source: sourceText(s.source), fingerprint: s.key_fingerprint_display, period: `${s.period_from} to ${s.period_to}`, made: s.generated_at, received: s.received_at, used: s.used, sha256: s.sha256 })));
+        const subs = d.programmes.flatMap((p) => [...p.submissions.map((s) => ({ ...s, used: "Counted" })), ...p.left_out.map((s) => ({ ...s, used: `Left out: ${s.reason}` }))].map((s) => ({ programme: p.name, source: sourceText(s.source), fingerprint: s.key_fingerprint_display, period: `${s.period_from} to ${s.period_to}`, made: s.generated_at, received: s.received_at, used: s.used, sha256: s.sha256 })));
         if (!d.programmes.length) subs.push({ programme: "No programs registered", source: "", fingerprint: "", period: "", made: "", received: "", used: "", sha256: "" });
         for (const p of d.programmes) if (p.status === "none") subs.push({ programme: p.name, source: "", fingerprint: "", period: "", made: "", received: "", used: "No submission for this period", sha256: "" });
         const subCols = [["programme", "Program"], ["source", "Source"], ["fingerprint", "Key fingerprint"], ["period", "Period"], ["made", "Made or entered"], ["received", "Received"], ["used", "In the combined figures"], ["sha256", "SHA-256 of the payload"]].map(([key, label]) => ({ key, label }));
         const tidy = [];
-        const spendMeasures = [["spend_own_category", "Spent under the fund's own Exhibit E category ($)"], ["spend_other_categories", "Spent under other categories ($)"], ["spend_approved", "Spent, approved or reimbursed ($)"], ["spend_pending", "Pending approval ($)"]];
         const subRows = db3.all(`SELECT id, payload_enc FROM county_submissions WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify(d.programmes.flatMap((p) => p.submissions.map((s) => s.id))));
         const payloads = new Map(subRows.map((s) => [s.id, JSON.parse(require_crypto().decrypt(s.payload_enc))]));
         for (const p of d.programmes) for (const s of p.submissions) {
           const pl = payloads.get(s.id);
           if (!pl) continue;
-          const base = { program: p.name, period_from: s.period_from, period_to: s.period_to, source: sourceText(s.source) };
+          const base = { program: p.name, period_from: s.period_from, period_to: s.period_to, source: s.source === K.ENTERED ? K.ENTERED : "signed", source_label: sourceText(s.source) };
           for (const f of pl.funds) {
             const fb = { ...base, fund: f.name, grant_number: f.grant_number || "" };
             for (const [code2, label] of spendMeasures) tidy.push({ ...fb, measure_code: code2, measure_label: label, value: f.spend[code2.replace(/^spend_/, "")] });
@@ -35667,7 +35788,7 @@ var require_county2 = __commonJS({
           tidy.push({ ...tb, measure_code: "spend_approved", measure_label: "Spent, approved or reimbursed ($)", value: pl.total.spend.approved }, { ...tb, measure_code: "spend_pending", measure_label: "Pending approval ($)", value: pl.total.spend.pending });
           for (const k of K.VALUE_KEYS) tidy.push({ ...tb, measure_code: k, measure_label: K.measureLabel(k), value: pl.total.values[k] });
         }
-        const tidyCols = [...E.CSV_COLUMNS, "source"].map((key) => ({ key, label: key }));
+        const tidyCols = [...E.CSV_COLUMNS, "source", "source_label"].map((key) => ({ key, label: key }));
         audit3.log({ user: ctx.user, action: "county.export", ip: ctx.ip, details: { from, to, programmes: d.programmes.length, submitted: d.submitted, format, entered_programmes: d.entered_programmes || void 0, entered_excluded: !entered || void 0 } });
         const ext = format === "xlsx" ? "xlsx" : "csv";
         ctx.res.writeHead(200, {

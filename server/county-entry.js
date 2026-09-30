@@ -22,7 +22,17 @@ const K = require('./county');
 const MAP = require('./settlement-outcome-map');
 const { encrypt, decrypt, uuid } = require('./crypto');
 
-/** The long ("tidy") CSV layout the county view exports (routes/county.js), in order; a ninth column `source` is allowed. */
+/**
+ * The source column's values: the codes the county view's long CSV and the read API give (signed, county_entered),
+ * the words its source_label column (and 1.20.0's first builds) gave, or nothing.
+ */
+const SOURCE_WORDS = { '': null, signed: 'signed', county_entered: K.ENTERED, 'signed by the program': 'signed', [K.ENTERED_LABEL]: K.ENTERED };
+/** The one line a preview or a refusal says about another programme's rows (never read). */
+const othersLine = (list) => {
+  const n = list.reduce((x, o) => x + o.rows, 0);
+  return `${n} row${n === 1 ? '' : 's'} for other programs (${list.slice(0, 5).map(o => o.name).join(', ')}${list.length > 5 ? ` and ${list.length - 5} more` : ''}) ${n === 1 ? 'was' : 'were'} not read: import each program's figures from its own row of Programs.`;
+};
+/** The long ("tidy") CSV layout the county view exports (routes/county.js), in order; `source` and `source_label` may follow. */
 const CSV_COLUMNS = ['program', 'period_from', 'period_to', 'fund', 'grant_number', 'measure_code', 'measure_label', 'value'];
 /** The fund name the tidy export gives a file's totals. */
 const TOTAL_FUND = 'All funds in the submission';
@@ -143,7 +153,8 @@ function insert(prog, payload, user, { via, ref }) {
   id, prog.id, payload.period.from, payload.period.to, payload.schema_version, payload.programme, payload.generated_at, payload.suds_version, encrypt(bytes), sha256, db.now(), user ? user.id : null, K.ENTERED, via, ref ? encrypt(ref) : null);
   const winner = K.resettle(prog.id, payload.period.from, payload.period.to);
   const status = winner !== id ? 'older' : before ? 'superseded' : 'entered';
-  return { id, sha256, status, replaced: status === 'superseded' ? before.id : null, replaced_source: status === 'superseded' ? (K.subById(before.id).source || 'signed') : null };
+  return { id, sha256, status, replaced: status === 'superseded' ? before.id : null, replaced_source: status === 'superseded' ? (K.subById(before.id).source || 'signed') : null,
+    counting_source: status === 'older' && winner ? (K.subById(winner).source || 'signed') : null };
 }
 
 /** The source document's reference: required, cleaned, at most 200 characters. */
@@ -182,7 +193,7 @@ function enter(programmeId, body, user, { today }) {
   try { K.checkPayload(payload, { today, now: db.now() }); } catch (e) { if (e instanceof K.SubmissionError) throw new EntryError('schema', e.message); throw e; }
   let out;
   db.transaction(() => { out = insert(prog, payload, user, { via: 'form', ref }); });
-  return { programme: prog, submission: K.summary(K.subById(out.id)), status: out.status, replaced: out.replaced, replaced_source: out.replaced_source };
+  return { programme: prog, submission: K.summary(K.subById(out.id)), status: out.status, replaced: out.replaced, replaced_source: out.replaced_source, counting_source: out.counting_source };
 }
 
 // ---- the CSV ---------------------------------------------------------------------------------------------------
@@ -203,9 +214,11 @@ function readCsv(prog, text, { today, funds: choices = [] } = {}) {
   if (!rows.length) throw new EntryError('csv', 'The file has no rows.');
   const head = rows[0].map(h => String(h).trim().toLowerCase());
   const want = CSV_COLUMNS.join(',');
-  if (!(head.join(',') === want || (head.length === 9 && head.slice(0, 8).join(',') === want && head[8] === 'source'))) {
-    throw new EntryError('csv', `The first row must name the columns ${CSV_COLUMNS.join(', ')} (and optionally source), in that order, as County view's long CSV does. This file's first row is: ${head.slice(0, 10).join(', ').slice(0, 200)}.`);
+  const extra = head.slice(8).join(',');
+  if (!(head.slice(0, 8).join(',') === want && ['', 'source', 'source,source_label'].includes(extra))) {
+    throw new EntryError('csv', `The first row must name the columns ${CSV_COLUMNS.join(', ')} (and optionally source and source_label), in that order, as County view's long CSV does. This file's first row is: ${head.slice(0, 10).join(', ').slice(0, 200)}.`);
   }
+  const hasSource = head.length > 8;
   const body = rows.slice(1);
   if (!body.length) throw new EntryError('csv', 'The file has a header but no figures.');
   if (body.length > MAX_CSV_ROWS) throw new EntryError('csv', `The file has ${body.length} rows; at most ${MAX_CSV_ROWS} are read at once.`);
@@ -213,11 +226,22 @@ function readCsv(prog, text, { today, funds: choices = [] } = {}) {
   const err = (row, column, message) => { if (errors.length < MAX_ERRORS) errors.push({ row, column, message }); };
   const progName = K.cleanText(prog.name, 200).toLowerCase();
   const periods = new Map(); const seen = new Set();
+  // Rows of another programme are never read (a county's own long CSV has every programme in it): they are counted,
+  // by name, and said once. Rows whose source says "signed" are read (the county may re-enter what it downloaded),
+  // and the preview warns that, once imported, they are entered by the county and not signed.
+  const others = new Map(); let mine = 0; let signedRows = 0;
   body.forEach((r, i) => {
     const line = i + 2;
     if (r.length !== head.length) { err(line, null, `has ${r.length} columns; the header has ${head.length}. A quote may be missing, or a comma is inside a value that is not quoted.`); return; }
-    const [program, from, to, fund, grant, code, , value] = r.map(cellText);
-    if (K.cleanText(program, 200).toLowerCase() !== progName) err(line, 'program', `is "${K.cleanText(program, 60)}", not ${prog.name}. Import each program's figures on its own row of Programs.`);
+    const [program, from, to, fund, grant, code, , value, source] = r.map(cellText);
+    const pname = K.cleanText(program, 200);
+    if (pname.toLowerCase() !== progName) { const k = pname || '(no program named)'; others.set(k, (others.get(k) || 0) + 1); return; }
+    mine++;
+    if (hasSource) {
+      const src = SOURCE_WORDS[String(source || '').trim().toLowerCase()];
+      if (src === undefined) err(line, 'source', `is "${K.cleanText(source, 40)}": it must be signed or ${K.ENTERED} (or empty).`);
+      else if (src === 'signed') signedRows++;
+    }
     const pf = checkPeriod(from.trim(), to.trim(), today);
     if (pf) { if (pf.from) err(line, 'period_from', pf.from); if (pf.to) err(line, 'period_to', pf.to); return; }
     const fname = K.cleanText(fund, K.TEXT_MAX.fund_name);
@@ -227,7 +251,8 @@ function readCsv(prog, text, { today, funds: choices = [] } = {}) {
     const mcode = String(code || '').trim();
     const allowed = isTotal ? TOTAL_CODES : [...SPEND_CODES, ...K.VALUE_KEYS];
     if (!allowed.includes(mcode)) { err(line, 'measure_code', `"${K.cleanText(mcode, 40)}" is not a measure a county submission carries${isTotal ? ' in its totals' : ''}.`); return; }
-    let n; try { n = strictNumber(value, mcode); } catch (e) { err(line, 'value', e.message); return; }
+    let n = null; let badValue = null;
+    try { n = strictNumber(value, mcode); } catch (e) { badValue = e.message; }
     const pkey = `${from.trim()}_${to.trim()}`;
     const fkey = isTotal ? '\u0000total' : `${fname.toLowerCase()}\u0000${(gnum || '').toLowerCase()}`;
     const dup = `${pkey}|${fkey}|${mcode}`;
@@ -235,10 +260,17 @@ function readCsv(prog, text, { today, funds: choices = [] } = {}) {
     seen.add(dup);
     if (!periods.has(pkey)) periods.set(pkey, { from: from.trim(), to: to.trim(), funds: new Map(), total: {}, firstRow: line });
     const per = periods.get(pkey);
+    // A figure that is not a number is said at its cell; its fund (or the totals) is then not checked for being
+    // complete, so one mistake is one problem, not also "has no ..." for the same figure.
+    if (badValue) { err(line, 'value', badValue); if (isTotal) per.totalBad = true; else { if (!per.funds.has(fkey)) per.funds.set(fkey, { name: fname, grant_number: gnum, m: {}, firstRow: line }); per.funds.get(fkey).bad = true; } return; }
     if (isTotal) { per.total[mcode] = { n, line }; return; }
     if (!per.funds.has(fkey)) per.funds.set(fkey, { name: fname, grant_number: gnum, m: {}, firstRow: line });
     per.funds.get(fkey).m[mcode] = n;
   });
+  const otherList = [...others.entries()].map(([name, n]) => ({ name, rows: n }));
+  if (!mine && !errors.length) {
+    throw new EntryError('csv', `The file has no rows for ${prog.name}${otherList.length ? `: its rows are for ${otherList.slice(0, 5).map(o => o.name).join(', ')}${otherList.length > 5 ? ` and ${otherList.length - 5} more` : ''}` : ''}. The program column must be ${prog.name} exactly, as registered. Nothing was saved.`, { errors: [{ row: 2, column: 'program', message: `is not ${prog.name}` }] });
+  }
   if (periods.size > MAX_PERIODS) err(null, 'period_from', `The file has ${periods.size} periods; import at most ${MAX_PERIODS} at once.`);
   // Each fund complete: every outcome, the pending spending, and its spending (own and other categories, or the
   // approved total, which must then equal them).
@@ -248,6 +280,7 @@ function readCsv(prog, text, { today, funds: choices = [] } = {}) {
     if (!per.funds.size) { err(per.firstRow, 'fund', `${K.humanPeriod(per.from, per.to)} has totals but no fund's figures.`); continue; }
     const pf = [];
     for (const f of per.funds.values()) {
+      if (f.bad) continue;
       const where = `${f.name} in ${K.humanPeriod(per.from, per.to)}`;
       const missing = [...K.VALUE_KEYS, 'spend_pending'].filter(k => f.m[k] === undefined);
       if (f.m.spend_own_category === undefined && f.m.spend_approved === undefined) missing.unshift('spend_own_category (or spend_approved)');
@@ -263,7 +296,7 @@ function readCsv(prog, text, { today, funds: choices = [] } = {}) {
     }
     let totalValues = null;
     const t = per.total;
-    if (Object.keys(t).length) {
+    if (Object.keys(t).length && !per.totalBad) {
       const miss = TOTAL_CODES.filter(k => t[k] === undefined);
       const first = Math.min(...Object.values(t).map(x => x.line));
       if (miss.length) err(first, 'measure_code', `The totals for ${K.humanPeriod(per.from, per.to)} have no ${miss.slice(0, 5).join(', ')}: give every total, or leave the totals out (SUDS then adds the funds up).`);
@@ -275,9 +308,12 @@ function readCsv(prog, text, { today, funds: choices = [] } = {}) {
     }
     out.push({ from: per.from, to: per.to, funds: pf, totalValues });
   }
-  if (errors.length) throw new EntryError('csv', `The file was not imported: ${errors.length >= MAX_ERRORS ? `at least ${MAX_ERRORS}` : errors.length} problem${errors.length === 1 ? '' : 's'} (the first ${Math.min(errors.length, MAX_ERRORS)} listed). Nothing was saved.`, { errors });
+  if (errors.length) throw new EntryError('csv', `The file has ${errors.length >= MAX_ERRORS ? `at least ${MAX_ERRORS}` : errors.length} problem${errors.length === 1 ? '' : 's'}${errors.length > 1 ? ` (the first ${Math.min(errors.length, MAX_ERRORS)} listed)` : ''}. Nothing was saved.${otherList.length ? ` ${othersLine(otherList)}` : ''}`, { errors });
   out.sort((a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
-  return { periods: out, rows: body.length, funds: [...distinct.values()] };
+  const warnings = [];
+  if (signedRows) warnings.push(`${signedRows} row${signedRows === 1 ? ' says' : 's say'} "signed" in the source column. Once imported, these figures are ${K.ENTERED_LABEL}: no key of the program signs them.`);
+  if (otherList.length) warnings.push(othersLine(otherList));
+  return { periods: out, rows: mine, funds: [...distinct.values()], others: otherList, signed_rows: signedRows, warnings };
 }
 
 /**
@@ -300,7 +336,8 @@ function importCsv(programmeId, body, user, { today }) {
   const describe = (x) => ({ from: x.period.from, to: x.period.to, funds: x.funds.map(f => ({ name: f.name, grant_number: f.grant_number, category: f.category, hiaa: f.hiaa, spend_approved: f.spend.approved, spend_pending: f.spend.pending })),
     total: { spend_approved: round2(x.funds.reduce((n, f) => n + f.spend.approved, 0)), spend_pending: round2(x.funds.reduce((n, f) => n + f.spend.pending, 0)), values: x.totalValues || Object.fromEntries(K.VALUE_KEYS.map(k => [k, round2(x.funds.reduce((n, f) => n + f.values[k], 0))])) },
     totals_given: !!x.totalValues });
-  if (b.preview) return { programme: prog, preview: true, rows: parsed.rows, funds: parsed.funds, periods: built.map(describe), entries: [] };
+  const said = { others: parsed.others, warnings: parsed.warnings };
+  if (b.preview) return { programme: prog, preview: true, rows: parsed.rows, funds: parsed.funds, periods: built.map(describe), entries: [], ...said };
   const ref = checkRef(b.source_ref);
   if (!ref) throw new EntryError('invalid', 'Say which document the figures come from.', { fields: { source_ref: 'is required: say which document the figures come from (for example "FY 2025-26 report, emailed 3 July 2026")' } });
   const now = new Date().toISOString();
@@ -308,7 +345,7 @@ function importCsv(programmeId, body, user, { today }) {
   for (const p of payloads) { try { K.checkPayload(p, { today, now: db.now() }); } catch (e) { if (e instanceof K.SubmissionError) throw new EntryError('schema', e.message); throw e; } }
   const entries = [];
   db.transaction(() => { for (const p of payloads) entries.push({ ...insert(prog, p, user, { via: 'csv', ref }), from: p.period.from, to: p.period.to }); });
-  return { programme: prog, preview: false, rows: parsed.rows, funds: parsed.funds, periods: built.map(describe), entries: entries.map(e => ({ ...e, submission: K.summary(K.subById(e.id)) })) };
+  return { programme: prog, preview: false, rows: parsed.rows, funds: parsed.funds, periods: built.map(describe), entries: entries.map(e => ({ ...e, submission: K.summary(K.subById(e.id)) })), ...said };
 }
 
 /**
@@ -333,11 +370,11 @@ function sourceRefs(ids) {
 }
 
 /** What an entry did, in words. */
-function entryMessage(prog, from, to, status, replacedSource) {
+function entryMessage(prog, from, to, status, replacedSource, counting = null) {
   const period = K.humanPeriod(from, to);
   if (status === 'superseded') return `Saved ${prog.name}'s figures for ${period}, ${K.ENTERED_LABEL}. They replace the ${replacedSource === K.ENTERED ? 'figures entered earlier' : 'file'} for the same period, which ${replacedSource === K.ENTERED ? 'are' : 'is'} kept but no longer count${replacedSource === K.ENTERED ? '' : 's'}.`;
-  if (status === 'older') return `Saved ${prog.name}'s figures for ${period}, but they do not count: a file made later for that period counts.`;
+  if (status === 'older') return `Saved ${prog.name}'s figures for ${period}, but they do not count: ${counting === 'signed' ? 'a signed file for that period counts, and a signed file outranks figures the county entered' : 'figures entered later for that period count'}.`;
   return `Saved ${prog.name}'s figures for ${period}, ${K.ENTERED_LABEL}.`;
 }
 
-module.exports = { CSV_COLUMNS, TOTAL_FUND, SPEND_CODES, TOTAL_CODES, MAX_CSV_BYTES, MAX_PERIODS, MAX_FUNDS, EntryError, strictNumber, kindOf, checkPeriod, readCsv, enter, importCsv, entryForm, sourceRefs, entryMessage, payloadFor, INDICATORS: MAP.INDICATORS };
+module.exports = { SOURCE_WORDS, CSV_COLUMNS, TOTAL_FUND, SPEND_CODES, TOTAL_CODES, MAX_CSV_BYTES, MAX_PERIODS, MAX_FUNDS, EntryError, strictNumber, kindOf, checkPeriod, readCsv, enter, importCsv, entryForm, sourceRefs, entryMessage, payloadFor, INDICATORS: MAP.INDICATORS };

@@ -387,13 +387,16 @@ const byMade = (a, b) => Date.parse(b.generated_at) - Date.parse(a.generated_at)
 
 /**
  * Settle which of one program's files for exactly one period counts: of those that can count (not withdrawn,
- * not signed by a key marked compromised), the one made last (the signed generated_at; then the one received
- * last). Every other one that can count is superseded_by it; a withdrawn file, or one a compromised key signed,
- * is superseded by nothing (it is out for its own reason). Returns the id that counts, or null.
+ * not signed by a key marked compromised), a signed file before any figures the county entered, whenever either
+ * was made (a signed file always outranks county-entered figures: docs/COUNTY-VIEW.md, "Signed outranks entered");
+ * then the one made last (the signed generated_at, or when the county entered it; then the one received last).
+ * Every other one that can count is superseded_by it; a withdrawn file, or one a compromised key signed, is
+ * superseded by nothing (it is out for its own reason). Returns the id that counts, or null.
  */
+const signedFirst = (a, b) => (isEntered(a) ? 1 : 0) - (isEntered(b) ? 1 : 0);
 function resettle(programmeId, from, to) {
   const rows = db.all(`${SUBS} WHERE s.programme_id=? AND s.period_from=? AND s.period_to=?`, programmeId, from, to);
-  const can = rows.filter(r => !r.withdrawn_at && !r.key_compromised_at).sort(byMade);
+  const can = rows.filter(r => !r.withdrawn_at && !r.key_compromised_at).sort((a, b) => signedFirst(a, b) || byMade(a, b));
   const winner = can[0] ? can[0].id : null;
   for (const r of rows) {
     const want = r.withdrawn_at || r.key_compromised_at || r.id === winner ? null : winner;
@@ -437,7 +440,8 @@ function importParsed(parsed, user, { countyCode: here } = {}) {
     winner = resettle(prog.id, p.period.from, p.period.to);
   });
   const status = winner !== id ? 'older' : before ? 'superseded' : 'imported';
-  return { status, submission: summary(subById(id)), programme: prog, replaced: status === 'superseded' ? before : null, counting: status === 'older' ? summary(subById(winner)) : null };
+  const replacedSource = status === 'superseded' ? (subById(before).source || 'signed') : null;
+  return { status, submission: summary(subById(id)), programme: prog, replaced: status === 'superseded' ? before : null, replaced_source: replacedSource, counting: status === 'older' ? summary(subById(winner)) : null };
 }
 
 /**
@@ -451,6 +455,7 @@ function importMessage(out, { audience = 'county' } = {}) {
     return audience === 'county' ? `This file was already imported on ${humanDay(s.received_at)} and withdrawn on ${humanDay(s.withdrawn_at)}; nothing changed. To count it again, Reinstate it under Files received.`
       : `The county already had this file (imported on ${humanDay(s.received_at)}) and withdrew it on ${humanDay(s.withdrawn_at)}; nothing changed. Ask the county whether it should count.`;
   }
+  if (out.status === 'superseded' && out.replaced_source === ENTERED) return `Imported ${who}'s submission for ${period}. A signed file outranks figures the county entered: it replaces the figures entered for the same period, which are kept but no longer count.`;
   if (out.status === 'superseded') return `Imported ${who}'s submission for ${period}. It replaces the one made earlier for the same period, which is kept but no longer counts.`;
   if (out.status === 'older') return `Imported ${who}'s submission for ${period}, but it does not count: it was made on ${humanDay(s.generated_at)}, before the one that counts for that period (made on ${humanDay(out.counting.generated_at)}). It is kept as replaced.${audience === 'county' ? ' If the older file is the right one, withdraw the newer one.' : ''}`;
   return `Imported ${who}'s submission for ${period}.`;
@@ -488,7 +493,8 @@ function reinstate(id) {
     db.run(`UPDATE county_submissions SET withdrawn_at=NULL, withdrawn_by=NULL WHERE id=?`, id);
     winner = resettle(s.programme_id, s.period_from, s.period_to);
   });
-  return { submission: summary(subById(id)), counts: winner === id, displaced: winner === id && before ? before : null, programme_id: s.programme_id };
+  return { submission: summary(subById(id)), counts: winner === id, displaced: winner === id && before ? before : null, programme_id: s.programme_id,
+    counting: winner && winner !== id ? summary(subById(winner)) : null };
 }
 
 /** A submission's details without its figures. */
@@ -521,17 +527,27 @@ const round1 = (n) => Math.round(n * 10) / 10;
  * "Which submissions count"): only a submission whose whole period lies inside the chosen one; nothing is
  * pro-rated. Where two such submissions of one programme overlap (a quarter and a month inside it), the longer
  * one counts and the other is left out, so no day is counted twice; between two of the same length, the earlier
- * starting one, then the later received.
+ * starting one, then the later received. Signed files are placed first, all of them, and figures the county entered
+ * after: entered figures never push a signed file out, and entered figures that overlap a signed file that counts
+ * are left out (`signed_covers`: "a signed file covers this"), whatever their length.
  */
 function choose(subs, from, to) {
   const inside = subs.filter(s => s.period_from >= from && s.period_to <= to);
   const outside = subs.filter(s => !(s.period_from >= from && s.period_to <= to));
-  const order = [...inside].sort((a, b) => daysIn(b.period_from, b.period_to) - daysIn(a.period_from, a.period_to) || a.period_from.localeCompare(b.period_from) || b.received_at.localeCompare(a.received_at));
-  const used = []; const overlapped = [];
-  for (const s of order) (used.some(u => s.period_from <= u.period_to && u.period_from <= s.period_to) ? overlapped : used).push(s);
+  const order = [...inside].sort((a, b) => signedFirst(a, b) || daysIn(b.period_from, b.period_to) - daysIn(a.period_from, a.period_to) || a.period_from.localeCompare(b.period_from) || b.received_at.localeCompare(a.received_at));
+  const used = []; const overlapped = []; const covered = [];
+  const hits = (s, u) => s.period_from <= u.period_to && u.period_from <= s.period_to;
+  for (const s of order) {
+    const over = used.filter(u => hits(s, u));
+    if (!over.length) used.push(s);
+    else if (isEntered(s) && over.some(u => !isEntered(u))) covered.push(s);
+    else overlapped.push(s);
+  }
   used.sort((a, b) => a.period_from.localeCompare(b.period_from));
-  return { used, overlapped, outside };
+  return { used, overlapped, covered, outside };
 }
+/** Why a submission is left out of a period, in words (the view, its files and the read API say the same). */
+const LEFT_OUT = { overlaps: 'overlaps a longer file that counts', signed_covers: 'a signed file covers this', outside: 'not wholly inside this period' };
 /**
  * The submissions that can count (SUBS): not replaced, not withdrawn, and not signed by a key marked compromised;
  * one programme's, or every programme's. What the combined view adds up, and what the county connection tells a
@@ -613,7 +629,7 @@ function combined(from, to, { entered = true } = {}) {
     for (const f of pl.funds) { const h = f.hiaa || 'none'; agg.hiaa[h] = (agg.hiaa[h] || 0) + f.spend.approved; }
   };
   for (const p of programmes) {
-    const { used, overlapped, outside, days_covered: covered, status } = coverage(byProg.get(p.id), from, to);
+    const { used, overlapped, covered, outside, days_covered: daysCovered, status } = coverage(byProg.get(p.id), from, to);
     if (!filesCount(p)) { if (used.length) inactiveLeftOut.push({ id: p.id, name: p.name, files: used.length }); continue; }
     if (!entered) {
       const had = coverage(all.get(p.id), from, to).used.filter(isEntered);
@@ -629,8 +645,10 @@ function combined(from, to, { entered = true } = {}) {
     const source = sourceOf(used);
     cols.push({
       id: p.id, name: p.name, active: !!p.active, keep_files: !!p.keep_files, on_suds: p.on_suds !== 0,
-      status, days_covered: covered, days_in_period: period, source,
-      submissions: used.map(summary), left_out: [...overlapped.map(s => ({ ...summary(s), why: 'overlaps' })), ...outside.filter(s => s.period_from <= to && s.period_to >= from).map(s => ({ ...summary(s), why: 'outside' }))],
+      status, days_covered: daysCovered, days_in_period: period, source,
+      submissions: used.map(summary),
+      left_out: [...overlapped.map(s => ({ ...summary(s), why: 'overlaps', reason: LEFT_OUT.overlaps })), ...covered.map(s => ({ ...summary(s), why: 'signed_covers', reason: LEFT_OUT.signed_covers })),
+        ...outside.filter(s => s.period_from <= to && s.period_to >= from).map(s => ({ ...summary(s), why: 'outside', reason: LEFT_OUT.outside }))],
       agg: used.length ? agg : null, aggEntered: source === ENTERED || source === 'mixed' ? aggEntered : null,
     });
   }
@@ -704,12 +722,12 @@ const CAVEATS = [
   'Exact figures, including small numbers, as each program sends them under its funding contract. For authorised county staff only: not for publication or sharing.',
   'Each figure is what the program recorded in SUDS for the work charged to the opioid settlement funds it chose to report to the county, from its own Settlement outcomes page. Money is exact; a cost per outcome is not calculated across programs.',
 ];
-const PERIOD_RULE = 'A program\'s submission counts when its whole period lies inside the period chosen here; nothing is pro-rated. Where two of one program\'s submissions overlap (a quarter and a month inside it), the longer one counts. A program whose submissions cover only part of the period is marked "part of the period". An inactive program\'s files count only if the county chose to keep counting them.';
+const PERIOD_RULE = 'A program\'s submission counts when its whole period lies inside the period chosen here; nothing is pro-rated. Where two of one program\'s submissions overlap (a quarter and a month inside it), the longer one counts, except that a signed file always counts over figures the county entered. A program whose submissions cover only part of the period is marked "part of the period". An inactive program\'s files count only if the county chose to keep counting them.';
 const PUBLICATION_NOTE = 'Publishing these figures needs the publication screen over the combined release (planned). Until then nothing here is for publication.';
 
 module.exports = {
   FORMAT, SCHEMA_VERSION, ALGORITHM, MAX_FILE_BYTES, MAX_QUARTERS, VALUE_KEYS, PAYLOAD, TEXT_MAX, CAVEATS, CAVEAT_SUMMARY, PERIOD_RULE, PUBLICATION_NOTE, SubmissionError,
-  ENTERED, ENTERED_LABEL, ENTERED_NOTE, USE_CODES, HIAA_CODES, CURRENT, subById, sha256Hex, isEntered, sourceOf, hasEntered,
+  ENTERED, ENTERED_LABEL, ENTERED_NOTE, LEFT_OUT, USE_CODES, HIAA_CODES, CURRENT, subById, sha256Hex, isEntered, sourceOf, hasEntered,
   SUBS, canonical, cleanText, fingerprintOf, formatFingerprint, normaliseFingerprint, parsePublicKey, normaliseCode, formatCode, countyCode,
   currentKey, retiredKeys, ensureKey, rotateKey, payloadFrom, signFile, signWithSeed, checkPayload, parseFile, importParsed, withdraw, reinstate, resettle, resettleProgramme,
   importMessage, countingSubs, filesCount, coverage, summary, programmeOut, programmeKeys, choose, combined, byQuarter, headline, measureLabel, quartersIn, daysIn, isDay, isInstant, humanDay, humanPeriod, slug,

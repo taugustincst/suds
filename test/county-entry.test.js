@@ -65,7 +65,9 @@ before(async () => {
   samples = SAMPLE.sample({ periods: [Q1, Q2], recipient: COUNTY });
 });
 after(async () => { await H.stop(); });
-beforeEach(() => { freshCounty(); rateLimitReset('county-connect:127.0.0.1'); rateLimitReset('county-connect-bad:127.0.0.1'); });
+/** The refusal throttle on entries (routes/county.js throttle) put back to nothing, for tests that refuse many on purpose. */
+function unthrottle() { for (const u of H.db.all(`SELECT id FROM users`)) for (const b of ['county-entry-refuse', 'county-entry-refuse-throttle-audit']) rateLimitReset(`${b}:${u.id}`); }
+beforeEach(() => { freshCounty(); unthrottle(); rateLimitReset('county-connect:127.0.0.1'); rateLimitReset('county-connect-bad:127.0.0.1'); });
 
 // ---------------------------------------------------------------- registering, permissions
 test('a program not on SUDS is registered with no key, audited; only county:manage may register, enter or import', async () => {
@@ -115,9 +117,17 @@ test('figures entered in the form: stored as a county-entered submission, encryp
   assert.equal(a.entity_id, s.id); assert.equal(a.details.programme_id, p.id); assert.equal(a.details.via, 'form'); assert.equal(a.details.status, 'entered'); assert.equal(a.details.sha256, row.sha256);
   const said = JSON.stringify(a.details);
   for (const figure of ['1000.5', '"80"', 'naloxone', 'Q1 report', 'contacts']) assert.ok(!said.includes(figure), `no figure or typed text in the audit (${figure})`);
-  // The listing carries the source document for the county's own staff; the correction form has the figures.
-  const listed = ok(await fin.get('/api/county/submissions'), 200).rows.find(x => x.id === s.id);
+  // The listing carries the source document for those who enter and correct figures (county:manage) only; someone
+  // who may only view (finance, supervisors) sees that the figures were entered, not the document (D3).
+  const listed = ok(await admin.get('/api/county/submissions'), 200).rows.find(x => x.id === s.id);
   assert.equal(listed.source, 'county_entered'); assert.equal(listed.source_ref, 'Q1 report emailed 3 April 2026');
+  assert.equal(listed.programme_on_suds, false);
+  for (const c of [fin, sup]) {
+    const seen = ok(await c.get('/api/county/submissions'), 200);
+    const row = seen.rows.find(x => x.id === s.id);
+    assert.equal(row.source, 'county_entered'); assert.ok(!('source_ref' in row), 'no source document for county:view alone');
+    assert.ok(!JSON.stringify(seen).includes('Q1 report'));
+  }
   const form = ok(await admin.get(`/api/county/entries/${s.id}`), 200);
   assert.deepEqual({ from: form.from, to: form.to, source_ref: form.source_ref }, { ...Q1, source_ref: 'Q1 report emailed 3 April 2026' });
   assert.equal(form.funds[0].naloxone_kits, 80); assert.equal(form.funds[0].category, 'core_h');
@@ -127,6 +137,7 @@ test('figures entered in the form: stored as a county-entered submission, encryp
 test('validation: strict numbers, the allow-list\'s categories, the period rules and the source document, each said at its field; nothing stored; the refusal audited without the values', async () => {
   const p = await notOnSuds();
   const bad = async (body, field, re) => {
+    unthrottle();
     const r = await enter(p.id, body);
     assert.equal(r.status, 400, JSON.stringify(r.data)); assert.equal(r.data.reason, 'invalid');
     assert.ok(r.data.fields[field], `${field} is named: ${JSON.stringify(r.data.fields)}`); if (re) assert.match(r.data.fields[field], re);
@@ -208,16 +219,117 @@ test('figures entered again for a period replace the earlier ones (county.entry.
   assert.ok(signedProg.id);
 });
 
-test('a programme that joined SUDS: its signed file made later for the period replaces the county\'s figures', async () => {
+test('D1: a programme that joined SUDS: its signed file for the period replaces the county\'s figures, even one made before them', async () => {
   const p = await notOnSuds(samples[1].name);
   const e1 = ok(await enter(p.id, entry(Q1))).submission;
   ok(await admin.post(`/api/county/programmes/${p.id}/keys`, { public_key: samples[1].public_key, compared: true }));
   const r = ok(await admin.post('/api/county/submissions', { text: text(SAMPLE.sample({ periods: [Q1], recipient: COUNTY, programmes: [SAMPLE.PROGRAMMES[1]] })[0].files[0].file) }));
-  // The sample file was made at the end of Q1 (before the county entered its figures today): it is the older one.
-  assert.equal(r.status, 'older');
-  assert.equal(K.summary(K.subById(e1.id)).status, 'current');
+  // The sample file was made at the end of Q1, before the county entered its figures today: a signed file outranks
+  // county-entered figures whatever either's generated_at, so it counts and the entered figures are replaced.
+  assert.equal(r.status, 'superseded'); assert.equal(r.replaced, e1.id);
+  assert.match(r.message, /signed file outranks figures the county entered/);
+  assert.ok(Date.parse(K.subById(r.submission.id).generated_at) < Date.parse(K.subById(e1.id).generated_at), 'the signed file was made before the entry');
+  assert.equal(K.summary(K.subById(e1.id)).status, 'superseded');
+  let d = await view(Q1.from, Q1.to);
+  assert.equal(d.programmes.find(x => x.id === p.id).source, 'signed');
+  // Withdraw the signed file: the entered figures count again; reinstate it: it outranks them again.
+  const w = ok(await admin.post(`/api/county/submissions/${r.submission.id}/withdraw`, { reason: 'Checking the file' }), 200);
+  assert.equal(w.restored.id, e1.id);
+  assert.equal((await view(Q1.from, Q1.to)).programmes.find(x => x.id === p.id).source, 'county_entered');
+  // Withdraw the entered figures too, reinstate the signed file (it counts), then the entered figures: they are
+  // reinstated as replaced, and the message says a signed file outranks them.
+  ok(await admin.post(`/api/county/submissions/${e1.id}/withdraw`, { reason: 'Checking the entry' }), 200);
+  const re = ok(await admin.post(`/api/county/submissions/${r.submission.id}/reinstate`, {}), 200);
+  assert.equal(re.counts, true);
+  const re2 = ok(await admin.post(`/api/county/submissions/${e1.id}/reinstate`, {}), 200);
+  assert.equal(re2.counts, false); assert.match(re2.message, /a signed file outranks figures the county entered/);
+  assert.equal(K.summary(K.subById(e1.id)).status, 'superseded');
+  d = await view(Q1.from, Q1.to);
+  assert.equal(d.programmes.find(x => x.id === p.id).source, 'signed');
+});
+
+test('D1: in a period, a signed file always counts where it overlaps county-entered figures; the entered ones are left out, "a signed file covers this"', async () => {
+  const p = await notOnSuds(samples[2].name);
+  const quarter = ok(await enter(p.id, entry(Q1))).submission; // entered for the whole quarter
+  ok(await admin.post(`/api/county/programmes/${p.id}/keys`, { public_key: samples[2].public_key, compared: true }));
+  const jan = SAMPLE.payloadFor(SAMPLE.PROGRAMMES[2], { from: '2026-01-01', to: '2026-01-31' }, 1, { recipient: COUNTY });
+  const sj = ok(await admin.post('/api/county/submissions', { text: text(K.signWithSeed(jan, samples[2].seed).file) }));
+  assert.equal(sj.status, 'imported', 'a different period: nothing is superseded');
   const d = await view(Q1.from, Q1.to);
-  assert.equal(d.programmes.find(x => x.id === p.id).source, 'county_entered');
+  const c = d.programmes.find(x => x.id === p.id);
+  // Before D1 the longer entered quarter counted and pushed the signed month out; now the signed month counts.
+  assert.deepEqual(c.submissions.map(x => x.id), [sj.submission.id]);
+  assert.equal(c.source, 'signed'); assert.equal(c.status, 'part');
+  const lo = c.left_out.find(x => x.id === quarter.id);
+  assert.equal(lo.why, 'signed_covers'); assert.equal(lo.reason, 'a signed file covers this');
+  assert.equal(d.rows.find(x => x.key === 'naloxone_kits').by[p.id], jan.total.values.naloxone_kits);
+  assert.equal(d.rows.find(x => x.key === 'naloxone_kits').total_entered, 0);
+  // The files say the same.
+  const x = await fin.raw(`/api/county/view/export?from=${Q1.from}&to=${Q1.to}&format=xlsx`);
+  const wb = require('../server/spreadsheet').readWorkbook(Buffer.from(await x.arrayBuffer()));
+  assert.ok(wb.find(w => w.name === 'Submissions').rows.some(r => r.includes('Left out: a signed file covers this')));
+  // Pure: two entered rows still follow the length rule between themselves; a signed row is never left out for an entered one.
+  const row = (id, from, to, source, rec = '2026-04-01') => ({ id, period_from: from, period_to: to, source, received_at: rec });
+  const ch = K.choose([row('eq', Q1.from, Q1.to, 'county_entered'), row('ej', '2026-01-01', '2026-01-31', 'county_entered'), row('sf', '2026-02-01', '2026-02-28', 'signed')], Q1.from, Q1.to);
+  assert.deepEqual(ch.used.map(s => s.id), ['ej', 'sf']);
+  assert.deepEqual(ch.covered.map(s => s.id), ['eq']); assert.deepEqual(ch.overlapped, []);
+  const ch2 = K.choose([row('eq', Q1.from, Q1.to, 'county_entered'), row('ej', '2026-01-01', '2026-01-31', 'county_entered')], Q1.from, Q1.to);
+  assert.deepEqual(ch2.used.map(s => s.id), ['eq']); assert.deepEqual(ch2.overlapped.map(s => s.id), ['ej']);
+});
+
+test('D2: the county connection\'s status counts only signed files as received; entered figures never take a period off the outstanding list', async () => {
+  const p = await notOnSuds(samples[1].name);
+  const e1 = ok(await enter(p.id, entry(Q1))).submission;
+  ok(await admin.post(`/api/county/programmes/${p.id}/keys`, { public_key: samples[1].public_key, compared: true }));
+  ok(await admin.put('/api/county-connect/settings', { enabled: true }), 200);
+  try {
+    const t = ok(await admin.post('/api/county-connect/tokens', { scope: 'county.submit', programme_id: p.id }));
+    const status = async () => { const res = await fetch(base + '/api/county-connect/v1/status', { headers: { Authorization: `Bearer ${t.token}` } }); assert.equal(res.status, 200); return res.json(); };
+    let st = await status();
+    const q1 = st.expected.find(x => x.from === Q1.from && x.to === Q1.to);
+    assert.ok(q1, JSON.stringify(st.expected));
+    assert.equal(q1.received, false, 'entered figures are not a file the programme sent'); assert.equal(q1.coverage, 'none');
+    assert.ok(st.outstanding.some(x => x.from === Q1.from && x.to === Q1.to), 'Q1 is still outstanding');
+    const got1 = st.received.find(x => x.sha256 === K.subById(e1.id).sha256);
+    assert.equal(got1.source, 'county_entered', 'the entered figures are listed, marked');
+    // Its signed file for Q1 makes Q1 received.
+    ok(await admin.post('/api/county/submissions', { text: text(SAMPLE.sample({ periods: [Q1], recipient: COUNTY, programmes: [SAMPLE.PROGRAMMES[1]] })[0].files[0].file) }));
+    st = await status();
+    assert.equal(st.expected.find(x => x.from === Q1.from).received, true);
+    assert.ok(!st.outstanding.some(x => x.from === Q1.from && x.to === Q1.to));
+    assert.ok(st.received.every(x => ['signed', 'county_entered'].includes(x.source)));
+    assert.equal(st.received.find(x => x.status === 'current').source, 'signed');
+  } finally { ok(await admin.put('/api/county-connect/settings', { enabled: false }), 200); }
+});
+
+test('D4: two programmes of one name are refused, whatever the case or spacing, on registering either kind and on renaming', async () => {
+  const p = await notOnSuds('Valley Outreach Collective');
+  let r = await admin.post('/api/county/programmes', { name: '  valley OUTREACH collective ', public_key: samples[0].public_key, compared: true });
+  assert.equal(r.status, 409); assert.equal(r.data.reason, 'duplicate_name'); assert.ok(r.data.fields.name); assert.match(r.data.error, /already registered/);
+  r = await admin.post('/api/county/programmes', { name: 'VALLEY OUTREACH COLLECTIVE', not_on_suds: true });
+  assert.equal(r.status, 409);
+  const other = ok(await admin.post('/api/county/programmes', { name: samples[0].name, public_key: samples[0].public_key, compared: true }));
+  r = await admin.put(`/api/county/programmes/${other.id}`, { name: 'Valley outreach collective' });
+  assert.equal(r.status, 409); assert.equal(H.db.one(`SELECT name FROM county_programmes WHERE id=?`, other.id).name, samples[0].name);
+  // Renaming a programme to its own name in another case is its own business.
+  assert.equal(ok(await admin.put(`/api/county/programmes/${p.id}`, { name: 'Valley Outreach collective' }), 200).name, 'Valley Outreach collective');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM county_programmes`).n, 2);
+});
+
+test('D5: after a programme joins SUDS its entered figures can be withdrawn and reinstated, not corrected or added to', async () => {
+  const p = await notOnSuds();
+  const e1 = ok(await enter(p.id, entry(Q1))).submission;
+  ok(await admin.post(`/api/county/programmes/${p.id}/keys`, { public_key: samples[2].public_key, compared: true }));
+  assert.equal((await enter(p.id, entry(Q1, { source_ref: 'A correction' }))).status, 409, 'no correction: a new entry is refused');
+  assert.equal((await importCsv(p.id, { text: tidyCsv(p.name, Q2, [fund()]), source_ref: 'Report', funds: [] })).status, 409);
+  assert.equal((await admin.get(`/api/county/programmes/${p.id}/entries/template?from=${Q2.from}&to=${Q2.to}`)).status, 409);
+  const listed = ok(await admin.get('/api/county/submissions'), 200).rows.find(x => x.id === e1.id);
+  assert.equal(listed.programme_on_suds, true, 'the list says so, so the page offers no Correct');
+  ok(await admin.post(`/api/county/submissions/${e1.id}/withdraw`, { reason: 'Superseded by its own report' }), 200);
+  assert.equal(K.summary(K.subById(e1.id)).status, 'withdrawn');
+  const re = ok(await admin.post(`/api/county/submissions/${e1.id}/reinstate`, {}), 200);
+  assert.equal(re.counts, true);
+  assert.equal(lastAudit('county.entry.reinstate').entity_id, e1.id);
 });
 
 // ---------------------------------------------------------------- the combined view and the switch
@@ -300,20 +412,27 @@ test('Excel, CSV and tidy CSV mark entered figures, give the total\'s entered pa
   assert.equal(lastAudit('county.export').details.entered_programmes, 1);
   const tidy = await got(fin, `/api/county/view/export?from=${Q1.from}&to=${Q1.to}&format=tidy`);
   const lines = tidy.data.replace(/^﻿/, '').trim().split(/\r?\n/);
-  assert.equal(lines[0], [...E.CSV_COLUMNS, 'source'].join(','));
+  assert.equal(lines[0], [...E.CSV_COLUMNS, 'source', 'source_label'].join(','));
   const mine = lines.filter(l => l.startsWith('Valley Outreach Collective,'));
-  assert.ok(mine.length > 0 && mine.every(l => l.endsWith('entered by the county — not signed by the program')), 'every figure of it says so');
-  assert.ok(lines.filter(l => l.startsWith(`${samples[0].name},`)).every(l => l.endsWith(',signed by the program')));
+  // The source column is a code, as the read API gives it; source_label says it in words.
+  assert.ok(mine.length > 0 && mine.every(l => l.endsWith(',county_entered,entered by the county — not signed by the program')), 'every figure of it says so');
+  assert.ok(lines.filter(l => l.startsWith(`${samples[0].name},`)).every(l => l.endsWith(',signed,signed by the program')));
   const x = await fin.raw(`/api/county/view/export?from=${Q1.from}&to=${Q1.to}&format=xlsx`);
   const wb = require('../server/spreadsheet').readWorkbook(Buffer.from(await x.arrayBuffer()));
   const sheet = (n) => wb.find(w => w.name === n).rows;
   assert.ok(sheet('Combined')[0].some(c => String(c).includes('(entered by the county — not signed by the program)')), 'the Excel column is marked');
   assert.ok(sheet('Submissions').some(r => r.includes('entered by the county — not signed by the program')), 'and the submission');
   assert.ok(sheet('About').some(r => r[0] === 'Figures entered by the county'));
+  assert.ok(sheet('About').some(r => r[0] === 'Source (long CSV and Tidy sheet)' && /"county_entered"/.test(r[1])), 'the About sheet explains the source codes');
+  // The Report line names both sources when entered figures are in the file (and only then: below).
+  assert.match(sheet('About').find(r => r[0] === 'Report')[1], /signed submissions, and figures entered by the county — not signed by the program$/);
   // Left out: the file says so in its name, and the program is not in it.
   const xs = await got(fin, `/api/county/view/export?from=${Q1.from}&to=${Q1.to}&format=tidy&entered=exclude`);
   assert.match(xs.headers.get('content-disposition'), /-signed-only-internal-exact\.csv/);
   assert.ok(!xs.data.includes('Valley Outreach Collective'));
+  const xo = await got(fin, `/api/county/view/export?from=${Q1.from}&to=${Q1.to}&entered=exclude`);
+  const report = xo.data.replace(/^﻿/, '').split(/\r?\n/).find(l => l.startsWith('About,Report,'));
+  assert.ok(report && /signed submissions"?$/.test(report) && !/entered/.test(report), `left out, the Report line names signed submissions alone: ${report}`);
   // The tidy CSV imports back: the programme's own rows, as the county downloaded them, give the same figures.
   const back = [lines[0], ...mine].join('\r\n');
   const pv = ok(await importCsv(p.id, { text: back, preview: true }), 200);
@@ -385,6 +504,7 @@ test('CSV import refusals: header, program, numbers, measures, duplicates, missi
   const p = await notOnSuds();
   const good = tidyCsv(p.name, Q1, [fund()]);
   const refused = async (csvText, re, { status = 422, row = null, column = null } = {}) => {
+    unthrottle();
     const r = await importCsv(p.id, { text: csvText, preview: true });
     assert.equal(r.status, status, JSON.stringify(r.data)); assert.match(JSON.stringify(r.data), re);
     if (row || column) assert.ok(r.data.errors.some(e => (!row || e.row === row) && (!column || e.column === column)), JSON.stringify(r.data.errors));
@@ -423,6 +543,106 @@ test('CSV import refusals: header, program, numbers, measures, duplicates, missi
   // The source column of the county view's own export is accepted.
   const withSource = good.split('\r\n').map((l, i) => `${l},${i ? 'entered by the county — not signed by the program' : 'source'}`).join('\r\n');
   assert.equal((await importCsv(p.id, { text: withSource, preview: true })).status, 200);
+});
+
+test('CSV import reads only this program\'s rows: another program\'s are never imported, and said in one line', async () => {
+  const p = await notOnSuds();
+  const signed = ok(await admin.post('/api/county/programmes', { name: samples[0].name, public_key: samples[0].public_key, compared: true }));
+  const mineCsv = tidyCsv(p.name, Q1, [fund()]);
+  const theirs = tidyCsv(signed.name, Q1, [fund(3)]).split('\r\n').slice(1);
+  const both = [mineCsv, ...theirs].join('\r\n');
+  const pv = ok(await importCsv(p.id, { text: both, preview: true }), 200);
+  assert.equal(pv.rows, 17, 'only this program\'s rows are read');
+  assert.deepEqual(pv.others, [{ name: signed.name, rows: 17 }]);
+  assert.ok(pv.warnings.some(w => /17 rows for other programs \(.+\) were not read/.test(w)), JSON.stringify(pv.warnings));
+  const im = ok(await importCsv(p.id, { text: both, source_ref: 'Mixed file', funds: [{ name: 'County settlement share', grant_number: 'OSF-NS-1', category: 'core_h', hiaa: 'hiaa_4' }] }));
+  assert.equal(im.entries.length, 1); assert.match(im.message, /17 rows for other programs/);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM county_submissions WHERE programme_id=?`, signed.id).n, 0, 'nothing of the other program');
+  assert.equal(lastAudit('county.entry.import').details.other_rows, 17);
+  // A file with no row for this program is refused, naming whose rows it has.
+  const r = await importCsv(p.id, { text: [E.CSV_COLUMNS.join(','), ...theirs].join('\r\n'), preview: true });
+  assert.equal(r.status, 422); assert.match(r.data.error, new RegExp(`no rows for ${p.name}: its rows are for ${signed.name}`));
+});
+
+test('CSV import: a figure that is not a number is one problem, not also "has no" that figure; the message says it once', async () => {
+  const p = await notOnSuds();
+  const r = await importCsv(p.id, { text: tidyCsv(p.name, Q1, [fund()]).replace(',naloxone_kits,label,80', ',naloxone_kits,label,9x'), preview: true });
+  assert.equal(r.status, 422);
+  assert.deepEqual(r.data.errors.map(e => e.column), ['value'], JSON.stringify(r.data.errors));
+  assert.ok(!/has no/.test(JSON.stringify(r.data)));
+  assert.equal(r.data.error, 'The file has 1 problem. Nothing was saved.');
+  assert.ok(!/not imported/i.test(r.data.error), 'the page adds nothing that says it twice');
+});
+
+test('CSV source column: codes or words; a row that says signed is warned about in the preview; anything else is refused at the cell', async () => {
+  const p = await notOnSuds();
+  const withSource = (v) => tidyCsv(p.name, Q1, [fund()]).split('\r\n').map((l, i) => `${l},${i ? v : 'source'}`).join('\r\n');
+  const pe = ok(await importCsv(p.id, { text: withSource('county_entered'), preview: true }), 200);
+  assert.deepEqual(pe.warnings, []);
+  for (const v of ['signed', 'signed by the program']) {
+    const pv = ok(await importCsv(p.id, { text: withSource(v), preview: true }), 200);
+    assert.ok(pv.warnings.some(w => /17 rows say "signed" in the source column\. Once imported, these figures are entered by the county — not signed by the program/.test(w)), JSON.stringify(pv.warnings));
+  }
+  const two = tidyCsv(p.name, Q1, [fund()]).split('\r\n').map((l, i) => `${l},${i ? 'county_entered,entered by the county — not signed by the program' : 'source,source_label'}`).join('\r\n');
+  ok(await importCsv(p.id, { text: two, preview: true }), 200);
+  const bad = await importCsv(p.id, { text: withSource('trusted'), preview: true });
+  assert.equal(bad.status, 422); assert.ok(bad.data.errors.some(e => e.column === 'source' && /must be signed or county_entered/.test(e.message)));
+});
+
+test('a template of the long CSV for one program not on SUDS: its funds and the period, values empty; county:manage; audited', async () => {
+  const p = await notOnSuds();
+  let t = await got(admin, `/api/county/programmes/${p.id}/entries/template?from=${Q2.from}&to=${Q2.to}`);
+  let lines = t.data.replace(/^﻿/, '').trim().split(/\r?\n/);
+  assert.equal(lines[0], E.CSV_COLUMNS.join(','));
+  assert.equal(lines.length, 1 + 4 + K.VALUE_KEYS.length, 'one fund to name when it has none');
+  assert.ok(lines.slice(1).every(l => l.startsWith(`${p.name},${Q2.from},${Q2.to},,,`) && l.endsWith(',')), lines[1]);
+  assert.match(t.headers.get('content-disposition'), /suds-county-entry-template-.*-2026-04-01_2026-06-30\.csv/);
+  ok(await enter(p.id, entry(Q1, { funds: [fund(), fund(1, { name: 'City abatement grant', grant_number: 'CAG-2' })] })));
+  t = await got(admin, `/api/county/programmes/${p.id}/entries/template?from=${Q2.from}&to=${Q2.to}`);
+  lines = t.data.replace(/^﻿/, '').trim().split(/\r?\n/);
+  assert.equal(lines.length, 1 + 2 * (4 + K.VALUE_KEYS.length));
+  assert.ok(lines.some(l => l.startsWith(`${p.name},${Q2.from},${Q2.to},City abatement grant,CAG-2,naloxone_kits,`)));
+  assert.ok(!/1000\.5|,80\b/.test(t.data), 'no figure of the earlier entry is in it');
+  assert.equal(lastAudit('county.entry.template').entity_id, p.id);
+  // Filled in, it imports.
+  const filled = lines.map((l, i) => (i ? `${l}${/,spend_approved,/.test(l) ? '10' : /,spend_own_category,/.test(l) ? '10' : '0'}` : l)).join('\r\n');
+  ok(await importCsv(p.id, { text: filled, preview: true }), 200);
+  for (const c of [fin, sup, ro, nav]) assert.equal((await c.get(`/api/county/programmes/${p.id}/entries/template?from=${Q2.from}&to=${Q2.to}`)).status, 403);
+  assert.equal((await admin.get(`/api/county/programmes/${p.id}/entries/template?from=2026-02-30&to=${Q2.to}`)).status, 400);
+  assert.equal((await admin.get(`/api/county/programmes/no-such/entries/template?from=${Q2.from}&to=${Q2.to}`)).status, 404);
+});
+
+test('refused entries are throttled per person, as refused files are: the 21st in ten minutes is refused unread, audited once', async () => {
+  const p = await notOnSuds();
+  const before = auditCount('county.entry.throttled');
+  for (let i = 0; i < 20; i++) assert.equal((i % 2 ? await enter(p.id, entry(Q1, { source_ref: 'x' })) : await importCsv(p.id, { text: 'a,b', preview: true })).status, i % 2 ? 400 : 422);
+  let r = await enter(p.id, entry());
+  assert.equal(r.status, 429, 'even a good entry waits'); assert.match(r.data.error, /Too many entries were refused/);
+  r = await importCsv(p.id, { text: tidyCsv(p.name, Q1, [fund()]), preview: true });
+  assert.equal(r.status, 429);
+  assert.equal(auditCount('county.entry.throttled') - before, 1, 'audited once per window');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM county_submissions`).n, 0);
+  // Ten minutes later (the count put back), a good entry is saved.
+  unthrottle();
+  ok(await enter(p.id, entry()));
+});
+
+test('entered= takes include or exclude only: anything else is refused, on the view, its files and the read API', async () => {
+  const p = await notOnSuds();
+  ok(await enter(p.id, entry()));
+  for (const q of ['entered=Exclude', 'entered=no', 'entered=', 'entered=exclude%20']) {
+    for (const path of [`/api/county/view?from=${Q1.from}&to=${Q1.to}&${q}`, `/api/county/view?from=${Q1.from}&to=${Q2.to}&by=quarter&${q}`, `/api/county/view/export?from=${Q1.from}&to=${Q1.to}&${q}`]) {
+      const r = await fin.get(path); assert.equal(r.status, 400, `${path}: ${r.status}`);
+    }
+  }
+  assert.equal((await view(Q1.from, Q1.to, '&entered=include')).entered, true);
+  ok(await admin.put('/api/county-connect/settings', { enabled: true }), 200);
+  try {
+    const rt = ok(await admin.post('/api/county-connect/tokens', { scope: 'county.read', name: 'Warehouse' }));
+    const call = (q) => fetch(`${base}/api/county-connect/v1/combined?from=${Q1.from}&to=${Q1.to}&${q}`, { headers: { Authorization: `Bearer ${rt.token}` } });
+    assert.equal((await call('entered=nope')).status, 400);
+    assert.equal((await call('entered=include')).status, 200);
+  } finally { ok(await admin.put('/api/county-connect/settings', { enabled: false }), 200); }
 });
 
 // ---------------------------------------------------------------- pure
