@@ -101,6 +101,19 @@ test('the hand-off: dates, commands, loop, title and counts agree with its table
   assert.deepEqual(codes(r), ['handoff-command', 'handoff-command', 'handoff-count', 'handoff-date', 'handoff-loop', 'handoff-push', 'handoff-title']);
 });
 
+test('the hand-off: a row the stamp cannot fill yet (the SBOM commit after it) is owed, and its commit is not checked', () => {
+  const pending = (t) => t.replace(/^\| `v1\.3\.0` \|.*$/m, "| `v1.3.0` | the commit after `Release 1.3.0`, which adds its SBOM (`git log -1 --format=%H --grep='^SBOM of the 1.3.0 stamp' origin/main`) | 2026-10-01 | recorded in a later commit on `main` |");
+  const docs = world({ patch: { handoff: pending } });
+  const h = RS.parseHandoff(docs.handoff);
+  assert.deepEqual([h.rows.map((r) => r.tag), h.pending.map((r) => r.tag)], [['v1.2.0'], ['v1.3.0']]);
+  const r = RS.evaluate({ docs, git: goodGit() });
+  assert.deepEqual(r.problems, [], 'its count, title, command, loop and push agree with the table');
+  assert.ok(r.notChecked.some((n) => /v1\.3\.0's commit/.test(n)), 'and it says the commit was not checked');
+  // Its date is still checked, and a pushed tag is still found.
+  assert.deepEqual(codes(RS.evaluate({ docs: world({ patch: { handoff: (t) => pending(t).replace('| 2026-10-01 |', '| 2026-10-02 |') } }) })), ['handoff-date']);
+  assert.ok(codes(RS.evaluate({ docs, remote: { tags: { 'v1.3.0': SHA('c') } } })).includes('handoff-tag-pushed'));
+});
+
 test('HANDOFF.md\'s Release waiting entry names the same tags, and exists while tags are owed', () => {
   let r = RS.evaluate({ docs: world({ patch: { notes: (t) => t.replace('1.2.0 and 1.3.0 are on', '1.3.0 is on').replace('git push origin v1.2.0 v1.3.0', 'git push origin v1.3.0').replace('all two', 'all three') } }) });
   assert.deepEqual(codes(r), ['notes-mismatch', 'notes-mismatch']);
@@ -185,7 +198,7 @@ test('parsers read the real documents\' shapes', () => {
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const h = RS.parseHandoff(read(RS.FILES.handoff));
   assert.ok(h.rows.length > 0 && h.rows.every((r) => /^v\d+\.\d+\.\d+$/.test(r.tag) && r.commit.length === 40), 'the hand-off table is read');
-  assert.equal(h.tagCommands.length, h.rows.length, 'one tag command per row');
+  assert.equal(h.tagCommands.length, h.rows.length + h.pending.length, 'one tag command per row (a row the stamp cannot fill yet included)');
   const rel = RS.parseRelease(read(RS.FILES.release));
   assert.ok(rel.latest && rel.previous && rel.older, 'the supported-versions rows are read');
   assert.ok(rel.records.length > 0 && rel.ledger.length > 0, 'the records and the ledger are read');

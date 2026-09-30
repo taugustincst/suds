@@ -122,6 +122,11 @@ function parseHandoff(text) {
     const after = /after the stamp `([0-9a-f]{7,40})`/.exec(m[4]);
     rows.push({ tag: m[1], version: m[2], commit: m[3], date: m[5], zip: m[6], afterStamp: after ? after[1] : null, line: lineAt(text, m.index) });
   }
+  // A row the stamp itself cannot fill: the released commit is the SBOM commit after "Release X.Y.Z" (a commit cannot
+  // hold its own hash), found by its subject; its zip's SHA-256 is recorded by a later commit on main.
+  const pending = [];
+  const pre = /^\|\s*`(v(\d+\.\d+\.\d+))`\s*\|\s*the commit after `Release (\d+\.\d+\.\d+)`[^|]*\|\s*(\d{4}-\d{2}-\d{2})\s*\|/gm;
+  for (let m; (m = pre.exec(text));) if (m[2] === m[3]) pending.push({ tag: m[1], version: m[2], commit: null, date: m[4], zip: null, afterStamp: null, pending: true, line: lineAt(text, m.index) });
   const tagCommands = [...text.matchAll(/^git tag -a (v\d+\.\d+\.\d+) (\S+) -m "SUDS (\d+\.\d+\.\d+)"/gm)]
     .map((m) => ({ tag: m[1], commit: m[2].replace(/^"|"$/g, ''), message: m[3], line: lineAt(text, m.index) }));
   const pushM = /^git push origin((?: v\d+\.\d+\.\d+)+)\s*$/m.exec(text);
@@ -132,7 +137,7 @@ function parseHandoff(text) {
   const counts = [...text.matchAll(/\b(?:[Tt]he|all|All) (two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) (?:releases|tags|untagged releases)\b|^(Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve) versions are on/gm)]
     .map((m) => ({ word: (m[1] || m[2]).toLowerCase(), line: lineAt(text, m.index) }));
   const noneTagged = /\bnone is tagged\b/.exec(text);
-  return { rows, tagCommands, push, loops, title, counts, noneTagged: noneTagged ? { line: lineAt(text, noneTagged.index) } : null };
+  return { rows, pending, tagCommands, push, loops, title, counts, noneTagged: noneTagged ? { line: lineAt(text, noneTagged.index) } : null };
 }
 
 /** HANDOFF.md: the *Release waiting* section, if any. */
@@ -284,44 +289,46 @@ function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = nul
   // 3. The hand-off page, against the CHANGELOG, its own commands and HANDOFF.md.
   const h = docs.handoff != null ? parseHandoff(docs.handoff) : null;
   const notes = docs.notes != null ? parseHandoffNotes(docs.notes) : null;
-  const owedTags = h ? h.rows.map((r) => r.tag) : [];
+  // Rows with a commit, and rows whose commit the stamp cannot hold yet (checked for everything but the commit).
+  const all = h ? [...h.rows, ...(h.pending || [])] : [];
+  const owedTags = all.map((r) => r.tag);
   if (h) {
-    for (const r of h.rows) {
+    for (const r of all) {
       const s = stampedSet.get(r.version);
       if (!s) problems.push(P(FILES.handoff, r.line, `${r.tag}: ${r.version} has no dated CHANGELOG section`, 'check the version', 'handoff-unknown'));
       else if (s.date !== r.date) problems.push(P(FILES.handoff, r.line, `${r.tag}: the table says its CHANGELOG date is ${r.date}; CHANGELOG.md:${s.line} says ${s.date}`, `use ${s.date}`, 'handoff-date'));
     }
-    const byTag = new Map(h.rows.map((r) => [r.tag, r]));
+    const byTag = new Map(all.map((r) => [r.tag, r]));
     for (const c of h.tagCommands) {
       const r = byTag.get(c.tag);
       if (!r) problems.push(P(FILES.handoff, c.line, `\`git tag -a ${c.tag}\` has no row in the table`, 'add the row or remove the command', 'handoff-command'));
       else {
-        if (/^[0-9a-f]{7,40}$/.test(c.commit) && !r.commit.startsWith(c.commit)) problems.push(P(FILES.handoff, c.line, `\`git tag -a ${c.tag} ${c.commit}\` names another commit than the table (${r.commit.slice(0, 12)})`, 'make the command and the table agree', 'handoff-command'));
+        if (r.commit && /^[0-9a-f]{7,40}$/.test(c.commit) && !r.commit.startsWith(c.commit)) problems.push(P(FILES.handoff, c.line, `\`git tag -a ${c.tag} ${c.commit}\` names another commit than the table (${r.commit.slice(0, 12)})`, 'make the command and the table agree', 'handoff-command'));
         if (c.message !== r.version) problems.push(P(FILES.handoff, c.line, `\`git tag -a ${c.tag}\`'s message says SUDS ${c.message}`, `-m "SUDS ${r.version}"`, 'handoff-command'));
       }
     }
-    for (const r of h.rows) if (!h.tagCommands.some((c) => c.tag === r.tag)) problems.push(P(FILES.handoff, r.line, `${r.tag} has no \`git tag -a\` command`, 'add it to step 2', 'handoff-command'));
+    for (const r of all) if (!h.tagCommands.some((c) => c.tag === r.tag)) problems.push(P(FILES.handoff, r.line, `${r.tag} has no \`git tag -a\` command`, 'add it to step 2', 'handoff-command'));
     if (h.push && !sameSet(h.push.tags, owedTags)) problems.push(P(FILES.handoff, h.push.line, `the push names ${h.push.tags.join(' ')}; the table ${owedTags.join(' ')}`, 'one push of exactly the tags in the table', 'handoff-push'));
     for (const l of h.loops) {
       const stray = l.shas.filter((s) => !h.rows.some((r) => r.commit.startsWith(s)));
       if (stray.length) problems.push(P(FILES.handoff, l.line, `the check loop names ${stray.join(', ')}, which is not a commit in the table`, 'list the table\'s commits', 'handoff-loop'));
-      else if (l.shas.length + l.vars !== h.rows.length) problems.push(P(FILES.handoff, l.line, `the check loop names ${l.shas.length + l.vars} commits; the table has ${h.rows.length}`, 'list the table\'s commits', 'handoff-loop'));
+      else if (l.shas.length + l.vars !== all.length) problems.push(P(FILES.handoff, l.line, `the check loop names ${l.shas.length + l.vars} commits; the table has ${all.length}`, 'list the table\'s commits', 'handoff-loop'));
     }
-    if (h.rows.length) {
-      const sorted = [...h.rows].sort((a, b) => cmp(a.version, b.version));
+    if (all.length) {
+      const sorted = [...all].sort((a, b) => cmp(a.version, b.version));
       const [lo, hi] = [sorted[0].tag, sorted[sorted.length - 1].tag];
       if (h.title && (h.title.from !== lo || h.title.to !== hi)) problems.push(P(FILES.handoff, h.title.line, `the title says ${h.title.from} to ${h.title.to}; the table has ${lo} to ${hi}`, `tags ${lo} to ${hi}`, 'handoff-title'));
-      for (const c of h.counts) if (NUMBER_WORDS.indexOf(c.word) !== h.rows.length) problems.push(P(FILES.handoff, c.line, `says ${c.word}; the table has ${h.rows.length} (${NUMBER_WORDS[h.rows.length] || h.rows.length})`, 'make the count match the table', 'handoff-count'));
+      for (const c of h.counts) if (NUMBER_WORDS.indexOf(c.word) !== all.length) problems.push(P(FILES.handoff, c.line, `says ${c.word}; the table has ${all.length} (${NUMBER_WORDS[all.length] || all.length})`, 'make the count match the table', 'handoff-count'));
     }
     if (rel && rel.owed && !sameSet(rel.owed.tags, owedTags)) problems.push(P(FILES.release, rel.owed.line, `"the tags owed" are ${rel.owed.tags.join(', ')}; RELEASE-HANDOFF.md's table has ${owedTags.join(', ')}`, 'name the same tags as the hand-off', 'owed-mismatch'));
-    if (rel && rel.count && NUMBER_WORDS.indexOf(rel.count.word) !== h.rows.length) problems.push(P(FILES.release, rel.count.line, `"Now ${rel.count.word} tags"; RELEASE-HANDOFF.md's table has ${h.rows.length}`, 'make the count match the hand-off', 'owed-count'));
+    if (rel && rel.count && NUMBER_WORDS.indexOf(rel.count.word) !== all.length) problems.push(P(FILES.release, rel.count.line, `"Now ${rel.count.word} tags"; RELEASE-HANDOFF.md's table has ${all.length}`, 'make the count match the hand-off', 'owed-count'));
     if (notes) {
       const tagsOfVersions = notes.versions.map((v) => `v${v}`);
-      if (notes.versions.length && !sameSet(tagsOfVersions, owedTags)) problems.push(P(FILES.notes, notes.versionsLine, `*Release waiting* names ${notes.versions.join(', ')}; RELEASE-HANDOFF.md's table has ${h.rows.map((r) => r.version).join(', ')}`, 'name the same versions', 'notes-mismatch'));
+      if (notes.versions.length && !sameSet(tagsOfVersions, owedTags)) problems.push(P(FILES.notes, notes.versionsLine, `*Release waiting* names ${notes.versions.join(', ')}; RELEASE-HANDOFF.md's table has ${all.map((r) => r.version).join(', ')}`, 'name the same versions', 'notes-mismatch'));
       if (notes.push && !sameSet(notes.push.tags, owedTags)) problems.push(P(FILES.notes, notes.push.line, `*Release waiting*'s push names ${notes.push.tags.join(' ')}; the hand-off ${owedTags.join(' ')}`, 'the same push as the hand-off', 'notes-mismatch'));
-      if (notes.count && NUMBER_WORDS.indexOf(notes.count.word) !== h.rows.length) problems.push(P(FILES.notes, notes.count.line, `"tags all ${notes.count.word}"; the hand-off has ${h.rows.length}`, 'make the count match', 'notes-mismatch'));
-    } else if (h.rows.length) {
-      problems.push(P(FILES.notes, 1, `RELEASE-HANDOFF.md lists ${h.rows.length} tags owed, but HANDOFF.md has no *Release waiting* entry`, 'add the entry, pointing at the hand-off', 'notes-missing'));
+      if (notes.count && NUMBER_WORDS.indexOf(notes.count.word) !== all.length) problems.push(P(FILES.notes, notes.count.line, `"tags all ${notes.count.word}"; the hand-off has ${all.length}`, 'make the count match', 'notes-mismatch'));
+    } else if (all.length) {
+      problems.push(P(FILES.notes, 1, `RELEASE-HANDOFF.md lists ${all.length} tags owed, but HANDOFF.md has no *Release waiting* entry`, 'add the entry, pointing at the hand-off', 'notes-missing'));
     }
   }
 
@@ -340,7 +347,8 @@ function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = nul
     if (counts.size > 1) for (const c of claims) if (!(majority.length === 1 && majority[0] === c.version)) problems.push(P(c.file, c.line, `says ${c.version} is live on GitHub Pages; other documents say ${[...counts.keys()].filter((v) => v !== c.version).join(', ')}`, 'the documents must name one live version', 'pages-disagree'));
   }
 
-  // 5. The hand-off's commits, when git can answer.
+  // 5. The hand-off's commits, when git can answer. A pending row names no commit yet: say so, never a problem.
+  for (const r of (h && h.pending) || []) notChecked.push(`${r.tag}'s commit (the hand-off names it as the commit after "Release ${r.version}"; a later commit on main records it)`);
   if (h && h.rows.length) {
     if (!git) notChecked.push('the hand-off\'s commits (no git: --docs-only)');
     else {
@@ -369,9 +377,9 @@ function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = nul
   if (!remote) notChecked.push('which tags are pushed (no `git ls-remote --tags origin`: --offline or --docs-only, or origin unreachable)');
   else {
     const pushed = (tag) => Object.prototype.hasOwnProperty.call(remote.tags, tag);
-    if (h) for (const r of h.rows) if (pushed(r.tag)) {
+    for (const r of all) if (pushed(r.tag)) {
       problems.push(P(FILES.handoff, r.line, `${r.tag} is pushed (at ${remote.tags[r.tag].slice(0, 12)}), but the hand-off still lists it as owed`, 'remove it from the table and the commands (the hand-off is done once every tag is pushed), and follow step 5', 'handoff-tag-pushed'));
-      if (remote.tags[r.tag] !== r.commit) problems.push(P(FILES.handoff, r.line, `${r.tag} is pushed at ${remote.tags[r.tag].slice(0, 12)}, not at the table's ${r.commit.slice(0, 12)}`, 'find out which commit is released before anything else: the tag decides what release.yml builds', 'handoff-tag-elsewhere'));
+      if (r.commit && remote.tags[r.tag] !== r.commit) problems.push(P(FILES.handoff, r.line, `${r.tag} is pushed at ${remote.tags[r.tag].slice(0, 12)}, not at the table's ${r.commit.slice(0, 12)}`, 'find out which commit is released before anything else: the tag decides what release.yml builds', 'handoff-tag-elsewhere'));
     }
     const pendingClaims = [];
     if (q && q.tagPending) pendingClaims.push({ file: FILES.questionnaire, line: q.line, tag: `v${q.version}` });
@@ -382,11 +390,11 @@ function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = nul
     // A stamped version newer than the newest pushed tag that nothing lists: a release nobody will tag.
     const pushedVersions = Object.keys(remote.tags).map((t) => t.replace(/^v/, '')).filter((v) => parseV(v));
     const newestPushed = pushedVersions.sort(cmp).pop() || '0.0.0';
-    const all = new Map(stamped.map((s) => [s.version, s]));
-    if (mainPkg) for (const s of mainPkg.stamped || []) if (!all.has(s.version)) all.set(s.version, s);
-    for (const s of [...all.values()].sort((a, b) => cmp(a.version, b.version))) {
+    const known = new Map(stamped.map((s) => [s.version, s]));
+    if (mainPkg) for (const s of mainPkg.stamped || []) if (!known.has(s.version)) known.set(s.version, s);
+    for (const s of [...known.values()].sort((a, b) => cmp(a.version, b.version))) {
       if (cmp(s.version, newestPushed) <= 0 || pushed(`v${s.version}`) || owedTags.includes(`v${s.version}`)) continue;
-      problems.push(P(FILES.handoff, h && h.rows.length ? h.rows[h.rows.length - 1].line : 1, `${s.version} is stamped (CHANGELOG ${s.date}) and newer than the newest pushed tag (v${newestPushed}), but v${s.version} is neither pushed nor listed in the hand-off`, 'add its row, tag command and push (docs/RELEASE.md, *Handing a release to the owner*)', 'untagged-unlisted'));
+      problems.push(P(FILES.handoff, all.length ? all[all.length - 1].line : 1, `${s.version} is stamped (CHANGELOG ${s.date}) and newer than the newest pushed tag (v${newestPushed}), but v${s.version} is neither pushed nor listed in the hand-off`, 'add its row, tag command and push (docs/RELEASE.md, *Handing a release to the owner*)', 'untagged-unlisted'));
     }
   }
   if (mainPkg) info.push(`origin/main's package.json says ${mainPkg.version}`);
