@@ -44,7 +44,7 @@ for arg in "$@"; do
   esac
 done
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "usage: upgrade.sh <version X.Y.Z> --release-sha256=HEX [--source=ZIP] [--dry-run]"
-valid_digits "$READY_SECS" && (( READY_SECS >= 1 )) || die "--ready-timeout must be a number of seconds (digits)"
+if ! { valid_digits "$READY_SECS" && (( READY_SECS >= 1 )); }; then die "--ready-timeout must be a number of seconds (digits)"; fi
 [[ -z "$RELEASE_SHA256" ]] || [[ "$RELEASE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || die "--release-sha256 must be 64 hex characters"
 RELEASE_SHA256=$(tr '[:upper:]' '[:lower:]' <<< "$RELEASE_SHA256")
 for pair in "--source:$RELEASE_ZIP" "--node-tarball:$NODE_TARBALL" "--caddy-tarball:$CADDY_TARBALL"; do

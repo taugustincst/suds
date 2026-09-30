@@ -90,7 +90,7 @@ detect_arch
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "--version must be X.Y.Z"
 [[ "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] || die "--domain=<the DNS name staff use> is required (e.g. suds.county.gov)"
 [[ "$ADMIN_CIDR" =~ ^[0-9a-fA-F:.]+(/[0-9]{1,3})?$ ]] || die "--admin-cidr=<network SSH is allowed from> is required (e.g. 10.20.0.0/16)"
-valid_digits "$LOG_DAYS" && (( LOG_DAYS >= 30 )) || die "--log-retention-days must be a number of days (digits), at least 30"
+if ! { valid_digits "$LOG_DAYS" && (( LOG_DAYS >= 30 )); }; then die "--log-retention-days must be a number of days (digits), at least 30"; fi
 valid_size "$JOURNAL_MAX" || die "--journal-max-use must be a size such as 8G (digits and an optional K, M, G or T)"
 [[ -z "$ACME_EMAIL" ]] || valid_email "$ACME_EMAIL" || die "--acme-email must be an e-mail address (got: $(printf '%q' "$ACME_EMAIL"))"
 [[ -z "$CONNECT_HOST" ]] || valid_host "$CONNECT_HOST" || die "--connect-host must be a host name or IP address"
@@ -341,7 +341,7 @@ if [[ $OS_FAMILY == debian ]]; then
   act ufw --force enable
 else
   act systemctl enable --now firewalld
-  zone=$( (( DRY )) && echo public || firewall-cmd --get-default-zone)
+  if (( DRY )); then zone=public; else zone=$(firewall-cmd --get-default-zone); fi
   rich() { local fam=ipv4; [[ "$1" == *:* ]] && fam=ipv6; printf 'rule family="%s" source address="%s" service name="ssh" accept' "$fam" "$1"; }
   act firewall-cmd --permanent --zone="$zone" --add-service=https
   if [[ $TLS_MODE == caddy ]]; then act firewall-cmd --permanent --zone="$zone" --add-service=http; else act firewall-cmd --permanent --zone="$zone" --remove-service=http; fi

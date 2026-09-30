@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# shellcheck disable=SC2034  # the settings below are read by install.sh, upgrade.sh and uninstall.sh, which source this file
 # Shared by deploy/linux/install.sh, upgrade.sh and uninstall.sh. Sourced, never run.
 #
 # Two conventions make the scripts testable (test/deploy-linux.test.js):
