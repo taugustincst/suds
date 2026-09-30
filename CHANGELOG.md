@@ -238,6 +238,18 @@ makes a screened, publishable release of a county's combined figures for a perio
   (its passkey was refused only "at its next use"). Saving the list, or loading a metadata file that refuses a model,
   now ends the sessions those passkeys opened (`sessions_ended` in the audit entry), as removing a passkey does; the
   administrator's own session is kept. Test: test/attestation.test.js.
+- **AI drafting sent a client's participant code to the provider.** The de-identification replaced names and the
+  client code only; a client known by a participant code (often with no name) had the code sent as typed. It is now
+  masked as `[CLIENT_CODE]`, with or without separators. Test: test/ai-copilot.test.js.
+- **Merging a coded client with the same person's named record lost what the kept record lacked**: its name (a named
+  duplicate merged into a coded record left it nameless and unsearchable by name), or its participant code and index
+  (so the SSP summary counted that person's anonymous visits as someone else's). The kept record now takes either.
+  Test: test/participant-code-default.test.js.
+- **The county evidence packet shipped the 1.19.0 drill, upgrade and installer evidence**: the 1.20.0 re-runs are in
+  folders named `<kind>-2026-09-30-v1.20.0`, which its match did not read. It now takes the latest date, then the
+  latest release re-run that day. Test: test/county-packet.test.js.
+- **`scripts/release-state.js` failed on the repository** (CI's advisory job): a 1.20.0 CHANGELOG line recording the
+  questionnaire's earlier check read as stale. Reworded; test/release-state.test.js now tolerates no finding.
 
 ## 1.20.0 — 2026-09-30
 
