@@ -137,6 +137,13 @@ const DUPLICATE_CHECKS = 60; const DUPLICATE_CHECK_WINDOW_MS = 15 * 60_000;
  * the blind indexes, the audit entry, the revision (server/client-revisions.js: what each changed field held before
  * and holds now) and, for an editor off the care team, the primary worker's change notice, which names it.
  */
+/** Two decrypted client records' participant codes: { keep, source, differ } (differ: both set and not the same). */
+function codesOf(keep, source) {
+  const PC = require('../participant-code');
+  const k = PC.normalise(keep.participant_code); const s = PC.normalise(source.participant_code);
+  return { keep: k, source: s, differ: !!(k && s && k !== s) };
+}
+
 function updateClient(ctx, row, v, { reverts = null } = {}) {
   // Contact details, and closing a client only by a discharge (the Episodes tab): the table's rules.
   rules.assertWrite('clients', { id: row.id, ...rules.toColumns('clients', v) }, ctx, { existing: row });
@@ -401,6 +408,23 @@ module.exports = (r) => {
    * anything already synced to a device still resolve to something.
    * The child tables are discovered from the schema's foreign keys, so a table added later is not missed.
    */
+  // What a merge would do that the person should know first (1.21.0): whether the two records carry different
+  // participant codes (the kept record's stays; the other is kept in the merge's revision). Both records must be
+  // reachable, as for the merge; the codes are PHI, so the read is audited (never with their values).
+  r.get('/api/clients/:id/merge/preview', auth.requireAuth, auth.requirePerm('clients:merge'), (ctx) => {
+    const keep = loadClient(ctx, ctx.params.id);
+    const sourceId = ctx.query.get('source_id') || '';
+    const source = sourceId ? db.one(`SELECT * FROM clients WHERE id=?`, sourceId) : null;
+    if (!source || source.deleted_at || source.merged_into) throw notFound('The record to merge was not found');
+    if (source.id === keep.id) throw badRequest('Choose a different record to merge in');
+    auth.assertClientAccess(ctx, source.id);
+    const codes = codesOf(M.decryptRow(keep), M.decryptRow(source));
+    audit.log({ user: ctx.user, action: 'client.merge.preview', entity: 'client', entityId: keep.id, clientId: keep.id, ip: ctx.ip, details: { source: source.id, participant_codes_differ: codes.differ || undefined } });
+    return { keep: { id: keep.id, client_code: keep.client_code, participant_code: codes.keep }, source: { id: source.id, client_code: source.client_code, participant_code: codes.source },
+      participant_codes_differ: codes.differ,
+      notices: codes.differ ? [`The two records have different participant codes (this record: ${codes.keep}; the other: ${codes.source}). This record's code is kept; the other is recorded in the merge's entry on the History tab, from where it can be put back.`] : [] };
+  });
+
   r.post('/api/clients/:id/merge', auth.requireAuth, auth.requirePerm('clients:merge'), (ctx) => {
     const keep = loadClient(ctx, ctx.params.id);
     const v = validate(ctx.body, { source_id: { type: 'string', required: true }, reason: { type: 'string', maxLen: 300 } });
@@ -461,10 +485,19 @@ module.exports = (r) => {
       const keys = Object.keys(fills);
       if (keys.length) db.run(`UPDATE clients SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=? WHERE id=?`, ...keys.map(k => fills[k]), db.now(), keep.id);
       // What the merge filled in on the kept record is a change to it like any other: a revision (via 'merge').
+      // Two different participant codes: the kept record's stays, and the duplicate's is not dropped unseen: it is
+      // in this revision (encrypted, like every revision) as the code the record was merged from, so the History tab
+      // shows it and "Put back" makes the duplicate's code the record's own. Never in the audit details.
+      const codes = codesOf(K, S);
+      let revChanges = {};
       if (keys.length) {
         const plainFills = M.decryptRow(Object.fromEntries(keys.map(k => [k, fills[k]])));
         delete plainFills.display_name; delete plainFills.participant_code_idx;
-        mergeRevision = REV.record({ user: ctx.user, clientId: keep.id, changes: REV.diff(M.decryptRow(keep), plainFills), via: 'merge', ip: ctx.ip });
+        revChanges = REV.diff(K, plainFills);
+      }
+      if (codes.differ) { revChanges.participant_code = { before: codes.source, after: codes.keep }; moved._participant_codes_differ = true; }
+      if (Object.keys(revChanges).length) {
+        mergeRevision = REV.record({ user: ctx.user, clientId: keep.id, changes: revChanges, via: 'merge', ip: ctx.ip });
       }
       // Recompute the kept record's blind indexes in case a name field was filled in from the duplicate.
       const after = db.one(`SELECT * FROM clients WHERE id=?`, keep.id);
@@ -500,7 +533,7 @@ module.exports = (r) => {
     // The detail of what moved is structural, never PHI; the reason is on the merged-away row, encrypted.
     audit.log({ user: ctx.user, action: 'client.merge', entity: 'client', entityId: keep.id, clientId: keep.id, ip: ctx.ip, details: { merged: source.id, merged_code: source.client_code, moved, reason_recorded: v.reason ? true : undefined, revision: mergeRevision || undefined } });
     audit.log({ user: ctx.user, action: 'client.merged_away', entity: 'client', entityId: source.id, clientId: source.id, ip: ctx.ip, details: { into: keep.id } });
-    return { ok: true, kept: keep.id, merged: source.id, moved };
+    return { ok: true, kept: keep.id, merged: source.id, moved, notices: moved._participant_codes_differ ? ['The two records had different participant codes: this record\'s is kept, and the other is recorded in the merge\'s entry on the History tab.'] : [] };
   });
 
   // The client's notes this reader may read: the kinds they read, less the SUD counseling notes they may not (the

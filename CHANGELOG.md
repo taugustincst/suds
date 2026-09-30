@@ -248,6 +248,18 @@ makes a screened, publishable release of a county's combined figures for a perio
 - **The county evidence packet shipped the 1.19.0 drill, upgrade and installer evidence**: the 1.20.0 re-runs are in
   folders named `<kind>-2026-09-30-v1.20.0`, which its match did not read. It now takes the latest date, then the
   latest release re-run that day. Test: test/county-packet.test.js.
+- **A client known only by a participant code, wherever a record leaves the screen.**
+  - A referral packet, and lists that show a client's name, say "Participant CODE", never a blank; the consent checks
+    (server/disclosure.js) are unchanged.
+  - CalOMS Tx needs the legal first and last name: such a record gets a fatal `name_missing` issue naming what is
+    missing and stays out of the submission file until the name is added (it can still be saved).
+  - A FHIR Patient carries the code as an identifier (`urn:suds:participant-code`) and has no `name` rather than an
+    empty one.
+  - The identified client export has a `participant_code` column; the de-identified one never does.
+  - A merge of two records with different participant codes keeps the kept record's code and records the other in
+    the merge's revision (encrypted; "Put back" makes it the record's own), never in the audit details. The new
+    `GET /api/clients/:id/merge/preview?source_id=` (clients:merge; audited) and the merge answer say so first.
+  Test: test/participant-code-outputs.test.js.
 - **`scripts/release-state.js` failed on the repository** (CI's advisory job): a 1.20.0 CHANGELOG line recording the
   questionnaire's earlier check read as stale. Reworded; test/release-state.test.js now tolerates no finding.
 

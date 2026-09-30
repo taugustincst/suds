@@ -325,9 +325,12 @@ ${a.notice ? `<p style="border:1px solid #000;padding:.4rem"><b>Protected by 42 
               const sourceId = picker.value;
               if (!sourceId) { toast('Choose the duplicate record first', 'error'); return; }
               if (sourceId === id) { toast('That is this record', 'error'); return; }
-              const reason = await confirmDialog('Merge duplicate', 'Everything on the other record moves onto this one. This cannot be undone from the app. Continue?', { danger: true, okText: 'Merge', requireReason: true });
+              // What the merge would do that needs saying first (different participant codes, 1.21.0).
+              let notices = [];
+              try { notices = (await get(`/api/clients/${id}/merge/preview?source_id=${encodeURIComponent(sourceId)}`)).notices || []; } catch (e) { toast(e.message, 'error'); return; }
+              const reason = await confirmDialog('Merge duplicate', [...notices, 'Everything on the other record moves onto this one. This cannot be undone from the app. Continue?'].join(' '), { danger: true, okText: 'Merge', requireReason: true });
               if (!reason) return;
-              try { const r = await post(`/api/clients/${id}/merge`, { source_id: sourceId, reason }); toast(`Merged. ${Object.values(r.moved).filter(n => typeof n === 'number').reduce((a, b) => a + b, 0)} record(s) moved.`, 'ok'); refresh(); }
+              try { const r = await post(`/api/clients/${id}/merge`, { source_id: sourceId, reason }); toast(`Merged. ${Object.values(r.moved).filter(n => typeof n === 'number').reduce((a, b) => a + b, 0)} record(s) moved.${(r.notices || []).length ? ` ${r.notices.join(' ')}` : ''}`, 'ok'); refresh(); }
               catch (e) { toast(e.message, 'error'); }
             } }, 'Merge into this record')));
           })()) : null,
