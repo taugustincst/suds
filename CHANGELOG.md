@@ -110,6 +110,85 @@ Evidence, documentation and tests only; no change to what SUDS does.
   on the installed server and the signed compliance reports; RHEL 9 could not be run. Four findings recorded for
   the owner. The run on real Ubuntu 24.04 and RHEL 9 VMs is owner-pending: docs/evidence/INSTALLER-VM-RUN.md.
 
+### Added: county-entered figures for grantees not on SUDS (docs/COUNTY-VIEW.md; built for 1.20.0, not yet released)
+
+For the feature release after 1.19.0: migration 60 and new routes; no new permission (`county:manage` enters,
+`county:view` sees). Office server only.
+
+- **A program not on SUDS.** County view › Programs › **Add a program not on SUDS** registers a grantee with no key
+  (`county_programmes.on_suds`). It gets no connection token; when it starts running SUDS, adding its key makes it an
+  ordinary programme and its entered figures stay, marked.
+- **Enter figures** for a period, per fund: Exhibit E allowable use, HIAA, spending and the thirteen outcomes, with the
+  source document they come from. **Import a CSV** in the combined view's own long "tidy" layout: **Check the file**
+  lists every problem by row and column and saves nothing, or shows what the file holds and asks each fund's category;
+  **Import** enters every period or none. Both build a payload of the signed files' own allow-list (`checkPayload`),
+  with strict numbers, the period rules and the signed files' text rules (`server/county-entry.js`).
+- **Stored and counted as county submissions** with `source` `county_entered`: no key or signature (a CHECK keeps the
+  two kinds apart), the figures and the source document encrypted, who entered them, when and how. The combined view's
+  own counting (`countingSubs`, `coverage`, `filesCount`), supersession, withdraw and reinstate are reused, not
+  re-implemented; **Correct** reopens the form with the figures.
+- **Marked "entered by the county — not signed by the program"** in the combined view (a Source column, "(entered)"
+  in every figure and heading, the entered part under each total), by quarter, the Excel and CSV (column headings, an
+  *Of the total* column, the Submissions sheet's Source, an About row), the tidy CSV (a ninth column, `source`) and
+  the read API (`source` per programme and submission, `total_entered` per row, `on_suds` and `source` on
+  `/v1/programs`). The headline counts them separately. **Leave out figures entered by the county** (and
+  `&entered=exclude` on the view, its files and `/v1/combined`) takes exactly them away.
+- **Audited without figures or typed text:** `county.entry.create`, `.update`, `.import`, `.refuse`, `.withdraw`,
+  `.reinstate`, `.template`, `.throttled`.
+- **A signed file always outranks county-entered figures.** For one period it counts whatever either's
+  `generated_at` (`resettle`); in the combined view entered figures never push a signed file out as an overlap, and
+  where they overlap one they are left out, "a signed file covers this" (`left_out[].why: "signed_covers"`, with a
+  `reason` on every left-out file). The county connection's `/v1/status` counts only signed files as received, and
+  each received item carries `source`.
+- **Once a programme joins SUDS** (County view › Programs › **Add its key**) its entered figures can be withdrawn and
+  reinstated but not corrected, and no more are entered; the dialog and the Submissions list say so
+  (`programme_on_suds`).
+- **Names are unique**: registering either kind of programme, or renaming one, to a name already registered
+  (whatever the case or spacing) is refused (`409`, `duplicate_name`).
+- **The source document** of entered figures is shown to `county:manage` only (not to someone who may only view, and
+  never in the read API); **Correct** does not carry the old one over.
+- **The CSV import** reads only the programme's own rows (another programme's are never imported, and are said in one
+  line), warns in the preview when a row's `source` says `signed`, says a figure that is not a number once (not also
+  "has no …"), and offers **Download a template for this program**. Choosing another file clears the check, and
+  **Import** refuses a file that is not the one checked. The long CSV's `source` is a code (`signed`,
+  `county_entered`, as the read API says it), with `source_label` in words.
+- **Refused entries and imports are throttled** per person as refused files are (`429`); `entered=` takes only
+  `include` or `exclude` (anything else `400`) on the view, its files and `/v1/combined`; the export's *Report* line
+  names entered figures only when the file has some.
+- The page: the combined view's introduction mentions entered figures; the entered part of a total sits on its own
+  line and wraps at phone width; Exhibit E's uses say their schedule; every figure is marked required; the keyboard
+  goes to the Submissions list after Save and Import; the message that a programme was added offers **Enter
+  figures** (`undoToast` takes an `action`).
+- docs/API.md's narrative lives in `scripts/gen-api-docs.js` (the passkeys paragraph included), and
+  `test/api-docs.test.js` fails when the file is not exactly what the script writes (`--check`).
+- `node scripts/county-sample.js --register` adds a fourth sample programme, not on SUDS, with entered figures for the
+  same two quarters.
+- The penetration test scope has a row for the CSV import parser; the pricing options say the feature is built for
+  1.20.0, not yet released.
+
+### Documentation: the county-contract kit
+
+No code, migration, permission or route: documents for a county that funds several CBOs and wants the county view
+(released in 1.18.0) across them.
+
+- **The county pilot kit** (docs/market/COUNTY-KIT.md): who it is for; what the county runs (one SUDS Server for the
+  county view only, 2 vCPU / 4 GB / 20 GB, no client data on it) and what each CBO does (the key exchange at
+  kickoff, the quarterly signed file, the optional connection); a 3-CBO pilot timeline; success measures; roles;
+  the data flows (aggregate only, and what never leaves a CBO); the documents a county will ask for, linked; and
+  the owner-pending items said plainly ([owner to complete]: entity, insurance, pen test, pricing, counsel review,
+  the data contribution agreement).
+- **Answers to a county's IT and privacy RFI** (docs/market/templates/COUNTY-RFI-ANSWERS.md): hosting, residency,
+  encryption, keys, MFA/SSO and passkeys, audit and retention, backups and DR with the drill evidence, vulnerability
+  management and the SBOM, incident response, accessibility, Part 2/HIPAA/CMIA roles, subprocessors, data ownership,
+  exit and support, each with the file in the repository that shows it; no certification claimed.
+- **A data contribution agreement draft** between a CBO and its county for Tier 1
+  (docs/market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md): purpose, aggregate exact counts not for publication,
+  no re-identification, retention and deletion, security, the key exchange and a lost key, county-entered figures
+  (only for a programme registered as not on SUDS), term. **A draft for counsel**, not reviewed.
+- The first-meeting walkthrough's county-funder path adds county-entered figures, marked built for 1.20.0, not yet
+  released (DEMO-SCRIPT.md); the penetration test scope has rows of its own for the county push endpoint and the
+  county read API (PEN-TEST-SCOPE.md); the pilot kit and pricing options point at the county kit.
+
 ## 1.19.0 — 2026-09-30
 
 A feature release (migrations 58 and 59 and the passkey routes), released under a policy exception inside 1.18.0's

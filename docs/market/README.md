@@ -39,10 +39,13 @@ STRATEGY.md exist; the rest is planned, and the organisational items below remai
 | [HOSTING.md](HOSTING.md) | Programme directors, IT partners, vendor | Hosting models, who does what at 2am, what vendor hosting requires, a unit-cost model, current status |
 | [DEMO-SCRIPT.md](DEMO-SCRIPT.md) | Vendor, presenters | A 20-minute first-meeting walkthrough on the fictional sample data: one path for a CBO director, one for a county funder |
 | [PILOT-KIT.md](PILOT-KIT.md) | Sponsor, pilot lead, vendor | 90-day pilot: scope, eligibility decision tree, roles, week-by-week plan, **measurement plan**, exit plan, evaluation template |
+| [COUNTY-KIT.md](COUNTY-KIT.md) | County sponsor, county IT and privacy, CBOs | The county pilot package for the county view: what the county runs, what each CBO does, a 3-CBO timeline, measures, data flows, the documents a county asks for |
 | [PROCUREMENT.md](PROCUREMENT.md) | Purchasing, counsel, vendor | Small purchase, CMAS, RFI/RFP, CalMHSA; RFI boilerplate; contract exhibits; vendor to-do list |
 | [EVALUATION-RESPONSE.md](EVALUATION-RESPONSE.md) | Owner, reviewers | Point-by-point response to the critical evaluation, with evidence and what is still open |
 | [templates/BAA-QSOA-DRAFT.md](templates/BAA-QSOA-DRAFT.md) | Counsel | HIPAA BAA + 42 CFR Part 2 QSOA elements (**DRAFT — for counsel review, not legal advice**) |
 | [templates/DPA-DRAFT.md](templates/DPA-DRAFT.md) | Counsel | Data processing addendum (**DRAFT — for counsel review, not legal advice**) |
+| [templates/COUNTY-RFI-ANSWERS.md](templates/COUNTY-RFI-ANSWERS.md) | County IT, privacy, purchasing | Answers to a county's IT and privacy RFI, each with its evidence in the repository (**template; organisational answers are owner-pending**) |
+| [templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md) | Counsel, county, CBOs | CBO ↔ county agreement for the county view's aggregate figures (**DRAFT — for counsel review, not legal advice**) |
 | [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md) | IT, purchasing, counsel | Business-hours support, severity levels, response targets; hosted-tier terms only when offered (**template for counsel review**) |
 | [templates/PRICING.md](templates/PRICING.md) | Buyers, vendor | Free software; paid services at flat annual amounts per programme (**unvalidated hypothesis**) |
 | [templates/ROI-CALCULATOR.md](templates/ROI-CALCULATOR.md) | Programme directors | Worksheet: staff time, report hours, supply waste — with measured pilot numbers only |

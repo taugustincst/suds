@@ -10,7 +10,9 @@ extends it to 90 days so a full reporting cycle — a month-end and most of a qu
 Sections 1–7 describe one programme's pilot. Section 8 describes the pilot the strategy prefers
 ([STRATEGY.md](STRATEGY.md), *Sequencing*): a **county pilot** in which a sponsoring county funds 2–3 of its CBOs'
 pilots at once and the vendor delivers them as a paid implementation service (the forward-deployed, or FDE,
-model). Each CBO in it still runs sections 1–7.
+model). Each CBO in it still runs sections 1–7. The county's side of it (the county's own server for the county view, the key exchange, a
+3-CBO timeline, the county's measures and the documents a county asks for) is the county pilot kit,
+[COUNTY-KIT.md](COUNTY-KIT.md).
 
 ## 1. Scope
 
@@ -244,6 +246,9 @@ before it is proposed.
 | **Vendor FDE lead** | Vendor | Delivers the packages; keeps the time log that measures implementation hours per CBO |
 
 ### Key exchange at kickoff (county view)
+
+The full county package (what the county runs, data flows, timeline, the RFI answers and a draft data
+contribution agreement) is [COUNTY-KIT.md](COUNTY-KIT.md).
 
 At each CBO's kickoff meeting, where the county view is in scope: the county reads its **county code** from County
 view › Programs and the CBO types it on Settlement outcomes › Send to the county; the CBO shows its key (**Show the

@@ -324,7 +324,7 @@ test('read API: the combined view with its notes, as JSON or tidy CSV, and the p
   const csv = await bearer('GET', `/api/county-connect/v1/combined?from=${Q1.from}&to=${Q1.to}&format=tidy-csv`, rt.token);
   assert.equal(csv.status, 200); assert.match(csv.headers.get('content-type'), /text\/csv/); assert.equal(csv.headers.get('x-suds-report-counts'), 'exact');
   const lines = csv.data.replace(/^﻿/, '').split('\r\n');
-  assert.equal(lines[0], 'from,to,programme_id,programme,programme_status,group,measure_key,measure,unit,value');
+  assert.equal(lines[0], 'from,to,programme_id,programme,programme_status,source,group,measure_key,measure,unit,value');
   assert.equal(lines.length - 1, d.rows.length * (d.programmes.length + 1), 'one row per programme and measure, and the total');
   assert.equal((await bearer('GET', `/api/county-connect/v1/combined?from=${Q1.from}&to=${Q1.to}&format=xml`, rt.token)).status, 400);
   assert.equal((await bearer('GET', '/api/county-connect/v1/combined?from=2026-05-01&to=2026-04-01', rt.token)).status, 400);

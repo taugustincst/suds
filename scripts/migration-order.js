@@ -123,6 +123,21 @@ const DEPENDENCY_CHANGES = [
       + 'table, and migration 55 adds each only when missing (addColumn) with the same definitions; '
       + 'test/migrations.test.js upgrades the 1.6.1 fixture through both to the same structure as a fresh install.',
   },
+  {
+    dependency: 'schema.sql:table:county_programmes', fingerprint: '6d21e3501a5058d4',
+    reason: '1.20.0 (migration 60, county-entered figures) adds on_suds INTEGER NOT NULL DEFAULT 1. Additive: a database '
+      + 'that runs migration 56 now creates the table with the column (1 for every programme, each registered with a key, '
+      + 'which is true of every programme before 1.20.0), and migration 60 adds it only when missing (addColumn); '
+      + 'test/migrations.test.js upgrades the 1.6.1 fixture through both to the same structure as a fresh install.',
+  },
+  {
+    dependency: 'schema.sql:table:county_submissions', fingerprint: '028d6a4ced50566e',
+    reason: '1.20.0 (migration 60, county-entered figures) makes key_id and signature nullable and adds source (default '
+      + "'signed'), entered_via, source_ref_enc and a CHECK tying a signed row to its key and signature. A database that "
+      + 'runs migration 56 now creates the table in its new shape, empty, and migration 60 then finds source there and does '
+      + 'not rebuild it; a database that ran 56 before is rebuilt by 60, every existing row copied as signed. '
+      + 'test/migrations.test.js upgrades the 1.6.1 fixture through both to the same structure as a fresh install.',
+  },
 ];
 
 /** Tokens of JavaScript source, enough to tell code from strings, comments, templates and regular expressions. */

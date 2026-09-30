@@ -53,7 +53,7 @@ report comes from the same records, and client privacy is designed in.
 | 14–17 | A client (`DEMO-0001`): the timeline, a consent that names the recipient, **Privacy & Part 2** → the accounting of disclosures | "Part 2 is built in: consent names who may receive what, there is one disclosure gate, and every disclosure is in the accounting. Every read and change is in a tamper-evident audit log." |
 | 17–20 | Settings → **AI copilot** (as administrator): the agreement form and the switch it unlocks. Do not record an agreement | "An optional copilot drafts notes for a person to review and sign. It runs only on an office server, stays off until you record your BAA and Part 2 QSOA with the AI provider, is never used for SUD counseling notes, and your counsel reviews it first. The pilot measures whether it saves time." |
 
-## Path 2: county funder (20 minutes; 25 on a build with the county view)
+## Path 2: county funder (20 minutes; 25 on a build with the county view, 28 with county-entered figures)
 
 What they need to leave with: grantees' figures arrive consistently and exactly, settlement spending is
 categorised and tied to outcomes, and the county's privacy and IT reviewers have evidence to read.
@@ -67,12 +67,15 @@ categorised and tied to outcomes, and the county's privacy and IT reviewers have
 | 13–17 | **State reporting** as administrator: the CalOMS worklist (the sample records ask for their provider ID), *Check and prepare (not sent)*, and the submission log | "SUDS checks and prepares the CalOMS Tx file each month; nothing is disclosed until someone with the right permission produces it, and SUDS never submits to DHCS. The layout is still to verify against the DHCS data dictionary." |
 | 17–20 | Where SUDS sits: next to SmartCare or another EHR (*Where it sits next to an EHR*), the FHIR import from an EHR export, secure referral links (off by default, counsel reviews them first), and the county pilot shape ([PILOT-KIT.md](PILOT-KIT.md), section 8) | "A county pilot runs two or three CBOs for 90 days and measures reporting hours." |
 | 20–25 | **County view** (released in 1.18.0; show it only on a build that has it, set up beforehand with `node scripts/county-sample.js --register`): as administrator, **County view** for the last quarter — the headline (whole period, part, not at all), one column per CBO and *Total (N of M programs complete)*, a CBO that did not submit shown as "— not submitted"; switch to **By quarter**; **Programs**: the county code and a CBO's key; **Submissions**: *Current*, *Replaced*, *Withdrawn*. Then as `afinance` on **Settlement outcomes**: **Send to the county** (the county code, the fund the county pays for ticked, the last quarter) ([../COUNTY-VIEW.md](../COUNTY-VIEW.md)) | "Each CBO sends you a file its own SUDS signed, with only the funds you pay for and no client in it; you see them side by side and added up, exactly, for your staff only. People are each CBO's own count, added up: someone served by two CBOs counts twice, and we never claim otherwise." |
+| 25–28 | *Only on a build that has it: county-entered figures are **built for 1.20.0, not yet released**; on 1.18 or 1.19 skip this row and say the line below it.* As administrator on **Programs**: **Add a program not on SUDS**; **Enter figures** for its last quarter (a fund, its Exhibit E category, spending and outcomes, and the source document); back on the combined view, its column and the headline say *entered by the county — not signed by the program*; tick **Leave out figures entered by the county** and the totals change ([../COUNTY-VIEW.md](../COUNTY-VIEW.md), *County-entered figures*) | "A grantee that does not run SUDS still belongs in your view. Your staff enter its figures from what it sends you, and every screen and file says those were entered by the county, not signed by the program, so nobody mistakes one for the other." |
+| | *Before 1.20.0 (no county-entered figures):* skip 25–28 and say instead | "A grantee not on SUDS is not in the combined view yet: county-entered figures for grantees not on SUDS are built for 1.20.0, not yet released. Until then its figures reach you the way they do today." |
 | | *On 1.17 (no county view):* skip 20–25 and say instead | "A funder-facing view across the CBOs you fund is coming in the next feature release, from signed files each CBO sends you; today each CBO's Settlement outcomes page and Excel file is what reaches you." |
 
 ## After the meeting
 
 - Send the buyer guide that fits ([BUYER-GUIDE-PROGRAM.md](BUYER-GUIDE-PROGRAM.md) or
-  [BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md)) and, for a funder, the pilot kit.
+  [BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md)) and, for a funder, the pilot kit and the county pilot kit
+  ([COUNTY-KIT.md](COUNTY-KIT.md)), with its RFI answers ([templates/COUNTY-RFI-ANSWERS.md](templates/COUNTY-RFI-ANSWERS.md)).
 - Remove the sample data (Settings → **Remove sample data**) or discard the walkthrough server. Never turn a
   walkthrough server into a programme's production server.
 - Record the questions you could not answer; they belong in the owner's pipeline notes, not in a promise.
