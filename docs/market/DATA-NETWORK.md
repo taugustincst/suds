@@ -1,6 +1,8 @@
 # The outcomes dataset and the referral network: design and legal analysis
 
-**Status: a design. None of it is built.** This document describes how two of the moats in
+**Status: a design, with Tier 1 built for 1.18.0, not yet released.** The county view — county aggregates from
+exact, signed submissions — is built ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)); Tiers 2 and 3 and the referral
+network beyond the one-time links are not. This document describes how two of the moats in
 [STRATEGY.md](STRATEGY.md) could work: a de-identified outcomes and benchmarking dataset across organisations,
 and a referral network between organisations. It sets out the privacy and legal questions each raises. It is not
 legal advice: every legal point below is for counsel to confirm, and the list at the end is what counsel must
@@ -84,10 +86,19 @@ Build them in order; each tier needs the previous one to have worked.
 
 **Tier 1: county aggregates from exact submissions.** Each CBO runs its funder submission for the period (exact
 aggregate counts, no client-level data, as finance runs it today) and sends it to the county, as funding
-contracts already require. A county-side view (planned) combines the submissions: spending by allowable use,
+contracts already require. A county-side view combines the submissions: spending by allowable use,
 people reached, naloxone distributed, reversals, referrals closed. The county sees what it receives today, in
 one place. **Nothing is published by this tier.** Anything the county publishes from it goes through the
 publication screen, audited over the combined release.
+
+*Built for 1.18.0, not yet released: [docs/COUNTY-VIEW.md](../COUNTY-VIEW.md).* The CBO makes a **county submission
+file** from its Settlement outcomes page (the page's own exact figures by settlement fund, allowable use and in
+total; an allow-list of aggregate fields, no identifiers), signed with an Ed25519 key of its office server. The
+county registers each CBO's public key, exchanged out of band with a fingerprint read out, imports the signed
+files on its own SUDS server and sees them per programme and summed, labelled internal and exact, "people served
+per programme, summed" and never unduplicated. No link between servers is added: the file is the transport.
+**Not built:** the publication screen over the combined release (so nothing from the county view can be
+published), key rotation and revocation, and the county's own template.
 
 **Tier 2: benchmarks.** Distributions across programmes (median, quartiles; rates per 100 people served rather
 than counts), published only when:

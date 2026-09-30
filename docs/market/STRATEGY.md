@@ -121,9 +121,15 @@ has been checked against a current official template.
 and month, with cost per outcome; small cells protected (suppressed by default, even for finance) and no cost shown
 beside a hidden count; never a publication release. It is a CBO's internal report, not a county dashboard.
 
-**What is planned (not scheduled).** A funder-facing view: a county or other funder sees, across the CBOs it
-funds, spending by allowable use and outcomes (people reached, naloxone distributed, reversals, referrals
-closed), without seeing a client.
+**What is built for 1.18.0, not yet released: the county view** ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md);
+[DATA-NETWORK.md](DATA-NETWORK.md) Tier 1). A county or other funder that runs SUDS sees, across the CBOs it funds,
+spending by allowable use and outcomes (people reached, naloxone distributed, reversals, referrals closed),
+without seeing a client: each CBO sends a signed file of its Settlement outcomes page's exact aggregates, and the
+county imports and combines them. Internal and exact, for authorised county staff; people are summed per
+programme, not unduplicated.
+
+**What is planned (not scheduled).** A published funder dashboard: needs the publication screen over the combined
+release. Benchmarks across programmes (Tier 2).
 
 **Assessment.**
 
@@ -321,7 +327,7 @@ until counsel and one pilot have looked at it.
 | AI documentation copilot | **Released in 1.17.0** ([docs/AI-COPILOT.md](../AI-COPILOT.md)); off by default |
 | Least-privilege default; client revision history | **Released in 1.17.0** |
 | SABG primary-prevention events and their summary; anonymous SSP participant code | **Released in 1.17.0**; no PPSDS file (the mapping awaits the DHCS data dictionary) |
-| Funder-facing outcome view across CBOs | **Planned**, not scheduled |
+| Funder-facing outcome view across CBOs | **Built for 1.18.0, not yet released**: the county view from signed, exact submissions, internal only ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)); a published view needs the publication screen over the combined release (**planned**) |
 | Street-outreach screen (one-handed anonymous contacts, offline, *My shift*) with the SSP participant code; settlement outcomes by fund | **Released in 1.17.0** |
 | Minimal-PII defaults and a field device scope for street outreach | **Planned**, not scheduled |
 | One-time secure referral links to organisations not on SUDS, with an invitation | **Released in 1.17.0**; off by default; counsel reviews the design before a programme switches it on |

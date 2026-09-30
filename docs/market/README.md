@@ -32,7 +32,7 @@ STRATEGY.md exist; the rest is planned, and the organisational items below remai
 | --- | --- | --- |
 | [STRATEGY.md](STRATEGY.md) | Owner, partners, sponsors | The 1.17.0 go-to-market strategy: segments, wedges, sequencing (copilot first), the FDE model, built vs planned, risks, metrics |
 | [PRICING-OPTIONS.md](PRICING-OPTIONS.md) | Owner | Pricing models to decide between (per active user, per organisation, county site licence, FDE services, support tiers), with a worksheet; nothing decided |
-| [DATA-NETWORK.md](DATA-NETWORK.md) | Owner, counsel, county privacy | The outcomes dataset and referral network as moats: a design (not built) with the HIPAA, Part 2 and California analysis and what counsel must review |
+| [DATA-NETWORK.md](DATA-NETWORK.md) | Owner, counsel, county privacy | The outcomes dataset and referral network as moats: a design (Tier 1, the county view, built for 1.18.0, not yet released; the rest not built) with the HIPAA, Part 2 and California analysis and what counsel must review |
 | [POSITIONING.md](POSITIONING.md) | Everyone | Category, buyer order, core vs optional modules, the boundary, key messages, objection handling |
 | [BUYER-GUIDE-PROGRAM.md](BUYER-GUIDE-PROGRAM.md) | Programme directors | Outreach, supplies and funder reporting in SUDS, a day in the life, what we need from you |
 | [BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md) | IT partners, county IT, security, privacy | Deployment options, identity, data flows, controls with evidence, questionnaire, accessibility, integration, support |

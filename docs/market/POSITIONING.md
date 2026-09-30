@@ -18,8 +18,10 @@ Three leads, in this order, each stated no further than the software goes:
    minimal-personal-information defaults beyond that are planned, not built.
 3. **Funder outcomes.** Funder report, NDP log, settlement expenditure report by allowable use and the layouts for
    DHCS and county settlement reporting, as exact submissions or screened publication releases. Each layout is to
-   be checked against the funder's current template. A funder-facing view across the CBOs a county funds is
-   planned, not built.
+   be checked against the funder's current template. A county view across the CBOs a county funds is built for 1.18.0, not yet released:
+   each CBO sends a signed file of its exact aggregates and a county running SUDS combines
+   them, internal only, people summed per programme and never unduplicated ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)).
+   A published county dashboard is planned, not built: it needs the publication screen over the combined release.
 
 What comes next, and what is only planned, is in [STRATEGY.md](STRATEGY.md): the AI documentation copilot is
 **released in 1.17.0** (office server only, off by default, gated on a BAA and QSOA, identifiers removed before

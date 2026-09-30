@@ -11,8 +11,10 @@ special mode for it, and nothing here should be presented as a trial edition.
   details into a walkthrough server.
 - Claim no time saving: no pilot has measured one. Say "the pilot measures this" ([PILOT-KIT.md](PILOT-KIT.md), section 5).
 - Say "each layout is to be checked against the funder's current template" whenever a report is on screen.
-- Planned capabilities (the county funder view across CBOs, the referral network, the outcomes dataset, a field
-  device scope) are named as planned, never shown as mock-ups.
+- Planned capabilities (the referral network, the outcomes dataset, a field device scope, a published county
+  dashboard) are named as planned, never shown as mock-ups. The county view across CBOs is built for 1.18.0, not yet released:
+  show it only on a build that has it, with `scripts/county-sample.js`'s fictional programmes
+  ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)).
 
 ## Before the meeting (15 minutes, once)
 

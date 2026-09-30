@@ -2,6 +2,58 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+A feature release (a migration, two permissions and new routes): built for 1.18.0, not yet released. The version is
+not stamped; the feature freeze in HANDOFF.md applies to cutting it.
+
+### Added: the county view (docs/COUNTY-VIEW.md; DATA-NETWORK Tier 1)
+
+- **Send to the county** (Settlement outcomes; office server only). Whoever files the funder submission
+  (`reports:funder`, with `budget:read` and `export:read`) makes a **county submission file** for the period: the
+  Settlement outcomes page's own exact figures (`figures()`, not a second count) per settlement fund, per Exhibit E
+  allowable use and in total, with spending and the thirteen outcomes. Aggregate only: the payload is an allow-list
+  checked when the file is made and again on import; no client, client code, participant code, name, date of birth
+  or single event. Signed with an **Ed25519 key of this office server**, made on first use, its private half
+  encrypted with the database key (`county_signing_keys.private_key_enc`); the public key and a 32-character
+  fingerprint are on the page, to give the county out of band. The signature is over a canonical serialisation
+  (sorted keys, no whitespace). The page says the file leaves the program, holds exact counts and is for the county
+  under the funding contract, not for publication. Audited `county_submission.export` (period, fingerprint, payload
+  SHA-256; never figures).
+- **County view** (`#/county`; office server only): for a county that runs SUDS. Register each programme by its public
+  key (the fingerprint is shown to compare, and a typed one that does not match refuses the key); import its signed
+  files (size, JSON, schema and allow-list, period ended and not backwards, a registered and active programme's key,
+  the signature; every refusal says why, is audited `county.submission.refuse` and is throttled per person); a
+  second file for the same programme and period supersedes the first (kept), the same file twice changes nothing,
+  and a file can be withdrawn. The combined view for a period: who has submitted (whole period, part, none), each
+  file's received date and fingerprint, spending by allowable use and by High Impact Abatement Activity, and each
+  outcome, one column per programme and a total, with Excel and CSV labelled internal and exact. Only files wholly
+  inside the chosen period count, the longer of two overlapping ones; nothing is pro-rated. The page says in plain
+  words that people are summed per programme, **not unduplicated across programmes**, that the figures are exact
+  and for authorised county staff only, and that publishing them needs the publication screen over the combined
+  release (planned). Everything audited: `county.view`, `county.export`, `county.programme.add|update|deactivate`,
+  `county.submission.import|duplicate|refuse|withdraw`.
+- **Permissions** `county:view` (administrators, supervisors, finance) and `county:manage` (administrators; sensitive).
+  Neither can be granted to a role without exact aggregate counts (read-only, navigators, clinicians). The County
+  view entry shows to `county:view` once a programme is registered, and to `county:manage` always.
+- **Migration 56**: `county_signing_keys`, `county_programmes`, `county_submissions` (payload encrypted,
+  `payload_enc`). Office server only (`server/sync-tables.js` `server_only`); not in the local kernel's routes, so SUDS
+  on this device neither makes nor imports a county file.
+- `scripts/county-sample.js`: three fictional programmes' keys and signed files, to try the county side on a
+  development server. `npm run seed` stays a programme's data.
+- Tests: `test/county.test.js`, `test/county-device.test.js`; browser script `scripts/ui/county.mjs` (the suite is
+  now 52 scripts), and the county pages, the programme dialog, the withdraw confirmation and the settlement card's
+  public key in the accessibility audit.
+- Docs: `docs/COUNTY-VIEW.md` (new); DATA-NETWORK Tier 1 status, STRATEGY *Built vs planned*, POSITIONING, the market
+  README, buyer guide and demo script, README *At a glance*, USER_GUIDE, API.md, DATA-INVENTORY, THREAT-MODEL,
+  PEN-TEST-SCOPE (the import parser).
+
+### Deferred
+
+- The publication screen over the combined release (so nothing from the county view is publishable); benchmarks
+  (Tier 2); key rotation and revocation for the county signing key; checking the file against a county's own
+  template. Unduplication across programmes is ruled out, not deferred.
+
 ## 1.17.1 — 2026-09-29
 
 ### Security (review of 1.17.0, r11; all Low)
