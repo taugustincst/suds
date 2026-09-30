@@ -95,10 +95,14 @@ function create({ referral, user, ip, v }) {
     const basis = disclosure.requireBasis(referral.client_id, { basis: 'consent', consent_id: v.consent_id || referral.consent_id, recipient: resourceNames(res), allowed: ['consent'],
       restriction_reviewed: v.restriction_reviewed, user });
     consentId = basis.consent.id;
-    const c = db.one(`SELECT first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc FROM clients WHERE id=?`, referral.client_id);
+    const c = db.one(`SELECT first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc, participant_code_enc FROM clients WHERE id=?`, referral.client_id);
+    // A client known only by a participant code (1.21.0) is named as the app names them ("Participant CODE"), never blank:
+    // the code is what the person will give the provider. The consent above covers the packet either way.
+    const legal = [dec(c.first_name_enc), dec(c.last_name_enc)].filter(Boolean).join(' ');
+    const pcode = dec(c.participant_code_enc);
     const message = String(v.message || '').trim().slice(0, 1000);
     packet = {
-      client: { name: [dec(c.first_name_enc), dec(c.last_name_enc)].filter(Boolean).join(' '), preferred_name: dec(c.preferred_name_enc) || undefined,
+      client: { name: legal || (pcode ? `Participant ${pcode}` : ''), preferred_name: dec(c.preferred_name_enc) || undefined,
         dob: v.include_dob ? dec(c.dob_enc) || undefined : undefined, phone: v.include_phone ? dec(c.phone_enc) || undefined : undefined },
       reason: message || null, urgency: referral.urgency || 'routine', referred_at: referral.referred_at,
       referred_by: user.display_name || user.username, recipient: res.name,
