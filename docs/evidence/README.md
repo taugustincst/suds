@@ -149,9 +149,11 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 ### Container and host hardening
 
-- **Documents:** `Dockerfile`, `docker-compose.yml`; [../DEPLOYMENT.md](../DEPLOYMENT.md), *Hardening checklist*.
+- **Documents:** [../SELF-HOSTING.md](../SELF-HOSTING.md) (SUDS Server: the hardened Linux install and its compliance boundary); [`deploy/linux/`](../../deploy/linux/README.md); [`deploy/docker/`](../../deploy/docker/README.md); `Dockerfile`, `docker-compose.yml`; [../DEPLOYMENT.md](../DEPLOYMENT.md), *Hardening checklist*.
+- **Tests:** `deploy-linux` (the installer's plan and refusals for both distribution families, the unit's single source, the Node pin matching CI), `compliance-check` (every host check against fixtures, TLS against local servers, the signed report and tamper detection), `compliance-report-route`, `secret-files`.
 - **CI:** `test` (packaging).
-- **Status:** A non-root, read-only container. **County:** the host OS, patching and firewall.
+- **Artefact — the compliance report.** On SUDS Server, `scripts/compliance-check.js` runs weekly (`suds-compliance.timer`) and writes `/var/lib/suds/compliance/compliance-<stamp>.json` and `.html`: every host and app-level check with the HIPAA Security Rule, 42 CFR §2.16 or CMIA rule it produces evidence for, what was observed and the remediation, signed with the server's Ed25519 evidence key. Verify it with the public key alone: `npm run verify-compliance-report -- <file> --public-key <signing-key.pem>` (the HTML is also re-rendered and compared, so an edit to what it shows fails). Download the last one from Settings → Security status (`GET /api/admin/security/compliance-report`, audited). Keep them with the audit evidence for six years. "Could not check" is never counted as a pass, and an accepted risk (an unencrypted data disk) is printed on every report.
+- **Status:** A non-root, read-only container; on a VM, the installer's hardening, checked weekly. **County:** what the check cannot see — encryption beneath the VM, perimeter firewalls, the WORM property of the anchor share, key escrow — and everything in *Compliance boundary*.
 
 ### Support and vulnerability reporting
 

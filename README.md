@@ -69,7 +69,7 @@ The sign-in page has two options, **Log in** and **Sign up** (link straight to e
 * **Secure referral links (1.17.0):** a one-time link, with a separate access code, to an organisation not on SUDS, carrying a minimal referral only under a Part 2 consent naming it. Office server only, **off by default**; counsel reviews the design before a programme switches it on ([docs/security/REFERRAL-LINKS.md](docs/security/REFERRAL-LINKS.md)).
 * **FHIR EHR import (1.17.0):** patients and encounters from a FHIR R4 Bundle or Bulk Data NDJSON file the EHR exports, through the spreadsheet import's preview and duplicate check. SUDS never connects to the EHR ([docs/integration/EHR-PART2-LAYER.md](docs/integration/EHR-PART2-LAYER.md)).
 * **CalOMS scheduling (1.17.0):** SUDS can check last month on a set day and prepare the submission file, with a worklist of errors by owner and a submission log. A prepared file is disclosed only when someone produces it; SUDS does not submit to DHCS, and the layout is not yet verified against the DHCS data dictionary ([docs/compliance/CALOMS.md](docs/compliance/CALOMS.md)).
-* **Documentation:** [Platform policy](docs/PLATFORM.md) · [Adopting SUDS (for a county CIO)](docs/ADOPTION.md) · [Deployment](docs/DEPLOYMENT.md) · [SUDS on this device (GitHub Pages)](docs/WEB_APP.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md) · [Market & procurement pack](docs/market/README.md) · [Security evidence package for county IT](docs/security/README.md)
+* **Documentation:** [Platform policy](docs/PLATFORM.md) · [Adopting SUDS (for a county CIO)](docs/ADOPTION.md) · [Deployment](docs/DEPLOYMENT.md) · [SUDS Server: self-hosting and the compliance boundary](docs/SELF-HOSTING.md) · [SUDS on this device (GitHub Pages)](docs/WEB_APP.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md) · [Market & procurement pack](docs/market/README.md) · [Security evidence package for county IT](docs/security/README.md)
 
 ## Get SUDS
 
@@ -79,6 +79,7 @@ The sign-in page has two options, **Log in** and **Sign up** (link straight to e
 | **Git** | `git clone https://github.com/taugustincst/suds.git` (upgrade later with `git pull`) |
 | **All releases** | https://github.com/taugustincst/suds/releases |
 | **Docker** | `docker compose up -d` |
+| **SUDS Server (Linux VM)** | `sudo deploy/linux/install.sh --domain=… --admin-cidr=… --offsite=… --anchors=…`: hardened install on Ubuntu 24.04 or RHEL 9, with a weekly signed compliance check ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)) |
 
 Current release: see [CHANGELOG.md](CHANGELOG.md). Release process: [docs/RELEASE.md](docs/RELEASE.md).
 
@@ -88,7 +89,7 @@ Current release: see [CHANGELOG.md](CHANGELOG.md). Release process: [docs/RELEAS
 2. Unzip SUDS somewhere permanent and start the server: `npm start` for a first look, or as a service (systemd / NSSM) or with Docker for anything staff depend on.
 3. Open the address the server prints in a browser: the **setup wizard** asks you to name the program, create your administrator account, choose whether phones, tablets and other computers on the office network may connect, and whether staff may keep an offline copy on their devices (recommended: No). SUDS generates its encryption keys and an HTTPS certificate for you and shows a QR code for the office address.
 
-Full walkthrough: [docs/INSTALL.md](docs/INSTALL.md); service and reverse-proxy settings: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Everything the wizard sets can later be changed under **Administration → Network & devices / Settings / System & backups**.
+Full walkthrough: [docs/INSTALL.md](docs/INSTALL.md); service and reverse-proxy settings: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). A county or CBO with a Linux VM installs **SUDS Server** instead — one command, hardened, and checked weekly against the policy by `npm run compliance-check`: [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md), including what that does and does not make compliant. Everything the wizard sets can later be changed under **Administration → Network & devices / Settings / System & backups**.
 
 **Phones, tablets and other computers:** nothing to install or configure. SUDS announces itself on the office network as **https://suds.local** (built-in mDNS responder) and uses the standard HTTPS port when available. Staff open that address in the browser, add it to the home screen (the `/app` page on the server walks them through it), and their workspace — clients, reminders, note drafts saved while typing, preferences — is the same everywhere because every device talks to the same server.
 

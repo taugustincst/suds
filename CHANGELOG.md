@@ -2,6 +2,51 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### SUDS Server: a hardened self-hosted install, and a compliance check that proves it
+
+- **One-command install on a Linux VM** (`deploy/linux/install.sh`; Ubuntu 24.04 LTS, RHEL/Rocky/Alma 9). Idempotent,
+  `--dry-run` prints every action. Installs the Node.js release CI tests on and a static Caddy, each checked against a
+  pinned checksum (`deploy/linux/pins`; never `curl | sh`); the code root-owned and read-only in `/opt/suds/<version>`;
+  the `suds` user and `/var/lib/suds` 0700; the four keys generated as root-only systemd credentials
+  (`/etc/suds/credentials`, `LoadCredential=`), never in an environment file, with a one-time key-escrow instruction;
+  Caddy with the repository's `Caddyfile` (TLS 1.2+, HSTS, port 80 only for redirects and ACME) or a county
+  certificate; ufw or firewalld (443, 80 with ACME, SSH only from `--admin-cidr`); time sync; security-only automatic
+  updates; a persistent journal kept 400 days; local mode off, MFA for every role, `TRUST_PROXY`, scheduled backups to
+  the offsite share and audit anchors on the WORM share. It **refuses** a data directory not on a LUKS/dm-crypt volume
+  (unless `--accept-unencrypted-disk=<reason>`, printed as an accepted risk on every compliance report), anchors or
+  offsite copies inside the data directory, unmounted shares, and an SSH session its firewall would cut off.
+- **`deploy/linux/upgrade.sh <version>`**: stage and verify the release, stop, back up with the service's own
+  credentials, swap `current`, start, wait for `/api/health/ready`, and roll back (code, Node, units and the database
+  from that backup) if it does not come up; never a downgrade. `uninstall.sh` never removes data or keys.
+- **The systemd unit has one source**, `deploy/linux/suds.service`; docs/DEPLOYMENT.md refers to it instead of carrying
+  a copy (`test/deploy-linux.test.js`).
+- **`npm run compliance-check`** (`scripts/compliance-check.js`; weekly from `suds-compliance.timer`): data directory and
+  database permissions, disk encryption, keys out of readable files and the environment, the unit's effective
+  sandbox, TLS (1.2+, 1.0/1.1 refused, certificate > 14 days, HSTS) and the HTTP redirect, loopback-only binding,
+  firewall, clock offset, security updates, journal retention, auditd, the pinned Node, a supported SUDS release, the
+  newest local and offsite backups, the last recovery drill's signed report, and the audit chain and anchors verified
+  now — plus every line of Settings → Security status, read through the same code on a read-only database
+  connection. Each check names the HIPAA Security Rule, 42 CFR §2.16 or CMIA §56.101 rule it evidences
+  (`server/compliance-rules.js`), what it observed and how to fix it. "Could not check" is never a pass; exit 1 on
+  any failure. JSON and self-contained HTML reports signed with the evidence signing key;
+  `npm run verify-compliance-report` checks either with the public key alone (the HTML is re-rendered and compared).
+- **Settings → Security status** shows the rule each control evidences and a *Host (last compliance check)* section
+  from the latest report, with its date and whether its signature verifies. New route
+  `GET /api/admin/security/compliance-report` (`settings:manage`; `?format=html`), audited
+  (`security.compliance_report.view`); the server records each new report (`security.compliance_report.generated`).
+- **Secrets from files**: every key and secret can be `<NAME>_FILE` (Docker/Kubernetes secrets, systemd credentials)
+  or a systemd credential named after it in `$CREDENTIALS_DIRECTORY`; the value is never copied into the process
+  environment (`server/config.js`). `deploy/docker/` covers where a container's guarantees differ from the VM's, with
+  a secrets override for `docker-compose.yml`.
+- **Provisioned settings** (`SUDS_PROVISION_FILE`, `server/provision.js`): an installer's choice of backup schedule,
+  offsite directory, monthly drill and MFA-for-every-role, applied only where no administrator has chosen, and audited
+  (`settings.provisioned`).
+- **Docs:** [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md) — sizing, prerequisites, what the installer does and why,
+  upgrade, backup, drills, monitoring, the compliance check, and an honest compliance boundary: which HIPAA and Part 2
+  safeguards SUDS Server implements, which it supports with evidence, and which are the organisation's.
+
 ## 1.17.1 — 2026-09-29
 
 ### Security (review of 1.17.0, r11; all Low)

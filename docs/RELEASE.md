@@ -797,7 +797,7 @@ gpg --verify SHASUMS256.txt.asc                               # release keys: gi
 grep ' node-'$v'-linux-x64.tar.xz$' SHASUMS256.txt.asc        # the hash for NODE24_SHA256 / NODE22_SHA256
 ```
 
-Change the two lines in one commit ("CI: Node 24 → $v"; for Node 22 in `ci.yml` and `release.yml` together);
+Change the two lines in one commit ("CI: Node 24 → $v"; for Node 22 in `ci.yml`, `release.yml` and `deploy/linux/pins` together — SUDS Server installs that exact release, and `test/deploy-linux.test.js` fails if the three differ);
 `test/release-gate.test.js` checks their shape, that the two workflows agree, and that Node 22's major is
 `.nvmrc`'s. 1.14.0 pinned v22.23.3 (released 2026-09-23; its `SHASUMS256.txt.asc` verified against the
 releaser's key from github.com/nodejs/release-keys).
