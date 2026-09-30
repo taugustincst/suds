@@ -104,6 +104,30 @@ route('settlement', async (r) => {
       table(trendCols, f.months, { empty: 'No months in this period.' }));
   };
 
-  return h('div', { 'data-settlement-outcomes': '1' }, ...head, totalCard, catCard, ...d.funds.map(fundCard),
+  return h('div', { 'data-settlement-outcomes': '1' }, ...head, totalCard, catCard, ...d.funds.map(fundCard), countyCard(from, to),
     h('details', { class: 'small muted' }, h('summary', {}, 'How the counts were made'), h('p', {}, d.counting_statement)));
 });
+
+// Send to the county (docs/COUNTY-VIEW.md; server/county.js): the period's figures as a signed file for the county
+// that funds the programme, for whoever files its funder submission. Office server only: SUDS on this device has
+// no county relationship, and its kernel has no such route.
+function countyCard(from, to) {
+  if (state.local || !can('reports:funder') || !can('budget:read') || !can('export:read')) return null;
+  const keyBox = h('div', { 'data-so-county-key': '1' });
+  const showKey = (k) => {
+    keyBox.replaceChildren(k
+      ? h('div', {}, kv([['This server\'s key fingerprint', h('code', { 'data-so-county-fingerprint': '1' }, k.fingerprint_display)], ['Made', fmt.date(k.created_at)]]),
+        h('details', { class: 'small' }, h('summary', {}, 'Public key (to give the county once)'), h('pre', { class: 'note', 'data-so-county-pem': '1' }, k.public_key)))
+      : h('p', { class: 'small muted' }, 'This server\'s signing key is made the first time a county file is made. Give the county its public key and read the fingerprint out to them, once, so they can check your files came from you.'));
+  };
+  get('/api/county-submission/key', { quiet: true }).then(x => showKey(x.key)).catch(() => showKey(null));
+  const make = () => fetchDownload(`/api/county-submission/file?from=${from}&to=${to}`)
+    .then(async () => { toast('County file made and downloaded. Send it to the county as your contract says; it holds exact counts and is not for publication.', 'ok'); try { showKey((await get('/api/county-submission/key', { quiet: true })).key); } catch { /* the file is made */ } })
+    .catch(e => toast(e.message, 'error'));
+  return h('section', { class: 'card mb', 'aria-labelledby': 'so-county-h', 'data-so-county': '1' },
+    h('div', { class: 'card-head' }, h('h2', { id: 'so-county-h' }, 'Send to the county')),
+    h('p', { class: 'small' }, `Makes a file of these settlement figures for ${fmt.date(from)} – ${fmt.date(to)} for the county that funds the program, signed by this server so the county can check it came from you unchanged. It holds exact counts, small numbers included, and money: aggregate figures only, with no names, client codes, dates of birth or single events.`),
+    h('p', { class: 'small', 'data-so-county-leaves': '1' }, h('b', {}, 'It leaves the program. '), 'It is for the county under your funding contract, not for publication or sharing. Making it is recorded in the audit log. SUDS sends nothing itself: you send the file the way the county asks.'),
+    keyBox,
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn', 'data-so-county-file': '1', onClick: make }, 'Make the county file')));
+}
