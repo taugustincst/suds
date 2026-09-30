@@ -86,7 +86,9 @@ function normalize(type, raw = {}) {
 // Cross-record problems are about another record (the admission a discharge follows). They are reported and
 // they block the extract, but they never stop a worker saving the record in front of them: a discharge must
 // be recordable even when the admission it follows still needs fixing.
-const CROSS_RECORD = new Set(['no_admission', 'admission_has_errors']);
+// name_missing (1.21.0): a problem of the client record, not of this one (a client known only by a participant code): the
+// record may be saved, and it stays out of every submission file until the client's name is added.
+const CROSS_RECORD = new Set(['no_admission', 'admission_has_errors', 'name_missing']);
 
 /**
  * The edit checks for one record. rec: { record_type, provider_id, record_date, answers }.
@@ -100,6 +102,9 @@ function check(rec, ctx) {
   const type = rec.record_type; const a = rec.answers || {};
   const label = (k) => (S.FIELD[k] || {}).label || k;
   if (!S.RECORD_TYPES.includes(type)) { add('record_type', 'invalid_record_type', `"${type}" is not a CalOMS record type`); return out; }
+  // Every CalOMS Tx record carries the client's first and last name (ClientFirstName, ClientLastName; caloms-spec.js):
+  // a client known only by a participant code (1.21.0) is refused with what is missing, never sent with blanks.
+  if (ctx.missingName && ctx.missingName.length) add('name', 'name_missing', `The client's ${ctx.missingName.join(' and ')} ${ctx.missingName.length === 1 ? 'is' : 'are'} not recorded (the client is known by a participant code only): a CalOMS Tx record needs the client's legal first and last name. Add ${ctx.missingName.length === 1 ? 'it' : 'them'} on the client record; until then this record is left out of the submission file.`);
 
   if (empty(rec.provider_id)) add('provider_id', 'provider_missing', 'Provider ID is required');
   else if (!(ctx.providers || []).includes(rec.provider_id)) add('provider_id', 'provider_unknown', `Provider ID ${rec.provider_id} is not one of this program's CalOMS provider IDs (Settings)`);
@@ -193,13 +198,21 @@ function present(row) {
 }
 function recordsForEpisode(episodeId) { return db.all(`SELECT * FROM caloms_records WHERE episode_id=? ORDER BY record_date, created_at`, episodeId).map(present); }
 
+/** Which of the client's first and last name are blank (a client known only by a participant code), as words. */
+function missingName(clientId) {
+  const c = db.one(`SELECT first_name_enc, last_name_enc FROM clients WHERE id=?`, clientId);
+  if (!c) return [];
+  const blank = (v) => { try { return !v || !String(decrypt(v)).trim(); } catch { return true; } };
+  return [blank(c.first_name_enc) ? 'first name' : null, blank(c.last_name_enc) ? 'last name' : null].filter(Boolean);
+}
+
 /** Everything check() needs to know about the episode a record belongs to. */
 function contextFor(episode, { records = null, dob = undefined } = {}) {
   const recs = records || recordsForEpisode(episode.id);
   const adm = recs.find(r => r.record_type === 'admission') || null;
   const dis = recs.find(r => r.record_type === 'discharge') || null;
   if (dob === undefined) { const c = db.one(`SELECT dob_enc FROM clients WHERE id=?`, episode.client_id); try { dob = c && c.dob_enc ? decrypt(c.dob_enc) : null; } catch { dob = null; } }
-  const base = { dob, episode, providers: providers().map(p => p.id), today: today() };
+  const base = { dob, missingName: missingName(episode.client_id), episode, providers: providers().map(p => p.id), today: today() };
   let admissionFatal = false;
   if (adm) admissionFatal = fatal(check(adm, { ...base, admission: null })).length > 0;
   return { ...base, admission: adm ? adm.answers : null, admissionDate: adm ? adm.record_date : null, admissionFatal, dischargeDate: dis ? dis.record_date : (episode.closed_at || null), records: recs };
@@ -260,7 +273,7 @@ function report({ from, to, scope = () => ({ sql: '1=1', params: [] }) }) {
     const c = contextFor(e, { dob }); ctxCache.set(episodeId, c); return c;
   };
   const rows = [];
-  const labelOf = (field) => (S.FIELD[field] || {}).label || ({ provider_id: 'Provider ID', record_date: 'Record date', dob: 'Date of birth', record_type: 'Record' }[field] || field);
+  const labelOf = (field) => (S.FIELD[field] || {}).label || ({ provider_id: 'Provider ID', record_date: 'Record date', dob: 'Date of birth', name: 'Client name', record_type: 'Record' }[field] || field);
   const checked = [];
   for (const r of recs) {
     const issues = check(r, ctxOf(r.episode_id));
