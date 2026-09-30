@@ -430,6 +430,19 @@ route('admin', async (r) => {
           { name: 'scim_group_roles', label: 'Provisioning (SCIM): identity-provider groups to SUDS roles', type: 'textarea', rows: 3, value: s.scim_group_roles || '', placeholder: 'SUD Navigators=navigator; SUD Supervisors=supervisor', span: true, help: 'One Group=role per line or separated by semicolons. A person in several mapped groups gets the most privileged role.' },
           { name: 'scim_default_role', label: 'Role for a provisioned person in no mapped group', type: 'select', noBlank: true, value: s.scim_default_role || 'readonly', options: ['readonly', 'finance', 'navigator', 'clinician', 'supervisor'].map((r) => ({ value: r, label: r })) },
         ]),
+        // Minimal personal information (built for 1.21.0, not yet released): new clients and contacts start with a
+        // participant code; field devices hold only what a field worker needs (server/field-scope.js). All off unless
+        // an administrator turns them on. Opened when a link says section=minimal.
+        { type: 'section', label: 'Minimal personal information', hint: 'participant codes, field devices', collapsible: true, heading: true, open: r.query.get('section') === 'minimal' },
+        { name: 'participant_code_default', label: 'Outreach records use a participant code by default', type: 'select', noBlank: true, value: s.participant_code_default === '1' ? '1' : '0', span: true,
+          options: [{ value: '0', label: 'Off — new clients start with their name' }, { value: '1', label: 'On — new clients, + Log visits and Street outreach start with a participant code; a name is an extra step' }],
+          help: 'For a syringe services or harm-reduction program whose participants often give no name. A client known by a code is counted like any other client; the name can be added later.' },
+        ...(state.local ? [] : [
+          { name: 'field_device_default', label: 'New devices start as field devices', type: 'select', noBlank: true, value: s.field_device_default === '1' ? '1' : '0', span: true,
+            options: [{ value: '0', label: 'Off — a device holds everything its user may see, until you make it a field device (Synced devices)' }, { value: '1', label: 'On — a device holds only its worker\'s recent caseload, contacts and to-dos from its first sync' }] },
+          { name: 'field_device_window_days', label: 'A field device holds clients assigned or seen in the last (days)', type: 'number', min: 7, max: 365, step: 1, value: s.field_device_window_days || '90',
+            help: 'From 7 to 365. A client of the worker\'s own caseload with no assignment or contact in this time leaves the device at its next sync.' },
+        ]),
         { type: 'section', label: 'Record retention', collapsible: true, heading: true },
         { name: 'client_retention_years', label: 'Keep discharged client records for (years, minimum 6)', type: 'number', min: 6, step: 1, value: s.client_retention_years || '7', help: 'Once every episode is closed and this many years have passed since discharge, the record is permanently deleted from every table — unless an administrator has placed it on legal hold from the client\'s Care team tab.' },
         // Reporting: which fund a visit is charged to when nobody chooses one, the funder report's small-cell
@@ -536,17 +549,30 @@ route('admin', async (r) => {
       const act = async (id, action) => { await post(`/api/admin/devices/${id}/${action}`, {}); refresh(); };
       return h('div', {},
         h('div', { class: 'banner small mb' }, 'One row per device (a browser running the offline copy, local mode) that has synced with this server. "Revoke" blocks it from syncing again until cleared. "Wipe" additionally erases its local database, the next time it tries to sync — it cannot reach a device that is never opened again; that limitation is inherent to working offline, not a bug in this feature.'),
+        h('p', { class: 'small mb', 'data-field-device-help': '1' }, 'Holds: "Everything" is all its user may see. A "Field device" holds only what a field worker needs: their own caseload assigned or seen recently (name, participant code and safety flags only), their contacts, their to-dos, supplies and lists; no notes, documents, consents or intake details. The change reaches the device at its next sync: it sends its changes first, then removes the rest. Set the window under ', h('a', { href: '#/admin?tab=settings&section=minimal' }, 'Program › Minimal personal information'), '.'),
         table([
           { label: 'Device', render: d => h('div', {}, h('b', {}, d.label || 'Device'), h('div', { class: 'small mono muted' }, d.id.slice(0, 8))) },
           { label: 'Belongs to', render: d => h('div', {}, d.display_name, h('div', { class: 'small muted' }, d.username)) },
           { label: 'First seen', render: d => fmt.dt(d.first_seen_at) },
           { label: 'Last synced', render: d => fmt.dt(d.last_seen_at) },
           { label: 'Syncs', key: 'sync_count' },
+          // What its sync carries (1.21.0, server/field-scope.js), and whether a change has reached it yet.
+          { label: 'Holds', render: d => h('span', { 'data-device-scope': d.sync_scope || 'full' }, d.sync_scope === 'field' ? badge('Field device', 'info') : badge('Everything'), d.sync_scope === 'field' && !d.field_applied_at ? h('div', { class: 'small muted' }, 'from its next sync') : null) },
           { label: 'Status', render: d => d.revoked_at ? badge(d.wipe_requested_at ? 'Wiped' : 'Revoked', 'danger') : d.wipe_requested_at ? badge('Wipe pending', 'warn') : badge('Active', 'ok') },
           { label: '', render: d => h('div', { class: 'row' },
             !d.revoked_at && !d.wipe_requested_at ? h('button', { class: 'btn sm', onClick: async () => { if (await confirmDialog('Revoke this device', `"${d.label || 'This device'}" (${d.display_name}) will be blocked from syncing until you clear it. Its local copy is kept; use Wipe to erase it.`, { danger: true, okText: 'Revoke' })) act(d.id, 'revoke'); } }, 'Revoke') : null,
             !d.wipe_requested_at && !d.revoked_at ? h('button', { class: 'btn sm danger', onClick: async () => { if (await confirmDialog('Wipe this device', `The next time "${d.label || 'this device'}" (${d.display_name}) tries to sync, it will be told to erase everything it has stored and will need to be set up again. This cannot reach a device that never syncs again.`, { danger: true, okText: 'Request wipe' })) act(d.id, 'wipe'); } }, 'Wipe') : null,
-            (d.revoked_at || d.wipe_requested_at) ? h('button', { class: 'btn sm', onClick: () => act(d.id, 'clear') }, 'Clear') : null) },
+            (d.revoked_at || d.wipe_requested_at) ? h('button', { class: 'btn sm', onClick: () => act(d.id, 'clear') }, 'Clear') : null,
+            !d.revoked_at ? h('button', { class: 'btn sm', 'data-device-scope-change': d.id, 'aria-label': `${d.sync_scope === 'field' ? 'Hold everything on' : 'Make field device:'} ${d.label || 'device'} of ${d.display_name}`, onClick: async () => {
+              const toField = d.sync_scope !== 'field';
+              const ok = await confirmDialog(toField ? 'Make this a field device' : 'Let this device hold everything',
+                toField ? `At its next sync, "${d.label || 'this device'}" (${d.display_name}) sends what it has recorded, then keeps only what a field worker needs: their own recent caseload with no contact, intake or clinical details, their contacts, to-dos, supplies and lists. Everything else is removed from the device (nothing is deleted at the office).`
+                  : `At its next sync, "${d.label || 'this device'}" (${d.display_name}) downloads everything ${d.display_name} may see, as before it was a field device.`,
+                { okText: toField ? 'Make field device' : 'Hold everything' });
+              if (!ok) return;
+              await post(`/api/admin/devices/${d.id}/scope`, { scope: toField ? 'field' : 'full' });
+              toast(toField ? 'It becomes a field device at its next sync' : 'It holds everything again from its next sync', 'ok'); refresh();
+            } }, d.sync_scope === 'field' ? 'Hold everything' : 'Make field device') : null) },
         ], devices, { empty: 'No devices have synced yet.' }));
     },
   };

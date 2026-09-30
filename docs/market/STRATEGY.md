@@ -161,14 +161,17 @@ default ([docs/PLATFORM.md](../PLATFORM.md)).
 
 **What "real" would add.** An offline-first flow designed around a contact that takes a minute: minimal
 personal information by default (a participant code instead of a name, which is also the CDPH SSP norm: the
-code is released in 1.17.0; making it the default is planned), a device that holds only what the
-worker needs rather than everything the worker may see (planned), and a sync that tolerates days without signal.
+code is released in 1.17.0; a programme setting that makes it the default for new clients, + Log and Street
+outreach is built for 1.21.0, not yet released), a device that holds only what the worker needs rather than
+everything the worker may see (the field device scope, built for 1.21.0, not yet released:
+[docs/PLATFORM.md](../PLATFORM.md), *Field devices*), and a sync that tolerates days without signal.
 
 **Assessment.** It is the most differentiated of the three for harm-reduction buyers, and the one that fits the
 product's privacy stance best: the least data collected is the least data to protect. Two cautions. First, a
 device today holds every record its user may see, which under the 1.16.0 defaults is the whole programme; a
 real outreach mode needs the least-privilege default (released in 1.17.0: on for a new install, a setting an upgraded office turns on)
-or a device scope of its own. Second,
+or a device scope of its own (the field device scope, built for 1.21.0, not yet released; an administrator marks
+each device, or makes every new device one). Second,
 offline sync is the area where most 1.16.x security findings were; each change to it needs the same review.
 
 ## Capture

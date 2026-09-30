@@ -10,14 +10,44 @@ const asked = (name, label) => ({ name, label, type: 'select', options: [{ value
 /** How such an answer reads on the record: NULL was never asked. */
 export const yesNoAsked = (v) => (v === null || v === undefined ? 'Not asked' : v ? 'Yes' : 'No');
 
-export function clientFields(C, { isNew = true, hasEpisodes = false, openEpisode = false } = {}) {
+/** Whether this programme starts new clients and contacts with a participant code instead of a name (1.21.0). */
+export const participantCodeFirst = () => !!(state.programme && state.programme.participant_code_default);
+// The participant code field, as the client forms offer it (server/participant-code.js normalises what is typed).
+const PARTICIPANT_CODE_HELP = 'The code the person builds the same way every time, by your program\'s recipe, when they would rather not give a name. Letters and digits; spaces and dashes are dropped. Stored encrypted; the SSP report counts people by it without naming anyone.';
+const participantCodeField = (required) => ({ name: 'participant_code', label: 'Participant code', required, maxLen: 20, help: PARTICIPANT_CODE_HELP });
+
+/**
+ * Participant-code mode (1.21.0): the name fields (and the other details that identify someone) start hidden behind
+ * an explicit "Add a name" step, which shows them and moves the focus to the first one. A draft or a value that
+ * already has a name shows them from the start.
+ */
+function nameBehindStep(f, names) {
+  const wraps = names.map(n => f.querySelector(`[data-field="${n}"]`)).filter(Boolean);
+  if (!wraps.length || wraps.some(w => { const i = w.querySelector('input, select, textarea'); return i && i.value; })) return null;
+  for (const w of wraps) w.hidden = true;
+  const btn = h('button', { type: 'button', class: 'btn sm', 'data-add-name': '1', onClick: () => {
+    for (const w of wraps) w.hidden = false;
+    holder.remove();
+    const first = wraps[0].querySelector('input, select, textarea'); if (first) first.focus();
+  } }, 'Add a name');
+  const hint = h('p', { class: 'small muted', 'data-add-name-hint': '1' }, 'No name is needed: the participant code is enough. Add a name, date of birth or phone only if the person wants to give them.');
+  const holder = h('div', { class: 'field span add-name', 'data-add-name-step': '1' }, hint, btn);
+  wraps[0].before(holder);
+  return btn;
+}
+
+export function clientFields(C, { isNew = true, hasEpisodes = false, openEpisode = false, codeFirst = false, hasCode = false } = {}) {
   // While an episode is open, closing the record (or recording a death) is a discharge, and the discharge
   // is what closes the episode, ends the care team and clears the to-dos — so those two are taken off the
   // menu here and the help text says where they went. The server refuses them too.
   const statusOptions = ['waitlist', 'active', 'inactive', 'closed', 'deceased'].map(sv => ({ value: sv, label: fmt.label(sv), disabled: openEpisode && (sv === 'closed' || sv === 'deceased'), title: openEpisode && (sv === 'closed' || sv === 'deceased') ? 'Discharge on the Episodes tab' : null }));
   return [
-    { type: 'section', label: 'Who they are', collapsible: true, open: true, hint: 'only first and last name are required' },
-    { name: 'first_name', label: 'First name', required: true }, { name: 'last_name', label: 'Last name', required: true }, { name: 'preferred_name', label: 'Preferred name' },
+    { type: 'section', label: 'Who they are', collapsible: true, open: true, hint: codeFirst || hasCode ? 'a participant code, or a first and last name' : 'only first and last name are required' },
+    // Participant-code mode (1.21.0): the code comes first and the name is optional; otherwise the code is offered
+    // after the name, for a person who gives both or a coded record being edited.
+    ...(codeFirst ? [participantCodeField(isNew)] : []),
+    { name: 'first_name', label: 'First name', required: !(codeFirst || hasCode) }, { name: 'last_name', label: 'Last name', required: !(codeFirst || hasCode) }, { name: 'preferred_name', label: 'Preferred name' },
+    ...(!codeFirst ? [participantCodeField(false)] : []),
     { name: 'dob', label: 'Date of birth', type: 'date', max: fmt.today(), min: '1900-01-01' }, { name: 'gender', label: 'Gender', type: 'select', options: ['female', 'male', 'non_binary', 'transgender_female', 'transgender_male', 'other', 'declined'] }, { name: 'pronouns', label: 'Pronouns' },
     { name: 'race_ethnicity', label: 'Race / ethnicity' }, { name: 'preferred_language', label: 'Preferred language', value: 'English' }, asked('veteran', 'Veteran'),
     { type: 'section', label: 'How to reach them', collapsible: true, open: true },
@@ -140,15 +170,15 @@ function duplicateCheck(f, { getModal, onDone, extra = () => ({}) }) {
   // Check while they are still typing, so the match appears before the form is finished.
   let timer;
   const check = async () => {
-    const body = { first_name: read('first_name') || '', last_name: read('last_name') || '', dob: read('dob') || '', phone: read('phone') || '' };
-    if (!body.last_name || (!body.dob && !body.phone && !body.first_name)) return;
+    const body = { first_name: read('first_name') || '', last_name: read('last_name') || '', dob: read('dob') || '', phone: read('phone') || '', participant_code: read('participant_code') || '' };
+    if (!body.participant_code.trim() && (!body.last_name || (!body.dob && !body.phone && !body.first_name))) return;
     try {
       const r = await post('/api/clients/check-duplicates', body, { quiet: true });
       if (r.matches.length || (r.readmit && r.readmit.length)) show(r.matches, r.readmit || []); else clear(box);
     } catch { /* a failed check must never block entering a client */ }
   };
   const watch = () => {
-    for (const n of ['last_name', 'dob', 'phone']) {
+    for (const n of ['last_name', 'dob', 'phone', 'participant_code']) {
       const el = f.querySelector(`[name="${n}"]`);
       if (el) el.addEventListener('change', () => { clearTimeout(timer); timer = setTimeout(check, 250); });
     }
@@ -174,12 +204,20 @@ const NEW_CLIENT_DEFAULTS = () => ({ status: 'active', intake_date: fmt.today(),
  * intake is added there ("Add details"), or all at once with "Full intake".
  */
 function openQuickAdd(onDone, prefill = null) {
+  // Participant-code mode (1.21.0, the programme's "Outreach records use a participant code by default"): the code
+  // is asked for first and the name waits behind "Add a name".
+  const codeFirst = participantCodeFirst();
   const f = form([
-    { name: 'first_name', label: 'First name', required: true }, { name: 'last_name', label: 'Last name', required: true },
+    ...(codeFirst ? [participantCodeField(false)] : []),
+    { name: 'first_name', label: 'First name', required: !codeFirst }, { name: 'last_name', label: 'Last name', required: !codeFirst },
     { name: 'preferred_name', label: 'Preferred name or alias', help: 'What they want to be called, if it is not their first name.' },
     { name: 'dob', label: 'Date of birth', type: 'date', max: fmt.today(), min: '1900-01-01', help: 'Optional. With the last name, it finds an earlier record of the same person.' },
     { name: 'phone', label: 'Phone', type: 'tel' },
-  ], { values: prefill || {}, submitText: 'Create client', onCancel: () => m.close(), draftKey: 'client:quick', onSubmit: async (d) => {
+  ], { values: prefill || {}, submitText: 'Create client', onCancel: () => m.close(), draftKey: codeFirst ? 'client:quick-code' : 'client:quick', onSubmit: async (d) => {
+    // A name, or a participant code in its place: the server says the same (server/rules/clients.js).
+    if (codeFirst && !String(d.participant_code || '').trim() && !(String(d.first_name || '').trim() && String(d.last_name || '').trim())) {
+      const e = new Error('Enter a participant code, or add a first and last name.'); e.data = { fields: { participant_code: 'is required unless you add a name' } }; throw e;
+    }
     checkClientFields(d);
     const r = await dup.create({ ...NEW_CLIENT_DEFAULTS(), ...Object.fromEntries(Object.entries(d).filter(([, v]) => v !== null && v !== '')) });
     toast(`Client ${r.client_code} created. Add the rest of their details when you have them.`, 'ok'); m.close();
@@ -196,16 +234,18 @@ function openQuickAdd(onDone, prefill = null) {
     f.finished(); m.close(); openClientForm(null, onDone, { full: true, prefill: now });
   } }, 'Full intake');
   f.querySelector('.btn-row button[type=submit]').before(full);
-  const m = modal('New client', h('div', { 'data-quick-add': '1' },
-    h('p', { class: 'small muted' }, 'Only the name is required. The record opens once it is created, and the rest of the intake can be added there when you have it — or use Full intake to enter everything now.'), f));
-  if (prefill && prefill.last_name) dup.check();
+  if (codeFirst) nameBehindStep(f, ['first_name', 'last_name', 'preferred_name', 'dob', 'phone']);
+  const m = modal('New client', h('div', { 'data-quick-add': '1', 'data-code-first': codeFirst ? '1' : null },
+    h('p', { class: 'small muted' }, codeFirst ? 'Only the participant code is needed. The record opens once it is created; a name and the rest of the intake can be added there if the person wants to give them.' : 'Only the name is required. The record opens once it is created, and the rest of the intake can be added there when you have it — or use Full intake to enter everything now.'), f));
+  if (prefill && (prefill.last_name || prefill.participant_code)) dup.check();
 }
 
 export function openClientForm(values, onDone, { full = false, prefill = null } = {}) {
   const isNew = !values;
   if (isNew && !full) { openQuickAdd(onDone, prefill); return; }
   let dup = null;
-  const f = form(clientFields(state.constants, { isNew, hasEpisodes: !!(values && values.counts && values.counts.episodes), openEpisode: !!(values && values.open_episode) }), { values: values || prefill || {}, submitText: isNew ? 'Create client' : 'Save changes', onCancel: () => m.close(), draftKey: isNew ? 'client:new' : `client:${values.id}`, onSubmit: async (d) => {
+  const codeFirst = isNew && participantCodeFirst();
+  const f = form(clientFields(state.constants, { isNew, hasEpisodes: !!(values && values.counts && values.counts.episodes), openEpisode: !!(values && values.open_episode), codeFirst, hasCode: !!(values && values.participant_code) }), { values: values || prefill || {}, submitText: isNew ? 'Create client' : 'Save changes', onCancel: () => m.close(), draftKey: isNew ? 'client:new' : `client:${values.id}`, onSubmit: async (d) => {
     checkClientFields(d);
     if (isNew) {
       const r = await dup.create(d);
@@ -228,6 +268,7 @@ export function openClientForm(values, onDone, { full = false, prefill = null } 
     f.querySelector('.form-grid').after(dup.box);
     dup.watch();
   }
+  if (codeFirst) nameBehindStep(f, ['first_name', 'last_name', 'preferred_name', 'dob']);
   if (!isNew) { const told = noticeLine(values); if (told) f.prepend(told); }
   const m = modal(isNew ? 'New client — full intake' : `Edit ${values.display_name}`, f, { wide: true });
   if (isNew && prefill && prefill.last_name) dup.check();

@@ -10,10 +10,12 @@ import { h, route, get, post, state, toast, can, pageHead, prefs, fmt, listEntri
 //
 // An anonymous contact's SSP participant code (1.17.0, server/participant-code.js), as on the visit form: optional,
 // stored encrypted and counted by its blind index; "My shift" counts the different codes as participants seen.
-function participantInput() {
+// Participant-code mode (1.21.0, the programme's "Outreach records use a participant code by default"): the code is
+// asked for first, right under the kind of contact, and the intro says no name is needed.
+function participantInput(codeFirst = false) {
   const id = `or-code-${rid()}`;
   const input = h('input', { type: 'text', id, maxlength: 20, autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', 'aria-describedby': `${id}-help`, 'data-outreach-code': '1' });
-  const field = h('div', { class: 'field outreach-code' }, h('label', { for: id }, 'Participant code (optional)'), input,
+  const field = h('div', { class: 'field outreach-code', 'data-code-first': codeFirst ? '1' : null }, h('label', { for: id }, codeFirst ? 'Participant code' : 'Participant code (optional)'), input,
     h('p', { class: 'help small muted', id: `${id}-help` }, 'Only if the person gives one: the code they build the same way every time, by your program\'s recipe. Never a name. Letters and digits count; spaces and dashes are dropped. Stored encrypted.'));
   return { field, value: () => (input.value.trim() ? { participant_code: input.value.trim() } : {}), reset: () => { input.value = ''; } };
 }
@@ -113,7 +115,8 @@ route('outreach', async () => {
     h('div', { class: 'field' }, h('label', { for: placeSel.id }, 'Where'), placeSel),
     siteSel ? h('div', { class: 'field' }, h('label', { for: siteSel.id }, 'Supplies came from'), siteSel) : null);
 
-  const participant = participantInput();
+  const codeFirst = !!(state.programme && state.programme.participant_code_default);
+  const participant = participantInput(codeFirst);
 
   // ---- notes, without identifiers ----
   const notesId = `or-notes-${rid()}`;
@@ -169,7 +172,7 @@ route('outreach', async () => {
       errorBox.setAttribute('tabindex', '-1'); errorBox.focus();
     }
   } },
-  typeGroup, whereBox, participant.field, suppliesBox, notesBox, errorBox, saveBtn);
+  ...(codeFirst ? [typeGroup, participant.field, whereBox] : [typeGroup, whereBox, participant.field]), suppliesBox, notesBox, errorBox, saveBtn);
 
   // ---- my shift ----
   const shiftSince = () => { const s = prefs.get(SHIFT, null); const t = s ? Date.parse(s) : NaN; return Number.isFinite(t) && Date.now() - t < SHIFT_MS && t <= Date.now() ? s : null; };
@@ -200,7 +203,7 @@ route('outreach', async () => {
 
   return h('div', { class: 'outreach', 'data-outreach': '1' },
     pageHead('Street outreach'),
-    h('p', { class: 'small muted outreach-intro' }, 'Anonymous: no names or client records. Each contact is saved as an anonymous visit, and its supplies come off the stock.',
+    h('p', { class: 'small muted outreach-intro' }, codeFirst ? 'No names: ask for the person\'s participant code instead. Each contact is saved as an anonymous visit, and its supplies come off the stock.' : 'Anonymous: no names or client records. Each contact is saved as an anonymous visit, and its supplies come off the stock.',
       state.local ? (window.SUDS_STATIC_HOST ? ' Works with no connection.' : ' Works with no connection: the office gets it at the next sync.') : ''),
     formEl, shiftCard, h('div', { class: 'outreach-foot' }, startBox, h('a', { href: '#/interventions?type=outreach' }, 'All outreach visits')));
 });

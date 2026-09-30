@@ -32,10 +32,12 @@ function indexedColumns(d) {
 // name-index helpers read config.indexKey at call time, which is why the key is swapped in below.
 const DERIVATIONS = {
   clients: {
-    source: ['first_name_enc', 'last_name_enc', 'dob_enc', 'phone_enc', 'preferred_name_enc'],
-    // The same derivation migration 26 uses to rebuild these after a normalisation change.
+    source: ['first_name_enc', 'last_name_enc', 'dob_enc', 'phone_enc', 'preferred_name_enc', 'participant_code_enc'],
+    // The same derivation migration 26 uses to rebuild these after a normalisation change; a client's participant
+    // code (1.21.0) as encryptFields writes it.
     derive(p) {
-      return require('../server/clients-model').clientIndexes({ first_name: p.first_name_enc, last_name: p.last_name_enc, preferred_name: p.preferred_name_enc, dob: p.dob_enc, phone: p.phone_enc });
+      return { ...require('../server/clients-model').clientIndexes({ first_name: p.first_name_enc, last_name: p.last_name_enc, preferred_name: p.preferred_name_enc, dob: p.dob_enc, phone: p.phone_enc }),
+        participant_code_idx: require('../server/participant-code').index(p.participant_code_enc) };
     },
   },
   // An anonymous contact's SSP participant code (1.17.0), as the visit routes and sync write it.

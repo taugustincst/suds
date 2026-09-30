@@ -6859,7 +6859,16 @@ CREATE TABLE IF NOT EXISTS devices (
   last_ip TEXT,
   sync_count INTEGER NOT NULL DEFAULT 0,
   wipe_requested_at TEXT,
-  revoked_at TEXT
+  revoked_at TEXT,
+  -- What this device's sync carries (1.21.0, server/field-scope.js; migration 62): 'full', everything its user may
+  -- read, or 'field', only what a field worker needs (their own recent caseload's minimal record, their outreach
+  -- contacts, supplies, their own to-dos). Set by an administrator, or narrowed to 'field' by its user when enrolling.
+  sync_scope TEXT NOT NULL DEFAULT 'full' CHECK (sync_scope IN ('full','field')),
+  scope_changed_at TEXT,
+  -- When the office first answered this device's pull under the field scope: from then on its pushes are held to
+  -- that scope and its field-shaped rows (blanked columns) never overwrite the office's values. NULL while a change
+  -- to 'field' has not reached the device yet, and again once a full-scope pull has completed after it.
+  field_applied_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id);
 
@@ -6890,7 +6899,10 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- 1 for a device's sync sign-in (X-Sync-Client): a device signs in with the password and, with two-step verification
   -- on, the authenticator code; it cannot give a fingerprint, so a passkey does not count as its second factor
   -- (server/auth.js login and requireAuth; docs/FINGERPRINT.md; migration 59).
-  sync_client INTEGER NOT NULL DEFAULT 0
+  sync_client INTEGER NOT NULL DEFAULT 0,
+  -- The device (devices.id) a sync sign-in was made from, bound when the session was created (1.21.0, migration 62):
+  -- a field device's scope is looked up from it on every pull and push, never taken from a header the device sends.
+  device_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 
@@ -7047,7 +7059,13 @@ CREATE TABLE IF NOT EXISTS clients (
   removed_reason_enc TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  deleted_at TEXT
+  deleted_at TEXT,
+  -- A client known by a syringe services participant code instead of a name (1.21.0, migration 62; the programme
+  -- setting participant_code_default): encrypted like the visit's code (server/participant-code.js), and counted
+  -- and found by its blind index in the same domain, so a code on an anonymous visit and on a client match.
+  -- A coded client's first_name_enc and last_name_enc hold an empty string until someone adds a name.
+  participant_code_enc TEXT,
+  participant_code_idx TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_clients_last_name ON clients(last_name_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_phone ON clients(phone_idx);
@@ -7701,6 +7719,7 @@ CREATE INDEX IF NOT EXISTS idx_clients_name_phonetic ON clients(name_phonetic_id
 CREATE INDEX IF NOT EXISTS idx_clients_first_name ON clients(first_name_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_first_name_prefix ON clients(first_name_prefix_idx);
 CREATE INDEX IF NOT EXISTS idx_clients_preferred_name ON clients(preferred_name_idx);
+CREATE INDEX IF NOT EXISTS idx_clients_participant_code ON clients(participant_code_idx) WHERE participant_code_idx IS NOT NULL;
 -- The duplicates merged into a caseload's clients travel with them (sync pull; migration 47).
 CREATE INDEX IF NOT EXISTS idx_clients_merged ON clients(merged_into) WHERE merged_into IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_resources_updated ON resources(updated_at);
@@ -8709,6 +8728,34 @@ var require_crypto = __commonJS({
   }
 });
 
+// server/participant-code.js
+var require_participant_code = __commonJS({
+  "server/participant-code.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var { blindIndex: blindIndex2 } = require_crypto();
+    var MIN = 4;
+    var MAX = 20;
+    function normalise(code) {
+      if (code === null || code === void 0) return null;
+      const s = String(code).normalize("NFKD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      return s || null;
+    }
+    function problem(code) {
+      if (code === null || code === void 0 || String(code).trim() === "") return null;
+      const n = normalise(code);
+      if (!n || n.length < MIN) return `must have at least ${MIN} letters or digits`;
+      if (n.length > MAX) return `must have at most ${MAX} letters or digits`;
+      return null;
+    }
+    function index(code) {
+      const n = normalise(code);
+      return n ? blindIndex2(`ssp participant ${n}`) : null;
+    }
+    module.exports = { normalise, problem, index, MIN, MAX };
+  }
+});
+
 // server/clients-model.js
 var require_clients_model = __commonJS({
   "server/clients-model.js"(exports, module) {
@@ -8775,6 +8822,7 @@ var require_clients_model = __commonJS({
       if (deidentify) {
         out2.display_name = row.client_code;
       } else out2.display_name = `${out2.last_name || ""}, ${out2.first_name || ""}`.trim().replace(/^,\s*|,\s*$/g, "");
+      if (!deidentify && !out2.display_name) out2.display_name = out2.participant_code ? `Participant ${out2.participant_code}` : row.client_code || "";
       return out2;
     }
     function encryptFields(v) {
@@ -8793,6 +8841,12 @@ var require_clients_model = __commonJS({
       if (v.preferred_name !== void 0) cols2.preferred_name_idx = preferredNameIndex(v.preferred_name);
       if (v.dob !== void 0) cols2.dob_idx = blindIndex2(v.dob);
       if (v.phone !== void 0) cols2.phone_idx = blindIndex2(String(v.phone || "").replace(/\D/g, ""));
+      if (v.participant_code !== void 0) {
+        const PC = require_participant_code();
+        const code = PC.normalise(v.participant_code);
+        cols2.participant_code_enc = code ? encrypt3(code) : null;
+        cols2.participant_code_idx = code ? PC.index(code) : null;
+      }
       return cols2;
     }
     function soundex(name) {
@@ -8878,7 +8932,7 @@ var require_clients_model = __commonJS({
       db3.setSetting(counterKey, String(n));
       return code;
     }
-    var SUMMARY_KEEP = ["id", "client_code", "display_name", "first_name", "last_name", "preferred_name", "dob", "phone", "status", "risk_level", "primary_substance", "mat_status", "intake_date", "referral_date", "engagement_date", "city", "flags", "ok_to_text", "ok_to_voicemail", "updated_at"];
+    var SUMMARY_KEEP = ["id", "client_code", "display_name", "first_name", "last_name", "preferred_name", "dob", "phone", "status", "risk_level", "primary_substance", "mat_status", "intake_date", "referral_date", "engagement_date", "city", "flags", "ok_to_text", "ok_to_voicemail", "updated_at", "participant_code"];
     var SUMMARY_READS = new Set([...SUMMARY_KEEP, "deleted_at", "merged_into"].flatMap((k) => [k, `${k}_enc`]));
     function summary(row, opts) {
       const d = decryptRow(row ? Object.fromEntries(Object.entries(row).filter(([k]) => SUMMARY_READS.has(k))) : row, opts);
@@ -11626,34 +11680,6 @@ var require_shared = __commonJS({
   }
 });
 
-// server/participant-code.js
-var require_participant_code = __commonJS({
-  "server/participant-code.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var { blindIndex: blindIndex2 } = require_crypto();
-    var MIN = 4;
-    var MAX = 20;
-    function normalise(code) {
-      if (code === null || code === void 0) return null;
-      const s = String(code).normalize("NFKD").replace(/[̀-ͯ]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-      return s || null;
-    }
-    function problem(code) {
-      if (code === null || code === void 0 || String(code).trim() === "") return null;
-      const n = normalise(code);
-      if (!n || n.length < MIN) return `must have at least ${MIN} letters or digits`;
-      if (n.length > MAX) return `must have at most ${MAX} letters or digits`;
-      return null;
-    }
-    function index(code) {
-      const n = normalise(code);
-      return n ? blindIndex2(`ssp participant ${n}`) : null;
-    }
-    module.exports = { normalise, problem, index, MIN, MAX };
-  }
-});
-
 // server/supply-names.js
 var require_supply_names = __commonJS({
   "server/supply-names.js"(exports, module) {
@@ -12349,6 +12375,9 @@ var require_sync_tables = __commonJS({
         // Caseload restriction (1.16.0): with each person's own grants and denies (pull's permission_overrides), a
         // device holds a person the office holds to their caseload to it too (server/auth.js caseloadRestricted).
         "caseload_restriction",
+        // Whether new clients and outreach contacts start with a participant code instead of a name (1.21.0): a device's
+        // forms start the way its office's do. (A field device's scope and window are the office's alone: server/field-scope.js.)
+        "participant_code_default",
         // The programme profile and module switches (server/programme.js): a device shows what its office shows.
         ...require_programme().SETTING_KEYS
       ],
@@ -12364,7 +12393,9 @@ var require_sync_tables = __commonJS({
         { name: "funding_sources", enc: [], scope: "all", writePerm: "budget:manage", redact: { perm: "budget:read", cols: { total_amount: 0, grant_number: null, restrictions: null, notes: null } } },
         { name: "budget_lines", enc: [], scope: "all", writePerm: "budget:manage", parent: ["funding_sources", "funding_source_id"], selfParent: "parent_id", redact: { perm: "budget:read", cols: { allocated_amount: 0, notes: null } } },
         // merged_into points at another client: the record that was kept must land before its duplicate.
-        { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc", "legal_hold_reason_enc", "legal_hold_cleared_reason_enc", "removed_reason_enc", "contact_preferences_enc"], legacy: { legal_hold_reason: "legal_hold_reason_enc", contact_preferences: "contact_preferences_enc" }, scope: "client", clientCol: "id", idx: true, writePerm: "clients:write", selfParent: "merged_into" },
+        // participant_code_enc (1.21.0): a client known by an SSP participant code instead of a name; its blind index is
+        // recomputed by the receiver (importRow below), in the same domain as a visit's code.
+        { name: "clients", enc: ["first_name_enc", "last_name_enc", "preferred_name_enc", "dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "goals_enc", "flags_enc", "legal_hold_reason_enc", "legal_hold_cleared_reason_enc", "removed_reason_enc", "contact_preferences_enc", "participant_code_enc"], legacy: { legal_hold_reason: "legal_hold_reason_enc", contact_preferences: "contact_preferences_enc" }, scope: "client", clientCol: "id", idx: true, writePerm: "clients:write", selfParent: "merged_into" },
         { name: "assignments", enc: ["notes_enc"], legacy: { notes: "notes_enc" }, scope: "client", clientCol: "client_id", writePerm: "assignments:manage", parent: ["clients", "client_id"] },
         { name: "episodes", enc: ["presenting_problem_enc", "discharge_summary_enc", "reopen_reason_enc"], scope: "client", clientCol: "client_id", writePerm: "episodes:write", parent: ["clients", "client_id"] },
         // CalOMS Tx records hang off an episode: the episode must land first.
@@ -12460,7 +12491,9 @@ var require_sync_tables = __commonJS({
         "its ",
         "has a value the office does not accept",
         "needs a lawful basis for disclosure",
-        "drawn down at the office"
+        "drawn down at the office",
+        // A field device writing outside its scope (server/field-scope.js, server/rules/push.js fieldRefusal).
+        "outside this field device"
       ],
       // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
       // emergency access, and a device has no supervisor to review it.
@@ -12671,6 +12704,7 @@ var require_sync_tables = __commonJS({
         if (r.preferred_name_enc !== void 0) o.preferred_name_idx = M.preferredNameIndex(r.preferred_name_enc || "");
         if (r.dob_enc !== void 0) o.dob_idx = crypto3.blindIndex(r.dob_enc || "");
         if (r.phone_enc !== void 0) o.phone_idx = crypto3.blindIndex(String(r.phone_enc || "").replace(/\D/g, ""));
+        if (r.participant_code_enc !== void 0) o.participant_code_idx = require_participant_code().index(r.participant_code_enc);
       }
       if (t.name === "interventions" && r.participant_code_enc !== void 0) o.participant_code_idx = require_interventions().participantCode(r.participant_code_enc).idx;
       return o;
@@ -14483,6 +14517,8 @@ var require_clients = __commonJS({
       if (v.dob && v.last_name) add("(c.dob_idx=? AND c.last_name_idx=?)", blindIndex2(v.dob), blindIndex2(v.last_name));
       if (v.phone) add("c.phone_idx=?", blindIndex2(String(v.phone).replace(/\D/g, "")));
       if (v.first_name && v.last_name) add("c.full_name_idx=?", blindIndex2((v.last_name || "") + (v.first_name || "")));
+      const codeIdx = v.participant_code ? require_participant_code().index(v.participant_code) : null;
+      if (codeIdx) add("c.participant_code_idx=?", codeIdx);
       if (!clauses.length) return [];
       const rows = db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND (${clauses.join(" OR ")}) ${excludeId ? "AND c.id<>?" : ""} LIMIT 10`, ...params, ...excludeId ? [excludeId] : []);
       return rows.map((x) => {
@@ -14491,6 +14527,7 @@ var require_clients = __commonJS({
         if (v.dob && v.last_name && x.dob_idx === blindIndex2(v.dob) && x.last_name_idx === blindIndex2(v.last_name)) reasons.push("same surname and date of birth");
         if (v.phone && x.phone_idx === blindIndex2(String(v.phone).replace(/\D/g, ""))) reasons.push("same phone number");
         if (v.first_name && v.last_name && x.full_name_idx === blindIndex2((v.last_name || "") + (v.first_name || ""))) reasons.push("same full name");
+        if (codeIdx && x.participant_code_idx === codeIdx) reasons.push("same participant code");
         return { id: x.id, client_code: x.client_code, display_name: d.display_name, dob: d.dob, status: x.status, intake_date: x.intake_date, reasons };
       });
     }
@@ -14585,6 +14622,11 @@ var require_clients = __commonJS({
             where.push("c.phone_idx=?");
             params.push(blindIndex2(q.replace(/\D/g, "")));
             searched = ["phone"];
+          } else if (/^code\s+\S+$/i.test(q)) {
+            const PC = require_participant_code();
+            where.push("c.participant_code_idx=?");
+            params.push(PC.index(q.replace(/^code\s+/i, "")) || "");
+            searched = ["participant_code"];
           } else {
             searched = ["name"];
             const parts = q.split(/[,\s]+/).filter(Boolean);
@@ -14610,6 +14652,11 @@ var require_clients = __commonJS({
                   params.push(snd);
                 }
               }
+            }
+            const codeIdx = parts.length === 1 && !require_participant_code().problem(parts[0]) ? require_participant_code().index(parts[0]) : null;
+            if (codeIdx) {
+              clauses.push("c.participant_code_idx=?");
+              params.push(codeIdx);
             }
             where.push(`(${clauses.join(" OR ")})`);
             const exactParts = parts.flatMap((p) => M.searchPartTokens(p, { exact: true }));
@@ -14684,12 +14731,12 @@ var require_clients = __commonJS({
           audit3.log({ user: ctx.user, action: "client.duplicate_check", ip: ctx.ip, success: false, details: { reason: "rate limited" } });
           throw new HttpError3(429, "Too many duplicate checks. Wait a few minutes; the check is made again when the client is saved.");
         }
-        const v = validate(ctx.body, { first_name: { type: "string", maxLen: 100 }, last_name: { type: "string", maxLen: 100 }, dob: { type: "date" }, phone: { type: "string", maxLen: 40 }, exclude_id: { type: "string" } });
+        const v = validate(ctx.body, { first_name: { type: "string", maxLen: 100 }, last_name: { type: "string", maxLen: 100 }, dob: { type: "date" }, phone: { type: "string", maxLen: 40 }, participant_code: { type: "string", maxLen: 40 }, exclude_id: { type: "string" } });
         const all = possibleDuplicates(v, v.exclude_id || null);
         const matches = all.filter((m) => mayOpen(ctx.user, m.id));
         const hidden = all.filter((m) => !mayOpen(ctx.user, m.id));
         const readmit = readmitOffers(ctx, hidden);
-        audit3.log({ user: ctx.user, action: "client.duplicate_check", ip: ctx.ip, details: { asked: ["first_name", "last_name", "dob", "phone"].filter((k) => v[k]), matches: all.length, hidden: hidden.length, shown: matches.map((m) => m.client_code), readmit_offered: readmit.length ? readmit.map((m) => hidden.find((x) => x.id === m.id).client_code) : void 0 } });
+        audit3.log({ user: ctx.user, action: "client.duplicate_check", ip: ctx.ip, details: { asked: ["first_name", "last_name", "dob", "phone", "participant_code"].filter((k) => v[k]), matches: all.length, hidden: hidden.length, shown: matches.map((m) => m.client_code), readmit_offered: readmit.length ? readmit.map((m) => hidden.find((x) => x.id === m.id).client_code) : void 0 } });
         return { matches, readmit };
       });
       r.post("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {
@@ -14706,6 +14753,8 @@ var require_clients = __commonJS({
         delete v.confirm_duplicate;
         const noEpisode = !!v.no_episode;
         delete v.no_episode;
+        if (v.first_name === void 0) v.first_name = "";
+        if (v.last_name === void 0) v.last_name = "";
         const id = uuid2();
         const enc2 = M.encryptFields(v);
         enc2.full_name_idx = blindIndex2((v.last_name || "") + (v.first_name || ""));
@@ -15028,10 +15077,12 @@ var require_clients2 = __commonJS({
     init_globals_inject();
     var db3 = require_db();
     var auth3 = require_auth2();
-    var { define: define2, flag } = require_core();
+    var { define: define2, flag, refuse } = require_core();
     var FIELDS = {
-      first_name: { type: "string", required: true, maxLen: 100 },
-      last_name: { type: "string", required: true, maxLen: 100 },
+      // A name is required unless the client is known by a participant code instead (1.21.0; check below).
+      first_name: { type: "string", maxLen: 100 },
+      last_name: { type: "string", maxLen: 100 },
+      participant_code: { type: "string", maxLen: 40 },
       preferred_name: { type: "string", maxLen: 100 },
       dob: { type: "date" },
       phone: { type: "string", maxLen: 40 },
@@ -15129,6 +15180,17 @@ var require_clients2 = __commonJS({
       check(row, c) {
         const e = c.existing || {};
         const out2 = [];
+        const PC = require_participant_code();
+        if (row.participant_code_enc !== void 0 && row.participant_code_enc !== null && String(row.participant_code_enc).trim() !== "") {
+          const why = PC.problem(row.participant_code_enc);
+          if (why) out2.push(refuse(`its participant code ${why}`, { message: `The participant code ${why}.`, fields: { participant_code: why } }));
+        }
+        const has = (col) => String(c.plain(col) ?? "").trim() !== "";
+        if (!has("participant_code_enc") && (!has("first_name_enc") || !has("last_name_enc"))) {
+          const fields2 = {};
+          for (const f of ["first_name", "last_name"]) if (!has(`${f}_enc`)) fields2[f] = "is required (or give a participant code instead of a name)";
+          out2.push(refuse("is missing a required field: a name, or a participant code", { message: "Enter a first and last name, or a participant code instead of a name.", fields: fields2 }));
+        }
         const touched = Object.fromEntries(["dob_enc", "email_enc", "phone_enc", "alt_phone_enc"].map((k) => [k, row[k] !== void 0 && (!c.existing || String(row[k] ?? "") !== String(c.was(k) ?? "")) ? row[k] : void 0]));
         const fields = contactProblems(touched);
         if (Object.keys(fields).length) out2.push(flag(`was accepted, but its ${Object.keys(fields).map((f) => f.replace("_", " ")).join(" and ")} ${Object.keys(fields).length === 1 ? "does" : "do"} not look right (${Object.entries(fields).map(([k, m]) => `${k.replace("_", " ")} ${m}`).join("; ")}); the office will review it`, { message: "Validation failed", fields, code: "contact" }));
@@ -15145,6 +15207,10 @@ var require_clients2 = __commonJS({
         return out2;
       },
       normalise(row, c) {
+        if (row.participant_code_enc !== void 0) row.participant_code_enc = require_participant_code().normalise(row.participant_code_enc);
+        if (!c.existing) {
+          for (const col of ["first_name_enc", "last_name_enc"]) if (row[col] === void 0 || row[col] === null) row[col] = "";
+        }
         for (const [cols2, may] of GUARDED) if (!may(c.user)) for (const col of cols2) row[col] = c.existing ? void 0 : DEFAULTS[col];
         if (!c.existing) require_clients_model().unaskedAsNull(row);
         return null;
@@ -15656,7 +15722,7 @@ var require_caloms_spec = __commonJS({
       { key: "social_support_days_30", name: "SocialSupportRecoveryDaysPast30", label: "Days at social support recovery activities, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
       { key: "lives_with_user", name: "LivesWithSubstanceUser", label: "Lives with someone who uses alcohol or drugs", set: "YES_NO", in: REP, req: "standard", group: "Past 30 days" }
     ];
-    var FIELD = Object.fromEntries(FIELDS.map((f) => [f.key, f]));
+    var FIELD2 = Object.fromEntries(FIELDS.map((f) => [f.key, f]));
     var fieldsFor = (type) => FIELDS.filter((f) => f.in.includes(type));
     var FROM_SUDS = {
       asam_level: { "1.0": "01", "2.1": "02", "2.5": "03", "3.1": "04", "3.3": "05", "3.5": "06", "3.7": "07", "4.0": "10", OTP: "11" },
@@ -15674,7 +15740,7 @@ var require_caloms_spec = __commonJS({
       { key: "admission_date", name: "AdmissionDate" }
     ];
     var RECORD_CODE = { admission: "A", discharge: "D", annual_update: "U" };
-    module.exports = { SPEC_VERSION, SPEC_SOURCE, SETS, FIELDS, FIELD, RECORD_TYPES, RECORD_CODE, ADMINISTRATIVE_DISCHARGE, MULTI_MAX, fieldsFor, FROM_SUDS, ID_COLUMNS };
+    module.exports = { SPEC_VERSION, SPEC_SOURCE, SETS, FIELDS, FIELD: FIELD2, RECORD_TYPES, RECORD_CODE, ADMINISTRATIVE_DISCHARGE, MULTI_MAX, fieldsFor, FROM_SUDS, ID_COLUMNS };
   }
 });
 
@@ -19301,6 +19367,150 @@ var require_budget = __commonJS({
     module.exports.cents = cents;
     module.exports.lineAvailable = lineAvailable;
     module.exports.presentExpenditure = presentExpenditure;
+  }
+});
+
+// server/field-scope.js
+var require_field_scope = __commonJS({
+  "server/field-scope.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var WINDOW_DEFAULT = 90;
+    var WINDOW_MIN = 7;
+    var WINDOW_MAX = 365;
+    var CLIENT_BLANK = [
+      "dob_enc",
+      "phone_enc",
+      "alt_phone_enc",
+      "email_enc",
+      "address_enc",
+      "medicaid_id_enc",
+      "emergency_contact_enc",
+      "goals_enc",
+      "contact_preferences_enc",
+      "legal_hold_reason_enc",
+      "legal_hold_cleared_reason_enc",
+      "removed_reason_enc",
+      "zip",
+      "insurance",
+      "justice_involved",
+      "pregnant_or_parenting",
+      "co_occurring_mh",
+      "asam_level",
+      "mat_medication",
+      "discharge_reason",
+      "referral_source",
+      "race_ethnicity",
+      "race_codes",
+      "veteran"
+    ];
+    var include = (why) => ({ decision: "include", why });
+    var exclude = (why) => ({ decision: "exclude", why });
+    var reduce = (why, { rows = null, blank = [] } = {}) => ({ decision: "reduce", why, rows, blank });
+    var TABLES = {
+      users: include("staff accounts: who recorded what, and the worker's own sign-in on the device"),
+      resources: include("the referral directory, to hand someone a place to go"),
+      resource_photos: include("pictures of the directory's places"),
+      policy_documents: exclude("office policies are read at the office"),
+      funding_sources: include("a contact is charged to a fund (amounts redacted as for any role without budget:read)"),
+      budget_lines: include("a contact may name a budget line"),
+      clients: reduce("only the worker's own recent caseload, with contact, intake, legal and clinical details blank", { rows: "field_clients", blank: CLIENT_BLANK }),
+      assignments: reduce("who is on the case, for the worker's recent clients only; the transfer notes blank", { rows: "client", blank: ["notes_enc"] }),
+      episodes: exclude("episodes of care are the office's intake and discharge record"),
+      caloms_records: exclude("state reporting"),
+      interventions: reduce("the worker's recent clients' contacts in the window, and the worker's own anonymous contacts", { rows: "contacts" }),
+      overdose_events: reduce("overdose reports in the window: the worker's recent clients', and those the worker reported with no client", { rows: "overdoses" }),
+      prevention_events: exclude("group prevention events are recorded at the office"),
+      calls: exclude("phone calls, with callers' names and numbers"),
+      time_entries: exclude("timesheets are the office's"),
+      consents: exclude("consents are the legal record, kept at the office"),
+      court_orders: exclude("court orders"),
+      part2_notices: exclude("Part 2 notices"),
+      referrals: exclude("referrals name the client to another organisation"),
+      tasks: reduce("the worker's own to-dos, about their recent clients or no client; a referral link blank", { rows: "own_tasks", blank: ["referral_id"] }),
+      expenditures: exclude("spending"),
+      notes: exclude("notes, clinical or not"),
+      note_addenda: exclude("addenda to notes"),
+      disclosures: exclude("the accounting of disclosures"),
+      imports: exclude("imported pages and transcripts"),
+      import_items: exclude("imported pages and transcripts"),
+      form_templates: exclude("form templates"),
+      client_forms: exclude("completed forms (intake and others)"),
+      client_form_files: exclude("form attachments"),
+      patient_requests: exclude("patient-rights requests"),
+      problems: exclude("the problem list"),
+      problem_history: exclude("the problem list's history"),
+      care_plan_goals: exclude("the care plan"),
+      care_plan_steps: exclude("the care plan"),
+      asam_assessments: exclude("ASAM assessments"),
+      outcome_measures: exclude("scored screenings"),
+      suprt_assessments: exclude("SUPRT-A records"),
+      supply_sites: include("where supplies come from"),
+      supply_items: include("what can be handed out"),
+      intervention_supplies: reduce("the items handed out on the contacts the device holds", { rows: "contact_items" }),
+      supply_ledger: include("stock on hand (no client on it)"),
+      option_overrides: include("the programme's wording of its lists"),
+      disclosure_agreements: exclude("disclosure agreements")
+    };
+    function decision(table) {
+      return TABLES[table] || null;
+    }
+    function excluded(table) {
+      const d = TABLES[table];
+      return !d || d.decision === "exclude";
+    }
+    function blankColumns(table) {
+      const d = TABLES[table];
+      return d && d.blank || [];
+    }
+    function windowDays(getSetting) {
+      const n = Math.floor(Number(getSetting("field_device_window_days", String(WINDOW_DEFAULT))));
+      return Number.isFinite(n) && n >= WINDOW_MIN && n <= WINDOW_MAX ? n : WINDOW_DEFAULT;
+    }
+    function context(userId, days, now2 = Date.now()) {
+      const start2 = new Date(now2 - days * 864e5).toISOString();
+      return { userId, days, windowStart: start2, windowDate: start2.slice(0, 10) };
+    }
+    function clientSetSql(f, active) {
+      return {
+        sql: `SELECT a.client_id FROM assignments a WHERE a.user_id=? AND ${active} AND (a.start_date >= ? OR a.created_at >= ? OR EXISTS (SELECT 1 FROM interventions fi WHERE fi.client_id=a.client_id AND fi.occurred_at >= ?))`,
+        params: [f.userId, f.windowDate, f.windowStart, f.windowStart]
+      };
+    }
+    function rowSql(table, alias, f, active) {
+      const d = TABLES[table];
+      if (!d || d.decision === "exclude") return { sql: "0=1", params: [] };
+      if (!d.rows) return null;
+      const set = clientSetSql(f, active);
+      const x = alias;
+      switch (d.rows) {
+        case "field_clients":
+          return { sql: `(${x}.id IN (${set.sql}) OR (${x}.merged_into IS NOT NULL AND ${x}.merged_into IN (${set.sql})))`, params: [...set.params, ...set.params] };
+        case "client":
+          return { sql: `${x}.client_id IN (${set.sql})`, params: set.params };
+        case "contacts":
+          return { sql: `(${x}.occurred_at >= ? AND ((${x}.client_id IS NULL AND ${x}.user_id=?) OR ${x}.client_id IN (${set.sql})))`, params: [f.windowStart, f.userId, ...set.params] };
+        case "overdoses":
+          return { sql: `(${x}.occurred_at >= ? AND ((${x}.client_id IS NULL AND ${x}.reported_by=?) OR ${x}.client_id IN (${set.sql})))`, params: [f.windowStart, f.userId, ...set.params] };
+        case "contact_items":
+          return { sql: `${x}.intervention_id IN (SELECT ci.id FROM interventions ci WHERE ci.occurred_at >= ? AND ((ci.client_id IS NULL AND ci.user_id=?) OR ci.client_id IN (${set.sql})))`, params: [f.windowStart, f.userId, ...set.params] };
+        case "own_tasks":
+          return { sql: `((${x}.assigned_to=? OR (${x}.assigned_to IS NULL AND ${x}.created_by=?)) AND (${x}.client_id IS NULL OR ${x}.client_id IN (${set.sql})))`, params: [f.userId, f.userId, ...set.params] };
+        default:
+          throw new Error(`field-scope: unknown row rule ${d.rows}`);
+      }
+    }
+    function describe2(f) {
+      return {
+        window_days: f.days,
+        window_start: f.windowStart,
+        holds: "the clients on your own caseload assigned or seen in the last " + f.days + " days (name, participant code and safety flags; no contact, intake, legal or clinical details), your outreach contacts and overdose reports from that time, your own to-dos, supplies and sites, and the program's lists",
+        excluded: Object.entries(TABLES).filter(([, d]) => d.decision === "exclude").map(([t]) => t),
+        reduced: Object.fromEntries(Object.entries(TABLES).filter(([, d]) => d.decision === "reduce").map(([t, d]) => [t, d.blank || []])),
+        windowed: Object.entries(TABLES).filter(([, d]) => ["contacts", "overdoses", "contact_items"].includes(d.rows)).map(([t]) => t)
+      };
+    }
+    module.exports = { TABLES, CLIENT_BLANK, WINDOW_DEFAULT, WINDOW_MIN, WINDOW_MAX, decision, excluded, blankColumns, windowDays, context, clientSetSql, rowSql, describe: describe2 };
   }
 });
 
@@ -23622,6 +23832,86 @@ var require_update = __commonJS({
   }
 });
 
+// server/devices.js
+var require_devices = __commonJS({
+  "server/devices.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var { sha256: sha2562, randomToken } = require_crypto();
+    function labelFrom(userAgent) {
+      const ua = userAgent || "";
+      if (/android/i.test(ua)) return "Android phone";
+      if (/ipad/i.test(ua)) return "iPad";
+      if (/iphone/i.test(ua)) return "iPhone";
+      return "Device";
+    }
+    function touch(user, deviceId2, ctx) {
+      const existing = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+      const label = labelFrom(ctx.headers["user-agent"]);
+      const now2 = db3.now();
+      if (existing) db3.run(`UPDATE devices SET user_id=?, last_seen_at=?, last_ip=?, sync_count=sync_count+1, label=COALESCE(label, ?) WHERE id=?`, user.id, now2, ctx.ip, label, deviceId2);
+      else {
+        const scope = db3.getSetting("field_device_default", "0") === "1" ? "field" : "full";
+        db3.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count,sync_scope,scope_changed_at) VALUES(?,?,?,?,?,?,1,?,?)`, deviceId2, user.id, label, now2, now2, ctx.ip, scope, scope === "field" ? now2 : null);
+      }
+      return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+    }
+    var SCOPES = ["full", "field"];
+    function setScope(deviceId2, scope, { actor, ip, via = "admin" } = {}) {
+      if (!SCOPES.includes(scope)) throw new Error(`setScope: unknown scope ${scope}`);
+      const d = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+      if (!d || d.sync_scope === scope) return null;
+      if (via !== "admin" && scope !== "field") throw new Error("Only an administrator can widen what a device holds");
+      db3.run(`UPDATE devices SET sync_scope=?, scope_changed_at=? WHERE id=?`, scope, db3.now(), deviceId2);
+      require_audit().log({ user: actor, action: "device.scope", entity: "device", entityId: deviceId2, ip, details: { from: d.sync_scope, to: scope, via, device_user: d.user_id } });
+      return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+    }
+    function ofSession(ctx) {
+      const id = ctx && ctx.session && ctx.session.device_id;
+      return id ? db3.one(`SELECT * FROM devices WHERE id=?`, id) : null;
+    }
+    function markWiped(deviceId2) {
+      db3.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?) WHERE id=?`, db3.now(), deviceId2);
+      db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
+    }
+    var ACK_TTL_MS = 15 * 6e4;
+    var ackKey = (deviceId2) => `device_wipe_ack:${deviceId2}`;
+    function issueWipeToken(deviceId2) {
+      const token2 = randomToken(32);
+      db3.setSetting(ackKey(deviceId2), JSON.stringify({ hash: sha2562(token2), expires: new Date(Date.now() + ACK_TTL_MS).toISOString() }));
+      return token2;
+    }
+    function ackWipe(deviceId2, token2) {
+      const raw = db3.getSetting(ackKey(deviceId2), null);
+      if (!raw || typeof token2 !== "string" || !token2) return false;
+      let rec;
+      try {
+        rec = JSON.parse(raw);
+      } catch {
+        return false;
+      }
+      if (!rec.hash || Date.parse(rec.expires || 0) < Date.now()) {
+        db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
+        return false;
+      }
+      const given = sha2562(token2);
+      if (given.length !== rec.hash.length || !(init_crypto2(), __toCommonJS(crypto_exports)).timingSafeEqual(import_buffer.Buffer.from(given), import_buffer.Buffer.from(rec.hash))) return false;
+      markWiped(deviceId2);
+      return true;
+    }
+    function requestWipeForUser(userId, { actor, ip, reason } = {}) {
+      const rows = db3.all(`SELECT id FROM devices WHERE user_id=? AND revoked_at IS NULL AND wipe_requested_at IS NULL`, userId);
+      if (!rows.length) return [];
+      const now2 = db3.now();
+      for (const d of rows) db3.run(`UPDATE devices SET wipe_requested_at=? WHERE id=?`, now2, d.id);
+      require_audit().log({ user: actor, action: "device.wipe.requested", entity: "user", entityId: userId, ip, details: { reason, devices: rows.map((d) => d.id) } });
+      return rows.map((d) => d.id);
+    }
+    module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe, setScope, ofSession, SCOPES };
+  }
+});
+
 // server/routes/admin.js
 var require_admin = __commonJS({
   "server/routes/admin.js"(exports, module) {
@@ -23686,6 +23976,12 @@ var require_admin = __commonJS({
       "suprt_grant_id",
       "suprt_site_id",
       "suprt_reassessment_months",
+      // Minimal personal information (built for 1.21.0, not yet released): new clients and outreach contacts start with a
+      // participant code instead of a name; new devices start as field devices, and the window a field device holds
+      // (server/field-scope.js). All three are off (or 90 days) unless an administrator changes them.
+      "participant_code_default",
+      "field_device_default",
+      "field_device_window_days",
       // The programme profile and its module switches (server/programme.js): presentation, not permissions.
       ...require_programme().SETTING_KEYS
     ];
@@ -23719,7 +24015,11 @@ var require_admin = __commonJS({
             if (k === "client_retention_years" && v !== "" && Number(v) < 6) throw badRequest("Client records must be kept at least 6 years (45 CFR \xA7164.316(b)(2)); most SUD programs keep 7 or more");
             if (k === "self_signup" && v !== "" && !["0", "1"].includes(v)) throw badRequest("self_signup must be 1 (on) or 0 (off)");
             if (k === "org_timezone" && v !== "" && !require_budget().validTimezone(v)) throw badRequest("org_timezone must be a time zone name such as America/Los_Angeles");
-            if (["mfa_require_all", "sso_required", "dr_drill_monthly", "passkey_signin", "passkey_signing", "sign_strong_required"].includes(k) && v !== "" && !["0", "1"].includes(v)) throw badRequest(`${k} must be 1 (on) or 0 (off)`);
+            if (["mfa_require_all", "sso_required", "dr_drill_monthly", "passkey_signin", "passkey_signing", "sign_strong_required", "participant_code_default", "field_device_default"].includes(k) && v !== "" && !["0", "1"].includes(v)) throw badRequest(`${k} must be 1 (on) or 0 (off)`);
+            if (k === "field_device_window_days" && v !== "") {
+              const FS = require_field_scope();
+              if (!(Number.isInteger(Number(v)) && Number(v) >= FS.WINDOW_MIN && Number(v) <= FS.WINDOW_MAX)) throw badRequest(`field_device_window_days must be a whole number of days from ${FS.WINDOW_MIN} to ${FS.WINDOW_MAX}`);
+            }
             if (["dr_rto_target_minutes", "dr_rpo_target_hours"].includes(k) && v !== "" && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);
             if (k === "mfa_required_roles") v = v.split(",").map((x) => x.trim()).filter((x) => ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"].includes(x)).join(",");
             if (k === "sign_reauth_minutes" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 60)) throw badRequest("sign_reauth_minutes must be a whole number of minutes from 0 (always ask) to 60");
@@ -23980,6 +24280,12 @@ var require_admin = __commonJS({
         db3.run(`UPDATE devices SET revoked_at=NULL, wipe_requested_at=NULL WHERE id=?`, d.id);
         audit3.log({ user: ctx.user, action: "device.clear", entity: "device", entityId: d.id, ip: ctx.ip, details: { device_user: d.user_id } });
         return { ok: true };
+      });
+      r.post("/api/admin/devices/:id/scope", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
+        const d = findDevice(ctx);
+        const { scope } = validate(ctx.body, { scope: { type: "string", required: true, enum: require_devices().SCOPES } });
+        const changed = require_devices().setScope(d.id, scope, { actor: ctx.user, ip: ctx.ip, via: "admin" });
+        return { ok: true, changed: !!changed, scope };
       });
       r.get("/api/admin/stats", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => ({
         users: db3.one(`SELECT COUNT(*) n FROM users WHERE is_active=1`).n,
@@ -26595,7 +26901,10 @@ var require_auth = __commonJS({
         }
         ctx.res.setHeader("Set-Cookie", auth3.cookieHeader(result.token));
         const out2 = { user: result.user, mfaPending: result.mfaPending, mfaMethods: result.mfaMethods, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline };
-        if (ctx.headers["x-sync-client"]) out2.token = result.token;
+        if (ctx.headers["x-sync-client"]) {
+          out2.token = result.token;
+          if (result.device) out2.device = result.device;
+        }
         return out2;
       });
       const signupEnabled = () => db3.getSetting("self_signup", "1") !== "0";
@@ -26667,6 +26976,8 @@ var require_auth = __commonJS({
             modules: require_programme().modules(),
             // Whether "Secure link" is offered on a referral (server/referral-links.js; office server only).
             referral_links: db3.getSetting("referral_links_enabled", "0") === "1",
+            // Whether new clients, + Log and Street outreach start with a participant code instead of a name (1.21.0).
+            participant_code_default: db3.getSetting("participant_code_default", "0") === "1",
             // How many programmes this server has registered for the county view (server/county.js), active or not:
             // the County view entry shows for county:view once there is one (an inactive programme's files are still
             // there to see), and to county:manage always.
@@ -33417,7 +33728,7 @@ var require_ssp_report = __commonJS({
       const cf = funderOnly(ctx.user) ? { sql: "1=1", params: [] } : auth3.caseloadFilter(ctx.user, "c.id");
       const scope = `(i.client_id IS NULL OR ${cf.sql})`;
       const activity = `(EXISTS (SELECT 1 FROM intervention_supplies l WHERE l.intervention_id=i.id) OR i.syringes_returned > 0 OR i.naloxone_kits > 0 OR i.fentanyl_strips > 0)`;
-      const visits = db3.all(`SELECT i.id, i.client_id, i.occurred_at, i.supply_site_id, i.naloxone_kits, i.fentanyl_strips, i.syringes_returned, i.returns_estimated, i.participant_code_idx, c.deleted_at
+      const visits = db3.all(`SELECT i.id, i.client_id, i.occurred_at, i.supply_site_id, i.naloxone_kits, i.fentanyl_strips, i.syringes_returned, i.returns_estimated, i.participant_code_idx, c.deleted_at, c.participant_code_idx AS client_code_idx
     FROM interventions i LEFT JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${activity} AND ${scope}`, ...tsP, ...cf.params);
       const lines = db3.all(`SELECT l.intervention_id, l.quantity, l.untracked, it.id AS item_id, it.name, it.category, it.product, it.unit FROM intervention_supplies l
     JOIN supply_items it ON it.id=l.item_id JOIN interventions i ON i.id=l.intervention_id LEFT JOIN clients c ON c.id=i.client_id WHERE ${ts("i.occurred_at")} AND ${scope}`, ...tsP, ...cf.params);
@@ -33430,7 +33741,8 @@ var require_ssp_report = __commonJS({
       const sumCat = (ls, cat) => ls.filter((l) => l.category === cat).reduce((n, l) => n + l.quantity, 0);
       const participants = new Set(visits.filter((v) => v.client_id && !v.deleted_at).map((v) => v.client_id));
       const coded = visits.filter((v) => !v.client_id && v.participant_code_idx);
-      const codes = new Set(coded.map((v) => v.participant_code_idx));
+      const clientCodes = new Set(visits.filter((v) => v.client_id && !v.deleted_at && v.client_code_idx).map((v) => v.client_code_idx));
+      const codes = new Set(coded.map((v) => v.participant_code_idx).filter((x) => !clientCodes.has(x)));
       const month = /* @__PURE__ */ new Map();
       const site = /* @__PURE__ */ new Map();
       const bucket = () => ({ contacts: 0, anonymous_contacts: 0, syringes_distributed: 0, syringes_returned: 0, naloxone_kits: 0 });
@@ -46193,6 +46505,9 @@ var require_setup = __commonJS({
           local_mode: { type: "boolean" },
           // What kind of programme this is (server/programme.js); omitted means harm reduction & outreach.
           programme_profile: { type: "string", enum: Object.keys(require_programme().PROFILES) },
+          // "Outreach records use a participant code by default" (1.21.0): offered for a harm-reduction programme; omitted
+          // (or any other profile) means off, the default everywhere.
+          participant_code_default: { type: "boolean" },
           // The programme's main fund (optional): created and made the default fund for new visits.
           main_fund_name: { type: "string", maxLen: 200 },
           // What kind of money it is (C.FUNDING_TYPES), and for opioid settlement money the settlement report's
@@ -46220,6 +46535,7 @@ var require_setup = __commonJS({
           if (v.program_contact) db3.setSetting("program_contact", v.program_contact);
           db3.setSetting("caseload_restriction", "1");
           db3.setSetting("programme_profile", v.programme_profile || require_programme().DEFAULT_PROFILE);
+          if (v.participant_code_default === true && (v.programme_profile || require_programme().DEFAULT_PROFILE) === "harm_reduction") db3.setSetting("participant_code_default", "1");
           mainFund = require_budget().createProgrammeFund(v.main_fund_name, { type: v.main_fund_type || "other", settlement_use: v.main_fund_settlement_use || null, settlement_hiaa: v.main_fund_settlement_hiaa || null });
         });
         const defaults = applyProductionDefaults();
@@ -46465,6 +46781,7 @@ var require_push = __commonJS({
     var audit3 = require_audit();
     var { decrypt: decrypt3 } = require_crypto();
     var SYNC2 = require_sync_tables();
+    var FS = require_field_scope();
     var rules = require_rules();
     var { refusals, checkFields, flag } = require_core();
     var NEVER2 = "1970-01-01T00:00:00.000Z";
@@ -46577,10 +46894,17 @@ var require_push = __commonJS({
         return this._raw[col] !== void 0 ? this._raw[col] : this.was(col);
       }
     };
+    var OUTSIDE_FIELD = "outside this field device's scope";
     var PushSession = class {
-      constructor(user, payload) {
+      // field: null for a device in the full scope (or a browser); otherwise { scope, blank } from server/routes/sync.js
+      // pushField: `scope`, the field context its writes are held to; `blank`, that a column the device was sent blank and
+      // sends back blank is the device not having it, never an instruction to clear the office's value.
+      constructor(user, payload, field = null) {
         this.user = user;
         this.payload = payload;
+        this.field = field;
+        this.fieldNew = /* @__PURE__ */ new Set();
+        this.fieldIn = /* @__PURE__ */ new Map();
         this.tables = payload.tables || {};
         this.applied = {};
         this.rejected = [];
@@ -46620,6 +46944,38 @@ var require_push = __commonJS({
       cols(table) {
         if (!this.colsByTable.has(table)) this.colsByTable.set(table, cols2(table));
         return this.colsByTable.get(table);
+      }
+      /** Whether a client is in this field device's set: created by this very push, or on the worker's recent caseload. */
+      fieldHas(clientId) {
+        if (this.fieldNew.has(clientId)) return true;
+        let v = this.fieldIn.get(clientId);
+        if (v === void 0) {
+          const set = FS.clientSetSql(this.field.scope, auth3.activeAssignment("a."));
+          this.fieldIn.set(clientId, v = !!db3.one(`SELECT 1 FROM (${set.sql}) s WHERE s.client_id=?`, ...set.params, clientId));
+        }
+        return v;
+      }
+      /** Whether a stored row is one this field device holds (its table's field rule, server/field-scope.js). */
+      fieldHolds(t, row) {
+        const rule = FS.rowSql(t.name, "x", this.field.scope, auth3.activeAssignment("a."));
+        if (!rule) return true;
+        return !!db3.one(`SELECT 1 FROM ${t.name} x WHERE x.id=? AND ${rule.sql}`, row.id, ...rule.params);
+      }
+      /**
+       * A field device writes within its scope only: never to a table it is not sent, never to a stored row it does not
+       * hold (another worker's to-do, a client off its set, a contact older than the window), and a new row only about a
+       * client in its set or one this push creates (a person the worker met in the field). Asked after the shared
+       * authorise stage, so a row for a merged-away client is judged by the record that was kept.
+       */
+      fieldRefusal(t, raw, c) {
+        const f = this.field && this.field.scope;
+        if (!f) return null;
+        if (FS.excluded(t.name)) return { reason: OUTSIDE_FIELD };
+        if (c.existing && !this.fieldHolds(t, c.existing)) return { reason: OUTSIDE_FIELD };
+        if (t.name === "clients") return null;
+        const clientId = t.clientCol ? raw[t.clientCol] : null;
+        if (clientId && !this.fieldHas(clientId)) return { reason: OUTSIDE_FIELD };
+        return null;
       }
       // permanent: the office has ruled and a retry can never succeed, so the device stops resending the row.
       reject(table, id, reason, permanent = SYNC2.isPermanentReason(reason)) {
@@ -46661,6 +47017,13 @@ var require_push = __commonJS({
         if (t.selfParent) rows = selfParentOrder2(rows, t.selfParent);
         if (R.pushable === false) return;
         this.applied[t.name] = this.applied[t.name] || 0;
+        if (this.field && this.field.scope && FS.excluded(t.name)) {
+          for (const raw of rows) if (raw && typeof raw.id === "string") {
+            this.reject(t.name, raw.id, OUTSIDE_FIELD);
+            this.rejectedIds.set(`${t.name}:${raw.id}`, true);
+          }
+          return;
+        }
         if (R.order) rows = R.order(rows, this);
         if (t.serverOwned) {
           for (const raw of rows) if (raw && typeof raw.id === "string") this.reject(t.name, raw.id, "server-owned");
@@ -46708,6 +47071,9 @@ var require_push = __commonJS({
         const user = this.user;
         const incomingAt = this.shift(raw.updated_at || raw.created_at) || NEVER2;
         const existing = db3.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
+        if (this.field && this.field.blank && existing) {
+          for (const col of FS.blankColumns(t.name)) if (raw[col] === null || raw[col] === "") delete raw[col];
+        }
         if (existing) delete raw.created_at;
         else if (raw.created_at) raw.created_at = this.shift(raw.created_at);
         delete raw.updated_at;
@@ -46716,6 +47082,7 @@ var require_push = __commonJS({
         c.statements = Object.fromEntries((R.statements || []).filter((k) => raw[k] !== void 0).map((k) => [k, raw[k]]));
         this.confine(R, raw, c);
         if (refused(this.authorise(R, t, raw, c))) return false;
+        if (refused(this.fieldRefusal(t, raw, c))) return false;
         if (R.authorise && refused(R.authorise(raw, c))) return false;
         if (refused(this.validate(R, t, raw, c))) return false;
         if (existing && !c.allowedChange && (existing.updated_at || existing.created_at || NEVER2) >= incomingAt) {
@@ -46753,7 +47120,11 @@ var require_push = __commonJS({
         } else db3.run(`INSERT INTO ${t.name}(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, raw.id, ...keys.map((k) => o[k]));
         db3.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, t.name, raw.id);
         if (R.afterApply) R.afterApply(raw, o, c);
-        if (t.name === "assignments" || t.name === "clients") this.memo.access.clear();
+        if (t.name === "assignments" || t.name === "clients") {
+          this.memo.access.clear();
+          this.fieldIn.clear();
+        }
+        if (t.name === "clients" && !existing) this.fieldNew.add(raw.id);
         for (const f of c.flags) {
           this.warnings.push({ table: t.name, id: raw.id, reason: f.reason, flagged: true });
           audit3.log({
@@ -46884,9 +47255,17 @@ var require_push = __commonJS({
           this.reject(t.name, ts.id, `your role cannot delete ${t.name}`);
           return;
         }
+        if (this.field && this.field.scope && FS.excluded(t.name)) {
+          this.reject(t.name, ts.id, OUTSIDE_FIELD);
+          return;
+        }
         const existing = db3.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
         if (!existing) return;
         if (R.tombstone === "never") return;
+        if (this.field && this.field.scope && !this.fieldHolds(t, existing)) {
+          this.reject(t.name, ts.id, OUTSIDE_FIELD);
+          return;
+        }
         const clientId = t.clientCol ? existing[t.clientCol] : null;
         if (clientId && !auth3.canAccessClient(user, clientId)) {
           this.reject(t.name, ts.id, "not on caseload");
@@ -46923,8 +47302,8 @@ var require_push = __commonJS({
         this.applied._audit = auditRows.length;
       }
     };
-    function push(user, payload) {
-      return new PushSession(user, payload).run();
+    function push(user, payload, field = null) {
+      return new PushSession(user, payload, field).run();
     }
     module.exports = { push, PushSession, changedColumns: changedColumns2, describeError, keeperOf, NEVER: NEVER2 };
   }
@@ -46941,10 +47320,18 @@ var require_sync = __commonJS({
     var { badRequest, forbidden } = require_http();
     var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
     var SYNC2 = require_sync_tables();
+    var FS = require_field_scope();
     var NEVER2 = "1970-01-01T00:00:00.000Z";
     var PULL_LIMIT = 2e3;
     var { exportRow: exportRow2, importRow: importRow2 } = SYNC2;
-    function scopeSql(t, user, alias) {
+    function scopeSql(t, user, alias, field = null) {
+      const base = baseScopeSql(t, user, alias);
+      if (!field) return base;
+      const extra = FS.rowSql(t.name, alias, field, auth3.activeAssignment("a."));
+      if (!extra) return base;
+      return { sql: `(${base.sql}) AND ${extra.sql}`, params: [...base.params, ...extra.params] };
+    }
+    function baseScopeSql(t, user, alias) {
       const cf = auth3.caseloadFilter(user, `${alias}.${t.clientCol}`);
       if (t.scope === "all" || t.scope === "users") return { sql: "1=1", params: [] };
       if (t.scope === "importer" || t.scope === "via-import") {
@@ -46965,12 +47352,26 @@ var require_sync = __commonJS({
       }
       return cf;
     }
-    function droppedClients(user, since) {
+    function droppedClients(user, since, field = null) {
+      if (field) return fieldDroppedClients(user, since, field);
       if (!auth3.caseloadRestricted(user) || since === NEVER2) return [];
       const ids = db3.all(`SELECT DISTINCT client_id FROM assignments WHERE user_id=? AND NOT ${auth3.activeAssignment()}
     AND (ended_at > ? OR (ended_at IS NULL AND (updated_at > ? OR end_date >= date(?))))`, user.id, since, since, since).map((r) => r.client_id);
       const sc = scopeSql(SYNC2.tables.find((t) => t.name === "clients"), user, "c");
       return ids.filter((id) => !db3.one(`SELECT 1 FROM clients c WHERE c.id=? AND ${sc.sql}`, id, ...sc.params));
+    }
+    function fieldDroppedClients(user, since, field) {
+      if (since === NEVER2) return [];
+      const set = FS.clientSetSql(field, auth3.activeAssignment("a."));
+      const inSet = new Set(db3.all(set.sql, ...set.params).map((r) => r.client_id));
+      const ever = db3.all(`SELECT DISTINCT client_id FROM assignments WHERE user_id=?`, user.id).map((r) => r.client_id);
+      const merged = db3.all(`SELECT id FROM clients WHERE merged_into IS NOT NULL AND updated_at > ?`, since).map((r) => r.id);
+      const out2 = new Set([...ever, ...merged].filter((id) => !inSet.has(id)));
+      for (let frontier = [...out2], i = 0; frontier.length && i < 25; i++) {
+        frontier = db3.all(`SELECT id FROM clients WHERE merged_into IN (SELECT value FROM json_each(?))`, JSON.stringify(frontier)).map((r) => r.id).filter((id) => !out2.has(id) && !inSet.has(id));
+        for (const id of frontier) out2.add(id);
+      }
+      return [...out2];
     }
     var SCOPE_V = "v1";
     var COUNSEL = require_notes();
@@ -46984,8 +47385,8 @@ var require_sync = __commonJS({
       }
       return [...s].sort();
     }
-    function syncScopeKey(user) {
-      return [SCOPE_V, `caseload=${auth3.caseloadRestricted(user) ? 1 : 0}`, ...scopePerms().map((p) => `${p}=${auth3.hasPerm(user, p) ? 1 : 0}`), `counseling=${COUNSEL.readsCounseling(user) ? 1 : 0}`].join(";");
+    function syncScopeKey(user, field = null) {
+      return [SCOPE_V, `caseload=${auth3.caseloadRestricted(user) ? 1 : 0}`, ...scopePerms().map((p) => `${p}=${auth3.hasPerm(user, p) ? 1 : 0}`), `counseling=${COUNSEL.readsCounseling(user) ? 1 : 0}`, `field=${field ? field.days : 0}`].join(";");
     }
     function parseScopeKey(key) {
       const parts = String(key || "").split(";");
@@ -46993,18 +47394,28 @@ var require_sync = __commonJS({
       const m = {};
       for (const x of parts.slice(1)) {
         const [k, v] = x.split("=");
+        if (k === "field") {
+          if (/^\d{1,3}$/.test(v || "")) m.field = Number(v);
+          continue;
+        }
         if (k && (v === "0" || v === "1")) m[k] = v === "1";
       }
       return m;
     }
-    function scopeChange(user, sent) {
+    function scopeChange(user, sent, field = null) {
       if (!sent) return null;
       const prevKey = sent === "legacy" ? syncScopeKey(auth3.asBefore1_16(user)) : sent;
       const prev = parseScopeKey(prevKey);
-      const cur = parseScopeKey(syncScopeKey(user));
+      const cur = parseScopeKey(syncScopeKey(user, field));
       if (!prev) return null;
       if (!("counseling" in prev)) prev.counseling = prev["notes:clinical:read"] !== false;
-      const change = { widened: false, redacted: false, caseloadNarrowed: false, lost: /* @__PURE__ */ new Set() };
+      const change = { widened: false, redacted: false, caseloadNarrowed: false, lost: /* @__PURE__ */ new Set(), fieldReset: false };
+      const wasField = prev.field || 0;
+      const isField = cur.field || 0;
+      delete prev.field;
+      delete cur.field;
+      if (isField && isField !== wasField) change.fieldReset = true;
+      else if (!isField && wasField) change.widened = true;
       const redactPerms = new Set(SYNC2.tables.filter((t) => t.redact).map((t) => t.redact.perm));
       for (const [k, now2] of Object.entries(cur)) {
         if (!(k in prev) || prev[k] === now2) continue;
@@ -47017,28 +47428,29 @@ var require_sync = __commonJS({
         else change.lost.add(k);
         if (redactPerms.has(k)) change.redacted = true;
       }
-      return change.widened || change.redacted || change.caseloadNarrowed || change.lost.size ? change : null;
+      return change.widened || change.redacted || change.caseloadNarrowed || change.lost.size || change.fieldReset ? change : null;
     }
-    function scopeDrops(user, change) {
+    function scopeDrops(user, change, field = null) {
       const clients = [];
       const rows = [];
+      if (change.fieldReset) return { clients, rows };
       if (change.caseloadNarrowed) {
-        const sc = scopeSql(SYNC2.tables.find((t) => t.name === "clients"), user, "c");
+        const sc = scopeSql(SYNC2.tables.find((t) => t.name === "clients"), user, "c", field);
         clients.push(...db3.all(`SELECT c.id FROM clients c WHERE NOT (${sc.sql})`, ...sc.params).map((r) => r.id));
       }
       const lost = change.lost;
       for (const t of SYNC2.tables) {
         if (t.readPerm && lost.has(t.readPerm)) {
-          const sc = scopeSql(t, user, "x");
+          const sc = scopeSql(t, user, "x", field);
           rows.push(...db3.all(`SELECT x.id FROM ${t.name} x WHERE ${sc.sql}`, ...sc.params).map((r) => [t.name, r.id]));
           continue;
         }
         if (t.unlinked && lost.has(t.unlinked.all)) {
-          const sc = scopeSql(t, user, "x");
+          const sc = scopeSql(t, user, "x", field);
           rows.push(...db3.all(`SELECT x.id FROM ${t.name} x WHERE x.${t.clientCol || "client_id"} IS NULL AND NOT (${sc.sql})`, ...sc.params).map((r) => [t.name, r.id]));
         }
         if ((t.scope === "importer" || t.scope === "via-import") && lost.has("records:manage-others")) {
-          const sc = scopeSql(t, user, "x");
+          const sc = scopeSql(t, user, "x", field);
           rows.push(...db3.all(`SELECT x.id FROM ${t.name} x WHERE NOT (${sc.sql})`, ...sc.params).map((r) => [t.name, r.id]));
         }
       }
@@ -47059,16 +47471,27 @@ var require_sync = __commonJS({
       const kidsFirst = rows.map((r, i) => [r, i]).sort((a, b) => order.get(b[0][0]) - order.get(a[0][0]) || a[1] - b[1]).map((x) => x[0]);
       return { clients, rows: kidsFirst };
     }
-    function newlyInScopeSql(user, since, cursor) {
+    function newlyInScopeSql(user, since, cursor, field = null) {
+      if (field) return newlyInFieldSql(since, field);
       return {
         sql: `SELECT DISTINCT a.client_id FROM assignments a WHERE a.user_id=? AND ${auth3.activeAssignment("a.")} AND a.updated_at > ? AND a.updated_at <= ?
     AND NOT EXISTS (SELECT 1 FROM assignments b WHERE b.client_id=a.client_id AND b.user_id=? AND b.updated_at <= ? AND ${auth3.activeAssignment("b.")})`,
         params: [user.id, since, cursor, user.id, since]
       };
     }
-    function newlyInScope(user, since, cursor) {
-      if (!auth3.caseloadRestricted(user) || since === NEVER2) return [];
-      const q = newlyInScopeSql(user, since, cursor);
+    function newlyInFieldSql(since, field) {
+      const active = auth3.activeAssignment("a.");
+      const now2 = FS.clientSetSql(field, active);
+      const then = FS.context(field.userId, field.days, Date.parse(since));
+      return {
+        sql: `SELECT DISTINCT n.client_id FROM (${now2.sql}) n WHERE n.client_id NOT IN (SELECT a.client_id FROM assignments a WHERE a.user_id=? AND ${active} AND a.updated_at <= ?
+      AND (a.start_date >= ? OR a.created_at >= ? OR EXISTS (SELECT 1 FROM interventions fi WHERE fi.client_id=a.client_id AND fi.created_at <= ? AND fi.occurred_at >= ?)))`,
+        params: [...now2.params, field.userId, since, then.windowDate, then.windowStart, since, then.windowStart]
+      };
+    }
+    function newlyInScope(user, since, cursor, field = null) {
+      if (!auth3.caseloadRestricted(user) && !field || since === NEVER2) return [];
+      const q = newlyInScopeSql(user, since, cursor, field);
       return db3.all(q.sql, ...q.params).map((r) => r.client_id);
     }
     var BF_MARK = "~bf.";
@@ -47106,8 +47529,8 @@ var require_sync = __commonJS({
       if (!ok) throw badRequest("This device's sync position is damaged. Sync again; if this repeats, reset the device's sync from This device.");
       return { since, bf: { from: bf.from, t: bf.t, k: bf.k, i: bf.i } };
     }
-    function backfillPage(user, until, bf, limit2) {
-      const q = newlyInScopeSql(user, bf.from, until);
+    function backfillPage(user, until, bf, limit2, field = null) {
+      const q = newlyInScopeSql(user, bf.from, until, field);
       const arrivedQ = { sql: "SELECT value FROM json_each(?)", params: [JSON.stringify(db3.all(q.sql, ...q.params).map((r) => r.client_id))] };
       const tables = bfTables();
       const raw = {};
@@ -47121,7 +47544,7 @@ var require_sync = __commonJS({
           next = resume ? { ...bf } : { from: bf.from, t: t.name, k: null, i: null };
           break;
         }
-        const sc = scopeSql(t, user, "x");
+        const sc = scopeSql(t, user, "x", field);
         const after = resume ? `AND (x.${key} > ? OR (x.${key} = ? AND x.id > ?))` : "";
         const rows = db3.all(
           `SELECT x.* FROM ${t.name} x WHERE ${where(arrivedQ.sql)} AND x.updated_at <= ? AND ${sc.sql} ${after} ORDER BY x.${key}, x.id LIMIT ?`,
@@ -47143,13 +47566,13 @@ var require_sync = __commonJS({
       }
       return { raw, next };
     }
-    function pull(user, sinceRaw, { limit: limit2 = PULL_LIMIT, scope = null } = {}) {
+    function pull(user, sinceRaw, { limit: limit2 = PULL_LIMIT, scope = null, field = null } = {}) {
       const serverNow = db3.now();
       let { since, bf, from } = parseCursor(String(sinceRaw || NEVER2));
       const dropFrom = since === NEVER2 ? null : from || since;
-      const change = since !== NEVER2 ? scopeChange(user, scope) : null;
-      const drops = change ? scopeDrops(user, change) : null;
-      if (change && (change.widened || change.redacted)) {
+      const change = since !== NEVER2 ? scopeChange(user, scope, field) : null;
+      const drops = change ? scopeDrops(user, change, field) : null;
+      if (change && (change.widened || change.redacted || change.fieldReset)) {
         since = NEVER2;
         bf = null;
       }
@@ -47158,26 +47581,30 @@ var require_sync = __commonJS({
         return out2;
       };
       const withScope = (out2) => {
-        out2.scope = syncScopeKey(user);
+        out2.scope = syncScopeKey(user, field);
+        out2.device_scope = field ? "field" : "full";
+        if (field) out2.field = FS.describe(field);
         if (drops) {
           out2.dropped_clients = [.../* @__PURE__ */ new Set([...out2.dropped_clients || [], ...drops.clients])];
           out2.dropped_rows = [...drops.rows, ...out2.dropped_rows || []];
           out2.scope_changed = true;
           if (change.widened || change.redacted) out2.scope_widened = true;
+          if (change.fieldReset) out2.field_reset = true;
         }
         return out2;
       };
-      if (bf) return withScope(carry(pullBackfill(user, since, bf, limit2, serverNow)));
-      return withScope(carry(pullPage(user, since, limit2, serverNow, since === NEVER2 ? null : dropFrom)));
+      if (bf) return withScope(carry(pullBackfill(user, since, bf, limit2, serverNow, field)));
+      return withScope(carry(pullPage(user, since, limit2, serverNow, since === NEVER2 ? null : dropFrom, field)));
     }
-    function pullPage(user, since, limit2, serverNow, dropFrom = null) {
+    function pullPage(user, since, limit2, serverNow, dropFrom = null, field = null) {
       const raw = {};
       const capped = [];
       const scopes = /* @__PURE__ */ new Map();
       for (const t of SYNC2.tables) {
         const newest = db3.one(`SELECT MAX(updated_at) m FROM ${t.name}`).m;
         if (newest === null || newest === void 0 || newest <= since) continue;
-        const sc = scopeSql(t, user, "x");
+        if (field && FS.excluded(t.name)) continue;
+        const sc = scopeSql(t, user, "x", field);
         scopes.set(t.name, sc);
         const stamps = db3.all(`SELECT x.updated_at u FROM ${t.name} x WHERE x.updated_at > ? AND ${sc.sql} ORDER BY x.updated_at LIMIT ?`, since, ...sc.params, limit2 + 1);
         if (stamps.length <= limit2) continue;
@@ -47192,13 +47619,13 @@ var require_sync = __commonJS({
       const cursor = capped.length ? capped.reduce((a, b) => a < b ? a : b) : serverNow;
       for (const [name, sc] of scopes) raw[name] = db3.all(`SELECT x.* FROM ${name} x WHERE x.updated_at > ? AND x.updated_at <= ? AND ${sc.sql} ORDER BY x.updated_at`, since, cursor, ...sc.params);
       const out2 = baseAnswer(cursor, serverNow, capped.length === 0);
-      exportInto(out2, user, raw, cursor, dropFrom);
-      if (newlyInScope(user, since, cursor).length) {
+      exportInto(out2, user, raw, cursor, dropFrom, field);
+      if (newlyInScope(user, since, cursor, field).length) {
         out2.cursor = encodeCursor(cursor, { from: since, t: bfTables()[0].name, k: null, i: null });
         out2.complete = false;
         out2.backfill = true;
       }
-      out2.dropped_clients = droppedClients(user, since);
+      out2.dropped_clients = droppedClients(user, since, field);
       out2.tombstones = db3.all(`SELECT table_name, id, deleted_at FROM tombstones WHERE deleted_at > ? AND deleted_at <= ? ORDER BY deleted_at`, since, cursor);
       resyncCheck(out2, since);
       return out2;
@@ -47217,11 +47644,11 @@ var require_sync = __commonJS({
         out2.reason = "This device has been offline longer than deletions are kept; it will rebuild from the office copy.";
       }
     }
-    function pullBackfill(user, since, bf, limit2, serverNow) {
-      const { raw, next } = backfillPage(user, since, bf, limit2);
+    function pullBackfill(user, since, bf, limit2, serverNow, field = null) {
+      const { raw, next } = backfillPage(user, since, bf, limit2, field);
       const out2 = baseAnswer(next ? encodeCursor(since, next) : since, serverNow, false);
       out2.backfill = !!next;
-      exportInto(out2, user, raw, null);
+      exportInto(out2, user, raw, null, null, field);
       resyncCheck(out2, bf.from);
       return out2;
     }
@@ -47232,9 +47659,16 @@ var require_sync = __commonJS({
       return !!(db3.one(`SELECT 1 FROM audit_log WHERE client_id=? ${flagged}`, n.client_id, n.id, since) || db3.one(`SELECT 1 FROM audit_log WHERE client_id IS NULL ${flagged}`, n.id, since));
     }
     var gate = (n) => ({ counseling_note: 1, author_id: n.author_id, cosigned_by: n.cosigned_by || null });
-    function exportInto(out2, user, raw, cursor, dropSince = null) {
+    function exportInto(out2, user, raw, cursor, dropSince = null, field = null) {
       for (const t of SYNC2.tables) {
         let rows = raw[t.name] || [];
+        if (field && FS.excluded(t.name)) rows = [];
+        const blank = field ? FS.blankColumns(t.name) : [];
+        if (blank.length) rows = rows.map((r) => {
+          const o = { ...r };
+          for (const c of blank) if (c in o) o[c] = null;
+          return o;
+        });
         if (cursor) rows = rows.filter((r) => r.updated_at <= cursor);
         if (t.name === "users") rows = rows.map((r) => ({ ...r.id === user.id ? r : { ...r, password_hash: "scrypt$0$0$0$AA==$AA==" }, mfa_secret_enc: null, mfa_enabled: 0 }));
         if (t.name === "notes" && !auth3.hasPerm(user, "notes:clinical:read")) rows = rows.filter((r) => r.kind !== "clinical");
@@ -47265,27 +47699,46 @@ var require_sync = __commonJS({
       const config2 = require_config();
       if (!config2.localModeEnabled && !config2.local) throw forbidden("Local mode (offline copies on devices) is turned off on this server, so devices cannot sync. An administrator can turn it on in the server settings (LOCAL_MODE_ENABLED, or the setup answer saved in server.json).");
     }
+    var DEVICES = require_devices();
+    function fieldContext(user, device) {
+      if (!device || device.sync_scope !== "field") return null;
+      return FS.context(user.id, FS.windowDays(db3.getSetting));
+    }
+    function pushField(user, device) {
+      if (!device || !device.field_applied_at) return null;
+      return { scope: device.sync_scope === "field" ? FS.context(user.id, FS.windowDays(db3.getSetting)) : null, blank: true };
+    }
+    function assertFieldTable(ctx, t) {
+      const device = DEVICES.ofSession(ctx);
+      if (device && device.sync_scope === "field" && FS.excluded(t.name)) throw forbidden("This is outside what a field device holds");
+    }
     module.exports = (r) => {
       r.get("/api/sync/pull", requireLocalMode, auth3.requireAuth, (ctx) => {
         if (!auth3.hasPerm(ctx.user, "clients:read")) throw forbidden("Your role cannot sync client data");
         const since = ctx.query.get("since") || NEVER2;
         const limit2 = Math.min(Number(ctx.query.get("limit")) || PULL_LIMIT, PULL_LIMIT);
-        const out2 = pull(ctx.user, since, { limit: limit2, scope: ctx.query.get("scope") });
+        const device = DEVICES.ofSession(ctx);
+        const field = fieldContext(ctx.user, device);
+        const out2 = pull(ctx.user, since, { limit: limit2, scope: ctx.query.get("scope"), field });
+        if (device && field && !device.field_applied_at) db3.run(`UPDATE devices SET field_applied_at=? WHERE id=?`, db3.now(), device.id);
+        if (device && !field && device.field_applied_at && out2.complete) db3.run(`UPDATE devices SET field_applied_at=NULL WHERE id=?`, device.id);
         out2.permission_overrides = db3.all(`SELECT permission, mode, reason, granted_at FROM user_permission_overrides WHERE user_id=? ORDER BY permission`, ctx.user.id);
-        audit3.log({ user: ctx.user, action: "sync.pull", ip: ctx.ip, details: { since: since.split("~")[0], backfill: since.includes(BF_MARK) || void 0, complete: out2.complete, scope_changed: out2.scope_changed || void 0, dropped: out2.scope_changed ? { clients: out2.dropped_clients.length, rows: out2.dropped_rows.length } : void 0, rows: Object.fromEntries(Object.entries(out2.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
+        audit3.log({ user: ctx.user, action: "sync.pull", ip: ctx.ip, details: { since: since.split("~")[0], backfill: since.includes(BF_MARK) || void 0, complete: out2.complete, scope_changed: out2.scope_changed || void 0, field: field ? true : void 0, field_reset: out2.field_reset || void 0, dropped: out2.scope_changed ? { clients: out2.dropped_clients.length, rows: out2.dropped_rows.length } : void 0, rows: Object.fromEntries(Object.entries(out2.tables).map(([k, v]) => [k, v.length]).filter(([, n]) => n)) } });
         return out2;
       });
       r.post("/api/sync/push", requireLocalMode, auth3.requireAuth, (ctx) => {
         if (!auth3.hasPerm(ctx.user, "clients:write")) throw forbidden("Your role cannot sync client data");
         if (!ctx.body || typeof ctx.body !== "object") throw badRequest("JSON body required");
-        const res = push(ctx.user, ctx.body);
-        audit3.log({ user: ctx.user, action: "sync.push", ip: ctx.ip, details: { applied: res.applied, rejected: res.rejected.length } });
+        const device = DEVICES.ofSession(ctx);
+        const res = push(ctx.user, ctx.body, pushField(ctx.user, device));
+        audit3.log({ user: ctx.user, action: "sync.push", ip: ctx.ip, details: { applied: res.applied, rejected: res.rejected.length, field: device && device.field_applied_at ? true : void 0 } });
         return res;
       });
       r.get("/api/sync/blob/:table/:id/:column", requireLocalMode, auth3.requireAuth, (ctx) => {
         const t = SYNC2.tables.find((x) => x.name === ctx.params.table && (x.blob || []).includes(ctx.params.column));
         if (!t) throw badRequest("Not a synchronised attachment");
         if (t.writePerm && !auth3.hasPerm(ctx.user, t.writePerm.replace(/:(write|manage)$/, ":read")) && !auth3.hasPerm(ctx.user, t.writePerm)) throw forbidden("You cannot read this attachment");
+        assertFieldTable(ctx, t);
         const row = db3.one(`SELECT * FROM ${t.name} WHERE id=?`, ctx.params.id);
         if (!row) throw require_http().notFound();
         if (t.clientCol && row[t.clientCol]) auth3.assertClientAccess(ctx, row[t.clientCol]);
@@ -47298,6 +47751,7 @@ var require_sync = __commonJS({
         const t = SYNC2.tables.find((x) => x.name === ctx.params.table && (x.blob || []).includes(ctx.params.column));
         if (!t) throw badRequest("Not a synchronised attachment");
         if (t.writePerm && !auth3.hasPerm(ctx.user, t.writePerm)) throw forbidden("You cannot upload this attachment");
+        assertFieldTable(ctx, t);
         const row = db3.one(`SELECT * FROM ${t.name} WHERE id=?`, ctx.params.id);
         if (!row) throw require_http().notFound("Upload the record before its attachment");
         if (t.clientCol && row[t.clientCol]) auth3.assertClientAccess(ctx, row[t.clientCol]);
@@ -47324,70 +47778,8 @@ var require_sync = __commonJS({
     };
     module.exports.pull = pull;
     module.exports.push = push;
+    module.exports.fieldContext = fieldContext;
     module.exports.scopeSql = scopeSql;
-  }
-});
-
-// server/devices.js
-var require_devices = __commonJS({
-  "server/devices.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var { sha256: sha2562, randomToken } = require_crypto();
-    function labelFrom(userAgent) {
-      const ua = userAgent || "";
-      if (/android/i.test(ua)) return "Android phone";
-      if (/ipad/i.test(ua)) return "iPad";
-      if (/iphone/i.test(ua)) return "iPhone";
-      return "Device";
-    }
-    function touch(user, deviceId2, ctx) {
-      const existing = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
-      const label = labelFrom(ctx.headers["user-agent"]);
-      const now2 = db3.now();
-      if (existing) db3.run(`UPDATE devices SET user_id=?, last_seen_at=?, last_ip=?, sync_count=sync_count+1, label=COALESCE(label, ?) WHERE id=?`, user.id, now2, ctx.ip, label, deviceId2);
-      else db3.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count) VALUES(?,?,?,?,?,?,1)`, deviceId2, user.id, label, now2, now2, ctx.ip);
-      return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
-    }
-    function markWiped(deviceId2) {
-      db3.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?) WHERE id=?`, db3.now(), deviceId2);
-      db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
-    }
-    var ACK_TTL_MS = 15 * 6e4;
-    var ackKey = (deviceId2) => `device_wipe_ack:${deviceId2}`;
-    function issueWipeToken(deviceId2) {
-      const token2 = randomToken(32);
-      db3.setSetting(ackKey(deviceId2), JSON.stringify({ hash: sha2562(token2), expires: new Date(Date.now() + ACK_TTL_MS).toISOString() }));
-      return token2;
-    }
-    function ackWipe(deviceId2, token2) {
-      const raw = db3.getSetting(ackKey(deviceId2), null);
-      if (!raw || typeof token2 !== "string" || !token2) return false;
-      let rec;
-      try {
-        rec = JSON.parse(raw);
-      } catch {
-        return false;
-      }
-      if (!rec.hash || Date.parse(rec.expires || 0) < Date.now()) {
-        db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
-        return false;
-      }
-      const given = sha2562(token2);
-      if (given.length !== rec.hash.length || !(init_crypto2(), __toCommonJS(crypto_exports)).timingSafeEqual(import_buffer.Buffer.from(given), import_buffer.Buffer.from(rec.hash))) return false;
-      markWiped(deviceId2);
-      return true;
-    }
-    function requestWipeForUser(userId, { actor, ip, reason } = {}) {
-      const rows = db3.all(`SELECT id FROM devices WHERE user_id=? AND revoked_at IS NULL AND wipe_requested_at IS NULL`, userId);
-      if (!rows.length) return [];
-      const now2 = db3.now();
-      for (const d of rows) db3.run(`UPDATE devices SET wipe_requested_at=? WHERE id=?`, now2, d.id);
-      require_audit().log({ user: actor, action: "device.wipe.requested", entity: "user", entityId: userId, ip, details: { reason, devices: rows.map((d) => d.id) } });
-      return rows.map((d) => d.id);
-    }
-    module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe };
   }
 });
 
@@ -48430,12 +48822,12 @@ var require_auth2 = __commonJS({
       return { sql: `${col} IN (SELECT client_id FROM assignments WHERE user_id=? AND ${activeAssignment()})`, params: [user.id] };
     }
     var COOKIE = "suds_session";
-    function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauthMethod = "password", passkeyId = null, syncClient = false } = {}) {
+    function createSession(user, ctx, { mfaPending = false, mfaSource = null, reauthMethod = "password", passkeyId = null, syncClient = false, deviceId: deviceId2 = null } = {}) {
       const token2 = randomToken(32);
       const now2 = /* @__PURE__ */ new Date();
       const expires = new Date(now2.getTime() + policy().absoluteHours * 3600 * 1e3);
       db3.run(
-        `INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method,passkey_id,sync_client) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method,passkey_id,sync_client,device_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         sha2562(token2),
         user.id,
         now2.toISOString(),
@@ -48448,7 +48840,8 @@ var require_auth2 = __commonJS({
         now2.toISOString(),
         reauthMethod,
         passkeyId,
-        syncClient ? 1 : 0
+        syncClient ? 1 : 0,
+        deviceId2
       );
       return token2;
     }
@@ -48688,6 +49081,10 @@ var require_auth2 = __commonJS({
     function requireAuth(ctx) {
       if (!ctx.user) throw unauthorized();
       if (ctx.session?.mfa_pending) throw new HttpError3(401, "MFA verification required", { mfaRequired: true });
+      if (ctx.session?.device_id && !ctx.path.startsWith("/api/sync/") && !ctx.path.startsWith("/api/auth/")) {
+        const dev = db3.one(`SELECT sync_scope FROM devices WHERE id=?`, ctx.session.device_id);
+        if (dev && dev.sync_scope === "field") throw new HttpError3(403, "A field device's sync session can only sync", { fieldDevice: true });
+      }
       if (!ctx.path.startsWith("/api/auth/")) {
         const shellOnly = ctx.method === "GET" && (ctx.path === "/api/meta/constants" || ctx.path === "/api/me/prefs");
         const sync = !!ctx.session?.sync_client;
@@ -48782,16 +49179,26 @@ var require_auth2 = __commonJS({
           pendingWipe = device;
           wipeRequired(true);
         }
+        if (ctx.body && ctx.body.field_device === true && device.sync_scope !== "field") devices.setScope(device.id, "field", { actor: user, ip: ctx.ip, via: "enrolment" });
       }
       const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
       const syncClient = !!ctx.headers["x-sync-client"];
       const passkeyStep = passkeyStepOwed(user, { syncClient });
       const mfaPending = !!user.mfa_enabled || mfaRequiredForRole && passkeyStep;
-      const token2 = createSession(user, ctx, { mfaPending, syncClient });
+      const token2 = createSession(user, ctx, { mfaPending, syncClient, deviceId: syncClient ? deviceId2 : null });
       if (emergency) console.warn(`[suds] emergency (break-glass) password sign-in by ${user.username} while single sign-on is required`);
       audit3.log({ user, action: mfaPending ? "auth.login.mfa_pending" : "auth.login", ip: ctx.ip, details: emergency ? { emergency_account: true } : void 0 });
       const deadline = mfaDeadline(user, { passkeyCounts: !syncClient });
-      return { token: token2, user: publicUser(user), mfaPending, mfaMethods: mfaPending ? mfaMethods(user, { syncClient }) : void 0, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled && !passkeyStep, mfaSetupDeadline: deadline };
+      const dev = deviceId2 && syncClient ? db3.one(`SELECT sync_scope FROM devices WHERE id=?`, deviceId2) : null;
+      return {
+        token: token2,
+        user: publicUser(user),
+        mfaPending,
+        mfaMethods: mfaPending ? mfaMethods(user, { syncClient }) : void 0,
+        mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled && !passkeyStep,
+        mfaSetupDeadline: deadline,
+        device: dev ? { scope: dev.sync_scope } : void 0
+      };
     }
     function passkeyStepOwed(user, { syncClient = false } = {}) {
       return !syncClient && policy().passkeySignin && passkeyCount(user.id) > 0;
@@ -50208,6 +50615,26 @@ var require_db = __commonJS({
       (d) => {
         addColumn(d, "county_programmes", "on_suds", "INTEGER NOT NULL DEFAULT 1");
         if (tableExists(d, "county_submissions") && !tableCols(d, "county_submissions").includes("source")) rebuildTable(d, safeSchema(), "county_submissions");
+      },
+      // 61: reserved for another 1.21.0 change (numbers are assigned per change so parallel work merges cleanly). A
+      //     documented no-op on this branch, kept so the field-device migration below keeps number 62; when the change
+      //     that owns 61 is merged, its migration replaces this line.
+      (d) => {
+      },
+      // 62: field devices and participant-code clients (built for 1.21.0, not yet released; server/field-scope.js,
+      //     docs/PLATFORM.md "Field devices"). devices.sync_scope ('full' for every existing device: nothing a device
+      //     holds changes on upgrade), scope_changed_at and field_applied_at; sessions.device_id, the device a sync
+      //     sign-in came from (existing sessions predate it: NULL, and they end within hours); clients.participant_code_enc
+      //     and participant_code_idx with their index (no client has a code yet). Self-contained and idempotent, so it can
+      //     be renumbered.
+      (d) => {
+        addColumn(d, "devices", "sync_scope", "TEXT NOT NULL DEFAULT 'full' CHECK (sync_scope IN ('full','field'))");
+        addColumn(d, "devices", "scope_changed_at", "TEXT");
+        addColumn(d, "devices", "field_applied_at", "TEXT");
+        addColumn(d, "sessions", "device_id", "TEXT");
+        addColumn(d, "clients", "participant_code_enc", "TEXT");
+        addColumn(d, "clients", "participant_code_idx", "TEXT");
+        createIndexesFromSchema(d, safeSchema(), ["idx_clients_participant_code"]);
       }
     ];
     var PERF_INDEXES_47 = [
@@ -50722,6 +51149,7 @@ var import_audit = __toESM(require_audit());
 var import_http = __toESM(require_http());
 var import_crypto2 = __toESM(require_crypto());
 var import_sync_tables = __toESM(require_sync_tables());
+var import_field_scope = __toESM(require_field_scope());
 var import_supplies = __toESM(require_supplies());
 var import_notes = __toESM(require_notes());
 var import_tasks = __toESM(require_tasks());
@@ -50874,6 +51302,11 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
     }
     for (const id of payload.dropped_clients || []) {
       if (typeof id !== "string") continue;
+      if (!import_db.default.one(`SELECT 1 FROM clients WHERE id=?`, id)) continue;
+      if (hasUnsent(id)) {
+        skipped.push({ table: "clients", id, reason: "kept on this device: it has changes not yet sent to the office" });
+        continue;
+      }
       if (officeUserId && import_db.default.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id<>? AND ${import_auth.default.activeAssignment()}`, id, officeUserId)) continue;
       import_db.default.savepoint(() => {
         const removed = import_sync_tables.default.purgeClient(import_db.default, id);
@@ -50905,6 +51338,7 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
         (err2) => skipped.push({ table: t.name, id, reason: String(err2 && err2.message || "could not be removed").slice(0, 200) })
       );
     }
+    if (payload.device_scope === "field" && payload.field && typeof payload.field.window_start === "string") pruneField(payload.field.window_start);
     keepNotices(payload.notices);
     if ((payload.dropped_rows || []).length) import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.scope_removed", details: { rows: payload.dropped_rows.length } });
     if (officeUserId && Array.isArray(payload.permission_overrides)) {
@@ -50918,6 +51352,76 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
     settleSupplies(payload, officeUserId, skipped);
   });
   return counts;
+}
+var untouched = (table, alias = "x") => `EXISTS (SELECT 1 FROM sync_seen s WHERE s.table_name='${table}' AND s.id=${alias}.id AND s.updated_at IS COALESCE(${alias}.updated_at, ${alias}.created_at))`;
+var hasTable = (name) => !!import_db.default.one(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`, name);
+function hasUnsent(clientId) {
+  for (const t of import_sync_tables.default.tables) {
+    if (!hasTable(t.name)) continue;
+    const col = t.name === "clients" ? "id" : t.clientCol;
+    if (!col) continue;
+    if (import_db.default.one(`SELECT 1 FROM ${t.name} x WHERE x.${col}=? AND NOT ${untouched(t.name)} LIMIT 1`, clientId)) return true;
+  }
+  return false;
+}
+function referencesTo(name) {
+  const refs = [];
+  for (const t of import_sync_tables.default.tables) {
+    if (t.parent && t.parent[0] === name) refs.push([t.name, t.parent[1]]);
+    if (t.selfParent && t.name === name) refs.push([t.name, t.selfParent]);
+    if (name === "clients" && t.clientCol && t.name !== "clients") refs.push([t.name, t.clientCol]);
+  }
+  if (name === "clients") refs.push(["clients", "merged_into"]);
+  return refs.filter(([tn]) => hasTable(tn));
+}
+function removeUntouched(t, extra = "", params = []) {
+  if (!hasTable(t.name)) return 0;
+  const keep = referencesTo(t.name).map(([tn, col]) => `AND NOT EXISTS (SELECT 1 FROM ${tn} r WHERE r.${col}=x.id${tn === t.name ? " AND r.id<>x.id" : ""})`).join(" ");
+  const ids = import_db.default.all(`SELECT x.id FROM ${t.name} x WHERE ${untouched(t.name)} ${extra} ${keep}`, ...params).map((r) => r.id);
+  let n = 0;
+  for (const id of ids) {
+    import_db.default.savepoint(() => {
+      import_db.default.run(`DELETE FROM ${t.name} WHERE id=?`, id);
+      import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, id);
+      n++;
+    }, () => {
+    });
+  }
+  return n;
+}
+function resetForField(skipped = []) {
+  const counts = {};
+  import_db.default.transaction(() => {
+    for (const t of [...import_sync_tables.default.tables].reverse()) {
+      const d = import_field_scope.default.decision(t.name);
+      if (d && d.decision === "include") continue;
+      const n = removeUntouched(t);
+      if (n) counts[t.name] = n;
+      if (hasTable(t.name)) {
+        for (const r of import_db.default.all(`SELECT x.id FROM ${t.name} x WHERE NOT ${untouched(t.name)}`)) if (!d || d.decision === "exclude") skipped.push({ table: t.name, id: r.id, reason: "kept on this device: it has changes not yet sent to the office" });
+      }
+    }
+    import_db.default.run(`DELETE FROM settings WHERE key='sync_cursor' OR key LIKE 'sync_cursor:%' OR key LIKE 'sync_scope:%'`);
+  });
+  import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.field_reset", details: { rows: counts } });
+  return counts;
+}
+function pruneField(windowStart) {
+  if (!/^\d{4}-\d{2}-\d{2}T/.test(windowStart)) return;
+  const old = (alias) => `${alias}.occurred_at < ?`;
+  if (hasTable("intervention_supplies")) removeUntouched({ name: "intervention_supplies" }, `AND x.intervention_id IN (SELECT i.id FROM interventions i WHERE ${old("i")} AND ${untouched("interventions", "i")})`, [windowStart]);
+  removeUntouched({ name: "interventions" }, `AND ${old("x")}`, [windowStart]);
+  removeUntouched({ name: "overdose_events" }, `AND ${old("x")}`, [windowStart]);
+}
+function scopeStatus() {
+  let field = null;
+  try {
+    field = JSON.parse(import_db.default.getSetting("device_field", "null"));
+  } catch {
+    field = null;
+  }
+  const scope = import_db.default.getSetting("device_sync_scope", null);
+  return { scope, field: scope === "field" ? field : null };
 }
 function applyRow(t, raw, existingCols, toServer, conflicts) {
   const existing = import_db.default.one(`SELECT * FROM ${t.name} WHERE id=?`, raw.id);
@@ -50939,9 +51443,9 @@ function applyRow(t, raw, existingCols, toServer, conflicts) {
   }
   if (existing && t.name !== "users" && !t.serverOwned) {
     const known = seenAt(t.name, existing.id);
-    const untouched = known !== void 0 && known === stamp(existing);
-    if (!untouched && toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER)) return false;
-    if (!untouched) {
+    const untouched2 = known !== void 0 && known === stamp(existing);
+    if (!untouched2 && toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER)) return false;
+    if (!untouched2) {
       const lost = changedColumns(t, existing, raw, existingCols);
       if (lost.length) {
         conflicts.push({ table: t.name, id: raw.id, label: t.name === "clients" ? existing.client_code : null, columns: lost });
@@ -50969,8 +51473,8 @@ function applyTombstone(t, ts, toServer) {
   const existing = import_db.default.one(`SELECT * FROM ${t.name} WHERE id=?`, ts.id);
   if (existing) {
     const known = seenAt(t.name, existing.id);
-    const untouched = known !== void 0 && known === stamp(existing);
-    if (untouched || toServer(stamp(existing)) < ts.deleted_at) {
+    const untouched2 = known !== void 0 && known === stamp(existing);
+    if (untouched2 || toServer(stamp(existing)) < ts.deleted_at) {
       import_db.default.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id);
       import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, ts.id);
     }
@@ -51149,14 +51653,52 @@ function resetExchangeState() {
 }
 var RESTORED_MESSAGE = "The office database was restored from a backup; re-sending this device's records";
 var generationOf = (pulled) => pulled.db_generation === null || pulled.db_generation === void 0 ? "" : String(pulled.db_generation);
-async function run({ server, username, password, code, onProgress = () => {
+async function pushAll(server, token2, officeUserId, onProgress) {
+  onProgress("Uploading this device's changes\u2026");
+  const deviceNow = import_db.default.now();
+  const pending = localRows(officeUserId);
+  const chunks = chunkRows(pending);
+  const pushedCounts = {};
+  const rejected = [];
+  const conflicts = [];
+  for (let i = 0; i < chunks.length; i++) {
+    if (chunks.length > 1) onProgress(`Uploading this device's changes (${i + 1} of ${chunks.length})\u2026`);
+    const res = await call(server, "/api/sync/push", { method: "POST", body: JSON.stringify({ device_now: deviceNow, tables: chunks[i] }) }, token2);
+    const rejectedIds = new Set((res.rejected || []).map((x) => x.table + ":" + x.id));
+    rejected.push(...res.rejected || []);
+    conflicts.push(...res.conflicts || []);
+    for (const w of res.warnings || []) conflicts.push({ table: w.table, id: w.id, label: null, columns: [], reason: w.reason, warning: true });
+    for (const [k, v] of Object.entries(res.applied || {})) if (typeof v === "number") pushedCounts[k] = (pushedCounts[k] || 0) + v;
+    import_db.default.transaction(() => {
+      for (const [table, rows] of Object.entries(chunks[i])) for (const r of rows) if (!rejectedIds.has(table + ":" + r.id)) seen(table, r.id, stamp(r));
+      settleRejections(res.rejected || [], chunks[i], conflicts);
+    });
+  }
+  const tombstones = pendingTombstones();
+  const auditRows = import_db.default.all(`SELECT at, action, entity, entity_id, client_id, success, details FROM audit_log WHERE at > ? AND action NOT LIKE 'sync.%' ORDER BY at, id LIMIT 2000`, import_db.default.getSetting("audit_pushed", NEVER));
+  if (tombstones.length || auditRows.length) {
+    const res = await call(server, "/api/sync/push", { method: "POST", body: JSON.stringify({ device_now: deviceNow, tombstones, audit: auditRows }) }, token2);
+    const rejectedIds = new Set((res.rejected || []).map((x) => x.table + ":" + x.id));
+    rejected.push(...res.rejected || []);
+    const permanent = new Set((res.rejected || []).filter((x) => isPermanent(x)).map((x) => x.table + ":" + x.id));
+    import_db.default.transaction(() => {
+      for (const ts of tombstones) if (!rejectedIds.has(ts.table_name + ":" + ts.id) || permanent.has(ts.table_name + ":" + ts.id)) import_db.default.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, ts.table_name, ts.id);
+    });
+    import_db.default.setSetting("sync_pushed", deviceNow);
+    if (auditRows.length) import_db.default.setSetting("audit_pushed", auditRows[auditRows.length - 1].at);
+  } else {
+    import_db.default.setSetting("sync_pushed", deviceNow);
+  }
+  return { pushedCounts, rejected, conflicts };
+}
+async function run({ server, username, password, code, fieldDevice = false, onProgress = () => {
 } }) {
   if (!server) throw new import_http.HttpError(400, "Office server address is required");
   assertNotStaticHost();
   onProgress("Signing in to the office server\u2026");
   let login;
   try {
-    login = await call(server, "/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+    login = await call(server, "/api/auth/login", { method: "POST", body: JSON.stringify({ username, password, ...fieldDevice ? { field_device: true } : {} }) });
   } catch (e) {
     if (e.data && (e.data.deviceWipeRequired || e.data.deviceRevoked && e.data.wipeRequested)) {
       onProgress("This device has been remotely wiped by an administrator\u2026");
@@ -51190,6 +51732,27 @@ async function run({ server, username, password, code, onProgress = () => {
     const skipped = [];
     const notices = [];
     const officeUserId = login.user && login.user.id || username;
+    const officeScope = login.device && ["full", "field"].includes(login.device.scope) ? login.device.scope : null;
+    const heldScope = import_db.default.getSetting("device_sync_scope", "full");
+    let earlyPushed = {};
+    const earlyRejected = [];
+    const earlyConflicts = [];
+    let fieldResetDone = false;
+    if (officeScope && officeScope !== heldScope) {
+      onProgress(officeScope === "field" ? "This device is now a field device: sending its changes first\u2026" : "This device now holds everything again: sending its changes first\u2026");
+      if (import_db.default.getSetting("last_sync_at", null)) {
+        const first = await pushAll(server, token2, officeUserId, onProgress);
+        earlyPushed = first.pushedCounts;
+        earlyRejected.push(...first.rejected);
+        earlyConflicts.push(...first.conflicts);
+      }
+      if (officeScope === "field") {
+        onProgress("Removing what a field device does not keep\u2026");
+        resetForField(skipped);
+        fieldResetDone = true;
+        notices.push("This device is now a field device: it keeps only what you need in the field. Everything else was removed from it (nothing was deleted at the office).");
+      } else notices.push("This device is no longer a field device: it downloaded everything you may see.");
+    }
     let since = readCursor(officeUserId, username);
     const applied = {};
     let pages = 0;
@@ -51226,7 +51789,15 @@ async function run({ server, username, password, code, onProgress = () => {
         pages++;
         continue;
       }
+      if (pulled.field_reset && !fieldResetDone) {
+        resetForField(skipped);
+        fieldResetDone = true;
+      }
       const counts = applyPull(pulled, pullConflicts, skipped, officeUserId);
+      if (pulled.device_scope === "field" || pulled.device_scope === "full") {
+        import_db.default.setSetting("device_sync_scope", pulled.device_scope);
+        import_db.default.setSetting("device_field", JSON.stringify(pulled.device_scope === "field" && pulled.field ? { window_days: pulled.field.window_days, holds: pulled.field.holds } : null));
+      }
       for (const [k, v] of Object.entries(counts)) applied[k] = (applied[k] || 0) + v;
       serverNow = pulled.server_now;
       since = pulled.cursor;
@@ -51240,41 +51811,10 @@ async function run({ server, username, password, code, onProgress = () => {
       }
       if (++pages > 200) break;
     }
-    onProgress("Uploading this device's changes\u2026");
-    const deviceNow = import_db.default.now();
-    const pending = localRows(officeUserId);
-    const chunks = chunkRows(pending);
-    const pushedCounts = {};
-    const rejected = [];
-    const conflicts = [...pullConflicts];
-    for (let i = 0; i < chunks.length; i++) {
-      if (chunks.length > 1) onProgress(`Uploading this device's changes (${i + 1} of ${chunks.length})\u2026`);
-      const res = await call(server, "/api/sync/push", { method: "POST", body: JSON.stringify({ device_now: deviceNow, tables: chunks[i] }) }, token2);
-      const rejectedIds = new Set((res.rejected || []).map((x) => x.table + ":" + x.id));
-      rejected.push(...res.rejected || []);
-      conflicts.push(...res.conflicts || []);
-      for (const w of res.warnings || []) conflicts.push({ table: w.table, id: w.id, label: null, columns: [], reason: w.reason, warning: true });
-      for (const [k, v] of Object.entries(res.applied || {})) if (typeof v === "number") pushedCounts[k] = (pushedCounts[k] || 0) + v;
-      import_db.default.transaction(() => {
-        for (const [table, rows] of Object.entries(chunks[i])) for (const r of rows) if (!rejectedIds.has(table + ":" + r.id)) seen(table, r.id, stamp(r));
-        settleRejections(res.rejected || [], chunks[i], conflicts);
-      });
-    }
-    const tombstones = pendingTombstones();
-    const auditRows = import_db.default.all(`SELECT at, action, entity, entity_id, client_id, success, details FROM audit_log WHERE at > ? AND action NOT LIKE 'sync.%' ORDER BY at, id LIMIT 2000`, import_db.default.getSetting("audit_pushed", NEVER));
-    if (tombstones.length || auditRows.length) {
-      const res = await call(server, "/api/sync/push", { method: "POST", body: JSON.stringify({ device_now: deviceNow, tombstones, audit: auditRows }) }, token2);
-      const rejectedIds = new Set((res.rejected || []).map((x) => x.table + ":" + x.id));
-      rejected.push(...res.rejected || []);
-      const permanent = new Set((res.rejected || []).filter((x) => isPermanent(x)).map((x) => x.table + ":" + x.id));
-      import_db.default.transaction(() => {
-        for (const ts of tombstones) if (!rejectedIds.has(ts.table_name + ":" + ts.id) || permanent.has(ts.table_name + ":" + ts.id)) import_db.default.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, ts.table_name, ts.id);
-      });
-      import_db.default.setSetting("sync_pushed", deviceNow);
-      if (auditRows.length) import_db.default.setSetting("audit_pushed", auditRows[auditRows.length - 1].at);
-    } else {
-      import_db.default.setSetting("sync_pushed", deviceNow);
-    }
+    const { pushedCounts, rejected, conflicts: pushConflicts } = await pushAll(server, token2, officeUserId, onProgress);
+    const conflicts = [...pullConflicts, ...earlyConflicts, ...pushConflicts];
+    rejected.unshift(...earlyRejected);
+    for (const [k, v] of Object.entries(earlyPushed)) pushedCounts[k] = (pushedCounts[k] || 0) + v;
     const uploaded = await uploadBlobs(server, token2, onProgress);
     const downloaded = await fetchBlobs(server, token2, onProgress);
     import_db.default.setSetting("last_sync_at", import_db.default.now());
@@ -51291,14 +51831,15 @@ async function run({ server, username, password, code, onProgress = () => {
 }
 function register(router2) {
   router2.post("/api/local/sync", import_auth.default.requireAuth, async (ctx) => {
-    const { server, username, password, code } = ctx.body || {};
-    return run({ server, username: username || ctx.user.username, password, code });
+    const { server, username, password, code, field_device: fieldDevice } = ctx.body || {};
+    return run({ server, username: username || ctx.user.username, password, code, fieldDevice: fieldDevice === true });
   });
   router2.get("/api/local/sync/status", import_auth.default.requireAuth, () => ({
     last_sync_at: import_db.default.getSetting("last_sync_at", null),
     server: import_db.default.getSetting("sync_server", null),
     username: import_db.default.getSetting("sync_username", null),
-    pending: localRows().length
+    pending: localRows().length,
+    device: scopeStatus()
   }));
 }
 

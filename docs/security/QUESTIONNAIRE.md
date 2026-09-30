@@ -173,6 +173,7 @@ What is still missing:
 - **Off by default.** Local mode is off unless the setup wizard or IT (`LOCAL_MODE_ENABLED`) turns it on. The wizard recommends it for harm-reduction and outreach programmes.
 - **Sealed copies.** If it is on, registered devices hold copies sealed under each person's password. Devices can be revoked and wiped remotely.
 - **What a copy holds.** A copy holds what its user may see. **Under the 1.16.0 role defaults, that is the whole programme's records, clinical notes included**, unless the person is held to their caseload before the device first syncs: *See every client* denied to them, or, from 1.17.0, the least-privilege default, on for a new install, which holds every new navigator and clinician to their caseload (#22).
+- **Field devices** (built for 1.21.0, not yet released). An administrator can make a device a field device (or every new device one): it then holds only its worker's own recent caseload (no contact, intake, legal or clinical details), their contacts, to-dos, supplies and lists; no notes, documents or consents. The office enforces it on every pull and push, from its own record of the device the sync session signed in from ([../PLATFORM.md](../PLATFORM.md), *Field devices*). Off unless turned on.
 - **Shared devices.** On a device shared by several accounts, every account unlocks the same key. What separates them is the app's rules, not cryptography ([THREAT-MODEL.md](THREAT-MODEL.md), *Residual risks* 4).
 
 ## Evidence, vulnerability disclosure and support

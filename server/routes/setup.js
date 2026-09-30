@@ -77,6 +77,9 @@ module.exports = (r) => {
       local_mode: { type: 'boolean' },
       // What kind of programme this is (server/programme.js); omitted means harm reduction & outreach.
       programme_profile: { type: 'string', enum: Object.keys(require('../programme').PROFILES) },
+      // "Outreach records use a participant code by default" (1.21.0): offered for a harm-reduction programme; omitted
+      // (or any other profile) means off, the default everywhere.
+      participant_code_default: { type: 'boolean' },
       // The programme's main fund (optional): created and made the default fund for new visits.
       main_fund_name: { type: 'string', maxLen: 200 },
       // What kind of money it is (C.FUNDING_TYPES), and for opioid settlement money the settlement report's
@@ -106,6 +109,7 @@ module.exports = (r) => {
       db.setSetting('org_name', v.org_name); if (v.county_name) db.setSetting('county_name', v.county_name); if (v.program_contact) db.setSetting('program_contact', v.program_contact);
       db.setSetting('caseload_restriction', '1');
       db.setSetting('programme_profile', v.programme_profile || require('../programme').DEFAULT_PROFILE);
+      if (v.participant_code_default === true && (v.programme_profile || require('../programme').DEFAULT_PROFILE) === 'harm_reduction') db.setSetting('participant_code_default', '1');
       mainFund = require('./budget').createProgrammeFund(v.main_fund_name, { type: v.main_fund_type || 'other', settlement_use: v.main_fund_settlement_use || null, settlement_hiaa: v.main_fund_settlement_hiaa || null });
     });
     const defaults = applyProductionDefaults();

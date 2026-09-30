@@ -31,6 +31,11 @@ route('setup', async () => {
     { name: 'programme_profile', label: 'What kind of program is this?', type: 'select', noBlank: true, required: true, value: 'harm_reduction', span: true,
       options: [{ value: 'harm_reduction', label: 'Harm reduction & outreach — outreach, visits, supplies, referrals and grant reporting (recommended)' }, { value: 'treatment', label: 'Treatment-adjacent — adds care plans, assessments (ASAM), CalOMS Tx, the FHIR API and the county EHR hand-off' }, { value: 'part2_layer', label: 'Part 2 compliance module beside your EHR — consents, disclosures, notices, breaches and patient requests; the EHR stays the clinical record' }],
       help: 'Changes only what the screens show. You can switch any clinical module on later in Settings › Program.' },
+    // Minimal personal information (1.21.0): offered to a harm-reduction or syringe services programme only (shown
+    // while that profile is chosen); off unless answered Yes, as it is everywhere else. Settings › Program changes it.
+    { name: 'participant_code_default', label: 'Should outreach records use a participant code instead of a name by default?', type: 'select', noBlank: true, value: 'no', span: true,
+      options: [{ value: 'no', label: 'No — new clients start with their name (you can change this later)' }, { value: 'yes', label: 'Yes — new clients and outreach contacts start with a participant code; a name is an extra step' }],
+      help: 'For a syringe services program whose participants often give no name. A client known only by a code is counted like any other client. Change it any time in Settings › Program › Minimal personal information.' },
     // Optional: the fund most of the work is charged to. Created for this fiscal year (July–June) and made the
     // default for new visits, so they are not all "No funding source" until someone finds Settings.
     { name: 'main_fund_name', label: 'Main funding source (optional)', placeholder: 'e.g. County opioid settlement allocation', span: true, maxLen: 200,
@@ -68,6 +73,8 @@ route('setup', async () => {
     if (d.network === 'lan' && !d.https) throw new Error('HTTPS is required when other devices can connect');
     delete d.confirm;
     if ('local_mode' in d) d.local_mode = d.local_mode === 'yes';
+    // Answered only for a harm-reduction programme; any other profile leaves it off.
+    d.participant_code_default = d.programme_profile === 'harm_reduction' && d.participant_code_default === 'yes';
     // The fund's type and settlement category go only with a fund, and the category only with settlement money.
     if (!d.main_fund_name) { delete d.main_fund_type; delete d.main_fund_settlement_use; delete d.main_fund_settlement_hiaa; }
     else if (d.main_fund_type !== 'opioid_settlement') { delete d.main_fund_settlement_use; delete d.main_fund_settlement_hiaa; }
@@ -91,6 +98,11 @@ route('setup', async () => {
   } });
   // The offline-copy advice follows the programme profile until someone answers the question themselves.
   const profileSel = f.querySelector('select[name=programme_profile]'); const offlineSel = f.querySelector('select[name=local_mode]');
+  // The participant-code question is for a harm-reduction programme only (1.21.0).
+  const codeWrap = f.querySelector('[data-field="participant_code_default"]');
+  const syncCodeQuestion = () => { if (codeWrap && profileSel) codeWrap.hidden = profileSel.value !== 'harm_reduction'; };
+  if (profileSel) profileSel.addEventListener('change', syncCodeQuestion);
+  syncCodeQuestion();
   if (profileSel && offlineSel) {
     let touched = false;
     offlineSel.addEventListener('change', () => { touched = true; });

@@ -39,6 +39,9 @@ function possibleDuplicates(v, excludeId = null) {
   if (v.dob && v.last_name) add('(c.dob_idx=? AND c.last_name_idx=?)', blindIndex(v.dob), blindIndex(v.last_name));
   if (v.phone) add('c.phone_idx=?', blindIndex(String(v.phone).replace(/\D/g, '')));
   if (v.first_name && v.last_name) add('c.full_name_idx=?', blindIndex((v.last_name || '') + (v.first_name || '')));
+  // The same participant code is the same person by the programme's own recipe (1.21.0).
+  const codeIdx = v.participant_code ? require('../participant-code').index(v.participant_code) : null;
+  if (codeIdx) add('c.participant_code_idx=?', codeIdx);
   if (!clauses.length) return [];
   const rows = db.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND (${clauses.join(' OR ')}) ${excludeId ? 'AND c.id<>?' : ''} LIMIT 10`, ...params, ...(excludeId ? [excludeId] : []));
   return rows.map(x => {
@@ -47,6 +50,7 @@ function possibleDuplicates(v, excludeId = null) {
     if (v.dob && v.last_name && x.dob_idx === blindIndex(v.dob) && x.last_name_idx === blindIndex(v.last_name)) reasons.push('same surname and date of birth');
     if (v.phone && x.phone_idx === blindIndex(String(v.phone).replace(/\D/g, ''))) reasons.push('same phone number');
     if (v.first_name && v.last_name && x.full_name_idx === blindIndex((v.last_name || '') + (v.first_name || ''))) reasons.push('same full name');
+    if (codeIdx && x.participant_code_idx === codeIdx) reasons.push('same participant code');
     return { id: x.id, client_code: x.client_code, display_name: d.display_name, dob: d.dob, status: x.status, intake_date: x.intake_date, reasons };
   });
 }
@@ -178,6 +182,8 @@ module.exports = (r) => {
       else if (isCode) { where.push('c.client_code=?'); params.push(q.toUpperCase()); searched = ['client_code']; }
       else if (/^\d{4}-\d{2}-\d{2}$/.test(q)) { where.push('c.dob_idx=?'); params.push(blindIndex(q)); searched = ['dob']; }
       else if (/^[\d\-() .+]{7,}$/.test(q)) { where.push('c.phone_idx=?'); params.push(blindIndex(q.replace(/\D/g, ''))); searched = ['phone']; }
+      // A participant code typed as the person gives it (1.21.0): "code ABC123", or a code-shaped word that matches one.
+      else if (/^code\s+\S+$/i.test(q)) { const PC = require('../participant-code'); where.push('c.participant_code_idx=?'); params.push(PC.index(q.replace(/^code\s+/i, '')) || ''); searched = ['participant_code']; }
       else {
         searched = ['name'];
         // Exact surname or full name first, then the coarse indexes so a partial surname ("ngu") or a
@@ -196,6 +202,9 @@ module.exports = (r) => {
             const snd = M.namePhoneticIndex(part); if (snd) { clauses.push('c.name_phonetic_idx=?'); params.push(snd); }
           }
         }
+        // A participant code typed on its own finds the client it belongs to (1.21.0): one word, letters and digits.
+        const codeIdx = parts.length === 1 && !require('../participant-code').problem(parts[0]) ? require('../participant-code').index(parts[0]) : null;
+        if (codeIdx) { clauses.push('c.participant_code_idx=?'); params.push(codeIdx); }
         where.push(`(${clauses.join(' OR ')})`);
         // How well each record matched: 0 the full name, 1 a surname, first name, preferred name or word of a
         // compound surname exactly, 2 the start of a name (its first three letters), 3 only sounds alike
@@ -279,13 +288,13 @@ module.exports = (r) => {
       audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, success: false, details: { reason: 'rate limited' } });
       throw new HttpError(429, 'Too many duplicate checks. Wait a few minutes; the check is made again when the client is saved.');
     }
-    const v = validate(ctx.body, { first_name: { type: 'string', maxLen: 100 }, last_name: { type: 'string', maxLen: 100 }, dob: { type: 'date' }, phone: { type: 'string', maxLen: 40 }, exclude_id: { type: 'string' } });
+    const v = validate(ctx.body, { first_name: { type: 'string', maxLen: 100 }, last_name: { type: 'string', maxLen: 100 }, dob: { type: 'date' }, phone: { type: 'string', maxLen: 40 }, participant_code: { type: 'string', maxLen: 40 }, exclude_id: { type: 'string' } });
     const all = possibleDuplicates(v, v.exclude_id || null);
     const matches = all.filter(m => mayOpen(ctx.user, m.id));
     const hidden = all.filter(m => !mayOpen(ctx.user, m.id));
     const readmit = readmitOffers(ctx, hidden);
     // Every check is audited, found or not: which details were given (never their values) and what matched.
-    audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, details: { asked: ['first_name', 'last_name', 'dob', 'phone'].filter(k => v[k]), matches: all.length, hidden: hidden.length, shown: matches.map(m => m.client_code), readmit_offered: readmit.length ? readmit.map(m => hidden.find(x => x.id === m.id).client_code) : undefined } });
+    audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, details: { asked: ['first_name', 'last_name', 'dob', 'phone', 'participant_code'].filter(k => v[k]), matches: all.length, hidden: hidden.length, shown: matches.map(m => m.client_code), readmit_offered: readmit.length ? readmit.map(m => hidden.find(x => x.id === m.id).client_code) : undefined } });
     // No count of the matches the caller cannot open: that answered "is this person a client here?".
     return { matches, readmit };
   });
@@ -307,6 +316,9 @@ module.exports = (r) => {
     }
     delete v.confirm_duplicate;
     const noEpisode = !!v.no_episode; delete v.no_episode;
+    // A client known by a participant code and no name yet (1.21.0): the name columns hold empty strings.
+    if (v.first_name === undefined) v.first_name = '';
+    if (v.last_name === undefined) v.last_name = '';
     const id = uuid();
     const enc = M.encryptFields(v);
     enc.full_name_idx = blindIndex((v.last_name || '') + (v.first_name || ''));

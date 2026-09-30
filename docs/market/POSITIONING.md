@@ -14,8 +14,10 @@ Three leads, in this order, each stated no further than the software goes:
    been made yet; the first is to be tested in a pilot.
 2. **Field-ready outreach.** One **+ Log** button on a phone, anonymous contacts that still count, supplies drawn
    from the van or site they left, and an offline copy that syncs with the office where the programme turns it on.
-   The Street outreach screen and the SSP participant code are released in 1.17.0; a field device scope and
-   minimal-personal-information defaults beyond that are planned, not built.
+   The Street outreach screen and the SSP participant code are released in 1.17.0. A field device scope (a
+   device that holds only its worker's recent caseload, contacts and to-dos) and a participant-code-first
+   default for new clients and contacts are built for 1.21.0, not yet released; both are off unless an
+   administrator turns them on ([docs/PLATFORM.md](../PLATFORM.md), *Field devices*).
 3. **Funder outcomes.** Funder report, NDP log, settlement expenditure report by allowable use and the layouts for
    DHCS and county settlement reporting, as exact submissions or screened publication releases. Each layout is to
    be checked against the funder's current template. A county view across the CBOs a county funds is released in 1.18.0:

@@ -320,6 +320,9 @@ route('sync', async () => {
   // The office that served this page: the Content-Security-Policy (connect-src 'self', server/csp.js) lets a
   // browser sync only with the site it opened SUDS from.
   const serverGuess = st.server || location.origin;
+  // What this device holds, as the office last said (local/sync.js scopeStatus).
+  const fieldDevice = !!(st.device && st.device.scope === 'field');
+  const fieldInfo = fieldDevice ? st.device.field : null;
   const log = h('div', { class: 'small muted mt', 'data-sync-log': '1' });
   const f = form([
     { name: 'server', label: 'Office SUDS address', required: true, value: serverGuess, help: 'The address you opened SUDS from (this browser can sync only with that office SUDS). Shown under Settings → Network & devices on the office computer.', span: true },
@@ -331,10 +334,15 @@ route('sync', async () => {
     // still honor, unlike "off"), keeps this field empty until the person types into it themselves.
     { name: 'office_password', label: 'Office password', type: 'password', required: true, autocomplete: 'new-password', help: 'Your office SUDS account password — not the password you use to unlock this device.' },
     { name: 'code', label: '2-step code (if your office account uses it)', placeholder: '123456' },
+    // A field device (1.21.0, server/field-scope.js): its user may narrow what it holds as they enrol it; only an
+    // administrator can widen it again (Settings -> Synced devices).
+    ...(fieldDevice ? [] : [{ name: 'field_device', label: 'Keep only what I need in the field on this device (field device)', type: 'checkbox', span: true,
+      help: 'The device then holds your own clients assigned or seen recently (name, participant code and safety flags only), your contacts, to-dos, supplies and lists — no notes, documents, consents or intake details. Only an administrator can change it back.' }]),
   ], { submitText: 'Sync now', onSubmit: async (d) => {
     log.textContent = 'Connecting…';
     try {
-      const { office_password, ...rest } = d;
+      const { office_password, field_device: fd, ...rest } = d;
+      if (fd) rest.field_device = true;
       // quiet: what comes back is about the *office* account (a wrong office password is a 401, an office
       // account that needs a code is a 401 too) and must not be read by api() as this device's own session
       // expiring or needing its own second factor.
@@ -403,8 +411,9 @@ route('sync', async () => {
     h('div', { class: 'banner warn mb', 'data-device-protection': '1' }, h('b', {}, 'This is an offline copy of the office SUDS. '),
       'Its records are encrypted with your device password and locked whenever you log out or step away, so a lost device does not give them up without that password. While you are logged in they are open on this device: log out when you put it down. If you forget the password, the records here cannot be opened; anything not yet synced is lost and the rest comes back from the office when the device is set up again. Keep real client information on the office SUDS unless your administrator has approved this device for field work.'),
     h('div', { class: 'grid cols-2' },
-      h('div', { class: 'card' }, h('h2', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Data protection', badge('Encrypted, opened by your password', 'ok')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
-        h('p', { class: 'small muted mt' }, 'Sync exchanges clients, visits, calls, notes, reminders, referrals and everything else in both directions. The office SUDS decides: the newest change wins, a change it rejects for good is not sent again, and a record the office has purged or merged does not come back.')),
+      h('div', { class: 'card' }, h('h2', {}, 'Status'), kv([['This device', badge('Local copy', 'info')], ['Holds', h('span', { 'data-device-holds': fieldDevice ? 'field' : 'full' }, fieldDevice ? badge('Field device', 'info') : 'Everything you may see')], ['Data protection', badge('Encrypted, opened by your password', 'ok')], ['Last sync', st.last_sync_at ? fmt.dt(st.last_sync_at) : 'never'], ['Changes waiting to send', String(st.pending)], ['Office server', st.server || 'not set yet']]),
+        fieldDevice ? h('p', { class: 'small mt', 'data-field-device-status': '1' }, h('b', {}, 'Field device: '), `holds only ${(fieldInfo && fieldInfo.holds) || 'what you need in the field'}. Everything else stays at the office. Your administrator decides this (Settings › Synced devices on the office SUDS).`) : null,
+        h('p', { class: 'small muted mt' }, fieldDevice ? 'Sync exchanges what this field device holds in both directions. The office SUDS decides: the newest change wins, a change it rejects for good is not sent again, and a record outside what a field device holds is not accepted from it.' : 'Sync exchanges clients, visits, calls, notes, reminders, referrals and everything else in both directions. The office SUDS decides: the newest change wins, a change it rejects for good is not sent again, and a record the office has purged or merged does not come back.')),
       h('div', { class: 'card' }, h('h2', {}, 'Sync now'), h('p', { class: 'small muted' }, 'Connect this device to the office Wi-Fi (or the address IT gave you), then sign in with your office account.'), f, log,
         h('div', { class: 'btn-row' }, eraseDeviceButton())),
       await safetyCard(dev, refresh),

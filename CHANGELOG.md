@@ -4,6 +4,32 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Field devices and minimal personal information (stream F)
+
+Built for 1.21.0, not yet released. Migration 62 (61 is kept for another 1.21.0 change). Both features are off unless
+an administrator turns them on.
+
+- **Field devices.** A device can be made a *field device* (Settings › Synced devices; its user may choose it when
+  enrolling, narrowing only; or Settings › Program › *New devices start as field devices*). Its sync then carries
+  only its worker's own caseload assigned or seen in the last 90 days (a setting, 7 to 365), with contact, intake,
+  legal and clinical columns blank, those clients' and the worker's own contacts and overdose reports in that window,
+  the worker's own to-dos, supplies, sites and lists: no notes, documents, consents, episodes or assessments. Every
+  synchronised table has an explicit decision in `server/field-scope.js`, and a test fails when one has none. The
+  office enforces it on pull and push from its own record of the device the session signed in from
+  (`sessions.device_id`): a field device cannot pull or push outside it (caseload transfers and merges included),
+  a blank column it sends back never clears the office's value, and its sync session reaches only the sync routes.
+  A device that changes scope sends its changes first, then removes what it may no longer hold (nothing is deleted
+  at the office). Settings › Synced devices shows what each device holds; This device says *Field device: holds
+  only …*. Changes are audited (`device.scope`).
+- **Participant code first.** Settings › Program › Minimal personal information › *Outreach records use a
+  participant code by default* (offered by the setup wizard to a harm-reduction programme, answered No unless
+  changed). With it on, New client asks for the participant code and keeps the name, date of birth and phone
+  behind *Add a name*; Street outreach asks for the code right under the kind of contact; a new visit with no
+  client starts with its code open. A client may be known by a code alone (`clients.participant_code_enc`,
+  encrypted, with a blind index in the same domain as a visit's code): shown as *Participant CODE*, found by the
+  code in the client search and the duplicate check, counted as a client, and counted once in the syringe
+  services summary when the same code is given at an anonymous contact.
+
 ## 1.20.0 — 2026-09-30
 
 A feature release (migration 60 and the county-entered figures routes), released under a policy exception inside
