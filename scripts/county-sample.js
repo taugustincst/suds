@@ -1,23 +1,30 @@
 'use strict';
 // Sample county submissions for trying the county view (docs/COUNTY-VIEW.md) on a development server or in tests:
-// three fictional programmes, each with its own Ed25519 key (derived from its name, so the same every run) and a
-// signed submission for each of the last two complete calendar quarters. Nothing here touches a database: the
-// files are what three programmes' own SUDS servers would have made under Send to the county.
+// three fictional programs, each with its own Ed25519 key (derived from its name, so the same every run) and a
+// signed submission for each of the last two complete calendar quarters, made for one county (its county code).
 //
-//   node scripts/county-sample.js <dir>     writes <dir>/programmes.json (name, public key, fingerprint of each)
-//                                            and <dir>/<programme>-<from>_<to>.json (the signed files)
+//   node scripts/county-sample.js --register
+//       Development only: registers the three sample programs in this machine's development database (the one
+//       `npm run dev` serves) and imports their files, made for that database's own county code. A presenter is
+//       set up in under a minute: open County view. Refuses to run against a production server's data.
+//   node scripts/county-sample.js <dir> --county-code ABCD-EFGH
+//       Writes <dir>/programmes.json (name, public key, fingerprint of each) and <dir>/<program>-<from>_<to>.json
+//       (the signed files), made for the county whose code is given (County view › Programs shows it). Nothing
+//       here touches a database: the files are what three programs' own SUDS servers would have made. Register
+//       each key and import each file on the county's server (the browser suite does this through the API).
 //
-// Then, on a server signed in as an administrator: County view › Programmes › Register a programme (paste each
-// public key), and Import a submission (each file). `npm run seed` stays a programme's data; this is the county's.
-// It needs no database, keys or data directory of a server (signWithSeed signs with each sample programme's own
-// key): run as a command, it loads SUDS's modules as the test suite does, so it never reads or writes a server's
-// data folder whatever SUDS_ENV the shell has.
-if (require.main === module) { process.env.SUDS_ENV = 'test'; process.env.SUDS_DB_PATH = ':memory:'; }
-process.env.SUDS_ENV = process.env.SUDS_ENV || 'test';
+// `npm run seed` stays a program's data; this is the county's. Written to a directory, it needs no database, keys or
+// data directory of a server (signWithSeed signs with each sample program's own key): it loads SUDS's modules as
+// the test suite does, so it never reads or writes a server's data folder whatever SUDS_ENV the shell has.
+// Required as a module (the tests, scripts/ui/county.mjs for lastQuarters), it loads SUDS's modules only when a
+// file is signed.
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const K = require('../server/county');
+
+const REGISTER = require.main === module && process.argv.includes('--register');
+if (require.main === module && !REGISTER) { process.env.SUDS_ENV = 'test'; process.env.SUDS_DB_PATH = ':memory:'; }
+const county = () => require('../server/county');
 
 const PROGRAMMES = [
   { slug: 'riverbend', name: 'Riverbend Harm Reduction Collective', scale: 1.0,
@@ -28,6 +35,8 @@ const PROGRAMMES = [
     funds: [{ name: 'Settlement prevention fund', grant_number: 'OSF-HV-2', category: 'core_g', hiaa: 'hiaa_5' }] },
 ];
 const seedOf = (slug) => crypto.createHash('sha256').update(`suds-county-sample:${slug}`).digest();
+/** The county the sample files are made for when a test does not say (a fixed, valid county code). */
+const SAMPLE_COUNTY = { county_code: 'SAMP1E00', county_name: 'Sample County Behavioral Health' };
 
 /** The last `n` complete calendar quarters before `today` (YYYY-MM-DD), oldest first. */
 function lastQuarters(today = new Date().toISOString().slice(0, 10), n = 2) {
@@ -41,38 +50,83 @@ function lastQuarters(today = new Date().toISOString().slice(0, 10), n = 2) {
   return out;
 }
 
-/** A plausible, fictional payload for one programme and period (`k` varies the figures between periods). */
-function payloadFor(p, period, k = 1) {
+/** A plausible, fictional payload for one program and period (`k` varies the figures between periods). */
+function payloadFor(p, period, k = 1, { recipient = SAMPLE_COUNTY, generatedAt = `${period.to}T23:00:00.000Z` } = {}) {
+  const K = county();
   const n = (x) => Math.round(x * p.scale * k);
   const vals = (w) => ({ contacts: n(420 * w), naloxone_kits: n(260 * w), fentanyl_strips: n(900 * w), syringes: n(3000 * w), reversals: n(9 * w), treatment_admissions: n(14 * w),
     education_contacts: n(35 * w), staff_training_hours: Math.round(40 * w * p.scale * k * 10) / 10, referrals_made: n(60 * w), people_served: n(310 * w), people_linked: n(22 * w), moud_linked: n(11 * w), people_trained: n(80 * w) });
   const share = p.funds.map((_, i) => (p.funds.length === 1 ? 1 : i === 0 ? 0.7 : 0.3));
   const funds = p.funds.map((f, i) => { const spent = Math.round(52000 * p.scale * k * share[i] * 100) / 100; return { ...f, spend: { own_category: spent, other_categories: 0, approved: spent, pending: Math.round(spent * 0.05 * 100) / 100 }, values: vals(share[i]) }; });
-  const sum = (key) => Object.fromEntries(Object.keys(funds[0].values).map(v => [v, Math.round(funds.reduce((t, f) => t + f.values[v], 0) * 10) / 10]));
-  const cats = [...new Set(funds.map(f => f.category))].map(c => { const fs2 = funds.filter(f => f.category === c); return { key: c, spend_own_category: Math.round(fs2.reduce((t, f) => t + f.spend.own_category, 0) * 100) / 100, values: vals(fs2.reduce((t, f, i) => t + share[funds.indexOf(f)], 0)) }; });
+  const sum = () => Object.fromEntries(Object.keys(funds[0].values).map(v => [v, Math.round(funds.reduce((t, f) => t + f.values[v], 0) * 10) / 10]));
+  const cats = [...new Set(funds.map(f => f.category))].map(c => { const fs2 = funds.filter(f => f.category === c); return { key: c, spend_own_category: Math.round(fs2.reduce((t, f) => t + f.spend.own_category, 0) * 100) / 100, values: vals(fs2.reduce((t, f) => t + share[funds.indexOf(f)], 0)) }; });
   return {
-    schema_version: K.SCHEMA_VERSION, programme: p.name, period, generated_at: `${period.to}T23:00:00.000Z`, suds_version: require('../package.json').version, counts: 'exact',
+    schema_version: K.SCHEMA_VERSION, programme: p.name, recipient: { ...recipient }, period, generated_at: generatedAt, suds_version: require('../package.json').version, counts: 'exact',
     funds, categories: cats, total: { spend: { approved: Math.round(funds.reduce((t, f) => t + f.spend.approved, 0) * 100) / 100, pending: Math.round(funds.reduce((t, f) => t + f.spend.pending, 0) * 100) / 100 }, values: sum() },
   };
 }
 
-/** Every sample programme with its key, and its signed files for `periods`. */
-function sample({ periods = lastQuarters(), programmes = PROGRAMMES } = {}) {
+/** Every sample program with its key, and its signed files for `periods`, made for `recipient`. */
+function sample({ periods = lastQuarters(), programmes = PROGRAMMES, recipient = SAMPLE_COUNTY } = {}) {
+  const K = county();
   return programmes.map(p => {
     const seed = seedOf(p.slug);
-    const files = periods.map((period, i) => ({ period, ...K.signWithSeed(payloadFor(p, period, 1 + i * 0.1), seed) }));
+    const files = periods.map((period, i) => ({ period, ...K.signWithSeed(payloadFor(p, period, 1 + i * 0.1, { recipient }), seed) }));
     return { slug: p.slug, name: p.name, seed, public_key: files[0].public_key, fingerprint: files[0].fingerprint, fingerprint_display: K.formatFingerprint(files[0].fingerprint), files };
   });
 }
 
-if (require.main === module) {
-  const dir = process.argv[2];
-  if (!dir) { console.error('usage: node scripts/county-sample.js <output directory>'); process.exit(2); }
-  fs.mkdirSync(dir, { recursive: true });
-  const s = sample();
-  fs.writeFileSync(path.join(dir, 'programmes.json'), JSON.stringify(s.map(p => ({ name: p.name, public_key: p.public_key, fingerprint: p.fingerprint_display })), null, 2) + '\n');
-  for (const p of s) for (const f of p.files) fs.writeFileSync(path.join(dir, `${p.slug}-${f.period.from}_${f.period.to}.json`), JSON.stringify(f.file, null, 2) + '\n');
-  console.log(`Wrote ${s.length} programmes and ${s.reduce((n, p) => n + p.files.length, 0)} signed submissions to ${dir}`);
+/**
+ * --register: the sample programs registered in the development database and their files imported, as the
+ * county's first administrator (audited as that person). Development only.
+ */
+function register() {
+  // Asked before SUDS's configuration loads: on a production server's data folder it would otherwise start looking
+  // for (or making) that server's keys.
+  const prod = () => { console.error('Refusing to add sample county data to a production server. --register is for a development server (npm run dev).'); process.exit(1); };
+  if ((process.env.SUDS_ENV || 'development') === 'production' || process.env.NODE_ENV === 'production') prod();
+  const config = require('../server/config');
+  if (config.isProd) prod();
+  const db = require('../server/db'); const audit = require('../server/audit');
+  db.open();
+  require('../server/bootstrap').ensureBootstrap();
+  const K = county();
+  const admin = db.one(`SELECT * FROM users WHERE role='admin' AND is_active=1 ORDER BY rowid LIMIT 1`);
+  const { code } = K.countyCode();
+  const recipient = { county_code: code, county_name: db.getSetting('org_name', '') || 'Sample County' };
+  let added = 0; let imported = 0;
+  for (const p of sample({ recipient })) {
+    let key = db.one(`SELECT * FROM county_programme_keys WHERE fingerprint=?`, p.fingerprint);
+    if (!key) {
+      const id = crypto.randomUUID(); const now = db.now();
+      db.run(`INSERT INTO county_programmes(id,name,active,keep_files,notes,created_at,created_by,updated_at) VALUES(?,?,1,0,?,?,?,?)`, id, p.name, 'Fictional sample program (scripts/county-sample.js)', now, admin ? admin.id : null, now);
+      db.run(`INSERT INTO county_programme_keys(id,programme_id,public_key,fingerprint,added_at,added_by) VALUES(?,?,?,?,?,?)`, crypto.randomUUID(), id, p.public_key, p.fingerprint, now, admin ? admin.id : null);
+      audit.log({ user: admin, action: 'county.programme.add', entity: 'county_programme', entityId: id, details: { fingerprint: p.fingerprint, checked: 'sample', sample: true } });
+      added++;
+    }
+    for (const f of p.files) {
+      const out = K.importParsed(K.parseFile(JSON.stringify(f.file)), admin, { countyCode: code });
+      if (out.status !== 'duplicate') { imported++; audit.log({ user: admin, action: 'county.submission.import', entity: 'county_submission', entityId: out.submission.id, details: { programme_id: out.programme.id, fingerprint: f.fingerprint, from: f.period.from, to: f.period.to, sha256: f.sha256, status: out.status, sample: true } }); }
+    }
+  }
+  console.log(`County code ${K.formatCode(code)}: registered ${added} sample program(s) and imported ${imported} file(s). Open County view.`);
+  db.close();
 }
 
-module.exports = { PROGRAMMES, sample, payloadFor, lastQuarters, seedOf };
+if (require.main === module) {
+  if (REGISTER) register();
+  else {
+    const args = process.argv.slice(2);
+    const at = args.indexOf('--county-code'); const code = at >= 0 ? args[at + 1] : null;
+    const dir = args.find((a, i) => !a.startsWith('--') && (at < 0 || i !== at + 1));
+    const K = county(); const c = K.normaliseCode(code);
+    if (!dir || !c) { console.error('usage: node scripts/county-sample.js <output directory> --county-code <the county\'s code, from County view › Programs>\n       node scripts/county-sample.js --register    (development server only)'); process.exit(2); }
+    fs.mkdirSync(dir, { recursive: true });
+    const s = sample({ recipient: { county_code: c, county_name: 'Sample County Behavioral Health' } });
+    fs.writeFileSync(path.join(dir, 'programmes.json'), JSON.stringify(s.map(p => ({ name: p.name, public_key: p.public_key, fingerprint: p.fingerprint_display })), null, 2) + '\n');
+    for (const p of s) for (const f of p.files) fs.writeFileSync(path.join(dir, `${p.slug}-${f.period.from}_${f.period.to}.json`), JSON.stringify(f.file, null, 2) + '\n');
+    console.log(`Wrote ${s.length} programs and ${s.reduce((n, p) => n + p.files.length, 0)} signed submissions for county ${K.formatCode(c)} to ${dir}`);
+  }
+}
+
+module.exports = { PROGRAMMES, SAMPLE_COUNTY, sample, payloadFor, lastQuarters, seedOf };

@@ -140,7 +140,7 @@ module.exports = {
   // county_* (the county view, docs/COUNTY-VIEW.md): the office's own county signing key, and on a county's server
   // the programmes it accepts submissions from and the submissions it imported. A device makes and imports none.
   server_only: ['breakglass_events', 'complaints', 'privacy_incidents', 'privacy_incident_clients', 'fhir_jwt_assertions', 'caloms_submissions', 'client_revisions', 'ai_usage', 'caloms_submission_events', 'referral_links',
-    'county_signing_keys', 'county_programmes', 'county_submissions'],
+    'county_signing_keys', 'county_programmes', 'county_programme_keys', 'county_submissions'],
   // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
   // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
   // list against the schema, so a table with PHI is always either synchronised or deliberately kept apart.
@@ -149,7 +149,7 @@ module.exports = {
     privacy_incidents: ['title_enc', 'description_enc', 'risk_nature_enc', 'risk_recipient_enc', 'risk_acquired_enc', 'risk_mitigation_enc', 'determination_reason_enc'],
     privacy_incident_clients: ['client_name_enc'], fhir_jwt_assertions: [], caloms_submissions: ['file_enc'], client_revisions: ['changes_enc'], ai_usage: [],
     caloms_submission_events: [], referral_links: ['packet_enc', 'ack_by_enc', 'ack_note_enc'],
-    county_signing_keys: ['private_key_enc'], county_programmes: [], county_submissions: ['payload_enc'],
+    county_signing_keys: ['private_key_enc'], county_programmes: [], county_programme_keys: [], county_submissions: ['payload_enc'],
     idempotency_keys: ['response_enc'],
   },
   // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
@@ -181,7 +181,8 @@ module.exports = {
     ['privacy_incidents', 'determined_by'], ['privacy_incidents', 'reported_by'], ['disclosure_agreements', 'created_by'], ['caloms_submissions', 'created_by'], ['ai_usage', 'user_id'],
     ['user_permission_overrides', 'user_id'], ['user_permission_overrides', 'granted_by'], ['client_revisions', 'changed_by'], ['prevention_events', 'user_id'],
     ['caloms_submissions', 'uploaded_by'], ['caloms_submission_events', 'user_id'], ['referral_links', 'created_by'], ['referral_links', 'revoked_by'],
-    ['county_signing_keys', 'created_by'], ['county_programmes', 'created_by'], ['county_submissions', 'received_by'], ['county_submissions', 'withdrawn_by'],
+    ['county_signing_keys', 'created_by'], ['county_signing_keys', 'retired_by'], ['county_programmes', 'created_by'], ['county_programme_keys', 'added_by'], ['county_programme_keys', 'replaced_by'],
+    ['county_programme_keys', 'compromised_by'], ['county_submissions', 'received_by'], ['county_submissions', 'withdrawn_by'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.

@@ -81,11 +81,14 @@ const values = (b) => ({ contacts: b.contacts, naloxone_kits: b.naloxone_kits, f
 /**
  * The period's true figures: every settlement fund (active, or with anything in the period), each with its
  * spending and its figures for the period and by month; the same by category (the fund's own Exhibit E
- * allowable use) and for all settlement funds together. Pure data, no protection (protect() below).
+ * allowable use) and for all settlement funds together. Pure data, no protection (protect() below). With
+ * fundIds, only those funds (a county submission, server/county.js).
  */
-function figures({ from, to, ts, tsP }) {
+function figures({ from, to, ts, tsP }, { fundIds = null } = {}) {
   const monthOf = monthReader(); const months = monthsOf(from, to);
-  const funds = db.all(`SELECT f.id, f.name, f.grant_number, f.source_type, f.settlement_use, f.settlement_hiaa, f.is_active, f.total_amount FROM funding_sources f WHERE ${isFund} ORDER BY f.name, f.id`);
+  // fundIds (a county submission, server/county.js): only these funds, and every total over them alone. Every
+  // count below goes through F, so a fund left out adds to nothing: not its own row, its category or the total.
+  const funds = db.all(`SELECT f.id, f.name, f.grant_number, f.source_type, f.settlement_use, f.settlement_hiaa, f.is_active, f.total_amount FROM funding_sources f WHERE ${isFund}${fundIds ? ' AND f.id IN (SELECT value FROM json_each(?))' : ''} ORDER BY f.name, f.id`, ...(fundIds ? [JSON.stringify(fundIds)] : []));
   const F = new Map(funds.map(f => [f.id, { f, period: bucket(), months: new Map(months.map(m => [m, bucket()])), own: 0, other: 0, pending: 0, active: false }]));
   const catKey = (f) => (f.settlement_use && USE[f.settlement_use] ? f.settlement_use : 'uncategorised');
   const cats = new Map(); const total = bucket(); const totalMonths = new Map(months.map(m => [m, bucket()]));
@@ -148,7 +151,8 @@ function figures({ from, to, ts, tsP }) {
       WHERE ${isFund} AND t.category='training' AND t.status='approved' AND t.work_date BETWEEN ? AND ?`, from, to)) {
     add(t.fid, String(t.work_date).slice(0, 7), (b) => { b.staff_minutes += t.minutes || 0; });
   }
-  const shownFunds = [...F.values()].filter(x => x.f.is_active || x.active);
+  // A fund chosen for a county file is in it even with nothing in the period (the county sees it reported, at 0).
+  const shownFunds = [...F.values()].filter(x => x.f.is_active || x.active || fundIds);
   const fundRows = shownFunds.map(x => {
     const profile = MAP.profileFor(x.f.settlement_use, x.f.settlement_hiaa);
     return { id: x.f.id, name: x.f.name, grant_number: x.f.grant_number || null, is_active: !!x.f.is_active, category: catKey(x.f), hiaa: x.f.settlement_hiaa || null,

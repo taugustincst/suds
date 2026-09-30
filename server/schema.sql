@@ -1524,10 +1524,11 @@ CREATE INDEX IF NOT EXISTS idx_referral_links_client ON referral_links(client_id
 
 -- The county view (docs/COUNTY-VIEW.md; server/county.js). Office server only, never synchronised
 -- (server/sync-tables.js server_only).
--- county_signing_keys: the Ed25519 key this office server signs its county submission files with, made the first
--- time one is asked for. The private half is the 32-byte seed, encrypted with the database key like every other
--- secret column, so key rotation re-encrypts it and a copy of the database without the key file does not hold it.
--- The public half and its fingerprint are what the programme gives the county, out of band.
+-- county_signing_keys: the Ed25519 keys this office server signs its county submission files with. The current one
+-- (retired_at NULL) is made the first time one is asked for; "Make a new key" retires it and makes another. The
+-- private half is the 32-byte seed, encrypted with the database key like every other secret column, so key rotation
+-- re-encrypts it and a copy of the database without the key file does not hold it. The public half and its
+-- fingerprint are what the program gives the county, out of band.
 CREATE TABLE IF NOT EXISTS county_signing_keys (
   id TEXT PRIMARY KEY,
   public_key TEXT NOT NULL,            -- SPKI PEM
@@ -1535,42 +1536,63 @@ CREATE TABLE IF NOT EXISTS county_signing_keys (
   private_key_enc TEXT NOT NULL,       -- the seed, hex, AES-256-GCM
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   created_by TEXT REFERENCES users(id),
-  retired_at TEXT
+  retired_at TEXT,
+  retired_by TEXT REFERENCES users(id)
 );
--- On a county's server: the programmes whose signed submissions it accepts, each by the public key it gave the
--- county. Registering, changing and deactivating one needs county:manage.
+-- On a county's server: the programs whose signed submissions it accepts. Registering, changing and deactivating
+-- one needs county:manage. An inactive program's files stop counting in the combined view unless keep_files is set
+-- (a program whose contract ended, whose past quarters still stand).
 CREATE TABLE IF NOT EXISTS county_programmes (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  public_key TEXT NOT NULL,
-  fingerprint TEXT NOT NULL UNIQUE,
   active INTEGER NOT NULL DEFAULT 1,
+  keep_files INTEGER NOT NULL DEFAULT 0,
   notes TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   created_by TEXT REFERENCES users(id),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+-- Each program's public keys, current and past (key history). The current one has replaced_at NULL; a new file must
+-- be signed with it. Files a replaced key signed that were already imported keep counting unless the key is marked
+-- compromised. A fingerprint belongs to one program only.
+CREATE TABLE IF NOT EXISTS county_programme_keys (
+  id TEXT PRIMARY KEY,
+  programme_id TEXT NOT NULL REFERENCES county_programmes(id),
+  public_key TEXT NOT NULL,
+  fingerprint TEXT NOT NULL UNIQUE,
+  added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  added_by TEXT REFERENCES users(id),
+  replaced_at TEXT,
+  replaced_by TEXT REFERENCES users(id),
+  compromised_at TEXT,                 -- set: the files it signed stop counting
+  compromised_by TEXT REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_county_programme_keys_programme ON county_programme_keys(programme_id);
 -- Each imported submission. payload_enc is the canonical payload exactly as signed: aggregate counts and money, no
 -- client-level data (server/county.js PAYLOAD is its allow-list). It is not PHI, but its small counts are exact and
--- not for publication, so it is encrypted at rest like the other figures SUDS keeps for authorised staff only. A
--- later file for the same programme and period supersedes an earlier one (kept, superseded_by); a withdrawn one is
--- kept and no longer counts.
+-- not for publication, so it is encrypted at rest like the other figures SUDS keeps for authorised staff only.
+-- generated_at is the signed time the file was made (strict ISO-8601 UTC, checked on import): of one program's files
+-- for exactly the same period, the latest made counts and the others are kept, superseded_by it, whatever order they
+-- arrived in. A withdrawn one is kept, counts for nothing, and can be reinstated. The same payload twice from one
+-- program is one submission (UNIQUE programme_id, sha256).
 CREATE TABLE IF NOT EXISTS county_submissions (
   id TEXT PRIMARY KEY,
   programme_id TEXT NOT NULL REFERENCES county_programmes(id),
+  key_id TEXT NOT NULL REFERENCES county_programme_keys(id),
   period_from TEXT NOT NULL,
   period_to TEXT NOT NULL,
   schema_version INTEGER NOT NULL,
-  programme_name TEXT,                 -- the name the programme gave itself in the file
-  generated_at TEXT,
+  programme_name TEXT,                 -- the name the program gave itself in the file (checked text, no control characters)
+  generated_at TEXT NOT NULL,
   suds_version TEXT,
   payload_enc TEXT NOT NULL,
-  sha256 TEXT NOT NULL UNIQUE,         -- of the canonical payload
+  sha256 TEXT NOT NULL,                -- of the canonical payload
   signature TEXT NOT NULL,
   received_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   received_by TEXT REFERENCES users(id),
   superseded_by TEXT REFERENCES county_submissions(id),
   withdrawn_at TEXT,
-  withdrawn_by TEXT REFERENCES users(id)
+  withdrawn_by TEXT REFERENCES users(id),
+  UNIQUE(programme_id, sha256)
 );
 CREATE INDEX IF NOT EXISTS idx_county_submissions_programme ON county_submissions(programme_id, period_from, period_to);

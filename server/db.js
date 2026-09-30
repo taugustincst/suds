@@ -718,13 +718,14 @@ const migrations = [
       for (const line of schemaText.split('\n')) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
     }
   },
-  // 56: the county view (docs/COUNTY-VIEW.md): county_signing_keys (the key a programme signs its county
-  //     submission files with), county_programmes and county_submissions (on a county's server, the programmes
-  //     it accepts files from and the files it imported). Office server only. Self-contained and idempotent, so
-  //     it can be renumbered.
+  // 56: the county view (docs/COUNTY-VIEW.md): county_signing_keys (the keys a programme signs its county
+  //     submission files with, current and retired), and on a county's server county_programmes (the programmes
+  //     it accepts files from), county_programme_keys (each one's public keys, current and replaced) and
+  //     county_submissions (the files it imported). Office server only. Self-contained and idempotent, so it can be
+  //     renumbered.
   (d) => {
     const schemaText = safeSchema();
-    for (const t of ['county_signing_keys', 'county_programmes', 'county_submissions']) {
+    for (const t of ['county_signing_keys', 'county_programmes', 'county_programme_keys', 'county_submissions']) {
       const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
       if (!m) throw new Error(`migration 56: no definition for ${t} in schema`);
       d.exec(m[0]);

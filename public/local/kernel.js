@@ -8291,10 +8291,11 @@ CREATE INDEX IF NOT EXISTS idx_referral_links_client ON referral_links(client_id
 
 -- The county view (docs/COUNTY-VIEW.md; server/county.js). Office server only, never synchronised
 -- (server/sync-tables.js server_only).
--- county_signing_keys: the Ed25519 key this office server signs its county submission files with, made the first
--- time one is asked for. The private half is the 32-byte seed, encrypted with the database key like every other
--- secret column, so key rotation re-encrypts it and a copy of the database without the key file does not hold it.
--- The public half and its fingerprint are what the programme gives the county, out of band.
+-- county_signing_keys: the Ed25519 keys this office server signs its county submission files with. The current one
+-- (retired_at NULL) is made the first time one is asked for; "Make a new key" retires it and makes another. The
+-- private half is the 32-byte seed, encrypted with the database key like every other secret column, so key rotation
+-- re-encrypts it and a copy of the database without the key file does not hold it. The public half and its
+-- fingerprint are what the program gives the county, out of band.
 CREATE TABLE IF NOT EXISTS county_signing_keys (
   id TEXT PRIMARY KEY,
   public_key TEXT NOT NULL,            -- SPKI PEM
@@ -8302,43 +8303,64 @@ CREATE TABLE IF NOT EXISTS county_signing_keys (
   private_key_enc TEXT NOT NULL,       -- the seed, hex, AES-256-GCM
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   created_by TEXT REFERENCES users(id),
-  retired_at TEXT
+  retired_at TEXT,
+  retired_by TEXT REFERENCES users(id)
 );
--- On a county's server: the programmes whose signed submissions it accepts, each by the public key it gave the
--- county. Registering, changing and deactivating one needs county:manage.
+-- On a county's server: the programs whose signed submissions it accepts. Registering, changing and deactivating
+-- one needs county:manage. An inactive program's files stop counting in the combined view unless keep_files is set
+-- (a program whose contract ended, whose past quarters still stand).
 CREATE TABLE IF NOT EXISTS county_programmes (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
-  public_key TEXT NOT NULL,
-  fingerprint TEXT NOT NULL UNIQUE,
   active INTEGER NOT NULL DEFAULT 1,
+  keep_files INTEGER NOT NULL DEFAULT 0,
   notes TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   created_by TEXT REFERENCES users(id),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+-- Each program's public keys, current and past (key history). The current one has replaced_at NULL; a new file must
+-- be signed with it. Files a replaced key signed that were already imported keep counting unless the key is marked
+-- compromised. A fingerprint belongs to one program only.
+CREATE TABLE IF NOT EXISTS county_programme_keys (
+  id TEXT PRIMARY KEY,
+  programme_id TEXT NOT NULL REFERENCES county_programmes(id),
+  public_key TEXT NOT NULL,
+  fingerprint TEXT NOT NULL UNIQUE,
+  added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  added_by TEXT REFERENCES users(id),
+  replaced_at TEXT,
+  replaced_by TEXT REFERENCES users(id),
+  compromised_at TEXT,                 -- set: the files it signed stop counting
+  compromised_by TEXT REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_county_programme_keys_programme ON county_programme_keys(programme_id);
 -- Each imported submission. payload_enc is the canonical payload exactly as signed: aggregate counts and money, no
 -- client-level data (server/county.js PAYLOAD is its allow-list). It is not PHI, but its small counts are exact and
--- not for publication, so it is encrypted at rest like the other figures SUDS keeps for authorised staff only. A
--- later file for the same programme and period supersedes an earlier one (kept, superseded_by); a withdrawn one is
--- kept and no longer counts.
+-- not for publication, so it is encrypted at rest like the other figures SUDS keeps for authorised staff only.
+-- generated_at is the signed time the file was made (strict ISO-8601 UTC, checked on import): of one program's files
+-- for exactly the same period, the latest made counts and the others are kept, superseded_by it, whatever order they
+-- arrived in. A withdrawn one is kept, counts for nothing, and can be reinstated. The same payload twice from one
+-- program is one submission (UNIQUE programme_id, sha256).
 CREATE TABLE IF NOT EXISTS county_submissions (
   id TEXT PRIMARY KEY,
   programme_id TEXT NOT NULL REFERENCES county_programmes(id),
+  key_id TEXT NOT NULL REFERENCES county_programme_keys(id),
   period_from TEXT NOT NULL,
   period_to TEXT NOT NULL,
   schema_version INTEGER NOT NULL,
-  programme_name TEXT,                 -- the name the programme gave itself in the file
-  generated_at TEXT,
+  programme_name TEXT,                 -- the name the program gave itself in the file (checked text, no control characters)
+  generated_at TEXT NOT NULL,
   suds_version TEXT,
   payload_enc TEXT NOT NULL,
-  sha256 TEXT NOT NULL UNIQUE,         -- of the canonical payload
+  sha256 TEXT NOT NULL,                -- of the canonical payload
   signature TEXT NOT NULL,
   received_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   received_by TEXT REFERENCES users(id),
   superseded_by TEXT REFERENCES county_submissions(id),
   withdrawn_at TEXT,
-  withdrawn_by TEXT REFERENCES users(id)
+  withdrawn_by TEXT REFERENCES users(id),
+  UNIQUE(programme_id, sha256)
 );
 CREATE INDEX IF NOT EXISTS idx_county_submissions_programme ON county_submissions(programme_id, period_from, period_to);
 `;
@@ -12313,6 +12335,7 @@ var require_sync_tables = __commonJS({
         "referral_links",
         "county_signing_keys",
         "county_programmes",
+        "county_programme_keys",
         "county_submissions"
       ],
       // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
@@ -12331,6 +12354,7 @@ var require_sync_tables = __commonJS({
         referral_links: ["packet_enc", "ack_by_enc", "ack_note_enc"],
         county_signing_keys: ["private_key_enc"],
         county_programmes: [],
+        county_programme_keys: [],
         county_submissions: ["payload_enc"],
         idempotency_keys: ["response_enc"]
       },
@@ -12420,7 +12444,11 @@ var require_sync_tables = __commonJS({
         ["referral_links", "created_by"],
         ["referral_links", "revoked_by"],
         ["county_signing_keys", "created_by"],
+        ["county_signing_keys", "retired_by"],
         ["county_programmes", "created_by"],
+        ["county_programme_keys", "added_by"],
+        ["county_programme_keys", "replaced_by"],
+        ["county_programme_keys", "compromised_by"],
         ["county_submissions", "received_by"],
         ["county_submissions", "withdrawn_by"]
       ]
@@ -25899,9 +25927,10 @@ var require_auth = __commonJS({
             modules: require_programme().modules(),
             // Whether "Secure link" is offered on a referral (server/referral-links.js; office server only).
             referral_links: db3.getSetting("referral_links_enabled", "0") === "1",
-            // How many programmes this server accepts county submissions from (the county view, server/county.js):
-            // the County view entry shows for county:view once there is one, and to county:manage always.
-            county_programmes: db3.one(`SELECT COUNT(*) n FROM county_programmes WHERE active=1`).n
+            // How many programmes this server has registered for the county view (server/county.js), active or not:
+            // the County view entry shows for county:view once there is one (an inactive programme's files are still
+            // there to see), and to county:manage always.
+            county_programmes: db3.one(`SELECT COUNT(*) n FROM county_programmes`).n
           }
         };
       });
@@ -28004,10 +28033,47 @@ var require_county = __commonJS({
     var MAX_FILE_BYTES = 256 * 1024;
     var MAX_FUNDS = 200;
     var MAX_CATEGORIES = 60;
+    var MAX_QUARTERS = 12;
     var VALUE_KEYS = Object.keys(MAP.INDICATORS);
     var USE_CODES = /* @__PURE__ */ new Set([...C.SETTLEMENT_USES.map((x) => x.code), "uncategorised"]);
     var HIAA_CODES = /* @__PURE__ */ new Set([...C.SETTLEMENT_HIAA.map((x) => x.code), "none"]);
     var DAY = /^\d{4}-\d{2}-\d{2}$/;
+    var INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/;
+    var VERSION3 = /^[0-9A-Za-z.+-]{1,40}$/;
+    var CODE = /^[0-9A-HJKMNP-TV-Z]{8}$/;
+    var CROCKFORD2 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    var isDay = (s) => typeof s === "string" && DAY.test(s) && Number.isFinite(Date.parse(s)) && new Date(Date.parse(s)).toISOString().slice(0, 10) === s;
+    function isInstant(s) {
+      if (typeof s !== "string" || !INSTANT.test(s)) return false;
+      const t = Date.parse(s);
+      if (!Number.isFinite(t)) return false;
+      const iso = new Date(t).toISOString();
+      return iso === s || iso === `${s.slice(0, -1)}.000Z`;
+    }
+    var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var humanDay = (s) => isDay(String(s).slice(0, 10)) ? `${MONTHS[Number(String(s).slice(5, 7)) - 1]} ${Number(String(s).slice(8, 10))}, ${String(s).slice(0, 4)}` : String(s || "");
+    var humanPeriod = (from, to) => `${humanDay(from)} to ${humanDay(to)}`;
+    var dayNum = (s) => Math.round(Date.parse(`${s}T00:00:00Z`) / 864e5);
+    var daysIn = (from, to) => dayNum(to) - dayNum(from) + 1;
+    var lastDayOf = (y, m) => new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+    function quartersIn(from, to) {
+      const out2 = [];
+      let y = Number(from.slice(0, 4));
+      let m = Number(from.slice(5, 7));
+      m = Math.floor((m - 1) / 3) * 3 + 1;
+      for (; ; ) {
+        const qf = `${y}-${String(m).padStart(2, "0")}-01`;
+        const qt = lastDayOf(y, m + 2);
+        if (qf > to) break;
+        if (qf >= from && qt <= to) out2.push({ from: qf, to: qt });
+        m += 3;
+        if (m > 12) {
+          m = 1;
+          y++;
+        }
+      }
+      return out2;
+    }
     function canonical(v) {
       if (v === null) return "null";
       if (typeof v === "boolean") return v ? "true" : "false";
@@ -28021,6 +28087,10 @@ var require_county = __commonJS({
       throw new Error(`canonical: ${typeof v} is not a JSON value`);
     }
     var sha256Hex = (s) => nodeCrypto.createHash("sha256").update(s).digest("hex");
+    var UNSAFE = /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069\u2028\u2029\ufeff]/g;
+    function cleanText(s, max2) {
+      return String(s === null || s === void 0 ? "" : s).replace(UNSAFE, " ").replace(/\s+/g, " ").trim().slice(0, max2).trim();
+    }
     function fingerprintOf(publicKeyPem) {
       const der = nodeCrypto.createPublicKey(publicKeyPem).export({ type: "spki", format: "der" });
       return sha256Hex(der).slice(0, 32);
@@ -28032,26 +28102,43 @@ var require_county = __commonJS({
     }
     function parsePublicKey(text2) {
       const s = String(text2 || "").trim();
-      if (!s) throw new Error(`Paste the programme's public key: the block that starts "-----BEGIN PUBLIC KEY-----".`);
+      if (!s) throw new Error(`Paste the program's public key: the block that starts "-----BEGIN PUBLIC KEY-----".`);
       if (s.length > 2e3) throw new Error('That is too long to be a public key. Paste only the block from "-----BEGIN PUBLIC KEY-----" to "-----END PUBLIC KEY-----".');
-      if (/PRIVATE KEY/.test(s)) throw new Error("That is a private key. Never send or paste a private key: ask the programme for its public key.");
+      if (/PRIVATE KEY/.test(s)) throw new Error("That is a private key. Never send or paste a private key: ask the program for its public key.");
       let key;
       try {
         key = nodeCrypto.createPublicKey({ key: s, format: "pem" });
       } catch {
-        throw new Error(`That is not a public key SUDS can read. Paste the whole block from "-----BEGIN PUBLIC KEY-----" to "-----END PUBLIC KEY-----", as shown on the programme's Settlement outcomes page.`);
+        throw new Error(`That is not a public key SUDS can read. Paste the whole block from "-----BEGIN PUBLIC KEY-----" to "-----END PUBLIC KEY-----", as shown on the program's Settlement outcomes page.`);
       }
-      if (key.asymmetricKeyType !== "ed25519") throw new Error("That key is not an Ed25519 key. The key a SUDS programme signs county files with is shown on its Settlement outcomes page, under Send to the county.");
+      if (key.asymmetricKeyType !== "ed25519") throw new Error("That key is not an Ed25519 key. The key a SUDS program signs county files with is shown on its Settlement outcomes page, under Send to the county.");
       const pem = key.export({ type: "spki", format: "pem" });
       return { pem, fingerprint: fingerprintOf(pem) };
+    }
+    function normaliseCode(s) {
+      const t = String(s || "").toUpperCase().replace(/[\s-]/g, "").replace(/[IL]/g, "1").replace(/O/g, "0");
+      return CODE.test(t) ? t : null;
+    }
+    var formatCode = (c) => c ? `${c.slice(0, 4)}-${c.slice(4)}` : "";
+    function countyCode() {
+      const have = db3.getSetting("county_code", null);
+      if (have && CODE.test(have)) return { code: have, created: false };
+      const bytes3 = nodeCrypto.randomBytes(5);
+      let bits2 = 0n;
+      for (const b of bytes3) bits2 = bits2 << 8n | BigInt(b);
+      let code = "";
+      for (let i = 7; i >= 0; i--) code += CROCKFORD2[Number(bits2 >> BigInt(i * 5) & 31n)];
+      db3.setSetting("county_code", code);
+      return { code, created: true };
     }
     function currentKey() {
       const k = db3.one(`SELECT id, public_key, fingerprint, created_at FROM county_signing_keys WHERE retired_at IS NULL ORDER BY created_at DESC, id LIMIT 1`);
       return k ? { ...k, fingerprint_display: formatFingerprint(k.fingerprint), algorithm: ALGORITHM } : null;
     }
-    function ensureKey(user) {
-      const have = currentKey();
-      if (have) return { key: have, created: false };
+    function retiredKeys() {
+      return db3.all(`SELECT id, fingerprint, created_at, retired_at FROM county_signing_keys WHERE retired_at IS NOT NULL ORDER BY retired_at DESC, id`).map((k) => ({ ...k, fingerprint_display: formatFingerprint(k.fingerprint) }));
+    }
+    function makeKey(user) {
       const seed = nodeCrypto.randomBytes(32);
       const priv = signing.privateKeyFrom(seed);
       const pem = nodeCrypto.createPublicKey(priv).export({ type: "spki", format: "pem" });
@@ -28064,7 +28151,22 @@ var require_county = __commonJS({
         db3.now(),
         user ? user.id : null
       );
+      seed.fill(0);
+    }
+    function ensureKey(user) {
+      const have = currentKey();
+      if (have) return { key: have, created: false };
+      makeKey(user);
       return { key: currentKey(), created: true };
+    }
+    function rotateKey(user) {
+      let old = null;
+      db3.transaction(() => {
+        old = currentKey();
+        if (old) db3.run(`UPDATE county_signing_keys SET retired_at=?, retired_by=? WHERE id=?`, db3.now(), user ? user.id : null, old.id);
+        makeKey(user);
+      });
+      return { old, key: currentKey() };
     }
     function signWithCurrentKey(data) {
       const row = db3.one(`SELECT private_key_enc, public_key, fingerprint FROM county_signing_keys WHERE retired_at IS NULL ORDER BY created_at DESC, id LIMIT 1`);
@@ -28075,8 +28177,9 @@ var require_county = __commonJS({
       return { signature: sig, fingerprint: row.fingerprint, public_key: row.public_key };
     }
     var PAYLOAD = {
-      top: ["counts", "funds", "categories", "generated_at", "period", "programme", "schema_version", "suds_version", "total"],
+      top: ["categories", "counts", "funds", "generated_at", "period", "programme", "recipient", "schema_version", "suds_version", "total"],
       period: ["from", "to"],
+      recipient: ["county_code", "county_name"],
       fund: ["category", "grant_number", "hiaa", "name", "spend", "values"],
       fundSpend: ["approved", "other_categories", "own_category", "pending"],
       category: ["key", "spend_own_category", "values"],
@@ -28084,6 +28187,7 @@ var require_county = __commonJS({
       totalSpend: ["approved", "pending"],
       values: [...VALUE_KEYS].sort()
     };
+    var TEXT_MAX = { programme: 200, county_name: 200, fund_name: 200, grant_number: 100 };
     var SubmissionError = class extends Error {
       constructor(code, message) {
         super(message);
@@ -28106,24 +28210,28 @@ var require_county = __commonJS({
     };
     var text = (v, where, max2, { nullable = false } = {}) => {
       if (nullable && v === null) return;
-      if (typeof v !== "string" || !v.trim() || v.length > max2) refuse("schema", `${where} must be text of at most ${max2} characters.`);
+      if (typeof v !== "string" || !v || v.length > max2 || cleanText(v, max2) !== v) refuse("schema", `${where} must be text of 1 to ${max2} characters, with no control characters and no extra spaces.`);
     };
     function valuesOk(v, where) {
       exactKeys(v, PAYLOAD.values, where);
       for (const k of PAYLOAD.values) amount(v[k], `${where}.${k}`);
     }
-    var isDay = (s) => typeof s === "string" && DAY.test(s) && Number.isFinite(Date.parse(s)) && new Date(Date.parse(s)).toISOString().slice(0, 10) === s;
-    function checkPayload(p, { today } = {}) {
+    function checkPayload(p, { today, now: now2 } = {}) {
       exactKeys(p, PAYLOAD.top, "The submission");
-      if (p.schema_version !== SCHEMA_VERSION) refuse("schema", `This file is county submission version ${JSON.stringify(p.schema_version)}; this SUDS reads version ${SCHEMA_VERSION}. Ask the programme to make it again with the same version of SUDS as the county, or upgrade SUDS.`);
-      text(p.programme, "The programme name", 200);
-      text(p.suds_version, "The SUDS version", 40);
-      if (typeof p.generated_at !== "string" || !Number.isFinite(Date.parse(p.generated_at))) refuse("schema", "The time the file was made (generated_at) is not a date and time.");
+      if (p.schema_version !== SCHEMA_VERSION) refuse("schema", `This file is county submission version ${JSON.stringify(p.schema_version)}; this SUDS reads version ${SCHEMA_VERSION}. Ask the program to make it again with the same version of SUDS as the county, or upgrade SUDS.`);
+      text(p.programme, "The program name", TEXT_MAX.programme);
+      if (typeof p.suds_version !== "string" || !VERSION3.test(p.suds_version)) refuse("schema", "The SUDS version must be a version number (letters, digits, dots, plus and minus; at most 40 characters).");
+      if (!isInstant(p.generated_at)) refuse("schema", "The time the file was made (generated_at) must be a date and time in UTC, as SUDS writes it (for example 2026-07-02T16:05:00.000Z).");
       if (p.counts !== "exact") refuse("schema", 'A county submission carries exact counts (counts: "exact").');
+      exactKeys(p.recipient, PAYLOAD.recipient, "The recipient");
+      if (typeof p.recipient.county_code !== "string" || !CODE.test(p.recipient.county_code)) refuse("schema", "The file does not name the county it is for (a county code of eight letters and digits).");
+      text(p.recipient.county_name, "The county's name", TEXT_MAX.county_name);
       exactKeys(p.period, PAYLOAD.period, "The period");
       if (!isDay(p.period.from) || !isDay(p.period.to)) refuse("period", "The period's dates must be real dates (YYYY-MM-DD).");
-      if (p.period.from > p.period.to) refuse("period", `The period starts (${p.period.from}) after it ends (${p.period.to}).`);
-      if (today && p.period.to > today) refuse("period", `The period ends in the future (${p.period.to}; today is ${today}). A submission reports a period that has happened.`);
+      if (p.period.from > p.period.to) refuse("period", `The period starts (${humanDay(p.period.from)}) after it ends (${humanDay(p.period.to)}).`);
+      if (today && p.period.to > today) refuse("period", `The period ends in the future (${humanDay(p.period.to)}; today is ${humanDay(today)}). A submission reports a period that has happened.`);
+      if (p.generated_at.slice(0, 10) < p.period.to) refuse("period", `The file says it was made on ${humanDay(p.generated_at)}, before its period ended (${humanDay(p.period.to)}). A submission is made once the period is over.`);
+      if (now2 && Date.parse(p.generated_at) > Date.parse(now2) + 864e5) refuse("period", `The file says it was made on ${humanDay(p.generated_at)}, which has not happened yet. Check the clock on the program's server, and ask for the file again.`);
       exactKeys(p.total, PAYLOAD.total, "The total");
       exactKeys(p.total.spend, PAYLOAD.totalSpend, "The total's spending");
       for (const k of PAYLOAD.totalSpend) amount(p.total.spend[k], `total.spend.${k}`);
@@ -28132,8 +28240,8 @@ var require_county = __commonJS({
       p.funds.forEach((f, i) => {
         const w = `funds[${i}]`;
         exactKeys(f, PAYLOAD.fund, w);
-        text(f.name, `${w}.name`, 200);
-        text(f.grant_number, `${w}.grant_number`, 100, { nullable: true });
+        text(f.name, `${w}.name`, TEXT_MAX.fund_name);
+        text(f.grant_number, `${w}.grant_number`, TEXT_MAX.grant_number, { nullable: true });
         if (!USE_CODES.has(f.category)) refuse("schema", `${w}.category is not an Exhibit E allowable use SUDS knows.`);
         if (f.hiaa !== null && !HIAA_CODES.has(f.hiaa)) refuse("schema", `${w}.hiaa is not a High Impact Abatement Activity SUDS knows.`);
         exactKeys(f.spend, PAYLOAD.fundSpend, `${w}.spend`);
@@ -28152,28 +28260,38 @@ var require_county = __commonJS({
       });
       return p;
     }
-    function payloadFrom(raw, { programme, generatedAt = db3.now(), version = config2.version } = {}) {
-      const vals = (v) => Object.fromEntries(VALUE_KEYS.map((k) => [k, v[k] || 0]));
+    function payloadFrom(raw, { programme, recipient, generatedAt = (/* @__PURE__ */ new Date()).toISOString(), version = config2.version } = {}) {
+      const need = (o, k, where) => {
+        if (!o || !Object.prototype.hasOwnProperty.call(o, k) || o[k] === void 0 || o[k] === null) refuse("schema", `${where} has no ${k}: the figures are not the shape this version of SUDS expects.`);
+        return o[k];
+      };
+      const vals = (v, where) => Object.fromEntries(VALUE_KEYS.map((k) => [k, need(v, k, where)]));
+      const code = normaliseCode(recipient && recipient.county_code);
+      if (!code) refuse("recipient", "Type the county code the county gave you (eight letters and digits, as its County view \u203A Programs page shows it).");
+      const countyName = cleanText(recipient && recipient.county_name, TEXT_MAX.county_name);
+      if (!countyName) refuse("recipient", "Type the county's name, as the file should show it.");
       const p = {
         schema_version: SCHEMA_VERSION,
-        programme: String(programme || "").trim().slice(0, 200) || "Unnamed programme",
+        programme: cleanText(programme, TEXT_MAX.programme) || "Unnamed program",
+        recipient: { county_code: code, county_name: countyName },
         period: { from: raw.from, to: raw.to },
         generated_at: generatedAt,
         suds_version: String(version),
         counts: "exact",
-        funds: raw.funds.map((f) => ({
-          name: String(f.name).slice(0, 200),
-          grant_number: f.grant_number ? String(f.grant_number).slice(0, 100) : null,
+        funds: raw.funds.map((f, i) => ({
+          name: cleanText(f.name, TEXT_MAX.fund_name) || `Fund ${i + 1}`,
+          grant_number: cleanText(f.grant_number, TEXT_MAX.grant_number) || null,
           category: f.category,
           hiaa: f.hiaa || null,
-          spend: { own_category: f.spend.own_category, other_categories: f.spend.other_categories, approved: f.spend.approved, pending: f.spend.pending },
-          values: vals(f.values)
+          spend: { own_category: need(f.spend, "own_category", `funds[${i}].spend`), other_categories: need(f.spend, "other_categories", `funds[${i}].spend`), approved: need(f.spend, "approved", `funds[${i}].spend`), pending: need(f.spend, "pending", `funds[${i}].spend`) },
+          values: vals(f.values, `funds[${i}].values`)
         })),
-        categories: raw.categories.map((c) => ({ key: c.key, spend_own_category: c.spend_own_category, values: vals(c.values) })),
-        total: { spend: { approved: raw.total.spend.approved, pending: raw.total.spend.pending }, values: vals(raw.total.values) }
+        categories: raw.categories.map((c, i) => ({ key: c.key, spend_own_category: need(c, "spend_own_category", `categories[${i}]`), values: vals(c.values, `categories[${i}].values`) })),
+        total: { spend: { approved: need(raw.total.spend, "approved", "total.spend"), pending: need(raw.total.spend, "pending", "total.spend") }, values: vals(raw.total.values, "total.values") }
       };
       return checkPayload(p);
     }
+    var slug = (s) => cleanText(s, 200).normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/, "") || "program";
     var envelope = (payload, fingerprint, signature) => ({ format: FORMAT2, schema_version: SCHEMA_VERSION, payload, signature: { algorithm: ALGORITHM, key_fingerprint: fingerprint, value: signature } });
     function signFile(payload) {
       const bytes3 = canonical(payload);
@@ -28188,14 +28306,14 @@ var require_county = __commonJS({
       const fingerprint = fingerprintOf(pem);
       return { file: envelope(payload, fingerprint, nodeCrypto.sign(null, import_buffer.Buffer.from(bytes3), priv).toString("base64")), public_key: pem, fingerprint, sha256: sha256Hex(bytes3) };
     }
-    function parseFile(textIn, { today } = {}) {
-      if (typeof textIn !== "string" || !textIn.trim()) refuse("malformed", "Choose a county submission file (a .json file a SUDS programme made under Send to the county).");
+    function parseFile(textIn, { today, now: now2 } = {}) {
+      if (typeof textIn !== "string" || !textIn.trim()) refuse("malformed", "Choose a county submission file (a .json file a SUDS program made under Send to the county).");
       if (import_buffer.Buffer.byteLength(textIn, "utf8") > MAX_FILE_BYTES) refuse("too_large", `The file is larger than a county submission can be (${Math.round(MAX_FILE_BYTES / 1024)} KB). It is not a SUDS county submission.`);
       let f;
       try {
         f = JSON.parse(textIn);
       } catch {
-        refuse("malformed", "The file is not a county submission: it is not valid JSON. Ask the programme to send the file SUDS made, unchanged.");
+        refuse("malformed", "The file is not a county submission: it is not valid JSON. Ask the program to send the file SUDS made, unchanged.");
       }
       if (!f || typeof f !== "object" || Array.isArray(f) || f.format !== FORMAT2) refuse("format", "The file is not a SUDS county submission (its format is not suds-county-submission).");
       exactKeys(f, ["format", "payload", "schema_version", "signature"], "The file");
@@ -28205,26 +28323,50 @@ var require_county = __commonJS({
       const fingerprint = normaliseFingerprint(f.signature.key_fingerprint);
       if (!fingerprint) refuse("signature", "The file does not name the key it was signed with.");
       if (typeof f.signature.value !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(f.signature.value)) refuse("signature", "The file's signature is not an Ed25519 signature.");
-      checkPayload(f.payload, { today });
+      checkPayload(f.payload, { today, now: now2 });
       const bytes3 = canonical(f.payload);
       return { payload: f.payload, bytes: bytes3, sha256: sha256Hex(bytes3), fingerprint, signature: f.signature.value };
     }
-    function importParsed(parsed, user) {
-      const prog = db3.one(`SELECT * FROM county_programmes WHERE fingerprint=?`, parsed.fingerprint);
-      if (!prog) refuse("unknown_key", `The file was signed with a key the county has not registered (fingerprint ${formatFingerprint(parsed.fingerprint)}). Register the programme under County view \u203A Programmes, with the public key it gave you, then import the file again.`);
-      if (!prog.active) refuse("inactive", `The file was signed by ${prog.name}, which is not an active programme here. Reactivate it under County view \u203A Programmes if it should report again.`);
-      if (!signing.verify(parsed.bytes, parsed.signature, prog.public_key)) refuse("signature", `The signature does not match ${prog.name}'s registered key: the file was changed after it was made, or was not made with that key. Ask the programme to send the file again, unchanged.`);
-      const dup = db3.one(`SELECT * FROM county_submissions WHERE sha256=?`, parsed.sha256);
-      if (dup) return { status: "duplicate", submission: summary(dup), programme: prog, replaced: null };
+    var SUBS = `SELECT s.*, k.fingerprint key_fingerprint, k.replaced_at key_replaced_at, k.compromised_at key_compromised_at FROM county_submissions s JOIN county_programme_keys k ON k.id=s.key_id`;
+    var subById = (id) => db3.one(`${SUBS} WHERE s.id=?`, id);
+    var byMade = (a, b) => Date.parse(b.generated_at) - Date.parse(a.generated_at) || String(b.received_at).localeCompare(String(a.received_at)) || String(b.id).localeCompare(String(a.id));
+    function resettle(programmeId, from, to) {
+      const rows = db3.all(`${SUBS} WHERE s.programme_id=? AND s.period_from=? AND s.period_to=?`, programmeId, from, to);
+      const can = rows.filter((r) => !r.withdrawn_at && !r.key_compromised_at).sort(byMade);
+      const winner = can[0] ? can[0].id : null;
+      for (const r of rows) {
+        const want = r.withdrawn_at || r.key_compromised_at || r.id === winner ? null : winner;
+        if ((r.superseded_by || null) !== want) db3.run(`UPDATE county_submissions SET superseded_by=? WHERE id=?`, want, r.id);
+      }
+      return winner;
+    }
+    function resettleProgramme(programmeId) {
+      for (const p of db3.all(`SELECT DISTINCT period_from, period_to FROM county_submissions WHERE programme_id=?`, programmeId)) resettle(programmeId, p.period_from, p.period_to);
+    }
+    function importParsed(parsed, user, { countyCode: here } = {}) {
       const p = parsed.payload;
+      const code = here || countyCode().code;
+      if (p.recipient.county_code !== code) refuse("recipient", `This file was made for another county: ${p.recipient.county_name} (county code ${formatCode(p.recipient.county_code)}). This county's code is ${formatCode(code)}. If the file is meant for this county, ask the program to make it again with this county's code.`);
+      const key = db3.one(`SELECT * FROM county_programme_keys WHERE fingerprint=?`, parsed.fingerprint);
+      if (!key) refuse("unknown_key", `The file was signed with a key the county has not registered (fingerprint ${formatFingerprint(parsed.fingerprint)}). If the program made a new key, add it under County view \u203A Programs \u203A Edit \u203A Replace the key; otherwise register the program with the public key it gave you. Then import the file again.`);
+      const prog = db3.one(`SELECT * FROM county_programmes WHERE id=?`, key.programme_id);
+      if (!prog.active) refuse("inactive", `The file was signed by ${prog.name}, which is not an active program here. Reactivate it under County view \u203A Programs if it should report again.`);
+      if (!signing.verify(parsed.bytes, parsed.signature, key.public_key)) refuse("signature", `The signature does not match ${prog.name}'s registered key: the file was changed after it was made, or was not made with that key. Ask the program to send the file again, unchanged.`);
+      const dup = db3.one(`${SUBS} WHERE s.programme_id=? AND s.sha256=?`, prog.id, parsed.sha256);
+      if (dup) return { status: "duplicate", submission: summary(dup), programme: prog, replaced: null, counting: null };
+      if (key.replaced_at) refuse("retired_key", `The file was signed with ${prog.name}'s old key, replaced on ${humanDay(key.replaced_at)}. New files must be signed with its current key: ask the program to make the file again (its Settlement outcomes page signs with the current key).`);
       const id = uuid2();
       const now2 = db3.now();
-      let replaced = null;
+      let before = null;
+      let winner = null;
       db3.transaction(() => {
+        const cur = db3.one(`SELECT id FROM county_submissions WHERE programme_id=? AND period_from=? AND period_to=? AND superseded_by IS NULL AND withdrawn_at IS NULL AND key_id IN (SELECT id FROM county_programme_keys WHERE compromised_at IS NULL)`, prog.id, p.period.from, p.period.to);
+        before = cur ? cur.id : null;
         db3.run(
-          `INSERT INTO county_submissions(id,programme_id,period_from,period_to,schema_version,programme_name,generated_at,suds_version,payload_enc,sha256,signature,received_at,received_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO county_submissions(id,programme_id,key_id,period_from,period_to,schema_version,programme_name,generated_at,suds_version,payload_enc,sha256,signature,received_at,received_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           id,
           prog.id,
+          key.id,
           p.period.from,
           p.period.to,
           p.schema_version,
@@ -28237,15 +28379,39 @@ var require_county = __commonJS({
           now2,
           user ? user.id : null
         );
-        const earlier = db3.one(`SELECT id FROM county_submissions WHERE programme_id=? AND period_from=? AND period_to=? AND id<>? AND superseded_by IS NULL AND withdrawn_at IS NULL ORDER BY received_at DESC LIMIT 1`, prog.id, p.period.from, p.period.to, id);
-        if (earlier) {
-          db3.run(`UPDATE county_submissions SET superseded_by=? WHERE programme_id=? AND period_from=? AND period_to=? AND id<>? AND superseded_by IS NULL AND withdrawn_at IS NULL`, id, prog.id, p.period.from, p.period.to, id);
-          replaced = earlier.id;
-        }
+        winner = resettle(prog.id, p.period.from, p.period.to);
       });
-      return { status: replaced ? "superseded" : "imported", submission: summary(db3.one(`SELECT * FROM county_submissions WHERE id=?`, id)), programme: prog, replaced };
+      const status = winner !== id ? "older" : before ? "superseded" : "imported";
+      return { status, submission: summary(subById(id)), programme: prog, replaced: status === "superseded" ? before : null, counting: status === "older" ? summary(subById(winner)) : null };
+    }
+    function withdraw(id, user) {
+      const s = subById(id);
+      if (!s) return null;
+      if (s.withdrawn_at) refuse("conflict", "This file was already withdrawn.");
+      if (s.superseded_by) refuse("conflict", "This file was replaced by a later one for the same period and does not count. To change what counts, withdraw the later one.");
+      let restored = null;
+      db3.transaction(() => {
+        db3.run(`UPDATE county_submissions SET withdrawn_at=?, withdrawn_by=?, superseded_by=NULL WHERE id=?`, db3.now(), user ? user.id : null, id);
+        restored = resettle(s.programme_id, s.period_from, s.period_to);
+      });
+      return { submission: summary(subById(id)), restored: restored ? summary(subById(restored)) : null, programme_id: s.programme_id };
+    }
+    function reinstate(id) {
+      const s = subById(id);
+      if (!s) return null;
+      if (!s.withdrawn_at) refuse("conflict", "This file is not withdrawn.");
+      let before = null;
+      let winner = null;
+      db3.transaction(() => {
+        const cur = db3.one(`SELECT id FROM county_submissions WHERE programme_id=? AND period_from=? AND period_to=? AND superseded_by IS NULL AND withdrawn_at IS NULL AND key_id IN (SELECT id FROM county_programme_keys WHERE compromised_at IS NULL)`, s.programme_id, s.period_from, s.period_to);
+        before = cur ? cur.id : null;
+        db3.run(`UPDATE county_submissions SET withdrawn_at=NULL, withdrawn_by=NULL WHERE id=?`, id);
+        winner = resettle(s.programme_id, s.period_from, s.period_to);
+      });
+      return { submission: summary(subById(id)), counts: winner === id, displaced: winner === id && before ? before : null, programme_id: s.programme_id };
     }
     function summary(s) {
+      const status = s.withdrawn_at ? "withdrawn" : s.superseded_by ? "superseded" : s.key_compromised_at ? "key_compromised" : "current";
       return {
         id: s.id,
         programme_id: s.programme_id,
@@ -28261,14 +28427,41 @@ var require_county = __commonJS({
         superseded_by: s.superseded_by,
         withdrawn_at: s.withdrawn_at,
         withdrawn_by: s.withdrawn_by,
-        status: s.withdrawn_at ? "withdrawn" : s.superseded_by ? "superseded" : "current"
+        key_fingerprint: s.key_fingerprint || null,
+        key_fingerprint_display: formatFingerprint(s.key_fingerprint),
+        status
       };
     }
-    function programmeOut(p) {
-      return { id: p.id, name: p.name, fingerprint: p.fingerprint, fingerprint_display: formatFingerprint(p.fingerprint), public_key: p.public_key, active: !!p.active, notes: p.notes || "", created_at: p.created_at, updated_at: p.updated_at };
+    function programmeKeys(programmeId) {
+      return db3.all(`SELECT * FROM county_programme_keys WHERE programme_id=? ORDER BY (replaced_at IS NULL) DESC, COALESCE(replaced_at, added_at) DESC, id`, programmeId).map((k) => ({
+        id: k.id,
+        fingerprint: k.fingerprint,
+        fingerprint_display: formatFingerprint(k.fingerprint),
+        public_key: k.public_key,
+        added_at: k.added_at,
+        replaced_at: k.replaced_at,
+        compromised_at: k.compromised_at,
+        current: !k.replaced_at
+      }));
     }
-    var dayNum = (s) => Math.round(Date.parse(`${s}T00:00:00Z`) / 864e5);
-    var daysIn = (from, to) => dayNum(to) - dayNum(from) + 1;
+    function programmeOut(p) {
+      const keys = programmeKeys(p.id);
+      const cur = keys.find((k) => k.current) || null;
+      return {
+        id: p.id,
+        name: p.name,
+        fingerprint: cur ? cur.fingerprint : null,
+        fingerprint_display: cur ? cur.fingerprint_display : "",
+        public_key: cur ? cur.public_key : null,
+        keys,
+        active: !!p.active,
+        keep_files: !!p.keep_files,
+        counts: !!p.active || !!p.keep_files,
+        notes: p.notes || "",
+        created_at: p.created_at,
+        updated_at: p.updated_at
+      };
+    }
     var round2 = (n) => Math.round(n * 100) / 100;
     var round1 = (n) => Math.round(n * 10) / 10;
     function choose(subs, from, to) {
@@ -28281,22 +28474,41 @@ var require_county = __commonJS({
       used.sort((a, b) => a.period_from.localeCompare(b.period_from));
       return { used, overlapped, outside };
     }
+    var PEOPLE_LABELS = {
+      people_served: "People served (each program's own count, summed)",
+      referrals_made: "Referrals made for the people served (each program's own count, summed)",
+      people_linked: "People linked to care: a referral admitted or completed (each program's own count, summed)",
+      moud_linked: "People linked to medication for OUD (each program's own count, summed)",
+      people_trained: "People trained in education sessions (each program's own count, summed)"
+    };
+    function measureLabel(k) {
+      if (PEOPLE_LABELS[k]) return PEOPLE_LABELS[k];
+      if (MAP.INDICATORS[k].kind === "person") return `${MAP.INDICATORS[k].short} (each program's own count, summed)`;
+      return MAP.INDICATORS[k].label;
+    }
+    var USE_ROWS = () => [...C.SETTLEMENT_USES.map((u) => ({ code: u.code, label: `${u.label} (${u.schedule})` })), { code: "uncategorised", label: "No settlement category recorded" }];
+    var HIAA_ROWS = () => [...C.SETTLEMENT_HIAA.map((x) => ({ code: x.code, label: x.label })), { code: "none", label: "No High Impact Abatement Activity recorded" }];
     function combined(from, to) {
       const programmes = db3.all(`SELECT * FROM county_programmes ORDER BY name COLLATE NOCASE, id`);
-      const subs = db3.all(`SELECT * FROM county_submissions WHERE superseded_by IS NULL AND withdrawn_at IS NULL ORDER BY period_from, received_at`);
+      const subs = db3.all(`${SUBS} WHERE s.superseded_by IS NULL AND s.withdrawn_at IS NULL AND k.compromised_at IS NULL ORDER BY s.period_from, s.received_at`);
       const byProg = new Map(programmes.map((p) => [p.id, []]));
       for (const s of subs) if (byProg.has(s.programme_id)) byProg.get(s.programme_id).push(s);
       const period = daysIn(from, to);
       const cols2 = [];
+      const inactiveLeftOut = [];
       for (const p of programmes) {
         const { used, overlapped, outside } = choose(byProg.get(p.id), from, to);
+        if (!p.active && !p.keep_files) {
+          if (used.length) inactiveLeftOut.push({ id: p.id, name: p.name, files: used.length });
+          continue;
+        }
         if (!p.active && !used.length) continue;
         const agg = { spend_approved: 0, spend_pending: 0, use: {}, hiaa: {}, values: Object.fromEntries(VALUE_KEYS.map((k) => [k, 0])) };
         for (const s of used) {
           const pl = JSON.parse(decrypt3(s.payload_enc));
           agg.spend_approved += pl.total.spend.approved;
           agg.spend_pending += pl.total.spend.pending;
-          for (const k of VALUE_KEYS) agg.values[k] += pl.total.values[k] || 0;
+          for (const k of VALUE_KEYS) agg.values[k] += pl.total.values[k];
           for (const c of pl.categories) agg.use[c.key] = (agg.use[c.key] || 0) + c.spend_own_category;
           for (const f of pl.funds) {
             const h = f.hiaa || "none";
@@ -28308,79 +28520,135 @@ var require_county = __commonJS({
           id: p.id,
           name: p.name,
           active: !!p.active,
-          fingerprint: p.fingerprint,
-          fingerprint_display: formatFingerprint(p.fingerprint),
+          keep_files: !!p.keep_files,
           status: !used.length ? "none" : covered >= period ? "whole" : "part",
           days_covered: covered,
           days_in_period: period,
           submissions: used.map(summary),
           left_out: [...overlapped.map((s) => ({ ...summary(s), why: "overlaps" })), ...outside.filter((s) => s.period_from <= to && s.period_to >= from).map((s) => ({ ...summary(s), why: "outside" }))],
-          agg
+          agg: used.length ? agg : null
         });
       }
-      const USE = C.SETTLEMENT_USES;
-      const HIAA = [...C.SETTLEMENT_HIAA, { code: "none", label: "No High Impact Abatement Activity recorded" }];
       const row = (group, key, label, pick, { money = true, round = round2 } = {}) => {
-        const by = Object.fromEntries(cols2.map((c) => [c.id, round(pick(c.agg) || 0)]));
-        return { group, key, label, money, by, total: round(cols2.reduce((n, c) => n + (pick(c.agg) || 0), 0)) };
+        const by = Object.fromEntries(cols2.map((c) => [c.id, c.agg ? round(pick(c.agg) || 0) : null]));
+        return { group, key, label, money, by, total: round(cols2.reduce((n, c) => n + (c.agg ? pick(c.agg) || 0 : 0), 0)) };
       };
       const rows = [
         row("spending", "spend_approved", "Spent from settlement funds (approved or reimbursed)", (a) => a.spend_approved),
         row("spending", "spend_pending", "Pending approval", (a) => a.spend_pending)
       ];
-      for (const u of USE) if (cols2.some((c) => c.agg.use[u.code])) rows.push(row("use", u.code, `${u.label} (${u.schedule})`, (a) => a.use[u.code]));
-      if (cols2.some((c) => c.agg.use.uncategorised)) rows.push(row("use", "uncategorised", "No settlement category recorded", (a) => a.use.uncategorised));
-      for (const x of HIAA) if (cols2.some((c) => c.agg.hiaa[x.code])) rows.push(row("hiaa", x.code, x.label, (a) => a.hiaa[x.code]));
-      for (const k of VALUE_KEYS) rows.push(row("outcome", k, MAP.INDICATORS[k].label, (a) => a.values[k], { money: false, round: k === "staff_training_hours" ? round1 : (n) => n }));
+      for (const u of USE_ROWS()) if (cols2.some((c) => c.agg && c.agg.use[u.code])) rows.push(row("use", u.code, u.label, (a) => a.use[u.code]));
+      for (const x of HIAA_ROWS()) if (cols2.some((c) => c.agg && c.agg.hiaa[x.code])) rows.push(row("hiaa", x.code, x.label, (a) => a.hiaa[x.code]));
+      for (const k of VALUE_KEYS) rows.push(row("outcome", k, measureLabel(k), (a) => a.values[k], { money: false, round: k === "staff_training_hours" ? round1 : (n) => n }));
+      const whole = cols2.filter((c) => c.status === "whole").length;
+      const part = cols2.filter((c) => c.status === "part").length;
+      const none = cols2.filter((c) => c.status === "none").length;
       return {
         from,
         to,
         days_in_period: period,
         programmes: cols2.map(({ agg, ...c }) => c),
         rows,
-        submitted: cols2.filter((c) => c.status !== "none").length,
-        not_submitted: cols2.filter((c) => c.status === "none").length,
+        submitted: whole + part,
+        not_submitted: none,
+        whole,
+        part,
+        none,
+        of: cols2.length,
+        headline: headline(whole, part, none, cols2.length),
+        inactive_left_out: inactiveLeftOut,
         caveats: CAVEATS,
+        caveat_summary: CAVEAT_SUMMARY,
         publication_note: PUBLICATION_NOTE,
         rule: PERIOD_RULE
       };
     }
+    function headline(whole, part, none, of) {
+      return `${whole} of ${of} program${of === 1 ? "" : "s"} submitted for the whole period, ${part} for part of it, ${none} not at all.`;
+    }
+    function byQuarter(from, to) {
+      const qs = quartersIn(from, to);
+      if (!qs.length) return { from, to, quarters: [], rows: [], days_outside_quarters: daysIn(from, to), too_many: false };
+      if (qs.length > MAX_QUARTERS) return { from, to, quarters: [], rows: [], too_many: true, max_quarters: MAX_QUARTERS };
+      const views = qs.map((q) => combined(q.from, q.to));
+      const order = [["spending", "spend_approved"], ["spending", "spend_pending"], ...USE_ROWS().map((u) => ["use", u.code]), ...HIAA_ROWS().map((x) => ["hiaa", x.code]), ...VALUE_KEYS.map((k) => ["outcome", k])];
+      const rows = [];
+      for (const [g, k] of order) {
+        const found = views.map((v) => v.rows.find((r) => r.group === g && r.key === k));
+        const first = found.find(Boolean);
+        if (!first) continue;
+        rows.push({ group: g, key: k, label: first.label, money: first.money, by_quarter: found.map((r) => r ? r.total : 0) });
+      }
+      const inQuarters = qs.reduce((n, q) => n + daysIn(q.from, q.to), 0);
+      return {
+        from,
+        to,
+        rows,
+        too_many: false,
+        days_outside_quarters: daysIn(from, to) - inQuarters,
+        quarters: views.map((v) => ({ from: v.from, to: v.to, whole: v.whole, part: v.part, none: v.none, of: v.of, headline: v.headline, programmes: v.programmes, rows: v.rows }))
+      };
+    }
+    var CAVEAT_SUMMARY = "Each program's own counts, added up: a person served by two programs counts twice. Exact figures for authorised county staff only, not for publication.";
     var CAVEATS = [
-      'People are counted by each programme and then added up. A person served by two programmes is counted twice: these figures are "people served per programme, summed", not unduplicated across programmes, and they never can be (that would need a shared identifier to move between organisations).',
-      "Exact figures, including small numbers, as each programme sends them under its funding contract. For authorised county staff only: not for publication or sharing.",
-      "Each figure is what the programme recorded in SUDS for the work charged to its opioid settlement funds, from its own Settlement outcomes page. Money is exact; a cost per outcome is not calculated across programmes."
+      `People are counted by each program and then added up: "each program's own count, summed". A person served by two programs is counted twice, and the county view can never remove that double counting (it would need a shared identifier to move between organisations).`,
+      "Exact figures, including small numbers, as each program sends them under its funding contract. For authorised county staff only: not for publication or sharing.",
+      "Each figure is what the program recorded in SUDS for the work charged to the opioid settlement funds it chose to report to the county, from its own Settlement outcomes page. Money is exact; a cost per outcome is not calculated across programs."
     ];
-    var PERIOD_RULE = `A programme's submission counts when its whole period lies inside the period chosen here; nothing is pro-rated. Where two of one programme's submissions overlap (a quarter and a month inside it), the longer one counts. A programme whose submissions cover only part of the period is marked "part of the period".`;
+    var PERIOD_RULE = `A program's submission counts when its whole period lies inside the period chosen here; nothing is pro-rated. Where two of one program's submissions overlap (a quarter and a month inside it), the longer one counts. A program whose submissions cover only part of the period is marked "part of the period". An inactive program's files count only if the county chose to keep counting them.`;
     var PUBLICATION_NOTE = "Publishing these figures needs the publication screen over the combined release (planned). Until then nothing here is for publication.";
     module.exports = {
       FORMAT: FORMAT2,
       SCHEMA_VERSION,
       ALGORITHM,
       MAX_FILE_BYTES,
+      MAX_QUARTERS,
       VALUE_KEYS,
       PAYLOAD,
+      TEXT_MAX,
       CAVEATS,
+      CAVEAT_SUMMARY,
       PERIOD_RULE,
       PUBLICATION_NOTE,
       SubmissionError,
       canonical,
+      cleanText,
       fingerprintOf,
       formatFingerprint,
       normaliseFingerprint,
       parsePublicKey,
+      normaliseCode,
+      formatCode,
+      countyCode,
       currentKey,
+      retiredKeys,
       ensureKey,
+      rotateKey,
       payloadFrom,
       signFile,
       signWithSeed,
       checkPayload,
       parseFile,
       importParsed,
+      withdraw,
+      reinstate,
+      resettle,
+      resettleProgramme,
       summary,
       programmeOut,
+      programmeKeys,
       choose,
       combined,
-      daysIn
+      byQuarter,
+      headline,
+      measureLabel,
+      quartersIn,
+      daysIn,
+      isDay,
+      isInstant,
+      humanDay,
+      humanPeriod,
+      slug
     };
   }
 });
@@ -31256,10 +31524,10 @@ var require_settlement_outcomes = __commonJS({
       moud_linked: b.moud.size,
       people_trained: b.trained.size
     });
-    function figures({ from, to, ts, tsP }) {
+    function figures({ from, to, ts, tsP }, { fundIds = null } = {}) {
       const monthOf = monthReader();
       const months = monthsOf(from, to);
-      const funds = db3.all(`SELECT f.id, f.name, f.grant_number, f.source_type, f.settlement_use, f.settlement_hiaa, f.is_active, f.total_amount FROM funding_sources f WHERE ${isFund} ORDER BY f.name, f.id`);
+      const funds = db3.all(`SELECT f.id, f.name, f.grant_number, f.source_type, f.settlement_use, f.settlement_hiaa, f.is_active, f.total_amount FROM funding_sources f WHERE ${isFund}${fundIds ? " AND f.id IN (SELECT value FROM json_each(?))" : ""} ORDER BY f.name, f.id`, ...fundIds ? [JSON.stringify(fundIds)] : []);
       const F = new Map(funds.map((f) => [f.id, { f, period: bucket(), months: new Map(months.map((m) => [m, bucket()])), own: 0, other: 0, pending: 0, active: false }]));
       const catKey = (f) => f.settlement_use && USE[f.settlement_use] ? f.settlement_use : "uncategorised";
       const cats = /* @__PURE__ */ new Map();
@@ -31351,7 +31619,7 @@ var require_settlement_outcomes = __commonJS({
           b.staff_minutes += t.minutes || 0;
         });
       }
-      const shownFunds = [...F.values()].filter((x) => x.f.is_active || x.active);
+      const shownFunds = [...F.values()].filter((x) => x.f.is_active || x.active || fundIds);
       const fundRows = shownFunds.map((x) => {
         const profile = MAP.profileFor(x.f.settlement_use, x.f.settlement_hiaa);
         return {
@@ -32392,43 +32660,77 @@ var require_county2 = __commonJS({
     var { validate } = require_validate();
     var { badRequest, notFound, conflict, HttpError: HttpError3 } = require_http();
     var REFUSALS_PER_10_MIN = 20;
-    var DAY = /^\d{4}-\d{2}-\d{2}$/;
+    var WINDOW_MS = 10 * 6e4;
+    var IS_FUND = `(source_type='opioid_settlement' OR settlement_use IS NOT NULL OR settlement_hiaa IS NOT NULL)`;
     var today = () => require_budget().localDate();
     function periodOf(ctx) {
       const from = ctx.query.get("from") || "";
       const to = ctx.query.get("to") || "";
-      if (!DAY.test(from) || !DAY.test(to) || !Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to))) throw badRequest("Choose a period: from and to must be dates (YYYY-MM-DD).");
-      if (from > to) throw badRequest(`The start date (${from}) is after the end date (${to}). Choose a start date on or before the end date.`);
+      if (!K.isDay(from) || !K.isDay(to)) throw badRequest("Choose a period: from and to must be real dates (YYYY-MM-DD).");
+      if (from > to) throw badRequest(`The start date (${K.humanDay(from)}) is after the end date (${K.humanDay(to)}). Choose a start date on or before the end date.`);
       return { from, to };
+    }
+    function recipients() {
+      try {
+        const o = JSON.parse(db3.getSetting("county_submission_recipients", "{}"));
+        return o && typeof o === "object" ? o : {};
+      } catch {
+        return {};
+      }
     }
     module.exports = (r) => {
       const cboPerms = [auth3.requireAuth, auth3.requirePerm("reports:funder"), auth3.requirePerm("budget:read")];
-      r.get("/api/county-submission/key", ...cboPerms, () => ({ key: K.currentKey() }));
+      const keyCreated = (ctx, key) => audit3.log({ user: ctx.user, action: "county_submission.key.create", ip: ctx.ip, details: { fingerprint: key.fingerprint } });
+      r.get("/api/county-submission/key", ...cboPerms, () => ({ key: K.currentKey(), retired: K.retiredKeys() }));
       r.post("/api/county-submission/key", ...cboPerms, (ctx) => {
         const { key, created } = K.ensureKey(ctx.user);
-        if (created) audit3.log({ user: ctx.user, action: "county_submission.key.create", ip: ctx.ip, details: { fingerprint: key.fingerprint } });
+        if (created) keyCreated(ctx, key);
         ctx.status = created ? 201 : 200;
-        return { key, created };
+        return { key, created, retired: K.retiredKeys() };
+      });
+      r.post("/api/county-submission/key/new", ...cboPerms, (ctx) => {
+        const { old, key } = K.rotateKey(ctx.user);
+        audit3.log({ user: ctx.user, action: "county_submission.key.rotate", ip: ctx.ip, details: { retired_fingerprint: old ? old.fingerprint : null, fingerprint: key.fingerprint } });
+        ctx.status = 201;
+        return { key, retired: K.retiredKeys() };
+      });
+      r.get("/api/county-submission/options", ...cboPerms, () => {
+        const funds = db3.all(`SELECT id, name, grant_number, is_active FROM funding_sources WHERE ${IS_FUND} ORDER BY is_active DESC, name COLLATE NOCASE, id`);
+        const counties = Object.entries(recipients()).map(([code2, x]) => ({ code: code2, code_display: K.formatCode(code2), name: x.name || "", fund_ids: Array.isArray(x.fund_ids) ? x.fund_ids.filter((id) => funds.some((f) => f.id === id)) : [], used_at: x.used_at || null })).sort((a, b) => String(b.used_at || "").localeCompare(String(a.used_at || "")));
+        return { funds: funds.map((f) => ({ ...f, is_active: !!f.is_active })), counties, today: today() };
       });
       r.get("/api/county-submission/file", ...cboPerms, auth3.requirePerm("export:read"), async (ctx) => {
         const { from, to } = periodOf(ctx);
-        if (to > today()) throw badRequest(`The period ends in the future (${to}). A county submission reports a period that has happened: choose an end date of today or earlier.`);
+        if (to >= today()) throw badRequest(`The period is not over yet: it ends ${K.humanDay(to)}, and today is ${K.humanDay(today())}. A county file reports a period that has ended (for a quarter, make it from the day after the quarter ends).`, { fields: { to: "the period is not over yet" } });
+        const code2 = K.normaliseCode(ctx.query.get("county_code"));
+        if (!code2) throw badRequest("Type the county code the county gave you: eight letters and digits, as its County view \u203A Programs page shows it.", { fields: { county_code: "required" } });
+        const countyName = K.cleanText(ctx.query.get("county_name"), K.TEXT_MAX.county_name);
+        if (!countyName) throw badRequest("Type the county's name, as the file should show it.", { fields: { county_name: "required" } });
+        const ids = String(ctx.query.get("funds") || "").split(",").map((s) => s.trim()).filter(Boolean);
+        if (!ids.length) throw badRequest("Choose the settlement funds this county pays for: only they go into the file.", { fields: { funds: "required" } });
+        if (ids.length > 200) throw badRequest("Too many funds.");
+        const known = new Set(db3.all(`SELECT id FROM funding_sources WHERE ${IS_FUND} AND id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)).map((x) => x.id));
+        const unknown = ids.filter((id) => !known.has(id));
+        if (unknown.length) throw badRequest("One of the funds chosen is not an opioid settlement fund here. Reload the page and choose again.", { fields: { funds: "not a settlement fund" } });
         const range = require_reports().range(ctx);
-        const raw = await db3.readSnapshot(async () => SO.figures(range));
+        const raw = await db3.readSnapshot(async () => SO.figures(range, { fundIds: [...known] }));
         let payload;
         try {
-          payload = K.payloadFrom(raw, { programme: db3.getSetting("org_name", "") });
+          payload = K.payloadFrom(raw, { programme: db3.getSetting("org_name", ""), recipient: { county_code: code2, county_name: countyName } });
         } catch (e) {
           if (e instanceof K.SubmissionError) throw badRequest(`The county file could not be made: ${e.message}`);
           throw e;
         }
         const { key, created } = K.ensureKey(ctx.user);
-        if (created) audit3.log({ user: ctx.user, action: "county_submission.key.create", ip: ctx.ip, details: { fingerprint: key.fingerprint } });
+        if (created) keyCreated(ctx, key);
         const { file, sha256: sha2562, fingerprint } = K.signFile(payload);
-        audit3.log({ user: ctx.user, action: "county_submission.export", ip: ctx.ip, details: { from, to, fingerprint, sha256: sha2562, funds: payload.funds.length, leaves_programme: true, content: "aggregate counts and money; no client-level data" } });
+        const rec = recipients();
+        rec[code2] = { name: countyName, fund_ids: [...known], used_at: db3.now() };
+        db3.setSetting("county_submission_recipients", JSON.stringify(rec));
+        audit3.log({ user: ctx.user, action: "county_submission.export", ip: ctx.ip, details: { from, to, county_code: code2, fingerprint, sha256: sha2562, funds: payload.funds.length, leaves_programme: true, content: "aggregate counts and money; no client-level data" } });
         ctx.res.writeHead(200, {
           "Content-Type": "application/json; charset=utf-8",
-          "Content-Disposition": `attachment; filename="suds-county-submission-${from}_${to}.json"`,
+          "Content-Disposition": `attachment; filename="suds-county-submission-${K.slug(payload.programme)}-${from}_${to}.json"`,
           "X-SUDS-Export": "County submission: exact aggregate figures for the county under the funding contract; not for publication. No client-level data."
         });
         ctx.res.end(JSON.stringify(file, null, 2) + "\n");
@@ -32437,14 +32739,39 @@ var require_county2 = __commonJS({
       const manage = [auth3.requireAuth, auth3.requirePerm("county:manage")];
       const programme = (id) => {
         const p = db3.one(`SELECT * FROM county_programmes WHERE id=?`, id);
-        if (!p) throw notFound("Programme not found");
+        if (!p) throw notFound("Program not found");
         return p;
       };
+      const code = (ctx) => {
+        const c = K.countyCode();
+        if (c.created) audit3.log({ user: ctx.user, action: "county.code.create", ip: ctx.ip, details: { county_code: c.code } });
+        return c.code;
+      };
+      const checkedKey = (v) => {
+        let k;
+        try {
+          k = K.parsePublicKey(v.public_key);
+        } catch (e) {
+          throw badRequest(e.message, { fields: { public_key: e.message } });
+        }
+        if (v.fingerprint) {
+          if (K.normaliseFingerprint(v.fingerprint) !== k.fingerprint) throw badRequest(`The fingerprint you typed does not match this key (its fingerprint is ${K.formatFingerprint(k.fingerprint)}). Check the key with the program before registering it.`, { fields: { fingerprint: "does not match the key" } });
+        } else if (!v.compared) {
+          throw badRequest("Check the key before trusting it: type the fingerprint the program read out to you, or tick that you compared the fingerprint shown with the one the program read out.", { fields: { fingerprint: "type the fingerprint the program read out, or tick that you compared it" } });
+        }
+        const taken = db3.one(`SELECT k.programme_id, p.name FROM county_programme_keys k JOIN county_programmes p ON p.id=k.programme_id WHERE k.fingerprint=?`, k.fingerprint);
+        return { k, taken };
+      };
+      const keyFields = { public_key: { type: "string", required: true, maxLen: 4e3 }, fingerprint: { type: "string", maxLen: 100 }, compared: { type: "boolean" } };
+      r.get("/api/county/code", ...view, (ctx) => {
+        const c = code(ctx);
+        return { code: c, code_display: K.formatCode(c), name: db3.getSetting("org_name", "") || "" };
+      });
       r.get("/api/county/programmes", ...view, (ctx) => {
-        const rows = db3.all(`SELECT p.*, (SELECT COUNT(*) FROM county_submissions s WHERE s.programme_id=p.id AND s.superseded_by IS NULL AND s.withdrawn_at IS NULL) current_submissions,
+        const rows = db3.all(`SELECT p.*, (SELECT COUNT(*) FROM county_submissions s JOIN county_programme_keys k ON k.id=s.key_id WHERE s.programme_id=p.id AND s.superseded_by IS NULL AND s.withdrawn_at IS NULL AND k.compromised_at IS NULL) current_submissions,
       (SELECT MAX(received_at) FROM county_submissions s WHERE s.programme_id=p.id) last_received FROM county_programmes p ORDER BY p.active DESC, p.name COLLATE NOCASE`);
         audit3.log({ user: ctx.user, action: "county.view", ip: ctx.ip, details: { what: "programmes", count: rows.length } });
-        return { rows: rows.map((p) => ({ ...K.programmeOut(p), current_submissions: p.current_submissions, last_received: p.last_received })) };
+        return { rows: rows.map((p) => ({ ...K.programmeOut(p), current_submissions: p.current_submissions, last_received: p.last_received })), county_code: K.formatCode(code(ctx)) };
       });
       r.post("/api/county/fingerprint", ...manage, (ctx) => {
         const v = validate(ctx.body, { public_key: { type: "string", required: true, maxLen: 4e3 } });
@@ -32454,119 +32781,203 @@ var require_county2 = __commonJS({
         } catch (e) {
           throw badRequest(e.message, { fields: { public_key: e.message } });
         }
-        const taken = db3.one(`SELECT name FROM county_programmes WHERE fingerprint=?`, k.fingerprint);
-        return { fingerprint: k.fingerprint, fingerprint_display: K.formatFingerprint(k.fingerprint), registered_as: taken ? taken.name : null };
+        const taken = db3.one(`SELECT p.name, k.replaced_at FROM county_programme_keys k JOIN county_programmes p ON p.id=k.programme_id WHERE k.fingerprint=?`, k.fingerprint);
+        return { fingerprint: k.fingerprint, fingerprint_display: K.formatFingerprint(k.fingerprint), registered_as: taken ? taken.name : null, registered_as_old_key: !!(taken && taken.replaced_at) };
       });
       r.post("/api/county/programmes", ...manage, (ctx) => {
-        const v = validate(ctx.body, { name: { type: "string", required: true, maxLen: 200 }, public_key: { type: "string", required: true, maxLen: 4e3 }, notes: { type: "string", maxLen: 2e3 }, fingerprint: { type: "string", maxLen: 100 } });
-        if (!String(v.name).trim()) throw badRequest("Give the programme's name", { fields: { name: "required" } });
-        let k;
-        try {
-          k = K.parsePublicKey(v.public_key);
-        } catch (e) {
-          throw badRequest(e.message, { fields: { public_key: e.message } });
-        }
-        if (v.fingerprint && K.normaliseFingerprint(v.fingerprint) !== k.fingerprint) throw badRequest(`The fingerprint you typed does not match this key (its fingerprint is ${K.formatFingerprint(k.fingerprint)}). Check the key with the programme before registering it.`, { fields: { fingerprint: "does not match the key" } });
-        const taken = db3.one(`SELECT name FROM county_programmes WHERE fingerprint=?`, k.fingerprint);
+        const v = validate(ctx.body, { name: { type: "string", required: true, maxLen: 200 }, notes: { type: "string", maxLen: 2e3 }, ...keyFields });
+        const name = K.cleanText(v.name, 200);
+        if (!name) throw badRequest("Give the program's name", { fields: { name: "required" } });
+        const { k, taken } = checkedKey(v);
         if (taken) throw conflict(`This key is already registered, for ${taken.name}.`);
         const id = require_crypto().uuid();
         const now2 = db3.now();
-        db3.run(`INSERT INTO county_programmes(id,name,public_key,fingerprint,active,notes,created_at,created_by,updated_at) VALUES(?,?,?,?,1,?,?,?,?)`, id, String(v.name).trim(), k.pem, k.fingerprint, v.notes || null, now2, ctx.user.id, now2);
-        audit3.log({ user: ctx.user, action: "county.programme.add", entity: "county_programme", entityId: id, ip: ctx.ip, details: { fingerprint: k.fingerprint } });
+        db3.transaction(() => {
+          db3.run(`INSERT INTO county_programmes(id,name,active,keep_files,notes,created_at,created_by,updated_at) VALUES(?,?,1,0,?,?,?,?)`, id, name, v.notes || null, now2, ctx.user.id, now2);
+          db3.run(`INSERT INTO county_programme_keys(id,programme_id,public_key,fingerprint,added_at,added_by) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), id, k.pem, k.fingerprint, now2, ctx.user.id);
+        });
+        audit3.log({ user: ctx.user, action: "county.programme.add", entity: "county_programme", entityId: id, ip: ctx.ip, details: { fingerprint: k.fingerprint, checked: v.fingerprint ? "typed" : "compared" } });
         ctx.status = 201;
         return K.programmeOut(programme(id));
       });
       r.put("/api/county/programmes/:id", ...manage, (ctx) => {
         const p = programme(ctx.params.id);
-        const v = validate(ctx.body, { name: { type: "string", maxLen: 200 }, notes: { type: "string", maxLen: 2e3 }, active: { type: "boolean" } }, { partial: true });
-        const name = v.name !== void 0 && v.name !== null ? String(v.name).trim() : p.name;
-        if (!name) throw badRequest("Give the programme's name", { fields: { name: "required" } });
+        const v = validate(ctx.body, { name: { type: "string", maxLen: 200 }, notes: { type: "string", maxLen: 2e3 }, active: { type: "boolean" }, keep_files: { type: "boolean" } }, { partial: true });
+        const name = v.name !== void 0 && v.name !== null ? K.cleanText(v.name, 200) : p.name;
+        if (!name) throw badRequest("Give the program's name", { fields: { name: "required" } });
         const active = v.active === void 0 || v.active === null ? !!p.active : !!v.active;
-        db3.run(`UPDATE county_programmes SET name=?, notes=?, active=?, updated_at=? WHERE id=?`, name, v.notes !== void 0 ? v.notes || null : p.notes, active ? 1 : 0, db3.now(), p.id);
-        const action = !!p.active && !active ? "county.programme.deactivate" : "county.programme.update";
-        audit3.log({ user: ctx.user, action, entity: "county_programme", entityId: p.id, ip: ctx.ip, details: { fingerprint: p.fingerprint, changed: ["name", "notes", "active"].filter((k) => v[k] !== void 0), active } });
+        const keep = v.keep_files === void 0 || v.keep_files === null ? !!p.keep_files : !!v.keep_files;
+        db3.run(`UPDATE county_programmes SET name=?, notes=?, active=?, keep_files=?, updated_at=? WHERE id=?`, name, v.notes !== void 0 ? v.notes || null : p.notes, active ? 1 : 0, keep ? 1 : 0, db3.now(), p.id);
+        const action = !!p.active && !active ? "county.programme.deactivate" : !p.active && active ? "county.programme.reactivate" : "county.programme.update";
+        audit3.log({ user: ctx.user, action, entity: "county_programme", entityId: p.id, ip: ctx.ip, details: { changed: ["name", "notes", "active", "keep_files"].filter((k) => v[k] !== void 0), active, keep_files: keep } });
+        return K.programmeOut(programme(p.id));
+      });
+      r.post("/api/county/programmes/:id/keys", ...manage, (ctx) => {
+        const p = programme(ctx.params.id);
+        const v = validate(ctx.body, { ...keyFields, old_compromised: { type: "boolean" } });
+        const { k, taken } = checkedKey(v);
+        if (taken) throw conflict(taken.programme_id === p.id ? `This key was ${p.name}'s before (it was replaced). Ask the program for its new key.` : `This key is already registered, for ${taken.name}.`);
+        const old = db3.one(`SELECT * FROM county_programme_keys WHERE programme_id=? AND replaced_at IS NULL`, p.id);
+        const now2 = db3.now();
+        db3.transaction(() => {
+          if (old) db3.run(`UPDATE county_programme_keys SET replaced_at=?, replaced_by=?, compromised_at=?, compromised_by=? WHERE id=?`, now2, ctx.user.id, v.old_compromised ? now2 : null, v.old_compromised ? ctx.user.id : null, old.id);
+          db3.run(`INSERT INTO county_programme_keys(id,programme_id,public_key,fingerprint,added_at,added_by) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), p.id, k.pem, k.fingerprint, now2, ctx.user.id);
+          if (v.old_compromised) K.resettleProgramme(p.id);
+          db3.run(`UPDATE county_programmes SET updated_at=? WHERE id=?`, now2, p.id);
+        });
+        audit3.log({ user: ctx.user, action: "county.programme.key.replace", entity: "county_programme", entityId: p.id, ip: ctx.ip, details: { old_fingerprint: old ? old.fingerprint : null, fingerprint: k.fingerprint, old_compromised: !!v.old_compromised, checked: v.fingerprint ? "typed" : "compared" } });
+        ctx.status = 201;
+        return K.programmeOut(programme(p.id));
+      });
+      r.put("/api/county/programmes/:id/keys/:keyId", ...manage, (ctx) => {
+        const p = programme(ctx.params.id);
+        const key = db3.one(`SELECT * FROM county_programme_keys WHERE id=? AND programme_id=?`, ctx.params.keyId, p.id);
+        if (!key) throw notFound("Key not found");
+        const v = validate(ctx.body, { compromised: { type: "boolean", required: true } });
+        if (!key.replaced_at) throw conflict("This is the program's current key. If it is compromised, replace it first (Replace the key, and tick that the old key was compromised).");
+        const want = !!v.compromised;
+        if (!!key.compromised_at === want) return K.programmeOut(p);
+        db3.transaction(() => {
+          db3.run(`UPDATE county_programme_keys SET compromised_at=?, compromised_by=? WHERE id=?`, want ? db3.now() : null, want ? ctx.user.id : null, key.id);
+          K.resettleProgramme(p.id);
+        });
+        const files = db3.one(`SELECT COUNT(*) n FROM county_submissions WHERE key_id=?`, key.id).n;
+        audit3.log({ user: ctx.user, action: want ? "county.programme.key.compromised" : "county.programme.key.trusted", entity: "county_programme", entityId: p.id, ip: ctx.ip, details: { fingerprint: key.fingerprint, files } });
         return K.programmeOut(programme(p.id));
       });
       r.get("/api/county/submissions", ...view, (ctx) => {
         const pid = ctx.query.get("programme_id");
-        const rows = db3.all(`SELECT s.*, p.name programme, p.fingerprint FROM county_submissions s JOIN county_programmes p ON p.id=s.programme_id ${pid ? "WHERE s.programme_id=?" : ""} ORDER BY s.received_at DESC LIMIT 500`, ...pid ? [pid] : []);
+        const rows = db3.all(`SELECT s.*, p.name programme, k.fingerprint key_fingerprint, k.replaced_at key_replaced_at, k.compromised_at key_compromised_at FROM county_submissions s JOIN county_programmes p ON p.id=s.programme_id
+      JOIN county_programme_keys k ON k.id=s.key_id ${pid ? "WHERE s.programme_id=?" : ""} ORDER BY s.received_at DESC LIMIT 500`, ...pid ? [pid] : []);
         audit3.log({ user: ctx.user, action: "county.view", ip: ctx.ip, details: { what: "submissions", count: rows.length } });
-        return { rows: rows.map((s) => ({ ...K.summary(s), programme: s.programme, fingerprint: s.fingerprint, fingerprint_display: K.formatFingerprint(s.fingerprint) })) };
+        return { rows: rows.map((s) => ({ ...K.summary(s), programme: s.programme })) };
       });
       r.post("/api/county/submissions", ...manage, (ctx) => {
         const { rateLimit, rateLimited } = require_app2();
         const key = `county-refuse:${ctx.user.id}`;
-        if (rateLimited(key, REFUSALS_PER_10_MIN)) throw new HttpError3(429, "Too many files were refused in the last few minutes. Wait ten minutes, and check with the programme that it sent the file SUDS made.");
+        if (rateLimited(key, REFUSALS_PER_10_MIN)) {
+          if (rateLimit(`county-throttle-audit:${ctx.user.id}`, 1, WINDOW_MS)) audit3.log({ user: ctx.user, action: "county.submission.throttled", ip: ctx.ip, success: false, details: { refusals: REFUSALS_PER_10_MIN, window_minutes: WINDOW_MS / 6e4 } });
+          throw new HttpError3(429, "Too many files were refused in the last few minutes. Wait ten minutes, and check with the program that it sent the file SUDS made.");
+        }
         const textIn = ctx.body && typeof ctx.body.text === "string" ? ctx.body.text : "";
         const fileSha = textIn ? require_crypto().sha256(textIn) : null;
         try {
-          const parsed = K.parseFile(textIn, { today: today() });
-          const out2 = K.importParsed(parsed, ctx.user);
+          const parsed = K.parseFile(textIn, { today: today(), now: db3.now() });
+          const out2 = K.importParsed(parsed, ctx.user, { countyCode: code(ctx) });
           const s = out2.submission;
+          const who = out2.programme.name;
+          const period = K.humanPeriod(s.period_from, s.period_to);
           const action = out2.status === "duplicate" ? "county.submission.duplicate" : "county.submission.import";
-          audit3.log({ user: ctx.user, action, entity: "county_submission", entityId: s.id, ip: ctx.ip, details: { programme_id: out2.programme.id, fingerprint: parsed.fingerprint, from: s.period_from, to: s.period_to, sha256: s.sha256, superseded: out2.replaced || void 0 } });
+          audit3.log({ user: ctx.user, action, entity: "county_submission", entityId: s.id, ip: ctx.ip, details: { programme_id: out2.programme.id, fingerprint: parsed.fingerprint, from: s.period_from, to: s.period_to, sha256: s.sha256, status: out2.status, superseded: out2.replaced || void 0 } });
           ctx.status = out2.status === "duplicate" ? 200 : 201;
-          const said = out2.status === "duplicate" ? `This file was already imported on ${s.received_at.slice(0, 10)}; nothing changed.` : out2.status === "superseded" ? `Imported ${out2.programme.name}'s submission for ${s.period_from} to ${s.period_to}. It replaces the one received earlier for the same period, which is kept but no longer counts.` : `Imported ${out2.programme.name}'s submission for ${s.period_from} to ${s.period_to}.`;
-          return { status: out2.status, message: said, submission: { ...s, programme: out2.programme.name }, replaced: out2.replaced };
+          const said = out2.status === "duplicate" ? s.status === "withdrawn" ? `This file was already imported on ${K.humanDay(s.received_at)} and withdrawn on ${K.humanDay(s.withdrawn_at)}; nothing changed. To count it again, Reinstate it under Files received.` : `This file was already imported on ${K.humanDay(s.received_at)}; nothing changed.` : out2.status === "superseded" ? `Imported ${who}'s submission for ${period}. It replaces the one made earlier for the same period, which is kept but no longer counts.` : out2.status === "older" ? `Imported ${who}'s submission for ${period}, but it does not count: it was made on ${K.humanDay(s.generated_at)}, before the one that counts for that period (made on ${K.humanDay(out2.counting.generated_at)}). It is kept as replaced. If the older file is the right one, withdraw the newer one.` : `Imported ${who}'s submission for ${period}.`;
+          return { status: out2.status, message: said, submission: { ...s, programme: who }, replaced: out2.replaced, counting: out2.counting };
         } catch (e) {
           if (!(e instanceof K.SubmissionError)) throw e;
-          rateLimit(key, REFUSALS_PER_10_MIN, 10 * 6e4);
+          rateLimit(key, REFUSALS_PER_10_MIN, WINDOW_MS);
           audit3.log({ user: ctx.user, action: "county.submission.refuse", ip: ctx.ip, success: false, details: { reason: e.code, file_sha256: fileSha, bytes: textIn ? import_buffer.Buffer.byteLength(textIn) : 0 } });
           throw new HttpError3(e.code === "too_large" ? 413 : 422, e.message, { reason: e.code });
         }
       });
       r.post("/api/county/submissions/:id/withdraw", ...manage, (ctx) => {
-        const s = db3.one(`SELECT * FROM county_submissions WHERE id=?`, ctx.params.id);
-        if (!s) throw notFound("Submission not found");
-        if (s.withdrawn_at) throw conflict("This submission was already withdrawn.");
-        const v = validate(ctx.body || {}, { reason: { type: "string", maxLen: 500 } }, { partial: true });
-        db3.run(`UPDATE county_submissions SET withdrawn_at=?, withdrawn_by=? WHERE id=?`, db3.now(), ctx.user.id, s.id);
-        audit3.log({ user: ctx.user, action: "county.submission.withdraw", entity: "county_submission", entityId: s.id, ip: ctx.ip, details: { programme_id: s.programme_id, from: s.period_from, to: s.period_to, sha256: s.sha256, reason_given: !!(v.reason && v.reason.trim()) } });
-        return K.summary(db3.one(`SELECT * FROM county_submissions WHERE id=?`, s.id));
+        const v = validate(ctx.body || {}, { reason: { type: "string", required: true, maxLen: 500 } });
+        const reason = K.cleanText(v.reason, 500);
+        if (reason.length < 3) throw badRequest("Say why the file is withdrawn (it is kept in the audit log).", { fields: { reason: "required" } });
+        let out2;
+        try {
+          out2 = K.withdraw(ctx.params.id, ctx.user);
+        } catch (e) {
+          if (e instanceof K.SubmissionError) throw conflict(e.message);
+          throw e;
+        }
+        if (!out2) throw notFound("Submission not found");
+        audit3.log({ user: ctx.user, action: "county.submission.withdraw", entity: "county_submission", entityId: out2.submission.id, ip: ctx.ip, details: { programme_id: out2.programme_id, from: out2.submission.period_from, to: out2.submission.period_to, sha256: out2.submission.sha256, reason, counts_again: out2.restored ? out2.restored.id : null } });
+        return { ...out2.submission, restored: out2.restored };
+      });
+      r.post("/api/county/submissions/:id/reinstate", ...manage, (ctx) => {
+        let out2;
+        try {
+          out2 = K.reinstate(ctx.params.id);
+        } catch (e) {
+          if (e instanceof K.SubmissionError) throw conflict(e.message);
+          throw e;
+        }
+        if (!out2) throw notFound("Submission not found");
+        audit3.log({ user: ctx.user, action: "county.submission.reinstate", entity: "county_submission", entityId: out2.submission.id, ip: ctx.ip, details: { programme_id: out2.programme_id, from: out2.submission.period_from, to: out2.submission.period_to, sha256: out2.submission.sha256, counts: out2.counts, replaces: out2.displaced } });
+        const s = out2.submission;
+        const message = out2.counts ? `Reinstated. It counts again for ${K.humanPeriod(s.period_from, s.period_to)}${out2.displaced ? ", in place of the file that counted" : ""}.` : s.status === "key_compromised" ? "Reinstated, but it does not count: the key that signed it is marked compromised." : `Reinstated, but it does not count: a file made later for ${K.humanPeriod(s.period_from, s.period_to)} counts. It is kept as replaced.`;
+        return { ...s, counts: out2.counts, message };
       });
       r.get("/api/county/view", ...view, (ctx) => {
         const { from, to } = periodOf(ctx);
+        if (ctx.query.get("by") === "quarter") {
+          const d2 = K.byQuarter(from, to);
+          audit3.log({ user: ctx.user, action: "county.view", ip: ctx.ip, details: { what: "by_quarter", from, to, quarters: d2.quarters.length } });
+          return { ...d2, by: "quarter", caveats: K.CAVEATS, caveat_summary: K.CAVEAT_SUMMARY, publication_note: K.PUBLICATION_NOTE, rule: K.PERIOD_RULE };
+        }
         const d = K.combined(from, to);
         audit3.log({ user: ctx.user, action: "county.view", ip: ctx.ip, details: { what: "combined", from, to, programmes: d.programmes.length, submitted: d.submitted, submissions: d.programmes.reduce((n, p) => n + p.submissions.length, 0) } });
         return { ...d, indicators: MAP.INDICATORS };
       });
       r.get("/api/county/view/export", ...view, auth3.requirePerm("export:read"), (ctx) => {
         const { from, to } = periodOf(ctx);
+        const format = ["xlsx", "tidy"].includes(ctx.query.get("format")) ? ctx.query.get("format") : "csv";
         const d = K.combined(from, to);
-        const xlsx = ctx.query.get("format") === "xlsx";
         const S = require_spreadsheet();
-        const progCols = d.programmes.map((p, i) => ({ key: `p${i}`, label: p.name }));
+        const notSubmitted = "\u2014 (not submitted)";
+        const progCols = d.programmes.map((p, i) => ({ key: `p${i}`, label: p.status === "part" ? `${p.name} (part of the period)` : p.status === "none" ? `${p.name} (not submitted)` : p.name }));
         const matrix = d.rows.map((x) => ({
           group: { spending: "Spending", use: "Spent by allowable use (Exhibit E)", hiaa: "Spent by High Impact Abatement Activity", outcome: "Outcomes" }[x.group],
           measure: x.label,
-          ...Object.fromEntries(d.programmes.map((p, i) => [`p${i}`, x.by[p.id]])),
+          ...Object.fromEntries(d.programmes.map((p, i) => [`p${i}`, x.by[p.id] === null ? notSubmitted : x.by[p.id]])),
           total: x.total
         }));
-        const matrixCols = [{ key: "group", label: "Section" }, { key: "measure", label: "Measure" }, ...progCols, { key: "total", label: "Total (summed, not unduplicated)" }];
+        const matrixCols = [{ key: "group", label: "Section" }, { key: "measure", label: "Measure" }, ...progCols, { key: "total", label: `Total (${d.whole} of ${d.of} programs complete)` }];
         const about = [
-          { k: "Report", v: "County view: settlement spending and outcomes from the programmes' signed submissions" },
+          { k: "Report", v: "County view: settlement spending and outcomes from the programs' signed submissions" },
           { k: "Period", v: `${from} to ${to}` },
           { k: "County", v: db3.getSetting("org_name", "") || "" },
+          { k: "Who submitted", v: d.headline },
           { k: "Classification", v: "Internal \u2014 exact counts. For authorised county staff only; not for publication or sharing." },
           ...d.caveats.map((c, i) => ({ k: `Caveat ${i + 1}`, v: c })),
           { k: "Which submissions count", v: d.rule },
           { k: "Publication", v: d.publication_note },
+          ...d.inactive_left_out.length ? [{ k: "Inactive programs left out", v: d.inactive_left_out.map((p) => p.name).join("; ") }] : [],
           { k: "Generated", v: db3.now() },
           { k: "Generated by", v: ctx.user.display_name || ctx.user.username }
         ];
-        const subs = d.programmes.flatMap((p) => [...p.submissions.map((s) => ({ ...s, used: "Counted" })), ...p.left_out.map((s) => ({ ...s, used: s.why === "overlaps" ? "Left out: overlaps a longer submission" : "Left out: not wholly inside the period" }))].map((s) => ({ programme: p.name, fingerprint: p.fingerprint_display, period: `${s.period_from} to ${s.period_to}`, received: s.received_at, used: s.used, sha256: s.sha256 })));
-        if (!d.programmes.length) subs.push({ programme: "No programmes registered", fingerprint: "", period: "", received: "", used: "", sha256: "" });
-        for (const p of d.programmes) if (p.status === "none") subs.push({ programme: p.name, fingerprint: p.fingerprint_display, period: "", received: "", used: "No submission for this period", sha256: "" });
-        const subCols = [["programme", "Programme"], ["fingerprint", "Key fingerprint"], ["period", "Period"], ["received", "Received"], ["used", "In the combined figures"], ["sha256", "SHA-256 of the payload"]].map(([key, label]) => ({ key, label }));
-        audit3.log({ user: ctx.user, action: "county.export", ip: ctx.ip, details: { from, to, programmes: d.programmes.length, submitted: d.submitted, format: xlsx ? "xlsx" : "csv" } });
+        const subs = d.programmes.flatMap((p) => [...p.submissions.map((s) => ({ ...s, used: "Counted" })), ...p.left_out.map((s) => ({ ...s, used: s.why === "overlaps" ? "Left out: overlaps a longer submission" : "Left out: not wholly inside the period" }))].map((s) => ({ programme: p.name, fingerprint: s.key_fingerprint_display, period: `${s.period_from} to ${s.period_to}`, made: s.generated_at, received: s.received_at, used: s.used, sha256: s.sha256 })));
+        if (!d.programmes.length) subs.push({ programme: "No programs registered", fingerprint: "", period: "", made: "", received: "", used: "", sha256: "" });
+        for (const p of d.programmes) if (p.status === "none") subs.push({ programme: p.name, fingerprint: "", period: "", made: "", received: "", used: "No submission for this period", sha256: "" });
+        const subCols = [["programme", "Program"], ["fingerprint", "Key fingerprint"], ["period", "Period"], ["made", "Made"], ["received", "Received"], ["used", "In the combined figures"], ["sha256", "SHA-256 of the payload"]].map(([key, label]) => ({ key, label }));
+        const tidy = [];
+        const spendMeasures = [["spend_own_category", "Spent under the fund's own Exhibit E category ($)"], ["spend_other_categories", "Spent under other categories ($)"], ["spend_approved", "Spent, approved or reimbursed ($)"], ["spend_pending", "Pending approval ($)"]];
+        const subRows = db3.all(`SELECT id, payload_enc FROM county_submissions WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify(d.programmes.flatMap((p) => p.submissions.map((s) => s.id))));
+        const payloads = new Map(subRows.map((s) => [s.id, JSON.parse(require_crypto().decrypt(s.payload_enc))]));
+        for (const p of d.programmes) for (const s of p.submissions) {
+          const pl = payloads.get(s.id);
+          if (!pl) continue;
+          const base = { program: p.name, period_from: s.period_from, period_to: s.period_to };
+          for (const f of pl.funds) {
+            const fb = { ...base, fund: f.name, grant_number: f.grant_number || "" };
+            for (const [code2, label] of spendMeasures) tidy.push({ ...fb, measure_code: code2, measure_label: label, value: f.spend[code2.replace(/^spend_/, "")] });
+            for (const k of K.VALUE_KEYS) tidy.push({ ...fb, measure_code: k, measure_label: K.measureLabel(k), value: f.values[k] });
+          }
+          const tb = { ...base, fund: "All funds in the submission", grant_number: "" };
+          tidy.push({ ...tb, measure_code: "spend_approved", measure_label: "Spent, approved or reimbursed ($)", value: pl.total.spend.approved }, { ...tb, measure_code: "spend_pending", measure_label: "Pending approval ($)", value: pl.total.spend.pending });
+          for (const k of K.VALUE_KEYS) tidy.push({ ...tb, measure_code: k, measure_label: K.measureLabel(k), value: pl.total.values[k] });
+        }
+        const tidyCols = ["program", "period_from", "period_to", "fund", "grant_number", "measure_code", "measure_label", "value"].map((key) => ({ key, label: key }));
+        audit3.log({ user: ctx.user, action: "county.export", ip: ctx.ip, details: { from, to, programmes: d.programmes.length, submitted: d.submitted, format } });
+        const ext = format === "xlsx" ? "xlsx" : "csv";
         ctx.res.writeHead(200, {
-          "Content-Type": xlsx ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8",
-          "Content-Disposition": `attachment; filename="suds-county-view-${from}_${to}-internal-exact.${xlsx ? "xlsx" : "csv"}"`,
-          "X-SUDS-Export": "County view: exact aggregate figures from programmes' signed submissions, for authorised county staff; not for publication. No client-level data.",
+          "Content-Type": format === "xlsx" ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="suds-county-view-${from}_${to}${format === "tidy" ? "-tidy" : ""}-internal-exact.${ext}"`,
+          "X-SUDS-Export": "County view: exact aggregate figures from programs' signed submissions, for authorised county staff; not for publication. No client-level data.",
           "X-SUDS-Report-Counts": "exact",
           "X-SUDS-Report-Purpose": "internal"
         });
-        ctx.res.end(xlsx ? S.writeWorkbook([{ name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: about }, { name: "Combined", columns: matrixCols, rows: matrix }, { name: "Submissions", columns: subCols, rows: subs }]) : S.toCsv([...about.map((a) => ({ group: "About", measure: a.k, total: a.v })), ...matrix], matrixCols));
+        ctx.res.end(format === "xlsx" ? S.writeWorkbook([{ name: "About", columns: [{ key: "k", label: "Field" }, { key: "v", label: "Value" }], rows: about }, { name: "Combined", columns: matrixCols, rows: matrix }, { name: "Submissions", columns: subCols, rows: subs }, { name: "Tidy", columns: tidyCols, rows: tidy }]) : format === "tidy" ? S.toCsv(tidy, tidyCols) : S.toCsv([...about.map((a) => ({ group: "About", measure: a.k, total: a.v })), ...matrix], matrixCols));
       });
     };
   }
@@ -46937,13 +47348,14 @@ var require_db = __commonJS({
           for (const line of schemaText.split("\n")) if (new RegExp(`^CREATE( UNIQUE)? INDEX IF NOT EXISTS \\S+ ON ${t}\\(`).test(line.trim())) d.exec(line.trim());
         }
       },
-      // 56: the county view (docs/COUNTY-VIEW.md): county_signing_keys (the key a programme signs its county
-      //     submission files with), county_programmes and county_submissions (on a county's server, the programmes
-      //     it accepts files from and the files it imported). Office server only. Self-contained and idempotent, so
-      //     it can be renumbered.
+      // 56: the county view (docs/COUNTY-VIEW.md): county_signing_keys (the keys a programme signs its county
+      //     submission files with, current and retired), and on a county's server county_programmes (the programmes
+      //     it accepts files from), county_programme_keys (each one's public keys, current and replaced) and
+      //     county_submissions (the files it imported). Office server only. Self-contained and idempotent, so it can be
+      //     renumbered.
       (d) => {
         const schemaText = safeSchema();
-        for (const t of ["county_signing_keys", "county_programmes", "county_submissions"]) {
+        for (const t of ["county_signing_keys", "county_programmes", "county_programme_keys", "county_submissions"]) {
           const m = schemaText.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${t} \\([\\s\\S]*?\\n\\);`));
           if (!m) throw new Error(`migration 56: no definition for ${t} in schema`);
           d.exec(m[0]);
