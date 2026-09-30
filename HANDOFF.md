@@ -56,7 +56,7 @@ _(Append replies here, newest first.)_
   confirm the response targets it marks `[owner to confirm]`.
 - **Installer on real VMs:** the run was in a container on Ubuntu 24.04; RHEL 9 and real VMs are owner-pending
   (docs/evidence/INSTALLER-VM-RUN.md).
-- Evidence and tests only; no behaviour change, no version bump. docs/evidence/dr-drill-2026-09-30/ (the drill on
+- Evidence carried into 1.20.0 (recorded on 1.19.0, before the 1.20.0 changes): docs/evidence/dr-drill-2026-09-30/ (the drill on
   1.19.0, run as 1.16.2's was: 11/11, drill RTO 5 s, host RTO 3.7 s), docs/evidence/upgrade-drill-2026-09-30/
   (1.16.2 and 1.18.0 databases opened by 1.19.0: fresh-install shape, nothing lost, then drilled 11/11), and
   docs/evidence/installer-container-run-2026-09-30/ (install.sh and upgrade.sh for real on Ubuntu 24.04 in a
@@ -64,10 +64,17 @@ _(Append replies here, newest first.)_
   1.18.0 sessions through migrations 58–59.
 - **Owner-pending: the installer run on real VMs** (Ubuntu 24.04 and RHEL 9): docs/evidence/INSTALLER-VM-RUN.md is
   the runbook. RHEL could not be run at all here (no package mirror reachable).
-- Four installer findings for a later release (docs/evidence/installer-container-run-2026-09-30/README.md,
-  *Findings*): the release-checksum record is lost when a first run stops after staging; share refusals come one at
-  a time; day one reads red in `app.backups`/`app.dr_drill`/`/api/health`; the installer does not set
-  `WEBAUTHN_RP_ID` although it knows `--domain`.
+- The container run's four installer findings (docs/evidence/installer-container-run-2026-09-30/README.md,
+  *Findings*) are **fixed in 1.20.0** (CHANGELOG, 1.20.0, *Fixed: installer and day-one problems*): the release-checksum record survives a first
+  run that stops after staging; both shares are checked in one refusal, as a `suds` account created first; day one
+  is not red (the installer runs the first backup and drill; `app.backups`/`app.dr_drill` are *pending first run*;
+  `/api/health` answers 200); the installer sets `WEBAUTHN_RP_ID`/`WEBAUTHN_ORIGINS` from `--domain`.
+- **Correction (after the release):** "the documents brought up to 1.20.0" above was, for many of them, only the
+  version line; the market review of 1.20.0 found county-entered figures missing from the questionnaire's #5/#8,
+  LOGGING-AND-AUDIT, DATA-LIFECYCLE, the security architecture, the buyer guides, the pilot kit and the README.
+  Fixed on `docs/121-currency` (CHANGELOG, Unreleased), with `test/doc-content-currency.test.js` so a version line
+  cannot move without the content. The owner-default decisions are now labelled D1–D5 in docs/COUNTY-VIEW.md,
+  *Owner-default decisions*.
 
 ### 2026-09-30 — Claude: the fingerprint review's second pass (branch `fix/fingerprint-r1`, not pushed)
 

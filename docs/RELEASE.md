@@ -183,11 +183,12 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 **Record: 1.20.0 ships under a policy exception, published without a tag.** 1.20.0 is a feature release inside
 1.19.0's 28 days, on the owner's instruction ("We are building the app, there is no freeze at this time. Complete all
 build through 1.20"). It carries the market-readiness review of 1.19.0's repository work: the documents brought up to
-1.19.0 and now 1.20.0, LICENSE and SECURITY.md, a recovery drill, an upgrade drill and a real installer run with their
+1.19.0 and their version lines to 1.20.0 (the market review of 1.20.0 found much of their content still at 1.19.0;
+corrected after the release, `test/doc-content-currency.test.js`), LICENSE and SECURITY.md, a recovery drill, an upgrade drill and a real installer run with their
 evidence, the installer and day-one fixes that run found, the county-contract kit, and county-entered figures for
 grantees not on SUDS (migration 60 and its routes; no new permission). The county-entered figures had security, UX and
-engineering reviews whose findings were fixed before the stamp, with the owner-default decisions recorded in
-docs/COUNTY-VIEW.md. It is the first new minor released as two commits, the stamp and its SBOM (*Stamp checklist*); the
+engineering reviews whose findings were fixed before the stamp, with the owner-default decisions D1–D5 recorded in
+docs/COUNTY-VIEW.md (*Owner-default decisions*). It is the first new minor released as two commits, the stamp and its SBOM (*Stamp checklist*); the
 second is the one CI passes, that goes to `main` and `gh-pages` by a direct push, and that the owner tags. The next
 feature release waits 28 days from 1.20.0. Its tag goes in the same push as the others.
 
@@ -324,7 +325,9 @@ README.md, PILOT-KIT.md, the buyer guides). When stamping X.Y.Z, rewrite each of
 review). `test/release-wording.test.js` finds them: it fails once `package.json`'s version has a dated CHANGELOG
 heading while any document still says that version is not yet released, or still says a feature is "built for"
 it (say "released in X.Y.Z" or "available from X.Y.Z"), and it refuses other spellings of the same thing, so there
-is one phrase to search for.
+is one phrase to search for. Since the market review of 1.20.0 it also fails on any "X.Y.Z, not yet released" (or
+"not available until X.Y.Z is released") for a stamped X.Y.Z, however the line introduces the version: that review
+found the county kit still calling a 1.20.0 feature unreleased, three times, after the stamp.
 
 **Stamp checklist: the documents that name a release.** When stamping X.Y.Z, the documents that say which release they
 describe move to it: `docs/security/QUESTIONNAIRE.md`'s **Checked against** line and `docs/evidence/README.md`'s
@@ -338,7 +341,14 @@ minor's documents and SBOM; a new minor may not), and every SBOM link outside th
 SBOM. While a version is being prepared (no date yet), the rule applies to the last stamped version. Re-read the
 answers those documents give for what the release changed, not only the version line (the review of 1.19.0 found
 them two releases behind: the county connection and passkeys missing from the questionnaire, "planned" for a
-released county view).
+released county view; the review of 1.20.0 found the version lines moved and the content not).
+`test/doc-content-currency.test.js` checks the content mechanically: every audit action the server writes is in
+`docs/security/LOGGING-AND-AUDIT.md`'s *Audit action catalogue*; the newest migration, and every one the stamped
+section names, is in `docs/security/DATA-INVENTORY.md`'s *Schema versions*; every line that says which release it
+is current for ("describes X.Y.Z", "Current status (X.Y.Z)", "State on … (X.Y.Z)", "the history of X.Y.Z",
+"X.Y.Z, the latest release", the threat model's *Version.*, README's *What's new*) names the stamped minor; and each
+buyer document names a version on that minor at least once. For a new minor, recount the authorship figures
+(QUESTIONNAIRE.md #36a's method) at the stamp commit.
 
 **Stamp checklist: the release state** (built for 1.21.0, not yet released). `node scripts/release-state.js` compares what the release
 documents say with what is true: the questionnaire's *Checked against* and the evidence index's *Version.*; the
@@ -397,7 +407,7 @@ and **refuses** a tag that is not `v<package.json version>` (until 1.16.2 only t
 owner's approval, checked the tag). The warning is also written to the run's summary (1.16.3), on the page where
 the owner approves the `release` environment, since an annotation in the log is easily missed. A warning, not a
 refusal, so that a reviewed exception stays possible: the owner decides, and says so in the notes.
-**The zip's SHA-256 in two places.** SUDS Server's `install.sh` and `upgrade.sh` need `--release-sha256` from a channel other than the download (docs/SELF-HOSTING.md, *Upgrading*), so once the release job has published `suds-vX.Y.Z.zip.sha256`, the owner copies that SHA-256 into the GitHub release notes **and** into the version's CHANGELOG entry on `main` (a line `SHA-256 of suds-vX.Y.Z.zip: <hex>`, committed and pushed as its own commit). An operator compares the two; a zip swapped on the release page cannot also change the repository's history. The CHANGELOG line is on `main`, never at the tag: a zip's checksum cannot be inside the commit it is built from. Because `git archive` is reproducible, the value can be known before the release: `git archive --format=zip --prefix=suds-vX.Y.Z/ <stamp sha> | sha256sum` gives what the job will publish (checked against the published `v1.15.4` and `v1.16.2`), and the hand-off for the untagged 1.16.3 to 1.19.0 lists each ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); compare it with the published file before recording it.
+**The zip's SHA-256 in two places.** SUDS Server's `install.sh` and `upgrade.sh` need `--release-sha256` from a channel other than the download (docs/SELF-HOSTING.md, *Upgrading*), so once the release job has published `suds-vX.Y.Z.zip.sha256`, the owner copies that SHA-256 into the GitHub release notes **and** into the version's CHANGELOG entry on `main` (a line `SHA-256 of suds-vX.Y.Z.zip: <hex>`, committed and pushed as its own commit). An operator compares the two; a zip swapped on the release page cannot also change the repository's history. The CHANGELOG line is on `main`, never at the tag: a zip's checksum cannot be inside the commit it is built from. Because `git archive` is reproducible, the value can be known before the release: `git archive --format=zip --prefix=suds-vX.Y.Z/ <stamp sha> | sha256sum` gives what the job will publish (checked against the published `v1.15.4` and `v1.16.2`), and the hand-off for the untagged releases (1.16.3 onwards) lists each ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); compare it with the published file before recording it.
 
 Pushing the tag runs `.github/workflows/release.yml`, which first passes the release gate (below), then re-runs the tests in the `verify` job (read-only token, no environment), and, after the owner's approval, the `release` job packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release for the tag with the zip attached. Since 1.16.4 (engineering review of 1.16.3, M5) the `release` job is the only one with a write token and runs no npm and none of the released commit's code: `npm ci` and `npm test` ran in `verify`, where a dependency could once reach the packaging step through `$GITHUB_ENV`, `$GITHUB_PATH` or a replaced `git`, `sha256sum` or `gh`. As its last step it starts the web-app (GitHub Pages) workflow for the tag (`gh workflow run web-app.yml --ref v1.0.1`): a release created with `GITHUB_TOKEN` does not trigger other workflows by itself. That dispatch is the web-app workflow's only trigger (since 1.16.1 a tag push or a `release` event no longer starts it): it runs only on a `v*` tag whose GitHub Release exists at that commit, and its `publish` job waits in the `release` environment, so the owner approves it too. The on-device web app is published on releases only — never on a push to `main` — so what is on the public URL is always a released version ([WEB_APP.md](WEB_APP.md#when-it-is-published)). No workflow uses a marketplace action; the only actions used are GitHub's own `actions/upload-artifact` and `actions/download-artifact`, pinned to a commit, in `web-app.yml` (they run under the Actions policy *Allow actions created by GitHub*).
 

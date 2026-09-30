@@ -10,7 +10,8 @@ Most of SUDS was written with an AI coding assistant: of the 286 commits up to 1
 Claude and 31 by the owner, over eleven days, with 41 schema migrations and 26 releases (1.12.0–1.12.4 in one
 day, against the release policy — [docs/RELEASE.md](../RELEASE.md) records why and what now enforces it). Up
 to 1.13.0: 337 commits (306 and 31), 43 migrations, 27 releases; 1.13.0 itself came within a day of 1.12.0,
-which the release check now refuses for a feature release without a recorded exception.
+which the release check now refuses for a feature release without a recorded exception. The current figures,
+recounted for each new minor, are in [../security/QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md) #36a.
 The owner set the direction, the rules in `CLAUDE.md` and the tests the work had to pass, and reviewed and
 merged it. Automated gates carry much of the weight: several hundred API tests, a browser suite with
 accessibility checks, CI drift checks and the release gate.

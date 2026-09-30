@@ -26,10 +26,24 @@ function stamped() {
   const log = fs.readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8');
   return new Set([...log.matchAll(/^## (\d+\.\d+\.\d+) — \d{4}-\d{2}-\d{2}\s*$/gm)].map(m => m[1]));
 }
-/** Every "built for X.Y.Z, not yet released" in the documents: [file, version]. */
+/**
+ * Every "X.Y.Z, not yet released" in the documents: [file, version]. Not only the phrase "built for X.Y.Z, not yet
+ * released": the market review of 1.20.0 found "(1.20.0, not yet released)" three times in the county kit after the
+ * stamp, which the narrower match let through. A version followed, within the same clause, by "not yet released"
+ * (or "is not yet released", or "not available until X.Y.Z is released") counts, whatever words introduce it.
+ */
+const NOT_YET = [
+  /(\d+\.\d+\.\d+)\)?,?(?: (?:and|is|was|are))? not yet released/gi,
+  /not available until (\d+\.\d+\.\d+) is released/gi,
+];
+function notYetReleasedIn(text) {
+  const out = [];
+  for (const re of NOT_YET) for (const m of flat(text).matchAll(re)) out.push(m[1]);
+  return out;
+}
 function notYetReleased() {
   const out = [];
-  for (const f of docs()) for (const m of flat(fs.readFileSync(f, 'utf8')).matchAll(/built for (\d+\.\d+\.\d+),? not yet released/gi)) out.push([rel(f), m[1]]);
+  for (const f of docs()) for (const v of notYetReleasedIn(fs.readFileSync(f, 'utf8'))) out.push([rel(f), v]);
   return out;
 }
 
@@ -74,8 +88,13 @@ test('the check finds what it is for', () => {
   // A stamped heading is recognised, an unstamped one is not; and the phrase is found across a line break and bold.
   assert.ok(stamped().has('1.16.4'), 'the latest stamped release');
   assert.ok(!stamped().has('9.9.9'));
-  const m = [...flat('the copilot is **built for 1.17.0,\nnot yet released** (office only)').matchAll(/built for (\d+\.\d+\.\d+),? not yet released/gi)];
-  assert.equal(m.length, 1); assert.equal(m[0][1], '1.17.0');
+  assert.deepEqual(notYetReleasedIn('the copilot is **built for 1.17.0,\nnot yet released** (office only)'), ['1.17.0']);
+  // Any other spelling of a version not yet released is found too (COUNTY-KIT.md on be5a48f, three times).
+  assert.deepEqual(notYetReleasedIn('*and enters figures for grantees not on SUDS, 1.20.0, not yet released*'), ['1.20.0']);
+  assert.deepEqual(notYetReleasedIn('| County staff (*1.20.0, not yet released*) |'), ['1.20.0']);
+  assert.deepEqual(notYetReleasedIn('grantees not on SUDS (1.20.0,\nnot yet released)'), ['1.20.0']);
+  assert.deepEqual(notYetReleasedIn('1.21.0 is not yet released; the gate is not available until 1.21.0 is released'), ['1.21.0', '1.21.0']);
+  assert.deepEqual(notYetReleasedIn('released in 1.20.0; nothing here is not yet released'), []);
   // A bare "built for" a stamped version is found too, across a line break and bold.
   const bare = [...flat('the copilot **built for\n1.16.4** (office only)').matchAll(/built for (\d+\.\d+\.\d+)/gi)];
   assert.equal(bare.length, 1); assert.ok(stamped().has(bare[0][1]));

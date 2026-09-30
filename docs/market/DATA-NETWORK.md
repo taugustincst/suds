@@ -102,9 +102,13 @@ county connection, **off by default**, over which a CBO's server posts the **sam
 connection token the county issued it (the token says who is calling; the file must still verify under that CBO's
 registered key), sees which periods the county still expects, and over which the county's own systems read the
 combined view with a read token. It carries nothing the emailed file did not: no figures back, no other CBO's data,
-no client-level data.
+no client-level data. From 1.20.0 the county can also **enter** the figures of a grantee that does not run SUDS
+(COUNTY-VIEW *County-entered figures*): the same aggregate fields, typed or imported by county staff from the
+grantee's own report, stored unsigned, marked *entered by the county — not signed by the program* everywhere and
+always outranked by a signed file; the data contribution agreement draft's section 8 says what a county may enter.
 **Not built:** the publication screen over the combined release (so nothing from the county view can be
-published), key rotation and revocation, and the county's own template.
+published), and the county's own template. (Key replacement, and marking an old key compromised, were built in
+1.18.0: COUNTY-VIEW *Key history* and *Key rotation*.)
 
 **Tier 2: benchmarks.** Distributions across programmes (median, quartiles; rates per 100 people served rather
 than counts), published only when:

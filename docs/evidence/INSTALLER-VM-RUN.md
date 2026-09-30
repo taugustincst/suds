@@ -8,7 +8,8 @@ a virtual machine, and **not at all on RHEL 9** (the sandbox could reach no RHEL
 development sandbox cannot give a VM, so this run is for the owner or an IT partner. It takes about two hours per VM.
 
 Do it once on a fresh **Ubuntu 24.04 LTS** VM and once on a fresh **RHEL 9** VM (Rocky or Alma 9 are acceptable
-stand-ins; say which). Record everything as below and commit it back (last section). Nothing here needs a real
+stand-ins; say which). Use **the latest release** (below, `<v>`: 1.20.0 when this was written) and, for the upgrade
+step, the release before it (`<prev>`: 1.19.0). Record everything as below and commit it back (last section). Nothing here needs a real
 client record: use a test domain and fictional data only.
 
 ## What you need, per VM
@@ -20,7 +21,7 @@ client record: use a test domain and fictional data only.
 | Name and certificate | a DNS name (e.g. `suds-test.county.gov`) resolving to the VM, and either ports 80/443 reachable for ACME (`--tls=caddy`) or a certificate, key and CA from the county CA (`--tls=county-cert`) |
 | Shares | an NFS or SMB **offsite** share on another host, and a **WORM** share for audit anchors (SnapLock, SmartLock, Synology WriteOnce, S3 Object Lock via Mountpoint), both mountable on the VM |
 | Time | the county NTP server(s) |
-| Release | `suds-v1.19.0.zip` and its SHA-256 **from two channels that agree**: the GitHub release notes and `git show v1.19.0:CHANGELOG.md`. (While 1.19.0 is untagged: `git archive --format=zip --prefix=suds-v1.19.0/ -o suds-v1.19.0.zip 3dc20dc` gives SHA-256 `c927808937892f9c474a01eee07a8f13c390d54db98ae6425eaa3f99a19bf2ed`; record that this is how it was obtained.) For the upgrade step, `suds-v1.18.0.zip` likewise (`39e397e`: `23cc69abda81257e69b09700a637cd3dee0d88e59878a0f4c31456af1099a4cc`) |
+| Release | `suds-v<v>.zip` and its SHA-256 **from two channels that agree**: the GitHub release notes and the version's CHANGELOG section on `main` ([../RELEASE.md](../RELEASE.md), *The zip's SHA-256 in two places*). While the release is untagged, rebuild it from its commit with `git archive` and take the SHA-256 from [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md) (1.20.0: `git archive --format=zip --prefix=suds-v1.20.0/ -o suds-v1.20.0.zip 8f365b4` gives `048e928499fa3569dfcfc59af86633ad4f8176d3bba1c0dd2fe61b62c35fb9ff`); record that this is how it was obtained. For the upgrade step, `suds-v<prev>.zip` likewise (1.19.0, `3dc20dc`: `c927808937892f9c474a01eee07a8f13c390d54db98ae6425eaa3f99a19bf2ed`) |
 | People | the person running it, and a key custodian to take the generated keys into escrow |
 
 Capture every command's output: run each step below inside `script`, for example
@@ -69,8 +70,8 @@ Expect: both are mount points from other hosts (`SOURCE` is `host:/export`, `//h
 ## 4. The release, checked
 
 ```bash
-cd /root && sha256sum suds-v1.19.0.zip      # must equal the value from BOTH channels
-unzip -q suds-v1.19.0.zip && cd suds-v1.19.0
+cd /root && sha256sum suds-v<v>.zip      # must equal the value from BOTH channels
+unzip -q suds-v<v>.zip && cd suds-v<v>
 ```
 
 ## 5. Dry run
@@ -79,12 +80,12 @@ unzip -q suds-v1.19.0.zip && cd suds-v1.19.0
 deploy/linux/install.sh --dry-run --domain=<name> --admin-cidr=<cidr> \
   --offsite=/mnt/suds-offsite --anchors=/mnt/worm/suds-anchors \
   [--tls=county-cert --cert=<pem> --key=<pem> --ca-file=<county CA pem>] \
-  --ntp-server=<county ntp> --source=/root/suds-v1.19.0.zip --release-sha256=<hex>
+  --ntp-server=<county ntp> --source=/root/suds-v<v>.zip --release-sha256=<hex>
 ```
 
-Expect, exit 0: `SUDS Server installer — SUDS 1.19.0 (dry run: nothing is changed)`; under *Checking the host* the
+Expect, exit 0: `SUDS Server installer — SUDS <v> (dry run: nothing is changed)`; under *Checking the host* the
 OS and family (`debian` or `rhel`) and `data volume: /var/lib is on crypto_LUKS …` (no unencrypted-disk warning);
-`suds-v1.19.0.zip: sha256 matches the pinned checksum`; then the planned actions (`+ …`) for packages, Node.js,
+`suds-v<v>.zip: sha256 matches the pinned checksum`; then the planned actions (`+ …`) for packages, Node.js,
 Caddy, the service account, keys, configuration, firewall (`ufw` or `firewall-cmd`), time (`systemd-timesyncd`,
 `chrony` or `chronyd`), security updates (`unattended-upgrades` or `dnf-automatic`), the journal and the units.
 On RHEL, a `restorecon` line.
@@ -100,9 +101,11 @@ The same command without `--dry-run`. Expect, exit 0 in a minute or two:
   temporary password is;
 * `== Compliance check ==`: the report, `Signed (Ed25519 …, key id …)` and `Wrote /var/lib/suds-compliance/compliance-<stamp>.json`.
 
-Day one is not all green (SELF-HOSTING.md, *Install*). Expected on this first report: `app.backups` and
-`app.dr_drill` **fail** (never run yet); `host.backup_files`, `host.dr_evidence` **warn** (pending first run);
-`app.passkeys` **fails** until step 8; `app.mfa_coverage`, `app.sso`, `app.deprovisioning`, `app.audit_chain`,
+Day one (SELF-HOSTING.md, *Day one*; since 1.20.0): the installer runs the first backup and recovery drill once SUDS
+is up, so the first report normally shows both as done; `host.dr_evidence` still **warns** until a drill has used the
+escrowed key file (step 9), and a backup or drill that could not run yet is *pending first run*, a **warning**, not a
+failure. `app.passkeys` should **pass**: the installer writes `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGINS` from
+`--domain`. `app.mfa_coverage`, `app.sso`, `app.deprovisioning`, `app.audit_chain`,
 `app.audit_anchors`, `host.audit_verify`, `host.auditd` warn. Everything else should **pass** — in particular
 `host.os`, `host.disk_encryption`, `host.keys`, `host.service`, `host.tls`, `host.http_redirect`, `host.bind`,
 `host.firewall`, `host.time_sync`, `host.security_updates`, `host.journald`, `host.node`, `host.release_integrity`.
@@ -110,19 +113,19 @@ A failure in that list is a finding: record it with the report.
 
 ## 7. Idempotence
 
-Run the same command again. Expect exit 0, every key `exists: kept (keys are never regenerated)`, `SUDS 1.19.0
-already at /opt/suds/1.19.0`, and `grep CHECKSUM /etc/suds/suds-server.conf` → `SUDS_RELEASE_CHECKSUM_SOURCE=operator`.
+Run the same command again. Expect exit 0, every key `exists: kept (keys are never regenerated)`, `SUDS <v>
+already at /opt/suds/<v>`, and `grep CHECKSUM /etc/suds/suds-server.conf` → `SUDS_RELEASE_CHECKSUM_SOURCE=operator`.
 
 ## 8. After the install (SELF-HOSTING.md, *After the install*)
 
 ```bash
 cat /var/lib/suds/first-admin-password.txt        # once; sign in at https://<name>, change it, enrol TOTP
-echo "WEBAUTHN_RP_ID=<name>" >> /etc/suds/suds.env && systemctl restart suds
+grep WEBAUTHN /etc/suds/suds.env                  # WEBAUTHN_RP_ID=<name> and WEBAUTHN_ORIGINS=https://<name>, from --domain
 curl -sS https://<name>/api/health; curl -sSI http://<name>/ | head -1
 ```
 
 Expect: sign-in over HTTPS works, the password change and TOTP enrolment succeed; `/api/health` answers with
-`"database":"ok"` (and `"ok":false` with a backup warning until the first scheduled backup); `http://` answers
+`"database":"ok"` and `"ok":true` (on day one with a pending-first-backup warning if the installer's backup could not run); `http://` answers
 `308` (or 301) to `https://`. In a browser with a fingerprint reader or security key, add a passkey under My
 profile → Fingerprint sign-in, sign out and sign in with it.
 
@@ -167,19 +170,21 @@ encrypted root, vTPM or Tang; typed at the console with a passphrase — record 
 
 ## 11. Upgrade (and, optionally, rollback)
 
-On a second fresh VM of the same image (or a snapshot taken before step 6), install **1.18.0** exactly as in steps
-2–6 from `suds-v1.18.0.zip`, sign in once and create a test client and a signed note, then:
+On a second fresh VM of the same image (or a snapshot taken before step 6), install **`<prev>`** exactly as in steps
+2–6 from `suds-v<prev>.zip`, sign in once and create a test client and a signed note, then:
 
 ```bash
-/opt/suds/current/deploy/linux/upgrade.sh 1.19.0 --source=/root/suds-v1.19.0.zip --release-sha256=<hex>
+/opt/suds/current/deploy/linux/upgrade.sh <v> --source=/root/suds-v<v>.zip --release-sha256=<hex>
 ```
 
-Expect, exit 0: *1. Stage 1.19.0* (checksum matches), *2-3. Stop SUDS and take a backup* (`Encrypted backup written:
-/var/lib/suds/backups/pre-upgrade-<stamp>/…`), *4. Switch to 1.19.0*, *5. Start and check* (`SUDS 1.19.0 is ready`),
-the compliance report, `Upgraded to 1.19.0`. Then `ls /var/lib/suds/pre-migration` shows `suds.db.v57.<stamp>.db.enc`,
+Expect, exit 0: *1. Stage `<v>`* (checksum matches), *2-3. Stop SUDS and take a backup* (`Encrypted backup written:
+/var/lib/suds/backups/pre-upgrade-<stamp>/…`), *4. Switch to `<v>`*, *5. Start and check* (`SUDS <v> is ready`),
+the compliance report, `Upgraded to <v>`. Then `ls /var/lib/suds/pre-migration` shows `suds.db.v<N>.<stamp>.db.enc`
+(`<N>` the schema `<prev>` left: 59 for 1.19.0, which 1.20.0's migration 60 upgrades), and `grep WEBAUTHN
+/etc/suds/suds.env` shows the two lines `upgrade.sh` adds when they were missing;
 the test client and note are there and the note's signature shows as intact. Optional rollback: repeat on a fresh
-1.18.0 snapshot with `--ready-timeout=1`; expect the rollback messages, `readlink /opt/suds/current` → `1.18.0`, and
-SUDS serving the 1.18.0 database again.
+`<prev>` snapshot with `--ready-timeout=1`; expect the rollback messages, `readlink /opt/suds/current` → `<prev>`,
+and SUDS serving the `<prev>` database again.
 
 ## 12. The compliance report to collect
 
@@ -192,8 +197,8 @@ Collect the newest `compliance-<stamp>.json` and `.html` and `/etc/suds/complian
 another machine: `npm run verify-compliance-report -- compliance-<stamp>.json --public-key compliance-signing-key.pub.pem`
 → `VERIFIED`. After steps 8–10 the expected state is: every `host.*` and `app.*` check **passes** except warnings you
 can explain (`host.auditd` if auditd is not installed, `app.sso`/`app.deprovisioning` without an identity
-provider, `app.mfa_coverage` for accounts not yet enrolled) and `app.backups` until the first *scheduled* backup has
-run. Record every fail and could-not-check with its reason.
+provider, `app.mfa_coverage` for accounts not yet enrolled) and a *pending first run* warning while a first backup
+or drill has not run. Record every fail and could-not-check with its reason.
 
 ## What to commit back
 

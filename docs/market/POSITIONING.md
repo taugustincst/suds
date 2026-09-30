@@ -21,6 +21,8 @@ Three leads, in this order, each stated no further than the software goes:
    be checked against the funder's current template. A county view across the CBOs a county funds is released in 1.18.0:
    each CBO sends a signed file of its exact aggregates and a county running SUDS combines
    them, internal only, people counted as each CBO's own count, summed ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)).
+   From 1.20.0 the county can add grantees that do not run SUDS by entering their figures, marked as entered by the
+   county and never as signed.
    A published county dashboard is planned, not built: it needs the publication screen over the combined release.
 
 What comes next, and what is only planned, is in [STRATEGY.md](STRATEGY.md): the AI documentation copilot is

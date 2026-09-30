@@ -82,12 +82,51 @@ migration.
   outcomes (*County reporting schedule*). A period is done when its file is made (or, for the connected county,
   received or sent and accepted). Office server only.
 
+### Documentation: the documents' content brought up to 1.20.0, and a test that keeps it there
+
+No code, migration, permission or route. The market review of 1.20.0 found that "the documents brought up to 1.20.0"
+was mostly their version lines: county-entered figures, 1.20.0's feature, was missing from most buyer and security
+documents, and several still said 1.19.0 was current.
+
+- **Test:** `test/doc-content-currency.test.js` fails when an audit action the server writes (collected from
+  `server/**/*.js`) is not in `docs/security/LOGGING-AND-AUDIT.md`, or its catalogue names one the code no longer
+  writes; when the newest migration, or one the newest stamped CHANGELOG section names, is not in
+  `docs/security/DATA-INVENTORY.md`; when a line that says which release it is current for ("describes X.Y.Z",
+  "Current status (X.Y.Z)", "State on … (X.Y.Z)", "the history of X.Y.Z", "X.Y.Z, the latest release", the threat
+  model's *Version.*, README's *What's new*) is not on the stamped minor; and when a buyer document never names
+  the stamped minor. `test/release-wording.test.js` now fails on any "X.Y.Z, not yet released" for a stamped
+  version, not only "built for X.Y.Z, not yet released". Both fail on `be5a48f`.
+- **LOGGING-AND-AUDIT:** an *Audit action catalogue* of every action the server writes, by area, and the
+  `county.entry.*` actions of county-entered figures (what each records; never a figure or the source document).
+- **DATA-INVENTORY:** *Schema versions* (migrations 56 to 60, what each adds to what is stored); the county view's
+  flow names county-entered figures.
+- **County-entered figures described** in the questionnaire (#5 no third party or connection; #8 kept on the county's
+  server; #25 the action catalogue), DATA-LIFECYCLE (what a county's server holds, and its retention), the security
+  ARCHITECTURE (a component, the third way in, a flow row, trust boundary 7), BUYER-GUIDE-IT and -PROGRAM, the pilot
+  kit's county section (what the county gets, a measure), the market README's scorecard (a row, with D1–D5),
+  STRATEGY's *Built vs planned*, POSITIONING, DATA-NETWORK (which also no longer lists key replacement as not built),
+  the user guide's County view, SECURITY.md's scope and README's *What's new* (now 1.18.0 to 1.20.0).
+- **The decisions labelled:** docs/COUNTY-VIEW.md, *Owner-default decisions (D1–D5)*, each with its rule, code and
+  test, so RELEASE.md's and HANDOFF.md's citations are true.
+- **Stale lines fixed:** the county kit's three "1.20.0, not yet released"; 1.20.0's CHANGELOG section's leftover
+  1.19.x lines (supported versions, the SBOM, "describe 1.19.0", "no change to what SUDS does" in a section with a
+  migration); HOSTING's *Current status* (no version now); EVALUATION-RESPONSE and STRATEGY to 1.20.0; the
+  authorship figures recounted at the 1.20.0 stamp (`66a616b`: 662 of 681 commits, 649 authored by the assistant and
+  13 co-authored; QUESTIONNAIRE #36a, SDLC, BUYER-GUIDE-IT, the evidence index, EVALUATION-RESPONSE); the threat
+  model's version line (1.20.0, saying what it does not yet model); PLATFORM's list of direct `gh-pages` pushes;
+  RELEASE.md's hand-off line; RELEASE-HANDOFF's `main` version and recheck example; the evidence index's 1.20.0
+  SBOM commit (it named 1.19.0's), tag hand-off (seven tags) and installer-run row; INSTALLER-VM-RUN (the latest
+  release, with 1.20.0's day-one expectations); the "fake root only" installer wording in README, SELF-HOSTING,
+  ARCHITECTURE, the market README, STRATEGY, HOSTING and BUYER-GUIDE-IT (a container run exists); the container
+  run's findings marked fixed in 1.20.0; HANDOFF.md's 1.20.0 entry; the RFI answers' security contact points at
+  SECURITY.md.
+
 ## 1.20.0 — 2026-09-30
 
 A feature release (migration 60 and the county-entered figures routes), released under a policy exception inside
 1.19.0's 28 days (docs/RELEASE.md, *Record: 1.20.0*). A county can now enter or import figures for a grantee not on
 SUDS, clearly marked as county-entered and always outranked by a signed file; SUDS Server's installer and first day
-are fixed after a real install; and the documents, evidence and county-contract kit describe 1.20.0. Upgrading runs
+are fixed after a real install; the county-contract kit is added; and the documents are brought up to 1.19.0 (see below). Upgrading runs
 migration 60 on start; nothing else for an administrator to do.
 
 ### Fixed: installer and day-one problems found by a real install in a systemd container (SUDS Server)
@@ -137,12 +176,15 @@ test that failed before the fix, in the real-execution harness (`test/deploy-lin
 
 ### Documentation, evidence and repository metadata
 
-- **Buyer and security documents describe 1.19.0.** The market-readiness review of 1.19.0 found them two releases
-  behind. The IT buyer guide no longer says the county view is "one file, carried by people, not a connection": it
+- **Buyer and security documents brought up to 1.19.0's features, their version lines to 1.20.0.** The
+  market-readiness review of 1.19.0 found them two releases behind. (What 1.20.0 itself added, county-entered
+  figures, reached COUNTY-VIEW, API, DATA-INVENTORY, PEN-TEST-SCOPE, the demo script and the questionnaire's #7, but
+  not the other buyer and security documents; the market review of 1.20.0 found that, and it is corrected after
+  the release: *Unreleased*.) The IT buyer guide no longer says the county view is "one file, carried by people, not a connection": it
   describes the optional county connection (off by default; the CBO's push with a county-issued token *and* the
   file's Ed25519 signature; status; the county's read API with expiring read tokens; `TRUST_PROXY=1`; only the
   aggregate file leaves), SUDS Server and its compliance report, and fingerprint sign-in. The security
-  questionnaire is checked against 1.19.0 (`3dc20dc`): #5 names the county connection (outbound from a CBO) and the
+  questionnaire is checked against 1.20.0 (it was checked against 1.19.0, `3dc20dc`, before the stamp): #5 names the county connection (outbound from a CBO) and the
   county server's inbound push and read endpoints, and the AI copilot's Bedrock and Vertex AI providers; #6 the
   `LICENSE`; #7, #8, #29, #39 and #48 what 1.18.0 and 1.19.0 changed; #36a the AI-authorship figures recounted
   from git (643 of 662 commits written with the assistant: 630 as author, 13 as co-author; the method is stated).
@@ -152,15 +194,18 @@ test that failed before the fix, in the real-execution harness (`test/deploy-lin
   signed evidence) cover the county view, the county connection, SUDS Server's compliance reports and passkeys.
   The market README's rules no longer call the county view planned, and its scorecard has rows for the county view,
   the county connection, SUDS Server and fingerprint sign-in; STRATEGY's *Built vs planned* has SUDS Server and
-  passkeys. README.md's *What's new* covers 1.18.0 and 1.19.0. EVALUATION-RESPONSE (through 1.19.0), HOSTING
-  (current status 1.19.0), THREAT-MODEL's version line and SDLC's authorship figures follow.
-- **Supported versions** (docs/RELEASE.md): 1.19.x is the latest minor, 1.18.x the previous (security fixes for 30
-  days from 1.19.0's tag, not yet pushed), 1.17.x and older get nothing.
-- **Evidence.** A CycloneDX SBOM for 1.19.0 from the release commit (`docs/evidence/sbom-1.19.0.cdx.json`; the
-  1.16.4 and 1.17.0 SBOMs stay as history), linked everywhere the 1.17.0 one was. The evidence index describes
-  1.19.0, with sections for the county view and connection, SUDS Server's signed compliance report
+  passkeys. README.md's *What's new* covered 1.18.0 and 1.19.0; EVALUATION-RESPONSE (through 1.19.0), HOSTING
+  (current status 1.19.0), THREAT-MODEL's version line and SDLC's authorship figures followed to 1.19.0 (not to
+  1.20.0: corrected after the release, *Unreleased*).
+- **Supported versions** (docs/RELEASE.md): 1.20.x is the latest minor, 1.19.x the previous (security fixes for 30
+  days from 1.20.0's tag, not yet pushed; plan as if from its publication on 2026-09-30), 1.18.x and older get
+  nothing.
+- **Evidence.** A CycloneDX SBOM for 1.19.0 from its release commit (`docs/evidence/sbom-1.19.0.cdx.json`) and one
+  for 1.20.0 from its stamp (`docs/evidence/sbom-1.20.0.cdx.json`, added by the commit after the stamp; the 1.16.4,
+  1.17.0 and 1.19.0 SBOMs stay as history), linked everywhere the 1.17.0 one was. The evidence index describes
+  1.20.0, with sections for the county view and connection, SUDS Server's signed compliance report
   (`npm run verify-compliance-report`) and fingerprint signature evidence (`npm run verify-passkey-evidence`).
-- **Tag hand-off** (`docs/evidence/RELEASE-HANDOFF.md`): the six untagged releases 1.16.3 to 1.19.0, their tag
+- **Tag hand-off** (`docs/evidence/RELEASE-HANDOFF.md`): the seven untagged releases 1.16.3 to 1.20.0, their tag
   commands and one push, what each tag's workflow runs will do (which need a `policy_exception`, which `Web app` run
   to approve), and the SHA-256 of each release zip, rebuilt from its commit as `release.yml` builds it (the same
   method reproduces the published `v1.15.4` and `v1.16.2` checksums), for the release notes and the CHANGELOG on
@@ -175,7 +220,9 @@ test that failed before the fix, in the real-execution harness (`test/deploy-lin
   *Checked against*, the evidence index's *Version.* or the newest SBOM is not on that version's minor line, or a
   document outside the evidence index links an older SBOM (docs/RELEASE.md, stamp checklist). It fails on `3dc20dc`.
 
-Evidence, documentation and tests only; no change to what SUDS does.
+The drills and the installer run below were recorded on 1.19.0, before this release's code changes (migration 60,
+the county-entered figures routes, the installer fixes): they are 1.19.0's evidence, carried in this release, not
+runs of 1.20.0.
 
 - **Recovery drill on 1.19.0** (docs/evidence/dr-drill-2026-09-30/): `scripts/dr-exercise.js --clients 20000` on
   the released tree (`3dc20dc`), as the 1.16.2 drill was run: 11 of 11 checks, drill RTO 5 s, host-procedure RTO
@@ -191,8 +238,8 @@ Evidence, documentation and tests only; no change to what SUDS does.
   table (`county_connection`).
 - **Installer run** (docs/evidence/installer-container-run-2026-09-30/): `deploy/linux/install.sh`, and `upgrade.sh`
   from 1.18.0 to 1.19.0, run for real on Ubuntu 24.04 with systemd in a container (not a VM), with a recovery drill
-  on the installed server and the signed compliance reports; RHEL 9 could not be run. Four findings recorded for
-  the owner. The run on real Ubuntu 24.04 and RHEL 9 VMs is owner-pending: docs/evidence/INSTALLER-VM-RUN.md.
+  on the installed server and the signed compliance reports; RHEL 9 could not be run. Its four findings are fixed in this
+  release (*Fixed: installer and day-one problems*, above). The run on real Ubuntu 24.04 and RHEL 9 VMs is owner-pending: docs/evidence/INSTALLER-VM-RUN.md.
 
 ### Added: county-entered figures for grantees not on SUDS (docs/COUNTY-VIEW.md; released in 1.20.0)
 
