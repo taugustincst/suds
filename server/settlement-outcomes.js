@@ -88,7 +88,7 @@ function figures({ from, to, ts, tsP }, { fundIds = null } = {}) {
   const monthOf = monthReader(); const months = monthsOf(from, to);
   // fundIds (a county submission, server/county.js): only these funds, and every total over them alone. Every
   // count below goes through F, so a fund left out adds to nothing: not its own row, its category or the total.
-  const funds = db.all(`SELECT f.id, f.name, f.grant_number, f.source_type, f.settlement_use, f.settlement_hiaa, f.is_active, f.total_amount FROM funding_sources f WHERE ${isFund}${fundIds ? ' AND f.id IN (SELECT value FROM json_each(?))' : ''} ORDER BY f.name, f.id`, ...(fundIds ? [JSON.stringify(fundIds)] : []));
+  const funds = db.all(`SELECT f.id, f.name, f.grant_number, f.source_type, f.settlement_use, f.settlement_hiaa, f.is_active, f.total_amount, f.fiscal_year_start, f.fiscal_year_end FROM funding_sources f WHERE ${isFund}${fundIds ? ' AND f.id IN (SELECT value FROM json_each(?))' : ''} ORDER BY f.name, f.id`, ...(fundIds ? [JSON.stringify(fundIds)] : []));
   const F = new Map(funds.map(f => [f.id, { f, period: bucket(), months: new Map(months.map(m => [m, bucket()])), own: 0, other: 0, pending: 0, active: false }]));
   const catKey = (f) => (f.settlement_use && USE[f.settlement_use] ? f.settlement_use : 'uncategorised');
   const cats = new Map(); const total = bucket(); const totalMonths = new Map(months.map(m => [m, bucket()]));
@@ -159,6 +159,9 @@ function figures({ from, to, ts, tsP }, { fundIds = null } = {}) {
       category_label: USE[x.f.settlement_use]?.label || 'No settlement category recorded', schedule: USE[x.f.settlement_use]?.schedule || 'Uncategorized',
       hiaa_label: x.f.settlement_hiaa ? HIAA[x.f.settlement_hiaa] || null : null, profile, profile_label: MAP.PROFILES[profile].label, indicators: MAP.PROFILES[profile].indicators,
       spend: { own_category: money(x.own), other_categories: money(x.other), approved: money(x.own + x.other), pending: money(x.pending) },
+      // The fund's award as its record gives it (the amount and the award period): a county file of schema version 2
+      // carries it (county.js awardFrom decides whether it is one).
+      award: { amount: x.f.total_amount, from: String(x.f.fiscal_year_start || '').slice(0, 10), to: String(x.f.fiscal_year_end || '').slice(0, 10) },
       values: values(x.period), months: months.map(m => ({ month: m, spend: money(x.months.get(m).spend), values: values(x.months.get(m)) })) };
   });
   const catRows = [...cats].filter(([k]) => shownFunds.some(x => catKey(x.f) === k)).map(([k, b]) => {

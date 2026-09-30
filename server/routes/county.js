@@ -11,7 +11,14 @@
 //     GET  /api/county-submission/options  the settlement funds to choose from, and the counties this server made
 //                                          files for (their codes, names and the funds chosen last time)
 //     GET  /api/county-submission/file     the signed county submission file for ?from&to&county_code&county_name
-//                                          &funds=id,id (also export:read)
+//                                          &funds=id,id (also export:read); schema version 2 (each fund's award) unless
+//                                          &schema_version=1, for a county on SUDS 1.20 or earlier
+//   Reporting-cadence reminders (built for 1.21.0, not yet released; server/county-schedule.js), for the same people:
+//     GET    /api/county-submission/reminders          each county's expected periods, when each file is due, whether
+//                                                      it was made or sent, and the reminders (the periods not done)
+//     PUT    /api/county-submission/schedules/:code    the programme's own schedule for a county: { county_name,
+//                                                      cadence, due_days, start }
+//     DELETE /api/county-submission/schedules/:code    remove it
 //   The county's side:
 //     GET  /api/county/code                this county's code, for programs to type on their card (county:view)
 //     GET  /api/county/programmes          the registered programs, each with its key history (county:view)
@@ -131,11 +138,16 @@ module.exports = (r) => {
     const known = new Set(db.all(`SELECT id FROM funding_sources WHERE ${IS_FUND} AND id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)).map(x => x.id));
     const unknown = ids.filter(id => !known.has(id));
     if (unknown.length) throw badRequest('One of the funds chosen is not an opioid settlement fund here. Reload the page and choose again.', { fields: { funds: 'not a settlement fund' } });
+    // The file's version: the latest (each fund's award in it) unless the person asks for version 1, which a county
+    // still on SUDS 1.20 or earlier reads (it refuses version 2).
+    const sv = ctx.query.get('schema_version');
+    if (sv !== null && sv !== '' && !K.SCHEMA_VERSIONS.map(String).includes(sv)) throw badRequest(`schema_version must be ${K.SCHEMA_VERSIONS.join(' or ')}.`, { fields: { schema_version: 'not a version SUDS makes' } });
+    const schemaVersion = sv ? Number(sv) : K.SCHEMA_VERSION;
     const range = require('./reports').range(ctx);
     const raw = await db.readSnapshot(async () => SO.figures(range, { fundIds: [...known] }));
     // The allow-list is checked here too: a figure it does not expect is said, never sent.
     let payload;
-    try { payload = K.payloadFrom(raw, { programme: db.getSetting('org_name', ''), recipient: { county_code: code, county_name: countyName } }); }
+    try { payload = K.payloadFrom(raw, { programme: db.getSetting('org_name', ''), recipient: { county_code: code, county_name: countyName }, schemaVersion }); }
     catch (e) { if (e instanceof K.SubmissionError) throw badRequest(`The county file could not be made: ${e.message}`); throw e; }
     const { key, created } = K.ensureKey(ctx.user);
     if (created) keyCreated(ctx, key);
@@ -143,13 +155,33 @@ module.exports = (r) => {
     // Remembered for next time, for this county: its name and the funds chosen (the card offers them again).
     const rec = recipients(); rec[code] = { name: countyName, fund_ids: [...known], used_at: db.now() };
     db.setSetting('county_submission_recipients', JSON.stringify(rec));
+    // Made: the reminders count the period done for this county (county-schedule.js).
+    require('../county-schedule').recordMade({ county_code: code, from, to, sha256, schema_version: payload.schema_version, via: 'download' });
     // It leaves the programme: aggregate counts and money only, no client-level data, not PHI and not a Part 2
     // disclosure. Recorded with what identifies the file, not its figures.
-    audit.log({ user: ctx.user, action: 'county_submission.export', ip: ctx.ip, details: { from, to, county_code: code, fingerprint, sha256, funds: payload.funds.length, leaves_programme: true, content: 'aggregate counts and money; no client-level data' } });
+    audit.log({ user: ctx.user, action: 'county_submission.export', ip: ctx.ip, details: { from, to, county_code: code, fingerprint, sha256, schema_version: payload.schema_version, funds: payload.funds.length, leaves_programme: true, content: 'aggregate counts and money; no client-level data' } });
     ctx.res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8',
       'Content-Disposition': `attachment; filename="suds-county-submission-${K.slug(payload.programme)}-${from}_${to}.json"`,
       'X-SUDS-Export': 'County submission: exact aggregate figures for the county under the funding contract; not for publication. No client-level data.' });
     ctx.res.end(JSON.stringify(file, null, 2) + '\n');
+  });
+
+  // ---- reporting-cadence reminders (county-schedule.js) ----
+  const SCH = require('../county-schedule');
+  r.get('/api/county-submission/reminders', ...cboPerms, () => SCH.reminders());
+  r.put('/api/county-submission/schedules/:code', ...cboPerms, (ctx) => {
+    const v = validate(ctx.body, { county_name: { type: 'string', maxLen: 400 }, cadence: { type: 'string', required: true, maxLen: 40 }, due_days: { type: 'number', integer: true }, start: { type: 'string', maxLen: 10 } });
+    let out;
+    try { out = SCH.saveSchedule({ county_code: ctx.params.code, county_name: v.county_name, cadence: v.cadence, due_days: v.due_days, start: v.start || null }); }
+    catch (e) { if (e.field) throw badRequest(e.message, { fields: { [e.field]: e.message } }); throw e; }
+    audit.log({ user: ctx.user, action: 'county_submission.schedule.save', ip: ctx.ip, details: { county_code: out.code, cadence: out.schedule.cadence, due_days: out.schedule.due_days, start: out.schedule.start } });
+    return SCH.reminders();
+  });
+  r.delete('/api/county-submission/schedules/:code', ...cboPerms, (ctx) => {
+    const code = K.normaliseCode(ctx.params.code);
+    if (!code || !SCH.removeSchedule(code)) throw notFound('No schedule for that county code');
+    audit.log({ user: ctx.user, action: 'county_submission.schedule.remove', ip: ctx.ip, details: { county_code: code } });
+    return SCH.reminders();
   });
 
   // ---- the county's side ----
@@ -392,6 +424,8 @@ module.exports = (r) => {
       const b = { program: p.name, period_from: from, period_to: to, fund: f.name, grant_number: f.grant_number, value: '' };
       for (const [code, label] of spendMeasures) rows.push({ ...b, measure_code: code, measure_label: label });
       for (const k of K.VALUE_KEYS) rows.push({ ...b, measure_code: k, measure_label: K.measureLabel(k) });
+      // The award, optional: fill in all three (the amount, the award period's first and last days) or leave all empty.
+      for (const [code, label] of E.AWARD_MEASURES) rows.push({ ...b, measure_code: code, measure_label: label });
     }
     audit.log({ user: ctx.user, action: 'county.entry.template', entity: 'county_programme', entityId: p.id, ip: ctx.ip, details: { from, to, funds: funds.length } });
     ctx.res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'no-store',
@@ -430,8 +464,11 @@ module.exports = (r) => {
     const S = require('../spreadsheet');
     const notSubmitted = '— (not submitted)';
     const progCols = d.programmes.map((p, i) => ({ key: `p${i}`, label: `${p.status === 'part' ? `${p.name} (part of the period)` : p.status === 'none' ? `${p.name} (not submitted)` : p.name}${p.source === K.ENTERED ? ` (${K.ENTERED_LABEL})` : p.source === 'mixed' ? ` (some figures ${K.ENTERED_LABEL})` : ''}` }));
-    const matrix = d.rows.map(x => ({ group: { spending: 'Spending', use: 'Spent by allowable use (Exhibit E)', hiaa: 'Spent by High Impact Abatement Activity', outcome: 'Outcomes' }[x.group], measure: x.label,
-      ...Object.fromEntries(d.programmes.map((p, i) => [`p${i}`, x.by[p.id] === null ? notSubmitted : x.by[p.id]])), total: x.total, total_entered: x.total_entered }));
+    // A programme with figures whose files carry no award has "— (award not in file)" in the award rows (or "— (no
+    // award recorded)"), never a 0; the award totals are over the programmes whose files carry it (said in About).
+    const cellOf = (x, p) => (x.by[p.id] !== null ? x.by[p.id] : x.by_note && x.by_note[p.id] ? `— (${x.by_note[p.id]})` : notSubmitted);
+    const matrix = d.rows.map(x => ({ group: { spending: 'Spending', use: 'Spent by allowable use (Exhibit E)', hiaa: 'Spent by High Impact Abatement Activity', outcome: 'Outcomes', award: `Award (total over ${x.total_over ?? 0} of ${d.award.of} programs)` }[x.group], measure: x.label,
+      ...Object.fromEntries(d.programmes.map((p, i) => [`p${i}`, cellOf(x, p)])), total: x.total === null ? `— (${K.AWARD_NOT_IN_FILE} for every program)` : x.total, total_entered: x.total_entered }));
     const matrixCols = [{ key: 'group', label: 'Section' }, { key: 'measure', label: 'Measure' }, ...progCols, { key: 'total', label: `Total (${d.whole} of ${d.of} programs complete)` },
       ...(anyEntered ? [{ key: 'total_entered', label: `Of the total, ${K.ENTERED_LABEL}` }] : [])];
     const about = [
@@ -441,6 +478,7 @@ module.exports = (r) => {
       { k: 'Classification', v: 'Internal — exact counts. For authorised county staff only; not for publication or sharing.' },
       ...d.caveats.map((c, i) => ({ k: `Caveat ${i + 1}`, v: c })),
       { k: 'Which submissions count', v: d.rule }, { k: 'Publication', v: d.publication_note },
+      { k: 'Award', v: d.award.note },
       { k: 'Source (long CSV and Tidy sheet)', v: `The source column is "signed" (a file the program's key signed) or "${K.ENTERED}" (${K.ENTERED_LABEL}), as the read API says it; source_label says the same in words.` },
       { k: 'Figures entered by the county', v: entered ? `Counted, and marked "${K.ENTERED_LABEL}". ${d.entered_note}` : `Left out${d.entered_left_out.length ? `: ${d.entered_left_out.map(p => p.name).join('; ')}` : ''}. Only files the programs signed are counted.` },
       ...(d.inactive_left_out.length ? [{ k: 'Inactive programs left out', v: d.inactive_left_out.map(p => p.name).join('; ') }] : []),
@@ -462,6 +500,9 @@ module.exports = (r) => {
         const fb = { ...base, fund: f.name, grant_number: f.grant_number || '' };
         for (const [code, label] of spendMeasures) tidy.push({ ...fb, measure_code: code, measure_label: label, value: f.spend[code.replace(/^spend_/, '')] });
         for (const k of K.VALUE_KEYS) tidy.push({ ...fb, measure_code: k, measure_label: K.measureLabel(k), value: f.values[k] });
+        // The fund's award (schema version 2), in the layout county-entry.js imports: the amount, and the award
+        // period's first and last days in the value column. A fund with no award, or a version 1 file, has none.
+        if (f.award) for (const [code, label] of E.AWARD_MEASURES) tidy.push({ ...fb, measure_code: code, measure_label: label, value: f.award[code.replace(/^award_/, '')] });
       }
       const tb = { ...base, fund: 'All funds in the submission', grant_number: '' };
       tidy.push({ ...tb, measure_code: 'spend_approved', measure_label: 'Spent, approved or reimbursed ($)', value: pl.total.spend.approved }, { ...tb, measure_code: 'spend_pending', measure_label: 'Pending approval ($)', value: pl.total.spend.pending });

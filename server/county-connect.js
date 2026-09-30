@@ -29,6 +29,13 @@ const { sha256, randomToken, uuid } = require('./crypto');
 const SETTING_ENABLED = 'county_connect_enabled';
 const SETTING_CADENCE = 'county_connect_cadence';
 const SETTING_START = 'county_connect_start';
+/**
+ * How many days after a period ends the county expects its file (built for 1.21.0, not yet released): told to each
+ * programme through /status (due_days, and each expected period's due_by), so its SUDS can remind it. 30 unless set.
+ */
+const SETTING_DUE_DAYS = 'county_connect_due_days';
+const DUE_DAYS_DEFAULT = 30;
+const DUE_DAYS_MAX = 180;
 // A calendar quarter and a California fiscal quarter cover the same months; the two quarterly cadences differ only in
 // which name comes first in a period's label (county-periods.js describe() names both, as the Send to the county
 // card does).
@@ -68,6 +75,9 @@ const NOT_THIS_KEY = 'The file was not signed with a key the county registered f
 
 const enabled = () => db.getSetting(SETTING_ENABLED, '0') === '1';
 function cadence() { const c = db.getSetting(SETTING_CADENCE, 'quarterly_calendar'); return CADENCES[c] ? c : 'quarterly_calendar'; }
+function dueDays() { const n = Number(db.getSetting(SETTING_DUE_DAYS, String(DUE_DAYS_DEFAULT))); return Number.isInteger(n) && n >= 1 && n <= DUE_DAYS_MAX ? n : DUE_DAYS_DEFAULT; }
+/** A day `n` days after `day` (YYYY-MM-DD). */
+const plusDays = (day, n) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 function startDate() { const s = db.getSetting(SETTING_START, ''); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null; }
 const today = () => require('./routes/budget').localDate();
 
@@ -97,15 +107,17 @@ function _resetForwardedForTests() { forwardedSeenAt = null; }
 // ---- settings ------------------------------------------------------------------------------------------------------
 function settings(who = {}) {
   const code = countyCode(who);
-  return { enabled: enabled(), cadence: cadence(), cadences: Object.entries(CADENCES).map(([value, label]) => ({ value, label })), start: startDate(),
+  return { enabled: enabled(), cadence: cadence(), cadences: Object.entries(CADENCES).map(([value, label]) => ({ value, label })), start: startDate(), due_days: dueDays(), due_days_max: DUE_DAYS_MAX,
+    accepts_schema_versions: K.SCHEMA_VERSIONS,
     county_code: code, county_code_display: K.formatCode(code), county_name: db.getSetting('org_name', '') || null,
     endpoints: { submissions: '/api/county-connect/v1/submissions', status: '/api/county-connect/v1/status', combined: '/api/county-connect/v1/combined', programs: '/api/county-connect/v1/programs' },
     limits: { max_file_bytes: MAX_PUSH_BYTES, read_default_days: READ_DEFAULT_DAYS, read_max_days: READ_MAX_DAYS, connection_max_days: CONNECTION_MAX_DAYS },
     trust_proxy: !!require('./config').trustProxy,
     proxy_warning: proxyWarning() ? 'Calls to the county connection arrive through a proxy (they carry X-Forwarded-For), but this server is not started with TRUST_PROXY=1: every program is counted as the proxy\'s one address, so one program\'s calls can make the others wait, and the audit log records the proxy\'s address. Set TRUST_PROXY=1 (docs/DEPLOYMENT.md).' : null };
 }
-function saveSettings({ enabled: on, cadence: c, start }) {
+function saveSettings({ enabled: on, cadence: c, start, dueDays: dd }) {
   const changed = [];
+  if (dd !== undefined && dd !== null) { if (!Number.isInteger(dd) || dd < 1 || dd > DUE_DAYS_MAX) throw new Error(`due_days must be a whole number of days from 1 to ${DUE_DAYS_MAX}`); db.setSetting(SETTING_DUE_DAYS, String(dd)); changed.push(SETTING_DUE_DAYS); }
   if (on !== undefined && on !== null) { db.setSetting(SETTING_ENABLED, on ? '1' : '0'); changed.push(SETTING_ENABLED); }
   if (c !== undefined && c !== null) { if (!CADENCES[c]) throw new Error(`cadence must be one of ${Object.keys(CADENCES).join(', ')}`); db.setSetting(SETTING_CADENCE, c); changed.push(SETTING_CADENCE); }
   if (start !== undefined) { if (start) db.setSetting(SETTING_START, start); else db.run(`DELETE FROM settings WHERE key=?`, SETTING_START); changed.push(SETTING_START); }
@@ -280,12 +292,16 @@ function statusFor(t, who = {}) {
   // Only files the programme signed count toward what it is expected to send: figures the county entered for it
   // (before it ran SUDS) never make a period "received" or take it off the outstanding list (COUNTY-VIEW.md).
   const counting = K.filesCount(prog) ? K.countingSubs(prog.id).filter(s => !K.isEntered(s)) : [];
-  const expected = expectedPeriods().map(p => { const cov = K.coverage(counting, p.from, p.to); return { ...p, received: cov.status === 'whole', coverage: cov.status }; });
+  const due = dueDays();
+  const expected = expectedPeriods().map(p => { const cov = K.coverage(counting, p.from, p.to); return { ...p, due_by: plusDays(p.to, due), received: cov.status === 'whole', coverage: cov.status }; });
   const files = db.all(`${K.SUBS} WHERE s.programme_id=? ORDER BY s.received_at DESC, s.id LIMIT 40`, prog.id).map(K.summary);
   return {
     county: { code: countyCode(who), name: db.getSetting('org_name', '') || null },
     programme: { id: prog.id, name: prog.name, active: !!prog.active, files_count: K.filesCount(prog) },
-    cadence: cadence(), cadence_label: CADENCES[cadence()], start: startDate(), today: today(),
+    cadence: cadence(), cadence_label: CADENCES[cadence()], start: startDate(), today: today(), due_days: due,
+    // What this county reads (built for 1.21.0, not yet released): a programme's SUDS makes the file in a version the
+    // county reads. A county on SUDS 1.20 or earlier says nothing here, and reads version 1 only.
+    accepts_schema_versions: K.SCHEMA_VERSIONS,
     expected, outstanding: expected.filter(p => !p.received).map(({ received, ...p }) => p), // eslint-disable-line no-unused-vars
     received: files.map(s => ({ from: s.period_from, to: s.period_to, sha256: s.sha256, received_at: s.received_at, generated_at: s.generated_at, status: s.status, source: s.source })),
     max_file_bytes: MAX_PUSH_BYTES,
@@ -293,7 +309,7 @@ function statusFor(t, who = {}) {
 }
 
 module.exports = {
-  SETTING_ENABLED, SETTING_CADENCE, SETTING_START, CADENCES, SCOPES, PREFIX, LIMITS, WINDOW_MS, MAX_PUSH_BYTES, READ_DEFAULT_DAYS, READ_MAX_DAYS, CONNECTION_MAX_DAYS,
+  SETTING_ENABLED, SETTING_CADENCE, SETTING_START, SETTING_DUE_DAYS, DUE_DAYS_DEFAULT, DUE_DAYS_MAX, dueDays, plusDays, CADENCES, SCOPES, PREFIX, LIMITS, WINDOW_MS, MAX_PUSH_BYTES, READ_DEFAULT_DAYS, READ_MAX_DAYS, CONNECTION_MAX_DAYS,
   REFUSALS_LOGGED_PER_HOUR, NOT_THIS_KEY, NOT_THIS_KEY_REASON, enabled, noteForwarded, proxyWarning, _resetForwardedForTests, revokeForProgramme, sweepRefusals, cadence, startDate, countyCode, settings, saveSettings, issue, revoke, listTokens, tokenOut, tokenState, bearer, lookup, touch, actor,
   pushBodyLimit, logRefusal, flushRefusals, expectedPeriods, statusFor, today,
 };

@@ -13,7 +13,8 @@
 //       Writes <dir>/programmes.json (name, public key, fingerprint of each) and <dir>/<program>-<from>_<to>.json
 //       (the signed files), made for the county whose code is given (County view › Programs shows it). Nothing
 //       here touches a database: the files are what three programs' own SUDS servers would have made. Register
-//       each key and import each file on the county's server (the browser suite does this through the API).
+//       each key and import each file on the county's server (the browser suite does this through the API). Schema
+//       version 2 (each fund's award; built for 1.21.0, not yet released) unless --schema-version 1.
 //
 // `npm run seed` stays a program's data; this is the county's. Written to a directory, it needs no database, keys or
 // data directory of a server (signWithSeed signs with each sample program's own key): it loads SUDS's modules as
@@ -30,15 +31,15 @@ const county = () => require('../server/county');
 
 const PROGRAMMES = [
   { slug: 'riverbend', name: 'Riverbend Harm Reduction Collective', scale: 1.0,
-    funds: [{ name: 'County settlement share', grant_number: 'OSF-RB-1', category: 'core_a', hiaa: 'hiaa_6' }, { name: 'City abatement grant', grant_number: null, category: 'approved_h', hiaa: 'hiaa_4' }] },
+    funds: [{ name: 'County settlement share', grant_number: 'OSF-RB-1', category: 'core_a', hiaa: 'hiaa_6', award: 240000 }, { name: 'City abatement grant', grant_number: null, category: 'approved_h', hiaa: 'hiaa_4', award: null }] },
   { slug: 'eastside', name: 'Eastside Recovery Outreach', scale: 0.6,
-    funds: [{ name: 'County settlement share', grant_number: 'OSF-ER-7', category: 'approved_c', hiaa: 'hiaa_3' }] },
+    funds: [{ name: 'County settlement share', grant_number: 'OSF-ER-7', category: 'approved_c', hiaa: 'hiaa_3', award: 150000 }] },
   { slug: 'hillview', name: 'Hillview Youth Prevention Project', scale: 0.3,
-    funds: [{ name: 'Settlement prevention fund', grant_number: 'OSF-HV-2', category: 'core_g', hiaa: 'hiaa_5' }] },
+    funds: [{ name: 'Settlement prevention fund', grant_number: 'OSF-HV-2', category: 'core_g', hiaa: 'hiaa_5', award: 80000 }] },
 ];
 /** A fictional grantee that does not run SUDS: the county enters its figures (--register only). */
 const NOT_ON_SUDS = { slug: 'canyon', name: 'Canyon Mobile Outreach', scale: 0.4,
-  funds: [{ name: 'County settlement share', grant_number: 'OSF-CM-3', category: 'core_h', hiaa: 'hiaa_4' }] };
+  funds: [{ name: 'County settlement share', grant_number: 'OSF-CM-3', category: 'core_h', hiaa: 'hiaa_4', award: 100000 }] };
 const seedOf = (slug) => crypto.createHash('sha256').update(`suds-county-sample:${slug}`).digest();
 /** The county the sample files are made for when a test does not say (a fixed, valid county code). */
 const SAMPLE_COUNTY = { county_code: 'SAMP1E00', county_name: 'Sample County Behavioral Health' };
@@ -55,28 +56,41 @@ function lastQuarters(today = new Date().toISOString().slice(0, 10), n = 2) {
   return out;
 }
 
-/** A plausible, fictional payload for one program and period (`k` varies the figures between periods). */
-function payloadFor(p, period, k = 1, { recipient = SAMPLE_COUNTY, generatedAt = `${period.to}T23:00:00.000Z` } = {}) {
+/** The California fiscal year (July to June) a day falls in: a sample fund's award period. */
+function fiscalYearOf(day) {
+  const y = Number(day.slice(0, 4)); const start = Number(day.slice(5, 7)) >= 7 ? y : y - 1;
+  return { from: `${start}-07-01`, to: `${start + 1}-06-30` };
+}
+/**
+ * A plausible, fictional payload for one program and period (`k` varies the figures between periods). Schema version 2
+ * (each fund's award: its amount for the fiscal year the period starts in, or null) unless `schemaVersion` is 1.
+ */
+function payloadFor(p, period, k = 1, { recipient = SAMPLE_COUNTY, generatedAt = `${period.to}T23:00:00.000Z`, schemaVersion } = {}) {
   const K = county();
   const n = (x) => Math.round(x * p.scale * k);
   const vals = (w) => ({ contacts: n(420 * w), naloxone_kits: n(260 * w), fentanyl_strips: n(900 * w), syringes: n(3000 * w), reversals: n(9 * w), treatment_admissions: n(14 * w),
     education_contacts: n(35 * w), staff_training_hours: Math.round(40 * w * p.scale * k * 10) / 10, referrals_made: n(60 * w), people_served: n(310 * w), people_linked: n(22 * w), moud_linked: n(11 * w), people_trained: n(80 * w) });
   const share = p.funds.map((_, i) => (p.funds.length === 1 ? 1 : i === 0 ? 0.7 : 0.3));
-  const funds = p.funds.map((f, i) => { const spent = Math.round(52000 * p.scale * k * share[i] * 100) / 100; return { ...f, spend: { own_category: spent, other_categories: 0, approved: spent, pending: Math.round(spent * 0.05 * 100) / 100 }, values: vals(share[i]) }; });
+  const v = schemaVersion || K.SCHEMA_VERSION;
+  const funds = p.funds.map((f, i) => {
+    const spent = Math.round(52000 * p.scale * k * share[i] * 100) / 100; const { award, ...rest } = f;
+    return { ...rest, spend: { own_category: spent, other_categories: 0, approved: spent, pending: Math.round(spent * 0.05 * 100) / 100 }, values: vals(share[i]),
+      ...(v >= 2 ? { award: award ? { amount: award, ...fiscalYearOf(period.from) } : null } : {}) };
+  });
   const sum = () => Object.fromEntries(Object.keys(funds[0].values).map(v => [v, Math.round(funds.reduce((t, f) => t + f.values[v], 0) * 10) / 10]));
   const cats = [...new Set(funds.map(f => f.category))].map(c => { const fs2 = funds.filter(f => f.category === c); return { key: c, spend_own_category: Math.round(fs2.reduce((t, f) => t + f.spend.own_category, 0) * 100) / 100, values: vals(fs2.reduce((t, f) => t + share[funds.indexOf(f)], 0)) }; });
   return {
-    schema_version: K.SCHEMA_VERSION, programme: p.name, recipient: { ...recipient }, period, generated_at: generatedAt, suds_version: require('../package.json').version, counts: 'exact',
+    schema_version: v, programme: p.name, recipient: { ...recipient }, period, generated_at: generatedAt, suds_version: require('../package.json').version, counts: 'exact',
     funds, categories: cats, total: { spend: { approved: Math.round(funds.reduce((t, f) => t + f.spend.approved, 0) * 100) / 100, pending: Math.round(funds.reduce((t, f) => t + f.spend.pending, 0) * 100) / 100 }, values: sum() },
   };
 }
 
 /** Every sample program with its key, and its signed files for `periods`, made for `recipient`. */
-function sample({ periods = lastQuarters(), programmes = PROGRAMMES, recipient = SAMPLE_COUNTY } = {}) {
+function sample({ periods = lastQuarters(), programmes = PROGRAMMES, recipient = SAMPLE_COUNTY, schemaVersion } = {}) {
   const K = county();
   return programmes.map(p => {
     const seed = seedOf(p.slug);
-    const files = periods.map((period, i) => ({ period, ...K.signWithSeed(payloadFor(p, period, 1 + i * 0.1, { recipient }), seed) }));
+    const files = periods.map((period, i) => ({ period, ...K.signWithSeed(payloadFor(p, period, 1 + i * 0.1, { recipient, schemaVersion }), seed) }));
     return { slug: p.slug, name: p.name, seed, public_key: files[0].public_key, fingerprint: files[0].fingerprint, fingerprint_display: K.formatFingerprint(files[0].fingerprint), files };
   });
 }
@@ -130,7 +144,8 @@ function register() {
     if (db.one(`SELECT 1 x FROM county_submissions WHERE programme_id=? AND period_from=? AND period_to=? AND source='county_entered'`, prog.id, period.from, period.to)) return;
     const pl = payloadFor(NOT_ON_SUDS, period, 1 + i * 0.1, { recipient });
     const funds = pl.funds.map(f => ({ name: f.name, grant_number: f.grant_number, category: f.category, hiaa: f.hiaa, spend_own_category: String(f.spend.own_category), spend_other_categories: String(f.spend.other_categories), spend_pending: String(f.spend.pending),
-      ...Object.fromEntries(Object.entries(f.values).map(([k, v]) => [k, String(k === 'staff_training_hours' ? Math.round(v * 10) / 10 : Math.round(v))])) }));
+      ...Object.fromEntries(Object.entries(f.values).map(([k, v]) => [k, String(k === 'staff_training_hours' ? Math.round(v * 10) / 10 : Math.round(v))])),
+      ...(f.award ? { award_amount: String(f.award.amount), award_from: f.award.from, award_to: f.award.to } : {}) }));
     const out = E.enter(prog.id, { ...period, source_ref: `Sample quarterly report (fictional), ${period.from} to ${period.to}`, funds }, admin, { today });
     audit.log({ user: admin, action: 'county.entry.create', entity: 'county_submission', entityId: out.submission.id, details: { programme_id: prog.id, from: period.from, to: period.to, sha256: out.submission.sha256, via: 'form', status: out.status, sample: true } });
     entered++;
@@ -144,15 +159,17 @@ if (require.main === module) {
   else {
     const args = process.argv.slice(2);
     const at = args.indexOf('--county-code'); const code = at >= 0 ? args[at + 1] : null;
-    const dir = args.find((a, i) => !a.startsWith('--') && (at < 0 || i !== at + 1));
+    // --schema-version 1: files as a SUDS before 1.21 made them (no award), to try a county view that reads both.
+    const sv = args.indexOf('--schema-version'); const schemaVersion = sv >= 0 ? Number(args[sv + 1]) : undefined;
+    const dir = args.find((a, i) => !a.startsWith('--') && (at < 0 || i !== at + 1) && (sv < 0 || i !== sv + 1));
     const K = county(); const c = K.normaliseCode(code);
-    if (!dir || !c) { console.error('usage: node scripts/county-sample.js <output directory> --county-code <the county\'s code, from County view › Programs>\n       node scripts/county-sample.js --register    (development server only)'); process.exit(2); }
+    if (!dir || !c || (schemaVersion !== undefined && !K.SCHEMA_VERSIONS.includes(schemaVersion))) { console.error('usage: node scripts/county-sample.js <output directory> --county-code <the county\'s code, from County view › Programs> [--schema-version 1]\n       node scripts/county-sample.js --register    (development server only)'); process.exit(2); }
     fs.mkdirSync(dir, { recursive: true });
-    const s = sample({ recipient: { county_code: c, county_name: 'Sample County Behavioral Health' } });
+    const s = sample({ recipient: { county_code: c, county_name: 'Sample County Behavioral Health' }, schemaVersion });
     fs.writeFileSync(path.join(dir, 'programmes.json'), JSON.stringify(s.map(p => ({ name: p.name, public_key: p.public_key, fingerprint: p.fingerprint_display })), null, 2) + '\n');
     for (const p of s) for (const f of p.files) fs.writeFileSync(path.join(dir, `${p.slug}-${f.period.from}_${f.period.to}.json`), JSON.stringify(f.file, null, 2) + '\n');
     console.log(`Wrote ${s.length} programs and ${s.reduce((n, p) => n + p.files.length, 0)} signed submissions for county ${K.formatCode(c)} to ${dir}`);
   }
 }
 
-module.exports = { PROGRAMMES, NOT_ON_SUDS, SAMPLE_COUNTY, sample, payloadFor, lastQuarters, seedOf };
+module.exports = { PROGRAMMES, NOT_ON_SUDS, SAMPLE_COUNTY, sample, payloadFor, lastQuarters, seedOf, fiscalYearOf };

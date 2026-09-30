@@ -594,18 +594,19 @@ test('a template of the long CSV for one program not on SUDS: its funds and the 
   let t = await got(admin, `/api/county/programmes/${p.id}/entries/template?from=${Q2.from}&to=${Q2.to}`);
   let lines = t.data.replace(/^﻿/, '').trim().split(/\r?\n/);
   assert.equal(lines[0], E.CSV_COLUMNS.join(','));
-  assert.equal(lines.length, 1 + 4 + K.VALUE_KEYS.length, 'one fund to name when it has none');
+  assert.equal(lines.length, 1 + 4 + K.VALUE_KEYS.length + E.AWARD_MEASURES.length, 'one fund to name when it has none (its award rows too, optional)');
   assert.ok(lines.slice(1).every(l => l.startsWith(`${p.name},${Q2.from},${Q2.to},,,`) && l.endsWith(',')), lines[1]);
   assert.match(t.headers.get('content-disposition'), /suds-county-entry-template-.*-2026-04-01_2026-06-30\.csv/);
   ok(await enter(p.id, entry(Q1, { funds: [fund(), fund(1, { name: 'City abatement grant', grant_number: 'CAG-2' })] })));
   t = await got(admin, `/api/county/programmes/${p.id}/entries/template?from=${Q2.from}&to=${Q2.to}`);
   lines = t.data.replace(/^﻿/, '').trim().split(/\r?\n/);
-  assert.equal(lines.length, 1 + 2 * (4 + K.VALUE_KEYS.length));
+  assert.equal(lines.length, 1 + 2 * (4 + K.VALUE_KEYS.length + E.AWARD_MEASURES.length));
   assert.ok(lines.some(l => l.startsWith(`${p.name},${Q2.from},${Q2.to},City abatement grant,CAG-2,naloxone_kits,`)));
   assert.ok(!/1000\.5|,80\b/.test(t.data), 'no figure of the earlier entry is in it');
   assert.equal(lastAudit('county.entry.template').entity_id, p.id);
   // Filled in, it imports.
-  const filled = lines.map((l, i) => (i ? `${l}${/,spend_approved,/.test(l) ? '10' : /,spend_own_category,/.test(l) ? '10' : '0'}` : l)).join('\r\n');
+  // The award rows are optional: left empty, the fund has no award.
+  const filled = lines.map((l, i) => (i ? `${l}${/,award_/.test(l) ? '' : /,spend_approved,/.test(l) ? '10' : /,spend_own_category,/.test(l) ? '10' : '0'}` : l)).join('\r\n');
   ok(await importCsv(p.id, { text: filled, preview: true }), 200);
   for (const c of [fin, sup, ro, nav]) assert.equal((await c.get(`/api/county/programmes/${p.id}/entries/template?from=${Q2.from}&to=${Q2.to}`)).status, 403);
   assert.equal((await admin.get(`/api/county/programmes/${p.id}/entries/template?from=2026-02-30&to=${Q2.to}`)).status, 400);

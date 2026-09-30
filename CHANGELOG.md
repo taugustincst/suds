@@ -60,6 +60,28 @@ Built for 1.21.0, not yet released. No migration.
   documents raise no finding but the known ones) and `test/county-packet.test.js` (two runs, identical bytes; every
   listed file present; the manifest and the zip's directory right).
 
+### County view: award amounts in the county file, and reminders when a county file is due
+
+Built for 1.21.0, not yet released (docs/COUNTY-VIEW.md, *Award amounts* and *Reminders on the programme's side*). No
+migration.
+
+- **Schema version 2 of the county submission file**: each fund carries its award (the award or contract amount and
+  the award period, from its fund record; null when none is recorded), signed with the rest. A county reads versions 1
+  and 2; the combined view, its CSV, Excel and long CSV, and the read API add *Spending against the award* (the award,
+  what was spent under the funds that carry one, and the share spent), each total over the programmes whose files
+  carry an award only, and "award not in file" for a programme whose files are version 1. The envelope's version must
+  be the signed payload's. County-entered figures take the award too (three optional fields per fund in Enter
+  figures; `award_amount`, `award_from`, `award_to` in the long CSV and the per-program template).
+- **Upgrade order: the county first.** A county on SUDS 1.20 reads version 1 only. The Send to the county card can
+  still make a version 1 file (a box for a county on 1.20 or earlier); over the county connection, the county's
+  `/status` now says which versions it reads (`accepts_schema_versions`), and a county that does not say is sent
+  version 1 automatically, with a warning on the card.
+- **Reporting-cadence reminders**: Home tells whoever makes the county file which county file is due by when and not
+  yet made or sent, from the connected county's own schedule (its `/status` now carries `due_days` and each period's
+  `due_by`; the county sets the days on County connections) or a schedule the programme records on Settlement
+  outcomes (*County reporting schedule*). A period is done when its file is made (or, for the connected county,
+  received or sent and accepted). Office server only.
+
 ## 1.20.0 — 2026-09-30
 
 A feature release (migration 60 and the county-entered figures routes), released under a policy exception inside

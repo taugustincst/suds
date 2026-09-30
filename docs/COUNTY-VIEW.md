@@ -47,7 +47,7 @@ under its contract today:
 | Part | Holds |
 | --- | --- |
 | Header | Schema version, the programme's name (Settings › Program), the **recipient** (the county's code and name), the period, when it was made (`generated_at`), the SUDS version, `counts: "exact"` |
-| Each chosen settlement fund | Its name, grant or agreement number, Exhibit E allowable use and California High Impact Abatement Activity; spending under its own category, under other categories, approved and pending; and its outcomes |
+| Each chosen settlement fund | Its name, grant or agreement number, Exhibit E allowable use and California High Impact Abatement Activity; spending under its own category, under other categories, approved and pending; its outcomes; and (schema version 2, built for 1.21.0, not yet released) its **award**: the award or contract amount and the award period, from its fund record, or none ([Award amounts](#award-amounts-schema-version-2)) |
 | Each allowable use of the chosen funds | Spending under it and its outcomes |
 | All the chosen funds | Spending (approved, pending) and outcomes, counted over those funds alone |
 
@@ -61,7 +61,8 @@ single event. The payload is an **allow-list** (`server/county.js` `PAYLOAD`): t
 it is made, and again when the county imports it, and anything else refuses it. `payloadFrom` refuses figures that
 lack a value the list expects (never a quiet 0). `test/county.test.js` walks a real file and fails on any key outside
 the list or any client's name, code or date of birth inside it, and **freezes** the list (the values included) for
-schema version 1: changing it is a new schema version.
+schema version 1: changing it is a new schema version. Version 2 (built for 1.21.0, not yet released) is version 1
+with each fund's award (`PAYLOAD_V2`), frozen the same way by `test/county-award.test.js`.
 
 ### Which funds go in (data minimisation)
 
@@ -136,7 +137,7 @@ date must be a real day (`isDay`: not 2026-02-30), on both sides.
   whitespace, arrays in order, strings and numbers exactly as `JSON.stringify` writes them, and only finite numbers
   (`server/county.js` `canonical()`); so the bytes signed do not depend on how the file was laid out or re-saved.
 - On import the county's server checks, in order: the size (256 KB at most); that it is JSON and a SUDS county
-  submission of this schema version; the payload's allow-list, types, text and period (real dates, the start on or
+  submission of a schema version it reads (1 or 2, the envelope's the same as the signed payload's); the payload's allow-list, types, text and period (real dates, the start on or
   before the end, the end not after today, made after its period ended); that it is **for this county**; that the
   fingerprint is a **registered** key of an **active** programme; the **signature** under that key; that the same
   payload has not come from that programme before (a duplicate changes nothing); and that a new file is signed with
@@ -244,8 +245,9 @@ Every read and write is audited: `county.view`, `county.export`, `county.code.cr
 superseded or older) and `.duplicate`, `county.submission.refuse`, `county.submission.throttled`,
 `county.submission.withdraw` (with the reason), `county.submission.reinstate`; for figures the county entered (released in
 1.20.0), `county.entry.create|update|import|refuse|withdraw|reinstate`. On the programme's side:
-`county_submission.key.create`, `county_submission.key.rotate`, `county_submission.export`. The audit entries carry
-ids, periods, fingerprints and hashes, never figures.
+`county_submission.key.create`, `county_submission.key.rotate`, `county_submission.export` (with the file's
+`schema_version`), and for the reminders (built for 1.21.0, not yet released) `county_submission.schedule.save|remove`.
+The audit entries carry ids, periods, fingerprints and hashes, never figures.
 
 ### Which submissions count for a period
 
@@ -539,6 +541,82 @@ county's staff are accountable for it through the audit log and the source docum
 agreement says what the county may enter ([market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md),
 section 8).
 
+## Award amounts (schema version 2)
+
+*Built for 1.21.0, not yet released.* A county that funds a programme wants to see what it spent **against the
+award**, not only what it spent. The file now carries, for each chosen fund, its **award**: the award or contract
+amount and the award period, taken from the fund's own record (Funding & spending: the fund's total amount and its
+fiscal year start and end; `funding_sources.total_amount`, `fiscal_year_start`, `fiscal_year_end`), signed with the
+rest of the payload. A fund whose record has no amount above 0 (or no real award period) carries `award: null`,
+never 0. That is **schema version 2** (`server/county.js` `PAYLOAD_V2`: version 1 with `award` on each fund, null or
+exactly `{ amount, from, to }`).
+
+- **The programme's side** always makes version 2, with `award: null` where there is none. The one exception: a box
+  on the Send to the county card, **"The county runs SUDS 1.20 or earlier: make a version 1 file"**
+  (`GET /api/county-submission/file?…&schema_version=1`), leaves the award out for a county that has not upgraded.
+  Over the county connection SUDS decides by itself (below).
+- **The county's side reads both.** A version 1 file is imported as before; its programme shows **"award not in
+  file"** in the award rows, in words, never 0. A version 2 file whose funds have no award shows **"no award
+  recorded"**. The envelope's `schema_version` must be the signed payload's (the envelope is not signed), so a signed
+  version 1 payload cannot be passed off as version 2 or the other way round; an award in a version 1 file, none in a
+  version 2 file, an extra key, an amount of 0 or less, a period that is not real dates or runs backwards, and any
+  change after signing are refused (`test/county-award.test.js`).
+- **The combined view** adds **Spending against the award**: for each programme, the **award** (each fund's award
+  counted once per programme however many of its files in the period carry it: the same fund, grant number and award
+  period), what the period's files **spent** under the funds that carry one (approved or reimbursed), and the share
+  **spent against the award (%)**; and the **total** of each, **over the programmes whose files carry an award
+  only**: the section, each total ("over N of M programs"), the CSV and Excel (a line in About, the Section column)
+  and the read API (`notes.award`, each row's `total_over`, each programme's `award.status`) say so. A programme whose
+  files carry no award is not in the totals. By quarter, each quarter's award totals are over that quarter's
+  programmes with an award. The long CSV has each fund's award as three measure codes, `award_amount`, `award_from`
+  and `award_to` (the dates in the value column).
+- **County-entered figures** carry the award too: three optional fields per fund in **Enter figures** (the amount,
+  the award period from and to: all three or none), and the same three measure codes in the long CSV the county
+  imports and in the per-program template (left empty, the fund has no award). Entered figures are stored as version 2.
+- **An older county.** A county server on SUDS 1.20 or earlier reads version 1 only and refuses a version 2 file
+  ("this SUDS reads version 1"). **The county upgrades first.** Until it does: a programme that downloads its file
+  ticks the version 1 box; over the county connection, the county's `/status` now says what it reads
+  (`accepts_schema_versions`), and a county that does not say (1.20 or earlier) is sent **version 1** automatically
+  (`county-connect-client.js` `versionForCounty`), and the Send to the county cards warn that the county reads
+  version 1 only and that its files leave the award out (and the download box is ticked for that county's code).
+- **Owner decision (conservative default):** the programme always makes version 2 once built (null awards are fine)
+  rather than version 1 when it has no award amounts, so a county sees "no award recorded" rather than "award not in
+  file" for a programme that has upgraded; the version 1 box and the connection's fallback exist only so a programme
+  is never stuck while its county upgrades. The award is the fund record's total amount for its fiscal year: a fund
+  whose record holds a different figure from the contract (an amendment not yet entered) shows that figure. The
+  percentage is the period's spending over the whole award, not a pro-rated share of it.
+
+## Reminders on the programme's side
+
+*Built for 1.21.0, not yet released* (`server/county-schedule.js`). A programme reports to its county on a cadence
+(usually each quarter, within some days of its end). SUDS now reminds whoever makes the county file (`reports:funder`
+and `budget:read`, as the file itself) on **Home**: "County file to Sample County Behavioral Health for Jul – Sep
+2026 due by Oct 30, 2026 — not yet made" (red once the date has passed; three at most, then how many more), leading
+to the **County reporting schedule** card on Settlement outcomes.
+
+- **Where the schedule comes from.** A county connected over the county connection says its own: its `/status` now
+  carries `due_days` (a county setting on County connections, **Days after a period ends that its file is due**, 1 to
+  180, 30 unless set; audited with `county_connect.settings`) and each expected period's `due_by`, beside the cadence,
+  the periods it expects and which it has **received** (so a file emailed and imported by hand counts too). The last
+  answer of Test connection (or of the daily automatic run) is kept, checked (`county-connect-client.js`
+  `statusFacts`: a cadence SUDS knows, whole days, real periods, plain labels), and used for that county. For any other
+  county the programme records the schedule on the card: the county's code and name, **quarterly** (calendar or
+  California fiscal) or **monthly**, the days after a period's end its file is due (30 unless set), and **Remind
+  from** (by default the last period that has ended, so files sent before SUDS kept a record are never called
+  missing). `PUT|DELETE /api/county-submission/schedules/:code`, audited `county_submission.schedule.save|remove`.
+- **What counts as done.** For a county not connected: the file for exactly that period made on this server for
+  that county's code (downloaded; SUDS cannot see the email that carries it). For the connected county: the county
+  says it received the period, or it was sent over the connection and accepted; a file made but not received is
+  "made, not yet received". Files made are recorded as they are made (`county_submission_made`: the county code, the
+  period, the payload's SHA-256, the version and how; no figures), beside the audit entry and the send log that
+  already record them.
+- **Settings only, no migration**: the schedules (`county_submission_schedules`), the files made (the last 200) and
+  the county's last status (`county_connect_last_status`) are settings, not synced to devices and holding no figures
+  or PHI. **Owner decision (conservative default):** a settings record rather than a table (migration 64 was not
+  needed), and reminders on Home rather than to-do items (nobody's to-do list fills with items that clear themselves).
+- **SUDS on this device** makes no county file (the county route module is office-only), so it has no reminders
+  either: Home does not ask for them there.
+
 ## Not on SUDS on this device
 
 The routes are office-server only (`server/app.js` `LOCAL_ROUTE_MODULES`; `test/county-device.test.js`): SUDS on
@@ -552,10 +630,9 @@ office-only too (`county-connect` in `LOCAL_ROUTE_MODULES`'s exclusions; `test/c
   over the combined release** (planned): the small-cell method audited over the county total *and* every
   programme's own releases it could be differenced against (DATA-NETWORK, *The basis*). The page and its files say
   so.
-- **Award and contract amounts per fund** (spending against the award): needs the award in the file, so a schema
-  version 2 of the payload.
-- **Reporting-cadence reminders on the programme's side** (the quarter the county expects, and whether its file was
-  made).
+- ~~Award and contract amounts per fund~~: built for 1.21.0, not yet released ([Award amounts](#award-amounts-schema-version-2)).
+- ~~Reporting-cadence reminders on the programme's side~~: built for 1.21.0, not yet released ([Reminders on the
+  programme's side](#reminders-on-the-programmes-side)).
 - **Benchmarks (Tier 2)**: distributions across programmes, rates per 100 people served, a minimum number of
   contributing programmes, an expert determination. Not built.
 - **Unduplication across programmes: never** (above).
@@ -581,6 +658,14 @@ County-entered figures (released in 1.20.0): `server/county-entry.js`, the entry
 `entered_via`, `source_ref_enc`); tests `test/county-entry.test.js` and `test/migrations.test.js` (migration 60 on a
 database with signed submissions); the browser script `scripts/ui/county.mjs` (section 4) and the dialogs in
 `scripts/ui/accessibility.mjs`.
+
+Award amounts and reminders (built for 1.21.0, not yet released): `server/county.js` (`PAYLOAD_V2`, `awardFrom`, the
+award rows of `combined()` and `byQuarter()`), `server/settlement-outcomes.js` (each fund's award), `server/county-entry.js`
+(`AWARD_MEASURES`), `server/county-schedule.js`, the reminder routes in `server/routes/county.js`, `statusFacts` and
+`versionForCounty` in `server/county-connect-client.js`, `due_days` in `server/county-connect.js`; the County reporting
+schedule card in `public/views/settlement.js`, the reminders on Home (`public/views/dashboard.js`); no migration; tests
+`test/county-award.test.js` and the 1.21 tests at the end of `test/county-connect.test.js`; browser scripts
+`scripts/ui/county.mjs` (section 6) and `scripts/ui/county-connect.mjs`.
 
 The county connection: `server/county-connect.js`, `server/county-connect-client.js`,
 `server/routes/county-connect.js`, `public/views/countyconnect.js`; migration 57 (`county_connect_tokens`,
