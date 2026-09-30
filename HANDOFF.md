@@ -41,6 +41,18 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-09-30 — Claude: the fingerprint review's fixes (branch `fix/fingerprint-r1`, not pushed)
+
+- On `feat/fingerprint` + released 1.18.0. Owner decisions implemented: **D1** `WEBAUTHN_RP_ID` required in
+  production; **D2** a note pushed as signed under "Require fingerprint or authenticator for signing" lands as a draft;
+  **D3** evidence bound to the plaintext content hash, and `rotate-key` recomputes the ciphertext signature hashes;
+  **D4** passkeys count as MFA, no AAGUID allow-list. docs/FINGERPRINT.md, *Review of the fingerprint work*.
+- Migration **58** changed while unreleased: `sessions.passkey_id`, `webauthn_challenges.ip`, and
+  `webauthn_challenges.user_id` references `users(id)` (a user reference in sync-tables). A development database that
+  already ran the earlier 58 (migrations run once) lacks them: recreate it (`npm run seed` on a fresh data directory).
+- The browser suite is **54 scripts** (the review's "55" counted `assert.mjs`). The kernel is built without the
+  WebAuthn code (`local/shims/passkeys.js`).
+
 ### 2026-09-30 — Claude: fingerprint sign-in and signing with passkeys (built for 1.19.0, not yet released)
 
 - Branch `feat/fingerprint`, from `574a257` (the 1.18.0 candidate before its stamp). Not stamped, not pushed.

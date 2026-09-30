@@ -94,9 +94,10 @@ Each step, the control it implements, and where the compliance check verifies it
 3. Give your auditor two public keys, with their key ids, obtained on the server rather than from a report: the **evidence signing key** (Settings → Security status → *Download signing public key*), which verifies recovery-drill reports and audit exports, and the **compliance signing key** (`/etc/suds/compliance-signing-key.pub.pem`; the installer printed its id), which verifies compliance reports. SUDS itself cannot sign a compliance report: it never holds that key.
 4. Configure single sign-on if the county has an identity provider ([DEPLOYMENT.md](DEPLOYMENT.md), *Single sign-on*): set `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_REDIRECT_URI` in `/etc/suds/suds.env` and the client secret as a credential (`/etc/suds/credentials/oidc_client_secret`, a `LoadCredential=oidc_client_secret:…` line and `Environment=OIDC_CLIENT_SECRET_FILE=%d/oidc_client_secret` in a drop-in), then `systemctl restart suds`.
 5. **Fingerprint sign-in (passkeys)**, built for 1.19.0, not yet released ([FINGERPRINT.md](FINGERPRINT.md)): a passkey belongs
-   to one host name and works only over **HTTPS**, so it needs nothing more than the TLS set-up above — but set
-   `WEBAUTHN_RP_ID=<domain>` in `/etc/suds/suds.env` to the **same name as on the certificate and in the address staff
-   open** before anyone enrols (a passkey made for another name, or at an IP address, never works; one made before a
+   to one host name and works only over **HTTPS**, so it needs the TLS set-up above and one setting, **required in
+   production** (without it nobody can add or use a passkey, and Security status shows it in red):
+   `WEBAUTHN_RP_ID=<domain>` in `/etc/suds/suds.env`, the **same name as on the certificate and in the address staff
+   open**, before anyone enrols (a passkey made for another name, or at an IP address, never works; one made before a
    rename must be added again). Behind a proxy that changes what SUDS sees, list the exact page origins in
    `WEBAUTHN_ORIGINS=https://<domain>` too. It is on by default; Settings → Security policy switches sign-in and signing
    with it off, or requires a fingerprint or authenticator code for signing. SUDS stores no fingerprint, only each

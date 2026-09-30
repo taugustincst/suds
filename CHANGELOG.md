@@ -59,6 +59,44 @@ For the feature release after 1.18.0 (a migration and new routes; no new permiss
 - Docs: FINGERPRINT.md, USER_GUIDE, API.md, HIPAA.md (§164.312(d)), DEPLOYMENT and SELF-HOSTING (`WEBAUTHN_RP_ID`,
   HTTPS), security/THREAT-MODEL, DATA-INVENTORY, PEN-TEST-SCOPE, QUESTIONNAIRE, IDENTITY.
 
+### Security: the fingerprint review (r1; before release; docs/FINGERPRINT.md, *Review of the fingerprint work*)
+
+- **A code must verify.** Wherever a password and an authenticator code are both sent (note sign, countersign one and
+  batch, time approve one and batch, spending approve, key backup), both are checked; a password with a made-up code
+  was accepted as the password, and under *Require fingerprint or authenticator for signing* counted as the code. A
+  fingerprint sent with a password or code is refused. The policy covers the key backup's password too.
+- **A note signed on a device under that policy** lands as a draft at the office, flagged to the device and audited
+  (`server/rules/notes.js`, the owner's decision D2).
+- **Keys**: RSA needs 2048 bits (counted by the key) and exponent 65537 (a padded 128-bit key with e = 1 was accepted);
+  EC on P-256; Ed25519 32 bytes, also as COSE `-19`.
+- **The relying party** is required in production (`WEBAUTHN_RP_ID`, or `WEBAUTHN_ORIGINS`): without it no options,
+  a clear message and a red Security status line (D1). `X-Forwarded-Host` never sets the RP ID.
+- **Evidence** is bound to the note's plaintext content hash (`server/note-signature.js`, one helper where there were
+  four copies of the hash), so it verifies after a key rotation (D3); `npm run rotate-key` now recomputes the notes'
+  ciphertext signature hashes that were intact (they used to read "changed" after every rotation) and leaves broken ones
+  broken. The enrolment audit entry records the SHA-256 of the key and the credential id, and Verify signature and
+  `verify-passkey-evidence` (new `--audit`) check the evidence's key against it, and the statement's RP ID, an https
+  origin, no embedding, and, for a batch countersignature, that the note's hash is among those signed.
+- **Resetting two-step verification or a password** removes the person's passkeys; removing passkeys ends the
+  sessions they opened (`sessions.passkey_id`, migration 58).
+- **Sign-in options** list no credentials (discoverable passkeys only); the second step still lists the account's.
+- **Hardening**: unanswered sign-in challenges capped per address and swept hourly; `topOrigin`; `BS` without `BE`;
+  `AT` in an assertion; CBOR duplicate byte-string keys, invalid UTF-8, tags and reserved encodings; the assertion
+  checked against the stored challenge. A passkey counts toward the MFA banner only while fingerprint sign-in is allowed
+  (`passkey_mfa`, D4: no authenticator allow-list).
+- **Screens**: the second step offers "No fingerprint sign-in on this device?" and no code field to an account without
+  an authenticator app; a required fingerprint-or-code with neither set up shows no Sign button and links to My
+  profile; the signature dialog puts the fingerprint first (the one primary button, focused), "Or use your password"
+  after it, and beside "Confirm with single sign-on"; approvals ask only when the policy requires it or the person
+  opted in, and not inside the quick-signing window; the focus returns to the fingerprint button after a failure
+  (`aria-disabled` while waiting), said once; plain words on the sign-in page and My profile, the device marked, a
+  better default name, an SVG icon, and a specific toast on revocation.
+- **Tests**: `test/fingerprint-review.test.js`, with outside vectors (py_webauthn's real responses, RFC 8949 Appendix
+  A); `test/fingerprint.test.js` order-independent, with no fixed dates; `scripts/ui/fingerprint.mjs` for the screens.
+  The browser kernel is now built without the WebAuthn code. The browser suite is still 54 scripts: 1.18.0's
+  documents said 53, which was right for 1.18.0 (the review counted the `assert.mjs` helper); a test now also checks
+  the newest count in HANDOFF.md and CHANGELOG.md.
+
 ### Added: the county connection (docs/COUNTY-VIEW.md, *Connecting*; released in 1.18.0)
 
 - **Optional, off by default on both sides.** A county that runs the county view can switch on a connection
