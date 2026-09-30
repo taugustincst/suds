@@ -19446,13 +19446,6 @@ var require_budget = __commonJS({
         if (status === "approved" && require_shared().recordedOrChanged("expenditure", "expenditures", e.id, ctx.user.id)) throw forbidden("Separation of duties: you recorded or changed this expenditure, so another approver must review it");
         if (status === "rejected" && !note) throw badRequest("Say why this expenditure is being rejected, so the person who submitted it knows what to fix");
         const details = { note_recorded: note ? true : void 0, amount: e.amount };
-        if (status !== "rejected") {
-          const identity = await auth3.verifyApprover(ctx, body, { action: "expenditure.approve.failed", purpose: `mark this expenditure ${status}`, bind: body.passkey ? require_passkeys2().bindingFor(ctx, "expenditure.approve", { id: e.id, status }) : null });
-          if (identity) {
-            details.identity = identity;
-            if (ctx.signatureEvidence) details.evidence = ctx.signatureEvidence;
-          }
-        }
         if (status === "approved" && e.budget_line_id) {
           const available = lineAvailable(e.budget_line_id, { excluding: e.id });
           if (available !== null && cents(e.amount) > available) {
@@ -19468,6 +19461,13 @@ var require_budget = __commonJS({
             }
             details.overspend = over;
             details.forced = true;
+          }
+        }
+        if (status !== "rejected") {
+          const identity = await auth3.verifyApprover(ctx, body, { action: "expenditure.approve.failed", purpose: `mark this expenditure ${status}`, bind: body.passkey ? require_passkeys2().bindingFor(ctx, "expenditure.approve", { id: e.id, status }) : null });
+          if (identity) {
+            details.identity = identity;
+            if (ctx.signatureEvidence) details.evidence = ctx.signatureEvidence;
           }
         }
         if (status === "reimbursed") {
@@ -47750,7 +47750,9 @@ var require_passkeys2 = __commonJS({
       const rpId = wc.rpId || hp.hostname;
       if (hp.hostname !== rpId && !hp.hostname.endsWith("." + rpId)) throw new HttpError3(403, `Fingerprint sign-in is set up for ${rpId}; open SUDS at that address to use it.`, { passkeyUnavailable: "address" });
       const secure = secureRequest(ctx);
-      if (!secure && !(LOOPBACK.includes(hp.hostname) && !config2.isProd)) throw new HttpError3(403, "Fingerprint sign-in needs HTTPS. Ask your administrator to turn on HTTPS for SUDS (docs/SELF-HOSTING.md).", { passkeyUnavailable: "https" });
+      const devLoopback = LOOPBACK.includes(hp.hostname) && !config2.isProd;
+      if (!wc.rpId && !devLoopback && (/^\d{1,3}(\.\d{1,3}){3}$/.test(hp.hostname) || hp.hostname.includes(":"))) throw new HttpError3(403, "Fingerprint sign-in needs SUDS to be opened by its name, not an IP address. Ask your administrator for the address (docs/SELF-HOSTING.md).", { passkeyUnavailable: "address" });
+      if (!secure && !devLoopback) throw new HttpError3(403, "Fingerprint sign-in needs HTTPS. Ask your administrator to turn on HTTPS for SUDS (docs/SELF-HOSTING.md).", { passkeyUnavailable: "https" });
       const origins = wc.origins && wc.origins.length ? wc.origins : [`${secure ? "https" : "http"}://${hp.host}`];
       return { rpId, origins, rpName: db3.getSetting("org_name", "SUDS") || "SUDS" };
     }

@@ -46,7 +46,10 @@ function relyingParty(ctx) {
   const rpId = wc.rpId || hp.hostname;
   if (hp.hostname !== rpId && !hp.hostname.endsWith('.' + rpId)) throw new HttpError(403, `Fingerprint sign-in is set up for ${rpId}; open SUDS at that address to use it.`, { passkeyUnavailable: 'address' });
   const secure = secureRequest(ctx);
-  if (!secure && !(LOOPBACK.includes(hp.hostname) && !config.isProd)) throw new HttpError(403, 'Fingerprint sign-in needs HTTPS. Ask your administrator to turn on HTTPS for SUDS (docs/SELF-HOSTING.md).', { passkeyUnavailable: 'https' });
+  const devLoopback = LOOPBACK.includes(hp.hostname) && !config.isProd;
+  // A passkey belongs to a host name; browsers refuse an IP address as one (a LAN install opened as https://192.168.1.10).
+  if (!wc.rpId && !devLoopback && (/^\d{1,3}(\.\d{1,3}){3}$/.test(hp.hostname) || hp.hostname.includes(':'))) throw new HttpError(403, 'Fingerprint sign-in needs SUDS to be opened by its name, not an IP address. Ask your administrator for the address (docs/SELF-HOSTING.md).', { passkeyUnavailable: 'address' });
+  if (!secure && !devLoopback) throw new HttpError(403, 'Fingerprint sign-in needs HTTPS. Ask your administrator to turn on HTTPS for SUDS (docs/SELF-HOSTING.md).', { passkeyUnavailable: 'https' });
   const origins = wc.origins && wc.origins.length ? wc.origins : [`${secure ? 'https' : 'http'}://${hp.host}`];
   return { rpId, origins, rpName: db.getSetting('org_name', 'SUDS') || 'SUDS' };
 }

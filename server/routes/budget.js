@@ -277,13 +277,6 @@ module.exports = (r) => {
     // The note can name the client ("receipt shows J.'s name"): encrypted on the row, and the audit entry
     // records only that one was given.
     const details = { note_recorded: note ? true : undefined, amount: e.amount };
-    // Committing or paying out money may be confirmed with a fingerprint, or the password or code (auth.verifyApprover),
-    // and must be, with a fingerprint or a code, under "Require fingerprint or authenticator for signing". Checked
-    // before the budget line (the line check only reads).
-    if (status !== 'rejected') {
-      const identity = await auth.verifyApprover(ctx, body, { action: 'expenditure.approve.failed', purpose: `mark this expenditure ${status}`, bind: body.passkey ? require('../passkeys').bindingFor(ctx, 'expenditure.approve', { id: e.id, status }) : null });
-      if (identity) { details.identity = identity; if (ctx.signatureEvidence) details.evidence = ctx.signatureEvidence; }
-    }
     if (status === 'approved' && e.budget_line_id) {
       // Overspending a line is not something a reviewer does by accident. Recording the expense already
       // warned; approving it is where the money is committed, so it takes a supervisor or administrator
@@ -299,6 +292,13 @@ module.exports = (r) => {
         }
         details.overspend = over; details.forced = true;
       }
+    }
+    // Committing or paying out money may be confirmed with a fingerprint, or the password or code (auth.verifyApprover),
+    // and must be, with a fingerprint or a code, under "Require fingerprint or authenticator for signing". Checked
+    // after the budget line, so an overspend refusal does not spend a fingerprint confirmation (the retry with force uses it).
+    if (status !== 'rejected') {
+      const identity = await auth.verifyApprover(ctx, body, { action: 'expenditure.approve.failed', purpose: `mark this expenditure ${status}`, bind: body.passkey ? require('../passkeys').bindingFor(ctx, 'expenditure.approve', { id: e.id, status }) : null });
+      if (identity) { details.identity = identity; if (ctx.signatureEvidence) details.evidence = ctx.signatureEvidence; }
     }
     if (status === 'reimbursed') {
       // The approver stays on the record; reimbursement is a later step by (often) a different person.
