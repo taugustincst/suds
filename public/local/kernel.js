@@ -47502,7 +47502,6 @@ var require_app2 = __commonJS({
     var ROUTE_MODULES = [
       "setup",
       "auth",
-      "passkeys",
       "oidc",
       "me",
       "app",
@@ -47547,7 +47546,8 @@ var require_app2 = __commonJS({
       "scim",
       "ai",
       "county",
-      "county-connect"
+      "county-connect",
+      "passkeys"
     ];
     var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors", "fhir", "security", "scim", "ai", "referral-links", "county", "county-connect", "passkeys"].includes(m));
     var LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS \u2014 local mode is off</title>
