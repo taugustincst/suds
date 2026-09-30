@@ -83,7 +83,10 @@ json_str() {
 }
 
 # ---- /etc/suds/suds-server.conf: read a value; carry over what the installer does not manage ----
-conf_get() { local f; f=$(P "$ETC/suds-server.conf"); [[ -f "$f" ]] || return 0; sed -n "s/^$1=//p" "$f" | tail -n1; }
+# kv_get FILE KEY — the last KEY= value in FILE (a host path), or nothing.
+kv_get() { local f; f=$(P "$1"); [[ -f "$f" ]] || return 0; sed -n "s/^$2=//p" "$f" | tail -n1; }
+conf_get() { kv_get "$ETC/suds-server.conf" "$1"; }
+env_get() { kv_get "$ETC/suds.env" "$1"; }
 # conf_unmanaged KEY... — the lines of the current file whose key is not one of KEY (kept on a rewrite).
 conf_unmanaged() {
   local f line k m keep; f=$(P "$ETC/suds-server.conf")
@@ -276,6 +279,12 @@ install_caddy() {
   fi
 }
 
+# How a staged release's zip was checked (stage_release), a file inside it, so its manifest covers it too.
+CHECKSUM_RECORD=.suds-release-checksum
+staged_checksum_source() {
+  local v; v=$(head -n1 "$1/$CHECKSUM_RECORD" 2>/dev/null || true)
+  case "$v" in local-tree|operator|same-release) printf '%s' "$v" ;; esac
+}
 # A staged release is complete when its marker holds the SHA-256 of its manifest and every file matches it.
 staged_ok() {
   local d=$1
@@ -301,7 +310,15 @@ stage_release() {
   local ver=$1 dest="$CODE_BASE/$1" part="$CODE_BASE/$1.partial" src_ver tmp='' zip want top from restage=0
   if [[ -e "$(P "$part")" ]]; then note "removing $part, left by an interrupted run"; act chmod -R u+w "$(P "$part")"; act rm -rf "$(P "$part")"; fi
   if [[ -d "$(P "$dest")" ]]; then
-    if staged_ok "$(P "$dest")"; then note "SUDS $ver already at $dest (complete; every file matches its manifest)"; STAGED_TREE=$(P "$dest"); RELEASE_CHECKSUM_SOURCE=${RELEASE_CHECKSUM_SOURCE:-}; return 0; fi
+    if staged_ok "$(P "$dest")"; then
+      note "SUDS $ver already at $dest (complete; every file matches its manifest)"; STAGED_TREE=$(P "$dest")
+      # How its zip was checked is recorded inside it when it is staged, so a run that stopped after staging
+      # does not leave the next one without it (1.19.0 then wrote SUDS_RELEASE_CHECKSUM_SOURCE= empty). A stage
+      # made before 1.20.0 has no record: the caller falls back to suds-server.conf.
+      local recorded; recorded=$(staged_checksum_source "$(P "$dest")")
+      if [[ -n "$recorded" ]]; then RELEASE_CHECKSUM_SOURCE=$recorded; note "its zip was checked when staged: $recorded"; else RELEASE_CHECKSUM_SOURCE=${RELEASE_CHECKSUM_SOURCE:-}; fi
+      return 0
+    fi
     (( DRY )) || warn "$dest exists but is not a complete staged release (no marker, or files differ from its manifest): staging it again"
     restage=1
   fi
@@ -324,7 +341,7 @@ stage_release() {
       warn "suds-v$ver.zip is checked only against the .sha256 published beside it (--trust-release-checksum): whoever could replace the zip could replace that too. The compliance report records this (host.release_integrity)."
       RELEASE_CHECKSUM_SOURCE=same-release
     else
-      die "no independent checksum for suds-v$ver.zip. Pass --release-sha256=<hex>, taken from a channel other than the download (the release notes AND the CHANGELOG entry at tag v$ver; they must agree: docs/SELF-HOSTING.md, Upgrading), or knowingly pass --trust-release-checksum to accept the .sha256 file from the same release."
+      die "no independent checksum for suds-v$ver.zip. Pass --release-sha256=<hex>, taken from a channel other than the download: the SHA-256 published in the GitHub Release notes for v$ver AND recorded in that version's CHANGELOG section on the main branch (not at the tag: the zip is built from the tagged commit, so its checksum is added after it); they must agree (docs/SELF-HOSTING.md, Upgrading). Or knowingly pass --trust-release-checksum to accept the .sha256 file from the same release."
     fi
     [[ "$want" =~ ^[0-9a-f]{64}$ ]] || (( DRY )) || die "the release checksum is not a SHA-256"
     verify_sum sha256 "$zip" "$want"
@@ -341,9 +358,10 @@ stage_release() {
   fi
   act install -d -m 0755 -o root -g root "$(P "$CODE_BASE")" "$(P "$part")"
   if (( DRY )); then
-    printf '+ copy %s into %s (without .git, node_modules, data, test), write its manifest\n' "$from" "$(P "$part")"
+    printf '+ copy %s into %s (without .git, node_modules, data, test), record how its zip was checked (%s) in %s, write its manifest\n' "$from" "$(P "$part")" "$RELEASE_CHECKSUM_SOURCE" "$CHECKSUM_RECORD"
   else
     tar -C "$from" --exclude=./.git --exclude=./node_modules --exclude=./data --exclude=./test --exclude=./.env -cf - . | tar -C "$(P "$part")" -xf - --no-same-owner
+    printf '%s\n' "$RELEASE_CHECKSUM_SOURCE" > "$(P "$part")/$CHECKSUM_RECORD"
     write_manifest "$(P "$part")"
   fi
   act chown -R root:root "$(P "$part")"
@@ -387,8 +405,86 @@ wait_ready() {
   return 1
 }
 
+# Wait for SUDS to answer ready over HTTPS, through Caddy at the site's name (its certificate obtained or loaded,
+# the proxy started): 0 when it does, 1 when not within SECONDS. The compliance check's TLS and HTTPS checks
+# would otherwise catch Caddy still starting, or still waiting for its first ACME certificate.
+wait_https() {
+  local secs=${1:-90} dom conn ca i args
+  # install.sh has them as options; upgrade.sh reads what the install recorded.
+  dom=${DOMAIN:-$(conf_get SUDS_DOMAIN)}; conn=${CONNECT_HOST:-$(conf_get SUDS_CONNECT_HOST)}; ca=${ca_conf:-$(conf_get SUDS_CA_FILE)}
+  [[ -n "$dom" ]] || return 0
+  args=(-fsS --max-time 5 --proto '=https' --tlsv1.2)
+  [[ -n "$ca" && -r "$(P "$ca")" ]] && args+=(--cacert "$(P "$ca")")
+  [[ -n "$conn" && "$conn" != "$dom" ]] && args+=(--connect-to "$dom:443:$conn:443")
+  if (( DRY )); then printf '+ wait up to %ss for https://%s/api/health/ready (through Caddy)\n' "$secs" "$dom"; return 0; fi
+  for ((i = 0; i < secs; i += 3)); do curl "${args[@]}" "https://$dom/api/health/ready" >/dev/null 2>&1 && return 0; sleep 3; done
+  return 1
+}
+
+# The compliance check, with the settings the weekly unit runs it with (suds-compliance.service:
+# EnvironmentFile=/etc/suds/suds.env, SUDS_ENV=production, SUDS_DATA_DIR). Run without them (1.19.0), the app
+# lines that read those settings reported what the service does not do: app.https failed for want of TRUST_PROXY
+# on the installer's report and passed on the weekly one.
 run_compliance_check() {
+  local envs=() line f
   say ""
   say "== Compliance check =="
-  act "$(P "$CODE_BASE/node/bin/node")" --no-warnings=ExperimentalWarning "$(P "$CODE_BASE/current/scripts/compliance-check.js")" || warn "the compliance check reported failures (above): fix them, then run: systemctl start suds-compliance. On a new server the first backup and the first recovery drill show as \"pending first run (expected on day one)\"."
+  if ! wait_https 90; then warn "https://${DOMAIN:-$(conf_get SUDS_DOMAIN)} did not answer through Caddy within 90 s (journalctl -u caddy -n 50): the TLS checks below may fail until it does; run systemctl start suds-compliance then."; fi
+  f=$(P "$ETC/suds.env")
+  if [[ -r "$f" ]]; then while IFS= read -r line || [[ -n "$line" ]]; do [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] && envs+=("$line"); done < "$f"; fi
+  if (( DRY )); then printf '+ (the compliance check below runs with every KEY=value line of %s in its environment, as suds-compliance.service does)\n' "$f"; fi
+  act env "${envs[@]}" SUDS_ENV=production SUDS_DATA_DIR="$DATA_DIR" "$(P "$CODE_BASE/node/bin/node")" --no-warnings=ExperimentalWarning "$(P "$CODE_BASE/current/scripts/compliance-check.js")" || warn "the compliance check reported failures (above): fix them, then run: systemctl start suds-compliance. On a new server a first backup or recovery drill that has not run yet shows as \"pending first run (expected on day one)\", a warning."
+}
+
+# check_shares LABEL DIR [LABEL DIR ...] — each share must be writable (and searchable) by the service user,
+# tested as that user. Every share is checked and one refusal names each that is not, with the commands that
+# fix it: one fix and one more run, not one run per share. The account is created here if it does not exist
+# yet, so that it can be tested as (in a dry run, the modes are read instead, as a warning).
+SUDS_USER_PLANNED=0
+check_shares() {
+  local labels=() dirs=() bad=() i d st owner mode uid gid msg
+  while (( $# )); do labels+=("$1"); dirs+=("$2"); shift 2; done
+  if ! id -u "$SUDS_USER" >/dev/null 2>&1; then
+    if (( DRY )); then
+      act useradd --system --user-group --home-dir "$DATA_DIR" --no-create-home --shell /usr/sbin/nologin "$SUDS_USER"; SUDS_USER_PLANNED=1
+      # A new account owns nothing: it can write a share only if everyone can (an ACL may say otherwise).
+      for i in "${!dirs[@]}"; do
+        st=$(stat -c '%U:%G %a' "$(P "${dirs[$i]}")" 2>/dev/null) || continue
+        mode=${st##* }; (( (${mode: -1} & 3) == 3 )) || warn "${dirs[$i]} (${labels[$i]}; owner ${st% *}, mode $mode) will probably not be writable by the new $SUDS_USER user: the real run refuses then. Create the user first (the useradd above) and give it write access, e.g. chown $SUDS_USER:$SUDS_USER ${dirs[$i]} && chmod 0700 ${dirs[$i]}"
+      done
+      return 0
+    fi
+    note "creating the $SUDS_USER service account now, so the shares can be checked as it"
+    act useradd --system --user-group --home-dir "$DATA_DIR" --no-create-home --shell /usr/sbin/nologin "$SUDS_USER"
+  fi
+  if (( DRY )); then for d in "${dirs[@]}"; do printf '+ check %s is writable by %s\n' "$d" "$SUDS_USER"; done; return 0; fi
+  for i in "${!dirs[@]}"; do
+    runuser -u "$SUDS_USER" -- test -w "$(P "${dirs[$i]}")" -a -x "$(P "${dirs[$i]}")" || bad+=("$i")
+  done
+  (( ${#bad[@]} )) || { note "the shares are writable by $SUDS_USER: ${dirs[*]}"; return 0; }
+  uid=$(id -u "$SUDS_USER" 2>/dev/null || echo '?'); gid=$(id -g "$SUDS_USER" 2>/dev/null || echo '?')
+  if (( ${#bad[@]} == 1 )); then msg="${dirs[${bad[0]}]} (${labels[${bad[0]}]}"; else msg="${#bad[@]} shares are not writable by the $SUDS_USER user (uid $uid, gid $gid):"$'\n'; fi
+  for i in "${bad[@]}"; do
+    st=$(stat -c '%U:%G %a' "$(P "${dirs[$i]}")" 2>/dev/null || echo '? ?')
+    if (( ${#bad[@]} == 1 )); then msg+="; owner ${st% *}, mode ${st##* }) is not writable by the $SUDS_USER user (uid $uid, gid $gid)."$'\n'
+    else msg+="  ${dirs[$i]} (${labels[$i]}; owner ${st% *}, mode ${st##* })"$'\n'; fi
+  done
+  msg+="Give the $SUDS_USER user write access, then run this again. Where root can change the mount's ownership (a local disk, or a share that keeps it):"$'\n'
+  for i in "${bad[@]}"; do msg+="  chown $SUDS_USER:$SUDS_USER ${dirs[$i]} && chmod 0700 ${dirs[$i]}"$'\n'; done
+  msg+="or keep the owner and add an ACL:"$'\n'
+  for i in "${bad[@]}"; do msg+="  setfacl -m u:$SUDS_USER:rwx ${dirs[$i]}"$'\n'; done
+  msg+="On an NFS or SMB share whose server decides ownership (root squashed, or mapped), grant uid $uid / gid $gid write access on the share's server instead. The anchor share needs create and write only: it is write-once."
+  die "$msg"
+}
+
+# webauthn_defaults DOMAIN — passkeys (docs/FINGERPRINT.md) need the relying party in production: add
+# WEBAUTHN_RP_ID=<domain> and WEBAUTHN_ORIGINS=https://<domain> to suds.env unless the operator set either.
+webauthn_defaults() {
+  local dom=${1,,} f; f=$(P "$ETC/suds.env")
+  [[ -n "$dom" ]] && valid_host "$dom" || return 0
+  if [[ -n "$(env_get WEBAUTHN_RP_ID)$(env_get WEBAUTHN_ORIGINS)" ]]; then note "passkeys: WEBAUTHN_RP_ID/WEBAUTHN_ORIGINS in $ETC/suds.env kept as set"; return 0; fi
+  if (( DRY )); then printf '+ add WEBAUTHN_RP_ID=%s and WEBAUTHN_ORIGINS=https://%s to %s\n' "$dom" "$dom" "$f"; return 0; fi
+  [[ -f "$f" ]] || return 0
+  { cat "$f"; printf 'WEBAUTHN_RP_ID=%s\nWEBAUTHN_ORIGINS=https://%s\n' "$dom" "$dom"; } | put_file "$f" 0644 root:root
+  note "passkeys: WEBAUTHN_RP_ID=$dom set in $ETC/suds.env"
 }

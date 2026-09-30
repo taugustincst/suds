@@ -23,6 +23,7 @@ const audit = require('./audit');
 
 const BACKUP_RE = /^suds-.*\.db\.enc$/;
 const MONTH_MS = 30 * 86400_000;
+const FIRST_DRILL_DAYS = 31; // firstDrillPending
 const CHILD_TIMEOUT_MS = Number(process.env.DR_DRILL_TIMEOUT_MS || 15 * 60_000);
 
 function backupsDir() { return path.join(config.dataDir, 'backups'); }
@@ -212,13 +213,14 @@ async function runJob(job, { backupFile = null, fresh = false, by = 'system', tr
     // Which backup. A drill restores what a disaster would leave the county with: the newest copy that
     // would survive the loss of this server -- the offsite copy when there is one. Only when there is none
     // (or when asked) is one made first.
+    let offsiteProblem = null;
     if (!file && !fresh) {
       if (copy === 'offsite' || (copy === 'auto' && sched.offsiteDir)) {
         let st = null; try { st = sched.offsiteDir ? fs.statSync(sched.offsiteDir) : null; } catch {}
         const off = st && st.isDirectory() ? latestBackup(sched.offsiteDir) : null;
         if (off) { file = off; source = { ...source, copy: 'offsite', dir: sched.offsiteDir }; }
         else {
-          failures.push(!sched.offsiteDir ? 'an offsite copy was asked for but no offsite directory is configured' : !st ? `the offsite directory ${sched.offsiteDir} is not reachable (is the share mounted?), so the offsite copy could not be restored` : `the offsite directory ${sched.offsiteDir} holds no backup`);
+          offsiteProblem = !sched.offsiteDir ? 'an offsite copy was asked for but no offsite directory is configured' : !st ? `the offsite directory ${sched.offsiteDir} is not reachable (is the share mounted?), so the offsite copy could not be restored` : `the offsite directory ${sched.offsiteDir} holds no backup`;
           step('The offsite copy is not available; restoring the local copy instead');
         }
       }
@@ -229,9 +231,12 @@ async function runJob(job, { backupFile = null, fresh = false, by = 'system', tr
       const made = await require('./scheduled-backup').runHeld({ retain: sched.retain, offsiteDir: sched.offsiteDir }); // this drill holds the lock
       if (!made.file) throw new Error(`a backup could not be taken: ${made.error}`);
       madeBackup = true;
-      if (made.offsiteFile && copy !== 'local') { file = made.offsiteFile; source = { ...source, copy: 'offsite', dir: sched.offsiteDir }; }
+      // A new server's first drill: no backup anywhere yet, so the offsite share held none either. The one just
+      // taken was copied there, and that copy is what is restored: the offsite copy is proven, not missing.
+      if (made.offsiteFile && copy !== 'local') { file = made.offsiteFile; source = { ...source, copy: 'offsite', dir: sched.offsiteDir }; offsiteProblem = null; step('The backup just taken was copied to the offsite share: restoring that copy'); }
       else { file = made.file; source = { ...source, copy: 'local', dir: backupsDir() }; }
     }
+    if (offsiteProblem) failures.push(offsiteProblem);
     step(`Restoring ${path.basename(file)} (${source.copy} copy)`);
     restoreStarted = Date.now();
     const enc = fs.readFileSync(file);
@@ -338,6 +343,19 @@ function start(opts) {
   return p;
 }
 
+/**
+ * Day one: the monthly drill is on, none has run yet, and it was turned on less than 31 days ago (the first one
+ * runs at the next hourly housekeeping pass, once there is a backup). { since, until } or null; the same 31 days
+ * the host check allows from the install (scripts/compliance/app-checks.js drEvidence). After it, "never" fails.
+ */
+function firstDrillPending(now = Date.now()) {
+  if (db.getSetting('dr_drill_monthly', '0') !== '1' || lastDrill()) return null;
+  const row = db.one(`SELECT updated_at FROM settings WHERE key='dr_drill_monthly'`);
+  const since = Date.parse((row && row.updated_at) || '');
+  if (!Number.isFinite(since) || now - since >= FIRST_DRILL_DAYS * 86400_000) return null;
+  return { since: row.updated_at, until: new Date(since + FIRST_DRILL_DAYS * 86400_000).toISOString() };
+}
+
 /** Housekeeping: once a month when an administrator has turned the monthly drill on. Off by default. */
 function runIfDue(now = Date.now()) {
   if (db.getSetting('dr_drill_monthly', '0') !== '1' || current || require('./backup-lock').paused()) return null;
@@ -346,4 +364,4 @@ function runIfDue(now = Date.now()) {
   return start({ by: 'system', trigger: 'monthly' });
 }
 
-module.exports = { run, start, runIfDue, status, lastDrill, latestBackup, backupTime, verifyReport, canonical, seal, textReport, targets, parseKeysFile, sweepStale };
+module.exports = { run, start, runIfDue, firstDrillPending, status, lastDrill, latestBackup, backupTime, verifyReport, canonical, seal, textReport, targets, parseKeysFile, sweepStale };

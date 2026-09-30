@@ -39,6 +39,20 @@ function rpo(s = settings()) {
   return c.sort((a, b) => a.minutes - b.minutes)[0];
 }
 
+/**
+ * Day one: backups are scheduled, none has run yet, and the schedule was set less than twice its interval ago
+ * (the first runs at the next hourly housekeeping pass). { hours, since, until } or null. The same window the
+ * host check allows from the install (scripts/compliance/app-checks.js backupFiles); after it, "never" fails.
+ */
+function firstRunPending(now = Date.now()) {
+  const { hours } = settings();
+  if (!hours || db.getSetting('last_scheduled_backup_at', null)) return null;
+  const row = db.one(`SELECT updated_at FROM settings WHERE key='backup_schedule_hours'`);
+  const since = Date.parse((row && row.updated_at) || '');
+  if (!Number.isFinite(since) || now - since >= 2 * hours * 3600_000) return null;
+  return { hours, since: row.updated_at, until: new Date(since + 2 * hours * 3600_000).toISOString() };
+}
+
 /** Run a scheduled backup if one is due (schedule enabled and the interval has elapsed). Resolves to null
  *  otherwise. Never rejects: a failure is recorded in last_scheduled_backup_status (and audited) for the
  *  health check. */
@@ -198,4 +212,4 @@ function prune(dir, retain) {
   return Math.min(files.length, retain);
 }
 
-module.exports = { runIfDue, run, runHeld, settings, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };
+module.exports = { runIfDue, run, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };

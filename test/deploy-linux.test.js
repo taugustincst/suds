@@ -114,6 +114,18 @@ test('Ubuntu 24.04: the plan installs the unit, generates each key root-only 060
   assert.ok(r.out.includes(`+ install -d -m 0755 -o root -g root ${R}/opt/suds ${R}/opt/suds/node-${pins.NODE_VERSION}`), 'the Node directory is made 0755, whatever the umask');
   assert.ok(r.out.includes(`+ install -d -m 0700 -o suds -g suds ${R}/var/lib/suds`));
   assert.ok(r.out.includes('+ useradd --system --user-group --home-dir /var/lib/suds --no-create-home --shell /usr/sbin/nologin suds'));
+  assert.equal(r.out.split('+ useradd --system --user-group --home-dir /var/lib/suds').length, 2, 'the account is planned once');
+  // Before anything is staged, the account is made and both shares are looked at together; a dry run cannot test
+  // as a user that does not exist, so it reads the modes and warns, with the commands.
+  assert.ok(r.out.indexOf('+ useradd') < r.out.indexOf('== Packages =='), 'the account comes first, so the shares can be checked as it');
+  for (const d of ['/mnt/worm/suds-anchors', '/mnt/offsite']) assert.ok(r.err.includes(`WARNING: ${d} (`) && r.err.includes(`chown suds:suds ${d} && chmod 0700 ${d}`), `${d}\n${r.err}`);
+  // The first backup and drill, as the service user, then the compliance check with the service's environment
+  // once HTTPS answers through Caddy; the relying party for passkeys from --domain.
+  assert.ok(r.out.includes(`+ systemd-run --quiet --wait --pipe --collect --uid=suds --gid=suds`) && /scripts\/dr-drill\.js --offsite\n/.test(r.out), 'the first drill');
+  const waitAt = r.out.indexOf('+ wait up to 90s for https://suds.county.example.gov/api/health/ready (through Caddy)');
+  assert.ok(waitAt > r.out.indexOf('scripts/dr-drill.js --offsite'), 'after the first drill');
+  // (suds.env is not written in a dry run; test/deploy-linux-real.test.js checks the values the check receives.)
+  assert.match(r.out.slice(waitAt), /every KEY=value line of \S+\/etc\/suds\/suds\.env in its environment, as suds-compliance\.service does\)\n\+ env SUDS_ENV=production SUDS_DATA_DIR=\/var\/lib\/suds \S+\/node --no-warnings=ExperimentalWarning \S+\/scripts\/compliance-check\.js\n/, 'the check gets suds.env, as the weekly unit does');
   // Keys: a 0700 root directory, each key 0600 root, loaded by systemd.
   assert.ok(r.out.includes(`+ install -d -m 0700 -o root -g root ${R}/etc/suds/credentials`));
   for (const k of ['suds_encryption_key', 'suds_index_key', 'suds_backup_key', 'suds_signing_key']) assert.ok(r.out.includes(`+ generate 32 random bytes as hex into ${R}/etc/suds/credentials/${k} (mode 0600, owner root:root)`), k);
@@ -271,7 +283,10 @@ test('a release zip needs a checksum from another channel: refused without --rel
   const fx = fixture();
   let r = run('install.sh', [...BASE, '--version=9.9.9'], fx);
   assert.notEqual(r.code, 0);
-  assert.match(r.err, /REFUSED: no independent checksum for suds-v9\.9\.9\.zip\. Pass --release-sha256=<hex>, taken from a channel other than the download \(the release notes AND the CHANGELOG entry at tag v9\.9\.9/);
+  // Where an operator finds the checksum: the release notes and the CHANGELOG on main. Never "at the tag": the zip
+  // is built from the tagged commit, so that commit cannot carry its own checksum.
+  assert.match(r.err, /REFUSED: no independent checksum for suds-v9\.9\.9\.zip\. Pass --release-sha256=<hex>, taken from a channel other than the download: the SHA-256 published in the GitHub Release notes for v9\.9\.9 AND recorded in that version's CHANGELOG section on the main branch \(not at the tag: the zip is built from the tagged commit, so its checksum is added after it\); they must agree/);
+  assert.ok(!/CHANGELOG entry at tag/.test(r.err));
   r = run('install.sh', [...BASE, '--version=9.9.9', '--trust-release-checksum'], fx);
   assert.equal(r.code, 0, r.all);
   assert.match(r.err, /checked only against the \.sha256 published beside it \(--trust-release-checksum\)/);
@@ -290,6 +305,23 @@ test('a release zip needs a checksum from another channel: refused without --rel
   r = run('upgrade.sh', ['--dry-run', '9.9.9'], up);
   assert.match(r.err, /REFUSED: no independent checksum/);
   fs.rmSync(fx.dir, { recursive: true, force: true }); fs.rmSync(up.dir, { recursive: true, force: true });
+});
+
+test('the release checksum is where it can be: the GitHub Release notes and the CHANGELOG on main, never "at the tag" — the refusal, the compliance remediation, the browser kernel and the docs agree', () => {
+  // The zip is built from the tagged commit (git archive), so the CHANGELOG at the tag cannot hold its checksum.
+  const atTag = /CHANGELOG (entry )?at (the release |its )?tag|CHANGELOG at the tag, which must agree|git show v[^:\s]*:CHANGELOG/;
+  const rem = require('../server/compliance-rules').byId.get('host.release_integrity').remediation;
+  assert.match(rem, /GitHub Release notes and recorded in that version's CHANGELOG section on the main branch/);
+  assert.ok(!atTag.test(rem), rem);
+  const kernel = fs.readFileSync(path.join(REPO, 'public/local/kernel.js'), 'utf8');
+  assert.ok(kernel.includes('recorded in that version') && kernel.includes('CHANGELOG section on the main branch'), 'public/local/kernel.js is rebuilt (npm run build:local)');
+  assert.ok(!kernel.includes('CHANGELOG entry at the release tag'));
+  assert.ok(!atTag.test(fs.readFileSync(path.join(LINUX, 'lib.sh'), 'utf8')));
+  for (const f of ['docs/SELF-HOSTING.md', 'deploy/linux/README.md']) {
+    const doc = fs.readFileSync(path.join(REPO, f), 'utf8');
+    assert.ok(!atTag.test(doc), `${f}: ${(atTag.exec(doc) || [''])[0]}`);
+    assert.match(doc, /CHANGELOG[^.]*on `main`/, f);
+  }
 });
 
 test('installer input is whitelisted: paths, e-mail, host names, numbers; JSON is escaped by construction', () => {

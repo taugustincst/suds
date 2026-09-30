@@ -137,6 +137,11 @@ fi
 # processes and ss; if none can say, it refuses unless --console-access.
 ssh_lockout_guard "$ADMIN_CIDR" "$CONSOLE"
 
+# The shares must be writable by the service user, tested as that user (nothing is written there by this
+# script). Both are checked and refused together, with the commands that fix them; the account is created
+# first when it does not exist yet (the one change before this point), since a share can only be tested as it.
+check_shares "the anchor share, write-once" "$ANCHORS" "the offsite share" "$OFFSITE"
+
 # A database already here was written with keys: never mint new ones over it.
 existing_db=0; [[ -s "$(P "$DATA_DIR/suds.db")" ]] && existing_db=1
 # What a previous run recorded: the first install's date, the SSH rule to replace, settings not given again.
@@ -174,7 +179,7 @@ install_caddy "$PIN_TREE"
 
 # ---- 4. Accounts and directories: code 0755 root; data 0700 suds; credentials 0700 root ----
 say ""; say "== Service account and directories =="
-if id -u "$SUDS_USER" >/dev/null 2>&1; then note "user $SUDS_USER exists"; else act useradd --system --user-group --home-dir "$DATA_DIR" --no-create-home --shell /usr/sbin/nologin "$SUDS_USER"; fi
+if id -u "$SUDS_USER" >/dev/null 2>&1; then note "user $SUDS_USER exists"; elif (( SUDS_USER_PLANNED )); then :; else act useradd --system --user-group --home-dir "$DATA_DIR" --no-create-home --shell /usr/sbin/nologin "$SUDS_USER"; fi
 if id -u caddy >/dev/null 2>&1; then note "user caddy exists"; else act useradd --system --user-group --home-dir /var/lib/caddy --no-create-home --shell /usr/sbin/nologin caddy; fi
 act install -d -m 0700 -o "$SUDS_USER" -g "$SUDS_USER" "$(P "$DATA_DIR")"
 act install -d -m 0700 -o caddy -g caddy "$(P /var/lib/caddy)"
@@ -187,10 +192,6 @@ if [[ -d "$(P "$DATA_DIR")" ]]; then
   act chown -R "$SUDS_USER:$SUDS_USER" "$(P "$DATA_DIR")"
   act chmod -R go-rwx "$(P "$DATA_DIR")"
 fi
-# The shares must be writable by the service user (tested as that user; nothing is written there by this script).
-for d in "$ANCHORS" "$OFFSITE"; do
-  if (( DRY )); then printf '+ check %s is writable by %s\n' "$d" "$SUDS_USER"; elif ! runuser -u "$SUDS_USER" -- test -w "$(P "$d")"; then die "$d is not writable by the $SUDS_USER user: give it write access on the share (and nothing more on the anchor share: write-once)"; fi
-done
 
 # ---- 5. Code: /opt/suds/<version> is live from here on ----
 say ""; say "== SUDS $VERSION =="
@@ -236,6 +237,15 @@ say ""; say "== Configuration =="
 metrics_cred=''; metrics_lines=''
 if (( METRICS )); then metrics_cred=' suds_metrics_token'; metrics_lines="LoadCredential=suds_metrics_token:$CRED_DIR/suds_metrics_token
 Environment=METRICS_TOKEN_FILE=%d/suds_metrics_token"; fi
+# Passkeys (docs/FINGERPRINT.md) need the relying party, the name staff open, in production (app.passkeys): the
+# domain. An operator's own WEBAUTHN_RP_ID or WEBAUTHN_ORIGINS in the file this rewrites is kept as it is.
+rp_id=$(env_get WEBAUTHN_RP_ID); rp_origins=$(env_get WEBAUTHN_ORIGINS)
+if [[ -z "$rp_id$rp_origins" ]]; then rp_id=${DOMAIN,,}; rp_origins="https://${DOMAIN,,}"; else note "passkeys: the WEBAUTHN_RP_ID/WEBAUTHN_ORIGINS already in $ETC/suds.env are kept"; fi
+[[ -z "$rp_id" ]] || valid_host "$rp_id" || die "WEBAUTHN_RP_ID in $ETC/suds.env is not a host name (got: $(printf '%q' "$rp_id")): fix or remove the line, then run this again"
+[[ -z "$rp_origins" ]] || [[ "$rp_origins" =~ ^[A-Za-z0-9.:/,\ -]+$ ]] || die "WEBAUTHN_ORIGINS in $ETC/suds.env is not a list of origins such as https://$DOMAIN (got: $(printf '%q' "$rp_origins")): fix or remove the line, then run this again"
+webauthn_lines=''
+[[ -z "$rp_id" ]] || webauthn_lines+="WEBAUTHN_RP_ID=$rp_id"$'\n'
+[[ -z "$rp_origins" ]] || webauthn_lines+="WEBAUTHN_ORIGINS=$rp_origins"$'\n'
 put_file "$(P "$ETC/suds.env")" 0644 root:root <<EOF
 # SUDS Server environment (non-secret), written by deploy/linux/install.sh. Keys are NOT here: they are
 # systemd credentials (/etc/suds/credentials, LoadCredential= in suds.service). Never add a key to this file.
@@ -247,6 +257,7 @@ SUDS_PROVISION_FILE=$ETC/provision.json
 SUDS_SKIP_SETUP=1
 SUDS_COMPLIANCE_DIR=$COMPLIANCE_DIR
 SUDS_COMPLIANCE_PUBLIC_KEY_FILE=$COMPLIANCE_PUB
+${webauthn_lines%$'\n'}
 EOF
 # JSON by construction: every value escaped (and whitelisted above).
 put_file "$(P "$ETC/provision.json")" 0644 root:root <<EOF
@@ -426,6 +437,24 @@ act systemctl restart caddy.service
 if ! wait_ready 180; then die "SUDS did not become ready within 3 minutes: journalctl -u suds -n 100"; fi
 note "SUDS is up on 127.0.0.1:8080, served at https://$DOMAIN"
 
+# ---- 9b. Day one: the first backup and the first recovery drill, now rather than within the hour ----
+# A new server has neither, so its first compliance report, Security status and /api/health would show them as
+# pending (a warning, not a failure, for a bounded time: docs/SELF-HOSTING.md, Day one). The drill, as the suds
+# user with the service's keys (safe while SUDS runs; scripts/dr-drill.js), finds no backup, so it takes the
+# first scheduled one (verified, copied to the offsite share), restores that offsite copy into a temporary
+# directory, checks it and records a signed report. Only when there is no backup and no drill report yet.
+first_run_due() {
+  local b; b=$(P "$DATA_DIR/backups")
+  (( DRY )) && return 0
+  [[ -s "$(P "$DATA_DIR/suds.db")" ]] || return 1
+  ! compgen -G "$b/suds-[0-9]*.db.enc" >/dev/null && ! compgen -G "$b/dr-drill-*.json" >/dev/null
+}
+if first_run_due; then
+  say ""; say "== First backup and recovery drill =="
+  if as_suds scripts/dr-drill.js --offsite; then note "the first backup is on the offsite share and the first recovery drill passed (its signed report is in $DATA_DIR/backups)"
+  else warn "the first recovery drill did not pass (its report, above, says why: is the offsite share mounted and writable by suds?). Fix that and run a drill from Settings > System & backups; until one passes, Security status and the compliance report show this one as failed. If no backup was taken, SUDS takes the first within the hour (\"pending first run\" until then)."; fi
+fi
+
 # ---- 10. What only the operator can do ----
 if (( ${#new_keys[@]} )); then
   say ""
@@ -444,4 +473,4 @@ if [[ -e "$(P "$DATA_DIR/first-admin-password.txt")" ]] || (( DRY )); then
 fi
 
 if (( ! SKIP_CHECK )); then run_compliance_check; fi
-say ""; say "Done. On a new server the first scheduled backup (within 4 hours) and the first recovery drill (within a month, or run one now) show as \"pending first run\" until they have run. Upgrade with deploy/linux/upgrade.sh <version>; the weekly compliance report is on Settings > Security status."
+say ""; say "Done. On a new server the installer runs the first backup and recovery drill itself; if they could not run, they show as \"pending first run\" (a warning) until SUDS has run them, within the hour. Upgrade with deploy/linux/upgrade.sh <version>; the weekly compliance report is on Settings > Security status."

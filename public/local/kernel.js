@@ -20003,6 +20003,120 @@ var require_scim = __commonJS({
   }
 });
 
+// server/compliance-rules.js
+var require_compliance_rules = __commonJS({
+  "server/compliance-rules.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var RULES = {
+      "hipaa-308a1iiA": { cite: "45 CFR \xA7164.308(a)(1)(ii)(A)", title: "Risk analysis (R)" },
+      "hipaa-308a1iiB": { cite: "45 CFR \xA7164.308(a)(1)(ii)(B)", title: "Risk management (R)" },
+      "hipaa-308a1iiD": { cite: "45 CFR \xA7164.308(a)(1)(ii)(D)", title: "Information system activity review (R)" },
+      "hipaa-308a3iiC": { cite: "45 CFR \xA7164.308(a)(3)(ii)(C)", title: "Termination procedures (A)" },
+      "hipaa-308a4iiC": { cite: "45 CFR \xA7164.308(a)(4)(ii)(C)", title: "Access establishment and modification (A)" },
+      "hipaa-308a5iiB": { cite: "45 CFR \xA7164.308(a)(5)(ii)(B)", title: "Protection from malicious software (A)" },
+      "hipaa-308a5iiD": { cite: "45 CFR \xA7164.308(a)(5)(ii)(D)", title: "Password management (A)" },
+      "hipaa-308a7iiA": { cite: "45 CFR \xA7164.308(a)(7)(ii)(A)", title: "Data backup plan (R)" },
+      "hipaa-308a7iiB": { cite: "45 CFR \xA7164.308(a)(7)(ii)(B)", title: "Disaster recovery plan (R)" },
+      "hipaa-308a7iiD": { cite: "45 CFR \xA7164.308(a)(7)(ii)(D)", title: "Testing and revision procedures (A)" },
+      "hipaa-308a8": { cite: "45 CFR \xA7164.308(a)(8)", title: "Evaluation (R)" },
+      "hipaa-310d1": { cite: "45 CFR \xA7164.310(d)(1)", title: "Device and media controls" },
+      "hipaa-310d2iv": { cite: "45 CFR \xA7164.310(d)(2)(iv)", title: "Data backup and storage (A)" },
+      "hipaa-312a1": { cite: "45 CFR \xA7164.312(a)(1)", title: "Access control" },
+      "hipaa-312a2i": { cite: "45 CFR \xA7164.312(a)(2)(i)", title: "Unique user identification (R)" },
+      "hipaa-312a2iii": { cite: "45 CFR \xA7164.312(a)(2)(iii)", title: "Automatic logoff (A)" },
+      "hipaa-312a2iv": { cite: "45 CFR \xA7164.312(a)(2)(iv)", title: "Encryption and decryption (A)" },
+      "hipaa-312b": { cite: "45 CFR \xA7164.312(b)", title: "Audit controls" },
+      "hipaa-312c1": { cite: "45 CFR \xA7164.312(c)(1)", title: "Integrity" },
+      "hipaa-312c2": { cite: "45 CFR \xA7164.312(c)(2)", title: "Mechanism to authenticate electronic PHI (A)" },
+      "hipaa-312d": { cite: "45 CFR \xA7164.312(d)", title: "Person or entity authentication" },
+      "hipaa-312e1": { cite: "45 CFR \xA7164.312(e)(1)", title: "Transmission security" },
+      "hipaa-312e2ii": { cite: "45 CFR \xA7164.312(e)(2)(ii)", title: "Encryption in transmission (A)" },
+      "hipaa-316b2i": { cite: "45 CFR \xA7164.316(b)(2)(i)", title: "Documentation time limit (six years)" },
+      "part2-16a2i": { cite: "42 CFR \xA72.16(a)(2)(i)", title: "Electronic records: creating, receiving, maintaining and transmitting" },
+      "part2-16a2ii": { cite: "42 CFR \xA72.16(a)(2)(ii)", title: "Electronic records: destroying, and sanitising media" },
+      "part2-16a2iii": { cite: "42 CFR \xA72.16(a)(2)(iii)", title: "Electronic records: using and accessing" },
+      "cmia-56101a": { cite: "Cal. Civ. Code \xA756.101(a)", title: "Preserve confidentiality in creating, maintaining, storing and destroying medical information" },
+      "cmia-56101b1A": { cite: "Cal. Civ. Code \xA756.101(b)(1)(A)", title: "Electronic record system protects and preserves integrity" },
+      "cmia-56101b1B": { cite: "Cal. Civ. Code \xA756.101(b)(1)(B)", title: "Electronic record system records every change or deletion" }
+    };
+    var HOST_CHECKS = [
+      { id: "host.os", title: "Supported operating system", rules: ["hipaa-308a1iiB"], remediation: "Run SUDS Server on Ubuntu 24.04 LTS or RHEL/Rocky/Alma 9, which receive security updates and which the installer supports." },
+      { id: "host.data_dir", title: "Data directory and database file permissions", rules: ["hipaa-312a1", "part2-16a2iii", "cmia-56101a"], remediation: "chown -R suds:suds /var/lib/suds; chmod 0700 /var/lib/suds; chmod 0600 /var/lib/suds/suds.db* (deploy/linux/install.sh does this)." },
+      { id: "host.disk_encryption", title: "Data on an encrypted block device", rules: ["hipaa-312a2iv", "hipaa-310d1", "part2-16a2i", "cmia-56101a"], remediation: 'Put the data directory on a LUKS (dm-crypt) volume. This cannot be done in place: attach a new encrypted disk, stop SUDS, move /var/lib/suds onto it and start SUDS again (docs/SELF-HOSTING.md, "Prerequisites").' },
+      { id: "host.keys", title: "Keys kept out of readable files and the environment", rules: ["hipaa-312a2iv", "hipaa-312a1"], remediation: "Keep each key in /etc/suds/credentials/<name> (root, 0600, directory 0700) loaded with LoadCredential= (deploy/linux/suds.service); remove any SUDS_*_KEY from Environment= and from environment files." },
+      { id: "host.service", title: "Service sandboxing (systemd unit)", rules: ["hipaa-312a1", "hipaa-308a1iiB"], remediation: "Install deploy/linux/suds.service unchanged (deploy/linux/install.sh) and keep local changes in a drop-in that does not weaken it." },
+      { id: "host.tls", title: "HTTPS: TLS 1.2 or newer, valid certificate, HSTS", rules: ["hipaa-312e1", "hipaa-312e2ii", "part2-16a2i"], remediation: "Terminate TLS with Caddy (the repository's Caddyfile, installed as /etc/caddy/Caddyfile: TLS 1.2+ only, HSTS) or a county certificate; renew the certificate before it has 14 days left." },
+      { id: "host.http_redirect", title: "Plain HTTP only redirects to HTTPS", rules: ["hipaa-312e1"], remediation: "Serve nothing but a redirect (and ACME challenges) on port 80; close it when the certificate is county-issued." },
+      { id: "host.bind", title: "SUDS listens on this machine only (127.0.0.1)", rules: ["hipaa-312e1", "hipaa-312a1"], remediation: "Set HOST=127.0.0.1 in the unit (deploy/linux/suds.service) so only the TLS proxy on this host can reach SUDS." },
+      { id: "host.firewall", title: "Host firewall active with only the expected ports", rules: ["hipaa-312e1", "hipaa-308a1iiB"], remediation: "ufw (Ubuntu) or firewalld (RHEL): deny incoming by default, allow 443 (and 80 while it only redirects), SSH only from the administration network (deploy/linux/install.sh --admin-cidr)." },
+      { id: "host.time_sync", title: "Clock synchronised (audit timestamps)", rules: ["hipaa-312b", "cmia-56101b1B"], remediation: "Enable chrony (RHEL) or systemd-timesyncd/chrony (Ubuntu) against the county time source: timedatectl set-ntp true." },
+      { id: "host.security_updates", title: "Automatic security updates", rules: ["hipaa-308a5iiB", "hipaa-308a1iiB"], remediation: "Ubuntu: unattended-upgrades with the -security origin and apt-daily-upgrade.timer; RHEL: dnf-automatic with upgrade_type = security, apply_updates = yes and dnf-automatic.timer (as deploy/linux/install.sh sets it)." },
+      { id: "host.journald", title: "System journal persistent and retained", rules: ["hipaa-312b", "hipaa-308a1iiD"], remediation: "Storage=persistent and MaxRetentionSec at least the log retention policy (default 400 days) in /etc/systemd/journald.conf.d/suds.conf; forward to the county SIEM for longer." },
+      { id: "host.auditd", title: "Linux audit daemon (recommended)", rules: ["hipaa-312b", "hipaa-308a1iiD"], remediation: "Recommended, not required: install and enable auditd so logins, sudo and changes to /etc/suds are recorded by the OS as well." },
+      { id: "host.node", title: "Node.js is the pinned, checksum-verified release", rules: ["hipaa-308a1iiB"], remediation: "Install the release pinned in deploy/linux/pins (the one CI tests) with deploy/linux/install.sh or upgrade.sh." },
+      { id: "host.suds_version", title: "SUDS release is supported", rules: ["hipaa-308a1iiB", "hipaa-308a5iiB"], remediation: 'Upgrade to the latest minor release (docs/RELEASE.md, "Supported versions") with deploy/linux/upgrade.sh.' },
+      { id: "host.release_integrity", title: "SUDS release checked against an independently published checksum", rules: ["hipaa-308a1iiB", "hipaa-308a5iiB"], remediation: "Upgrade with --release-sha256=<hex> taken from a channel other than the download: the SHA-256 published in the GitHub Release notes and recorded in that version's CHANGELOG section on the main branch, which must agree (not at the release tag: the zip is built from the tagged commit, so its checksum is added after it; docs/SELF-HOSTING.md, Upgrading). Not --trust-release-checksum." },
+      { id: "host.backup_files", title: "Latest backup is recent and the offsite copy exists", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Scheduled backups (Settings \u2192 Scheduled backups) with the offsite directory on the mounted offsite share; check the share is mounted." },
+      { id: "host.dr_evidence", title: "Recovery drill within 90 days, signed report verifies", rules: ["hipaa-308a7iiD", "hipaa-308a7iiB"], remediation: "Run a recovery drill with the escrowed key file against the offsite copy (Settings \u2192 System & backups, or npm run dr-drill); turn the monthly drill on." },
+      { id: "host.audit_verify", title: "Audit chain and external anchors verify now", rules: ["hipaa-312b", "hipaa-312c1", "hipaa-312c2", "cmia-56101b1B", "part2-16a2iii"], remediation: 'A failure is a possible incident: follow docs/security/INCIDENT-RESPONSE.md. "Could not check" means the check ran without the index key (run it as root, or from suds-compliance.service).' }
+    ];
+    var APP_CHECKS = [
+      { id: "app.mfa_coverage", item: "Two-step verification coverage", rules: ["hipaa-312d", "hipaa-308a5iiD"], remediation: "Have every active account enrol in two-step verification (Settings \u2192 Security status lists who has not)." },
+      { id: "app.mfa_required", item: "Two-step verification required for", rules: ["hipaa-312d"], remediation: 'Settings \u2192 Security policy \u2192 "Require two-step verification for every role" (or MFA_REQUIRED_ROLES naming every role).' },
+      { id: "app.sso", item: "Single sign-on (OIDC)", rules: ["hipaa-312a2i", "hipaa-308a3iiC"], remediation: 'Configure OIDC against the county identity provider (docs/DEPLOYMENT.md, "Single sign-on").' },
+      { id: "app.idp_mfa", item: "Identity provider's multi-factor sign-in", rules: ["hipaa-312d"], info: "pass", remediation: "Trust the provider's MFA only where it enforces MFA for this application (conditional access)." },
+      { id: "app.deprovisioning", item: "Deprovisioning", rules: ["hipaa-308a3iiC", "hipaa-308a4iiC"], info: "warn", remediation: 'Create a SCIM token or set "Disable single sign-on accounts not seen for (days)".' },
+      { id: "app.passkeys", item: "Fingerprint sign-in (passkeys)", rules: ["hipaa-312d"], info: "pass", remediation: "Optional: staff add a passkey under My profile \u2192 Fingerprint sign-in (needs HTTPS and WEBAUTHN_RP_ID matching the server's name, docs/FINGERPRINT.md)." },
+      { id: "app.password_signin", item: "Password sign-in", rules: ["hipaa-312d"], info: "pass", remediation: 'Settings \u2192 Security policy \u2192 "Require single sign-on" with named break-glass administrators.' },
+      { id: "app.password_policy", item: "Password policy", rules: ["hipaa-308a5iiD"], info: "pass", remediation: "Enforced in code (server/auth.js); nothing to configure." },
+      { id: "app.session_timeout", item: "Session timeouts", rules: ["hipaa-312a2iii"], remediation: "Settings \u2192 Security policy: idle timeout 15 minutes or less." },
+      { id: "app.backups", item: "Scheduled encrypted backups", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Settings \u2192 Scheduled backups: every 4 hours or less." },
+      { id: "app.snapshots", item: "Frequent online snapshots", rules: ["hipaa-308a7iiA"], info: "pass", remediation: 'Optional: Settings \u2192 Scheduled backups \u2192 "Also snapshot every (minutes)" for a recovery point in minutes.' },
+      { id: "app.rpo", item: "Recovery point objective (worst case)", rules: ["hipaa-308a7iiA", "hipaa-308a7iiB"], remediation: "Shorten the backup interval, or add snapshots, until the worst case is within the target." },
+      { id: "app.offsite", item: "Offsite copy", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Set the offsite directory to the mounted offsite share (Settings \u2192 Scheduled backups)." },
+      { id: "app.dr_drill", item: "Last recovery drill", rules: ["hipaa-308a7iiD", "hipaa-308a7iiB"], remediation: "Run a recovery drill (Settings \u2192 System & backups)." },
+      { id: "app.dr_monthly", item: "Monthly recovery drill", rules: ["hipaa-308a7iiD"], info: "warn", remediation: 'Settings \u2192 Scheduled backups \u2192 "Recovery drill every month".' },
+      { id: "app.plaintext_copies", item: "Unencrypted database copies", rules: ["hipaa-312a2iv", "part2-16a2ii"], remediation: "Free disk space so SUDS can seal them, or delete them securely." },
+      { id: "app.backup_key", item: "Backup encryption key", rules: ["hipaa-312a2iv", "hipaa-308a7iiA"], info: "warn", remediation: "Set SUDS_BACKUP_KEY (deploy/linux/install.sh generates it) so the PHI key can rotate without re-keying the backups." },
+      { id: "app.audit_chain", item: "Audit chain verification", rules: ["hipaa-312b", "hipaa-312c1", "cmia-56101b1B"], remediation: "A failure is a possible incident (docs/security/INCIDENT-RESPONSE.md)." },
+      { id: "app.audit_anchors", item: "Audit anchors outside the database", rules: ["hipaa-312b", "hipaa-312c2", "cmia-56101b1A"], remediation: "AUDIT_ANCHOR_DIR on write-once storage outside the data directory (install.sh --anchors)." },
+      { id: "app.audit_retention", item: "Audit retention", rules: ["hipaa-316b2i", "hipaa-312b"], remediation: "Remove AUDIT_RETENTION_DAYS or set it to 2190 or more." },
+      { id: "app.phi_key", item: "PHI encryption key", rules: ["hipaa-312a2iv", "part2-16a2i", "cmia-56101a"], remediation: "Rotate annually (npm run rotate-key) and keep the key in the credential store." },
+      { id: "app.signing_key", item: "Evidence signing key (Ed25519)", rules: ["hipaa-312c2"], remediation: "Provide SUDS_SIGNING_KEY (install.sh generates it) and give its public key to the auditor." },
+      { id: "app.index_key", item: "Index key (blind indexes, audit chain)", rules: ["hipaa-312c1"], info: "pass", remediation: "Rotate on custodian change or suspected exposure (npm run rotate-index-key)." },
+      { id: "app.key_backup", item: "Key backup", rules: ["hipaa-308a7iiA"], remediation: "Download the key backup (Settings \u2192 System & backups) and keep it apart from the database backups." },
+      { id: "app.client_retention", item: "Client record retention", rules: ["part2-16a2ii", "cmia-56101a"], info: "pass", remediation: "Set the retention period the programme's policy requires (never below 6 years)." },
+      { id: "app.https", item: "HTTPS", rules: ["hipaa-312e1", "hipaa-312e2ii"], remediation: "Run behind the TLS proxy with TRUST_PROXY=1, or give SUDS a certificate." },
+      { id: "app.local_mode", item: "Local mode (offline copies on devices)", rules: ["hipaa-310d1", "hipaa-312a1"], remediation: "Leave LOCAL_MODE_ENABLED off unless a field-work need is documented (docs/PLATFORM.md)." },
+      { id: "app.version", item: "Version", rules: ["hipaa-308a1iiB"], info: "pass", remediation: "See host.suds_version." },
+      { id: "app.db_indexes", item: "Database indexes", rules: ["hipaa-312c1"], inAppOnly: true, remediation: "Resolve the duplicate rows named, then restart." },
+      { id: "app.monitoring", item: "Monitoring", rules: ["hipaa-308a1iiD"], info: "pass", remediation: "Point the county monitoring at /api/health; set METRICS_TOKEN for Prometheus." }
+    ];
+    var byItem = new Map(APP_CHECKS.map((c) => [c.item, c]));
+    var byId = new Map([...HOST_CHECKS, ...APP_CHECKS].map((c) => [c.id, c]));
+    var slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+    function forItem(name) {
+      return byItem.get(name) || { id: `app.other.${slug(name)}`, item: name, rules: [], remediation: "" };
+    }
+    function cite(keys) {
+      return (keys || []).filter((k) => RULES[k]).map((k) => ({ key: k, ...RULES[k] }));
+    }
+    function resultOfLevel(level, entry) {
+      if (level === "ok") return "pass";
+      if (level === "bad") return "fail";
+      if (level === "warn") return "warn";
+      if (level === "info") return entry && entry.info || "warn";
+      return "not-checked";
+    }
+    function levelOfResult(result) {
+      return result === "pass" ? "ok" : result === "fail" ? "bad" : "warn";
+    }
+    var PENDING_FIRST_RUN = "pending first run (expected on day one)";
+    module.exports = { RULES, HOST_CHECKS, APP_CHECKS, forItem, cite, byId, resultOfLevel, levelOfResult, PENDING_FIRST_RUN, RESULTS: ["pass", "fail", "warn", "not-checked"] };
+  }
+});
+
 // server/signing.js
 var require_signing = __commonJS({
   "server/signing.js"(exports, module) {
@@ -20244,119 +20358,6 @@ ${rows}
       return null;
     }
     module.exports = { FORMAT: FORMAT2, FILE_RE, canonical, seal: seal2, verifyDoc, verifyHtml, renderHtml, renderText, extractFromHtml, latest, counts, overall, RESULT_LABEL };
-  }
-});
-
-// server/compliance-rules.js
-var require_compliance_rules = __commonJS({
-  "server/compliance-rules.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var RULES = {
-      "hipaa-308a1iiA": { cite: "45 CFR \xA7164.308(a)(1)(ii)(A)", title: "Risk analysis (R)" },
-      "hipaa-308a1iiB": { cite: "45 CFR \xA7164.308(a)(1)(ii)(B)", title: "Risk management (R)" },
-      "hipaa-308a1iiD": { cite: "45 CFR \xA7164.308(a)(1)(ii)(D)", title: "Information system activity review (R)" },
-      "hipaa-308a3iiC": { cite: "45 CFR \xA7164.308(a)(3)(ii)(C)", title: "Termination procedures (A)" },
-      "hipaa-308a4iiC": { cite: "45 CFR \xA7164.308(a)(4)(ii)(C)", title: "Access establishment and modification (A)" },
-      "hipaa-308a5iiB": { cite: "45 CFR \xA7164.308(a)(5)(ii)(B)", title: "Protection from malicious software (A)" },
-      "hipaa-308a5iiD": { cite: "45 CFR \xA7164.308(a)(5)(ii)(D)", title: "Password management (A)" },
-      "hipaa-308a7iiA": { cite: "45 CFR \xA7164.308(a)(7)(ii)(A)", title: "Data backup plan (R)" },
-      "hipaa-308a7iiB": { cite: "45 CFR \xA7164.308(a)(7)(ii)(B)", title: "Disaster recovery plan (R)" },
-      "hipaa-308a7iiD": { cite: "45 CFR \xA7164.308(a)(7)(ii)(D)", title: "Testing and revision procedures (A)" },
-      "hipaa-308a8": { cite: "45 CFR \xA7164.308(a)(8)", title: "Evaluation (R)" },
-      "hipaa-310d1": { cite: "45 CFR \xA7164.310(d)(1)", title: "Device and media controls" },
-      "hipaa-310d2iv": { cite: "45 CFR \xA7164.310(d)(2)(iv)", title: "Data backup and storage (A)" },
-      "hipaa-312a1": { cite: "45 CFR \xA7164.312(a)(1)", title: "Access control" },
-      "hipaa-312a2i": { cite: "45 CFR \xA7164.312(a)(2)(i)", title: "Unique user identification (R)" },
-      "hipaa-312a2iii": { cite: "45 CFR \xA7164.312(a)(2)(iii)", title: "Automatic logoff (A)" },
-      "hipaa-312a2iv": { cite: "45 CFR \xA7164.312(a)(2)(iv)", title: "Encryption and decryption (A)" },
-      "hipaa-312b": { cite: "45 CFR \xA7164.312(b)", title: "Audit controls" },
-      "hipaa-312c1": { cite: "45 CFR \xA7164.312(c)(1)", title: "Integrity" },
-      "hipaa-312c2": { cite: "45 CFR \xA7164.312(c)(2)", title: "Mechanism to authenticate electronic PHI (A)" },
-      "hipaa-312d": { cite: "45 CFR \xA7164.312(d)", title: "Person or entity authentication" },
-      "hipaa-312e1": { cite: "45 CFR \xA7164.312(e)(1)", title: "Transmission security" },
-      "hipaa-312e2ii": { cite: "45 CFR \xA7164.312(e)(2)(ii)", title: "Encryption in transmission (A)" },
-      "hipaa-316b2i": { cite: "45 CFR \xA7164.316(b)(2)(i)", title: "Documentation time limit (six years)" },
-      "part2-16a2i": { cite: "42 CFR \xA72.16(a)(2)(i)", title: "Electronic records: creating, receiving, maintaining and transmitting" },
-      "part2-16a2ii": { cite: "42 CFR \xA72.16(a)(2)(ii)", title: "Electronic records: destroying, and sanitising media" },
-      "part2-16a2iii": { cite: "42 CFR \xA72.16(a)(2)(iii)", title: "Electronic records: using and accessing" },
-      "cmia-56101a": { cite: "Cal. Civ. Code \xA756.101(a)", title: "Preserve confidentiality in creating, maintaining, storing and destroying medical information" },
-      "cmia-56101b1A": { cite: "Cal. Civ. Code \xA756.101(b)(1)(A)", title: "Electronic record system protects and preserves integrity" },
-      "cmia-56101b1B": { cite: "Cal. Civ. Code \xA756.101(b)(1)(B)", title: "Electronic record system records every change or deletion" }
-    };
-    var HOST_CHECKS = [
-      { id: "host.os", title: "Supported operating system", rules: ["hipaa-308a1iiB"], remediation: "Run SUDS Server on Ubuntu 24.04 LTS or RHEL/Rocky/Alma 9, which receive security updates and which the installer supports." },
-      { id: "host.data_dir", title: "Data directory and database file permissions", rules: ["hipaa-312a1", "part2-16a2iii", "cmia-56101a"], remediation: "chown -R suds:suds /var/lib/suds; chmod 0700 /var/lib/suds; chmod 0600 /var/lib/suds/suds.db* (deploy/linux/install.sh does this)." },
-      { id: "host.disk_encryption", title: "Data on an encrypted block device", rules: ["hipaa-312a2iv", "hipaa-310d1", "part2-16a2i", "cmia-56101a"], remediation: 'Put the data directory on a LUKS (dm-crypt) volume. This cannot be done in place: attach a new encrypted disk, stop SUDS, move /var/lib/suds onto it and start SUDS again (docs/SELF-HOSTING.md, "Prerequisites").' },
-      { id: "host.keys", title: "Keys kept out of readable files and the environment", rules: ["hipaa-312a2iv", "hipaa-312a1"], remediation: "Keep each key in /etc/suds/credentials/<name> (root, 0600, directory 0700) loaded with LoadCredential= (deploy/linux/suds.service); remove any SUDS_*_KEY from Environment= and from environment files." },
-      { id: "host.service", title: "Service sandboxing (systemd unit)", rules: ["hipaa-312a1", "hipaa-308a1iiB"], remediation: "Install deploy/linux/suds.service unchanged (deploy/linux/install.sh) and keep local changes in a drop-in that does not weaken it." },
-      { id: "host.tls", title: "HTTPS: TLS 1.2 or newer, valid certificate, HSTS", rules: ["hipaa-312e1", "hipaa-312e2ii", "part2-16a2i"], remediation: "Terminate TLS with Caddy (the repository's Caddyfile, installed as /etc/caddy/Caddyfile: TLS 1.2+ only, HSTS) or a county certificate; renew the certificate before it has 14 days left." },
-      { id: "host.http_redirect", title: "Plain HTTP only redirects to HTTPS", rules: ["hipaa-312e1"], remediation: "Serve nothing but a redirect (and ACME challenges) on port 80; close it when the certificate is county-issued." },
-      { id: "host.bind", title: "SUDS listens on this machine only (127.0.0.1)", rules: ["hipaa-312e1", "hipaa-312a1"], remediation: "Set HOST=127.0.0.1 in the unit (deploy/linux/suds.service) so only the TLS proxy on this host can reach SUDS." },
-      { id: "host.firewall", title: "Host firewall active with only the expected ports", rules: ["hipaa-312e1", "hipaa-308a1iiB"], remediation: "ufw (Ubuntu) or firewalld (RHEL): deny incoming by default, allow 443 (and 80 while it only redirects), SSH only from the administration network (deploy/linux/install.sh --admin-cidr)." },
-      { id: "host.time_sync", title: "Clock synchronised (audit timestamps)", rules: ["hipaa-312b", "cmia-56101b1B"], remediation: "Enable chrony (RHEL) or systemd-timesyncd/chrony (Ubuntu) against the county time source: timedatectl set-ntp true." },
-      { id: "host.security_updates", title: "Automatic security updates", rules: ["hipaa-308a5iiB", "hipaa-308a1iiB"], remediation: "Ubuntu: unattended-upgrades with the -security origin and apt-daily-upgrade.timer; RHEL: dnf-automatic with upgrade_type = security, apply_updates = yes and dnf-automatic.timer (as deploy/linux/install.sh sets it)." },
-      { id: "host.journald", title: "System journal persistent and retained", rules: ["hipaa-312b", "hipaa-308a1iiD"], remediation: "Storage=persistent and MaxRetentionSec at least the log retention policy (default 400 days) in /etc/systemd/journald.conf.d/suds.conf; forward to the county SIEM for longer." },
-      { id: "host.auditd", title: "Linux audit daemon (recommended)", rules: ["hipaa-312b", "hipaa-308a1iiD"], remediation: "Recommended, not required: install and enable auditd so logins, sudo and changes to /etc/suds are recorded by the OS as well." },
-      { id: "host.node", title: "Node.js is the pinned, checksum-verified release", rules: ["hipaa-308a1iiB"], remediation: "Install the release pinned in deploy/linux/pins (the one CI tests) with deploy/linux/install.sh or upgrade.sh." },
-      { id: "host.suds_version", title: "SUDS release is supported", rules: ["hipaa-308a1iiB", "hipaa-308a5iiB"], remediation: 'Upgrade to the latest minor release (docs/RELEASE.md, "Supported versions") with deploy/linux/upgrade.sh.' },
-      { id: "host.release_integrity", title: "SUDS release checked against an independently published checksum", rules: ["hipaa-308a1iiB", "hipaa-308a5iiB"], remediation: "Upgrade with --release-sha256=<hex> taken from a channel other than the download (the release notes and the CHANGELOG entry at the release tag: docs/SELF-HOSTING.md, Upgrading), not --trust-release-checksum." },
-      { id: "host.backup_files", title: "Latest backup is recent and the offsite copy exists", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Scheduled backups (Settings \u2192 Scheduled backups) with the offsite directory on the mounted offsite share; check the share is mounted." },
-      { id: "host.dr_evidence", title: "Recovery drill within 90 days, signed report verifies", rules: ["hipaa-308a7iiD", "hipaa-308a7iiB"], remediation: "Run a recovery drill with the escrowed key file against the offsite copy (Settings \u2192 System & backups, or npm run dr-drill); turn the monthly drill on." },
-      { id: "host.audit_verify", title: "Audit chain and external anchors verify now", rules: ["hipaa-312b", "hipaa-312c1", "hipaa-312c2", "cmia-56101b1B", "part2-16a2iii"], remediation: 'A failure is a possible incident: follow docs/security/INCIDENT-RESPONSE.md. "Could not check" means the check ran without the index key (run it as root, or from suds-compliance.service).' }
-    ];
-    var APP_CHECKS = [
-      { id: "app.mfa_coverage", item: "Two-step verification coverage", rules: ["hipaa-312d", "hipaa-308a5iiD"], remediation: "Have every active account enrol in two-step verification (Settings \u2192 Security status lists who has not)." },
-      { id: "app.mfa_required", item: "Two-step verification required for", rules: ["hipaa-312d"], remediation: 'Settings \u2192 Security policy \u2192 "Require two-step verification for every role" (or MFA_REQUIRED_ROLES naming every role).' },
-      { id: "app.sso", item: "Single sign-on (OIDC)", rules: ["hipaa-312a2i", "hipaa-308a3iiC"], remediation: 'Configure OIDC against the county identity provider (docs/DEPLOYMENT.md, "Single sign-on").' },
-      { id: "app.idp_mfa", item: "Identity provider's multi-factor sign-in", rules: ["hipaa-312d"], info: "pass", remediation: "Trust the provider's MFA only where it enforces MFA for this application (conditional access)." },
-      { id: "app.deprovisioning", item: "Deprovisioning", rules: ["hipaa-308a3iiC", "hipaa-308a4iiC"], info: "warn", remediation: 'Create a SCIM token or set "Disable single sign-on accounts not seen for (days)".' },
-      { id: "app.passkeys", item: "Fingerprint sign-in (passkeys)", rules: ["hipaa-312d"], info: "pass", remediation: "Optional: staff add a passkey under My profile \u2192 Fingerprint sign-in (needs HTTPS and WEBAUTHN_RP_ID matching the server's name, docs/FINGERPRINT.md)." },
-      { id: "app.password_signin", item: "Password sign-in", rules: ["hipaa-312d"], info: "pass", remediation: 'Settings \u2192 Security policy \u2192 "Require single sign-on" with named break-glass administrators.' },
-      { id: "app.password_policy", item: "Password policy", rules: ["hipaa-308a5iiD"], info: "pass", remediation: "Enforced in code (server/auth.js); nothing to configure." },
-      { id: "app.session_timeout", item: "Session timeouts", rules: ["hipaa-312a2iii"], remediation: "Settings \u2192 Security policy: idle timeout 15 minutes or less." },
-      { id: "app.backups", item: "Scheduled encrypted backups", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Settings \u2192 Scheduled backups: every 4 hours or less." },
-      { id: "app.snapshots", item: "Frequent online snapshots", rules: ["hipaa-308a7iiA"], info: "pass", remediation: 'Optional: Settings \u2192 Scheduled backups \u2192 "Also snapshot every (minutes)" for a recovery point in minutes.' },
-      { id: "app.rpo", item: "Recovery point objective (worst case)", rules: ["hipaa-308a7iiA", "hipaa-308a7iiB"], remediation: "Shorten the backup interval, or add snapshots, until the worst case is within the target." },
-      { id: "app.offsite", item: "Offsite copy", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Set the offsite directory to the mounted offsite share (Settings \u2192 Scheduled backups)." },
-      { id: "app.dr_drill", item: "Last recovery drill", rules: ["hipaa-308a7iiD", "hipaa-308a7iiB"], remediation: "Run a recovery drill (Settings \u2192 System & backups)." },
-      { id: "app.dr_monthly", item: "Monthly recovery drill", rules: ["hipaa-308a7iiD"], info: "warn", remediation: 'Settings \u2192 Scheduled backups \u2192 "Recovery drill every month".' },
-      { id: "app.plaintext_copies", item: "Unencrypted database copies", rules: ["hipaa-312a2iv", "part2-16a2ii"], remediation: "Free disk space so SUDS can seal them, or delete them securely." },
-      { id: "app.backup_key", item: "Backup encryption key", rules: ["hipaa-312a2iv", "hipaa-308a7iiA"], info: "warn", remediation: "Set SUDS_BACKUP_KEY (deploy/linux/install.sh generates it) so the PHI key can rotate without re-keying the backups." },
-      { id: "app.audit_chain", item: "Audit chain verification", rules: ["hipaa-312b", "hipaa-312c1", "cmia-56101b1B"], remediation: "A failure is a possible incident (docs/security/INCIDENT-RESPONSE.md)." },
-      { id: "app.audit_anchors", item: "Audit anchors outside the database", rules: ["hipaa-312b", "hipaa-312c2", "cmia-56101b1A"], remediation: "AUDIT_ANCHOR_DIR on write-once storage outside the data directory (install.sh --anchors)." },
-      { id: "app.audit_retention", item: "Audit retention", rules: ["hipaa-316b2i", "hipaa-312b"], remediation: "Remove AUDIT_RETENTION_DAYS or set it to 2190 or more." },
-      { id: "app.phi_key", item: "PHI encryption key", rules: ["hipaa-312a2iv", "part2-16a2i", "cmia-56101a"], remediation: "Rotate annually (npm run rotate-key) and keep the key in the credential store." },
-      { id: "app.signing_key", item: "Evidence signing key (Ed25519)", rules: ["hipaa-312c2"], remediation: "Provide SUDS_SIGNING_KEY (install.sh generates it) and give its public key to the auditor." },
-      { id: "app.index_key", item: "Index key (blind indexes, audit chain)", rules: ["hipaa-312c1"], info: "pass", remediation: "Rotate on custodian change or suspected exposure (npm run rotate-index-key)." },
-      { id: "app.key_backup", item: "Key backup", rules: ["hipaa-308a7iiA"], remediation: "Download the key backup (Settings \u2192 System & backups) and keep it apart from the database backups." },
-      { id: "app.client_retention", item: "Client record retention", rules: ["part2-16a2ii", "cmia-56101a"], info: "pass", remediation: "Set the retention period the programme's policy requires (never below 6 years)." },
-      { id: "app.https", item: "HTTPS", rules: ["hipaa-312e1", "hipaa-312e2ii"], remediation: "Run behind the TLS proxy with TRUST_PROXY=1, or give SUDS a certificate." },
-      { id: "app.local_mode", item: "Local mode (offline copies on devices)", rules: ["hipaa-310d1", "hipaa-312a1"], remediation: "Leave LOCAL_MODE_ENABLED off unless a field-work need is documented (docs/PLATFORM.md)." },
-      { id: "app.version", item: "Version", rules: ["hipaa-308a1iiB"], info: "pass", remediation: "See host.suds_version." },
-      { id: "app.db_indexes", item: "Database indexes", rules: ["hipaa-312c1"], inAppOnly: true, remediation: "Resolve the duplicate rows named, then restart." },
-      { id: "app.monitoring", item: "Monitoring", rules: ["hipaa-308a1iiD"], info: "pass", remediation: "Point the county monitoring at /api/health; set METRICS_TOKEN for Prometheus." }
-    ];
-    var byItem = new Map(APP_CHECKS.map((c) => [c.item, c]));
-    var byId = new Map([...HOST_CHECKS, ...APP_CHECKS].map((c) => [c.id, c]));
-    var slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
-    function forItem(name) {
-      return byItem.get(name) || { id: `app.other.${slug(name)}`, item: name, rules: [], remediation: "" };
-    }
-    function cite(keys) {
-      return (keys || []).filter((k) => RULES[k]).map((k) => ({ key: k, ...RULES[k] }));
-    }
-    function resultOfLevel(level, entry) {
-      if (level === "ok") return "pass";
-      if (level === "bad") return "fail";
-      if (level === "warn") return "warn";
-      if (level === "info") return entry && entry.info || "warn";
-      return "not-checked";
-    }
-    function levelOfResult(result) {
-      return result === "pass" ? "ok" : result === "fail" ? "bad" : "warn";
-    }
-    module.exports = { RULES, HOST_CHECKS, APP_CHECKS, forItem, cite, byId, resultOfLevel, levelOfResult, RESULTS: ["pass", "fail", "warn", "not-checked"] };
   }
 });
 
@@ -21467,6 +21468,14 @@ var require_scheduled_backup = __commonJS({
       if (!c.length) return null;
       return c.sort((a, b) => a.minutes - b.minutes)[0];
     }
+    function firstRunPending(now2 = Date.now()) {
+      const { hours } = settings();
+      if (!hours || db3.getSetting("last_scheduled_backup_at", null)) return null;
+      const row = db3.one(`SELECT updated_at FROM settings WHERE key='backup_schedule_hours'`);
+      const since = Date.parse(row && row.updated_at || "");
+      if (!Number.isFinite(since) || now2 - since >= 2 * hours * 36e5) return null;
+      return { hours, since: row.updated_at, until: new Date(since + 2 * hours * 36e5).toISOString() };
+    }
     async function runIfDue(now2 = Date.now()) {
       const { hours, retain, offsiteDir } = settings();
       if (!hours || lock.paused()) return null;
@@ -21618,7 +21627,7 @@ var require_scheduled_backup = __commonJS({
       }
       return Math.min(files.length, retain);
     }
-    module.exports = { runIfDue, run: run2, runHeld, settings, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };
+    module.exports = { runIfDue, run: run2, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };
   }
 });
 
@@ -21635,6 +21644,7 @@ var require_dr_drill = __commonJS({
     var audit3 = require_audit();
     var BACKUP_RE = /^suds-.*\.db\.enc$/;
     var MONTH_MS = 30 * 864e5;
+    var FIRST_DRILL_DAYS = 31;
     var CHILD_TIMEOUT_MS = Number(proc.env.DR_DRILL_TIMEOUT_MS || 15 * 6e4);
     function backupsDir() {
       return path.join(config2.dataDir, "backups");
@@ -21908,6 +21918,7 @@ var require_dr_drill = __commonJS({
           };
           step(`Using the escrowed keys from ${keyInfo.file || "the uploaded file"}, not the keys in this server's memory`);
         }
+        let offsiteProblem = null;
         if (!file && !fresh) {
           if (copy === "offsite" || copy === "auto" && sched.offsiteDir) {
             let st = null;
@@ -21920,7 +21931,7 @@ var require_dr_drill = __commonJS({
               file = off;
               source = { ...source, copy: "offsite", dir: sched.offsiteDir };
             } else {
-              failures.push(!sched.offsiteDir ? "an offsite copy was asked for but no offsite directory is configured" : !st ? `the offsite directory ${sched.offsiteDir} is not reachable (is the share mounted?), so the offsite copy could not be restored` : `the offsite directory ${sched.offsiteDir} holds no backup`);
+              offsiteProblem = !sched.offsiteDir ? "an offsite copy was asked for but no offsite directory is configured" : !st ? `the offsite directory ${sched.offsiteDir} is not reachable (is the share mounted?), so the offsite copy could not be restored` : `the offsite directory ${sched.offsiteDir} holds no backup`;
               step("The offsite copy is not available; restoring the local copy instead");
             }
           }
@@ -21937,11 +21948,14 @@ var require_dr_drill = __commonJS({
           if (made.offsiteFile && copy !== "local") {
             file = made.offsiteFile;
             source = { ...source, copy: "offsite", dir: sched.offsiteDir };
+            offsiteProblem = null;
+            step("The backup just taken was copied to the offsite share: restoring that copy");
           } else {
             file = made.file;
             source = { ...source, copy: "local", dir: backupsDir() };
           }
         }
+        if (offsiteProblem) failures.push(offsiteProblem);
         step(`Restoring ${path.basename(file)} (${source.copy} copy)`);
         restoreStarted = Date.now();
         const enc2 = fs.readFileSync(file);
@@ -22080,13 +22094,20 @@ var require_dr_drill = __commonJS({
       });
       return p;
     }
+    function firstDrillPending(now2 = Date.now()) {
+      if (db3.getSetting("dr_drill_monthly", "0") !== "1" || lastDrill()) return null;
+      const row = db3.one(`SELECT updated_at FROM settings WHERE key='dr_drill_monthly'`);
+      const since = Date.parse(row && row.updated_at || "");
+      if (!Number.isFinite(since) || now2 - since >= FIRST_DRILL_DAYS * 864e5) return null;
+      return { since: row.updated_at, until: new Date(since + FIRST_DRILL_DAYS * 864e5).toISOString() };
+    }
     function runIfDue(now2 = Date.now()) {
       if (db3.getSetting("dr_drill_monthly", "0") !== "1" || current2 || require_backup_lock().paused()) return null;
       const last = lastDrill();
       if (last && last.at && now2 - Date.parse(last.at) < MONTH_MS) return null;
       return start2({ by: "system", trigger: "monthly" });
     }
-    module.exports = { run: run2, start: start2, runIfDue, status, lastDrill, latestBackup, backupTime, verifyReport, canonical, seal: seal2, textReport, targets, parseKeysFile, sweepStale };
+    module.exports = { run: run2, start: start2, runIfDue, firstDrillPending, status, lastDrill, latestBackup, backupTime, verifyReport, canonical, seal: seal2, textReport, targets, parseKeysFile, sweepStale };
   }
 });
 
@@ -22100,6 +22121,7 @@ var require_security_status = __commonJS({
     var config2 = require_config();
     var db3 = require_db();
     var auth3 = require_auth2();
+    var { PENDING_FIRST_RUN } = require_compliance_rules();
     var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
     var DAY = 864e5;
     var ageDays = (iso) => iso ? (Date.now() - Date.parse(iso)) / DAY : null;
@@ -22281,7 +22303,15 @@ var require_security_status = __commonJS({
       const stale = hours && (!lastBackup || ageDays(lastBackup) * 24 > 2 * hours);
       const sb = require_scheduled_backup();
       const sched = sb.settings();
-      add("Backups and recovery", "Scheduled encrypted backups", !hours ? "bad" : stale || !/^ok/.test(lastStatus) ? "bad" : "ok", hours ? `every ${hours} h; last ${lastBackup || "never"}` : "off", hours ? lastStatus : `${config2.isProd ? "This is a production server with nothing backing it up. " : ""}Turn on under Settings \u2192 Scheduled backups (every 4 hours is the production default).`, "server/scheduled-backup.js");
+      const firstBackup = sb.firstRunPending();
+      add(
+        "Backups and recovery",
+        "Scheduled encrypted backups",
+        !hours ? "bad" : firstBackup ? "warn" : stale || !/^ok/.test(lastStatus) ? "bad" : "ok",
+        hours ? `every ${hours} h; last ${lastBackup || (firstBackup ? `never: ${PENDING_FIRST_RUN}` : "never")}` : "off",
+        hours ? firstBackup ? `Scheduled since ${firstBackup.since}: the first backup runs at the next hourly check. Until ${firstBackup.until} (twice the interval) "never" is expected; after that it is a failure. Or back up now from System & backups.` : lastStatus : `${config2.isProd ? "This is a production server with nothing backing it up. " : ""}Turn on under Settings \u2192 Scheduled backups (every 4 hours is the production default).`,
+        "server/scheduled-backup.js"
+      );
       const lastSnap = db3.getSetting("last_snapshot_at", null);
       const snapStatus = db3.getSetting("last_snapshot_status", "") || "";
       const snapStale = sched.minutes && (!lastSnap || ageDays(lastSnap) * 1440 > 3 * sched.minutes);
@@ -22307,12 +22337,13 @@ var require_security_status = __commonJS({
       add("Backups and recovery", "Offsite copy", !offsite ? "warn" : /offsite copy failed/.test(lastStatus) ? "bad" : "ok", offsite ? offsite : "not configured", offsite ? /offsite copy failed/.test(lastStatus) ? lastStatus : "Each scheduled backup is copied here after it is verified." : "Set an offsite directory (a mounted share on another host or site).", "server/scheduled-backup.js");
       const drill = require_dr_drill().lastDrill();
       const drillAge = drill ? ageDays(drill.at) : null;
+      const firstDrill = drill ? null : require_dr_drill().firstDrillPending();
       add(
         "Backups and recovery",
         "Last recovery drill",
-        !drill ? "bad" : !drill.ok ? "bad" : drillAge > 95 ? "warn" : "ok",
-        drill ? `${drill.ok ? "passed" : "FAILED"} ${drill.at.slice(0, 10)} \u2014 RTO ${drill.rto_seconds ?? "?"} s (target ${drill.rto_target_minutes} min), RPO ${drill.rpo_seconds != null ? Math.round(drill.rpo_seconds / 360) / 10 + " h" : "?"} (target ${drill.rpo_target_hours} h)` : "never run",
-        drill ? drill.ok ? `${drill.checks_passed}/${drill.checks_total} checks; restored the ${drill.backup_copy || "local"} copy with keys from ${drill.keys_source || "server memory"}; report ${drill.report_file || "(not written)"}.${drill.keys_source && drill.keys_source !== "server memory" ? "" : " Run one with the escrowed key file to prove it opens the backups."}` : (drill.failures || []).join("; ") : "Run one from System & backups, or npm run dr-drill.",
+        !drill ? firstDrill ? "warn" : "bad" : !drill.ok ? "bad" : drillAge > 95 ? "warn" : "ok",
+        drill ? `${drill.ok ? "passed" : "FAILED"} ${drill.at.slice(0, 10)} \u2014 RTO ${drill.rto_seconds ?? "?"} s (target ${drill.rto_target_minutes} min), RPO ${drill.rpo_seconds != null ? Math.round(drill.rpo_seconds / 360) / 10 + " h" : "?"} (target ${drill.rpo_target_hours} h)` : firstDrill ? `never run: ${PENDING_FIRST_RUN}` : "never run",
+        drill ? drill.ok ? `${drill.checks_passed}/${drill.checks_total} checks; restored the ${drill.backup_copy || "local"} copy with keys from ${drill.keys_source || "server memory"}; report ${drill.report_file || "(not written)"}.${drill.keys_source && drill.keys_source !== "server memory" ? "" : " Run one with the escrowed key file to prove it opens the backups."}` : (drill.failures || []).join("; ") : firstDrill ? `The monthly drill is on (since ${firstDrill.since}) and runs once there is a backup; until ${firstDrill.until} "never" is expected, after that it is a failure. Or run one now from System & backups, or npm run dr-drill.` : "Run one from System & backups, or npm run dr-drill.",
         "server/dr-drill.js; report in <data>/backups/dr-drill-*.json"
       );
       add("Backups and recovery", "Monthly recovery drill", db3.getSetting("dr_drill_monthly", "0") === "1" ? "ok" : "info", db3.getSetting("dr_drill_monthly", "0") === "1" ? "on" : "off", "Settings \u2192 Scheduled backups.", "server/dr-drill.js runIfDue");
@@ -25472,6 +25503,7 @@ var require_app = __commonJS({
         } catch {
         }
         const warnings = [];
+        const pending = [];
         try {
           if (db3.getSetting("audit_verify_failed_at", null)) warnings.push(`The audit log failed its integrity check at ${db3.getSetting("audit_verify_failed_at")}. Investigate before anything else.`);
           const placement = config2.local ? null : require_audit_anchor().placementProblem();
@@ -25480,7 +25512,9 @@ var require_app = __commonJS({
           const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
           const last = db3.getSetting("last_scheduled_backup_at", null);
           const status = db3.getSetting("last_scheduled_backup_status", "") || "";
-          if (hours && (!last || Date.now() - Date.parse(last) > 2 * hours * 36e5)) warnings.push(`Scheduled backups are set for every ${hours} hours but the last one ${last ? "ran " + last : "has never run"}.`);
+          const firstBackup = hours && !last ? require_scheduled_backup().firstRunPending() : null;
+          if (firstBackup) pending.push(`Scheduled backups are set for every ${hours} hours and the first has not run yet: ${require_compliance_rules().PENDING_FIRST_RUN}. It is overdue after ${firstBackup.until}.`);
+          else if (hours && (!last || Date.now() - Date.parse(last) > 2 * hours * 36e5)) warnings.push(`Scheduled backups are set for every ${hours} hours but the last one ${last ? "ran " + last : "has never run"}.`);
           if (hours && status && !/^ok/.test(status)) warnings.push(`The last scheduled backup reported: ${status}`);
           const minutes = Number(db3.getSetting("backup_schedule_minutes", "0")) || 0;
           const lastSnap = db3.getSetting("last_snapshot_at", null);
@@ -25497,10 +25531,8 @@ var require_app = __commonJS({
           }
         } catch {
         }
-        if (warnings.length) {
-          out2.ok = false;
-          out2.warnings = warnings;
-        }
+        if (warnings.length) out2.ok = false;
+        if (warnings.length || pending.length) out2.warnings = [...warnings, ...pending];
         ctx.status = out2.ok ? 200 : 503;
         return out2;
       });

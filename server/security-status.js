@@ -7,6 +7,7 @@ const path = require('node:path');
 const config = require('./config');
 const db = require('./db');
 const auth = require('./auth');
+const { PENDING_FIRST_RUN } = require('./compliance-rules');
 
 const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
 const DAY = 86400_000;
@@ -158,7 +159,11 @@ function status({ host = true } = {}) {
   const stale = hours && (!lastBackup || ageDays(lastBackup) * 24 > 2 * hours);
   const sb = require('./scheduled-backup');
   const sched = sb.settings();
-  add('Backups and recovery', 'Scheduled encrypted backups', !hours ? 'bad' : stale || !/^ok/.test(lastStatus) ? 'bad' : 'ok', hours ? `every ${hours} h; last ${lastBackup || 'never'}` : 'off', hours ? lastStatus : `${config.isProd ? 'This is a production server with nothing backing it up. ' : ''}Turn on under Settings → Scheduled backups (every 4 hours is the production default).`, 'server/scheduled-backup.js');
+  // Day one (sb.firstRunPending): scheduled, never run yet, and not yet overdue — a warning, as in the host check.
+  const firstBackup = sb.firstRunPending();
+  add('Backups and recovery', 'Scheduled encrypted backups', !hours ? 'bad' : firstBackup ? 'warn' : stale || !/^ok/.test(lastStatus) ? 'bad' : 'ok',
+    hours ? `every ${hours} h; last ${lastBackup || (firstBackup ? `never: ${PENDING_FIRST_RUN}` : 'never')}` : 'off',
+    hours ? (firstBackup ? `Scheduled since ${firstBackup.since}: the first backup runs at the next hourly check. Until ${firstBackup.until} (twice the interval) "never" is expected; after that it is a failure. Or back up now from System & backups.` : lastStatus) : `${config.isProd ? 'This is a production server with nothing backing it up. ' : ''}Turn on under Settings → Scheduled backups (every 4 hours is the production default).`, 'server/scheduled-backup.js');
   const lastSnap = db.getSetting('last_snapshot_at', null); const snapStatus = db.getSetting('last_snapshot_status', '') || '';
   const snapStale = sched.minutes && (!lastSnap || ageDays(lastSnap) * 1440 > 3 * sched.minutes);
   add('Backups and recovery', 'Frequent online snapshots', !sched.minutes ? 'info' : snapStale || /^failed/.test(snapStatus) ? 'bad' : 'ok',
@@ -173,9 +178,12 @@ function status({ host = true } = {}) {
   add('Backups and recovery', 'Offsite copy', !offsite ? 'warn' : /offsite copy failed/.test(lastStatus) ? 'bad' : 'ok', offsite ? offsite : 'not configured', offsite ? (/offsite copy failed/.test(lastStatus) ? lastStatus : 'Each scheduled backup is copied here after it is verified.') : 'Set an offsite directory (a mounted share on another host or site).', 'server/scheduled-backup.js');
   const drill = require('./dr-drill').lastDrill();
   const drillAge = drill ? ageDays(drill.at) : null;
-  add('Backups and recovery', 'Last recovery drill', !drill ? 'bad' : !drill.ok ? 'bad' : drillAge > 95 ? 'warn' : 'ok',
-    drill ? `${drill.ok ? 'passed' : 'FAILED'} ${drill.at.slice(0, 10)} — RTO ${drill.rto_seconds ?? '?'} s (target ${drill.rto_target_minutes} min), RPO ${drill.rpo_seconds != null ? Math.round(drill.rpo_seconds / 360) / 10 + ' h' : '?'} (target ${drill.rpo_target_hours} h)` : 'never run',
-    drill ? (drill.ok ? `${drill.checks_passed}/${drill.checks_total} checks; restored the ${drill.backup_copy || 'local'} copy with keys from ${drill.keys_source || 'server memory'}; report ${drill.report_file || '(not written)'}.${drill.keys_source && drill.keys_source !== 'server memory' ? '' : ' Run one with the escrowed key file to prove it opens the backups.'}` : (drill.failures || []).join('; ')) : 'Run one from System & backups, or npm run dr-drill.', 'server/dr-drill.js; report in <data>/backups/dr-drill-*.json');
+  // Day one (dr-drill.js firstDrillPending): the monthly drill is on and has not had its first turn — a warning.
+  const firstDrill = drill ? null : require('./dr-drill').firstDrillPending();
+  add('Backups and recovery', 'Last recovery drill', !drill ? (firstDrill ? 'warn' : 'bad') : !drill.ok ? 'bad' : drillAge > 95 ? 'warn' : 'ok',
+    drill ? `${drill.ok ? 'passed' : 'FAILED'} ${drill.at.slice(0, 10)} — RTO ${drill.rto_seconds ?? '?'} s (target ${drill.rto_target_minutes} min), RPO ${drill.rpo_seconds != null ? Math.round(drill.rpo_seconds / 360) / 10 + ' h' : '?'} (target ${drill.rpo_target_hours} h)` : firstDrill ? `never run: ${PENDING_FIRST_RUN}` : 'never run',
+    drill ? (drill.ok ? `${drill.checks_passed}/${drill.checks_total} checks; restored the ${drill.backup_copy || 'local'} copy with keys from ${drill.keys_source || 'server memory'}; report ${drill.report_file || '(not written)'}.${drill.keys_source && drill.keys_source !== 'server memory' ? '' : ' Run one with the escrowed key file to prove it opens the backups.'}` : (drill.failures || []).join('; '))
+      : firstDrill ? `The monthly drill is on (since ${firstDrill.since}) and runs once there is a backup; until ${firstDrill.until} "never" is expected, after that it is a failure. Or run one now from System & backups, or npm run dr-drill.` : 'Run one from System & backups, or npm run dr-drill.', 'server/dr-drill.js; report in <data>/backups/dr-drill-*.json');
   add('Backups and recovery', 'Monthly recovery drill', db.getSetting('dr_drill_monthly', '0') === '1' ? 'ok' : 'info', db.getSetting('dr_drill_monthly', '0') === '1' ? 'on' : 'off', 'Settings → Scheduled backups.', 'server/dr-drill.js runIfDue');
   {
     const plain = db.plaintextCopies();
