@@ -1,4 +1,6 @@
 import { h, route, get, state, fmt, can, pageHead, stat, table, kv, nav, toast, emptyState, loadingFor } from '../app.js';
+// Send to the county over the county connection (views/county-connect.js; built for 1.18.0), after the file card.
+import { countySendCard } from './county-connect.js';
 import { fetchDownload } from './reports.js';
 
 // Settlement outcomes (1.17.0; server/settlement-outcomes.js, server/settlement-outcome-map.js): each opioid
@@ -104,7 +106,7 @@ route('settlement', async (r) => {
       table(trendCols, f.months, { empty: 'No months in this period.' }));
   };
 
-  return h('div', { 'data-settlement-outcomes': '1' }, ...head, totalCard, catCard, ...d.funds.map(fundCard), countyCard(from, to),
+  return h('div', { 'data-settlement-outcomes': '1' }, ...head, totalCard, catCard, ...d.funds.map(fundCard), countyCard(from, to), countySendCard(from, to),
     h('details', { class: 'small muted' }, h('summary', {}, 'How the counts were made'), h('p', {}, d.counting_statement)));
 });
 

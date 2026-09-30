@@ -1,5 +1,7 @@
 import { h, route, get, post, put, fmt, can, pageHead, pageTabs, table, kv, nav, toast, modal, form, confirmDialog, emptyState, badge, loadingFor } from '../app.js';
 import { fetchDownload } from './reports.js';
+// The county connection's Connection tokens card (views/county-connect.js; built for 1.18.0), under the programmes.
+import { programmeConnections } from './county-connect.js';
 
 // The county view (server/county.js, server/routes/county.js; docs/COUNTY-VIEW.md). For a county that runs SUDS
 // and funds programmes that do too: each programme sends the county a signed file of its settlement figures
@@ -160,7 +162,9 @@ async function programmesTab() {
         { label: 'Status', render: p => badge(p.active ? 'Active' : 'Inactive', p.active ? 'ok' : '') }, { label: 'Files counting', num: true, render: p => num(p.current_submissions) },
         { label: 'Last file received', render: p => (p.last_received ? fmt.date(p.last_received) : '—') },
         manage ? { label: '', srLabel: 'Actions', render: p => h('button', { class: 'btn sm', 'data-cp-edit': p.id, 'aria-label': `Edit ${p.name}`, onClick: () => programmeForm(p) }, 'Edit') } : null].filter(Boolean),
-      rows, { empty: 'No programmes registered yet.' })));
+      rows, { empty: 'No programmes registered yet.' })),
+    // County connection hook (views/county-connect.js): each programme's connection token, for county:manage.
+    await programmeConnections(rows));
 }
 function programmeForm(p) {
   const isNew = !p;
