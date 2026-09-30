@@ -43,7 +43,10 @@ test('an outreach contact is an anonymous visit: its supplies come off the stock
   assert.equal(v.client_id, null, 'no client');
   assert.equal(v.naloxone_kits, 2, 'the kits are the visit\'s naloxone count, as every report reads it');
   assert.equal(v.fentanyl_strips, 5);
-  assert.ok(v.summary_enc && !v.summary_enc.includes('van'), 'the notes are encrypted like every visit summary');
+  // Not `includes('van')`: three letters turn up in random base64 about once in 3,000 runs (the node24 job of
+  // the 1.18.0 candidate). The whole sentence, spaces and all, cannot, and the value must decrypt to it.
+  assert.ok(v.summary_enc && !v.summary_enc.includes('Asked when the van'), 'the notes are encrypted like every visit summary');
+  assert.equal(require('../server/crypto').decrypt(v.summary_enc), 'Asked when the van is next at the park', 'and decrypt to what was written');
   // A service that needs a client cannot be logged this way.
   assert.equal((await contact(nav, { type: 'case_management' })).status, 400);
 });

@@ -19,7 +19,12 @@ function storage() {
 }
 // IndexedDB, as much of it as local/shims/sqlite.js uses: one database, object stores of key -> structured
 // clone, requests with onsuccess, transactions that run one after another, complete when their last request's
-// callback has run, and roll back on abort().
+// callback has run, and roll back on abort(). A transaction works on a copy of the store taken when it STARTS
+// running, not when it was created, as in a browser, where a readwrite transaction sees every one that ran
+// before it. Until 1.18.0 the copy was taken at creation: a coalesced save of the database image created just
+// before a vault write, and run just after it, wrote its stale copy back over the vault. A recovery code or an
+// account's wrap then vanished from the stored vault, and device-recovery.test.js failed now and then on a
+// busy CI runner (the node24 job of 1.18.0). The browser never did this; the stand-in did.
 function fakeIndexedDB() {
   const dbs = new Map();
   let chain = Promise.resolve();
@@ -33,7 +38,7 @@ function fakeIndexedDB() {
       close() {},
       transaction(storeName) {
         const tx = { oncomplete: null, onerror: null, onabort: null, error: null, aborted: false, queue: [] };
-        const data = new Map(stores.get(storeName));
+        let data = null; // the store as this transaction sees it: copied when it starts, below
         const request = (op) => { const r = { result: undefined, error: null, onsuccess: null, onerror: null }; tx.queue.push(() => { r.result = op(); if (r.onsuccess) r.onsuccess({ target: r }); }); return r; };
         const store = {
           get: (k) => request(() => structuredClone(data.get(k))),
@@ -47,6 +52,7 @@ function fakeIndexedDB() {
         tx.commit = () => {};
         tx.abort = () => { tx.aborted = true; tx.error = new Error('AbortError'); };
         chain = chain.then(() => new Promise((resolve) => setTimeout(() => {
+          data = new Map(stores.get(storeName));
           while (tx.queue.length && !tx.aborted) tx.queue.shift()();
           if (tx.aborted) { if (tx.onabort) tx.onabort({ target: tx }); } else { stores.set(storeName, data); if (tx.oncomplete) tx.oncomplete({ target: tx }); }
           resolve();
@@ -111,4 +117,4 @@ function strip(x) {
   return o;
 }
 
-module.exports = { loadKernel, kernelCaller, strip, WASM_URL };
+module.exports = { loadKernel, kernelCaller, strip, fakeIndexedDB, WASM_URL };

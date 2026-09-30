@@ -2,7 +2,7 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.18.0 — 2026-09-30
 
 A feature release (two migrations, two permissions and new routes): released in 1.18.0. The version is
 not stamped. The release policy's feature interval runs 28 days from 1.17.0's stamp (2026-09-29 21:08 UTC), so it
