@@ -27,7 +27,7 @@ row is filled in by the commit after its stamp: a commit cannot hold its own has
 | `v1.17.1` | `ab90c2f708b453f28c5f900feca5f67a3f89125a` | 2026-09-29 | `541fe5006b1f78ba1f580bf97655d139c66d35a68936d8d00d4eb9fcf336e0dd` |
 | `v1.18.0` | `39e397eee2957574a8fc420df4556c4d1b171ffe` | 2026-09-30 | `23cc69abda81257e69b09700a637cd3dee0d88e59878a0f4c31456af1099a4cc` |
 | `v1.19.0` | `3dc20dcfa27cefce0d7e715ac1229892d887f4fe` | 2026-09-30 | `c927808937892f9c474a01eee07a8f13c390d54db98ae6425eaa3f99a19bf2ed` |
-| `v1.20.0` | the commit after `Release 1.20.0`, which adds its SBOM (`git log -1 --format=%H --grep='^SBOM of the 1.20.0 stamp' origin/main`) | 2026-09-30 | recorded in a later commit on `main`; rebuild it with the command below |
+| `v1.20.0` | `8f365b4276feca70297debec423dde40e1056aea` ("SBOM of the 1.20.0 stamp", after the stamp `66a616b`) | 2026-09-30 | `048e928499fa3569dfcfc59af86633ad4f8176d3bba1c0dd2fe61b62c35fb9ff` |
 
 **How the checksums were made, and why they can be trusted before the release exists.** The release job builds
 the zip with `git archive --format=zip --prefix="suds-vX.Y.Z/" -o suds-vX.Y.Z.zip <commit>` and hashes it with
@@ -92,7 +92,7 @@ second approval.
 
 | Tag | Its gate (main's scripts) | Latest? Web app? | What the owner does |
 | --- | --- | --- | --- |
-| `v1.16.3`, `v1.16.4` | **Refused**: older than `main`'s version, from a `release.yml` that predates `--latest-out` (`olderReleaseProblem`, since 1.17.1). The tags alone do their job: the policy, migration order and *Backports* measure from them | Their workflow would mark them Latest and start a `Web app` run for 1.16.x | Nothing. A GitHub Release for either is optional: *Run workflow* on the tag with `policy_exception`, approve its release job, **reject its `Web app` run**, then `gh release edit v1.19.0 --latest` |
+| `v1.16.3`, `v1.16.4` | **Refused**: older than `main`'s version, from a `release.yml` that predates `--latest-out` (`olderReleaseProblem`, since 1.17.1). The tags alone do their job: the policy, migration order and *Backports* measure from them | Their workflow would mark them Latest and start a `Web app` run for 1.16.x | Nothing. A GitHub Release for either is optional: *Run workflow* on the tag with `policy_exception`, approve its release job, **reject its `Web app` run**, then `gh release edit v1.20.0 --latest` |
 | `v1.17.0` | **Refused on the feature interval**: 28 days from `v1.16.0` (until 2026-10-27 03:16 UTC), the recorded exception | Not Latest (`main` says 1.19.0); no `Web app` run | *Run workflow* on `v1.17.0` with `policy_exception` = the recorded reason (*Record: 1.17.0*); approve the release job |
 | `v1.17.1` | **Refused on the patch size** (more than 1,500 counted lines), the recorded exception | Not Latest; no `Web app` run | *Run workflow* on `v1.17.1` with `policy_exception` (*Record: 1.17.1*); approve |
 | `v1.18.0` | **Refused on the feature interval**: the previous feature tag `v1.17.0` is minutes old (an annotated tag's own date counts) | Not Latest; no `Web app` run | *Run workflow* on `v1.18.0` with `policy_exception` (*Record: 1.18.0*); approve |
