@@ -147,7 +147,12 @@ module.exports = (r) => {
     const trust = mfaTrust();
     const idp = trust.trusted ? oidc.idpMfa(claims, { acrValues: trust.acrValues }) : null;
     const viaIdp = !!(idp && idp.ok);
-    const mfaPending = !viaIdp && !!user.mfa_enabled;
+    // Without the provider's multi-factor: the authenticator code when the account has one, as after a password; and
+    // for a role that requires two-step verification, an account whose passkey is its enrolment (auth.mfaDeadline)
+    // finishes with the fingerprint (#/mfa), as after a password: single sign-on alone is one factor, and the passkey
+    // must not stand in for a second factor that was never given (docs/FINGERPRINT.md, "Single sign-on").
+    const passkeyStep = auth.policy().mfaRequiredRoles.includes(user.role) && auth.passkeyStepOwed(user);
+    const mfaPending = !viaIdp && (!!user.mfa_enabled || passkeyStep);
     const token = auth.createSession(user, ctx, { mfaPending, mfaSource: viaIdp ? 'idp' : null, reauthMethod: 'sso' });
     audit.log({ user, action: mfaPending ? 'auth.oidc.login.mfa_pending' : 'auth.oidc.login', ip: ctx.ip,
       details: idp ? { mfa: viaIdp ? 'idp' : 'not asserted by the identity provider', via: idp.via || undefined, amr: idp.amr.slice(0, 10), acr: idp.acr || undefined } : undefined });

@@ -563,12 +563,9 @@ test('key rotation finds the signature evidence like any other _enc column, and 
 });
 
 test('the key backup download accepts a fingerprint: fresh by nature, and bound to that download', async () => {
-  const fs = require('node:fs');
   const a = key(); await enrol(admin, a, { password: APW });
-  const was = config.keySource;
+  const restoreKeys = H.throwawayKeys(config);
   try {
-    config.keySource = 'file';
-    fs.writeFileSync(config.keysJsonPath, JSON.stringify({ SUDS_ENCRYPTION_KEY: 'c'.repeat(64) }));
     // A note-signing confirmation is not a key-backup one.
     const n = (await admin.post('/api/notes', { client_id: clientId, kind: 'admin', content: 'x', occurred_at: new Date().toISOString() })).data.id;
     const forNote = await confirmWith(admin, a, 'note.sign', { note_id: n });
@@ -582,7 +579,7 @@ test('the key backup download accepts a fingerprint: fresh by nature, and bound 
     const nav = await person('fp_nokeys');
     await enrol(nav.c, key());
     assert.equal((await nav.c.post('/api/auth/passkeys/challenge', { purpose: 'keys.download' })).status, 403, 'no challenge without settings:manage');
-  } finally { config.keySource = was; fs.rmSync(config.keysJsonPath, { force: true }); }
+  } finally { restoreKeys(); }
 });
 
 test('an auditor exports the evidence and verifies it offline with scripts/verify-passkey-evidence.js', async () => {

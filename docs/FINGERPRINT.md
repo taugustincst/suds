@@ -189,6 +189,16 @@ not bring them back.
   (a non-discoverable one works too). A code field is shown only to an account with an authenticator app. **No
   passkey on this device?** says how to get back in: the device it was set up on, or an administrator resets two-step
   verification (SUDS has no backup codes), after which they sign in with the password and set it up again.
+- **Single sign-on** whose identity provider did not assert multi-factor (no `amr` of `mfa` or two kinds of factor,
+  no trusted `acr`, or "Trust the identity provider's multi-factor sign-in" off) is one factor, like a password. So the
+  same second step follows it (`/#/mfa`): the code with an authenticator app; and, for a role that requires two-step
+  verification, an account whose passkey is its enrolment (fingerprint sign-in allowed) finishes with the fingerprint
+  — until then every request is refused (`401 mfaRequired`), and the session then records `mfa_source = 'passkey'`.
+  Audited as for a password: `auth.oidc.login.mfa_pending`, then `auth.login` with `mfa: true, method: "passkey"`.
+  When the trusted provider asserts multi-factor, nothing more is asked (`mfa_source = 'idp'`). Someone without a
+  passkey, or outside a role that requires it, signs in by single sign-on exactly as on 1.18.0 (tested in
+  `test/fingerprint-sso.test.js`). Before this, the passkey counted as that person's enrolment while never being used,
+  so the single sign-on session was one factor with no deadline (the owner's decision: ask for the fingerprint).
 - The errors are told apart: cancelled or timed out (on the sign-in page, with "or this device has no fingerprint
   sign-in for SUDS yet": browsers do not say which), "No fingerprint sign-in for SUDS was found on this device" (the
   device offered a passkey SUDS does not know), and "the device did not verify you" (no fingerprint or screen lock).

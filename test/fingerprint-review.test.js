@@ -73,11 +73,9 @@ test('finding 1: a password with a made-up code never signs or approves, anywher
   const mkTime = async () => { const t = (await other.c.post('/api/time', { work_date: today(), minutes: 30, category: 'documentation' })).data.id; await other.c.post(`/api/time/${t}/submit`, {}); return t; };
   const mkExp = async () => (await other.c.post('/api/budget/expenditures', { funding_source_id: fund, spent_at: today(), amount: 5, category: 'client_assistance' })).data.id;
   const junk = { password: PW, code: '000000' };
-  const was = config.keySource;
   const keyAdmin = await person('admin', { totpSecret: s });
+  const restoreKeys = H.throwawayKeys(config);
   try {
-    config.keySource = 'file';
-    fs.writeFileSync(config.keysJsonPath, JSON.stringify({ SUDS_ENCRYPTION_KEY: 'c'.repeat(64) }));
     for (const strong of ['1', '0']) {
       setting('sign_strong_required', strong);
       stale(w.u.id); stale(sup.u.id); stale(keyAdmin.u.id);
@@ -117,7 +115,7 @@ test('finding 1: a password with a made-up code never signs or approves, anywher
     const a = key(); assert.equal((await enrol(other.c, a)).status, 201);
     const both = await other.c.post(`/api/notes/${n2}/sign`, { passkey: await confirmWith(other.c, a, 'note.sign', { note_id: n2 }), code: '000000' });
     assert.equal(both.status, 400);
-  } finally { setting('sign_strong_required', null); config.keySource = was; fs.rmSync(config.keysJsonPath, { force: true }); H.db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL`); }
+  } finally { setting('sign_strong_required', null); restoreKeys(); H.db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL`); }
 });
 
 // ================================================================ finding 2 (D2): a signed note by sync push under the policy

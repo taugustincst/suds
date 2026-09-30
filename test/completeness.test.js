@@ -321,15 +321,14 @@ test('POST /api/admin/keys-backup downloads keys.json only after the administrat
   assert.equal((await sup.post('/api/admin/keys-backup', { confirm: true })).status, 403);
   assert.equal((await nav.post('/api/admin/keys-backup', { confirm: true })).status, 403);
   assert.ok([404, 405].includes((await admin.get('/api/admin/keys-backup')).status), 'no longer a plain link a session can follow');
-  const was = config.keySource;
+  const was = config.keySource; let restoreKeys = null;
   const adminId = H.db.one(`SELECT id FROM users WHERE username='admin'`).id;
   try {
     config.keySource = 'env';
     const env = await admin.post('/api/admin/keys-backup', { password: 'AdminPassw0rd!x' });
     assert.equal(env.status, 400); assert.match(env.data.error, /environment/);
-    config.keySource = 'file';
     const body = JSON.stringify({ SUDS_ENCRYPTION_KEY: 'a'.repeat(64), SUDS_INDEX_KEY: 'b'.repeat(64) });
-    fs.writeFileSync(config.keysJsonPath, body);
+    restoreKeys = H.throwawayKeys(config, body);
     // Long after signing in: a confirmation alone is refused, and so is a wrong password.
     H.db.run(`UPDATE sessions SET reauth_at='2020-01-01T00:00:00.000Z' WHERE user_id=?`, adminId);
     const stale = await admin.post('/api/admin/keys-backup', { confirm: true });
@@ -352,5 +351,5 @@ test('POST /api/admin/keys-backup downloads keys.json only after the administrat
     assert.equal((await admin.post('/api/admin/keys-backup', { confirm: true })).status, 403, 'a sign-in just now is not enough either');
     assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='keys.download.failed' AND user_id=? AND details LIKE '%fresh proof%'`, adminId), 'audited');
     assert.equal((await admin.post('/api/admin/keys-backup', { password: 'AdminPassw0rd!x' })).status, 200, 'the password again works');
-  } finally { config.keySource = was; fs.rmSync(config.keysJsonPath, { force: true }); }
+  } finally { if (restoreKeys) restoreKeys(); config.keySource = was; }
 });

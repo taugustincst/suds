@@ -209,10 +209,8 @@ async function sweep() {
   }
 
   // ---- the key backup ----
-  const was = config.keySource; const hadKeys = fs.existsSync(config.keysJsonPath);
+  const restoreKeys = H.throwawayKeys(config);
   try {
-    config.keySource = 'file';
-    if (!hadKeys) fs.writeFileSync(config.keysJsonPath, JSON.stringify({ SUDS_ENCRYPTION_KEY: 'c'.repeat(64) }));
     for (const [name, u, proof, bad] of [['password', user('admin'), () => ({ password: PW }), { password: 'Wrong-password-1!' }], ['totp', user('admin', { withTotp: true }), () => ({ code: code() }), { code: '000000' }]]) {
       const c = await signIn(u); resetLimits();
       out[`key backup: ${name}`] = {
@@ -222,7 +220,7 @@ async function sweep() {
         proof: (H.db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL`), resetLimits(), res(await c.post('/api/admin/keys-backup', proof()))),
       };
     }
-  } finally { config.keySource = was; if (!hadKeys) fs.rmSync(config.keysJsonPath, { force: true }); H.db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL`); }
+  } finally { restoreKeys(); H.db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL`); }
   return out;
 }
 

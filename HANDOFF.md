@@ -46,10 +46,11 @@ _(Append replies here, newest first.)_
 - N1–N7 (docs/FINGERPRINT.md, *Second review*). **Migration 59** adds `sessions.sync_client` (a device's sync
   sign-in, for which a passkey is not a second factor). N2 changes the note content hash (no `client_id`): evidence
   recorded on a development database before this change reads `reason: "content"` — unreleased, so not migrated.
-- Not changed, for the owner: a **single sign-on** session (no MFA asserted by the identity provider) of someone in a
-  role requiring two-step verification whose only second factor is a passkey is not asked for the fingerprint and is
-  not held to the enrolment deadline (the passkey counts as enrolment, `auth.mfaDeadline`), as it was for password
-  sign-ins before the fingerprint work made them owe the fingerprint. Worth deciding before release.
+- Single sign-on (decided, owner's default): when the identity provider does not assert multi-factor, someone in a
+  role requiring two-step verification whose passkey is their enrolment now finishes with the fingerprint on `#/mfa`
+  (TOTP too if they have it), as after a password; with MFA asserted, nothing changes; no passkey, or a device's sync
+  sign-in, as before. `auth.passkeyStepOwed`, `server/routes/oidc.js`; `test/fingerprint-sso.test.js`;
+  docs/FINGERPRINT.md, Sign-in.
 
 ### 2026-09-30 — Claude: the fingerprint review's fixes (branch `fix/fingerprint-r1`, not pushed)
 

@@ -40571,7 +40571,8 @@ var require_oidc2 = __commonJS({
         const trust = mfaTrust();
         const idp = trust.trusted ? oidc.idpMfa(claims, { acrValues: trust.acrValues }) : null;
         const viaIdp = !!(idp && idp.ok);
-        const mfaPending = !viaIdp && !!user.mfa_enabled;
+        const passkeyStep = auth3.policy().mfaRequiredRoles.includes(user.role) && auth3.passkeyStepOwed(user);
+        const mfaPending = !viaIdp && (!!user.mfa_enabled || passkeyStep);
         const token2 = auth3.createSession(user, ctx, { mfaPending, mfaSource: viaIdp ? "idp" : null, reauthMethod: "sso" });
         audit3.log({
           user,
@@ -48061,13 +48062,16 @@ var require_auth2 = __commonJS({
       }
       const mfaRequiredForRole = policy().mfaRequiredRoles.includes(user.role);
       const syncClient = !!ctx.headers["x-sync-client"];
-      const passkeyStep = !syncClient && policy().passkeySignin && passkeyCount(user.id) > 0;
+      const passkeyStep = passkeyStepOwed(user, { syncClient });
       const mfaPending = !!user.mfa_enabled || mfaRequiredForRole && passkeyStep;
       const token2 = createSession(user, ctx, { mfaPending, syncClient });
       if (emergency) console.warn(`[suds] emergency (break-glass) password sign-in by ${user.username} while single sign-on is required`);
       audit3.log({ user, action: mfaPending ? "auth.login.mfa_pending" : "auth.login", ip: ctx.ip, details: emergency ? { emergency_account: true } : void 0 });
       const deadline = mfaDeadline(user, { passkeyCounts: !syncClient });
       return { token: token2, user: publicUser(user), mfaPending, mfaMethods: mfaPending ? mfaMethods(user, { syncClient }) : void 0, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled && !passkeyStep, mfaSetupDeadline: deadline };
+    }
+    function passkeyStepOwed(user, { syncClient = false } = {}) {
+      return !syncClient && policy().passkeySignin && passkeyCount(user.id) > 0;
     }
     function mfaMethods(user, { syncClient = false } = {}) {
       const out2 = [];
@@ -48144,6 +48148,7 @@ var require_auth2 = __commonJS({
       reportRunAllowed,
       submissionRunAllowed,
       createSession,
+      passkeyStepOwed,
       markReauth,
       noteSsoProof,
       takeSsoProof,

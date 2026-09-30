@@ -101,4 +101,18 @@ function asAttacker(fn) {
   }
 }
 
-module.exports = { start, stop, client, makeUser, makeCaseloadUser, deny, agreement, db, asAttacker };
+/**
+ * Serve the key backup from a throwaway keys file for the length of a test: config's data folder is the checkout's
+ * own, shared by the test files running in parallel (one removing the file while another downloads it reset the
+ * connection) and by the developer's real keys. Returns a function that restores config and removes the file.
+ */
+function throwawayKeys(config, keys = { SUDS_ENCRYPTION_KEY: 'c'.repeat(64) }) {
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+  const was = { keySource: config.keySource, keysJsonPath: config.keysJsonPath };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-keys-'));
+  config.keySource = 'file'; config.keysJsonPath = path.join(dir, 'keys.json');
+  fs.writeFileSync(config.keysJsonPath, typeof keys === 'string' ? keys : JSON.stringify(keys));
+  return () => { Object.assign(config, was); fs.rmSync(dir, { recursive: true, force: true }); };
+}
+
+module.exports = { throwawayKeys, start, stop, client, makeUser, makeCaseloadUser, deny, agreement, db, asAttacker };

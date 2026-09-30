@@ -724,7 +724,7 @@ async function login({ username, password, ctx }) {
   // before passkeys: the code when the account has an authenticator app; otherwise the enrolment deadline, after which
   // the session is stopped (requireAuth) and the device told to add an authenticator app (DEVICE_NEEDS_AUTHENTICATOR).
   const syncClient = !!ctx.headers['x-sync-client'];
-  const passkeyStep = !syncClient && policy().passkeySignin && passkeyCount(user.id) > 0;
+  const passkeyStep = passkeyStepOwed(user, { syncClient });
   const mfaPending = !!user.mfa_enabled || (mfaRequiredForRole && passkeyStep);
   const token = createSession(user, ctx, { mfaPending, syncClient });
   // A password sign-in while SSO is required is the break-glass path: said so in the audit trail and the log.
@@ -732,6 +732,15 @@ async function login({ username, password, ctx }) {
   audit.log({ user, action: mfaPending ? 'auth.login.mfa_pending' : 'auth.login', ip: ctx.ip, details: emergency ? { emergency_account: true } : undefined });
   const deadline = mfaDeadline(user, { passkeyCounts: !syncClient });
   return { token, user: publicUser(user), mfaPending, mfaMethods: mfaPending ? mfaMethods(user, { syncClient }) : undefined, mfaSetupRequired: mfaRequiredForRole && !user.mfa_enabled && !passkeyStep, mfaSetupDeadline: deadline };
+}
+/**
+ * Whether a sign-in that proved only one factor (a password, or single sign-on whose provider did not assert
+ * multi-factor) owes the fingerprint as its second step because the account's passkey is what counts as its
+ * enrolment (mfaDeadline): passkey sign-in allowed, the account has a usable passkey, and it is not a device's sync
+ * sign-in (which cannot give one). The caller adds the role check (mfaRequiredRoles).
+ */
+function passkeyStepOwed(user, { syncClient = false } = {}) {
+  return !syncClient && policy().passkeySignin && passkeyCount(user.id) > 0;
 }
 /** The ways this account may finish the second step of signing in: 'totp', 'passkey' (never on a device's sync sign-in). */
 function mfaMethods(user, { syncClient = false } = {}) {
@@ -787,4 +796,4 @@ function passwordPolicy(pw) {
 }
 
 module.exports = { auditUsername, policy, PERMS, WIDENED_1_16, asBefore1_16, hasPerm, rolePerms, effectivePerms, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
-  createSession, markReauth, noteSsoProof, takeSsoProof, reauthStatus, verifySigner, verifyApprover, passkeyCount, mfaMethods, hasLocalPassword, clearReauth, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
+  createSession, passkeyStepOwed, markReauth, noteSsoProof, takeSsoProof, reauthStatus, verifySigner, verifyApprover, passkeyCount, mfaMethods, hasLocalPassword, clearReauth, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
