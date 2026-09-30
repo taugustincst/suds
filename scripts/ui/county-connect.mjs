@@ -11,10 +11,14 @@
 //      Send says so at the card, as Make the county file does) and sees the county's receipt and the send log;
 //      finance cannot change the connection.
 //   4. The county sees the file in its combined view; a read token (shown once) reads the same over the API.
-//   5. axe (WCAG 2.1 A/AA) on the pages and dialogs at 1280, 390 and 320 px, and nothing scrolls sideways.
+//   5. A county whose server starts giving another county code (a stand-in county this script runs): Test connection
+//      says so, the card says nothing is sent until an administrator confirms, and Confirm takes it; a proxy in front
+//      of the county without TRUST_PROXY is warned about on County connections.
+//   6. axe (WCAG 2.1 A/AA) on the pages and dialogs at 1280, 390 and 320 px, and nothing scrolls sideways.
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import http from 'node:http';
 import { makeChecks, until, settle } from './assert.mjs';
 
 const require = createRequire(import.meta.url);
@@ -196,7 +200,46 @@ try {
   ok((await adm.textContent('[data-cc-read]')).includes('County data warehouse'), 'the read token is listed by name');
   await axe(adm, 'County connections, on, with tokens (1280)');
 
-  // ---------------- 5. phone widths ----------------
+  // ---------------- 5. a county that changes its code; a proxy without TRUST_PROXY ----------------
+  let fakeCode = 'FAKE-2345';
+  const fake = http.createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ county: { code: fakeCode, name: 'Stand-in County' }, programme: { id: 'p', name: 'Our own program', active: true }, cadence: 'quarterly_calendar', cadence_label: 'Quarterly', expected: [], outstanding: [], received: [] }));
+  });
+  await new Promise(r => fake.listen(0, '127.0.0.1', r));
+  try {
+    eq((await api(adm, 'PUT', '/api/county-connect/connection', { base_url: `http://127.0.0.1:${fake.address().port}` })).status, 200, 'the connection points at the stand-in county');
+    eq((await api(adm, 'POST', '/api/county-connect/connection/test', {})).data.ok, true, 'which gives its county code');
+    fakeCode = 'ZZZZ-2345';
+    await go(adm, `settlement?from=${lq.from}&to=${lq.to}`);
+    await adm.waitForSelector('[data-cc-test]');
+    await adm.click('[data-cc-test]');
+    const changed = await until(async () => { const o = await adm.getAttribute('[data-cc-result]', 'data-cc-outcome'); return o ? { o, text: await adm.textContent('[data-cc-result]'), role: await adm.getAttribute('[data-cc-result]', 'role') } : null; });
+    eq(changed && changed.o, 'failed', 'Test connection says the county code changed', changed && changed.text);
+    ok(/county code changed/i.test(changed.text) && /ZZZZ-2345/.test(changed.text), 'naming the new code', changed.text);
+    eq(changed.role, 'alert', 'as an alert');
+    const banner = await until(() => adm.$('[data-cc-code-changed]'));
+    ok(banner && /nothing is sent/.test(await banner.textContent()), 'the card says nothing is sent until an administrator confirms');
+    await axe(adm, 'settlement, county code changed (1280)');
+    await adm.click('[data-cc-confirm-code]'); await adm.waitForSelector('.modal-bg .modal');
+    await axe(adm, 'Confirm the new county code dialog (1280)');
+    await adm.click('.modal-bg .modal .btn.primary');
+    ok(await toast(adm, /Confirmed/), 'confirming the new code is saved');
+    ok(await until(async () => !(await adm.$('[data-cc-code-changed]'))), 'and the warning goes');
+    eq((await api(adm, 'GET', '/api/county-connect/connection')).data.county_code, 'ZZZZ2345', 'the confirmed code is the one files are made for');
+  } finally { await new Promise(r => { fake.closeAllConnections(); fake.close(r); }); }
+  eq((await api(adm, 'PUT', '/api/county-connect/connection', { base_url: base })).status, 200, 'the connection points back at this server');
+  // A machine call through a proxy (X-Forwarded-For) while this server has no TRUST_PROXY: County connections warns.
+  await fetch(`${base}/api/county-connect/v1/status`, { headers: { Authorization: `Bearer ${token}`, 'X-Forwarded-For': '198.51.100.20' } });
+  const trusted = (await api(adm, 'GET', '/api/county-connect/settings')).data.trust_proxy;
+  await go(adm, 'county-connect');
+  if (trusted) ok(!(await adm.$('[data-cc-proxy-warning]')), 'with TRUST_PROXY set there is no proxy warning');
+  else {
+    ok(/TRUST_PROXY=1/.test((await adm.textContent('[data-cc-proxy-warning]').catch(() => '')) || ''), 'County connections warns that TRUST_PROXY is not set behind a proxy');
+    await axe(adm, 'County connections, proxy warning (1280)');
+  }
+
+  // ---------------- 6. phone widths ----------------
   for (const width of [390, 320]) {
     const { ctx, page } = await signIn('admin', 'AdminPassw0rd!x', { width, height: 844 });
     for (const hash of ['county-connect', 'county?tab=programmes', `settlement?from=${lq.from}&to=${lq.to}`]) {

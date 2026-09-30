@@ -83,6 +83,7 @@ route('county-connect', async () => {
   const settingsCard = h('section', { class: 'card mb', 'aria-labelledby': 'cc-set-h', 'data-cc-settings': '1' },
     h('div', { class: 'card-head' }, h('h2', { id: 'cc-set-h' }, 'The connection')),
     h('p', { class: 'small' }, 'Off by default. Switched on, programs the county has issued a connection token to can send their signed county file to this server over the internet, and see which periods the county still expects. The address must be reachable from the programs\' servers: through the county\'s TLS proxy, or a VPN (docs/DEPLOYMENT.md).'),
+    s.proxy_warning ? h('p', { class: 'banner warn small', role: 'note', 'data-cc-proxy-warning': '1' }, s.proxy_warning) : null,
     kv([['Status', s.enabled ? badge('On: accepting connections', 'ok') : badge('Off', '')], ['County code', s.county_code_display || s.county_code || '—'],
       ['Send address', h('code', { class: 'small' }, `${location.origin}${s.endpoints.submissions}`)], ['Status address', h('code', { class: 'small' }, `${location.origin}${s.endpoints.status}`)]]),
     configure ? form([
@@ -160,7 +161,9 @@ export function countySendCard(choice = {}) {
       btn.disabled = true;
       try {
         const r = await post('/api/county-connect/connection/test', {}, { quiet: true });
-        if (r.ok) {
+        if (r.ok && r.code_changed) {
+          say([h('p', {}, h('b', {}, 'The county code changed. '), `The county's server now gives county code ${r.connection.pending_county_code ? r.connection.pending_county_code.code_display : r.code_changed.code}, not the code this server was connected to. Nothing is sent, and automatic sending is off, until an administrator checks with the county and confirms the new code.`)], false);
+        } else if (r.ok) {
           const st = r.status;
           say([h('p', {}, h('b', {}, 'Connected. '), `${st.county.name || 'The county'} expects ${st.cadence_label ? st.cadence_label.toLowerCase() : 'periodic'} files from ${st.programme.name}.`),
             st.outstanding.length ? h('p', {}, `Outstanding: ${st.outstanding.map(p => p.label || periodText(p)).join('; ')}.`) : h('p', {}, 'Nothing outstanding: the county has a file for every period it expects.')], true);
@@ -189,7 +192,17 @@ export function countySendCard(choice = {}) {
       if (!await confirmDialog('Disconnect from the county?', 'The county\'s address and token are removed from this server. The county keeps what it received; the send log stays here.', { danger: true, okText: 'Disconnect' })) return;
       try { await del('/api/county-connect/connection'); toast('Disconnected.', 'ok'); await refresh(); } catch (e) { toast(e.message, 'error'); }
     } }, 'Disconnect') : null;
+    const pend = c.pending_county_code;
+    const pendingBox = pend ? h('div', { class: 'banner warn', role: 'note', 'data-cc-code-changed': '1' },
+      h('p', {}, h('b', {}, 'The county\'s server now gives a different county code. '), `It gave ${pend.previous_display}; it now gives ${pend.code_display}${pend.name ? ` (${pend.name})` : ''}. A county's code does not normally change, so nothing is sent to it, and automatic sending is off, until an administrator checks with the county (by phone, not by email from the same server) and confirms the new code.`),
+      c.can_configure ? h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', 'data-cc-confirm-code': '1', onClick: async (e) => {
+        const btn = e.currentTarget;
+        if (!await confirmDialog('Confirm the new county code?', `Files will be made for county code ${pend.code_display} and sent to ${c.base_url}. Confirm only once the county has told you this is its code.`, { okText: 'Confirm the new code' })) { btn.focus(); return; }
+        try { await put('/api/county-connect/connection', { confirm_county_code: true }); toast('Confirmed. Switch automatic sending on again under Change the connection if you want it.', 'ok'); await refresh(); }
+        catch (err) { toast(err.message, 'error'); }
+      } }, `Confirm ${pend.code_display} as the county's code`)) : h('p', { class: 'small' }, 'An administrator confirms it.')) : null;
     body.replaceChildren(
+      ...(pendingBox ? [pendingBox] : []),
       kv([['County SUDS address', h('code', { class: 'small', 'data-cc-url': '1' }, c.base_url)], ['Token', h('code', { class: 'small' }, `${c.token_hint}… (saved, not shown)`)],
         ['County', c.county_name ? `${c.county_name}${c.county_code ? ` (code ${c.county_code})` : ''}` : '—'],
         ['Last tested', c.last_checked_at ? `${fmt.date(c.last_checked_at)}: ${c.last_check_ok ? 'connected' : `not connected (${c.last_check_error || 'unknown'})`}` : 'Not yet'],
