@@ -28,11 +28,11 @@ Built for 1.23.0, not yet released. No migration, no new permission or route (th
   check-in list and the program-wide figures come after, and the **Update this page every 90 seconds** switch moves
   to the foot. The program-wide cards (*at a glance*, the visits chart, the team's hand-offs, consents expiring)
   **fold**, folded on a phone and open on a computer until the person chooses, and the choice is remembered per user
-  (prefs `home_folded`). The welcome card has a **×** besides *Got it*; either puts it away for that user on every
+  (prefs `home_folded`). The welcome card has a **×** beside *Got it*; either puts it away for that user on every
   device. A computer keeps its layout. Measured on the seed at 390 × 844, first sign-in with the welcome showing:
-  "To-dos for today" at 799 px → 235 px from the top (on the first screen); Home 3,308 → 2,603 px tall for a
-  navigator, 3,685 → 2,980 px for a peer navigator (2,352 and 2,730 px once the welcome is dismissed). At 1,280 px
-  the navigator's Home is 1,644 → 1,682 px (the fold headings).
+  "To-dos for today" at 799 px → 235 px from the top (on the first screen); Home 3,308 → 2,577 px tall for a
+  navigator, 3,685 → 2,954 px for a peer navigator (2,326 and 2,703 px once the welcome is dismissed). At 1,280 px
+  the navigator's Home without the welcome is 1,644 → 1,635 px.
 * Browser checks: `scripts/ui/menu-home.mjs` (new, in the suite) — the menu as drawn for a navigator, a peer
   navigator, a clinician and a supervisor in each profile at 390 px, Street outreach opening from the peer's menu,
   "To-dos for today" in the top 700 px on a first sign-in, the welcome's ×, the folded state after a reload, the
