@@ -258,6 +258,7 @@ The database's schema version is the number of the newest migration it has run (
 | Migration 64 | 1.22.0 | Field scope follows the account: `field_accounts` (one row per staff account held to the field scope on every device: the account id, when, and how: an administrator, the account's own enrolment, the programme default, a device; no client data, office server only) and `devices.scope_set_by` (who last decided a device's scope: `default`, `enrolment`, `account`, `admin`). No PHI |
 | Migration 65 | 1.22.0 | County publication governance: `county_publication_consents` (each programme's written agreement to publication: its date, the reference `reference_enc`, who recorded and withdrew it) and `county_publication_inputs` (what each release was screened from, `inputs_enc`, append-only by triggers). No client data. |
 | Migration 66 | 1.22.0 | The authenticator allow-list's grace period: `passkeys.allowlist_grace_until` (when a refused passkey's grace period ends; a date, nothing about the person) |
+| Migration 67 | 1.23.0 (built for 1.23.0, not yet released) | Follow-up to-dos: `tasks.call_id` and `tasks.intervention_id` (the call or visit whose follow-up date made a to-do, so changing the date moves it; ids only, no new data about people) |
 
 `test/doc-content-currency.test.js` fails when the newest migration, or one the newest stamped release's CHANGELOG section names, is not in this table.
 
