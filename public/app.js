@@ -1776,19 +1776,23 @@ function firstDayList() {
 /** Home's welcome card, or null once put away (unless asked for again from Help). */
 export function welcomeCard({ force = false, experienced = false } = {}) {
   if (paused || (!force && prefs.get('tour_done'))) return null;
+  // Put away for good (prefs tour_done follows the person to every device), from Got it or the × in the corner (1.23.0:
+  // on a phone the card is below today's work, and the × is where people look to close a card).
+  const dismiss = () => {
+    prefs.set('tour_done', true);
+    // Focus goes to the page's heading, not to nothing, when the card it was in goes away.
+    const h1 = document.querySelector('.main h1'); card.remove();
+    if (h1) { if (!h1.hasAttribute('tabindex')) h1.setAttribute('tabindex', '-1'); try { h1.focus({ preventScroll: true }); } catch {} }
+  };
   const card = h('section', { class: 'card mb welcome-card', 'data-welcome': '1', 'aria-labelledby': 'welcome-title' },
-    h('div', { class: 'card-head' }, h('h2', { id: 'welcome-title' }, 'Welcome to SUDS')),
+    h('div', { class: 'card-head' }, h('h2', { id: 'welcome-title' }, 'Welcome to SUDS'),
+      h('button', { type: 'button', class: 'btn ghost sm welcome-close', 'data-welcome-dismiss': '1', 'aria-label': 'Dismiss the welcome', title: 'Dismiss the welcome', onClick: dismiss }, h('span', { 'aria-hidden': 'true' }, '×'))),
     h('p', { 'data-welcome-intro': '1' }, welcomeIntro()),
     experienced ? null : firstDayList(),
     h('details', { class: 'welcome-tips' }, h('summary', {}, 'A few things that help'),
       h('ul', { class: 'welcome-steps' }, welcomeSteps().map(([t, text]) => h('li', {}, h('b', {}, t), ' — ', text)))),
     h('div', { class: 'row' },
-      h('button', { class: 'btn primary', type: 'button', 'data-welcome-done': '1', onClick: () => {
-        prefs.set('tour_done', true);
-        // Focus goes to the page's heading, not to nothing, when the card it was in goes away.
-        const h1 = document.querySelector('.main h1'); card.remove();
-        if (h1) { if (!h1.hasAttribute('tabindex')) h1.setAttribute('tabindex', '-1'); try { h1.focus({ preventScroll: true }); } catch {} }
-      } }, 'Got it'),
+      h('button', { class: 'btn primary', type: 'button', 'data-welcome-done': '1', onClick: dismiss }, 'Got it'),
       h('span', { class: 'small muted' }, 'You can open this again from Help at the foot of the menu.')));
   return card;
 }
