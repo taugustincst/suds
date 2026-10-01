@@ -9,7 +9,9 @@
 //   node test/fixtures/make-release-fixture.js /tmp/suds-v1.11.0 test/fixtures/release-v1.11.0.sql [--rich]
 //
 // release-v1.18.0.sql: `git archive 39e397e` (the "Release 1.18.0" commit; not tagged), --rich; release-v1.19.0.sql:
-// `git archive 3dc20dc server package.json` ("Release 1.19.0"), --rich (its county_submissions rows are signed ones). A table whose key is
+// `git archive 3dc20dc server package.json` ("Release 1.19.0"), --rich (its county_submissions rows are signed ones);
+// release-v1.20.0.sql: `git archive 8f365b4 server package.json` (the v1.20.0 commit), --rich (its county rows made
+// through its own API: signed files it imported, one superseded, and a quarter the county entered). A table whose key is
 // CHECKed to one value (county_connection) gets its one row, and is listed in the expectation's `rich.singletons`.
 //
 // --rich (release-v1.11.0.sql and release-v1.13.0.sql): a database with realistic rows in every table that has
@@ -101,8 +103,29 @@ async function enrich(db, call) {
     const c = await call('POST', '/api/clients', { first_name, last_name, ...(preferred_name ? { preferred_name } : {}), dob, phone, status: 'active', intake_date: '2026-08-04', confirm_duplicate: true });
     unicode.push({ id: c.id, first_name, last_name, preferred_name, dob, phone });
   }
-  // Every table with an encrypted column: top it up to RICH_ROWS rows, and give every such column a value.
   const d = db.get();
+  // A release with county-entered figures (1.20.0 on: county_submissions.source, and a CHECK tying a signed row to its
+  // key and signature and an entered one to neither, which rows made up below cannot satisfy): its county rows
+  // through its own API, as docs/evidence/upgrade-drill-2026-10-01-v1.21.0 makes them. This server registers itself
+  // as a programme with its county-submission key and imports its own signed files for two quarters, the second twice
+  // (so one is superseded); and a programme not on SUDS gets a quarter the county entered.
+  if (d.prepare(`PRAGMA table_info(county_submissions)`).all().some((c) => c.name === 'source')) {
+    await call('POST', '/api/county-submission/key', {});
+    const cur = await call('GET', '/api/county-submission/key');
+    const code = await call('GET', '/api/county/code');
+    const funds = (await call('GET', '/api/county-submission/options')).funds.map((f) => f.id);
+    await call('POST', '/api/county/programmes', { name: 'Fixture Programme', public_key: cur.key.public_key, compared: true });
+    for (const [from, to] of [['2026-01-01', '2026-03-31'], ['2026-04-01', '2026-06-30'], ['2026-04-01', '2026-06-30']]) {
+      const f = await call('GET', `/api/county-submission/file?from=${from}&to=${to}&county_code=${code.code}&county_name=${encodeURIComponent('Fixture County')}&funds=${funds.join(',')}`);
+      await new Promise((res) => setTimeout(res, 20));
+      await call('POST', '/api/county/submissions', { text: JSON.stringify(f, null, 2) });
+    }
+    const other = await call('POST', '/api/county/programmes', { name: 'Paper Reports Collective', not_on_suds: true });
+    await call('POST', `/api/county/programmes/${other.id}/entries`, { from: '2026-01-01', to: '2026-03-31', source_ref: 'Q1 report emailed 3 April 2026 — “Zoë”', funds: [{ name: 'County settlement share', grant_number: 'OSF-FX-1', category: 'core_h', hiaa: 'hiaa_4',
+      spend_own_category: '1000.50', spend_other_categories: '0', spend_pending: '25', contacts: '120', naloxone_kits: '80', fentanyl_strips: '300', syringes: '900', reversals: '3', treatment_admissions: '2',
+      education_contacts: '5', staff_training_hours: '12.5', referrals_made: '14', people_served: '70', people_linked: '6', moud_linked: '2', people_trained: '9' }] });
+  }
+  // Every table with an encrypted column: top it up to RICH_ROWS rows, and give every such column a value.
   const tables = d.prepare(`SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all();
   const made = {}; let n = 0;
   // A table after the tables it refers to, so a row made here can refer to rows made here.

@@ -1,0 +1,283 @@
+[upgrade-drill] 1.16.2 (/tmp/claude-0/-home-user-suds/d4ee5b51-c604-5f92-b8c2-e9f94f21d1eb/scratchpad/p4/tree1162) -> 1.21.0 (/tmp/claude-0/-home-user-suds/d4ee5b51-c604-5f92-b8c2-e9f94f21d1eb/scratchpad/p4/tree121); work directory /tmp/suds-upgrade-drill-0qfKn4; node v22.22.2
+[upgrade-drill] PASS 1.16.2: seed the fictional sample data (npm run seed) (1294 ms) — Seeded 12 clients, 112 visits, 70 calls, 45 notes, 15 resources.
+[upgrade-drill] PASS 1.16.2: add 20000 fictional clients with 8 visits each, every creation audited (13883 ms) — 20012 clients, 20001 audit entries
+[upgrade-drill] PASS 1.16.2: its server starts on the data directory (/api/health) (288 ms) — HTTP 200
+[upgrade-drill] PASS 1.16.2: through its API — note written, signed (password) and countersigned; TOTP enrolled for mrivera; passkey and sync device where the release has them; sessions kept (600 ms) — note 3ba4a59e-0da5-4cf3-82c3-ee6017016517 signature df5b60883eee…, countersignature b26a55d51c71…; /verify {"signed":true,"intact":true,"cosignature_intact":true}; no passkeys in this release; sync device upgrade-drill-device-1 signed in as jwalker (token issued); not in this release
+[upgrade-drill] PASS 1.16.2: audit anchor sealed; manifest of the database before the upgrade (608 ms) — schema 48; 59 tables; clients 20012, notes 46, audit_log 20009; 464 encrypted values sampled; audit chain {"ok":true,"checked":20009,"anchoredAt":1,"lastId":20009,"checkpointed":false}; anchor anchor-2026-10-01T00-37-53-334Z-000000020009.json
+[upgrade-drill] PASS 1.21.0: its server starts on the 1.16.2 data directory — migrations 49..63 run — and answers /api/health (4878 ms) — HTTP 200; start to healthy 4.9 s
+[upgrade-drill] PASS 1.21.0: through its API after the upgrade — the 1.16.2 session, password + TOTP sign-in, the signed note verifies, a name search finds clients (390 ms) — old session /api/auth/me HTTP 200; password -> second factor asked (true); wrong code HTTP 401; TOTP HTTP 200; read before the code HTTP 401; /api/notes/:id/verify {"signed":true,"intact":true,"cosignature_intact":true}; search "Exercise7" 5 hit(s)
+[upgrade-drill] PASS 1.21.0: the 1.16.2 sessions (browser, sync device) still answer; the device signs in again and is told scope 'full' (migration 62) (163 ms) — /api/auth/me with each kept session {"browser":200,"device":200}; no passkey on the older release; device sign-in HTTP 200, device {"scope":"full"}
+[upgrade-drill] PASS 1.21.0: schema at this build's version, integrity_check, foreign keys (4155 ms) — schema 63 (latest 63); integrity_check ok; foreign_key_check 0 violation(s)
+[upgrade-drill] PASS 1.21.0: upgraded schema identical to a fresh install (test/migrations.test.js comparison: columns, indexes, triggers of every table) (0 ms) — 76 tables; vs schema.sql: identical; vs a database 1.21.0 created itself: identical
+[upgrade-drill] PASS 1.21.0: no rows lost — every 1.16.2 table holds at least what it did (0 ms) — 59 tables compared; lost: none; changed: audit_log 20009 -> 20015, sessions 3 -> 6, settings 12 -> 13; new tables: ai_usage 0, authenticator_metadata 0, caloms_submission_events 0, client_revisions 0, county_connect_sends 0, county_connect_tokens 0, county_connection 0, county_programme_keys 0, county_programmes 0, county_publications 0, county_signing_keys 0, county_submissions 0, passkeys 0, prevention_events 0, referral_links 0, signature_evidence 0, webauthn_challenges 0
+[upgrade-drill] PASS 1.21.0: every sampled encrypted value decrypts to the plaintext 1.16.2 wrote (0 ms) — 464/464 values across 33 *_enc columns
+[upgrade-drill] PASS 1.21.0: the signed and countersigned note's hashes are unchanged and verify (0 ms) — {"status":"signed","signature_hash_unchanged":true,"signature_intact":true,"cosignature_hash_unchanged":true,"cosignature_intact":true}
+[upgrade-drill] PASS 1.21.0: users unchanged (role, active, TOTP enrolled) (0 ms) — 7 users; mrivera mfa_enabled=1
+[upgrade-drill] PASS 1.21.0: the audit chain verifies end to end (0 ms) — {"ok":true,"checked":20015,"anchoredAt":1,"lastId":20015,"checkpointed":false} (before the upgrade: 20009 entries)
+[upgrade-drill] PASS 1.21.0: every session, device and passkey 1.16.2 wrote is kept with the same values (sessions: id, user, created, mfa_pending, reauth_method, passkey_id, sync_client, revoked) (0 ms) — sessions 3/3; devices 1/1; sessions opened before the upgrade: [{"sync_client":0,"reauth_method":null,"with_passkey":0,"n":3}]; rows {"passkeys":0,"webauthn_challenges":0,"signature_evidence":0,"county_signing_keys":0,"county_programmes":0,"county_programme_keys":0,"county_submissions":0,"county_connect_tokens":0,"county_connection":0,"county_connect_sends":0,"county_publications":0,"authenticator_metadata":0,"devices":1}
+[upgrade-drill] PASS 1.21.0: migrations 61-63 — county_publications and authenticator_metadata exist; devices sync_scope 'full'; no client has a participant code; passkeys unattested; older sessions have no device_id (0 ms) — tables {"county_publications":0,"authenticator_metadata":0} (county_publications holds the 0 release(s) published in step 4); devices written before the upgrade [{"sync_scope":"full","scope_changed_at":null,"field_applied_at":null,"n":1}]; clients {"total":20012,"participant_code_set":0}, index idx_clients_participant_code true; passkeys written before {"n":0,"attested":0}; sessions opened before {"n":3,"with_device":0}
+[upgrade-drill] PASS 1.21.0: the database was snapshotted before the migrations and the snapshot sealed (0 ms) — suds.db.v48.2026-10-01T00-37-55-190Z.db.enc: opens with the backup key, schema 48, 20012 clients
+[upgrade-drill] PASS 1.21.0: encrypted backup of the upgraded database (scheduled-backup path, read back and verified) (4527 ms) — suds-2026-10-01T00-38-04-748Z.db.enc, 176292 KB, sqlite-online-backup, verified=true
+[upgrade-drill] PASS 1.21.0: recovery drill on that backup with the escrowed key file (npm run dr-drill -- --backup <file> --keys-file <keys.json>) (3776 ms) — 11/11 checks passed; RTO 3.1 s; RPO 5 s; audit entries verified 20015
+[upgrade-drill] PASS 1.21.0: host restore of that backup into a fresh data directory (node scripts/backup.js --restore) (2706 ms) — Restored to <work>/fresh-data/suds.db (20012 clients, schema 63).
+[upgrade-drill] PASS 1.21.0: the restored copy serves (server/index.js on the fresh data directory, /api/health) (322 ms) — HTTP 200; restore start to healthy 3.0 s
+[upgrade-drill] PASS 1.21.0: in the restored copy, mrivera signs in with password + TOTP and the note still verifies (0 ms) — TOTP HTTP 200; /verify {"signed":true,"intact":true,"cosignature_intact":true}
+[upgrade-drill] PASS 1.21.0: row counts in the fresh data directory equal the upgraded source at backup time; audit chain verifies (269 ms) — 76 tables; clients 20012, interventions 160112, notes 46, audit_log 20015 -> 20017; schema 63; audit {"ok":true,"checked":20017,"anchoredAt":1,"lastId":20017,"checkpointed":false}
+[upgrade-drill] PASS 1.21.0: the signed drill report verifies with the public key only (npm run verify-dr-report) (51 ms) — public key: supplied (key id 9fc14ad916e9bea4); VERIFIED
+
+===== signed drill report on the upgraded database (text) =====
+SUDS disaster-recovery drill — PASSED
+Started 2026-10-01T00:38:09.263Z, finished 2026-10-01T00:38:12.905Z (cli, by cli) on vm, SUDS 1.21.0
+
+Backup restored: suds-2026-10-01T00-38-04-748Z.db.enc — the given copy in /tmp/suds-upgrade-drill-0qfKn4/data/backups (taken 2026-10-01T00:38:04.748Z)
+Keys used: escrow file (escrowed-keys.json)
+RTO (restore to serving): 3.1 s — target 60 min — met
+RPO (age of that backup): 5 s — target 24 h — met
+
+Checks:
+  [PASS] The escrowed key file opens the backup — escrow file escrowed-keys.json; encryption key eea181cee3af, index key d5a7ffe7f09b
+  [PASS] The restored file passes SQLite integrity_check — ok
+  [PASS] The encryption key in custody opens this backup
+  [PASS] Schema is at this build's version (63) — schema 63
+  [PASS] Every table holds the rows the backup was taken with — 76 tables
+  [PASS] The audit chain verifies end to end — 20015 entries
+  [PASS] The restored audit chain matches the anchors written before the backup — 2 matched, 0 written after this backup
+  [PASS] A sample of encrypted fields decrypts — 144 values across every *_enc column
+  [PASS] The application serves from the restored copy (/api/health) — healthy
+  [PASS] Password and second-factor sign-in work — login HTTP 200, MFA HTTP 200
+  [PASS] An authenticated read returns the restored records — HTTP 200, 20012 clients
+
+Rows the live server holds beyond this backup: clients 0, notes 0, interventions 0, referrals 0, tasks 0, audit_log 1
+
+The backup was restored into a temporary directory, checked by a separate process that was never given the live database's path, and deleted afterwards. The live database received only this result (a settings row and an audit entry).
+Integrity: SHA-256 0962df44baefe0432f87cdf261242eaef77d626a3ede7505d9630fff4d34c448
+           HMAC-SHA256 db13ccf491d29e1f3b094c383e271d915d07bfed309a86e3044bbb1c445d103e
+           Ed25519 signature At9byRF6Y3snNehcL1Ha35zEjvOo0xlnci03sNBjCgCEr50PcNF4WnGkZ3goyvsP8tTAthk22P8BD2WQOjM9Bg==
+           signing key 9fc14ad916e9bea4 (public key published at GET /api/admin/security/signing-key)
+Verify with the public key only: npm run verify-dr-report -- <the .json report> --public-key <signing-key.pem>
+The JSON report beside this file is the record of the drill; this text is a convenience copy.
+
+===== upgrade drill summary =====
+{
+  "kind": "suds-upgrade-drill",
+  "ok": true,
+  "environment": "development exercise on a throwaway seeded database (fictional data); not a production upgrade",
+  "from": {
+    "version": "1.16.2",
+    "schema_version": 48,
+    "tables": 59
+  },
+  "to": {
+    "version": "1.21.0",
+    "schema_version": 63,
+    "tables": 76
+  },
+  "started_at": "2026-10-01T00:37:37.094Z",
+  "finished_at": "2026-10-01T00:38:30.675Z",
+  "host": {
+    "node": "v22.22.2",
+    "platform": "linux 6.18.44-fc-v50",
+    "cpus": 4,
+    "memory_gb": 16
+  },
+  "clients_added": 20000,
+  "steps": [
+    {
+      "name": "1.16.2: seed the fictional sample data (npm run seed)",
+      "ms": 1294,
+      "ok": true,
+      "detail": "Seeded 12 clients, 112 visits, 70 calls, 45 notes, 15 resources."
+    },
+    {
+      "name": "1.16.2: add 20000 fictional clients with 8 visits each, every creation audited",
+      "ms": 13883,
+      "ok": true,
+      "detail": "20012 clients, 20001 audit entries"
+    },
+    {
+      "name": "1.16.2: its server starts on the data directory (/api/health)",
+      "ms": 288,
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "1.16.2: through its API — note written, signed (password) and countersigned; TOTP enrolled for mrivera; passkey and sync device where the release has them; sessions kept",
+      "ms": 600,
+      "ok": true,
+      "detail": "note 3ba4a59e-0da5-4cf3-82c3-ee6017016517 signature df5b60883eee…, countersignature b26a55d51c71…; /verify {\"signed\":true,\"intact\":true,\"cosignature_intact\":true}; no passkeys in this release; sync device upgrade-drill-device-1 signed in as jwalker (token issued); not in this release"
+    },
+    {
+      "name": "1.16.2: audit anchor sealed; manifest of the database before the upgrade",
+      "ms": 608,
+      "ok": true,
+      "detail": "schema 48; 59 tables; clients 20012, notes 46, audit_log 20009; 464 encrypted values sampled; audit chain {\"ok\":true,\"checked\":20009,\"anchoredAt\":1,\"lastId\":20009,\"checkpointed\":false}; anchor anchor-2026-10-01T00-37-53-334Z-000000020009.json"
+    },
+    {
+      "name": "1.21.0: its server starts on the 1.16.2 data directory — migrations 49..63 run — and answers /api/health",
+      "ms": 4878,
+      "ok": true,
+      "detail": "HTTP 200; start to healthy 4.9 s"
+    },
+    {
+      "name": "1.21.0: through its API after the upgrade — the 1.16.2 session, password + TOTP sign-in, the signed note verifies, a name search finds clients",
+      "ms": 390,
+      "ok": true,
+      "detail": "old session /api/auth/me HTTP 200; password -> second factor asked (true); wrong code HTTP 401; TOTP HTTP 200; read before the code HTTP 401; /api/notes/:id/verify {\"signed\":true,\"intact\":true,\"cosignature_intact\":true}; search \"Exercise7\" 5 hit(s)"
+    },
+    {
+      "name": "1.21.0: the 1.16.2 sessions (browser, sync device) still answer; the device signs in again and is told scope 'full' (migration 62)",
+      "ms": 163,
+      "ok": true,
+      "detail": "/api/auth/me with each kept session {\"browser\":200,\"device\":200}; no passkey on the older release; device sign-in HTTP 200, device {\"scope\":\"full\"}"
+    },
+    {
+      "name": "1.21.0: schema at this build's version, integrity_check, foreign keys",
+      "ms": 4155,
+      "ok": true,
+      "detail": "schema 63 (latest 63); integrity_check ok; foreign_key_check 0 violation(s)"
+    },
+    {
+      "name": "1.21.0: upgraded schema identical to a fresh install (test/migrations.test.js comparison: columns, indexes, triggers of every table)",
+      "ms": 0,
+      "ok": true,
+      "detail": "76 tables; vs schema.sql: identical; vs a database 1.21.0 created itself: identical"
+    },
+    {
+      "name": "1.21.0: no rows lost — every 1.16.2 table holds at least what it did",
+      "ms": 0,
+      "ok": true,
+      "detail": "59 tables compared; lost: none; changed: audit_log 20009 -> 20015, sessions 3 -> 6, settings 12 -> 13; new tables: ai_usage 0, authenticator_metadata 0, caloms_submission_events 0, client_revisions 0, county_connect_sends 0, county_connect_tokens 0, county_connection 0, county_programme_keys 0, county_programmes 0, county_publications 0, county_signing_keys 0, county_submissions 0, passkeys 0, prevention_events 0, referral_links 0, signature_evidence 0, webauthn_challenges 0"
+    },
+    {
+      "name": "1.21.0: every sampled encrypted value decrypts to the plaintext 1.16.2 wrote",
+      "ms": 0,
+      "ok": true,
+      "detail": "464/464 values across 33 *_enc columns"
+    },
+    {
+      "name": "1.21.0: the signed and countersigned note's hashes are unchanged and verify",
+      "ms": 0,
+      "ok": true,
+      "detail": "{\"status\":\"signed\",\"signature_hash_unchanged\":true,\"signature_intact\":true,\"cosignature_hash_unchanged\":true,\"cosignature_intact\":true}"
+    },
+    {
+      "name": "1.21.0: users unchanged (role, active, TOTP enrolled)",
+      "ms": 0,
+      "ok": true,
+      "detail": "7 users; mrivera mfa_enabled=1"
+    },
+    {
+      "name": "1.21.0: the audit chain verifies end to end",
+      "ms": 0,
+      "ok": true,
+      "detail": "{\"ok\":true,\"checked\":20015,\"anchoredAt\":1,\"lastId\":20015,\"checkpointed\":false} (before the upgrade: 20009 entries)"
+    },
+    {
+      "name": "1.21.0: every session, device and passkey 1.16.2 wrote is kept with the same values (sessions: id, user, created, mfa_pending, reauth_method, passkey_id, sync_client, revoked)",
+      "ms": 0,
+      "ok": true,
+      "detail": "sessions 3/3; devices 1/1; sessions opened before the upgrade: [{\"sync_client\":0,\"reauth_method\":null,\"with_passkey\":0,\"n\":3}]; rows {\"passkeys\":0,\"webauthn_challenges\":0,\"signature_evidence\":0,\"county_signing_keys\":0,\"county_programmes\":0,\"county_programme_keys\":0,\"county_submissions\":0,\"county_connect_tokens\":0,\"county_connection\":0,\"county_connect_sends\":0,\"county_publications\":0,\"authenticator_metadata\":0,\"devices\":1}"
+    },
+    {
+      "name": "1.21.0: migrations 61-63 — county_publications and authenticator_metadata exist; devices sync_scope 'full'; no client has a participant code; passkeys unattested; older sessions have no device_id",
+      "ms": 0,
+      "ok": true,
+      "detail": "tables {\"county_publications\":0,\"authenticator_metadata\":0} (county_publications holds the 0 release(s) published in step 4); devices written before the upgrade [{\"sync_scope\":\"full\",\"scope_changed_at\":null,\"field_applied_at\":null,\"n\":1}]; clients {\"total\":20012,\"participant_code_set\":0}, index idx_clients_participant_code true; passkeys written before {\"n\":0,\"attested\":0}; sessions opened before {\"n\":3,\"with_device\":0}"
+    },
+    {
+      "name": "1.21.0: the database was snapshotted before the migrations and the snapshot sealed",
+      "ms": 0,
+      "ok": true,
+      "detail": "suds.db.v48.2026-10-01T00-37-55-190Z.db.enc: opens with the backup key, schema 48, 20012 clients"
+    },
+    {
+      "name": "1.21.0: encrypted backup of the upgraded database (scheduled-backup path, read back and verified)",
+      "ms": 4527,
+      "ok": true,
+      "detail": "suds-2026-10-01T00-38-04-748Z.db.enc, 176292 KB, sqlite-online-backup, verified=true"
+    },
+    {
+      "name": "1.21.0: recovery drill on that backup with the escrowed key file (npm run dr-drill -- --backup <file> --keys-file <keys.json>)",
+      "ms": 3776,
+      "ok": true,
+      "detail": "11/11 checks passed; RTO 3.1 s; RPO 5 s; audit entries verified 20015"
+    },
+    {
+      "name": "1.21.0: host restore of that backup into a fresh data directory (node scripts/backup.js --restore)",
+      "ms": 2706,
+      "ok": true,
+      "detail": "Restored to <work>/fresh-data/suds.db (20012 clients, schema 63)."
+    },
+    {
+      "name": "1.21.0: the restored copy serves (server/index.js on the fresh data directory, /api/health)",
+      "ms": 322,
+      "ok": true,
+      "detail": "HTTP 200; restore start to healthy 3.0 s"
+    },
+    {
+      "name": "1.21.0: in the restored copy, mrivera signs in with password + TOTP and the note still verifies",
+      "ms": 0,
+      "ok": true,
+      "detail": "TOTP HTTP 200; /verify {\"signed\":true,\"intact\":true,\"cosignature_intact\":true}"
+    },
+    {
+      "name": "1.21.0: row counts in the fresh data directory equal the upgraded source at backup time; audit chain verifies",
+      "ms": 269,
+      "ok": true,
+      "detail": "76 tables; clients 20012, interventions 160112, notes 46, audit_log 20015 -> 20017; schema 63; audit {\"ok\":true,\"checked\":20017,\"anchoredAt\":1,\"lastId\":20017,\"checkpointed\":false}"
+    },
+    {
+      "name": "1.21.0: the signed drill report verifies with the public key only (npm run verify-dr-report)",
+      "ms": 51,
+      "ok": true,
+      "detail": "public key: supplied (key id 9fc14ad916e9bea4); VERIFIED"
+    }
+  ],
+  "upgrade_start_to_healthy_seconds": 4.9,
+  "api_after_upgrade": {
+    "old_session_me": 200,
+    "login_mfa_pending": true,
+    "wrong_code": 401,
+    "totp": 200,
+    "verify": {
+      "signed": true,
+      "intact": true,
+      "signed_at": "2026-10-01T00:37:52.823Z",
+      "signer": "Maria Rivera",
+      "cosign_required": false,
+      "cosign_requested": false,
+      "cosigned": true,
+      "awaiting_cosign": false,
+      "cosigner": "Jordan Walker",
+      "cosigned_at": "2026-10-01T00:37:53.031Z",
+      "cosignature_intact": true
+    },
+    "search_hits": 5,
+    "read_without_second_factor": 401
+  },
+  "sessions_passkey_device_after_upgrade": {
+    "kept_sessions_me": {
+      "browser": 200,
+      "device": 200
+    },
+    "passkey_sign_in": null,
+    "device_sign_in": 200,
+    "device_scope": "full"
+  },
+  "before_upgrade": "no passkeys in this release; sync device upgrade-drill-device-1 signed in as jwalker (token issued)",
+  "county": "not in this release",
+  "county_after_upgrade": null,
+  "drill": {
+    "ok": true,
+    "rto_seconds": 3.1,
+    "rpo_seconds": 5,
+    "checks_passed": 11,
+    "checks_total": 11,
+    "audit_entries_verified": 20015,
+    "report_sha256": "0962df44baefe0432f87cdf261242eaef77d626a3ede7505d9630fff4d34c448",
+    "signing_key_id": "9fc14ad916e9bea4"
+  },
+  "host_restore_to_health_seconds": 3,
+  "report_file": "dr-drill-2026-10-01T00-38-09-263Z.json"
+}
+[upgrade-drill] evidence written to /tmp/claude-0/-home-user-suds/d4ee5b51-c604-5f92-b8c2-e9f94f21d1eb/scratchpad/p4/ud-out/from-1.16.2
