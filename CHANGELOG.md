@@ -20,6 +20,43 @@ worker and date) instead of making a second one. A to-do SUDS makes, moves or ca
 (`task.create`/`task.update`, with `from` and the record's id; no PHI). The call, visit and referral forms' help says
 what a date does. docs/USER_GUIDE.md, *Follow-up dates and your to-dos*.
 
+### Supervision: referrals waiting to hear what happened; My profile at 1366 px; documentation currency
+
+Built for 1.23.0, not yet released. No migration and no new permission; one new route,
+`POST /api/supervision/referrals/:id/remind`.
+
+- **Supervision › Referrals needing attention › Waiting to hear what happened** (it was *No outcome recorded
+  yet*). Only referrals with no outcome at all are listed: **No answer yet** (contacted: the provider has not
+  replied) and **Appointment set** (scheduled, with the appointment's date: nobody has said whether it happened).
+  Accepted and waitlisted referrals are no longer listed: by the referral's loop-closure rules they are the
+  provider's answer, and they stay open on the worker's own list with the referral's follow-up to-do (decision, with
+  that conservative reading: docs/USER_GUIDE.md, *Supervision*). The plain status words replace "(contacted through
+  scheduled)"; the oldest is first, with how long it has waited in days.
+- **Row actions, as for unsigned notes.** **Open referral** (the client's Referrals tab), **Remind worker** and
+  **Record outcome** (for a role with `referrals:write`; the row itself opens the form, or the referral without it).
+  Remind worker gives the worker who made the referral a to-do on the client's record, due today, linked to the
+  referral (`tasks.referral_id`), so recording the outcome closes it. Its text names the provider, as the
+  referral's own follow-up to-do already does, who asked and when the referral was sent; nothing from the
+  referral's notes or outcome. Title and details are encrypted; the audit entry `referral.remind` names the
+  referral, client, worker and to-do by id. One open reminder per referral, whoever sent it (the queue's rows carry
+  `reminded_at`). Only a supervisor of that worker's team may send one, by the queue's existing scoping: a holder of
+  `notes:cosign` or `assignments:manage` with `referrals:read` and `tasks:write`, of every worker with `clients:all`,
+  otherwise of staff who name them as supervisor; never to themselves or to a closed account (`may_remind` on each
+  row). Navigators and finance are refused (403, audited).
+- **My profile at a 1366 px laptop.** *Active sessions* takes the grid's whole width; in one of three columns its
+  table ran about 150 px past its card and had to be scrolled sideways. A phone still shows one card per session.
+- **Documentation currency.** The market scorecard's SUDS Server row, STRATEGY, HOSTING, BUYER-GUIDE-IT, the
+  security ARCHITECTURE and the README now cite the latest container run (1.21.0, 2026-10-01) and say that 1.22.0
+  fixed what it found (the listener under the service sandbox, the upgrade dry run) and that 1.22.0 itself has not
+  been run in the container; they said 1.20.0 fixed what "that run" found and cited the 1.19.0 run. The
+  accessibility conformance report is revised for 1.22.0 (no conformance level changes; 1.22.0's screens are audited
+  by axe in `scripts/ui/worker-usefulness.mjs`; screen-reader testing still not done, as of 1.22.0).
+  LOGGING-AND-AUDIT names `referral.remind`.
+- Tests: `test/supervision-referrals.test.js` (which statuses are listed and in what order; the reminder's to-do,
+  encryption, audit entry, one-at-a-time rule and closing with the outcome; who may and may not send one);
+  `scripts/ui/worker-usefulness.mjs` (the heading and plain status words, the three row actions, a reminder sent
+  and shown, the outcome form, the table fitting at 1366 px, My profile at 1366 and 390 px, axe on each).
+
 ## 1.22.0 — 2026-10-01
 
 A feature release (migrations 64, 65 and 66; the county publication consent routes; no new permission), released

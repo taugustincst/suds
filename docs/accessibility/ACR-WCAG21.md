@@ -4,13 +4,13 @@
 
 ## Name of Product/Version
 
-SUDS — SUD Navigator Services Tracker, SUDS 1.21.0 (this revision; see *Revisions* below).
+SUDS — SUD Navigator Services Tracker, SUDS 1.22.0 (this revision; see *Revisions* below).
 
 **The conformance levels in the tables were established on SUDS 1.11.0** (1.10.2 with the accessibility changes
 that accompanied the first version of this report), by every method under *Evaluation Methods Used*. They have not
 been re-established since by manual review or by any assistive technology. The screens added in later releases,
-1.21.0's included, are covered by the automated audit (axe) and scripted checks only. *Revisions* lists 1.21.0's new
-screens and what was and was not done for them. The 1.11.0 evaluation covered the whole product as it was then,
+1.21.0's and 1.22.0's included, are covered by the automated audit (axe) and scripted checks only. *Revisions* lists
+1.21.0's and 1.22.0's new screens and what was and was not done for them. The 1.11.0 evaluation covered the whole product as it was then,
 including the clinical documentation (problem list, care plan, six-dimension assessment
 (ASAM-aligned) and outcome measures), CalOMS Tx state reporting, the FHIR interface settings, the security evidence pages and the
 42 CFR Part 2 controls that release adds. Both ways SUDS is run are covered: the **office server** (the web application an
@@ -19,7 +19,7 @@ static site, keeping its records in the browser).
 
 ## Report Date
 
-25 September 2026 (the evaluation of 1.11.0); revised 1 October 2026 for 1.21.0 (see *Revisions*).
+25 September 2026 (the evaluation of 1.11.0); revised 1 October 2026 for 1.21.0 and for 1.22.0 (see *Revisions*).
 
 ## Product Description
 
@@ -101,12 +101,21 @@ shown in the application as **Accessibility** (`accessibility.html`).
   sensory characteristics, consistent navigation and identification, error suggestion and prevention, input
   purpose, content on hover or focus, non-text contrast of form fields and focus rings, which were measured
   from the colour tokens in both themes).
-* **Still not done, as of 1.21.0 (1 October 2026):** testing with screen readers (NVDA, JAWS, VoiceOver,
+* **Still not done, as of 1.22.0 (1 October 2026):** testing with screen readers (NVDA, JAWS, VoiceOver,
   TalkBack) and with speech recognition by their users. It was planned for the release after SUDS 1.11.0 and has
   not happened in any release since. It is an **owner item**: it needs people who use these tools, or an
   accessibility tester, which automated work cannot replace. Findings will be added to this report when it is done.
 
 ## Revisions
+
+**1 October 2026: revised for SUDS 1.22.0.** This revision changes no conformance level. 1.22.0 changed screens
+frontline workers use every day rather than adding new areas: a client's Overview opening with *Where things stand*,
+quick due and follow-up dates, Street outreach's Undo and *Same as last contact*, a note's remembered format and its
+structured sections' labelled boxes, the supervision queue's referral columns, the search box's hint, and the sync
+state in the header of a device that syncs with the office. Each new state is audited with the same axe rules in
+`scripts/ui/worker-usefulness.mjs`, at 390 CSS px for the phone screens and 1280 for the note and the supervision queue, and the script
+fails on any finding. Not done for them, as for 1.21.0's: the manual review, dark theme and 200% text, and any
+screen-reader or speech-recognition testing.
 
 **1 October 2026: revised for SUDS 1.21.0.** This revision changes no conformance level. It records what has been
 checked since the 1.11.0 evaluation, and what has not.

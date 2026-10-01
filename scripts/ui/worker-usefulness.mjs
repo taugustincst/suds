@@ -7,7 +7,10 @@
 //   * Street outreach: Save contact stays in reach, "Same as last contact" fills the last bundle in one tap, and Undo
 //     takes back a contact just saved without moving the keyboard focus off the form;
 //   * a clinician's note format is remembered, and a structured note's section boxes are labelled;
-//   * the supervision queue says who made each referral waiting for an outcome, and for how long;
+//   * the supervision queue says who made each referral waiting for an outcome, and for how long; from 1.23.0 it lists
+//     only contacted and scheduled referrals, in plain words, oldest first, with Open referral, Remind worker and
+//     Record outcome on each row, and fits a 1366 px laptop;
+//   * My profile's Active sessions fits a 1366 px laptop without sideways scrolling (1.23.0), and a phone;
 //   * the search box's hint fits a phone;
 //   * on a device that syncs with the office, the header says whether anything is waiting to be sent.
 // Every new state is put through axe (WCAG 2.1 A/AA).
@@ -186,7 +189,47 @@ try {
   const heads = await sup.page.$$eval('[data-awaiting-outcome] th', ths => ths.map(t => t.textContent.trim()));
   ok(heads.includes('Made by'), 'referrals waiting for an outcome say who made them', heads);
   ok(await sup.page.$('[data-awaiting-outcome] [data-referral-waiting]'), 'and how long ago they were sent');
+  // 1.23.0: plain words, only referrals with no outcome at all, oldest first, and row actions as for unsigned notes.
+  const card = await sup.page.$eval('[data-awaiting-outcome]', el => el.textContent);
+  ok(/Waiting to hear what happened/.test(card), 'the list is headed "Waiting to hear what happened"');
+  ok(!/contacted through scheduled|No outcome recorded yet/.test(card), 'without the old status jargon');
+  const queue = (await sup.api('GET', '/api/supervision/queue')).data.referrals_awaiting_outcome;
+  eq(queue.filter(r => !['contacted', 'scheduled'].includes(r.status)).length, 0, 'accepted and waitlisted referrals are not listed', queue.map(r => r.status));
+  const sent = queue.map(r => r.referred_at);
+  ok(sent.every((d, i) => i === 0 || sent[i - 1] <= d), 'oldest first');
+  const shown = await sup.page.$$eval('[data-awaiting-outcome] [data-referral-stands]', els => els.map(e => e.textContent));
+  ok(shown.length && shown.every(t => /No answer yet|Appointment set/.test(t)), 'each row says where it stands in plain words', shown.slice(0, 3));
+  ok(await sup.page.$('[data-awaiting-outcome] [data-open-referral]'), 'a row can open the referral');
+  ok(await sup.page.$('[data-awaiting-outcome] [data-record-outcome]'), 'and record its outcome');
+  const target = queue.find(r => r.may_remind && !r.reminded_at);
+  ok(target, 'a referral made by a worker on the team can be reminded about');
+  if (target) {
+    await sup.page.click(`[data-remind-worker="${target.id}"]`);
+    ok(await toastSays(sup.page, /Reminder sent to/), 'Remind worker sends the reminder');
+    await settle(sup.page);
+    ok(await until(() => sup.page.$(`[data-referral-reminded="${target.id}"]`)), 'the row then shows the reminder was sent');
+    ok(!(await sup.page.$(`[data-remind-worker="${target.id}"]`)), 'and offers no second reminder');
+    const todo = (await sup.api('GET', `/api/tasks?client_id=${target.client_id}&status=open&limit=200`)).data.rows.find(t => t.referral_id === target.id && /Record what happened/.test(t.title));
+    ok(todo && todo.assigned_to === target.worker_id, 'the to-do is on the worker\'s list, linked to the referral');
+    await sup.page.click(`[data-record-outcome="${target.id}"]`);
+    ok(await until(() => sup.page.$('.modal select[name=status]')), 'Record outcome opens the outcome form');
+    await axe(sup.page, 'Supervision queue: outcome form');
+    await sup.page.keyboard.press('Escape'); await settle(sup.page);
+  }
+  // At a 1366 px laptop the queue's referral table fits its card.
+  await sup.page.setViewportSize({ width: 1366, height: 900 }); await settle(sup.page);
+  const over = await sup.page.$eval('[data-awaiting-outcome] table', t => t.getBoundingClientRect().right - t.closest('.card').getBoundingClientRect().right);
+  ok(over <= 1, 'the referral table fits the card at 1366 px', over);
   await axe(sup.page, 'Supervision queue');
+  // My profile at 1366 px (1.23.0): Active sessions takes the grid's whole width, so its table needs no sideways scroll.
+  await sup.go('profile');
+  const fit = await sup.page.$eval('[data-profile-sessions] table', t => { const w = t.parentElement; return { scroll: w.scrollWidth - w.clientWidth, past: t.getBoundingClientRect().right - t.closest('.card').getBoundingClientRect().right }; });
+  ok(fit.scroll <= 1 && fit.past <= 1, 'My profile: the sessions table fits its card at 1366 px', fit);
+  eq(await sup.page.evaluate(() => document.documentElement.scrollWidth), 1366, 'and the page does not scroll sideways');
+  await axe(sup.page, 'My profile (1366 px)');
+  await sup.page.setViewportSize(PHONE); await settle(sup.page);
+  eq(await sup.page.evaluate(() => document.documentElement.scrollWidth), PHONE.width, 'My profile at 390 px does not scroll sideways either');
+  await axe(sup.page, 'My profile (390 px)');
   await sup.ctx.close();
 
   // ======== a device that syncs with the office: the header says what is waiting ========
