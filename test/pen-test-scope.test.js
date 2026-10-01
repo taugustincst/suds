@@ -141,6 +141,7 @@ const MAP = [
   ['A publication changed after review', ['County publication releases']],
   ['A field device pulling or pushing beyond its scope', ['Field devices and participant codes']],
   ['A participant code leaking where a name would not', ['Field devices and participant codes']],
+  ['A field worker leaving the field scope through the device id', ['Field devices and participant codes']],
   ['A passkey registered on an authenticator the programme did not list', ['Authenticator allow-list and metadata upload']],
   ['A forged, stale or rolled-back FIDO Metadata Service file', ['Authenticator allow-list and metadata upload']],
   ['A version 2 county file', ['County file version 2: award amounts']],

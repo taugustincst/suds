@@ -144,6 +144,8 @@ server only). No new permission: everything here is `county:manage`, and reading
 
 ### Day to day for frontline workers
 
+With `worker-usefulness.mjs` the suite is now 57 scripts.
+
 Built for 1.22.0, not yet released. No migration, permission or new route; one response gains fields (the supervision
 queue's referrals say who made them) and the call routes derive one flag. From a walk-through of a navigator's,
 an outreach worker's, a peer's, a counselor's and a supervisor's day at 390 px and on a desktop

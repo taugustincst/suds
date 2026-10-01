@@ -41,6 +41,13 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-10-01 — Claude: 1.22.0 in integration (built, not yet released)
+
+- Six streams from the 1.21.0 evaluation: field scope bound to the account, county publication consent and corrected
+  releases, honest security documents and the pen-test scope, a grace period for the authenticator allow-list and a
+  safer county file version, day-to-day fixes for workers, and evidence on 1.21.0. The browser suite is **57 scripts**
+  with `worker-usefulness.mjs`. The full entry is written at the stamp.
+
 ### 2026-09-30 — Claude: 1.21.0 (publication releases, field devices, allow-list, award amounts and reminders)
 
 - **What shipped.** One feature release under a recorded policy exception (docs/RELEASE.md, *Record: 1.21.0*), on
