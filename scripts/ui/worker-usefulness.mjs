@@ -12,7 +12,9 @@
 //     Record outcome on each row, and fits a 1366 px laptop;
 //   * My profile's Active sessions fits a 1366 px laptop without sideways scrolling (1.23.0), and a phone;
 //   * the search box's hint fits a phone;
-//   * on a device that syncs with the office, the header says whether anything is waiting to be sent.
+//   * on a device that syncs with the office, the header says whether anything is waiting to be sent;
+//   * 1.23.1: unticking Follow-up needed clears the date; a phone to-do row's Open button is "Open: <title> (<priority>)";
+//     a field-device request approved while offline copies are off says so to the administrator and the worker.
 // Every new state is put through axe (WCAG 2.1 A/AA).
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
@@ -110,11 +112,28 @@ try {
   await nav.page.click('.modal [data-quick-dates="follow_up_due"] [data-quick-date="3"]');
   eq(await nav.page.inputValue('.modal input[name=follow_up_due]'), await localDay(nav.page, 3), '"In 3 days" sets the call-back date');
   ok(await nav.page.isChecked('.modal input[name=follow_up_needed]'), 'and ticks Follow-up needed');
+  // 1.23.1: unticking Follow-up needed clears the date in the form, as the server does on save.
+  await nav.page.click('.modal input[name=follow_up_needed]');
+  eq(await nav.page.inputValue('.modal input[name=follow_up_due]'), '', 'unticking Follow-up needed clears the call-back date in the form');
+  await nav.page.click('.modal [data-quick-dates="follow_up_due"] [data-quick-date="3"]');
+  ok(await nav.page.isChecked('.modal input[name=follow_up_needed]') && await nav.page.inputValue('.modal input[name=follow_up_due]') === await localDay(nav.page, 3), 'a date chosen again ticks it again');
   await nav.page.click('.modal button[type=submit]');
   ok(await toastSays(nav.page, /Call logged/), 'the call is logged');
   await settle(nav.page);
   const after = (await nav.api('GET', `/api/tasks?client_id=${cid}&limit=100`)).data.rows; const in3 = await localDay(nav.page, 3);
   ok(after.some(t => t.title === 'Call back: Bed callback' && String(t.due_at).slice(0, 10) === in3), 'its call-back to-do is on the list', after.map(t => t.title));
+
+  // ---- 1.23.1: a to-do row's Open button on a phone names the title and the priority apart ----
+  await nav.go('tasks');
+  const rowName = await nav.page.evaluate(() => {
+    const row = document.querySelector('.compact-list .compact-row'); if (!row) return null;
+    const primary = row.querySelector('.primary');
+    const title = primary.firstElementChild.textContent.trim(); const pri = primary.querySelector(':scope > .badge')?.textContent.trim();
+    return { title, pri, name: row.querySelector('.compact-open .sr-only')?.textContent };
+  });
+  ok(rowName && rowName.title && rowName.pri, 'the phone To-dos list has rows with a title and a priority', rowName);
+  eq(rowName && rowName.name, rowName && `Open: ${rowName.title} (${rowName.pri})`, 'the row\'s Open button is named "Open: <title> (<priority>)", not the two run together');
+  await axe(nav.page, 'To-dos on a phone (390 px)');
 
   // ---- + Log a visit: the follow-up date has the same quick choices ----
   await nav.go(`client/${cid}`);
@@ -235,6 +254,35 @@ try {
   eq(await sup.page.evaluate(() => document.documentElement.scrollWidth), PHONE.width, 'My profile at 390 px does not scroll sideways either');
   await axe(sup.page, 'My profile (390 px)');
   await sup.ctx.close();
+
+  // ======== 1.23.1: a field-device request approved while offline copies are off ========
+  // The suite's server allows offline copies (LOCAL_MODE_ENABLED=true), so both pages are shown the default office
+  // answer (off) by rewriting the one field that says so; the request and the approval are real.
+  const offOff = async (page) => {
+    for (const path of ['/api/app/info', '/api/me/field-device']) await page.route(`**${path}`, async (route) => { const r = await route.fetch(); const j = await r.json(); await route.fulfill({ response: r, json: { ...j, local_mode: false } }); });
+  };
+  const worker = await session('kpatel', PW, PHONE); await offOff(worker.page);
+  eq((await worker.api('POST', '/api/me/field-device/request', {})).status, 201, 'a clinician asks for their phone to be set up for the field');
+  const adm = await session('admin', 'AdminPassw0rd!x'); await offOff(adm.page);
+  await adm.go('admin?tab=devices');
+  ok(await adm.page.$eval('[data-field-offline-off]', e => /Offline copies are off/.test(e.textContent) && /LOCAL_MODE_ENABLED/.test(e.textContent)).catch(() => false), 'Synced devices says offline copies are off, and what turns them on, beside the request');
+  await axe(adm.page, 'Synced devices with a request, offline copies off');
+  const kuid = await adm.page.$eval('[data-field-request-user]', e => e.dataset.fieldRequestUser);
+  await adm.page.click(`[data-field-approve="${kuid}"]`);
+  await adm.page.waitForSelector('.modal-bg .modal');
+  const confirmText = await adm.page.textContent('.modal-bg .modal');
+  ok(/Offline copies are off/.test(confirmText) && /LOCAL_MODE_ENABLED/.test(confirmText) && !/at its next sync/.test(confirmText), 'before approving, the dialog says offline copies are off and what enables them', confirmText.slice(0, 300));
+  await adm.page.click('.modal-bg .modal button:text-is("Approve")');
+  ok(await toastSays(adm.page, /field account\. Offline copies are still off/), 'the result says the account is a field account and offline copies are still off');
+  ok(!(await adm.page.$$eval('.toast', els => els.some(e => /from their next sync/.test(e.textContent)))), 'not "from their next sync"');
+  await adm.ctx.close();
+  await worker.go('field-phone');
+  eq(await worker.page.$eval('[data-field-request-status]', e => e.dataset.fieldRequestStatus), 'approved', 'the worker sees it approved');
+  const said = await worker.page.$eval('[data-field-approved-off]', e => e.textContent).catch(() => '');
+  ok(/set your account as a field account/.test(said) && /has not turned on offline copies yet/.test(said) && /Ask your SUDS administrator/.test(said), 'and is told plainly offline copies are not on yet, and who to ask', said);
+  ok(!/every phone you sync is a field device/.test(await worker.page.textContent('[data-field-request-status]')), 'not that every phone they sync is a field device');
+  await axe(worker.page, 'Set up this phone for the field, approved while offline copies are off (390 px)');
+  await worker.ctx.close();
 
   // ======== a device that syncs with the office: the header says what is waiting ========
   const dctx = await browser.newContext({ viewport: PHONE, isMobile: true, hasTouch: true }); const dev = await dctx.newPage(); watch(dev, 'device');
