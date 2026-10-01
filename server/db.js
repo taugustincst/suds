@@ -800,6 +800,20 @@ const migrations = [
     addColumn(d, 'passkeys', 'attestation', 'TEXT');
     createTablesFromSchema(d, safeSchema(), ['authenticator_metadata'], 63);
   },
+  // 64: reserved for another 1.22.0 branch's migration (a no-op on this branch; that branch's migration replaces it
+  //     when the two are merged, and this branch's own is 65).
+  () => {},
+  // 65: county publication governance (built for 1.22.0; docs/COUNTY-VIEW.md "Publication"):
+  //     county_publication_consents (each registered programme's written agreement to publication, and its
+  //     withdrawal) and county_publication_inputs (what each release from now on was screened from, encrypted, for a
+  //     corrected release of the same period), the latter append-only (its triggers, as schema.sql declares them).
+  //     New tables: nothing to backfill (a release published before has no inputs, and a corrected release of its
+  //     period stays refused). Office server only. Self-contained and idempotent, so it can be renumbered.
+  (d) => {
+    const text = safeSchema();
+    createTablesFromSchema(d, text, ['county_publication_consents', 'county_publication_inputs'], 65);
+    for (const m of text.matchAll(/CREATE TRIGGER IF NOT EXISTS county_publication_inputs_\w+ [\s\S]*?END;/g)) d.exec(m[0]);
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

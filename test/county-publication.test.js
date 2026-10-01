@@ -24,8 +24,10 @@ const lastAudit = (action) => { const a = H.db.one(`SELECT * FROM audit_log WHER
 const T = 11;
 
 function freshCounty() {
-  for (const t of ['county_connect_tokens', 'county_submissions', 'county_programme_keys', 'county_programmes']) H.db.run(`DELETE FROM ${t}`);
+  for (const t of ['county_connect_tokens', 'county_publication_consents', 'county_submissions', 'county_programme_keys', 'county_programmes']) H.db.run(`DELETE FROM ${t}`);
 }
+/** Record a programme's written agreement to publication (built for 1.22.0): a release names only programmes that agreed. */
+const agree = async (id, body = { agreed_on: '2020-06-01', reference: 'Data contribution agreement, signed copy in the contracts file' }) => ok(await admin.post(`/api/county/programmes/${id}/publication-consent`, body));
 /** One fund of figures as the Enter figures form sends them; `people` sets every screened measure (a count of people or events). */
 function fund(people, extra = {}) {
   const p = String(people);
@@ -33,10 +35,11 @@ function fund(people, extra = {}) {
     contacts: '120', naloxone_kits: '80', fentanyl_strips: '300', syringes: '900', education_contacts: '5', staff_training_hours: '12.5',
     reversals: p, treatment_admissions: p, referrals_made: p, people_served: p, people_linked: p, moud_linked: p, people_trained: p, ...extra };
 }
-/** A programme not on SUDS with the county's figures for each period: [[period, people], ...]. */
-async function programme(name, figures) {
+/** A programme not on SUDS with the county's figures for each period: [[period, people], ...]; it agreed to publication unless consent: false. */
+async function programme(name, figures, { consent = true } = {}) {
   const p = ok(await admin.post('/api/county/programmes', { name, not_on_suds: true }));
   for (const [period, people, extra] of figures) ok(await admin.post(`/api/county/programmes/${p.id}/entries`, { ...period, source_ref: 'Quarterly report', funds: [fund(people, extra)] }));
+  if (consent) await agree(p.id);
   return p;
 }
 const prepare = (body, c = admin) => c.post('/api/county/publications/prepare', body);
@@ -219,7 +222,7 @@ test('determinism and the record: preparing twice gives the same hash; publishin
   assert.equal((await prepare(q)).status, 409);
 });
 
-test('withdraw: a record of its own, with the reason kept encrypted; a second withdrawal is refused; a withdrawn release still blocks overlapping periods', async () => {
+test('withdraw: a record of its own, with the reason kept encrypted; a second withdrawal is refused; a withdrawn release still blocks overlapping periods (only a corrected release of exactly its period is allowed)', async () => {
   const y = Q(2022, 1); const year = { from: '2022-01-01', to: '2022-12-31' };
   await programme('Harbor Outreach', [[y, 200]]); await programme('Ridge Recovery', [[y, 150]]);
   const p = ok(await prepare(y), 200);
@@ -235,9 +238,11 @@ test('withdraw: a record of its own, with the reason kept encrypted; a second wi
   assert.equal(ok(await admin.get(`/api/county/publications/${rec.id}`), 200).withdrawal.reason, 'A grantee corrected its figures');
   assert.ok(!('reason' in ok(await fin.get(`/api/county/publications/${rec.id}`), 200).withdrawal), 'the reason is for county:manage');
   assert.equal((await admin.post(`/api/county/publications/${rec.id}/withdraw`, { reason: 'again' })).status, 409);
-  // The same quarter, and the year around it, cannot be published: they could be subtracted from what was seen.
-  for (const period of [y, year]) { const r = await prepare(period); assert.equal(r.status, 409); assert.equal(r.data.reason, 'overlap'); }
+  // The year around it cannot be published: the two could be subtracted from what was seen. The same quarter can, as a
+  // corrected release (1.22.0) audited against everything the withdrawn one printed.
+  const r = await prepare(year); assert.equal(r.status, 409); assert.equal(r.data.reason, 'overlap');
   assert.equal(lastAudit('county.publication.refuse').details.reason, 'overlap');
+  assert.deepEqual(ok(await prepare(y), 200).content.corrects, [{ sha256: rec.sha256, withdrawn: w.withdrawal.at.slice(0, 10) }]);
   // The next quarter can.
   await programme('Next Quarter Programme', [[Q(2022, 2), 90]]);
   assert.equal((await prepare(Q(2022, 2))).status, 200);
@@ -266,7 +271,7 @@ test('refusals: a period not over, a threshold below the county\'s, no figures, 
 test('figures entered by the county: counted and named by default (signed outranks entered, as the combined view), or left out', async () => {
   const q = Q(2024, 1);
   samples = SAMPLE.sample({ periods: [q], recipient: COUNTY });
-  ok(await admin.post('/api/county/programmes', { name: samples[0].name, public_key: samples[0].public_key, compared: true }));
+  await agree(ok(await admin.post('/api/county/programmes', { name: samples[0].name, public_key: samples[0].public_key, compared: true })).id);
   ok(await admin.post('/api/county/submissions', { text: JSON.stringify(samples[0].files[0].file) }));
   await programme('Canyon Paper Reports', [[q, 60]]);
   const inc = ok(await prepare(q), 200).content;

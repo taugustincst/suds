@@ -657,8 +657,14 @@ const sourceOf = (used) => (!used.length ? null : used.every(isEntered) ? ENTERE
  * a programme not on SUDS with no signed file for the period is no column at all (as an inactive one is not), and
  * `entered_left_out` names the programmes whose entered figures were left out.
  */
-function combined(from, to, { entered = true } = {}) {
-  const programmes = db.all(`SELECT * FROM county_programmes ORDER BY name COLLATE NOCASE, id`);
+function combined(from, to, { entered = true, leaveOut = null } = {}) {
+  // leaveOut (a Set of programme ids; county-publication.js): programmes left out whole, as an inactive one not kept
+  // is, and named in `consent_left_out` (a publication release leaves out a programme with no consent to publication).
+  const consentLeftOut = [];
+  const programmes = db.all(`SELECT * FROM county_programmes ORDER BY name COLLATE NOCASE, id`).filter(p => {
+    if (leaveOut && leaveOut.has(p.id)) { consentLeftOut.push({ id: p.id, name: p.name }); return false; }
+    return true;
+  });
   const subs = countingSubs();
   const all = new Map(programmes.map(p => [p.id, []])); const byProg = new Map(programmes.map(p => [p.id, []]));
   for (const s of subs) {
@@ -678,13 +684,15 @@ function combined(from, to, { entered = true } = {}) {
   // The award (schema version 2): each fund's award counted once per programme however many of its files in the
   // period carry it (the same fund, grant number and award period), and what the period's files spent (approved or
   // reimbursed) under the funds that carry one. Version 1 files carry no award ("award not in file").
+  // Each award is also pro-rated to the period (built for 1.22.0): its amount times the days of [from, to] inside the
+  // award period over the award period's days, so a quarter is set against a quarter's share of a year's award.
   const awardAgg = () => ({ awards: new Map(), spent: 0, v1: 0, v2: 0, without: 0 });
   const addAward = (a, pl) => {
     if (!(pl.schema_version >= 2)) { a.v1++; return; }
     a.v2++;
     for (const f of pl.funds) {
       if (!f.award) { a.without++; continue; }
-      a.awards.set([f.name, f.grant_number || '', f.award.from, f.award.to].join('\u0000').toLowerCase(), f.award.amount);
+      a.awards.set([f.name, f.grant_number || '', f.award.from, f.award.to].join('\u0000').toLowerCase(), { amount: f.award.amount, prorated: prorate(f.award, from, to) });
       a.spent += f.spend.approved;
     }
   };
@@ -704,11 +712,16 @@ function combined(from, to, { entered = true } = {}) {
       addAward(aw, pl);
     }
     const source = sourceOf(used);
-    const awardTotal = [...aw.awards.values()].reduce((n, x) => n + x, 0);
+    const awardTotal = [...aw.awards.values()].reduce((n, x) => n + x.amount, 0);
+    const proratedTotal = [...aw.awards.values()].reduce((n, x) => n + x.prorated, 0);
     const award = !used.length ? null : {
       status: !aw.v2 ? 'not_in_file' : !aw.awards.size ? 'none' : aw.v1 || aw.without ? 'partial' : 'whole',
       amount: aw.awards.size ? round2(awardTotal) : null, spent: aw.awards.size ? round2(aw.spent) : null,
-      pct: aw.awards.size ? round1((aw.spent / awardTotal) * 100) : null, files_without: aw.v1, funds_without: aw.without,
+      pct: aw.awards.size ? round1((aw.spent / awardTotal) * 100) : null,
+      // The award pro-rated to the period, and the spending against it; null when no award period overlaps the period.
+      prorated: aw.awards.size ? round2(proratedTotal) : null,
+      prorated_pct: aw.awards.size && proratedTotal > 0 ? round1((aw.spent / proratedTotal) * 100) : null,
+      files_without: aw.v1, funds_without: aw.without,
     };
     cols.push({
       id: p.id, name: p.name, active: !!p.active, keep_files: !!p.keep_files, on_suds: p.on_suds !== 0,
@@ -737,7 +750,7 @@ function combined(from, to, { entered = true } = {}) {
   const withAward = cols.filter(c => c.award && c.award.amount !== null);
   const enteredAward = withAward.filter(c => c.aggEntered);
   const sumOf = (list, k) => round2(list.reduce((n, c) => n + c.award[k], 0));
-  const pctOf = (list) => { const a = sumOf(list, 'amount'); return a ? round1((sumOf(list, 'spent') / a) * 100) : null; };
+  const pctOf = (list, of = 'amount') => { const a = sumOf(list, of); return a ? round1((sumOf(list, 'spent') / a) * 100) : null; };
   const awardRow = (key, label, pick, total, totalEntered, { money = true, percent = false } = {}) => ({
     group: 'award', key, label, money, percent, by: Object.fromEntries(cols.map(c => [c.id, c.award && c.award.amount !== null ? pick(c.award) : null])),
     by_note: Object.fromEntries(cols.filter(c => c.award && c.award.amount === null).map(c => [c.id, c.award.status === 'not_in_file' ? AWARD_NOT_IN_FILE : AWARD_NONE])),
@@ -746,6 +759,10 @@ function combined(from, to, { entered = true } = {}) {
     rows.push(awardRow('award_amount', 'Award or contract amount (each fund\'s award counted once)', a => a.amount, withAward.length ? sumOf(withAward, 'amount') : null, sumOf(enteredAward, 'amount')));
     rows.push(awardRow('award_spent', 'Spent in this period under the funds with an award (approved or reimbursed)', a => a.spent, withAward.length ? sumOf(withAward, 'spent') : null, sumOf(enteredAward, 'spent')));
     rows.push(awardRow('award_spent_pct', 'Spent against the award (%)', a => a.pct, pctOf(withAward), enteredAward.length ? pctOf(enteredAward) : 0, { money: false, percent: true }));
+    // Pro-rated (built for 1.22.0): the whole award stays above; these set the period's spending against the share of
+    // each award that falls in the period (award × days of the period inside the award period ÷ the award period's days).
+    rows.push(awardRow('award_prorated', AWARD_PRORATED_LABEL, a => a.prorated, withAward.length ? sumOf(withAward, 'prorated') : null, sumOf(enteredAward, 'prorated')));
+    rows.push(awardRow('award_spent_prorated_pct', AWARD_PRORATED_PCT_LABEL, a => a.prorated_pct, pctOf(withAward, 'prorated'), enteredAward.length ? pctOf(enteredAward, 'prorated') : 0, { money: false, percent: true }));
   }
   const whole = cols.filter(c => c.status === 'whole').length; const part = cols.filter(c => c.status === 'part').length; const none = cols.filter(c => c.status === 'none').length;
   const enteredProgrammes = cols.filter(c => c.source === ENTERED || c.source === 'mixed').length;
@@ -757,9 +774,19 @@ function combined(from, to, { entered = true } = {}) {
     entered, entered_programmes: enteredProgrammes, entered_left_out: enteredLeftOut, has_entered: hasEntered(),
     headline: headline(whole, part, none, cols.length, { entered: enteredProgrammes, leftOut: enteredLeftOut.length }),
     award: { programmes_with: withAward.length, of: cols.filter(c => c.agg).length, note: awardTotalsNote(withAward.length, cols.filter(c => c.agg).length) },
-    inactive_left_out: inactiveLeftOut,
+    inactive_left_out: inactiveLeftOut, ...(leaveOut ? { consent_left_out: consentLeftOut } : {}),
     caveats: CAVEATS, caveat_summary: CAVEAT_SUMMARY, publication_note: PUBLICATION_NOTE, rule: PERIOD_RULE, entered_label: ENTERED_LABEL, entered_note: ENTERED_NOTE,
   };
+}
+const AWARD_KEYS = ['award_amount', 'award_spent', 'award_spent_pct', 'award_prorated', 'award_spent_prorated_pct'];
+const AWARD_PRORATED_LABEL = 'Award pro-rated to the period (award × days of the period inside the award period ÷ days in the award period)';
+const AWARD_PRORATED_PCT_LABEL = 'Spent against the pro-rated award (%)';
+const AWARD_PRORATED_NOTE = 'The award pro-rated to the period is each award times the days of the period that fall inside its award period, divided by the days in its award period (a quarter of a one-year award is about a quarter of it; an award whose period does not overlap the period counts 0); "spent against the award (%)" sets the period\'s spending against the whole award, "spent against the pro-rated award (%)" against the pro-rated one.';
+/** An award's share for [from, to]: amount × the days of [from, to] inside [award.from, award.to] ÷ the award period's days. */
+function prorate(award, from, to) {
+  const a = from > award.from ? from : award.from; const b = to < award.to ? to : award.to;
+  if (a > b) return 0;
+  return (award.amount * daysIn(a, b)) / daysIn(award.from, award.to);
 }
 /** What a programme's award status means, in words (the view, its files and the read API say the same). */
 function awardNote(a) {
@@ -770,7 +797,7 @@ function awardNote(a) {
 }
 /** The award totals are over the programmes whose files carry the award only: said wherever a total is shown. */
 function awardTotalsNote(withAward, of) {
-  return `Award totals are over the ${withAward} of ${of} program${of === 1 ? '' : 's'} with figures whose files carry an award; a program whose files carry none (${AWARD_NOT_IN_FILE}, or ${AWARD_NONE}) is not in them. The spending against the award is what the period's files spent (approved or reimbursed) under the funds with an award, and each fund's award is counted once however many files carry it.`;
+  return `Award totals are over the ${withAward} of ${of} program${of === 1 ? '' : 's'} with figures whose files carry an award; a program whose files carry none (${AWARD_NOT_IN_FILE}, or ${AWARD_NONE}) is not in them. The spending against the award is what the period's files spent (approved or reimbursed) under the funds with an award, and each fund's award is counted once however many files carry it. ${AWARD_PRORATED_NOTE}`;
 }
 /** Whether the county has entered figures for any programme (the views offer to leave them out only then). */
 const hasEntered = () => !!db.one(`SELECT 1 x FROM county_submissions WHERE source=? LIMIT 1`, ENTERED);
@@ -797,7 +824,7 @@ function byQuarter(from, to, { entered = true } = {}) {
   if (!qs.length) return { from, to, quarters: [], rows: [], days_outside_quarters: daysIn(from, to), too_many: false, entered, has_entered: hasEntered() };
   if (qs.length > MAX_QUARTERS) return { from, to, quarters: [], rows: [], too_many: true, max_quarters: MAX_QUARTERS, entered, has_entered: hasEntered() };
   const views = qs.map(q => combined(q.from, q.to, { entered }));
-  const order = [['spending', 'spend_approved'], ['spending', 'spend_pending'], ...USE_ROWS().map(u => ['use', u.code]), ...HIAA_ROWS().map(x => ['hiaa', x.code]), ...VALUE_KEYS.map(k => ['outcome', k]), ...['award_amount', 'award_spent', 'award_spent_pct'].map(k => ['award', k])];
+  const order = [['spending', 'spend_approved'], ['spending', 'spend_pending'], ...USE_ROWS().map(u => ['use', u.code]), ...HIAA_ROWS().map(x => ['hiaa', x.code]), ...VALUE_KEYS.map(k => ['outcome', k]), ...AWARD_KEYS.map(k => ['award', k])];
   const rows = [];
   for (const [g, k] of order) {
     const found = views.map(v => v.rows.find(r => r.group === g && r.key === k));
@@ -823,7 +850,7 @@ const PERIOD_RULE = 'A program\'s submission counts when its whole period lies i
 const PUBLICATION_NOTE = 'To publish combined figures, use Publish: it screens the totals of a period with SUDS\'s small-cell method, checked against each program\'s own published figures, and records what was published. Nothing on the combined view or in its files is for publication.';
 
 module.exports = {
-  FORMAT, SCHEMA_VERSION, SCHEMA_VERSIONS, ALGORITHM, MAX_FILE_BYTES, MAX_QUARTERS, VALUE_KEYS, PAYLOAD, PAYLOAD_V2, PAYLOADS, AWARD_NOT_IN_FILE, AWARD_NONE, awardFrom, awardNote, TEXT_MAX, CAVEATS, CAVEAT_SUMMARY, PERIOD_RULE, PUBLICATION_NOTE, SubmissionError,
+  FORMAT, SCHEMA_VERSION, SCHEMA_VERSIONS, ALGORITHM, MAX_FILE_BYTES, MAX_QUARTERS, VALUE_KEYS, PAYLOAD, PAYLOAD_V2, PAYLOADS, AWARD_NOT_IN_FILE, AWARD_NONE, awardFrom, awardNote, prorate, AWARD_KEYS, AWARD_PRORATED_LABEL, AWARD_PRORATED_PCT_LABEL, AWARD_PRORATED_NOTE, TEXT_MAX, CAVEATS, CAVEAT_SUMMARY, PERIOD_RULE, PUBLICATION_NOTE, SubmissionError,
   ENTERED, ENTERED_LABEL, ENTERED_NOTE, LEFT_OUT, USE_CODES, HIAA_CODES, CURRENT, subById, sha256Hex, isEntered, sourceOf, hasEntered,
   SUBS, canonical, textOf, cleanText, fingerprintOf, formatFingerprint, normaliseFingerprint, parsePublicKey, normaliseCode, formatCode, countyCode,
   currentKey, retiredKeys, ensureKey, rotateKey, payloadFrom, signFile, signWithSeed, checkPayload, parseFile, importParsed, withdraw, reinstate, resettle, resettleProgramme,

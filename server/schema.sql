@@ -1752,6 +1752,36 @@ CREATE TRIGGER IF NOT EXISTS county_publications_no_update BEFORE UPDATE OF id, 
 CREATE TRIGGER IF NOT EXISTS county_publications_no_delete BEFORE DELETE ON county_publications
   BEGIN SELECT RAISE(ABORT, 'county_publications is append-only: a published release is never deleted'); END;
 
+-- Publication governance (migration 65; built for 1.22.0; docs/COUNTY-VIEW.md "Publication"). Office server only,
+-- never synchronised. county_publication_consents: per registered programme, that it agreed in writing to the county
+-- publishing figures that name it (the date of the agreement, its reference: typed text, encrypted; who recorded it
+-- and when), and the withdrawal of that consent (when and by whom; the row stays). A programme's current consent is
+-- its row with withdrawn_at NULL (at most one: the partial unique index). county_publication_inputs: for each release
+-- published from 1.22.0 on, the figures its audit screened (each programme's own counts of people and events, as the
+-- combined view gave them; encrypted), so that a corrected release of the same period after a withdrawal can be
+-- audited against everything the withdrawn one printed. Neither ever holds a client or anything about one.
+CREATE TABLE IF NOT EXISTS county_publication_consents (
+  id TEXT PRIMARY KEY,
+  programme_id TEXT NOT NULL REFERENCES county_programmes(id),
+  agreed_on TEXT NOT NULL,             -- the date of the programme's written agreement (YYYY-MM-DD)
+  reference_enc TEXT,                  -- the agreement's reference (typed text), AES-256-GCM
+  recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  recorded_by TEXT REFERENCES users(id),
+  withdrawn_at TEXT,
+  withdrawn_by TEXT REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_county_publication_consents_programme ON county_publication_consents(programme_id, recorded_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_county_publication_consents_current ON county_publication_consents(programme_id) WHERE withdrawn_at IS NULL;
+CREATE TABLE IF NOT EXISTS county_publication_inputs (
+  release_id TEXT PRIMARY KEY REFERENCES county_publications(id),
+  inputs_enc TEXT NOT NULL,            -- JSON { programmes: [{ id, name, values: { measure: n } }] }, AES-256-GCM
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TRIGGER IF NOT EXISTS county_publication_inputs_no_update BEFORE UPDATE OF release_id, created_at ON county_publication_inputs
+  BEGIN SELECT RAISE(ABORT, 'county_publication_inputs is append-only: what a release was screened from is never changed'); END;
+CREATE TRIGGER IF NOT EXISTS county_publication_inputs_no_delete BEFORE DELETE ON county_publication_inputs
+  BEGIN SELECT RAISE(ABORT, 'county_publication_inputs is append-only: what a release was screened from is never deleted'); END;
+
 -- The county connection (docs/COUNTY-VIEW.md, "Connecting"; server/county-connect.js, server/county-connect-client.js).
 -- Office server only, never synchronised (server/sync-tables.js server_only). Optional and off by default on both sides.
 -- county_connect_tokens, on a county's server: the machine tokens it issues. A connection token (scope county.submit)

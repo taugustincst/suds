@@ -57,17 +57,50 @@ const GROUPS = (() => {
  * The model of one group of measures. inputs: { programmes: [{ values: { measure: n } }] } in a fixed order (the
  * combined view's, by name); the true figures of the screened measures only.
  */
-function buildModel({ programmes }, T, measures = SCREENED) {
+function buildModel({ programmes, earlier = [] }, T, measures = SCREENED) {
   const vars = []; const cons = [];
-  const v = (id, value, o = {}) => { vars.push({ id, value, people: true, total: !!o.total, table: o.table, published: true, ...(o.fixed ? { fixed: true } : {}) }); return vars.length - 1; };
-  const h = { x: programmes.map(() => ({})), X: {} };
+  const v = (id, value, o = {}) => { vars.push({ id, value, people: true, total: !!o.total, table: o.table, published: o.published !== false, ...(o.fixed ? { fixed: true } : {}) }); return vars.length - 1; };
+  const h = { x: programmes.map(() => ({})), X: {}, earlier: earlier.map(() => ({ x: {}, X: {} })) };
+  const within = WITHIN.filter(([a, b]) => measures.includes(a) && measures.includes(b));
   for (const m of measures) {
     const parts = programmes.map((p, i) => { const j = v(`programme.${i}.${m}`, p.values[m], { fixed: true, table: `programme.${i}.${m}` }); h.x[i][m] = j; return j; });
     const X = h.X[m] = v(`total.${m}`, programmes.reduce((n, p) => n + p.values[m], 0), { total: true, table: `total.${m}` });
     if (parts.length) cons.push({ terms: [...parts.map(j => [j, 1]), [X, -1]], op: '=', rhs: 0 });
   }
-  const within = WITHIN.filter(([a, b]) => measures.includes(a) && measures.includes(b));
   programmes.forEach((p, i) => { for (const [a, b] of within) cons.push({ terms: [[h.x[i][a], 1], [h.x[i][b], -1]], op: '<=', rhs: 0, soft: true }); });
+  // A corrected release (built for 1.22.0; county-publication.js earlierReleases): each withdrawn release of the same
+  // period was seen, so the reader holds what it printed. Each of its programmes' figures then is a cell its own
+  // release could print (fixed, as now; the same cell as now when the programme's figure did not change, since a
+  // reader may know it did not), and each county total it printed as a number or "<T" is a fixed cell too, tied to
+  // those figures; a total it hid (suppressed or withheld) is a count printed nowhere. The new totals are then hidden
+  // until every small figure, then or now, is protected against both releases and every programme's own.
+  earlier.forEach((e, ei) => {
+    const now = new Map(programmes.map((p, i) => [p.id, i]));
+    for (const m of measures) {
+      const parts = e.programmes.map((q, qi) => {
+        const i = q.id !== undefined ? now.get(q.id) : undefined;
+        if (i !== undefined && programmes[i].values[m] === q.values[m]) return h.x[i][m];
+        const j = v(`earlier.${ei}.programme.${qi}.${m}`, q.values[m], { fixed: true, table: `earlier.${ei}.programme.${qi}.${m}` });
+        h.earlier[ei].x[`${qi}.${m}`] = j; return j;
+      });
+      const value = e.programmes.reduce((n, q) => n + q.values[m], 0);
+      const shown = e.printed[m];
+      const printed = typeof shown === 'number' || shown === SC.primary(T);
+      if (typeof shown === 'number' && shown !== value) throw new Error(`the withdrawn release printed ${m} as a number that is not the sum of what it was screened from`);
+      if (shown === SC.primary(T) && !(value > 0 && value < T)) throw new Error(`the withdrawn release printed ${m} as small, which what it was screened from is not`);
+      const X = h.earlier[ei].X[m] = v(`earlier.${ei}.total.${m}`, value, { total: true, table: `earlier.${ei}.total.${m}`, ...(printed ? { fixed: true } : { published: false }) });
+      if (parts.length) cons.push({ terms: [...parts.map(j => [j, 1]), [X, -1]], op: '=', rhs: 0 });
+    }
+    e.programmes.forEach((q, qi) => {
+      for (const [a, b] of within) {
+        const ja = h.earlier[ei].x[`${qi}.${a}`]; const jb = h.earlier[ei].x[`${qi}.${b}`];
+        if (ja !== undefined || jb !== undefined) {
+          const i = now.get(q.id);
+          cons.push({ terms: [[ja !== undefined ? ja : h.x[i][a], 1], [jb !== undefined ? jb : h.x[i][b], -1]], op: '<=', rhs: 0, soft: true });
+        }
+      }
+    });
+  });
   return { model: { vars, cons, derived: [], mirror: [], keep: [] }, h };
 }
 
