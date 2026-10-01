@@ -677,11 +677,16 @@ test('SUDS 1.21.0\'s first start on a 1.20.0 database: county rows (a county-ent
     // Migrations 61 and 63: the new tables, empty.
     for (const t of ['county_publications', 'authenticator_metadata']) assert.equal(db().one(`SELECT COUNT(*) n FROM "${t}"`).n, 0, `${t} exists and starts empty`);
     // Migration 62: the device keeps everything and syncs everything (full); no client has a participant code.
-    const dev = { ...db().one(`SELECT * FROM devices WHERE id='fixture-device'`) };
-    assert.deepEqual(dev, { ...deviceBefore, sync_scope: 'full', scope_changed_at: null, field_applied_at: null }, 'the device: unchanged, scope full');
+    // (Columns later migrations add, such as 64's scope_set_by, are those migrations' tests to check.)
+    const want = { ...deviceBefore, sync_scope: 'full', scope_changed_at: null, field_applied_at: null };
+    const got = db().one(`SELECT * FROM devices WHERE id='fixture-device'`);
+    const dev = Object.fromEntries(Object.keys(want).map(k => [k, got[k]]));
+    assert.deepEqual(dev, want, 'the device: unchanged, scope full');
     assert.equal(db().one(`SELECT COUNT(*) n FROM clients WHERE participant_code_enc IS NOT NULL OR participant_code_idx IS NOT NULL`).n, 0, 'no client has a participant code');
     // Migration 63: the passkey keeps everything, with no attestation (none was attested before the allow-list).
-    assert.deepEqual({ ...db().one(`SELECT * FROM passkeys WHERE id='fixture-passkey'`) }, { ...passkeyBefore, attestation: null }, 'the passkey: unchanged, unattested');
+    const pkWant = { ...passkeyBefore, attestation: null };
+    const pkGot = db().one(`SELECT * FROM passkeys WHERE id='fixture-passkey'`);
+    assert.deepEqual(Object.fromEntries(Object.keys(pkWant).map(k => [k, pkGot[k]])), pkWant, 'the passkey: unchanged, unattested');
     const S = (t) => ({ ...db().one(`SELECT mfa_pending, revoked_at, reauth_method, passkey_id, sync_client, device_id FROM sessions WHERE id=?`, sha256(tokens[t])) });
     assert.deepEqual(S('passkey'), { mfa_pending: 0, revoked_at: null, reauth_method: 'passkey', passkey_id: 'fixture-passkey', sync_client: 0, device_id: null }, 'the passkey session after migrations 61-63');
     assert.deepEqual(S('owesCode'), { mfa_pending: 1, revoked_at: null, reauth_method: null, passkey_id: null, sync_client: 0, device_id: null }, 'the session owing its code');
