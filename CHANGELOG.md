@@ -4,6 +4,38 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### County publication governance and award pro-rating
+
+Built for 1.22.0, not yet released. Migration 65 (`county_publication_consents`, `county_publication_inputs`; office
+server only). No new permission: everything here is `county:manage`, and reading is `county:view`.
+
+- **Each programme's consent to publication, recorded and enforced.** County view › Programs shows, per programme,
+  whether it agreed in writing to the county publishing figures that name it ("Agreed in writing" and the date, or
+  "No consent recorded"); a county manager records the date of the agreement and its reference (encrypted; shown to
+  `county:manage` only), or withdraws it, in the Publication consent dialog (audited
+  `county.publication.consent.record` and `.withdraw`, never with the reference). A publication release that would
+  name a programme without a current consent is refused, naming the programmes; the preparer may instead tick
+  **Leave out programs with no consent to publication**, and the release then states which were left out and why
+  (docs/COUNTY-VIEW.md, *Publication*, decisions 7 and 8). Before, the publication screen published any registered
+  programme, while the data contribution agreement draft forbade publication without the programme's written
+  agreement.
+- **A withdrawn release can be corrected.** A period that overlaps any release, withdrawn or not, is still refused,
+  except exactly the same period once every release of it is withdrawn: the corrected release is audited with every
+  total the withdrawn ones printed as known to the reader (`sdc.js` `fixed` cells beside the programmes' own figures
+  then and now), so nothing new can be worked out by setting the two side by side, and it says what it corrects. A
+  brute-force differencing test across the withdrawn and corrected releases pins it. Each release now keeps what it
+  was screened from (encrypted) for this; a release published before 1.22.0 kept nothing, so its period stays
+  closed (decision 3).
+- **Award pro-rated to the period.** Next to "Spent against the award (%)", the combined view, the by-quarter view,
+  the CSV and Excel and the read API show **"Award pro-rated to the period"** (award × days of the period inside the
+  award period ÷ days in the award period) and **"Spent against the pro-rated award (%)"**, so a quarter is no longer
+  read as under-spending a year's award. The whole-award figures are unchanged (docs/COUNTY-VIEW.md, *Award amounts*).
+- **Documents.** The data contribution agreement draft's section 4.2 now describes publication with the consent
+  record (it said SUDS had no publication function); COUNTY-KIT, DATA-NETWORK and DEMO-SCRIPT no longer call the
+  publication screen or the field device scope unbuilt or planned. `test/doc-content-currency.test.js` now fails when
+  a buyer, market or security document says a feature the CHANGELOG lists as released is "not built", "planned", "not
+  yet" or exists only "until" something.
+
 ## 1.21.0 — 2026-09-30
 
 A feature release (migrations 61, 62 and 63; the county publication, field-device, authenticator allow-list and

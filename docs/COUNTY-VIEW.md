@@ -600,7 +600,16 @@ exactly `{ amount, from, to }`).
   file" for a programme that has upgraded; the version 1 box and the connection's fallback exist only so a programme
   is never stuck while its county upgrades. The award is the fund record's total amount for its fiscal year: a fund
   whose record holds a different figure from the contract (an amendment not yet entered) shows that figure. The
-  percentage is the period's spending over the whole award, not a pro-rated share of it.
+  percentage is the period's spending over the whole award; the pro-rated share is beside it (below).
+- **Pro-rated to the period** (*built for 1.22.0, not yet released*). A quarter's spending set against a whole year's
+  award reads as under-spending, so the combined view, the by-quarter view, the CSV and Excel and the read API add,
+  after the whole-award rows (which stay as they are): **"Award pro-rated to the period"**, each award times the days
+  of the period that fall inside its award period divided by the days in its award period (`county.js` `prorate`;
+  an award whose period does not overlap the period counts 0, one wholly inside it counts whole), summed as the award
+  is; and **"Spent against the pro-rated award (%)"**, the same spending over that share (none when the share is 0).
+  Measure keys `award_prorated` and `award_spent_prorated_pct`; each programme's `award.prorated` and
+  `award.prorated_pct` in the read API, whose `notes.award` says which is which. Totals are over the same programmes
+  as the whole-award totals (`test/county-award.test.js`, "the award pro-rated to the period").
 
 ## Reminders on the programme's side
 
@@ -685,6 +694,38 @@ release** of the combined figures for a period, records it, and never changes it
 - **Overlapping periods are refused.** Two releases whose periods overlap could be subtracted from each other (a year
   beside its quarters), so a period that overlaps any release already published is refused (`409`, `overlap`), a
   withdrawn one included: it was seen.
+- **A corrected release** (*built for 1.22.0, not yet released*). The one exception: once every release of a period
+  is withdrawn, **exactly the same period** may be published again. Its audit treats every total the withdrawn
+  releases printed as known to the reader: each is an `sdc.js` `fixed` cell (its number, or `<T`; a total it hid is a
+  count printed nowhere), tied by the sum to the figures that release was screened from, which are `fixed` cells too
+  beside the programmes' figures now (one cell where a programme's figure did not change). The new totals are then
+  hidden until every small figure, then or now, is protected against both releases and every programme's own
+  (`county-publication-audit.js` `buildModel`, `earlier`). Example: a release printed 212 for 200 + 3 + 4 + 5; a late
+  file adds a programme of 6; alone the correction would print 218, which beside 212 gives the 6 away, so it is
+  suppressed. To make this possible each release from 1.22.0 keeps what it was screened from
+  (`county_publication_inputs`, encrypted, append-only; migration 65). A release published before 1.22.0 kept no
+  such record, so its period stays refused; a correction uses the withdrawn release's threshold (another is refused,
+  and so is a correction whose withdrawn release used less than the county's threshold now); a release of the same
+  period that is not withdrawn is refused (withdraw it first); a period that only overlaps is refused as before. The
+  release names what it corrects (`corrects`: each withdrawn release's SHA-256 and date) and says so in a note.
+  Tested by brute force: every split of the small figures before and after that prints what both releases print
+  leaves each small figure free (`test/county-publication.test.js`, "a corrected release …" and "corrected releases
+  across many shapes"), and the same figures audited without the withdrawn release print 218 and leak.
+- **Each programme's consent to publication** (*built for 1.22.0, not yet released*). A release names the programmes
+  whose figures it counts; the data contribution agreement
+  ([market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md),
+  section 4.2) lets the county publish figures that name a programme only with its written agreement. On **Programs**,
+  `county:manage` records per programme that it agreed in writing: the date of the agreement and its reference
+  (typed text, encrypted; shown to `county:manage` only), with who recorded it and when (`county_publication_consents`,
+  migration 65; `POST /api/county/programmes/:id/publication-consent`, audited `county.publication.consent.record`
+  without the reference), and withdraws it (`…/publication-consent/withdraw`, `county.publication.consent.withdraw`;
+  the row stays, marked). Everyone with `county:view` sees each programme's consent on Programs. A release that would
+  name a programme with no current consent is **refused** (`409`, `no_consent`, the programmes listed in the message
+  and in `programmes`; audited `county.publication.refuse` with their ids), or, if the preparer ticks **Leave out
+  programs with no consent to publication** (`without_consent: "leave_out"`; offered again beside the refusal), those
+  programmes are left out of the release whole, their figures too, and the release lists them
+  (`left_out_without_consent`, a note, a line in About). Publishing prepares again, so a consent withdrawn after
+  the review stops the release (or changes its hash: `409`, prepare again).
 - **Files.** On screen (the release's dialog, with its hash), CSV, Excel (sheets About, Figures and **Notes**: each
   suppressed or withheld figure and why, never its value) and JSON (`county:view` with `export:read`, audited
   `county.publication.export`); the read API's `GET /api/county-connect/v1/publications` (read token) lists every
@@ -703,12 +744,23 @@ release** of the combined figures for a period, records it, and never changes it
 2. *The threshold is the county's own* (`small_cell_threshold`, 11 by default), raised per release if wanted, never
    lowered. A county should set it at least as high as the highest threshold its programs publish with: a program's
    figure between the county's and its own threshold is assumed printed exactly.
-3. *No corrected release of a period*: any overlap with a release already published, withdrawn or not, is refused.
+3. *A corrected release only of exactly a withdrawn release's period* (changed for 1.22.0, from "no corrected release
+   of a period"): any other overlap with a release already published, withdrawn or not, is still refused; a period
+   whose every release is withdrawn may be published again, audited with every total the withdrawn releases printed
+   as `fixed` cells (above, *A corrected release*). A release published before 1.22.0 kept nothing to audit
+   against, so its period stays closed. The correction uses the withdrawn release's threshold.
 4. *Whole period, totals only*: no by-quarter release and no program columns in this version.
 5. *Entered figures counted by default*, as on the combined view, and named; the preparer can leave them out.
 6. *Publishing needs the review ticked and the hash reviewed*; the withdrawal's reason is kept encrypted with it, not in
    the audit log, and shown to `county:manage` only.
 7. *Independent of the program's Modules › publication switch*: a county-only install publishes with `county:manage`.
+   What the program agreed to is recorded on the county's side instead (built for 1.22.0): **a release that would
+   name a program without a current written consent is refused** by default, naming the programs; the preparer may
+   choose to leave them out, and the release says so. The county records consent in SUDS: SUDS cannot see the signed
+   agreement, so the record is the county manager's word, audited, with the agreement's reference.
+8. *Consent is the program's agreement as of its date, until withdrawn* (built for 1.22.0): one current consent per
+   program; withdrawing it stops later releases naming the program but does not withdraw releases already published
+   (they were seen); a new agreement is a new record.
 
 ## Not on SUDS on this device
 
@@ -721,8 +773,9 @@ office-only too (`county-connect` in `LOCAL_ROUTE_MODULES`'s exclusions; `test/c
 
 - ~~Publication~~: released in 1.21.0 ([Publication](#publication), above): **the publication screen over the
   combined release**, the small-cell method audited over the county total *and* every programme's own releases it
-  could be differenced against (DATA-NETWORK, *The basis*). Still deferred: a corrected release of a period already
-  published, a release by quarter, and program columns in a release.
+  could be differenced against (DATA-NETWORK, *The basis*). Built for 1.22.0: each programme's consent to
+  publication, and a corrected release of exactly a withdrawn release's period. Still deferred: a release by quarter,
+  program columns in a release, and a corrected release of a period published before 1.22.0.
 - ~~Award and contract amounts per fund~~: released in 1.21.0 ([Award amounts](#award-amounts-schema-version-2)).
 - ~~Reporting-cadence reminders on the programme's side~~: released in 1.21.0 ([Reminders on the
   programme's side](#reminders-on-the-programmes-side)).
@@ -766,6 +819,15 @@ routes in `server/routes/county.js` and `/v1/publications` in `server/routes/cou
 `public/views/county.js`; migration 61 (`county_publications`, append-only); tests `test/county-publication.test.js`
 and the attacker sweep `test/county-publication-sdc.test.js`; the browser script `scripts/ui/county-publication.mjs`,
 and the Publish tab and its dialogs in `scripts/ui/accessibility.mjs`.
+
+Publication governance (built for 1.22.0, not yet released): consent (`consents`, `recordConsent`,
+`withdrawConsent`) and corrected releases (`earlierReleases`, `inputsOf`) in `server/county-publication.js`, the
+`earlier` releases in `server/county-publication-audit.js` `buildModel`, the consent routes in
+`server/routes/county.js`, the Publication consent dialog and the Publish tab's choice in `public/views/county.js`;
+migration 65 (`county_publication_consents`, `county_publication_inputs`; 64 is another 1.22.0 branch's); tests at the
+end of `test/county-publication.test.js`; `scripts/ui/county-publication.mjs` (section 1a and the corrected release)
+and the Publication consent dialog in `scripts/ui/accessibility.mjs`. Award pro-rating: `server/county.js` `prorate`,
+`test/county-award.test.js`.
 
 The county connection: `server/county-connect.js`, `server/county-connect-client.js`,
 `server/routes/county-connect.js`, `public/views/countyconnect.js`; migration 57 (`county_connect_tokens`,
