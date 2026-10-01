@@ -4,6 +4,25 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Release discipline (stabilisation)
+
+- Fixed: the release policy was checked only in `release.yml`'s gate, which no release since 1.16.2 has been through,
+  so nothing turned red when work after a release broke it. CI's new `release-policy` job
+  (`scripts/release-policy-ci.js`) runs it on every push against the newest release (its tag, or while the tags are
+  owed the commit `docs/evidence/RELEASE-HANDOFF.md` records): a patch that adds a migration, permission or route, or
+  more than the patch size limit, fails, and so does a minor within 28 days of the previous feature release unless a
+  security exception is recorded.
+- Fixed: docs/RELEASE.md had no commitment after ten releases in two days under exceptions. Its new *Stabilisation
+  (from 1.23.1)* section sets a feature freeze (1.24.0 no earlier than 2026-10-29, through the gate), no policy
+  exception but a security fix, 1.23.x as the supported line, and every release tagged by the owner and published by
+  `release.yml`, with no direct `gh-pages` push once the owed tags exist. The tag hand-off and HANDOFF.md now lead with
+  the owner's tag push, the action that unblocks self-hosting and the gate; QUESTIONNAIRE #36 and #39 and the IT buyer
+  guide state the freeze and support window.
+- Fixed: workers had no short plain-language help: docs/QUICK-START-WORKERS.md has one-screen task cards (log a
+  contact, street outreach with or without signal, follow-ups and to-dos, notes, referrals, a phone as a field device)
+  in the app's own words, and the pilot kit has a measurement worksheet and a worker-feedback procedure built on what
+  SUDS already records.
+
 ## 1.23.0 — 2026-10-01
 
 A feature release (migration 67; new routes `POST /api/supervision/referrals/:id/remind`, `GET /api/me/field-device`,
