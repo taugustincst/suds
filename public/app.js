@@ -1,4 +1,5 @@
 // SUDS frontend core: API client, hash router, DOM + form helpers, session/idle handling.
+import { NAV, placement, isFrontline, isSupervising } from './nav.js';
 export const state = { user: null, org: 'SUDS', constants: null, users: [], funds: [], idleMinutes: 15, prefs: {}, local: false };
 // Local mode: the whole server runs inside this page (the offline copy). Requests go to the in-page kernel.
 // window.SUDS_FORCE_LOCAL is set by a small external script tag, before this module loads, on builds
@@ -1472,7 +1473,7 @@ export function roleSummary(f, name = 'role') {
 }
 export function pageHead(title, ...actions) {
   const r = parseHash(); const item = NAV.find(n => n.name === r.name);
-  return h('div', { class: 'topbar' }, h('div', { class: 'row', style: { gap: '.4rem' } }, h('h1', {}, title), item?.help ? helpTip(typeof item.help === 'function' ? item.help() : item.help) : null), h('div', { class: 'row' }, actions));
+  return h('div', { class: 'topbar' }, h('div', { class: 'row', style: { gap: '.4rem' } }, h('h1', {}, title), item?.help ? helpTip(typeof item.help === 'function' ? item.help(navContext()) : item.help) : null), h('div', { class: 'row' }, actions));
 }
 // Small "?" that reveals a plain-language explanation
 export function helpTip(text) {
@@ -1873,100 +1874,21 @@ export function navAndRender(to) {
   if (location.hash === before) render();
 }
 
-// The sidebar. Each entry shows for a role that holds its permission (perm) — and, so a front-line worker's
-// sidebar is the handful of pages they use every day rather than every page they may open, two more marks:
-//   more: true       — for front-line roles (frontline() below) it folds into a closed "More" group at the end;
-//                      everyone else sees it in its section.
-//   programme: true  — the programme's own pages (money, contracts, imports, the funder report, settings), in
-//                      the "Programme" section, shown to the roles that run the programme. A front-line worker
-//                      who may still open one (a navigator may record spending) reaches it from the page that
-//                      needs it, or its address; Import, which Home links to for imported notes, sits in More.
-//                      Marked both (the funder report, state reporting, SUPRT-A): in More for a front-line worker,
-//                      who runs them for their own caseload (the API allows it), in the Program section for others.
-//   show()           — shown only when this returns true (a reporting module switched on for the programme).
-//   hideIn: [...]    — not shown under these programme profiles (server/programme.js): the harm-reduction pages
-//                      a program running SUDS as its Part 2 layer beside an EHR does not use (1.17.0). Their
-//                      addresses still open for anyone whose role may; the sidebar just stops leading with them.
-//   team: true       — for someone who supervises a team (supervising() below) it stays in the main list, and
-//                      everything else folds into "More": their day is the supervision queue, the caseloads and
-//                      the team's daily pages, not the programme's every page. Supervision leads their list.
-// The order within each section is by how often the page is used: a navigator's day is Home, Clients, the
-// waitlist and to-dos, then recording visits, calls and notes; reports come monthly.
-// Nothing here changes a permission: the server decides what each role may do (server/auth.js PERMS).
-export const NAV = [
-  { sec: 'My day' },
-  { name: 'dashboard', team: true, label: 'Home', ico: '⌂', help: 'What needs attention today, and where you left off on any device.' },
-  { name: 'clients', team: true, label: 'Clients', ico: '👤', perm: 'clients:read', help: 'Everyone you serve. Open a client to see their whole story in one place.' },
-  { name: 'waitlist', team: true, label: 'Waitlist', ico: '⧗', perm: 'clients:read', help: 'People waiting for a place, longest and highest risk first.' },
-  { name: 'tasks', team: true, label: 'To-dos', ico: '☑', perm: 'tasks:read', help: 'Your to-dos: follow-ups and reminders. Check a box when it is done.' },
-  { name: 'supervision', team: true, label: 'Supervision', ico: '✍', perm: ['notes:cosign', 'time:approve', 'assignments:manage'], help: () => (can('notes:cosign') || can('assignments:manage') ? 'Notes waiting for your countersignature, drafts your team has not finished, staff time to approve, and referrals with no outcome recorded.'
-    : 'Staff time submitted for approval: approve it, or send it back to be corrected.') }, // Finance sees only the time (r9 L7)
-  { sec: 'Record work' },
-  { name: 'interventions', team: true, label: 'Visits', ico: '✚', perm: 'interventions:read', help: 'Every visit: the face-to-face or phone services you provide — outreach, screenings, warm handoffs, naloxone, transport and more.' },
-  { name: 'calls', team: true, label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
-  { name: 'notes', team: true, label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
-  { name: 'supplies', hideIn: ['part2_layer'], label: 'Supplies', ico: '📦', perm: 'supplies:read', help: 'Naloxone, test strips, syringes and other harm-reduction supplies on hand at each site, by lot and expiry, with every delivery, move and count. A visit takes what it hands out off the stock automatically, the batch that expires soonest first.' },
-  // Street outreach (1.17.0): the one-screen, phone-first logger for anonymous field contacts; also on + Log, and a
-  // worker's start page if they choose (My profile, or the box on the screen).
-  { name: 'outreach', hideIn: ['part2_layer'], label: 'Street outreach', ico: '🚶', perm: 'interventions:write', more: true, help: 'Log a field contact in a few taps: what kind, what you handed out, and roughly where. Anonymous, works with no connection on a device, and the supplies come off the stock.' },
-  { name: 'overdose', hideIn: ['part2_layer'], label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
-  // Group and community prevention events (1.17.0): a front-line worker finds it under More. Whoever reads reports
-  // but not visits (finance, read-only) gets its activity summary alone.
-  { name: 'prevention', label: 'Prevention', ico: '☂', perm: ['interventions:read', 'reports:read'], more: true, help: 'Group and community prevention events — presentations, trainings, community events, campaigns — with their CSAP strategy, IOM population category, hours and attendance (counts, never names), and the prevention activity summary.' },
-  { name: 'forms', label: 'Forms', ico: '🧾', perm: 'forms:read', more: true, help: 'County forms (releases, intake sheets, assistance requests). Fill one out from a client record: it is pre-filled from the chart, printable, and holds the signed copy.' },
-  { name: 'time', hideIn: ['part2_layer'], label: 'My time', ico: '◷', perm: 'time:read', more: true, help: 'Your hours by activity. A call adds its time, and a visit does when you tick "Also log this as a time entry"; log meetings, travel and paperwork here.' },
-  { sec: 'Connect clients' },
-  { name: 'referrals', team: true, label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
-  { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Syringe services, drop-ins, shelters, MAT and treatment programs, legal aid and the other partners you refer people to.' },
-  { sec: 'Program' },
-  { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', more: true, help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
-  { name: 'funder', hideIn: ['part2_layer'], label: 'Funder report', ico: '▦', perm: 'reports:read', programme: true, more: true, help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
-  // The two state and federal reporting modules, for a programme that uses them (Settings › Program › Modules):
-  // the same test the Reports page's cards use, so the entry and the card come and go together.
-  { name: 'caloms', label: 'State reporting', ico: '⚑', perm: ['episodes:read', 'episodes:write', 'export:identified'], more: true, show: () => ((can('episodes:read') || can('episodes:write')) && moduleOn('caloms')) || (can('export:identified') && (moduleOn('caloms') || moduleOn('handoff'))), help: 'CalOMS Tx admission, discharge and annual update records for DHCS, their validation report and the extract, and the county EHR hand-off.' },
-  { name: 'suprt', label: 'SUPRT-A', ico: '◎', perm: ['clients:read', 'reports:funder'], more: true, show: () => moduleOn('suprt'), help: 'SAMHSA SUPRT-A records for clients served with State Opioid Response money: completion, the follow-ups due, and the file for SPARS.' },
-  // Settlement outcomes (1.17.0): each opioid settlement fund's spending beside what the program recorded of the work
-  // it paid for. For the people who account for the money (reports:funder or reports:internal, with budget:read).
-  { name: 'settlement', hideIn: ['part2_layer'], label: 'Settlement outcomes', ico: '◈', perm: ['reports:funder', 'reports:internal'], show: () => can('budget:read'), programme: true, more: true, help: 'For each opioid settlement fund: what it spent, what the program recorded of the work it paid for (kits, reversals, people served and linked to care, people trained), the cost per outcome where that means something, and the trend by month. Small counts of people are hidden as in the funder report.' },
-  // The county view (docs/COUNTY-VIEW.md): for a county that runs SUDS, the signed submissions of the programmes it
-  // funds, side by side and summed. For county:view once a programme is registered here (active or not: an inactive
-  // one's files are still there), and for county:manage (who registers them) always. Never on SUDS on this device,
-  // which has no county relationship.
-  { name: 'county', label: 'County view', ico: '⊞', perm: 'county:view', show: () => !state.local && (can('county:manage') || !!(state.programme && state.programme.county_programmes)), programme: true, more: true, help: 'For a county that funds programs: the settlement spending and outcomes each one sends as a signed file, side by side and summed for a period or by quarter. Exact figures for authorised county staff, not for publication; people are each program\'s own count, added up.' },
-  { name: 'budget', hideIn: ['part2_layer'], label: 'Funding & spending', ico: '$', perm: 'budget:read', programme: true, help: 'Grants and what has been spent, including client assistance such as bus passes and IDs.' },
-  { name: 'documents', label: 'Policies & contracts', ico: '📋', perm: 'documents:read', programme: true, help: 'County policies, procedures and signed contracts, searchable by title and category.' },
-  { name: 'compliance', label: 'Privacy & Part 2', ico: '⚖', perm: ['consents:read', 'complaints:read', 'incidents:read', 'settings:manage'], more: true, help: '42 CFR Part 2: the patient notice and who has not been given it, the privacy complaint log, and the incident and breach register with its 60-day notification clock.' },
-  { name: 'imports', label: 'Import', ico: '⇩', perm: 'imports:write', programme: true, more: true, help: 'Bring in spreadsheets (Excel / CSV) of clients, visits, calls, resources and more, or notes from Pocket AI and OneNote. Everything is checked before it is saved.' },
-  // A supervisor holds assignments:manage (moving a caseload when someone leaves lives on this page) but not
-  // users:manage; gating the whole page on the latter locked them out of a feature built for them.
-  { name: 'admin', team: true, label: 'Settings', ico: '⚙', perm: ['users:manage', 'assignments:manage'], programme: true, help: 'Staff accounts, security, connecting devices and backups — or, for a supervisor, moving a caseload and the audit log.' },
-];
-/**
- * A front-line worker (navigator, clinician): records work with clients and does not run the programme's
- * money, staff or settings. Presentation only — the short sidebar and a Home without the budget.
- */
-export function frontline() {
-  return can('interventions:write') && !can('budget:approve') && !can('assignments:manage') && !can('users:manage') && !can('settings:manage');
-}
-/**
- * Someone who supervises a team (a supervisor): countersigns notes and moves caseloads, but does not run the
- * programme's accounts or settings. Presentation only, from permissions (deny-aware can()), not the role name:
- * a sidebar led by Supervision with the rest under More, and the client record's Episodes and Care team tabs.
- */
-export function supervising() {
-  return can('notes:cosign') && can('assignments:manage') && !can('users:manage') && !can('settings:manage');
-}
-/** Where a NAV entry goes in this person's sidebar: 'main', 'more' (folded away), or null (not shown). */
-export function navPlacement(n) {
-  if (!n.name || (n.perm && !canAny(n.perm)) || (n.show && !n.show())) return null;
-  if (n.hideIn && n.hideIn.includes(programmeProfile())) return null;
-  // SUDS as the Part 2 layer beside an EHR: Privacy & Part 2 is what it is for, so it leads for everyone who may open it.
-  if (n.name === 'compliance' && programmeProfile() === 'part2_layer') return 'main';
-  if (supervising()) return n.team ? 'main' : 'more';
-  if (!frontline()) return 'main';
-  if (n.more) return 'more';
-  return n.programme ? null : 'main';
-}
+// The menu: the pages and where each goes for a role and programme profile live in nav.js (data and pure
+// functions, checked for every role and profile by test/nav-menu.test.js); these are the wrappers with this
+// person's permissions, programme and screen.
+export { NAV };
+/** Is the menu the phone drawer (the width at which the sidebar folds away behind ☰)? */
+const PHONE_MENU = '(max-width: 900px)';
+const phoneMenu = () => typeof matchMedia === 'function' && matchMedia(PHONE_MENU).matches;
+/** What nav.js decides with: this person's permissions, the programme, and whether the menu is the phone drawer. */
+export function navContext() { return { can, moduleOn, profile: programmeProfile(), local: !!state.local, programme: state.programme || null, phone: phoneMenu() }; }
+/** A front-line worker (navigator, clinician): see nav.js isFrontline. Presentation only. */
+export function frontline() { return isFrontline(navContext()); }
+/** Someone who supervises a team: see nav.js isSupervising. Presentation only. */
+export function supervising() { return isSupervising(navContext()); }
+/** Where a NAV entry goes in this person's menu: 'main', 'more' (folded away), or null (not shown). */
+export function navPlacement(n) { return placement(n, navContext()); }
 /** The programme profile (server/programme.js): harm_reduction, treatment or part2_layer; null before sign-in. */
 export function programmeProfile() { return (state.programme && state.programme.profile) || null; }
 /** Is a module of the programme profile switched on (server/programme.js)? Unknown means on. */
@@ -2100,23 +2022,29 @@ export function setPageTitle(r = parseHash(), navItem = NAV.find(n => n.name ===
   const parts = [section && section !== page ? `${section} · ${page}` : page, 'SUDS'];
   document.title = parts.join(' — ');
 }
-function sidebar(r) {
+// The menu's links, from nav.js. Rebuilt on its own when the screen crosses the phone width (the phone menu folds a
+// little more away), so a rotated tablet does not keep the other screen's menu until the next page.
+function navMenu(r) {
   // Sections with nothing to show (a finance account and "Connect clients") are left out, headings and all.
   const groups = []; let cur = null; const more = [];
   const link = (n) => h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '', 'aria-current': r.name === n.name ? 'page' : null }, h('span', { class: 'ico', 'aria-hidden': 'true' }, n.ico), n.label);
+  const c = navContext();
   for (const n of NAV) {
     if (n.sec) { cur = { sec: n.sec, items: [] }; groups.push(cur); continue; }
-    const where = navPlacement(n);
+    const where = placement(n, c);
     if (where === 'main') cur.items.push(link(n)); else if (where === 'more') more.push({ n, a: link(n) });
   }
   // A supervisor's list starts with the queue of work waiting on them, straight after Home.
-  if (supervising()) { const day = groups[0].items; const i = day.findIndex(a => a.getAttribute('href') === '#/supervision'); if (i > 1) day.splice(1, 0, ...day.splice(i, 1)); }
+  if (isSupervising(c)) { const day = groups[0].items; const i = day.findIndex(a => a.getAttribute('href') === '#/supervision'); if (i > 1) day.splice(1, 0, ...day.splice(i, 1)); }
   // A front-line worker's (or a supervisor's) less-used pages, folded into one closed group (open while one of them is showing).
   const moreGroup = more.length ? h('details', { class: 'nav-more', 'data-nav-more': '1', open: more.some(x => x.n.name === r.name) ? true : null },
     h('summary', {}, 'More'), ...more.map(x => x.a)) : null;
+  return h('nav', { class: 'nav', 'aria-label': 'Main' }, groups.filter(g => g.items.length).flatMap(g => [h('div', { class: 'sec' }, g.sec), ...g.items]), moreGroup);
+}
+function sidebar(r) {
   return h('aside', { class: 'sidebar' },
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, state.org))),
-    h('nav', { class: 'nav', 'aria-label': 'Main' }, groups.filter(g => g.items.length).flatMap(g => [h('div', { class: 'sec' }, g.sec), ...g.items]), moreGroup),
+    navMenu(r),
     h('div', { class: 'foot' }, state.local ? h('a', { href: '#/sync', class: 'badge info', style: { display: 'block', textAlign: 'center', marginBottom: '.5rem' } }, window.SUDS_STATIC_HOST ? '📱 On this device · Backup' : '📱 On this device · Sync') : null, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
       h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#/dashboard?welcome=1', 'data-help-link': '1', title: 'Getting started with SUDS' }, 'Help'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'), h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility')),
       h('div', { class: 'small muted', 'data-build-stamp': '1', style: { marginTop: '.4rem' } }, `SUDS ${SUDS_VERSION}`)));
@@ -2128,7 +2056,7 @@ function mobileBar(r, side) {
   // Off-canvas but still in the tab order and the accessibility tree is a trap: a keyboard or screen-reader
   // user lands on invisible links. While the drawer is closed on a phone it is inert; on a desktop it is
   // always a real sidebar.
-  const phone = matchMedia('(max-width: 900px)');
+  const phone = matchMedia(PHONE_MENU);
   const syncInert = () => { const closed = phone.matches && !side.classList.contains('open'); side.inert = closed; if (closed) side.setAttribute('aria-hidden', 'true'); else side.removeAttribute('aria-hidden'); };
   const setOpen = (open) => { side.classList.toggle('open', open); document.body.classList.toggle('nav-open', open); menuBtn.setAttribute('aria-expanded', String(open)); syncInert(); if (open) side.querySelector('a')?.focus(); else menuBtn.focus(); };
   const toggle = () => setOpen(!side.classList.contains('open'));
@@ -2137,7 +2065,8 @@ function mobileBar(r, side) {
   side.addEventListener('keydown', (e) => { if (e.key === 'Escape' && side.classList.contains('open')) setOpen(false); });
   // The layout is rebuilt on every route change; keep exactly one media listener, for the current sidebar.
   if (mobileBar.onChange) phone.removeEventListener('change', mobileBar.onChange);
-  mobileBar.onChange = syncInert; phone.addEventListener('change', syncInert);
+  const onChange = () => { syncInert(); const menu = side.querySelector('nav.nav'); if (menu) menu.replaceWith(navMenu(r)); };
+  mobileBar.onChange = onChange; phone.addEventListener('change', onChange);
   syncInert();
   // The build stamp sits under the page title on a phone: the sidebar foot is below the fold with the menu open.
   return h('div', { class: 'mobilebar' }, menuBtn, h('div', { class: 'mobilebar-title' }, h('b', {}, item.label), h('span', { class: 'mobilebar-stamp', 'data-build-stamp': '1' }, `SUDS ${SUDS_VERSION}`)), can('clients:read') ? h('a', { href: '#/clients', class: 'btn ghost mobilebar-clients', 'data-mobile-clients': '1' }, h('span', { 'aria-hidden': 'true' }, '👤'), 'Clients') : h('span', { class: 'mobilebar-spacer', 'aria-hidden': 'true' }));
