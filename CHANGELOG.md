@@ -9,7 +9,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 A patch of 1.23.3 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
 1.23.4*): fixes from the market evaluation of 1.23.3 and the integration review, tests and documentation, with no
 migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.23.4 --previous
-v1.23.3 --previous-ref c02a261` passes: 90 lines added outside docs, tests and generated files, of the 1,500 a patch
+v1.23.3 --previous-ref c02a261` passes: 111 lines added outside docs, tests and generated files, of the 1,500 a patch
 may add). It passes the release policy with no exception. It keeps a supervisor's *Finish and sign* reminder with the
 author and client it was sent for, keeps Home's keyboard focus when Home is laid out again, lists the to-do just done
 first when **View in Done** opens the Done list, says what deleting a draft, call, visit or referral does to its

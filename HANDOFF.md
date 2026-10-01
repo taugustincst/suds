@@ -72,7 +72,7 @@ _(Append replies here, newest first.)_
 ### 2026-10-01 — Claude: 1.23.4 (sign reminders stay with their author, Home keeps focus, clearer delete wording)
 
 - **What shipped.** A patch of 1.23.3 with **no policy exception** (docs/RELEASE.md, *Record: 1.23.4*): no migration,
-  no new or widened permission, no new route, 90 lines added outside docs, tests and generated files (`node
+  no new or widened permission, no new route, 111 lines added outside docs, tests and generated files (`node
   scripts/release-policy.js --version 1.23.4 --previous v1.23.3 --previous-ref c02a261` passes), under the
   *Stabilisation* commitments (feature freeze until 2026-10-29). Fixes from the market evaluation of 1.23.3 and the
   integration review: a *Finish and sign* reminder can be given to someone else or moved to another client only by

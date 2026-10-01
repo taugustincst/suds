@@ -120,7 +120,7 @@ the `thorough` and `webkit` jobs re-run once after failures the same app code ha
 row for it.
 
 **Record: 1.23.4 ships without a policy exception.** 1.23.4 is a patch of 1.23.3 under the patch rules and
-*Stabilisation*: no migration, no new or widened permission, no new route, and 90 lines added outside docs, tests and
+*Stabilisation*: no migration, no new or widened permission, no new route, and 111 lines added outside docs, tests and
 generated files, within the 1,500-line limit (`node scripts/release-policy.js --version 1.23.4 --previous v1.23.3
 --previous-ref c02a261` passes). It carries fixes from the market evaluation of 1.23.3 and the integration review (a
 *Finish and sign* reminder that only its maker or someone who countersigns notes can give to someone else or move to
