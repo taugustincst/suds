@@ -8,7 +8,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 A stabilisation patch of 1.23.0: fixes, tests, documentation and evidence, with no migration, no new or widened
 permission and no new route (`node scripts/release-policy.js --version 1.23.1 --previous v1.23.0 --previous-ref 9877d07`
-passes: 498 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It is the first release
+passes: 501 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It is the first release
 under the new *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record: 1.23.1*) and
 passes the release policy with no exception: a feature freeze until 2026-10-29, no policy exception except a security
 fix, 1.23.x as the supported line, every release tagged by the owner and published by `release.yml`, and CI checking

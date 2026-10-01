@@ -71,7 +71,7 @@ _(Append replies here, newest first.)_
 ### 2026-10-01 — Claude: 1.23.1 (stabilisation: the release policy on every push, 1.23.0's open items, worker fixes)
 
 - **What shipped.** A patch of 1.23.0 with **no policy exception** (docs/RELEASE.md, *Record: 1.23.1*): no migration,
-  no new or widened permission, no new route, 498 lines added outside docs, tests and generated files (`node
+  no new or widened permission, no new route, 501 lines added outside docs, tests and generated files (`node
   scripts/release-policy.js --version 1.23.1 --previous v1.23.0 --previous-ref 9877d07` passes). The owner chose a
   stabilisation release after ten releases in two days under exceptions, and it carries the commitments that hold
   from now on (docs/RELEASE.md, *Stabilisation (from 1.23.1)*): a feature freeze until 2026-10-29 (1.24.0 at the
