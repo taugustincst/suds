@@ -153,7 +153,9 @@ try {
   ok(/Delete this contact record\? Its open follow-up to-do is cancelled too/.test(askDel), 'and says its open follow-up to-do is cancelled too', askDel.slice(0, 200));
   // 1.23.4 (N4): untouched, it is cancelled; nothing about an edited one is said ("(a follow-up to-do someone has edited
   // is left open)" was on every call's confirmation).
-  ok(!/edited|changed|left open/.test(askDel), 'and nothing about an edited follow-up, when it is as SUDS made it', askDel.slice(0, 200));
+  // 1.23.4: an untouched follow-up is cancelled "unless it has been changed since it was made" (the office matches its exact
+  // title too); what must not appear is the sentence about an edited one being left open.
+  ok(!/edited|left open/.test(askDel), 'and nothing about an edited follow-up, when it is as SUDS made it', askDel.slice(0, 200));
   await nav.page.locator('.modal-bg').last().locator('button', { hasText: /^Cancel$/ }).click();
   await until(async () => (await nav.page.$$('.modal-bg')).length === 1);
   await nav.page.keyboard.press('Escape'); await settle(nav.page);
