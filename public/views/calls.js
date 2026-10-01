@@ -1,4 +1,4 @@
-import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, contactLinks, kv, mayChange, ownedNotice, viewOnly } from '../app.js';
+import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, contactLinks, kv, mayChange, ownedNotice, viewOnly, QUICK_FOLLOW_UP } from '../app.js';
 
 // prefill: starting values for a new record (the number just dialled from a client's page) -- unlike
 // `values`, it does not make this an edit.
@@ -16,7 +16,7 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone, 
     { name: 'contact_type', label: 'Who', type: 'select', list: 'CALL_CONTACT_TYPES', value: 'client', noBlank: true, required: true }, { name: 'contact_name', label: 'Contact name (if not client)' }, { name: 'phone', label: isText ? 'Mobile number' : 'Phone number', type: 'tel' },
     { name: 'purpose', label: 'Purpose', span: true },
     { name: 'outcome', label: 'Outcome', type: 'select', list: isText ? 'TEXT_OUTCOMES' : 'CALL_OUTCOMES', value: isText ? 'sent' : 'reached', noBlank: true, required: true },
-    { name: 'crisis', label: `Crisis ${noun}`, type: 'checkbox' }, { name: 'follow_up_needed', label: 'Follow-up needed', type: 'checkbox' }, { name: 'follow_up_due', label: isText ? 'Remind me to follow up on' : 'Remind me to call back on', type: 'date' },
+    { name: 'crisis', label: `Crisis ${noun}`, type: 'checkbox' }, { name: 'follow_up_needed', label: 'Follow-up needed', type: 'checkbox' }, { name: 'follow_up_due', label: isText ? 'Remind me to follow up on' : 'Remind me to call back on', type: 'date', quick: QUICK_FOLLOW_UP, help: 'A date puts a to-do on your list for that day (Follow-up needed is ticked for you).' },
     { name: 'summary', label: isText ? 'What was said (encrypted)' : 'Summary (encrypted)', type: 'textarea', span: true,
       help: isText ? 'Record what was exchanged, not a screenshot. Texting a client about treatment is a disclosure if anyone else can read their phone — keep it to arranging contact unless they have agreed otherwise.' : null },
     // Unticked on every new call (1.15.3), as on a visit: time goes on the time sheet only when someone chose it,
@@ -27,6 +27,10 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone, 
     if (isNew) await post('/api/calls', d); else await put(`/api/calls/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast(isNew ? (isText ? 'Text logged' : 'Call logged') : 'Saved', 'ok'); m.close(); onDone && onDone();
   } });
+  // A reminder date is a follow-up (1.22.0): the box is ticked as soon as a date is chosen, as the server also
+  // does, so a date with the box left unticked no longer makes no to-do.
+  const fuDate = f.inputs.follow_up_due; const fuBox = f.inputs.follow_up_needed;
+  if (fuDate && fuBox) { const tick = () => { if (fuDate.value && !fuBox.checked) fuBox.checked = true; }; fuDate.addEventListener('change', tick); fuDate.addEventListener('input', tick); }
   if (f.inputs.log_time) {
     const help = f.querySelector('[data-field="log_time"] .help');
     const say = () => { const mins = Number(f.inputs.duration_minutes.value) || 0; if (help) help.textContent = f.inputs.log_time.checked ? (mins > 0 ? `Adds ${mins} min to your time (My time), as a draft to submit for approval. Check the ${isText ? 'time spent' : 'duration'} above first.` : `Nothing is logged while the ${isText ? 'time spent' : 'duration'} is 0.`) : 'No time entry is made. Tick this to put the call on your time sheet.'; };

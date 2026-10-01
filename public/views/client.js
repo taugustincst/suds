@@ -156,9 +156,41 @@ route('client', async (r) => {
     e.detail ? h('div', { class: 'd' }, String(e.detail).slice(0, 300)) : null)));
   // The Overview's last section: the most recent activity, and a link to all of it (the Timeline tab that was).
   const RECENT = 8;
+  // The timeline, read once for the Overview (its top card and its last section both use it).
+  let timelineOnce = null;
+  const timelineEvents = () => (timelineOnce || (timelineOnce = get(`/api/clients/${id}/timeline`).then(r => r.events || [], () => null)));
+  // "Where things stand" (1.22.0): the first thing on the Overview, on a phone too, is what a worker checks before
+  // seeing the person — when they were last seen or spoken to and by whom, the next thing owed to them, and the
+  // referrals still open. It used to be the bottom of a page some 3,000 px long at 390 px. Built from the same
+  // timeline the Recent activity section shows (no extra request), so it says nothing that list does not.
+  const OPEN_TASK = ['open', 'in_progress'];
+  const CLOSED_REFERRAL = ['declined_by_client', 'declined_by_provider', 'no_show', 'completed', 'closed'];
+  const glance = async () => {
+    const events = await timelineEvents(); if (!events) return null;
+    const now = Date.now();
+    const contact = events.find(e => (e.kind === 'intervention' || e.kind === 'call') && e.at && Date.parse(e.at) <= now);
+    const open = events.filter(e => (e.kind === 'task' || e.kind === 'milestone') && e.meta && OPEN_TASK.includes(e.meta.status));
+    const byDue = (a, b) => (a.meta.due_at ? 0 : 1) - (b.meta.due_at ? 0 : 1) || String(a.meta.due_at || '').localeCompare(String(b.meta.due_at || ''));
+    const next = open.slice().sort(byDue)[0];
+    const refs = events.filter(e => e.kind === 'referral' && e.meta && !CLOSED_REFERRAL.includes(e.meta.status));
+    const tab = (k, text, data) => h('a', { href: `#/client/${id}/${k}`, [data]: '1' }, text);
+    const overdue = next && next.meta.due_at && fmt.isPast(next.meta.due_at);
+    const rows = [
+      ['Last contact', contact ? h('span', { 'data-glance-contact': contact.kind },
+        h('b', {}, fmt.ago(contact.at)), ` · ${contact.title}`, h('span', { class: 'muted' }, ` · ${fmt.date(contact.at)}${contact.worker ? ` · ${contact.worker}` : ''}`))
+        : h('span', { class: 'muted', 'data-glance-contact': 'none' }, 'No visit or call recorded yet.')],
+      ['Next to-do', next ? h('span', { 'data-glance-todo': overdue ? 'overdue' : 'open' },
+        tab('tasks', next.title || 'To-do', 'data-glance-todo-link'), ' ',
+        next.meta.due_at ? h('span', { style: overdue ? { color: 'var(--danger)', fontWeight: 600 } : {} }, overdue ? `overdue since ${fmt.date(next.meta.due_at)}` : `due ${fmt.date(next.meta.due_at)}`) : h('span', { class: 'muted' }, 'no due date'),
+        open.length > 1 ? h('span', { class: 'muted' }, ` · ${open.length - 1} more open`) : null)
+        : h('span', { class: 'muted', 'data-glance-todo': 'none' }, 'Nothing open.')],
+      refs.length ? ['Open referrals', h('span', { 'data-glance-referrals': String(refs.length) }, tab('referrals', `${refs.length} open`, 'data-glance-referrals-link'), h('span', { class: 'muted' }, ` · ${refs.slice(0, 2).map(e => String(e.title || '').replace(/^Referral: /, '')).join(', ')}${refs.length > 2 ? '…' : ''}`))] : null,
+    ].filter(Boolean);
+    return h('section', { class: 'card glance', 'data-glance': '1', 'aria-labelledby': `glance-h-${id}`, style: { gridColumn: '1 / -1' } },
+      h('h2', { id: `glance-h-${id}` }, 'Where things stand'), kv(rows));
+  };
   const recentActivity = async () => {
-    let events = [];
-    try { ({ events } = await get(`/api/clients/${id}/timeline`)); } catch { return null; }
+    const events = await timelineEvents(); if (!events) return null;
     return h('section', { class: 'card', 'data-recent-activity': '1', style: { gridColumn: '1 / -1' } },
       h('div', { class: 'card-head' }, h('h2', {}, 'Recent activity'), events.length > RECENT ? h('a', { href: `#/client/${id}/timeline`, 'data-all-activity-link': '1' }, `All activity (${events.length})`) : null),
       events.length ? timelineList(events.slice(0, RECENT)) : h('p', { class: 'muted' }, 'No activity yet.'));
@@ -197,8 +229,8 @@ route('client', async (r) => {
     async overview() {
       const age = c.dob ? Math.floor((Date.now() - Date.parse(c.dob)) / (365.25 * 86400000)) : null;
       // Problem list, care plan reviews, latest ASAM and outcome trends (CalAIM), for the roles that may see them.
-      const [clinical, activity, consentWarn] = await Promise.all([(await import('./clinical.js')).overviewCard(id, { refresh }), recentActivity(), consentAlert()]);
-      return h('div', { class: 'grid cols-2' }, consentWarn, clinical,
+      const [clinical, activity, consentWarn, standing] = await Promise.all([(await import('./clinical.js')).overviewCard(id, { refresh }), recentActivity(), consentAlert(), glance()]);
+      return h('div', { class: 'grid cols-2' }, consentWarn, standing, clinical,
         h('div', { class: 'card' }, h('h2', {}, 'Identity & contact'), kv([['Name', `${c.first_name} ${c.last_name}${c.preferred_name ? ` ("${c.preferred_name}")` : ''}`], ['DOB', c.dob ? `${fmt.date(c.dob)} (${age})` : null], ['Gender / pronouns', [c.gender && fmt.label(c.gender), c.pronouns].filter(Boolean).join(' · ')], ['Phone', c.phone || c.alt_phone ? h('div', { class: 'row', style: { gap: '.5rem' } }, phoneRow(c.phone), c.alt_phone ? h('span', {}, h('span', { class: 'muted small' }, 'alt: '), phoneRow(c.alt_phone)) : null) : null], ['Email', c.email ? h('a', { href: `mailto:${c.email}` }, c.email) : null], ['Address', mapLink([c.address, c.city, c.zip].filter(Boolean).join(', '))], ['Language', c.preferred_language], ['Contact rules', [c.ok_to_text ? 'OK to text' : null, c.ok_to_voicemail ? 'OK to voicemail' : null, c.contact_preferences].filter(Boolean).join(' · ') || 'Not recorded — ask before texting or leaving a voicemail'], ['Emergency contact', linkifyPhones(c.emergency_contact)], ['Housing', c.housing_status && fmt.label(c.housing_status)], ['Insurance', [c.insurance && fmt.label(c.insurance), c.medicaid_id && `ID ${c.medicaid_id}`].filter(Boolean).join(' · ')], ['Veteran', yesNoAsked(c.veteran)]])),
         h('div', { class: 'card' }, h('h2', {}, 'Substance use & clinical'), kv([['Primary substance', fmt.label(c.primary_substance, 'SUBSTANCES')], ['Secondary', c.secondary_substances], ['Route', c.route_of_use && fmt.label(c.route_of_use)], ['ASAM level', c.asam_level], ['MAT', [c.mat_status && fmt.label(c.mat_status), c.mat_medication && fmt.label(c.mat_medication)].filter(Boolean).join(' — ')], ['Overdose history', c.overdose_history ? `Yes${c.last_overdose_date ? ', last ' + fmt.date(c.last_overdose_date) : ''}` : yesNoAsked(c.overdose_history)], ['Naloxone', c.naloxone_provided ? `Provided${c.naloxone_last_date ? ' ' + fmt.date(c.naloxone_last_date) : ''}` : 'Not provided'], ['Co-occurring MH', yesNoAsked(c.co_occurring_mh)], ['Justice involved', yesNoAsked(c.justice_involved)], ['Pregnant / parenting', yesNoAsked(c.pregnant_or_parenting)], ['Goals', c.goals]])),
         h('div', { class: 'card' }, h('h2', {}, 'Program'), kv([['Status', fmt.label(clientStatus(c))], ['Intake', fmt.date(c.intake_date)], ['Referral source', c.referral_source && fmt.label(c.referral_source)], ['Referral date', c.referral_date && fmt.date(c.referral_date)], ['Engagement date', c.engagement_date && fmt.date(c.engagement_date)],

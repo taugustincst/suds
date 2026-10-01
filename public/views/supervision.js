@@ -295,7 +295,10 @@ route('supervision', async (r) => {
         h('p', { class: 'small muted' }, 'Referrals the provider has been told about (contacted through scheduled) where nobody has recorded what happened.'),
         table([
           { label: 'Client', render: clientCell }, { label: 'Referred to', key: 'resource' },
-          { label: 'Sent', render: r => fmt.date(r.referred_at) }, { label: 'Status', render: r => badge(fmt.label(r.status, 'REFERRAL_STATUSES')) },
+          // How long it has waited, and who made it (1.22.0): whom to ask, and which to chase first (oldest first).
+          { label: 'Sent', render: r => h('span', {}, fmt.date(r.referred_at), h('span', { class: 'muted small', 'data-referral-waiting': '1' }, ` · ${fmt.ago(r.referred_at)}`)) },
+          { label: 'Made by', render: r => r.worker || '—' },
+          { label: 'Status', render: r => badge(fmt.label(r.status, 'REFERRAL_STATUSES')) },
         ], open, { onRow: openReferral })) : null));
   }
 

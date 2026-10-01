@@ -243,7 +243,9 @@ try {
   {
     mode = 'overloaded';
     await page.evaluate(async (id) => (await import('./views/notes.js')).openNoteForm(null, { clientId: id, clientDisplay: 'Quintero, Aurelia' }), clientId);
-    await page.waitForSelector('.modal textarea[name=content]');
+    await page.waitForSelector('.modal textarea[name=content]', { state: 'attached' });
+    // From 1.22.0 a new note starts in the format this clinician last saved one in (DAP, above): this step is a narrative note.
+    await page.selectOption('.modal select[name=format]', 'narrative');
     await page.fill('.modal textarea[name=content]', 'My own words about the session.');
     await openPanel(page, 'note');
     await page.check('.modal input[name=counseling_note]');

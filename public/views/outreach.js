@@ -1,4 +1,4 @@
-import { h, route, get, post, state, toast, can, pageHead, prefs, fmt, listEntries, emptyState, stat, clear, announce } from '../app.js';
+import { h, route, get, post, del, state, toast, undoToast, can, pageHead, prefs, fmt, listEntries, emptyState, stat, clear, announce } from '../app.js';
 
 // Street outreach (1.17.0; server/outreach.js, docs/USER_GUIDE.md "Street outreach"). One screen, big targets,
 // one hand at 390 px: what kind of contact, what was handed out (− count + for each usual item, any other item
@@ -96,7 +96,26 @@ route('outreach', async () => {
   const otherWrap = h('div', { class: 'outreach-other' }, h('label', { for: otherSel.id }, 'Another item'), h('div', { class: 'row' }, otherSel,
     h('button', { type: 'button', class: 'btn', 'data-outreach-add': '1', onClick: () => { const it = items.find(i => i.id === otherSel.value); if (it) { const c = addItem(it, true); if (c) { c.input.value = '1'; } refreshOther(); } } }, 'Add')));
   refreshOther();
-  const suppliesBox = h('fieldset', { class: 'outreach-supplies', 'data-outreach-supplies': '1' }, h('legend', {}, 'Supplies given'), list, otherWrap,
+  // "Same as last contact" (1.22.0): a peer handing out the same bundle all shift (a kit and two strips) fills the
+  // counts in one tap instead of five. What is kept is the items and how many (prefs LAST.given: item ids or the
+  // untracked count's column, never anything about the person); the button says what it will fill in, and an item
+  // added with "Another item" last time comes back as a row of its own.
+  const lastGiven = () => { const g = (prefs.get(LAST, null) || {}).given; return g && typeof g === 'object' ? Object.entries(g).filter(([, n]) => Number.isInteger(n) && n > 0 && n <= 1000) : []; };
+  const givenName = (key) => { const it = items.find(i => i.id === key); if (it) return it.name; const u = Object.values(UNTRACKED).find(([col]) => col === key); return u ? u[1].replace(/s$/, '') : null; };
+  const sameBtn = h('button', { type: 'button', class: 'btn outreach-same', 'data-outreach-same': '1', onClick: () => {
+    const g = lastGiven(); if (!g.length) return;
+    for (const c of counters) c.reset();
+    for (const [key, n] of g) {
+      let c = counters.find(x => (x.kind === 'item' ? x.item.id : x.col) === key);
+      if (!c) { const it = items.find(i => i.id === key); if (it) { addItem(it); refreshOther(); c = counters.find(x => x.kind === 'item' && x.item.id === key); } }
+      if (c) c.input.value = String(n);
+    }
+    announce(`Filled in as your last contact: ${sameText(g)}.`);
+  } });
+  const sameText = (g) => g.map(([k, n]) => (givenName(k) ? counted(n, givenName(k)) : null)).filter(Boolean).join(', ');
+  const drawSame = () => { const g = lastGiven().filter(([k]) => givenName(k)); sameBtn.hidden = !g.length; sameBtn.textContent = g.length ? `↻ Same as last contact: ${sameText(g)}` : ''; };
+  drawSame();
+  const suppliesBox = h('fieldset', { class: 'outreach-supplies', 'data-outreach-supplies': '1' }, h('legend', {}, 'Supplies given'), sameBtn, list, otherWrap,
     !items.length ? h('p', { class: 'small muted' }, 'The program keeps no supply items yet: naloxone kits and test strips are counted on the contact, not taken off any stock. A supervisor adds items under Supplies.') : null);
 
   // ---- where: a coarse place, and the site the supplies came from ----
@@ -153,11 +172,21 @@ route('outreach', async () => {
     let saved = false;
     try {
       const r = await post('/api/interventions', p);
-      prefs.set(LAST, { type: p.type, location: p.location, site: p.supply_site_id || null });
+      const handed = Object.fromEntries(counters.filter(c => c.value() > 0).map(c => [c.kind === 'item' ? c.item.id : c.col, c.value()]));
+      // A contact with nothing handed out keeps the last bundle for "Same as last contact".
+      const keep = Object.keys(handed).length ? handed : ((prefs.get(LAST, null) || {}).given || null);
+      prefs.set(LAST, { type: p.type, location: p.location, site: p.supply_site_id || null, given: keep });
       for (const c of counters) c.reset();
       notes.value = ''; participant.reset();
+      drawSame();
       const missed = (r && r.supplies_untracked) || [];
-      toast(`Contact saved: ${what}.${missed.length ? ' Not taken off any stock (no item kept for it).' : ''}`, 'ok');
+      const msg = `Contact saved: ${what}.${missed.length ? ' Not taken off any stock (no item kept for it).' : ''}`;
+      // Undo for 10 seconds (1.22.0): a contact saved twice, or with the wrong count, is taken back here instead of
+      // being hunted for under Visits. Deleting their own visit is what its worker may already do (the supplies go
+      // back on the stock, server/rules/interventions.js afterDelete; the deletion is audited). The keyboard focus
+      // stays on the form, ready for the next contact.
+      if (r && r.id) undoToast(msg, async () => { await del(`/api/interventions/${r.id}`); await drawShift(); announce('The contact was taken back: it is not counted, and its supplies are back on the stock.'); }, { focus: false });
+      else toast(msg, 'ok');
       saved = true;
       await drawShift();
     } catch (err) {
@@ -172,7 +201,7 @@ route('outreach', async () => {
       errorBox.setAttribute('tabindex', '-1'); errorBox.focus();
     }
   } },
-  ...(codeFirst ? [typeGroup, participant.field, whereBox] : [typeGroup, whereBox, participant.field]), suppliesBox, notesBox, errorBox, saveBtn);
+  ...(codeFirst ? [typeGroup, participant.field, whereBox] : [typeGroup, whereBox, participant.field]), suppliesBox, notesBox, errorBox, h('div', { class: 'outreach-savebar', 'data-outreach-savebar': '1' }, saveBtn));
 
   // ---- my shift ----
   const shiftSince = () => { const s = prefs.get(SHIFT, null); const t = s ? Date.parse(s) : NaN; return Number.isFinite(t) && Date.now() - t < SHIFT_MS && t <= Date.now() ? s : null; };

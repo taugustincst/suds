@@ -142,6 +142,44 @@ server only). No new permission: everything here is `county:manage`, and reading
   a buyer, market or security document says a feature the CHANGELOG lists as released is "not built", "planned", "not
   yet" or exists only "until" something.
 
+### Day to day for frontline workers
+
+Built for 1.22.0, not yet released. No migration, permission or new route; one response gains fields (the supervision
+queue's referrals say who made them) and the call routes derive one flag. From a walk-through of a navigator's,
+an outreach worker's, a peer's, a counselor's and a supervisor's day at 390 px and on a desktop
+(docs/USER_GUIDE.md has each change where workers read about it).
+
+- **Fixed: a call-back date with "Follow-up needed" left unticked made no to-do.** The call and text form's
+  *Remind me to call back on* (*to follow up on*) date now ticks the box when a date is chosen, and the call routes
+  treat a date as the follow-up whichever way the call is saved (`server/routes/calls.js` `deriveFollowUp`, beside
+  `deriveCrisis`). Before, the date was stored and the reminder silently never made.
+- **Quick dates.** A to-do's Due date has *Today*, *Tomorrow*, *In 3 days*, *In a week*; the follow-up dates on a
+  visit, a call or text and a referral have *Tomorrow* to *In 2 weeks*. One tap instead of four or five in a phone's
+  date picker; a labelled group of buttons, and the date chosen is announced (`public/app.js` `quickDates`, a
+  `quick` option on any date field). A new to-do's form no longer asks for a Status (a new to-do is open).
+- **Where things stand.** A client's Overview opens with the last contact (how long ago, what, who), the next
+  to-do (overdue in red) and the open referrals, read from the timeline the page already loads (no new request, no
+  new data, the same audit entry). At 390 px it used to sit some 3,000 px down, below the identity details.
+- **Street outreach.** *Save contact* stays at the foot of the screen while the counts are filled in; **Undo** for
+  10 seconds after a save takes the contact back (the worker's own delete, so the supplies return to the stock and
+  the deletion is audited as before) without taking the keyboard focus off the form (`undoToast` `focus: false`);
+  **Same as last contact** fills in the last bundle handed out in one tap (only item ids and counts are remembered,
+  in the worker's own preferences, never anything about the person).
+- **Notes.** A new note starts in the format its author last saved a new note of that type in (per user, while the
+  format is still on the programme's list); the structured sections' boxes (SOAP, DAP, BIRP, GIRP, safety plan)
+  are now labelled for screen readers (they were four unnamed text boxes); *My notes* says whether it is on
+  (`aria-pressed`).
+- **Supervision.** *No outcome recorded yet* says who made each referral and how long ago it was sent
+  (`GET /api/supervision/queue` `referrals_awaiting_outcome[].worker`, `worker_id`).
+- **A device that syncs with the office** shows in the header, on every page, whether changes are waiting to be
+  sent (**⇅ 3 to send**, **Synced 2d ago**, **Not synced yet**; on a phone **⇅ 3** or **⇅ ✓**, with the words kept
+  for a screen reader), opening This device. Read from the device's own kernel; not on SUDS on this device.
+- **The search box's hint fits a phone** (*Name, code or exact phone…*; it was cut off at "name, c").
+- Tests: `test/worker-usefulness.test.js` (the call follow-up, Undo's delete and stock, the queue's worker);
+  `scripts/ui/worker-usefulness.mjs` (51 checks, axe on every new state, at 390 px where workers use it), added to
+  `scripts/ui/run-all.sh`. `scripts/ui/r10-ai.mjs` now chooses *narrative* for its narrative-note step, since a new
+  note starts in the clinician's last format.
+
 ## 1.21.0 — 2026-09-30
 
 A feature release (migrations 61, 62 and 63; the county publication, field-device, authenticator allow-list and

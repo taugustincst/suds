@@ -274,7 +274,9 @@ export function toast(msg, kind = '', { ms } = {}) {
  * the Undo button has focus (WCAG 2.2.1); focus moves to Undo, since the button that did the action is usually
  * gone once the list redraws; Escape puts it away. `onUndo` makes the request that reverses it.
  */
-export function undoToast(msg, onUndo, { ms = 10000, action = null } = {}) {
+// `focus: false`: the keyboard focus stays where the page put it (Street outreach keeps it on the form for the next
+// contact); the toast's button is still reachable by Tab and is announced.
+export function undoToast(msg, onUndo, { ms = 10000, action = null, focus = true } = {}) {
   const host = document.getElementById('toasts'); if (!host) return null;
   const back = () => { const h1 = document.querySelector('.main h1'); if (h1) { if (!h1.hasAttribute('tabindex')) h1.setAttribute('tabindex', '-1'); try { h1.focus({ preventScroll: true }); } catch { /* ignore */ } } };
   // `action: { text, key }`: the same toast offering the next step instead of an Undo (the button says `text`, and
@@ -297,7 +299,7 @@ export function undoToast(msg, onUndo, { ms = 10000, action = null } = {}) {
   host.append(t);
   announce(`${msg} ${label} is available for ${Math.round(ms / 1000)} seconds.`);
   arm();
-  setTimeout(() => { if (t.isConnected) btn.focus({ preventScroll: true }); }, 0);
+  if (focus) setTimeout(() => { if (t.isConnected) btn.focus({ preventScroll: true }); }, 0);
   return t;
 }
 
@@ -814,6 +816,31 @@ function dateTimePair(f, v) {
   return wrap;
 }
 
+// Quick choices under a due or follow-up date (1.22.0): Today, Tomorrow, In 3 days, In a week. A phone's date picker
+// takes four or five taps to reach next Tuesday, and most follow-ups are one of these. A choice sets the date only (a
+// date-only due date counts as the end of that day), fires the field's own input and change events so the draft and
+// the form's listeners see it, and is said out loud. `f.quick`: true for these four, or [[label, days], ...].
+export const QUICK_DATES = [['Today', 0], ['Tomorrow', 1], ['In 3 days', 3], ['In a week', 7]];
+/** For "remind me to follow up on": a follow-up is not today. */
+export const QUICK_FOLLOW_UP = [['Tomorrow', 1], ['In 3 days', 3], ['In a week', 7], ['In 2 weeks', 14]];
+/** The local calendar date `days` after `from` (default today), as YYYY-MM-DD. */
+export function addDaysLocal(days, from = new Date()) {
+  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function quickDates(f, input) {
+  const name = String(f.label || 'the date').replace(/\s*\*$/, '');
+  const choices = Array.isArray(f.quick) ? f.quick : QUICK_DATES;
+  const target = input.dateInput || input;
+  return h('div', { class: 'row quick-dates', role: 'group', 'aria-label': `Quick choices for ${name}`, 'data-quick-dates': f.name },
+    choices.map(([label, days]) => h('button', { type: 'button', class: 'btn sm', 'data-quick-date': String(days), onClick: () => {
+      const day = addDaysLocal(days);
+      input.value = day;
+      for (const ev of ['input', 'change']) target.dispatchEvent(new Event(ev, { bubbles: true }));
+      announce(`${name}: ${fmt.date(day)}`);
+    } }, label)));
+}
+
 /** What an onSubmit returns when it decided not to save (nothing was sent): the form stays open, draft kept. */
 export const NOT_SAVED = Symbol('not saved');
 // `resume`: a question ("Resume your unsent visit?"). A kept draft is then not put back on its own: the form
@@ -876,6 +903,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     const errEl = h('div', { class: 'err', id: errId, role: 'alert' });
     const wrap = h('div', { class: `field ${f.span ? 'span' : ''}`, 'data-field': f.name },
       f.type === 'checkbox' ? h('label', { class: 'check', for: fieldId }, input, f.label) : [h('label', { for: fieldId }, f.label, f.required ? ' *' : ''), fieldLink(f), f.type === 'date' ? h('div', { class: 'date-with-pick' }, input, datePickButton(input, f.label)) : input],
+      f.quick && (f.type === 'date' || f.type === 'datetime') ? quickDates(f, input) : null,
       f.help ? h('div', { class: 'help', id: helpId }, f.help) : null, errEl);
     target.append(wrap);
   }
@@ -1495,7 +1523,10 @@ export function globalSearch() {
   const what = can('resources:read') ? 'Find a client or resource' : 'Find a client';
   const listId = `gsearch-results-${Math.random().toString(36).slice(2, 7)}`;
   // A de-identified role finds clients by code only (the server matches nothing else for it: 1.15.4).
-  const input = h('input', { type: 'search', placeholder: can('clients:read') ? `${what}: name, code or exact phone…` : 'Find a client by code…', 'aria-label': what, 'aria-controls': listId, 'data-global-search': '1' });
+  // On a phone the box is about 280 px wide: the long hint was cut off mid-word ("…name, c"), hiding what may be
+  // typed (1.22.0). There it says only what to type; the box's name is still "Find a client or resource".
+  const narrow = typeof matchMedia === 'function' && matchMedia('(max-width: 600px)').matches;
+  const input = h('input', { type: 'search', placeholder: can('clients:read') ? (narrow ? 'Name, code or exact phone…' : `${what}: name, code or exact phone…`) : 'Find a client by code…', 'aria-label': what, 'aria-controls': listId, 'data-global-search': '1' });
   const list = h('div', { class: 'card tight hidden search-results', id: listId, role: 'region', 'aria-label': 'Search results' });
   // What was found is said out loud (WCAG 4.1.3, 1.16.0): "3 clients and 1 resource found" or "No match", in a
   // polite live region, and Down arrow moves into the results (Up and Down move through them, Escape returns).
@@ -1557,6 +1588,27 @@ let dueCache = { at: 0, data: null }; const notifiedDue = new Set(); let dueTime
 /** After a device sync brought down new to-dos and notices: the bell asks again now, not in a minute (r8 M2). */
 export function forgetDue() { dueCache = { at: 0, data: null }; if (duePoll && state.user) duePoll(true); }
 /** The header's reminder that two-step verification is owed, once its banner has been dismissed. */
+// On a copy that syncs with the office (1.22.0): whether this device's work has reached the office, in the header
+// on every page, not only on This device. "⇅ 3 to send" when changes are waiting, "Synced 2h ago" (or "Not synced
+// yet") otherwise; it opens This device, where Sync now is. A field worker logging contacts with no signal could
+// not tell, short of opening This device, whether anything was still on the phone. Read from the device's own
+// kernel (GET /api/local/sync/status): no request leaves the device to draw it. Not on SUDS on this device (the
+// static build has no office to send to).
+export function syncChip() {
+  if (!state.local || window.SUDS_STATIC_HOST || !state.user) return null;
+  const a = h('a', { class: 'btn ghost sm sync-chip', href: '#/sync', 'data-sync-chip': 'loading' }, h('span', { 'aria-hidden': 'true' }, '⇅ '), 'Sync');
+  get('/api/local/sync/status', { quiet: true, background: true }).then((st) => {
+    const n = Number(st && st.pending) || 0;
+    const when = st && st.last_sync_at ? `Synced ${fmt.ago(st.last_sync_at)}` : 'Not synced yet';
+    a.dataset.syncChip = n ? 'pending' : st && st.last_sync_at ? 'synced' : 'never';
+    a.classList.toggle('pending', n > 0);
+    // On a phone the short form ("⇅ 3", "⇅ ✓") leaves the search box its width; the words are still read out.
+    a.replaceChildren(h('span', { 'aria-hidden': 'true' }, '⇅ '), h('span', { class: 'sync-long' }, n ? `${n} to send` : when),
+      h('span', { class: 'sync-short', 'aria-hidden': 'true' }, n ? String(n) : st && st.last_sync_at ? '✓' : 'Sync'),
+      h('span', { class: 'sr-only' }, n ? ` — ${n} change${n === 1 ? '' : 's'} on this device not sent to the office yet. ${when}. Open This device to sync` : ' — open This device to sync'));
+  }, () => { a.remove(); });
+  return a;
+}
 export function mfaLink() {
   if (!state.mfaDue || !prefs.get('mfa_banner_collapsed') || (state.user && state.user.mfa_enabled)) return null;
   return h('a', { class: 'btn ghost sm mfa-link', href: '#/profile?mfa=1', 'data-mfa-link': '1', title: state.mfaDue.full },
@@ -1995,7 +2047,7 @@ async function renderPage() {
   const main = h('main', { class: 'main', id: 'main', tabindex: '-1' }, h('div', { class: 'boot', role: waiting ? 'status' : null, 'data-loading': waiting ? '1' : null }, waiting || 'Loading…'));
   const side = sidebar(r);
   const qa = quickActions();
-  const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), dueBell(), mfaLink(), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
+  const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), syncChip(), dueBell(), mfaLink(), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
   if (qa) layout.querySelector('.fab button')?.addEventListener('click', () => qa.click());
   const focusWas = focusKey(document.activeElement, app);
   clear(app).append(layout);

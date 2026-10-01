@@ -1,4 +1,4 @@
-import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv } from '../app.js';
+import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv, prefs, listEntries } from '../app.js';
 import { problemPicker } from './clinical.js';
 import { noteCopilot, aiDraftBanner, putDraft } from './ai.js';
 import { passkeysPossible, fingerprintFor, fingerprintButton, strongSetupNotice } from '../passkey.js';
@@ -9,6 +9,7 @@ export const SECTIONS = { SOAP: [['S', 'Subjective'], ['O', 'Objective'], ['A', 
 // Formats and their wording are a documentation list (Settings → Lists; server/options.js has the built-in wording).
 export const sectionLabel = (format, key) => (SECTIONS[format] || []).find(([k]) => k === key)?.[1] || key;
 
+const NOTE_FORMATS = 'note_formats'; // { admin: 'narrative', clinical: 'SOAP' }: the format of this person's last new note of each type
 export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, prefill } = {}) {
   const C = state.constants; const isNew = !values;
   const kinds = ['admin', 'clinical'].filter(k => can(`notes:${k}:write`));
@@ -16,10 +17,15 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   // Required only for a narrative note: with SOAP, DAP, BIRP, GIRP or a safety plan it is built from the sections, and
   // folds away under them rather than asking for everything twice (r8 L7).
   const narrative = { name: 'content', label: 'Narrative', type: 'textarea', span: true, rows: 10, required: true, value: prefill?.content };
+  // The format this person last saved a new note of this type in (1.22.0, prefs NOTE_FORMATS, per user): a clinician
+  // who writes SOAP every day no longer picks it every time. Only while it is still on the programme's list.
+  const startKind = kind || values?.kind || (kinds.includes('clinical') ? 'clinical' : kinds[0]);
+  const lastFormat = (k) => { const v = (prefs.get(NOTE_FORMATS, null) || {})[k]; return v && listEntries('NOTE_FORMATS').some(e => e.code === v && !e.hidden) ? v : null; };
+  const remember = isNew && !prefill?.format;
   const f = form([
     { name: 'client_id', label: 'Client', type: 'client', required: true, value: clientId || values?.client_id, display: clientDisplay },
-    { name: 'kind', label: 'Note type', type: 'select', options: kinds.map(k => ({ value: k, label: k === 'clinical' ? 'Clinical (not shown to finance or read-only)' : 'Administrative / contact' })), value: kind || values?.kind || (kinds.includes('clinical') ? 'clinical' : kinds[0]), noBlank: true, required: true }, // clinical for those who write it (r8 L8)
-    { name: 'format', label: 'Format', type: 'select', list: 'NOTE_FORMATS', value: prefill?.format || 'narrative', noBlank: true }, { name: 'occurred_at', label: 'Date of service', type: 'datetime', required: true, value: values?.occurred_at || new Date().toISOString() },
+    { name: 'kind', label: 'Note type', type: 'select', options: kinds.map(k => ({ value: k, label: k === 'clinical' ? 'Clinical (not shown to finance or read-only)' : 'Administrative / contact' })), value: startKind, noBlank: true, required: true }, // clinical for those who write it (r8 L8)
+    { name: 'format', label: 'Format', type: 'select', list: 'NOTE_FORMATS', value: prefill?.format || (remember && lastFormat(startKind)) || 'narrative', noBlank: true }, { name: 'occurred_at', label: 'Date of service', type: 'datetime', required: true, value: values?.occurred_at || new Date().toISOString() },
     { name: 'title', label: 'Title', span: true, value: prefill?.title }, narrative,
     { name: 'part2_protected', label: 'Contains 42 CFR Part 2 protected SUD information', type: 'checkbox', value: values ? values.part2_protected : true },
     // 42 CFR §2.11: a clinician's own analysis of a counselling session, kept apart from the rest of the record
@@ -29,6 +35,7 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   ], { values: values || {}, submitText: 'Save draft', onCancel: () => m.close(), onSubmit: async (d) => {
     const andSign = signAfter; signAfter = false;
     await save(d, true);
+    if (remember && d.kind && d.format) prefs.set(NOTE_FORMATS, { ...(prefs.get(NOTE_FORMATS, null) || {}), [d.kind]: d.format });
     // "Save & sign": the signature step opens straight from the editor, over it; the editor closes once the
     // note is signed (or stays, saved, if the signature is cancelled).
     // A cancelled signature leaves the saved draft: say so, or it turns up in Unsigned notes as a surprise (r9 L3).
@@ -111,7 +118,11 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
     structuredBox.replaceChildren();
     const secs = SECTIONS[fmtSel.value]; foldNarrative(!!secs); if (!secs) return;
     const vals = values?.structured || {};
-    structuredBox.append(h('fieldset', {}, h('legend', {}, fmtSel.value === 'safety_plan' ? 'Safety plan' : `${fmtSel.value} sections`), secs.map(([k, label]) => h('div', { class: 'field' }, h('label', {}, k.length <= 2 ? `${k} — ${label}` : label), h('textarea', { 'data-sec': k, rows: 3 }, vals[k] || '')))));
+    structuredBox.append(h('fieldset', {}, h('legend', {}, fmtSel.value === 'safety_plan' ? 'Safety plan' : `${fmtSel.value} sections`), secs.map(([k, label]) => {
+      // Each section's box is named by its label (1.22.0): before, a screen reader met four unnamed text boxes.
+      const secId = `note-sec-${k}-${Math.random().toString(36).slice(2, 7)}`;
+      return h('div', { class: 'field' }, h('label', { for: secId }, k.length <= 2 ? `${k} — ${label}` : label), h('textarea', { id: secId, 'data-sec': k, rows: 3 }, vals[k] || ''));
+    })));
     // A draft whose narrative is still the one built from its sections goes on being built from them, folded away.
     const now = readStructured() || {}; const texts = [false, true].map(all => Object.entries(now).filter(([, v]) => all || v).map(([k, v]) => `${sectionLabel(fmtSel.value, k)}: ${v}`).join('\n\n'));
     if (!contentArea.value || texts.includes(contentArea.value)) contentArea.dataset.auto = '1';
@@ -120,6 +131,12 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   }
   function readStructured() { const out = {}; let any = false; structuredBox.querySelectorAll('textarea[data-sec]').forEach(t => { out[t.dataset.sec] = t.value; if (t.value.trim()) any = true; }); return any ? out : null; }
   fmtSel.addEventListener('change', renderStructured); renderStructured();
+  // A new note whose type is changed before anything is written takes that type's remembered format (a format the
+  // person chose themselves, or sections already written in, are left alone).
+  if (remember) {
+    let chosen = false; fmtSel.addEventListener('change', (e) => { if (e.isTrusted) chosen = true; });
+    f.inputs.kind.addEventListener('change', () => { if (chosen || readStructured()) return; const v = lastFormat(f.inputs.kind.value) || 'narrative'; if (fmtSel.value !== v) { fmtSel.value = v; renderStructured(); } });
+  }
   // ---- the AI copilot (views/ai.js): a draft from the author's own session notes, put into the sections
   // above for them to review, marked "AI draft — review before signing"; signing asks for the review statement.
   // A section the author already wrote in is never replaced unless they choose to (putDraft), and Undo on the
@@ -395,7 +412,7 @@ route('notes', async (r) => {
     pageHead('Notes', (can('notes:admin:write') || can('notes:clinical:write')) ? h('button', { class: 'btn primary', onClick: () => openNoteForm(null, { onDone: refresh }) }, '+ New note') : null, can('imports:write') ? h('a', { class: 'btn wide-only', href: '#/imports' }, 'Import from Pocket AI / OneNote') : null,
       // On a phone Import folds into More, so the first note is higher up the screen (r9 L5).
       can('imports:write') ? h('details', { class: 'more-menu phone-only', 'data-notes-more': '1' }, h('summary', { class: 'btn' }, 'More'), h('a', { class: 'btn', href: '#/imports' }, 'Import from Pocket AI / OneNote')) : null),
-    filterBar([status, kind, mine].filter(Boolean).length, h('div', { class: 'field' }, h('label', {}, 'Status'), sSel), h('div', { class: 'field' }, h('label', {}, 'Type'), kSel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(`notes?status=${status}&kind=${kind}${mine ? '' : '&mine=1'}`) }, 'My notes')),
+    filterBar([status, kind, mine].filter(Boolean).length, h('div', { class: 'field' }, h('label', {}, 'Status'), sSel), h('div', { class: 'field' }, h('label', {}, 'Type'), kSel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, 'aria-pressed': String(mine), onClick: () => nav(`notes?status=${status}&kind=${kind}${mine ? '' : '&mine=1'}`) }, 'My notes')),
     !can('notes:clinical:read') ? h('div', { class: 'banner small phone-line' }, 'Clinical notes are visible only to clinical roles and supervisors.') : counselingHidden(),
     pagedList({ first: data, url: `/api/notes${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => noteTable(rows, { onChange: refresh }), summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} notes`) }));
 });
