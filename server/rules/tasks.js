@@ -49,6 +49,13 @@ function addsSignReminder(row, existing) {
   return !hasReminderLine(before);
 }
 const SIGN_REMINDER_REFUSED = 'Only a supervisor who countersigns notes can send a reminder to sign them';
+/** Is the stored to-do a supervisor's sign reminder (rules/notes.js isSignReminder), read from its stored details? */
+function storedSignReminder(existing) {
+  if (!existing || !existing.description_enc) return false;
+  let text; try { text = require('../crypto').decrypt(existing.description_enc); } catch { return false; }
+  return require('./notes').isSignReminder(existing, text);
+}
+const SIGN_REMINDER_MOVED = 'Only the supervisor who sent this reminder can give it to someone else or move it to another client';
 
 module.exports = define({
   table: 'tasks',
@@ -71,6 +78,11 @@ module.exports = define({
     // And only someone who may send one (notes:cosign, the supervision queue's Remind), new or edited, over REST or a
     // push (market evaluation of 1.23.2: a navigator's to-do for a colleague, with the line, passed for a supervisor's).
     if (addsSignReminder(row, c.existing) && !require('./notes').maySendSignReminder(c.user)) return notPermitted(SIGN_REMINDER_REFUSED);
+    // A real reminder counts for its assignee's drafts on its client's record; moved by its assignee to a colleague or
+    // another client it would still count there (Supervision's "Sent", Remind all skipping it). So only its maker, or
+    // someone who may send one, changes who or which record it is about (market evaluation of 1.23.3, N1).
+    if (c.existing && c.existing.created_by !== c.user.id && c.changed().some(k => k === 'assigned_to' || k === 'client_id')
+      && !require('./notes').maySendSignReminder(c.user) && storedSignReminder(c.existing)) return notPermitted(SIGN_REMINDER_MOVED);
     if (c.existing) return null;
     // A notice a device raised for an edit made on it is that device's copy: the office raises its own when the edit
     // lands (clients.js afterApply), linked in its audit trail, so the device's is not taken (it would arrive as the

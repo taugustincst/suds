@@ -354,6 +354,8 @@ module.exports = (r) => {
     // The author's last draft on this record gone: a reminder to sign their drafts here has nothing left to ask (review of 1.23.2).
     const reminders = require('../rules/notes').closeSignReminders(n.author_id, n.id, n.client_id, { cause: 'deleted' });
     audit.log({ user: ctx.user, action: 'note.delete', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reminders.length ? { reminders_closed: reminders } : undefined });
+    // Each cancelled reminder has its own entry, as a push's has (rules/notes.js; market evaluation of 1.23.3, N5).
+    for (const id of reminders) audit.log({ user: ctx.user, action: 'task.update', entity: 'task', entityId: id, clientId: n.client_id, ip: ctx.ip, details: { status: 'cancelled', cause: 'deleted', note: n.id } });
     return { ok: true };
   });
 

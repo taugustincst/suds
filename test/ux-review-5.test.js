@@ -317,6 +317,9 @@ test('only a to-do\'s maker can make it a sign reminder; deleting the last draft
   assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, given.data.id).status, 'open', 'the ordinary to-do is left alone');
   const a = JSON.parse(H.db.one(`SELECT details FROM audit_log WHERE action='note.delete' AND entity_id=?`, n1).details);
   assert.deepEqual(a.reminders_closed, [r.data.id]);
+  // Market evaluation of 1.23.3 (N5): the cancelled reminder has its own task.update entry, as on the push path.
+  const t = H.db.all(`SELECT details FROM audit_log WHERE action='task.update' AND entity_id=?`, r.data.id).map(x => JSON.parse(x.details || '{}'));
+  assert.deepEqual(t.find(d => d.cause === 'deleted'), { status: 'cancelled', cause: 'deleted', note: n1 });
 });
 
 // A to-do as it could be written before 1.23.3: straight into the table, with the details encrypted.
@@ -381,4 +384,35 @@ test('the old reminder line cannot be pasted into a to-do either', async () => {
   assert.equal(forged.status, 403, JSON.stringify(forged.data));
   const row = (await clin.get('/api/tasks?mine=1&status=open&limit=1000')).data.rows.find(t => t.id === given.data.id);
   assert.ok(!row.sign_reminder, 'not taken for a reminder');
+});
+
+// Market evaluation of 1.23.3 (N1): the assignee of a real reminder could give it to a colleague or move it to another
+// client, and it still counted there (Supervision's "Sent", Remind all skipping it). Only its maker, or someone who may
+// send one, changes who or which record it is about, over REST or a push.
+test('the assignee of a sign reminder cannot move it to a colleague or another client (1.23.4)', async () => {
+  const { SIGN_REMINDER } = require('../server/rules/notes');
+  const c = await clin.post('/api/clients', { first_name: 'Rem', last_name: 'Indersix', status: 'active', confirm_duplicate: true });
+  const other = await clin.post('/api/clients', { first_name: 'Rem', last_name: 'Inderseven', status: 'active', confirm_duplicate: true });
+  const body = { client_id: c.data.id, assigned_to: U.clin, title: 'Finish and sign your draft notes', description: `Asked to sign.\n${SIGN_REMINDER}`, due_at: today };
+  const r = await sup.post('/api/tasks', body);
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  const moved = await clin.put(`/api/tasks/${r.data.id}`, { assigned_to: U.nav, client_id: other.data.id });
+  assert.equal(moved.status, 403, JSON.stringify(moved.data));
+  assert.match(moved.data.error || '', /supervisor who sent this reminder/);
+  assert.equal((await clin.put(`/api/tasks/${r.data.id}`, { assigned_to: U.nav })).status, 403, 'nor to a colleague alone');
+  assert.equal((await clin.put(`/api/tasks/${r.data.id}`, { client_id: other.data.id })).status, 403, 'nor to another client alone');
+  assert.equal((await clin.put(`/api/tasks/${r.data.id}`, { due_at: today, priority: 'high' })).status, 200, 'other edits stand');
+  // A push that moves it: the row is refused and the stored one is unchanged.
+  const stored = H.db.one(`SELECT * FROM tasks WHERE id=?`, r.data.id);
+  const push = await clin.post('/api/sync/push', { device_now: iso(), tables: { tasks: [{ ...stored, title_enc: 'Finish and sign your draft notes', description_enc: `Asked to sign.\n${SIGN_REMINDER}`, assigned_to: U.nav, client_id: other.data.id, updated_at: iso(Date.now() + 5000) }] } });
+  assert.equal(push.status, 200, JSON.stringify(push.data));
+  assert.ok(push.data.rejected.some(x => x.id === r.data.id), JSON.stringify(push.data));
+  const after = H.db.one(`SELECT assigned_to, client_id FROM tasks WHERE id=?`, r.data.id);
+  assert.deepEqual({ ...after }, { assigned_to: U.clin, client_id: c.data.id });
+  // An ordinary to-do someone gave them can still be passed on.
+  const plain = await sup.post('/api/tasks', { ...body, description: 'Asked to sign.' });
+  assert.equal((await clin.put(`/api/tasks/${plain.data.id}`, { assigned_to: U.nav })).status, 200, 'an ordinary to-do moves');
+  // Its maker can still reassign it.
+  assert.equal((await sup.put(`/api/tasks/${r.data.id}`, { assigned_to: U.nav, client_id: other.data.id })).status, 200, 'the maker moves it');
+  assert.deepEqual({ ...H.db.one(`SELECT assigned_to, client_id FROM tasks WHERE id=?`, r.data.id) }, { assigned_to: U.nav, client_id: other.data.id });
 });

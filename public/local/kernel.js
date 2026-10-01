@@ -13932,6 +13932,17 @@ var require_tasks = __commonJS({
       return !hasReminderLine(before);
     }
     var SIGN_REMINDER_REFUSED = "Only a supervisor who countersigns notes can send a reminder to sign them";
+    function storedSignReminder(existing) {
+      if (!existing || !existing.description_enc) return false;
+      let text;
+      try {
+        text = require_crypto().decrypt(existing.description_enc);
+      } catch {
+        return false;
+      }
+      return require_notes().isSignReminder(existing, text);
+    }
+    var SIGN_REMINDER_MOVED = "Only the supervisor who sent this reminder can give it to someone else or move it to another client";
     module.exports = define2({
       table: "tasks",
       // The record whose follow-up this to-do is (server/rules/follow-ups.js): a device's to-do carries its call's or
@@ -13954,6 +13965,7 @@ var require_tasks = __commonJS({
         if (c.existing && c.existing.assigned_to !== c.user.id && isNotice(c.existing)) return notPermitted(NOTICE);
         if (c.existing && c.existing.created_by !== c.user.id && addsSignReminder(row, c.existing)) return notPermitted("Only whoever made this to-do can make it a reminder to sign notes");
         if (addsSignReminder(row, c.existing) && !require_notes().maySendSignReminder(c.user)) return notPermitted(SIGN_REMINDER_REFUSED);
+        if (c.existing && c.existing.created_by !== c.user.id && c.changed().some((k) => k === "assigned_to" || k === "client_id") && !require_notes().maySendSignReminder(c.user) && storedSignReminder(c.existing)) return notPermitted(SIGN_REMINDER_MOVED);
         if (c.existing) return null;
         return c.via === "sync" && deviceNotice(row, c) ? { reason: null, quiet: true } : null;
       },
@@ -42691,6 +42703,7 @@ var require_notes2 = __commonJS({
         db3.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), n.id);
         const reminders = require_notes().closeSignReminders(n.author_id, n.id, n.client_id, { cause: "deleted" });
         audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reminders.length ? { reminders_closed: reminders } : void 0 });
+        for (const id of reminders) audit3.log({ user: ctx.user, action: "task.update", entity: "task", entityId: id, clientId: n.client_id, ip: ctx.ip, details: { status: "cancelled", cause: "deleted", note: n.id } });
         return { ok: true };
       });
       r.get("/api/notes/:id/verify", auth3.requireAuth, (ctx) => {
