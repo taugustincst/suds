@@ -43,7 +43,13 @@ top of each client's Overview, **Undo** and **Same as last contact** in street o
 writer's usual format, and, on a phone that syncs with the office, whether anything is still waiting to be sent
 ([docs/USER_GUIDE.md](../USER_GUIDE.md)). Once one of a worker's devices is a field device, all of them are; your
 administrator can keep a supervisor's office computer whole. Your county records your written consent before it
-publishes figures that name your programme. A referral network partner organisations join (beyond the
+publishes figures that name your programme. 1.23.0 goes further for the people who use SUDS most: a follow-up date
+added or changed later, by editing a call, visit or referral, now moves or cancels its to-do, so nobody's call-back
+falls off the list; navigators, peers and clinicians in a street programme find **Street outreach** in the main menu,
+and on a phone Home opens on **To-dos for today**; an outreach worker who loses signal can keep saving contacts that
+name nobody, which are sent by themselves later and counted once; a worker can ask for their phone to be set up for
+the field; and supervisors see, oldest first, the referrals still waiting to hear what happened, with **Remind
+worker** and **Record outcome** ([docs/USER_GUIDE.md](../USER_GUIDE.md)). Your staff's permissions do not change. A referral network partner organisations join (beyond the
 1.17.0 one-time secure links) is planned and not scheduled ([STRATEGY.md](STRATEGY.md)). Choose SUDS for what it does
 today.
 

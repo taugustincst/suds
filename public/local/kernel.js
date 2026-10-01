@@ -52538,7 +52538,7 @@ var require_db = __commonJS({
       (d) => {
         addColumn(d, "passkeys", "allowlist_grace_until", "TEXT");
       },
-      // 67: a follow-up to-do remembers the call or visit whose date made it (built for 1.23.0, not yet released;
+      // 67: a follow-up to-do remembers the call or visit whose date made it (released in 1.23.0;
       //     server/rules/follow-ups.js), so changing that date moves it and clearing the date cancels it.
       //     tasks.call_id and tasks.intervention_id, NULL for every existing to-do (an older one is matched by its
       //     title and date the first time its call or visit is edited). Self-contained and idempotent, so it can be

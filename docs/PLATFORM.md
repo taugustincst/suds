@@ -214,7 +214,7 @@ a per-device administrator decision, not a per-person flag, so no new or reinsta
 an administrator says so. The scope limits what a device **holds**, not what its account may reach: the same account
 in a browser at the office sees what its role allows.
 
-**Asking for a field device, and street outreach with no signal (built for 1.23.0, not yet released).** A worker on
+**Asking for a field device, and street outreach with no signal (released in 1.23.0).** A worker on
 the office app asks from **Set up this phone for the field** (`#/field-phone`, `server/field-request.js`); every active
 administrator holding `users:manage` gets a to-do, and **Settings › Synced devices** lists the request. **Approve**
 holds the account to the field scope (`devices.bindAccount`, via `admin`), so every device it syncs from is a field

@@ -41,15 +41,73 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
-### 2026-10-01 — Claude: worker-first menu and phone Home (branch `ux/123-menu-home`, not pushed)
+### 2026-10-01 — Claude: 1.23.0 (follow-ups that follow edits, the worker-first menu and phone Home, outreach with no signal)
 
-- Built for 1.23.0, not yet released; no migration, no new permission or route. The menu's pages and their placement
-  by role, programme profile and phone live in `public/nav.js` (pure; `test/nav-menu.test.js` checks every role ×
-  profile × module switches × screen). Street outreach is in front-line workers' main menu in the harm-reduction and
-  treatment-adjacent profiles; the Waitlist folds into More in harm reduction, Notes on a phone; Funding & spending and
-  Policies & contracts are under a navigator's More (they were in no menu). The phone Home opens on To-dos for today;
-  the program-wide cards fold (prefs `home_folded`); the welcome card has a ×. Measurements in CHANGELOG
-  (*Worker-first menu and phone Home*). The browser suite is **59 scripts** with `menu-home.mjs` and `offline-outreach.mjs`.
+- **What shipped.** One feature release under a recorded policy exception inside 1.22.0's 28 days (docs/RELEASE.md,
+  *Record: 1.23.0*), on the same instruction, "Implement all recommendations to make this as useful as possible for
+  suds workers, loop until complete": a follow-up date added, changed or cleared by editing a call or text, a visit or
+  a referral makes, moves or cancels its to-do by one rule at both doors, the REST routes and sync push
+  (`server/rules/follow-ups.js`, migration **67**: `tasks.call_id`, `tasks.intervention_id`); the menu by role and
+  programme profile from one table (`public/nav.js`; `test/nav-menu.test.js` checks every role × profile × module
+  switches × screen), with Street outreach in front-line workers' main menu in the harm-reduction and
+  treatment-adjacent profiles, and a phone Home that opens on *To-dos for today* with the program-wide cards folded
+  (prefs `home_folded`) and a × on the welcome card; on the office app with no signal, a street-outreach contact that
+  names nobody waits in the browser (`public/outreach-queue.js`) and is sent later with its Idempotency-Key, the
+  contact's id derived from the account and that key (`server/crud.js` `keyedId`), so it is counted once however
+  late; *Set up this phone for the field* (`#/field-phone`, `server/field-request.js`) with requests answered under
+  Settings › Synced devices; Supervision's *Waiting to hear what happened* with *Remind worker* and *Record outcome*;
+  My profile at 1366 px; the SUDS Server rows and the ACR brought up to date. New routes:
+  `POST /api/supervision/referrals/:id/remind`, `GET /api/me/field-device`, `POST /api/me/field-device/request`,
+  `GET /api/admin/field-requests`, `POST /api/admin/field-requests/:userId/approve` and `…/decline`. **No new
+  permission.** Four streams (follow-ups, menu and Home, offline outreach and field requests, supervision), each
+  reviewed, then an integration review whose findings were fixed before the stamp (CHANGELOG 1.23.0, *Fixed in the
+  review of the 1.23.0 integration*). The browser suite is **59 scripts** with `menu-home.mjs` and
+  `offline-outreach.mjs`. Two-commit stamp: "Release 1.23.0", then its SBOM (`docs/evidence/sbom-1.23.0.cdx.json`);
+  `v1.23.0` goes on the second, in the one push of ten tags (*Release waiting*, below). The authorship figures (789 of
+  808, QUESTIONNAIRE #36a) were counted at `b403d83`, the last commit before the documentation pass and the stamp.
+- **Upgrade notes.** Migration 67 runs on start (two nullable columns on `tasks`; an existing follow-up to-do is
+  linked to its call or visit the first time the date is changed, found by its title, client, worker and date).
+  **Menus change for front-line roles** (navigators, peer navigators and clinicians): Street outreach moves into the
+  main menu in the harm-reduction and treatment-adjacent profiles, the Waitlist moves under More in a harm-reduction
+  programme, Notes under More on a phone, and *Funding & spending* and *Policies & contracts* appear under More;
+  permissions are unchanged, and supervisors, finance, read-only and administrators keep their menus. Tell staff
+  before the upgrade. **A phone's Home opens on To-dos for today**; the computer layout is unchanged. **The office
+  app now keeps browser-stored data**: street-outreach contacts that name nobody, saved with no signal, wait in
+  IndexedDB (`suds-outreach-queue`) until sent: no PHI, not encrypted, per account, kept through sign-out
+  (docs/security/DATA-INVENTORY.md). **Workers can ask for a field device**: every administrator gets a to-do, and
+  Approve holds the worker's account to the field scope on every device it syncs from (narrowing only; an office
+  with offline copies switched off records the decision for when they are switched on).
+- **Owner decisions to confirm or change** (each taken with a conservative default and implemented that way):
+  - *Peer navigators*: a peer uses a navigator account; there is no separate peer role, and the menu treats them alike.
+  - *Money and contracts for front-line roles*: *Funding & spending* and *Policies & contracts*, which a navigator may
+    open, are under More, not in the main menu (they were in no menu at all).
+  - *The welcome card*: Got it or × puts it away for that person on every device (prefs `tour_done`).
+  - *Folded cards*: the program-wide cards on Home start folded on a phone and open on a computer, until the person
+    chooses; the choice follows the person (prefs `home_folded`).
+  - *The outreach waiting list*: only a contact that names nobody is kept; it is not encrypted (a per-session key would
+    lose contacts promised for the next sign-in) and survives sign-out for the same worker; another account on the
+    phone neither sees nor sends it; Undo is not offered for a waiting contact.
+  - *Field-device requests*: approval binds the account (every device it syncs from), not one device; a worker may ask
+    again only after a decline.
+  - *Waiting to hear what happened*: Accepted and Waitlisted referrals are the provider's answer and are off the
+    supervisor's list (they stay on the worker's own list with their follow-up to-do); one open reminder per
+    referral.
+  - *Follow-up to-dos*: SUDS changes only a to-do it made that is still as SUDS made it (open, the record's worker's,
+    SUDS's title and the record's previous date; to cancel it, no details added); a to-do the worker has changed is
+    theirs, and no second one is made while it is open.
+- **Open items (not fixed; for the owner):**
+  - **A field-device request left open when the worker is deactivated** drops off Settings › Synced devices, but its
+    record in `settings` and the administrators' to-dos stay open until someone closes the to-dos.
+  - **Deleting a call or visit leaves its follow-up to-do open** (the link is set to null); the worker closes it by
+    hand.
+  - Carried from 1.22.0: device-id reuse of an administrator-whole device (THREAT-MODEL residual risk 20); 1.21.0
+    publication releases cannot be corrected; the installer on real VMs and on RHEL 9; **screen-reader testing**,
+    including the screens 1.21.0 to 1.23.0 added (`#/field-phone`, the waiting list, the folded Home, the supervision
+    row actions), is still pending (docs/accessibility/ACR-WCAG21.md); the automated axe audits cover them.
+- **Owner-only:** push the ten tags in one push and approve only `v1.23.0`'s `Web app` run
+  (docs/evidence/RELEASE-HANDOFF.md); record 1.23.0's zip SHA-256 on `main` once its release job has run (1.22.0's is
+  in the hand-off); make `maint/1.22` from `v1.22.0` once the tags exist; the repository settings (docs/RELEASE.md,
+  *Owner: repository settings*). The next feature release waits 28 days from 1.23.0.
 
 ### 2026-10-01 — Claude: 1.22.0 (day to day for workers, field scope by account, publication consent, grace period)
 
@@ -268,17 +326,17 @@ _(Append replies here, newest first.)_
 
 ### Release waiting
 
-- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0 and 1.22.0 are on `main`, and 1.22.0 is live, but
-  none is tagged: the owner tags all nine, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the
-  checks, the nine `git tag -a` commands and `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0`,
+- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0 and 1.23.0 are on `main`, and 1.23.0 is
+  live, but none is tagged: the owner tags all ten, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the
+  checks, the ten `git tag -a` commands and `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0`,
   what each tag's runs do (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`,
-  `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0` and `v1.22.0` each need *Run workflow* with a `policy_exception`; only
-  `v1.22.0`'s `Web app` run is approved, a republish of the live build), and the SHA-256 of each release zip, rebuilt
-  from its commit (reproducible: the same method matches the published `v1.15.4` and `v1.16.2` checksums; 1.22.0's is
+  `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0` and `v1.23.0` each need *Run workflow* with a `policy_exception`; only
+  `v1.23.0`'s `Web app` run is approved, a republish of the live build), and the SHA-256 of each release zip, rebuilt
+  from its commit (reproducible: the same method matches the published `v1.15.4` and `v1.16.2` checksums; 1.23.0's is
   recorded by a commit after its SBOM commit). After the releases, the owner records each checksum in its release notes
   and in the CHANGELOG on `main`, the second channel SUDS Server's `upgrade.sh --release-sha256` needs. Push the tags
-  while `main` says 1.22.0, or add a newer stamped version's tag to the same push. `v1.20.0`, `v1.21.0` and `v1.22.0`
-  each go on the commit after their `Release X.Y.Z` that adds its SBOM. The assistant cannot push tags (its
+  while `main` says 1.23.0, or add a newer stamped version's tag to the same push. `v1.20.0`, `v1.21.0`, `v1.22.0` and
+  `v1.23.0` each go on the commit after their `Release X.Y.Z` that adds its SBOM. The assistant cannot push tags (its
   environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the owner*). Never push tags from an
   assistant's clone, and never an older tag alone.
 - The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here

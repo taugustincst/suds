@@ -1,5 +1,5 @@
 'use strict';
-// Follow-up to-dos (built for 1.23.0, not yet released; docs/USER_GUIDE.md, *Follow-up dates and your to-dos*). A
+// Follow-up to-dos (released in 1.23.0; docs/USER_GUIDE.md, *Follow-up dates and your to-dos*). A
 // worker who sets a follow-up date on a call or text, a visit or a referral gets a to-do for that day, whether the
 // date was set when the record was made or added by editing it later. Both doors run this one rule: the REST routes
 // after they write the record (routes/calls.js, interventions.js, referrals.js), and sync push once a device's whole

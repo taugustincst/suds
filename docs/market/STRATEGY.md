@@ -326,7 +326,7 @@ until counsel and one pilot have looked at it.
 
 ## Built vs planned, exactly
 
-| Capability | State on 1 October 2026 (1.22.0) |
+| Capability | State on 1 October 2026 (1.23.0) |
 | --- | --- |
 | Outreach, anonymous contacts, supplies, funder reporting, settlement report and DHCS/county layouts | **Built** (layouts not checked against current official templates) |
 | Local mode (offline copy, office sync) | **Built**, off by default; the wizard recommends it for harm reduction |
@@ -347,6 +347,7 @@ until counsel and one pilot have looked at it.
 | Minimal-PII defaults (participant code first) and a field device scope for street outreach | **Released in 1.21.0** ([docs/PLATFORM.md](../PLATFORM.md), *Field devices*); both off until an administrator turns them on; the scope is enforced at the office on every sync and, from 1.22.0, follows the account rather than the device id |
 | Authenticator allow-list for passkeys (attestation against the FIDO Metadata Service) | **Released in 1.21.0** ([docs/FINGERPRINT.md](../FINGERPRINT.md), *Authenticator allow-list*); off by default; office server only; from 1.22.0 a passkey it newly refuses stops after a grace period (14 days by default) |
 | Day-to-day fixes for frontline workers (call-back to-dos, quick dates, *Where things stand*, outreach Undo and *Same as last contact*, the note's usual format, the sync state in the header) | **Released in 1.22.0** ([docs/USER_GUIDE.md](../USER_GUIDE.md)) |
+| Follow-up to-dos that follow edits, the worker-first menu and phone Home, street outreach with no signal on the office app (contacts that name nobody, kept in the browser and counted once), *Set up this phone for the field* requests, and the supervisor's *Waiting to hear what happened* with *Remind worker* | **Released in 1.23.0** ([docs/USER_GUIDE.md](../USER_GUIDE.md)); migration 67; no new permission |
 | One-time secure referral links to organisations not on SUDS, with an invitation | **Released in 1.17.0**; off by default; counsel reviews the design before a programme switches it on |
 | A cross-organisation referral network (organisations that join and accept referrals in SUDS) | **Planned**, not scheduled |
 | Inbound FHIR referrals | **Design placeholder** ([docs/integration/FHIR.md](../integration/FHIR.md)) |

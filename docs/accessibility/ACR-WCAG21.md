@@ -4,13 +4,13 @@
 
 ## Name of Product/Version
 
-SUDS — SUD Navigator Services Tracker, SUDS 1.22.0 (this revision; see *Revisions* below).
+SUDS — SUD Navigator Services Tracker, SUDS 1.23.0 (this revision; see *Revisions* below).
 
 **The conformance levels in the tables were established on SUDS 1.11.0** (1.10.2 with the accessibility changes
 that accompanied the first version of this report), by every method under *Evaluation Methods Used*. They have not
 been re-established since by manual review or by any assistive technology. The screens added in later releases,
-1.21.0's and 1.22.0's included, are covered by the automated audit (axe) and scripted checks only. *Revisions* lists
-1.21.0's and 1.22.0's new screens and what was and was not done for them. The 1.11.0 evaluation covered the whole product as it was then,
+1.21.0's, 1.22.0's and 1.23.0's included, are covered by the automated audit (axe) and scripted checks only. *Revisions* lists
+1.21.0's, 1.22.0's and 1.23.0's new screens and what was and was not done for them. The 1.11.0 evaluation covered the whole product as it was then,
 including the clinical documentation (problem list, care plan, six-dimension assessment
 (ASAM-aligned) and outcome measures), CalOMS Tx state reporting, the FHIR interface settings, the security evidence pages and the
 42 CFR Part 2 controls that release adds. Both ways SUDS is run are covered: the **office server** (the web application an
@@ -19,7 +19,7 @@ static site, keeping its records in the browser).
 
 ## Report Date
 
-25 September 2026 (the evaluation of 1.11.0); revised 1 October 2026 for 1.21.0 and for 1.22.0 (see *Revisions*).
+25 September 2026 (the evaluation of 1.11.0); revised 1 October 2026 for 1.21.0, 1.22.0 and 1.23.0 (see *Revisions*).
 
 ## Product Description
 
@@ -101,12 +101,29 @@ shown in the application as **Accessibility** (`accessibility.html`).
   sensory characteristics, consistent navigation and identification, error suggestion and prevention, input
   purpose, content on hover or focus, non-text contrast of form fields and focus rings, which were measured
   from the colour tokens in both themes).
-* **Still not done, as of 1.22.0 (1 October 2026):** testing with screen readers (NVDA, JAWS, VoiceOver,
+* **Still not done, as of 1.23.0 (1 October 2026):** testing with screen readers (NVDA, JAWS, VoiceOver,
   TalkBack) and with speech recognition by their users. It was planned for the release after SUDS 1.11.0 and has
   not happened in any release since. It is an **owner item**: it needs people who use these tools, or an
   accessibility tester, which automated work cannot replace. Findings will be added to this report when it is done.
 
 ## Revisions
+
+**1 October 2026: revised for SUDS 1.23.0.** This revision changes no conformance level. 1.23.0 changed and added
+screens frontline workers use every day: the menu built by role and programme (Street outreach in the main menu of
+front-line roles in the street profiles, more under More on a phone), a phone Home that opens on *To-dos for today*
+with the program-wide cards folded under their headings (each heading a disclosure, `<details>`/`<summary>`) and a ×
+on the welcome card; Street outreach's waiting list with no signal (*N contacts waiting to send* in the header, *Send
+now*, *Discard* and its confirmation, *Keep it without the code and notes*); *Set up this phone for the field*
+(`#/field-phone`) and the field-device requests under Settings › Synced devices; Supervision's *Waiting to hear what
+happened* with its row actions and outcome form; and My profile at 1366 px. Each is audited with the same axe rules:
+the phone Home on a first sign-in and the open phone menu in `scripts/ui/menu-home.mjs` (390 CSS px); the waiting
+list, the keep-without-notes offer, the Discard dialog, `#/field-phone` before and after asking, and Synced devices
+with a request in `scripts/ui/offline-outreach.mjs`; the supervision queue, its outcome form and My profile at 1366
+and 390 px in `scripts/ui/worker-usefulness.mjs`; and the accessibility script audits `#/field-phone` and Home with
+every folded card opened, in both themes and at 200% text, as it does every page. Each script fails on any finding.
+Not done for them, as for 1.21.0's and 1.22.0's: the manual review, dark theme and 200% text for the states only the
+three scripts above reach (the waiting list, the Discard dialog, the supervision row actions), and any screen-reader
+or speech-recognition testing, which is still pending.
 
 **1 October 2026: revised for SUDS 1.22.0.** This revision changes no conformance level. 1.22.0 changed screens
 frontline workers use every day rather than adding new areas: a client's Overview opening with *Where things stand*,

@@ -39,9 +39,9 @@ Rules for every release:
 
 | Line | Gets | For how long |
 | --- | --- | --- |
-| **The latest minor** (today 1.22.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
-| **The previous minor** (today 1.21.x, until 30 days after 1.22.0's release date: the date of its tag. `v1.22.0` is not pushed yet (*Record: 1.22.0*; [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), so its 30 days have not started; 1.22.0 goes to GitHub Pages with its stamp on 2026-10-01, and a programme should plan as if they run from then, to 2026-10-31) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.21` is made from `v1.21.0`'s line once the tags exist) | **30 days** after the next minor's release date, then none |
-| Anything older (today 1.20.x and before: once 1.22.0 was released, 1.20.x stopped being the previous minor, whatever was left of its 30 days after 1.21.0; 1.19.x stopped when 1.21.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
+| **The latest minor** (today 1.23.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
+| **The previous minor** (today 1.22.x, until 30 days after 1.23.0's release date: the date of its tag. `v1.23.0` is not pushed yet (*Record: 1.23.0*; [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), so its 30 days have not started; 1.23.0 goes to GitHub Pages with its stamp on 2026-10-01, and a programme should plan as if they run from then, to 2026-10-31) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.22` is made from `v1.22.0`'s line once the tags exist) | **30 days** after the next minor's release date, then none |
+| Anything older (today 1.21.x and before: once 1.23.0 was released, 1.21.x stopped being the previous minor, whatever was left of its 30 days after 1.22.0; 1.20.x stopped when 1.22.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's
 CHANGELOG section, naming the affected versions (as 1.15.4 did); programmes with a support agreement are told
@@ -181,6 +181,23 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.20.0 | monthly limit (a feature release inside 1.19.0's 28 days: migration 60 and the county-entered figures routes); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner said there is no freeze and to complete all build through 1.20; it carries the documentation, evidence and installer fixes from the review of 1.19.0 and county-entered figures, which had security, UX and engineering reviews, all fixed before the stamp | owner (a request, no workflow record; *Record: 1.20.0*, below) |
 | 1.21.0 | monthly limit (a feature release inside 1.20.0's 28 days: migrations 61, 62 and 63; the county publication, field-device, authenticator allow-list and county reminder routes; no new permission); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner said to implement all five planned features, resolve all known issues and build out stump code ("loop until complete"); eight parallel streams, each reviewed, and an integration review whose findings were fixed before the stamp | owner (a request, no workflow record; *Record: 1.21.0*, below) |
 | 1.22.0 | monthly limit (a feature release inside 1.21.0's 28 days: migrations 64, 65 and 66; the county publication consent routes; no new permission); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner said to implement all recommendations to make SUDS as useful as possible for SUDS workers ("loop until complete"); six streams, the evidence re-run on 1.21.0, and an integration review whose findings were fixed before the stamp | owner (a request, no workflow record; *Record: 1.22.0*, below) |
+| 1.23.0 | monthly limit (a feature release inside 1.22.0's 28 days: migration 67; the supervisor's referral reminder and the field-device request routes; no new permission); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner said to implement all recommendations to make SUDS as useful as possible for SUDS workers ("loop until complete"); four streams and an integration review whose findings were fixed before the stamp | owner (a request, no workflow record; *Record: 1.23.0*, below) |
+
+**Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
+1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as
+possible for suds workers, loop until complete"). It carries follow-up to-dos that follow edits to a call, visit or
+referral at both doors (migration 67), the worker-first menu and phone Home, street outreach with no signal on the
+office app (contacts that name nobody kept in the browser, with keyed ids so each is counted once) and *Set up this
+phone for the field* requests, the supervisor's *Waiting to hear what happened* with *Remind worker* and *Record
+outcome*, My profile at a laptop's width, and the documents brought up to the latest container run. No new
+permission; the new routes are `POST /api/supervision/referrals/:id/remind` and the field-device request routes
+(`/api/me/field-device`, `/api/admin/field-requests`). The work was done in four streams, each reviewed on its branch,
+then merged and given an integration review whose findings (an outcome recorded by editing a referral closing its
+to-dos, *Send now* with an ended session, a waiting contact the office already has found before the write rules, a
+device's to-do linked to a colleague's call or visit) were fixed before the stamp; the items it left open are listed
+for the owner in HANDOFF.md. Like 1.22.0, 1.23.0 is released as two commits, the stamp and its SBOM (*Stamp
+checklist*); the second is the one CI passes, that goes to `main` and `gh-pages` by a direct push, and that the owner
+tags. The next feature release waits 28 days from 1.23.0. Its tag goes in the same push as the others.
 
 **Record: 1.22.0 ships under a policy exception, published without a tag.** 1.22.0 is a feature release inside
 1.21.0's 28 days, on the owner's instruction ("Implement all recommendations to make this as useful as possible for
@@ -275,12 +292,12 @@ change: 1.16.0 is the previous feature release) and for any 1.16.x patch (whose 
 `v1.16.2`: 1.16.3 and 1.16.4 alone count 1,137 of the 1,500 lines), `scripts/migration-order.js`'s baseline, and
 *Backports* step B, whose `git rev-parse 'v1.16.4^{commit}'` fails without the tag.
 
-**Now nine tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.22.0). 1.17.1, 1.18.0,
-1.19.0, 1.20.0, 1.21.0 and 1.22.0 were published the same way, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`, `v1.17.1`,
-`v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0` and `v1.22.0`, pushed together while `main` says 1.22.0. The hand-off has the checks, the tag commands, the one push,
-what each tag's runs do (the 1.16.x gates refuse, the other seven need a *Run workflow* with `policy_exception`, and
-only `v1.22.0`'s `Web app` run is approved: it republishes the build already live), and the SHA-256 each release
-zip will have, rebuilt from each commit (1.22.0's is recorded by a later commit on `main`). The paragraphs below are the reasoning of 1.17.0's time, for three tags;
+**Now ten tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.23.0). 1.17.1, 1.18.0,
+1.19.0, 1.20.0, 1.21.0, 1.22.0 and 1.23.0 were published the same way, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`, `v1.17.1`,
+`v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0` and `v1.23.0`, pushed together while `main` says 1.23.0. The hand-off has the checks, the tag commands, the one push,
+what each tag's runs do (the 1.16.x gates refuse, the other eight need a *Run workflow* with `policy_exception`, and
+only `v1.23.0`'s `Web app` run is approved: it republishes the build already live), and the SHA-256 each release
+zip will have, rebuilt from each commit (1.23.0's is recorded by a later commit on `main`). The paragraphs below are the reasoning of 1.17.0's time, for three tags;
 the rule they set, never an older tag alone, is unchanged.
 
 **Tag 1.16.3, 1.16.4 and 1.17.0 in one push, never 1.16.x alone** (engineering review of 1.17.0, H1). 1.17.0 is on

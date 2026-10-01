@@ -4,9 +4,34 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+## 1.23.0 — 2026-10-01
+
+A feature release (migration 67; new routes `POST /api/supervision/referrals/:id/remind`, `GET /api/me/field-device`,
+`POST /api/me/field-device/request`, `GET /api/admin/field-requests` and `POST /api/admin/field-requests/:userId/approve`
+and `…/decline`; no new permission), released under a policy exception inside 1.22.0's 28 days (docs/RELEASE.md,
+*Record: 1.23.0*). It goes on making the day of the people who use SUDS most easier: a follow-up date added or changed
+by editing a call, a visit or a referral now makes, moves or cancels its to-do; the menu is built for the worker's role
+and programme (Street outreach in the main menu of navigators and clinicians in the street profiles) and a phone's Home
+opens on today's to-dos; a street-outreach contact that names nobody waits on the phone when the office app has no
+signal, and is counted once however late it is sent; a worker can ask for their phone to be set up for the field; and a
+supervisor sees the referrals still waiting to hear what happened, with **Remind worker** and **Record outcome**. It
+also brings the documents up to the latest container run and fixes what the integration review found. Upgrading runs
+migration 67 on start (two nullable columns on `tasks`). What an administrator should know: **the menus change for
+front-line roles** (navigators, peer navigators and clinicians: Street outreach moves up in the harm-reduction and
+treatment-adjacent profiles, the Waitlist moves under More in a harm-reduction programme, Notes under More on a phone,
+and *Funding & spending* and *Policies & contracts* appear under More; permissions are unchanged, and supervisors,
+finance, read-only and administrators keep their menus); **a phone's Home opens on To-dos for today**, with the
+program-wide cards folded until opened; **the office app now keeps something in the browser**: a street-outreach
+contact saved with no signal waits in IndexedDB until it is sent, held to a contact that names nobody (no client,
+participant code or notes, which the office refuses from the waiting list), not encrypted, per account, and kept
+through sign-out for that worker's next sign-in (docs/security/DATA-INVENTORY.md); and **workers can ask for a field
+device** (*Set up this phone for the field*): every administrator gets a to-do, and **Approve** under **Settings ›
+Synced devices** holds the worker's account to the field scope on every device it syncs from, which only narrows what
+those devices keep (docs/PLATFORM.md, *Field devices*).
+
 ### Fixed: follow-up to-dos follow the follow-up date
 
-Built for 1.23.0, not yet released. Migration 67 (`tasks.call_id`, `tasks.intervention_id`). A follow-up date added by
+Released in 1.23.0. Migration 67 (`tasks.call_id`, `tasks.intervention_id`). A follow-up date added by
 editing a call or text, or a visit, made no to-do, and a changed date left the to-do on the old day; the call form's
 help said "A date puts a to-do on your list". Now one rule (`server/rules/follow-ups.js`) makes, moves and cancels the
 follow-up to-do of a call or text, a visit and a referral, on insert and on update: a date set makes the to-do (when the
@@ -22,7 +47,7 @@ what a date does. docs/USER_GUIDE.md, *Follow-up dates and your to-dos*.
 
 ### Supervision: referrals waiting to hear what happened; My profile at 1366 px; documentation currency
 
-Built for 1.23.0, not yet released. No migration and no new permission; one new route,
+Released in 1.23.0. No migration and no new permission; one new route,
 `POST /api/supervision/referrals/:id/remind`.
 
 - **Supervision › Referrals needing attention › Waiting to hear what happened** (it was *No outcome recorded
@@ -59,7 +84,7 @@ Built for 1.23.0, not yet released. No migration and no new permission; one new 
 
 ### Street outreach with no signal on the office app; "Set up this phone for the field" (no migration)
 
-Built for 1.23.0, not yet released. New routes: `GET /api/me/field-device`, `POST /api/me/field-device/request`,
+Released in 1.23.0. New routes: `GET /api/me/field-device`, `POST /api/me/field-device/request`,
 `GET /api/admin/field-requests`, `POST /api/admin/field-requests/:userId/approve` and `…/decline` (`users:manage`).
 No new permission.
 
@@ -91,7 +116,7 @@ No new permission.
 
 ### Worker-first menu and phone Home
 
-Built for 1.23.0, not yet released. No migration, no new permission or route (the folded cards are a preference,
+Released in 1.23.0. No migration, no new permission or route (the folded cards are a preference,
 `home_folded`, in the existing `/api/me/prefs`).
 
 * **The menu by role and programme profile, from one table** (`public/nav.js`, new: the pages and where each goes;
@@ -142,6 +167,10 @@ Built for 1.23.0, not yet released. No migration, no new permission or route (th
   sent it again (its supply site retired, or its period closed, a day or more later), the office refused it and the
   phone marked it *Not accepted*, inviting the worker to enter it a second time. The contact's keyed id is now looked
   for before the write rules (`server/crud.js`), so it is answered as already made. `test/outreach-queue.test.js`.
+* **A device's to-do can no longer be linked to a colleague's call or visit.** A to-do sent from a device that
+  names a call or visit of another worker (`call_id`, `intervention_id`) keeps the to-do and drops the link, so it
+  cannot stop the office making that colleague's follow-up to-do (`server/rules/tasks.js` `beforeStore`,
+  `test/follow-ups.test.js`).
 
 ## 1.22.0 — 2026-10-01
 
@@ -168,9 +197,6 @@ docs/FINGERPRINT.md, *Grace period*).
 
 Released in 1.22.0. No migration.
 
-- **A device's to-do can no longer be linked to a colleague's call or visit.** The link is dropped (the to-do is
-  kept), so it cannot stop the office making that colleague's follow-up to-do (`server/rules/tasks.js` `beforeStore`,
-  `test/follow-ups.test.js`).
 - **The listener no longer fails to start under SUDS Server's sandbox.** `deploy/linux/suds.service` restricts the
   address families to IPv4, IPv6 and Unix sockets, so `os.networkInterfaces()` throws there; `server/listener.js`
   read it on every start, which logged an unhandled rejection, never printed "listening on", left the setup wizard's

@@ -1,5 +1,5 @@
 'use strict';
-// Follow-up to-dos follow the follow-up date (built for 1.23.0, not yet released; server/rules/follow-ups.js): on a
+// Follow-up to-dos follow the follow-up date (released in 1.23.0; server/rules/follow-ups.js): on a
 // call or text, a visit and a referral, a date set when the record is made OR added by editing it makes the to-do; a
 // changed date moves it; a cleared date (or Follow-up needed unticked on a call) cancels it -- but only while the to-do
 // is as SUDS made it, so a worker's own edits are never lost; saving again makes no duplicate; sync push applies the

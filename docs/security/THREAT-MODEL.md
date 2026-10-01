@@ -2,7 +2,7 @@
 
 This document covers who might attack SUDS, how, what stops them, and what is left. It is for a county security reviewer, a penetration tester, and the next maintainer.
 
-**Version.** It describes 1.22.0, with the county surface and SUDS Server modelled in full (the review and the fuzz tests behind [The county surface](#the-county-surface) and [SUDS Server: the installed host](#suds-server-the-installed-host) are released in 1.21.0). 1.21.0 added four attack surfaces, modelled in [What 1.21.0 adds](#what-1210-adds): county publication releases (the combined figures differenced against programmes' own releases), field devices (a device's scope enforced at the office), the authenticator allow-list (attestation and FIDO Metadata Service verification) and version 2 of the county file (award amounts). 1.22.0 adds no new surface but changes four of these, summarised in [What 1.22.0 changes](#what-1220-changes) and marked in the rows: the field scope follows the account, not the device id; a publication release needs each named programme's recorded consent, and a withdrawn one can be corrected; the allow-list stops a refused passkey after a grace period; and a county file is version 2 only when the county is known to read it. What changed in 1.17.0, 1.18.0 (the county view, the county connection, SUDS Server), 1.19.0 (passkeys), 1.20.0 (county-entered figures), 1.21.0 and 1.22.0 is marked with the release.
+**Version.** It describes 1.23.0, with the county surface and SUDS Server modelled in full (the review and the fuzz tests behind [The county surface](#the-county-surface) and [SUDS Server: the installed host](#suds-server-the-installed-host) are released in 1.21.0). 1.21.0 added four attack surfaces, modelled in [What 1.21.0 adds](#what-1210-adds): county publication releases (the combined figures differenced against programmes' own releases), field devices (a device's scope enforced at the office), the authenticator allow-list (attestation and FIDO Metadata Service verification) and version 2 of the county file (award amounts). 1.22.0 adds no new surface but changes four of these, summarised in [What 1.22.0 changes](#what-1220-changes) and marked in the rows: the field scope follows the account, not the device id; a publication release needs each named programme's recorded consent, and a withdrawn one can be corrected; the allow-list stops a refused passkey after a grace period; and a county file is version 2 only when the county is known to read it. 1.23.0 adds one small surface and changes how two writes are made, summarised in [What 1.23.0 changes](#what-1230-changes): the office app keeps street-outreach contacts that name nobody in the browser while there is no signal, each with an id derived from the account and its Idempotency-Key; a follow-up to-do is made, moved or cancelled by one rule at both doors (the REST routes and sync push); and a worker can ask an administrator for a field device. What changed in 1.17.0, 1.18.0 (the county view, the county connection, SUDS Server), 1.19.0 (passkeys), 1.20.0 (county-entered figures), 1.21.0, 1.22.0 and 1.23.0 is marked with the release.
 
 **Who wrote it.** The SUDS project wrote it, from the code and from its own review rounds. **It is not an independent assessment.** No third-party penetration test or audit has been done (see [Residual risks](#residual-risks)).
 
@@ -110,7 +110,7 @@ Related documents:
 | A revoked person keeps the data | Deactivation queues a wipe. Revoke or wipe applies at the next contact. A narrowing of rights removes rows at the next sync. A device offline longer than the tombstones are kept is rebuilt from the office | `server/devices.js`, `server/routes/sync.js`; `test/sync-scope-change.test.js`, `test/devices.test.js` |
 | Unsynced work lost on a shared device | A row with unsent changes is never deleted (1.16.3 M2) | `local/sync.js`; `test/shared-device-drop.test.js` |
 | Framing, or another site on a shared Pages origin | The frame guard and the CSP are carried in the pages. The service worker is scoped to its own path. A dedicated origin is recommended ([QUESTIONNAIRE.md](QUESTIONNAIRE.md) #45a) | `scripts/static-site-security.js`; `test/static-site-csp.test.js`, `test/sw-phi.test.js` |
-| Altered code served to the on-device app | The `Web app` workflow publishes only from an approved release tag, checked byte for byte against the tag's own build (1.16.4 M2). **1.16.4 to 1.22.0 did not go through it**: they were pushed to `gh-pages` directly, with no tag (published without a tag: [QUESTIONNAIRE.md](QUESTIONNAIRE.md) #39), so the same check must be run against the commit by hand. Counties can self-host the build | `scripts/release-site-check.js`, `.github/workflows/web-app.yml`; `test/release-site-check.test.js` |
+| Altered code served to the on-device app | The `Web app` workflow publishes only from an approved release tag, checked byte for byte against the tag's own build (1.16.4 M2). **1.16.4 to 1.23.0 did not go through it**: they were pushed to `gh-pages` directly, with no tag (published without a tag: [QUESTIONNAIRE.md](QUESTIONNAIRE.md) #39), so the same check must be run against the commit by hand. Counties can self-host the build | `scripts/release-site-check.js`, `.github/workflows/web-app.yml`; `test/release-site-check.test.js` |
 
 ### Data at rest, keys and audit
 
@@ -266,31 +266,55 @@ follow them: [PEN-TEST-SCOPE.md](PEN-TEST-SCOPE.md)).
   that the county runs SUDS 1.21 or later; otherwise version 1, which carries no award. The answer is the programme's
   word: a wrong one makes a file the county refuses, not a wrong figure.
 
-### What 1.23.0 adds (built for 1.23.0, not yet released)
+### What 1.23.0 changes
+
+One small new surface, the office app's street-outreach waiting list; the rest changes how existing writes are made.
+No permission is added: the new routes (the supervisor's reminder, the field-device request and its answer) are held
+to permissions that already existed.
 
 - **Street outreach's waiting list in the office app** (`public/outreach-queue.js`). Until now the office app kept
   nothing in browser storage. A street-outreach contact saved with no signal now waits in IndexedDB until it is sent.
   It is held to a contact that names nobody (no client, participant code or notes: the screen will not keep one, and
-  the office refuses one sent from the list, `X-Suds-Queued`, `server/routes/interventions.js` `checkQueued`), so a
-  stolen or shared phone shows at most that this worker handed out these supplies at roughly this place and time. It is
-  not encrypted (an owner decision with a conservative default: nothing in it is PHI, and a per-session key would lose
-  contacts the worker was promised would be sent at the next sign-in); it is per account, so another account on the
-  same phone neither sees nor sends it. A replayed or forged list item can only create anonymous contacts as the
-  signed-in worker, which the worker could create anyway; its Idempotency-Key fixes the row id (`server/crud.js`
-  `keyedId`, derived from the account and the key), so resending one, however late, never counts or draws the stock
-  twice, and an undone contact is not made again.
+  the office refuses one sent from the list, `X-Suds-Queued`, `server/routes/interventions.js` `checkQueued`, which
+  also refuses a cost or a client service), so a stolen or shared phone shows at most that this worker handed out
+  these supplies at roughly this place and time. It is not encrypted (an owner decision with a conservative default:
+  nothing in it is PHI, and a per-session key would lose contacts the worker was promised would be sent at the next
+  sign-in); it is per account, so another account on the same phone neither sees nor sends it, and it survives
+  sign-out for that worker. A replayed or forged list item can only create anonymous contacts as the signed-in worker,
+  which the worker could create anyway.
+- **Keyed ids: counted once, however late** (`server/crud.js` `keyedId`). Each waiting contact carries one
+  Idempotency-Key from its first attempt, and the contact's id is derived from the account and that key, so resending
+  it after the 24-hour idempotency window, or after it was undone, is answered with the same id (audited
+  `intervention.create.replayed`) and never counts or draws the stock twice; an undone contact is not made again. Only
+  the caller's own account gives that id, so one worker's key cannot answer for another's contact. The id is looked for
+  before the write rules, so a contact the office already has is answered as made even when it could no longer be made
+  (its supply site retired, its period closed) rather than refused and entered a second time.
+- **The follow-up rule at both doors** (`server/rules/follow-ups.js`, migration 67: `tasks.call_id`,
+  `tasks.intervention_id`). A follow-up date on a call, a visit or a referral makes, moves or cancels its to-do by one
+  rule that the REST routes and sync push both run, as the write rules are (*Authorisation and insiders (both doors)*).
+  It changes only a to-do SUDS made that is still as SUDS made it (open, the record's worker's, SUDS's title and date),
+  so it cannot be used to alter or cancel a to-do a worker has made their own; each change is audited (`task.create`,
+  `task.update`, ids only). A device's to-do that names another worker's call or visit keeps the to-do and loses the
+  link (`server/rules/tasks.js` `beforeStore`), so a device cannot stop the office making a colleague's follow-up. An
+  outcome recorded by editing a referral closes its to-dos as **Record outcome** does.
 - **"Set up this phone for the field"** (`server/field-request.js`). Any signed-in worker can ask; every administrator
-  gets a to-do. Approve binds the worker's account to the field scope (narrowing only, `devices.bindAccount` via
-  `admin`); nothing widens. A worker can repeat the request only after it is declined, so it cannot flood the
-  administrators' to-dos.
+  gets a to-do naming the worker (staff, not a client). Approve (`users:manage`) binds the worker's account to the field
+  scope (narrowing only, `devices.bindAccount` via `admin`); nothing in the request widens what a device holds. A worker
+  can repeat the request only after it is declined, so it cannot flood the administrators' to-dos. Audited
+  (`device.field_request`, `.approve`, `.decline`).
+- **A supervisor's reminder** (`POST /api/supervision/referrals/:id/remind`). It gives the worker who made a referral
+  a to-do naming the provider, as the referral's own follow-up already does, never its notes or outcome (encrypted,
+  audited `referral.remind`). It is held to the supervision queue's existing scoping (a supervisor of that worker's
+  team, with `referrals:read` and `tasks:write`), one open reminder per referral, never to a closed account; navigators
+  and finance are refused.
 
 ### Release pipeline and supply chain
 
 | Threat | Mitigation | Code / test |
 | --- | --- | --- |
-| A malicious npm package in the server | There are none: the server uses Node built-ins only, which the SBOM script checks ([../evidence/sbom-1.22.0.cdx.json](../evidence/sbom-1.22.0.cdx.json)) | `scripts/sbom.js`; `test/sbom.test.js` |
+| A malicious npm package in the server | There are none: the server uses Node built-ins only, which the SBOM script checks ([../evidence/sbom-1.23.0.cdx.json](../evidence/sbom-1.23.0.cdx.json)) | `scripts/sbom.js`; `test/sbom.test.js` |
 | A malicious build tool changes the kernel | Few build tools, pinned by lockfile. The kernel is committed and CI rebuilds and compares it. esbuild and sql.js are updated by hand | `ci.yml` drift step, `scripts/kernel-build-options.js`; `test/kernel-parity.test.js` |
-| Releasing untested or unapproved code | The gate requires every required job to be green on the exact commit, on `main`, from a `v*` tag matching the version, and runs `main`'s copy of the gate scripts. The owner approves the `release` environment. **Not in force for 1.16.3 to 1.22.0**, which were published without a tag and without the gate (recorded policy exceptions; [QUESTIONNAIRE.md](QUESTIONNAIRE.md) #36, #39) | `scripts/release-gate.js`, `scripts/release-policy.js`; `test/release-gate.test.js`, `test/release-policy.test.js` |
+| Releasing untested or unapproved code | The gate requires every required job to be green on the exact commit, on `main`, from a `v*` tag matching the version, and runs `main`'s copy of the gate scripts. The owner approves the `release` environment. **Not in force for 1.16.3 to 1.23.0**, which were published without a tag and without the gate (recorded policy exceptions; [QUESTIONNAIRE.md](QUESTIONNAIRE.md) #36, #39) | `scripts/release-gate.js`, `scripts/release-policy.js`; `test/release-gate.test.js`, `test/release-policy.test.js` |
 | A backport released from the wrong line (1.17.0) | The gate accepts a commit on `origin/maint/X.Y` only for a patch of a minor older than `main`'s, measures it against the previous tag on its own line, and does not mark it Latest or publish the web app | `scripts/release-gate.js`, `scripts/release-policy.js`, `web-app.yml`; `test/release-gate.test.js`, `test/release-policy.test.js` |
 | An edit silently changes what a released migration does (1.17.0) | The migration check fingerprints the helpers and `schema.sql` definitions each released migration depends on and fails unless a change is acknowledged with a reason | `scripts/migration-order.js`; `test/migration-order.test.js`, `test/migrations.test.js` |
 | A forged GitHub Release for the owner's tag (1.16.4 H1) | The release must be made by the workflow's bot and hold only the zip and checksum, byte for byte what the tag builds. This is checked before approval, after approval and after publishing | `scripts/release-existing.js`; `test/release-existing.test.js` |

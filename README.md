@@ -27,7 +27,29 @@ partner, or its county) runs; it is not a hosted service. Positioning, buyer gui
 and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:
 [docs/architecture/README.md](docs/architecture/README.md).
 
-## What's new in 1.18.0 to 1.22.0
+## What's new in 1.18.0 to 1.23.0
+
+**1.23.0**
+
+* **Your follow-ups stay on your list** ([docs/USER_GUIDE.md](docs/USER_GUIDE.md)): a follow-up date on a call or
+  text, a visit or a referral puts a to-do on your list whether you set it when you record the work or add it later
+  by **Edit**; change the date and the to-do moves, clear it and the to-do is cancelled, and saving again never adds a
+  second one. SUDS leaves alone a to-do you have made your own. The same happens for work recorded on a phone, when it
+  syncs.
+* **A menu and a phone Home built for the worker**: navigators, peer navigators and clinicians in a harm-reduction or
+  treatment-adjacent programme have **Street outreach** in the main menu; on a phone, Home opens on **To-dos for
+  today**, then unsigned notes and clients to contact, with the program-wide figures folded until you open them; the
+  welcome card's **×** puts it away on every device. Supervisors, finance, read-only and administrators keep their
+  menus; permissions are unchanged.
+* **Street outreach with no signal**: on the office app, a contact that names nobody (no participant code, no notes)
+  is kept on the phone and sent by itself when the signal comes back or you next sign in, counted once however late;
+  the header says how many are waiting, and Street outreach lists them with **Send now** and **Discard**. Nothing that
+  could identify a person is kept in the browser.
+* **Set up this phone for the field**: a worker can read what a field device keeps and ask their administrator, who
+  approves under **Settings › Synced devices** ([docs/PLATFORM.md](docs/PLATFORM.md#field-devices)).
+* **Supervisors chase referrals in one place**: *Waiting to hear what happened* lists only referrals with no answer
+  yet, or an appointment nobody has said happened, oldest first, with **Remind worker** (a to-do for the worker who made
+  it) and **Record outcome**. My profile fits a 1366 px laptop. Upgrading runs migration 67 on start.
 
 **1.22.0**
 

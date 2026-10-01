@@ -1,5 +1,5 @@
 'use strict';
-// Follow-up to-dos on a device that syncs with the office (built for 1.23.0, not yet released;
+// Follow-up to-dos on a device that syncs with the office (released in 1.23.0;
 // server/rules/follow-ups.js): the browser kernel, bundled from the current sources, makes and moves the to-do itself
 // with the same rule, links it to the call or visit, and the office, running the rule again on the push, finds that
 // to-do rather than making a second one.

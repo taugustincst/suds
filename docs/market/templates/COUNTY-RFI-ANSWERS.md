@@ -147,11 +147,11 @@ Zero runtime dependencies: the server uses only Node.js built-ins; a production 
 Build-time tooling is listed separately. A CycloneDX SBOM per release, reproducible from the commit. Dependabot
 for build tooling, the container base and CI actions. Evidence:
 [../../security/VULNERABILITY-MANAGEMENT.md](../../security/VULNERABILITY-MANAGEMENT.md);
-[../../evidence/sbom-1.22.0.cdx.json](../../evidence/sbom-1.22.0.cdx.json) (`node scripts/sbom.js`,
+[../../evidence/sbom-1.23.0.cdx.json](../../evidence/sbom-1.23.0.cdx.json) (`node scripts/sbom.js`,
 `test/sbom.test.js`).
 
 **Q. Release integrity: how does the county know the build it runs is the released code?** **Releases 1.16.3 to
-1.22.0 were published without a tag**, without a GitHub Release and without the release gate's approval. The owner
+1.23.0 were published without a tag**, without a GitHub Release and without the release gate's approval. The owner
 had each put on GitHub Pages by a direct push to `gh-pages`, and each is recorded as a policy exception
 ([../../RELEASE.md](../../RELEASE.md), *The exceptions in one place*). For these versions there is no tag or published
 zip to check against, and SUDS Server's `upgrade.sh` cannot download them. Verify against the commit instead. Each
