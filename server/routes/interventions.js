@@ -237,6 +237,8 @@ module.exports = (r) => {
     // this has to run before the delete — after it, there is no longer any way to find the records this
     // intervention created.
     beforeDelete: (ctx, row) => {
+      // Its follow-up to-do, while still as SUDS made it, is cancelled (server/rules/follow-ups.js; sync push too).
+      require('../rules/follow-ups').cancelForDeleted('interventions', row, ctx);
       const existing = db.one(`SELECT * FROM expenditures WHERE intervention_id=?`, row.id);
       if (existing && existing.status === 'pending') { db.run(`DELETE FROM expenditures WHERE id=?`, existing.id); db.tombstone('expenditures', existing.id); }
       // The visit's automatic time entry: gone with the visit while nobody has approved it; once approved

@@ -32,7 +32,8 @@
 //   Push-only hooks, in the order push.js calls them: prepare(session, rows) once per push, later(row, session)
 //   true to hold a row back until every other table's rows have landed, order(rows, session),
 //   permitsWithoutWritePerm(row, session), outsideCaseload(row, c), beforeWrite(row, c), beforeStore(row, c),
-//   storeRow(stored, row, c), afterApply(row, stored, c), afterDelete(storedRow, session) after a tombstone lands,
+//   storeRow(stored, row, c), afterApply(row, stored, c), beforeDelete(storedRow, session) as a tombstone is applied,
+//   before the row goes (in the same savepoint), afterDelete(storedRow, session) after a tombstone lands,
 //   finish(session) once every row and tombstone of the push has landed; pushable: false for a table a device never
 //   writes.
 const { validate } = require('../validate');

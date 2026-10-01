@@ -106,6 +106,8 @@ module.exports = define({
     // Its follow-up to-do, once the whole push has landed (server/rules/follow-ups.js).
     FU.track('interventions', row, c);
   },
+  // A deleted visit's untouched follow-up to-do is cancelled before the row goes (server/rules/follow-ups.js).
+  beforeDelete(row, s) { FU.cancelForDeleted('interventions', row, { user: s.user, ip: 'device' }); },
   // A deleted visit puts back what it drew.
   afterDelete(row, s) { touchVisit(s, row.id, { linesPushed: true }); },
   // The office's draw-down for every visit this push touched, after the rows, the items (intervention_supplies) and

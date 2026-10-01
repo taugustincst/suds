@@ -164,6 +164,8 @@ module.exports = (r) => {
     if (v.is_active === 0) auth.revokeAllForUser(u.id);
     // Their secure referral links that could still be opened are withdrawn (server/referral-links.js).
     if (v.is_active === 0 && u.is_active) require('../referral-links').revokeForUser(u.id, ctx.user);
+    // An open field-device request of theirs can no longer be answered: it and the administrators' to-dos are closed.
+    if (v.is_active === 0 && u.is_active && !require('../config').local) require('../field-request').closeMoot(u.id, ctx.user, { ip: ctx.ip });
     // And their passkeys (fingerprint sign-in, docs/FINGERPRINT.md): re-enabling the account later does not bring them
     // back. Resetting their two-step verification or their password takes them too: both are how an administrator
     // recovers an account someone else may have had, and a passkey is a way in and a second factor like the code

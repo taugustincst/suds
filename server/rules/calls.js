@@ -38,4 +38,6 @@ module.exports = define({
   normalise(row, c) { FU.deriveCallFollowUp(row, c.existing); return null; },
   afterApply(row, o, c) { FU.track('calls', row, c); },
   finish(s) { FU.finish('calls', s); },
+  // A deleted call's untouched follow-up to-do is cancelled before the row goes (server/rules/follow-ups.js).
+  beforeDelete(row, s) { FU.cancelForDeleted('calls', row, { user: s.user, ip: 'device' }); },
 });

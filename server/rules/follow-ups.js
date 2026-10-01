@@ -68,10 +68,10 @@ const SPECS = {
  * as it was before (null for a new one), both in stored form (encrypted columns encrypted). `user` and `ip` are who
  * caused it, for the audit trail. Returns what was done ('created', 'moved', 'cancelled'), or null.
  */
-function reconcile(table, row, prev, { user, ip }) {
+function reconcile(table, row, prev, { user, ip }, extra = {}) {
   const S = SPECS[table];
   if (!S || !row || !row.id) return null;
-  const log = (action, id, details) => audit.log({ user, action, entity: 'task', entityId: id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, ...details } });
+  const log = (action, id, details) => audit.log({ user, action, entity: 'task', entityId: id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, ...extra, ...details } });
   // A referral whose outcome this write recorded (its status set to admitted, completed, declined or closed by
   // editing it, at the office or on a device) has served its to-dos, as POST /api/referrals/:id/outcome closes them:
   // its follow-up and a supervisor's reminder to record the outcome (routes/supervision.js). Review of 1.23.0.
@@ -133,6 +133,18 @@ function reconcile(table, row, prev, { user, ip }) {
   return done;
 }
 
+/**
+ * A call or text, a visit or a referral about to be deleted (1.23.1): its follow-up to-do goes as if the date had been
+ * cleared -- cancelled while it is still as SUDS made it (the rule above), left for the worker to close when they have
+ * changed it. Both doors call this BEFORE the row is deleted (the link is ON DELETE SET NULL): the REST routes'
+ * beforeDelete (crud.js) and sync push's tombstone (the tables' beforeDelete, push.js). Audited as task.update with
+ * cause 'deleted'.
+ */
+function cancelForDeleted(table, row, ctx) {
+  if (!SPECS[table] || !row || !row.id) return null;
+  return reconcile(table, { ...row, follow_up_due: null, follow_up_needed: 0 }, row, ctx, { cause: 'deleted' });
+}
+
 // ---- sync push: the tables' rules record each record a push writes (afterApply), and reconcile them all once every
 // row of the batch has landed (finish), so a to-do the device sent with the record is found rather than duplicated.
 function tracked(s) { return s.state.followUps || (s.state.followUps = new Map()); }
@@ -171,4 +183,4 @@ function defaultReferralDue(v) {
   v.follow_up_due = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
 }
 
-module.exports = { reconcile, track, finish, deriveCallFollowUp, defaultReferralDue, SPECS };
+module.exports = { reconcile, cancelForDeleted, track, finish, deriveCallFollowUp, defaultReferralDue, SPECS };
