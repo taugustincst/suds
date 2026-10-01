@@ -214,6 +214,18 @@ a per-device administrator decision, not a per-person flag, so no new or reinsta
 an administrator says so. The scope limits what a device **holds**, not what its account may reach: the same account
 in a browser at the office sees what its role allows.
 
+**Asking for a field device, and street outreach with no signal (built for 1.23.0, not yet released).** A worker on
+the office app asks from **Set up this phone for the field** (`#/field-phone`, `server/field-request.js`); every active
+administrator holding `users:manage` gets a to-do, and **Settings › Synced devices** lists the request. **Approve**
+holds the account to the field scope (`devices.bindAccount`, via `admin`), so every device it syncs from is a field
+device: narrowing only. **Decline** changes nothing. The worker's own enrolment option (*Keep only what I need in the
+field*) is unchanged and needs no approval. Requests are kept in `settings` (`field_request:<user id>`), one open
+request per worker. Owner decisions, conservative defaults: on the office app, Street outreach keeps on the phone only a
+contact that names nobody (no client, participant code or notes), unencrypted because it holds no PHI and must survive
+sign-out to be sent at the next sign-in, per account so nobody else on a shared phone sees or sends it
+(`public/outreach-queue.js`; [security/DATA-INVENTORY.md](security/DATA-INVENTORY.md)); a contact with a code or notes
+is not kept, and the worker may keep it without them.
+
 ## Lost or stolen devices, and offboarding
 
 - **Revoke** (Settings → Synced devices) blocks that device from syncing again until an administrator clears

@@ -266,6 +266,24 @@ follow them: [PEN-TEST-SCOPE.md](PEN-TEST-SCOPE.md)).
   that the county runs SUDS 1.21 or later; otherwise version 1, which carries no award. The answer is the programme's
   word: a wrong one makes a file the county refuses, not a wrong figure.
 
+### What 1.23.0 adds (built for 1.23.0, not yet released)
+
+- **Street outreach's waiting list in the office app** (`public/outreach-queue.js`). Until now the office app kept
+  nothing in browser storage. A street-outreach contact saved with no signal now waits in IndexedDB until it is sent.
+  It is held to a contact that names nobody (no client, participant code or notes: the screen will not keep one, and
+  the office refuses one sent from the list, `X-Suds-Queued`, `server/routes/interventions.js` `checkQueued`), so a
+  stolen or shared phone shows at most that this worker handed out these supplies at roughly this place and time. It is
+  not encrypted (an owner decision with a conservative default: nothing in it is PHI, and a per-session key would lose
+  contacts the worker was promised would be sent at the next sign-in); it is per account, so another account on the
+  same phone neither sees nor sends it. A replayed or forged list item can only create anonymous contacts as the
+  signed-in worker, which the worker could create anyway; its Idempotency-Key fixes the row id (`server/crud.js`
+  `keyedId`, derived from the account and the key), so resending one, however late, never counts or draws the stock
+  twice, and an undone contact is not made again.
+- **"Set up this phone for the field"** (`server/field-request.js`). Any signed-in worker can ask; every administrator
+  gets a to-do. Approve binds the worker's account to the field scope (narrowing only, `devices.bindAccount` via
+  `admin`); nothing widens. A worker can repeat the request only after it is declined, so it cannot flood the
+  administrators' to-dos.
+
 ### Release pipeline and supply chain
 
 | Threat | Mitigation | Code / test |

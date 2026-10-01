@@ -4,6 +4,38 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Street outreach with no signal on the office app; "Set up this phone for the field" (no migration)
+
+Built for 1.23.0, not yet released. New routes: `GET /api/me/field-device`, `POST /api/me/field-device/request`,
+`GET /api/admin/field-requests`, `POST /api/admin/field-requests/:userId/approve` and `…/decline` (`users:manage`).
+No new permission.
+
+- **A contact that names nobody waits on the phone.** On the office app, a street-outreach contact saved with no signal
+  used to stay in the form until there was signal again. A contact with no client, participant code or notes is now
+  kept on the phone (IndexedDB, `public/outreach-queue.js`) and sent by itself when the phone is back online or the
+  worker next signs in; **N contacts waiting to send** in the header says how many, and Street outreach lists them with
+  **Send now** and **Discard**. A contact with a participant code or notes is not kept (no PHI in the office app's
+  browser storage, 42 CFR Part 2, shared phones); the screen says so and offers **Keep it without the code and notes**.
+- **Counted once, however late.** Each contact carries one Idempotency-Key from its first attempt; an anonymous visit's
+  id is derived from the account and that key (`server/crud.js` `keyedId`), so a contact sent again after the 24-hour
+  idempotency window, or after it was undone, is answered with the same id and draws no stock again. The office
+  refuses a client, participant code, notes, cost or a client service from the waiting list (`X-Suds-Queued: 1`,
+  `server/routes/interventions.js` `checkQueued`). The save is audited as before; a repeat as
+  `intervention.create.replayed`.
+- **The offline banner** no longer links office users to *Use SUDS on this device* (get-app.html, a different SUDS that
+  cannot send the contact in hand to the office). It says what is kept and points at **Set up this phone for the field**.
+- **Set up this phone for the field** (`#/field-phone`, `server/field-request.js`): what a field device keeps and who
+  decides (a worker may narrow; only an administrator widens), how to set the phone up yourself where offline copies are
+  allowed (**Keep only what I need in the field** on This device › Sync, as before), and **Ask my administrator**, which
+  gives every administrator a to-do. **Settings › Synced devices** lists the requests with **Approve** (every device the
+  worker syncs from becomes a field device: narrowing only) and **Decline**. Audited as `device.field_request`,
+  `device.field_request.approve` and `.decline`.
+- **Undo of an outreach contact** also puts **Same as last contact** back to the bundle before it, or hides it when
+  there was none; it used to keep offering the undone bundle.
+- Tests: `test/outreach-queue.test.js`; `scripts/ui/offline-outreach.mjs` (offline with Playwright's `setOffline`, the
+  header count, sent once, axe); `worker-usefulness`, `r10-outreach` and `navigator-fixes` follow the new behaviour;
+  the accessibility script audits `#/field-phone`.
+
 ## 1.22.0 — 2026-10-01
 
 A feature release (migrations 64, 65 and 66; the county publication consent routes; no new permission), released
