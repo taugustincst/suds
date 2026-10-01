@@ -100,7 +100,9 @@ try {
     eq(task && task.assigned_to, one.author_id, 'assigned to the note\'s author');
     eq(task && task.client_id, one.client_id, 'on the note\'s client');
     // 1.23.3 (D3): it covers all the author's drafts on the client's record, so it names the client, not one note.
-    ok(task && /^Finish and sign your draft notes for /.test(task.title), 'titled for the author\'s drafts on that client, without a note\'s content', task && task.title);
+    // 1.23.4 (N4): the client is named once, by the to-do's client, not again in its title or details.
+    eq(task && task.title, 'Finish and sign your draft notes', 'titled for the author\'s drafts, without a note\'s content or the client again');
+    ok(task && /on this client's record/.test(task.description) && !(one.client_code && task.description.includes(one.client_code)), 'its details say "this client\'s record", not the name and code', task && task.description);
     ok(task && /once they are all signed/.test(task.description), 'and says it closes once they are all signed', task && task.description);
     eq(task && task.sign_reminder, true, 'the office marks it a sign reminder (its maker countersigns notes)');
 
@@ -144,6 +146,37 @@ try {
       ok(/Your draft notes on this record \(\d+\)/.test(shown), 'counted, with a way back to all notes', shown.slice(0, 120));
       ok(await nav.page.$('[data-my-drafts] a[data-all-notes]'), 'and "Show all notes"');
       await axe(nav.page, 'a client\'s Notes tab on the reader\'s drafts');
+      // 1.23.4 (N6): deleting a draft says the reminder is cancelled too when it is her last draft there, and only then;
+      // (N4) with none left, the view says so once, not "You have no draft notes" over the table's "No notes yet".
+      const cid = navReminder.client_id;
+      // A second draft there, so a confirmation with a draft still left is seen too.
+      const extra = await nav.api('POST', '/api/notes', { client_id: cid, kind: 'admin', content: 'Left a message about the appointment.', occurred_at: new Date().toISOString() });
+      eq(extra.status, 201, 'a second draft is written on the reminder\'s client', extra.data);
+      await nav.go(`client/${cid}/notes?drafts=mine&_=n6`);
+      const drafts = ((await nav.api('GET', `/api/notes?client_id=${cid}&status=draft&mine=1&limit=100`)).data.rows || []);
+      ok(drafts.length > 1, 'she has more than one draft on the reminder\'s client', drafts.length);
+      ok(await until(() => nav.page.evaluate((n) => document.querySelector('[data-my-drafts]')?.dataset.myDraftsLeft === String(n), drafts.length)), 'the drafts view lists them all');
+      for (let i = 0; i < drafts.length; i++) {
+        const last = i === drafts.length - 1;
+        await nav.page.locator('[data-my-drafts] [data-note-open]').first().click();
+        ok(await until(() => nav.page.$('.modal [data-delete-draft]')), `draft ${i + 1}: it opens with Delete draft`);
+        await nav.page.click('.modal [data-delete-draft]');
+        ok(await until(async () => (await nav.page.$$('.modal-bg')).length > 1), `draft ${i + 1}: Delete draft asks first`);
+        const ask = await nav.page.locator('.modal-bg').last().textContent();
+        if (last) ok(/Delete this draft note\? It is your last draft on this record, so the supervisor's reminder to finish and sign your draft notes here is cancelled too\./.test(ask), 'N6: deleting her last draft there says the reminder is cancelled too', ask.slice(0, 300));
+        else ok(/Delete this draft note\?/.test(ask) && !/reminder/.test(ask), `N6: with another draft left, draft ${i + 1}'s confirmation says nothing of the reminder`, ask.slice(0, 300));
+        if (last) await axe(nav.page, 'a draft\'s delete confirmation naming the reminder');
+        await nav.page.locator('.modal-bg').last().locator('button', { hasText: /^Delete$/ }).click();
+        ok(await until(() => nav.page.evaluate((n) => { const d = document.querySelector('[data-my-drafts]'); return !!d && d.dataset.myDraftsLeft === String(n) && !document.querySelector('.modal-bg'); }, drafts.length - i - 1)), `draft ${i + 1}: deleted, and the Notes tab stays on her drafts`);
+        await settle(nav.page);
+      }
+      eq(await nav.page.evaluate(() => location.hash.split('?')[1].split('&')[0]), 'drafts=mine', 'still on her drafts after the last one goes');
+      const none = await nav.page.evaluate(() => document.getElementById('main').textContent);
+      ok(none.includes('No draft notes left to sign on this record.'), 'N4: with none left it says "No draft notes left to sign on this record."', none.slice(0, 300));
+      ok(!/No notes yet|You have no draft notes/.test(none), 'N4: and not "No notes yet" or "You have no draft notes" as well', none.slice(0, 300));
+      ok(await nav.page.$('[data-my-drafts] a[data-all-notes]'), 'N4: with "Show all notes"');
+      eq(((await nav.api('GET', `/api/tasks/${navReminder.id}`)).data.row || {}).status, 'cancelled', 'and the reminder is cancelled');
+      await axe(nav.page, 'a client\'s Notes tab with no drafts left');
     }
   }
 

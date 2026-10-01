@@ -242,7 +242,7 @@ export async function openNote(id, { onChange } = {}) {
     n.addenda.length ? h('div', { class: 'mt' }, h('h3', { class: 'eyebrow' }, 'Addenda'), n.addenda.map(a => h('div', { class: 'list-item' }, h('div', { class: 'small muted' }, `${fmt.dt(a.created_at)} · ${a.author}${a.reason ? ' · ' + a.reason : ''}`), h('div', { style: { whiteSpace: 'pre-wrap' } }, a.content)))) : null,
     h('div', { class: 'btn-row' },
       writable && n.status === 'draft' && (mine || can('records:manage-others')) ? h('button', { class: 'btn', onClick: () => { m.close(); openNoteForm(n, { onDone: onChange }); } }, 'Edit draft') : null,
-      writable && n.status === 'draft' && (mine || can('records:manage-others')) ? h('button', { class: 'btn danger', onClick: async () => { if (await confirmDialog('Delete draft', 'Delete this draft note?', { danger: true, okText: 'Delete' })) { await del(`/api/notes/${n.id}`); m.close(); onChange && onChange(); } } }, 'Delete draft') : null,
+      writable && n.status === 'draft' && (mine || can('records:manage-others')) ? h('button', { class: 'btn danger', 'data-delete-draft': n.id, onClick: async () => { const also = await draftDeleteNotice(n); if (await confirmDialog('Delete draft', `Delete this draft note?${also}`, { danger: true, okText: 'Delete' })) { await del(`/api/notes/${n.id}`); m.close(); onChange && onChange(); } } }, 'Delete draft') : null,
       writable && n.status === 'draft' && (mine || can('records:manage-others')) ? h('button', { class: 'btn primary', onClick: () => signNote(n, () => { m.close(); onChange && onChange(); }) }, 'Sign & lock') : null,
       writable && n.status !== 'draft' ? h('button', { class: 'btn', onClick: () => addAddendum(n, () => { m.close(); openNote(n.id, { onChange }); onChange && onChange(); }) }, 'Add addendum') : null,
       // A navigator who wants a supervisor's eyes on a note asks for it here; the note goes into the
@@ -379,6 +379,23 @@ function signNote(n, done, { onCancel = null } = {}) {
 function addAddendum(n, done) {
   const f = form([{ name: 'reason', label: 'Reason (e.g. late entry, correction)' }, { name: 'content', label: 'Addendum', type: 'textarea', required: true, span: true }], { submitText: 'Add addendum', onCancel: () => m.close(), onSubmit: async (d) => { await post(`/api/notes/${n.id}/addenda`, d); toast('Addendum added', 'ok'); m.close(); done(); } });
   const m = modal('Add addendum', f);
+}
+/**
+ * What deleting a draft does to a supervisor's reminder to sign it, as a sentence for the confirmation, or '': the
+ * author's reminder on this client's record is cancelled when this is their last draft there (or, made before 1.23.2,
+ * when it names this note), as server/rules/notes.js closeSignReminders does (market evaluation of 1.23.3, N6).
+ */
+async function draftDeleteNotice(n) {
+  if (!n.client_id || !n.author_id || !can('tasks:read')) return '';
+  const q = (p) => get(p, { quiet: true }).then(d => d.rows || []);
+  let tasks, drafts;
+  try {
+    [tasks, drafts] = await Promise.all([q(`/api/tasks?client_id=${encodeURIComponent(n.client_id)}&status=open&limit=500`),
+      q(`/api/notes?client_id=${encodeURIComponent(n.client_id)}&status=draft&author_id=${encodeURIComponent(n.author_id)}&limit=500`)]);
+  } catch { return ''; }
+  const last = !drafts.some(d => d.id !== n.id);
+  const closes = tasks.some(t => t.sign_reminder && t.assigned_to === n.author_id && ((t.description || '').includes(`supervision reminder for note ${n.id}`) || last));
+  return closes ? ` ${n.author_id === state.user.id ? 'It is your last draft on this record, so the supervisor\'s reminder to finish and sign your draft notes here' : 'It is the author\'s last draft on this record, so the supervisor\'s reminder to finish and sign them'} is cancelled too.` : '';
 }
 /** For someone who reads clinical notes but does not write them: SUD counseling notes are not listed (server/routes/notes.js). */
 export const counselingHidden = () => (can('notes:clinical:read') && !can('notes:clinical:write') ? h('div', { class: 'banner small phone-line', 'data-counseling-hidden': '1' }, h('span', { class: 'wide-only' }, 'SUD counseling notes are visible only to their author, the co-signer and clinical staff, so they are not listed here.'), h('span', { class: 'phone-only' }, 'Counseling notes (§2.11) are not listed.')) : null);

@@ -162,9 +162,11 @@ route('supervision', async (r) => {
   const remind = (r) => post('/api/tasks', {
     client_id: r.client_id, assigned_to: r.author_id,
     // It covers every draft of theirs on that client's record and closes when the last is signed (or deleted), so it
-    // names the client, not one note (market evaluation of 1.23.2, D3); the last line stays SIGN_REMINDER.
-    title: `Finish and sign your draft notes for ${who(r)}`,
-    description: `${state.user.display_name} asked you to finish and sign your draft notes on ${who(r)}'s record${r.overdue ? ' (at least one is overdue)' : ''}. Open them from the client's Notes tab. This reminder is closed for you once they are all signed.\n${SIGN_REMINDER}`,
+    // is about the client, not one note (market evaluation of 1.23.2, D3); the last line stays SIGN_REMINDER. The to-do
+    // is on the client's record, and every list shows its client beside the title, so neither names them again (Home
+    // read "…for Park, Danielle (DEMO-0007) · Park, Danielle"; market evaluation of 1.23.3, N4).
+    title: 'Finish and sign your draft notes',
+    description: `${state.user.display_name} asked you to finish and sign your draft notes on this client's record${r.overdue ? ' (at least one is overdue)' : ''}. Open them from the client's Notes tab. This reminder is closed for you once they are all signed.\n${SIGN_REMINDER}`,
     due_at: fmt.today(), priority: r.overdue ? 'high' : 'normal',
   });
   const remindOne = async (r, btn) => {

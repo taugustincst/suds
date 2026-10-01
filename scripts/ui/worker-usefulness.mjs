@@ -151,6 +151,9 @@ try {
   ok(await until(async () => (await nav.page.$$('.modal-bg')).length > 1), 'Delete call asks first');
   const askDel = await nav.page.locator('.modal-bg').last().textContent();
   ok(/Delete this contact record\? Its open follow-up to-do is cancelled too/.test(askDel), 'and says its open follow-up to-do is cancelled too', askDel.slice(0, 200));
+  // 1.23.4 (N4): untouched, it is cancelled; nothing about an edited one is said ("(a follow-up to-do someone has edited
+  // is left open)" was on every call's confirmation).
+  ok(!/edited|changed|left open/.test(askDel), 'and nothing about an edited follow-up, when it is as SUDS made it', askDel.slice(0, 200));
   await nav.page.locator('.modal-bg').last().locator('button', { hasText: /^Cancel$/ }).click();
   await until(async () => (await nav.page.$$('.modal-bg')).length === 1);
   await nav.page.keyboard.press('Escape'); await settle(nav.page);
@@ -175,6 +178,20 @@ try {
   ok(await until(() => nav.page.evaluate(() => /^#\/tasks\?status=done&mine=1(&|$)/.test(location.hash))), 'View in Done from the phone list: To-dos showing Done, assigned to me as the list was', await nav.page.evaluate(() => location.hash));
   await settle(nav.page);
   ok(await nav.page.evaluate(() => [...document.querySelectorAll('.compact-list .compact-row')].some(r => r.textContent.includes('Call back: Bed callback'))), 'and the to-do is in it');
+  // 1.23.4 (N4): the same follow-up reopened with the worker's details on it is left open when the call is deleted,
+  // and the confirmation says so (and does not say it is cancelled).
+  eq((await nav.api('PUT', `/api/tasks/${cb.id}`, { status: 'open', description: 'Bed coordinator said to call after 2.' })).status, 200, 'the follow-up is reopened with details added');
+  await nav.go('tasks?status=open&mine=1');
+  await nav.page.locator('.compact-list .compact-row', { hasText: 'Call back: Bed callback' }).first().locator('[data-task-source="call"]').tap();
+  ok(await until(() => nav.page.$('.modal')), 'its row opens the call');
+  await nav.page.locator('.modal button', { hasText: /^Delete call$/ }).click();
+  ok(await until(async () => (await nav.page.$$('.modal-bg')).length > 1), 'Delete call asks first');
+  const askEdited = await nav.page.locator('.modal-bg').last().textContent();
+  ok(/Delete this contact record\? Its follow-up to-do has been changed since it was made, so it is left open\./.test(askEdited), 'N4: with the follow-up edited, it says the to-do is left open', askEdited.slice(0, 200));
+  ok(!/cancelled/.test(askEdited), 'N4: and not that it is cancelled', askEdited.slice(0, 200));
+  await nav.page.locator('.modal-bg').last().locator('button', { hasText: /^Cancel$/ }).click();
+  await until(async () => (await nav.page.$$('.modal-bg')).length === 1);
+  await nav.page.keyboard.press('Escape'); await settle(nav.page);
 
   // ---- + Log a visit: the follow-up date has the same quick choices ----
   await nav.go(`client/${cid}`);

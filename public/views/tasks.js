@@ -5,14 +5,14 @@ import { h, route, get, post, put, del, state, form, modal, toast, table, badge,
 // person, so the list shown has it in it.
 export const doneListHash = (t, mine) => `tasks?status=done&mine=${(mine ?? t.assigned_to === state.user.id) ? 1 : 0}`;
 // The "Done" message after a to-do is ticked off: Undo puts it back as it was (an in-progress to-do stays in progress,
-// 1.23.2), and "View in Done" opens the Done list with it. `onUndone` redraws the page it was done on, and only while
+// 1.23.2), and "View in Done" opens the Done list with it, first and marked "Just done" (`focus`; 1.23.4). `onUndone` redraws the page it was done on, and only while
 // the person is still on that page (Undo after moving on reopens it where they are).
 export function doneToast(t, { mine, onUndone } = {}) {
   const page = location.hash.replace(/^#\/?/, '').split('?')[0] || 'dashboard';
   return undoToast(`Done: ${t.title}`, async () => {
     await put(`/api/tasks/${t.id}`, { status: t.status === 'in_progress' ? 'in_progress' : 'open' });
     if (onUndone && (location.hash.replace(/^#\/?/, '').split('?')[0] || 'dashboard') === page) onUndone();
-  }, { also: { text: 'View in Done', key: 'view-done', onClick: () => nav(`${doneListHash(t, mine)}&_=${Date.now()}`) } });
+  }, { also: { text: 'View in Done', key: 'view-done', onClick: () => nav(`${doneListHash(t, mine)}&focus=${encodeURIComponent(t.id)}&_=${Date.now()}`) } });
 }
 
 export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
@@ -69,10 +69,23 @@ export async function deleteNotice(col, rec) {
   const linked = rows.filter(t => t[col] === rec.id);
   const isReminder = (t) => col === 'referral_id' && REMINDER.test(t.title || '') && t.created_by && t.created_by !== t.assigned_to;
   const reminder = linked.some(isReminder);
-  const followUp = linked.some(t => !isReminder(t));
-  if (!followUp && !reminder) return '';
+  const followUps = linked.filter(t => !isReminder(t));
+  const followUp = followUps.some(t => untouched(col, rec, t));
+  const edited = followUps.some(t => !untouched(col, rec, t));
+  if (!followUp && !reminder && !edited) return '';
   const what = [followUp ? 'its open follow-up to-do' : null, reminder ? 'the supervisor\'s reminder to record its outcome' : null].filter(Boolean).join(' and ');
-  return ` ${what[0].toUpperCase()}${what.slice(1)} ${followUp && reminder ? 'are' : 'is'} cancelled too${followUp ? ' (a follow-up to-do someone has edited is left open)' : ''}.`;
+  // Said only when a follow-up has been changed (it read "(a follow-up to-do someone has edited is left open)" on every
+  // call; market evaluation of 1.23.3, N4).
+  return `${what ? ` ${what[0].toUpperCase()}${what.slice(1)} ${followUp && reminder ? 'are' : 'is'} cancelled too.` : ''}${edited ? ` ${followUp ? 'A follow-up to-do someone has changed' : 'Its follow-up to-do has been changed since it was made, so it'} is left open.` : ''}`;
+}
+// Whether a follow-up to-do is still as SUDS made it, so deleting its record cancels it: the office's rule
+// (server/rules/follow-ups.js, "untouched"): open, not started; its record's worker's; SUDS's title; due on the record's
+// follow-up date; no details added.
+const FOLLOW_UP_TITLE = { call_id: /^(Call|Text) back(:|$)/, intervention_id: /^Follow up: /, referral_id: /^Follow up on referral to / };
+function untouched(col, rec, t) {
+  const due = col === 'call_id' ? (rec.follow_up_needed ? rec.follow_up_due : null) : rec.follow_up_due;
+  return t.status === 'open' && t.assigned_to === rec.user_id && !t.description && !!due && String(t.due_at || '').slice(0, 10) === String(due).slice(0, 10)
+    && (!FOLLOW_UP_TITLE[col] || FOLLOW_UP_TITLE[col].test(t.title || ''));
 }
 /** The same on a phone's to-do row (1.23.2), which opens the to-do itself on a tap: this button opens the record,
  *  named with the to-do's title for a screen reader ("Open the call: Call back"). */
@@ -153,7 +166,9 @@ export async function openChangeNotice(t, { onDone } = {}) {
   return m;
 }
 // `mine`: the list's "Assigned to me" choice, kept by "View in Done" (doneToast).
-export function taskTable(rows, { showClient = true, onChange, bulk = false, mine } = {}) {
+// `justDone`: the to-do View in Done came for, marked so it is found at once.
+export function taskTable(rows, { showClient = true, onChange, bulk = false, mine, justDone = null } = {}) {
+  const fresh = (t) => (justDone && t.id === justDone ? h('span', { 'data-just-done': t.id }, badge('Just done', 'ok')) : null);
   // Ticked off: "Done" with Undo and View in Done; unticked: reopened.
   const tick = async (t, wanted) => {
     await put(`/api/tasks/${t.id}`, { status: wanted ? 'done' : 'open' });
@@ -208,7 +223,7 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false, min
       },
     }) : null },
     canBulk ? { label: 'Select', render: t => { if (t.status === 'done' || !tickable(t)) return null; const box = h('input', { type: 'checkbox', 'aria-label': `Select "${t.title}"`, onChange: (e) => { if (e.target.checked) selected.add(t.id); else selected.delete(t.id); updateCount(); } }); boxes.set(t.id, box); return box; } } : null,
-    { label: 'To-do', render: t => h('div', {}, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title), changeNotice(t) ? h('div', { class: 'small muted' }, `Changed: ${changeNotice(t).fields.join(', ')}`) : t.description ? h('div', { class: 'small muted' }, t.description.slice(0, 120)) : null) },
+    { label: 'To-do', render: t => h('div', {}, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title), fresh(t) ? [' ', fresh(t)] : null, changeNotice(t) ? h('div', { class: 'small muted' }, `Changed: ${changeNotice(t).fields.join(', ')}`) : t.description ? h('div', { class: 'small muted' }, t.description.slice(0, 120)) : null) },
     showClient ? { label: 'Client', render: t => t.client_id ? h('a', { href: `#/client/${t.client_id}` }, t.client_name || t.client_code, t.client_name ? h('div', { class: 'muted small mono' }, t.client_code) : null) : '—' } : null,
     { label: 'Due', render: t => h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? fmt.dt(t.due_at) : '—', overdue(t) ? ' — overdue' : '') },
     { label: 'Priority', render: t => badge(fmt.label(t.priority), statusKind(t.priority)) }, { label: 'Status', render: t => badge(fmt.label(t.status), statusKind(t.status)) }, { label: 'Assignee', key: 'assignee' },
@@ -225,7 +240,7 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false, min
         finally { e.target.disabled = false; }
       } })) : null, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title)), badge(fmt.label(t.priority), statusKind(t.priority))],
       // The record it came from, a tap away on the row itself (1.23.2): it was only inside Edit.
-      secondary: t => [showClient && t.client_id ? h('span', {}, t.client_name || t.client_code) : null, changeNotice(t) ? h('span', {}, `Changed: ${changeNotice(t).fields.join(', ')}`) : h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? (overdue(t) ? 'overdue · ' : 'due ') + fmt.dt(t.due_at) : 'no due date'), t.status === 'done' ? badge('Done', 'ok') : null,
+      secondary: t => [showClient && t.client_id ? h('span', {}, t.client_name || t.client_code) : null, changeNotice(t) ? h('span', {}, `Changed: ${changeNotice(t).fields.join(', ')}`) : h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? (overdue(t) ? 'overdue · ' : 'due ') + fmt.dt(t.due_at) : 'no due date'), t.status === 'done' ? badge('Done', 'ok') : null, fresh(t),
         changeNotice(t) ? null : rowSource(t, onChange)],
       onTap: t => (changeNotice(t) ? openChangeNotice(t, { onDone: onChange }) : can('tasks:write') && mayChangeTask(t) ? openTaskForm(t, { onDone: onChange }) : openTaskView(t)) } });
   return toolbar ? h('div', {}, toolbar, tbl) : tbl;
@@ -234,6 +249,15 @@ route('tasks', async (r) => {
   const status = r.query.get('status') || 'open'; const mine = r.query.get('mine') !== '0'; const overdue = r.query.get('overdue') === '1';
   const qs = `limit=300&status=${status}${mine ? '&mine=1' : ''}${overdue ? '&overdue=1' : ''}`;
   const data = await get(`/api/tasks?${qs}`);
+  // View in Done (doneToast) names the to-do just done: it comes first, marked, rather than wherever its due date puts
+  // it in the list (the oldest due first: a phone showed older to-dos and not the one just ticked, external retest of
+  // 1.23.3), and is read on its own if the list does not have it.
+  const focus = status === 'done' ? r.query.get('focus') : null;
+  if (focus) {
+    let t = data.rows.find(x => x.id === focus);
+    if (!t) { try { const one = (await get(`/api/tasks/${encodeURIComponent(focus)}`, { quiet: true })).row; if (one && one.status === 'done') t = one; } catch { /* gone: the list as it is */ } }
+    if (t) data.rows = [t, ...data.rows.filter(x => x.id !== focus)];
+  }
   const refresh = () => nav(`tasks?status=${status}&mine=${mine ? 1 : 0}${overdue ? '&overdue=1' : ''}&_=${Date.now()}`);
   if (r.query.get('id')) { const t = data.rows.find(x => x.id === r.query.get('id')); if (t) setTimeout(() => (changeNotice(t) ? openChangeNotice(t, { onDone: refresh }) : openTaskForm(t, { onDone: refresh })), 0); }
   const sel = h('select', { onChange: () => nav(`tasks?status=${sel.value}&mine=${mine ? 1 : 0}`) }, [['open', 'Open'], ['done', 'Done'], ['cancelled', 'Cancelled'], ['all', 'All']].map(([v, l]) => h('option', { value: v, selected: v === status }, l)));
@@ -243,5 +267,5 @@ route('tasks', async (r) => {
     pageHead('To-dos', can('tasks:write') ? h('button', { class: 'btn primary', onClick: () => openTaskForm(null, { onDone: refresh }) }, '+ Add a to-do') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(`tasks?status=${status}&mine=${mine ? 0 : 1}`) }, 'Assigned to me'), h('button', { class: `btn sm ${overdue ? 'primary' : ''}`, onClick: () => nav(`tasks?status=open&mine=${mine ? 1 : 0}${overdue ? '' : '&overdue=1'}`) }, 'Overdue')),
     suprtDue,
-    taskTable(data.rows, { onChange: refresh, bulk: true, mine }));
+    taskTable(data.rows, { onChange: refresh, bulk: true, mine, justDone: focus }));
 });

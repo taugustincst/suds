@@ -15,7 +15,15 @@ async function redrawHome() {
   const seq = ++homeSeq;
   let view; try { view = await drawHome(homeRoute); } catch { return; }
   const main = document.getElementById('main');
-  if (seq === homeSeq && main && onHome() && idle()) main.replaceChildren(view);
+  if (!(seq === homeSeq && main && onHome() && idle())) return;
+  // The heading may have had the keyboard focus (idle() lets that be redrawn): it goes to the new heading, not to the
+  // page's body, which a zoom user crossing 640 px lost their place to (market evaluation of 1.23.3, N2).
+  const had = document.activeElement;
+  main.replaceChildren(view);
+  if (had && had !== document.body && !had.isConnected) {
+    const h1 = main.querySelector('h1');
+    if (h1) { if (!h1.hasAttribute('tabindex')) h1.setAttribute('tabindex', '-1'); try { h1.focus({ preventScroll: true }); } catch { /* ignore */ } }
+  }
 }
 // Home is laid out for the width it is drawn at: a phone's order (today's to-dos first) up to 640 px, a computer's
 // above. It was chosen once, when the figures came back, and never again: a screen whose width settled after that

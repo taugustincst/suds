@@ -12,6 +12,8 @@
 //   the + Log button clear of the alert badges; a short offline banner.
 //   1.23.2: a to-do on Home is marked done by its box alone (the title opens it) and "Done" has an Undo; nothing is
 //   left under the + Log button at the end of a page.
+//   1.23.4: a sign reminder names its client once on Home; a re-layout keeps the heading's focus; View in Done shows the
+//   to-do just done first, marked, however soon it is pressed.
 // Measurements are printed as "measure:" lines (before/after figures for the release notes).
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
@@ -292,9 +294,33 @@ try {
     await s.api('PUT', '/api/me/prefs', { tour_done: true });
     await s.page.reload(); await settle(s.page);
     measure('navigator Home at 1280 px without the welcome: height (px)', (await home(s.page)).height);
+    // 1.23.4 (N4): a supervisor's sign reminder names its client once on Home ("…for Park, Danielle (DEMO-0007) · Park,
+    // Danielle" before). Made as Supervision's Remind author makes it (public/views/supervision.js; ui-eval checks that),
+    // overdue so it is among the five Home shows.
+    const meId = (await s.api('GET', '/api/auth/me')).data.user.id;
+    const mine = { id: (((await s.api('GET', '/api/tasks?mine=1&status=all&limit=500')).data.rows || []).find(t => t.client_id && t.client_name) || {}).client_id };
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const rem = await admin.api('POST', '/api/tasks', { client_id: mine && mine.id, assigned_to: meId, title: 'Finish and sign your draft notes', priority: 'high', due_at: yesterday,
+      description: 'Admin asked you to finish and sign your draft notes on this client\'s record. Open them from the client\'s Notes tab. This reminder is closed for you once they are all signed.\nThis reminder closes itself once your draft notes on this client\'s record are signed.' });
+    eq(rem.status, 201, 'N4: a supervisor\'s sign reminder is made for the navigator', rem.data);
+    await s.go('dashboard?_=n4'); await settle(s.page);
+    const remRow = await until(() => s.page.evaluate((id) => { const r = document.querySelector(`[data-today-task="${id}"]`); return r ? r.querySelector('.today-main').textContent : null; }, rem.data && rem.data.id));
+    const remName = (((await s.api('GET', `/api/tasks/${rem.data && rem.data.id}`)).data || {}).row || {}).client_name;
+    ok(remName, 'N4: the reminder\'s client has a name this reader sees', remName);
+    eq(remRow, `Finish and sign your draft notes · ${remName}`, 'N4: Home names the reminder\'s client once');
+    // 1.23.4 (N2): a re-layout at the 640 px breakpoint left the keyboard focus on nothing (document.body): with the
+    // heading focused (a zoom user, or after moving to the page), the new Home's heading has it after the swap.
+    await s.page.setViewportSize({ width: 1366, height: 900 });
+    ok(await until(() => s.page.$('[data-home-layout="computer"]')), 'N2: Home at 1366 px is the computer\'s layout'); await settle(s.page);
+    await s.page.evaluate(() => { const h1 = document.querySelector('.main h1'); h1.setAttribute('tabindex', '-1'); h1.focus(); h1.dataset.oldHeading = '1'; });
+    eq(await s.page.evaluate(() => document.activeElement.tagName), 'H1', 'N2: the Home heading has the focus at 1366 px');
     // 1.23.3: Home follows the width both ways: narrowed to a phone it takes the phone's order, widened again the computer's.
     await s.page.setViewportSize(PHONE);
     ok(await until(() => s.page.$('[data-home-layout="phone"]')), 'desktop Home narrowed to 390 px is laid out for the phone'); await settle(s.page);
+    const focused = await s.page.evaluate(() => { const a = document.activeElement; return { tag: a.tagName, fresh: a.isConnected && !a.dataset.oldHeading && document.getElementById('main').contains(a), text: a.textContent.trim().slice(0, 40) }; });
+    eq(focused.tag, 'H1', 'N2: after the re-layout to 390 px the focus is on a heading, not the page body', focused);
+    ok(focused.fresh, 'N2: the new Home\'s heading', focused);
+    eq(await s.page.evaluate(() => document.activeElement === document.querySelector('.main h1')), true, 'N2: the page\'s own h1');
     ok((await home(s.page)).todosTop < 700, 'and "To-dos for today" is on its first screen');
     await s.page.setViewportSize({ width: 1280, height: 900 });
     ok(await until(() => s.page.$('[data-home-layout="computer"]')), 'widened again, it is the computer\'s layout'); await settle(s.page);
@@ -312,6 +338,30 @@ try {
       await settle(s.page);
       eq(await s.page.$eval('.main .filters select', e => e.value), 'done', 'View in Done from the list: the Status filter reads Done');
       ok(await s.page.evaluate((t) => [...document.querySelectorAll('.main tbody tr')].some(r => r.textContent.includes(t)), title), `View in Done from the list: "${title}" is in the list`);
+    }
+    // 1.23.4 (V1): View in Done pressed the moment it appears, a few times over, from the phone's To-dos list and from
+    // Home: the Done list has the to-do just done first, marked "Just done" and on the first screen (it was listed by
+    // due date, oldest first, so the one just ticked could be below the fold).
+    await s.page.setViewportSize(PHONE);
+    for (let i = 0; i < 4; i++) {
+      const fromHome = i % 2 === 1;
+      await s.go(fromHome ? `dashboard?_=v1${i}` : `tasks?status=open&mine=1&_=v1${i}`); await settle(s.page);
+      const sel = fromHome ? '.today-item[data-today-task] input[type=checkbox]' : '.main .compact-row input[type=checkbox]';
+      const box = await until(() => s.page.$(sel));
+      ok(box, `V1 ${i + 1}: ${fromHome ? 'Home' : 'the phone To-dos list'} has a to-do to tick`);
+      if (!box) continue;
+      const label = await box.getAttribute('aria-label');
+      const title = fromHome ? label.replace(/^Mark done: /, '') : label.replace(/^Mark "(.*)" done$/, '$1');
+      await box.check();
+      const also = await until(() => s.page.$('.undo-toast [data-toast-also]'), { timeout: 8000 });
+      ok(also, `V1 ${i + 1}: View in Done is offered`);
+      if (!also) continue;
+      await also.click();
+      ok(await until(() => s.page.evaluate(() => /^#\/tasks\?status=done&mine=1&focus=[\w-]+(&|$)/.test(location.hash))), `V1 ${i + 1}: it opens Done naming the to-do`, await s.page.evaluate(() => location.hash));
+      const first = await until(() => s.page.evaluate(() => { const r = document.querySelector('.main .compact-row'); const m = r && r.querySelector('[data-just-done]'); if (!m) return null; const b = r.getBoundingClientRect(); return { text: r.textContent, top: Math.round(b.top), bottom: Math.round(b.bottom), focus: new URLSearchParams(location.hash.split('?')[1]).get('focus'), id: m.dataset.justDone }; }));
+      ok(first && first.text.includes(title), `V1 ${i + 1}: "${title}" is first in Done, marked "Just done"`, first);
+      eq(first && first.id, first && first.focus, `V1 ${i + 1}: the marked row is the to-do View in Done named`);
+      ok(first && first.bottom <= PHONE.height, `V1 ${i + 1}: on the first screen`, first);
     }
     await s.ctx.close();
   }

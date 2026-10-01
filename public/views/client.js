@@ -33,7 +33,8 @@ route('client', async (r) => {
   // of closing over `tab`) means a slow save refreshes wherever the worker actually is now rather than
   // silently navigating them back to the tab that was open when they started the save; and it no-ops
   // instead of firing at all once they've left this client's page.
-  const refresh = () => { const h = parseHash(); if (h.name === 'client' && h.id === id) nav(`client/${id}/${h.sub || 'overview'}?_=${Date.now()}`); };
+  // The Notes tab on the reader's drafts stays on them (1.23.4): signing or deleting one there went back to every note.
+  const refresh = () => { const h = parseHash(); if (h.name === 'client' && h.id === id) nav(`client/${id}/${h.sub || 'overview'}?${h.sub === 'notes' && h.query && h.query.get('drafts') === 'mine' ? 'drafts=mine&' : ''}_=${Date.now()}`); };
   const ctxOpts = { clientId: id, clientDisplay: disp, onDone: refresh };
   // The "n" shortcut logs a visit for the client whose record is open (public/app.js), like + Log a visit here.
   state.pageClient = { id, display: disp, onDone: refresh };
@@ -257,8 +258,10 @@ route('client', async (r) => {
       // opens (tasks.js sourceButton); "Show all notes" goes back to the whole tab.
       const myDrafts = !!(r.query && r.query.get('drafts') === 'mine');
       const d = await get(`/api/notes?client_id=${id}&limit=500${myDrafts ? '&status=draft&mine=1' : ''}`);
-      if (myDrafts) return h('div', { 'data-my-drafts': '1' }, h('p', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('span', {}, h('b', {}, d.rows.length ? `Your draft notes on this record (${d.rows.length})` : 'You have no draft notes on this record'), d.rows.length ? ' — open one to finish and sign it.' : ''), h('a', { href: `#/client/${id}/notes`, 'data-all-notes': '1' }, 'Show all notes')),
-        noteTable(d.rows, { showClient: false, onChange: refresh }));
+      // With none left (the last one just signed), one line, not that line and then the table's "No notes yet" on a record
+      // with notes (market evaluation of 1.23.3, N4).
+      if (myDrafts) return h('div', { 'data-my-drafts': '1', 'data-my-drafts-left': String(d.rows.length) }, h('p', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('span', {}, h('b', {}, d.rows.length ? `Your draft notes on this record (${d.rows.length})` : 'No draft notes left to sign on this record.'), d.rows.length ? ' — open one to finish and sign it.' : ''), h('a', { href: `#/client/${id}/notes`, 'data-all-notes': '1' }, 'Show all notes')),
+        d.rows.length ? noteTable(d.rows, { showClient: false, onChange: refresh }) : null);
       // An administrator holds break-glass but had nowhere to use it except a note link they could not see.
       const breakGlass = !can('notes:clinical:read') && can('notes:clinical:breakglass') ? h('button', { class: 'btn sm danger', 'data-breakglass': '1', onClick: async () => {
         // The server insists on a reason of at least 15 characters; the dialog asks for the same, so a
