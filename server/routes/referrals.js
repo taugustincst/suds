@@ -181,6 +181,8 @@ module.exports = (r) => {
     },
     // A follow-up date changed or cleared by editing the referral moves or cancels its to-do (server/rules/follow-ups.js).
     afterUpdate: (ctx, row, prev) => { FU.reconcile('referrals', row, prev, ctx); },
+    // A deleted referral's follow-up to-do, while still as SUDS made it, is cancelled (sync push does the same).
+    beforeDelete: (ctx, row) => { FU.cancelForDeleted('referrals', row, ctx); },
   });
 
   // Close the loop explicitly: what happened, and was the client admitted?

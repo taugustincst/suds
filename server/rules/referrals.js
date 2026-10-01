@@ -62,6 +62,8 @@ module.exports = define({
   // once the push has landed (server/rules/follow-ups.js), as over REST (routes/referrals.js).
   normalise(row, c) { if (!c.existing) FU.defaultReferralDue(row); return null; },
   finish(s) { FU.finish('referrals', s); },
+  // A deleted referral's untouched follow-up to-do is cancelled before the row goes (server/rules/follow-ups.js).
+  beforeDelete(row, s) { FU.cancelForDeleted('referrals', row, { user: s.user, ip: 'device' }); },
   afterApply(row, o, c) {
     FU.track('referrals', row, c);
     const gate = c.referralDisclosure;

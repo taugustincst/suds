@@ -122,3 +122,33 @@ test('an outcome recorded by editing the referral closes its to-dos too: the rem
   ok(await nav.put(`/api/referrals/${id2}`, { status: 'accepted' }), 200);
   assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r2.task).status, 'open');
 });
+
+test('a to-do from a device cannot link to a colleague\'s referral, nor pass for a supervisor\'s reminder (1.23.1)', async () => {
+  require('../server/config').localModeEnabled = true;
+  const theirs = await refer(sup, 'contacted', 6); // the supervisor's own: a colleague's
+  const mine = await refer(nav, 'contacted', 7);
+  const login = await H.client().post('/api/auth/login', { username: 'srnav', password: PW }, { 'X-Sync-Client': '1' });
+  const B = { Authorization: 'Bearer ' + login.data.token, Cookie: '' };
+  const push = async (tables) => { const r = await H.client().post('/api/sync/push', { tables }, B); assert.equal(r.status, 200, JSON.stringify(r.data)); return r.data; };
+  const rid = () => require('node:crypto').randomUUID();
+  const now = () => new Date().toISOString();
+  const task = (over) => ({ id: rid(), client_id: clientId, assigned_to: navUser.id, created_by: navUser.id, title_enc: 'Follow up on referral to Remind Detox', due_at: now().slice(0, 10), priority: 'normal', status: 'open', created_at: now(), updated_at: now(), ...over });
+  // A colleague's referral: the link is dropped (the to-do keeps its place), so it cannot hold back their follow-up.
+  const crafted = task({ referral_id: theirs });
+  await push({ tasks: [crafted] });
+  assert.equal(H.db.one(`SELECT referral_id FROM tasks WHERE id=?`, crafted.id).referral_id, null, 'a link to someone else\'s referral is dropped');
+  // The worker's own referral keeps the link; but a to-do they wrote with the reminder's line is not a reminder.
+  const own = task({ referral_id: mine, description_enc: `Reference: supervision reminder for referral ${mine}` });
+  await push({ tasks: [own] });
+  assert.equal(H.db.one(`SELECT referral_id FROM tasks WHERE id=?`, own.id).referral_id, mine, 'a link to their own referral stands');
+  assert.equal((await queue()).find(x => x.id === mine).reminded_at, null, 'the queue does not take it for a reminder');
+  ok(await sup.post(`/api/supervision/referrals/${mine}/remind`, {}), 200);
+  // A link the office made to another worker's referral (a secure referral link's to-do is its maker's) is kept when
+  // the device sends the to-do back unchanged.
+  const officeLinked = task({ referral_id: null });
+  await push({ tasks: [officeLinked] });
+  H.db.run(`UPDATE tasks SET referral_id=? WHERE id=?`, theirs, officeLinked.id);
+  await push({ tasks: [{ ...officeLinked, referral_id: theirs, status: 'done', updated_at: new Date(Date.now() + 2000).toISOString() }] });
+  const back = H.db.one(`SELECT referral_id, status FROM tasks WHERE id=?`, officeLinked.id);
+  assert.equal(back.status, 'done'); assert.equal(back.referral_id, theirs, 'an unchanged office link stands');
+});

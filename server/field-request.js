@@ -22,7 +22,7 @@ const auth = require('./auth');
 const audit = require('./audit');
 const config = require('./config');
 const { HttpError, notFound } = require('./http');
-const { uuid, encrypt } = require('./crypto');
+const { uuid, encrypt, decrypt } = require('./crypto');
 
 const PREFIX = 'field_request:';
 const read = (userId) => { try { const v = JSON.parse(db.getSetting(PREFIX + userId, 'null')); return v && typeof v === 'object' ? v : null; } catch { return null; } };
@@ -76,15 +76,54 @@ function request(ctx) {
   return { ok: true, administrators: tasks.length, ...status(user) };
 }
 
+/**
+ * Close the administrators' to-dos a request made (those still open or started), each with a line in its details
+ * saying why, and audited (task.update, automatic). `why` is that line. Returns how many were closed.
+ */
+function closeTasks(r, status, why, { user, ip }) {
+  const now = db.now(); let n = 0;
+  for (const id of r.tasks || []) {
+    const t = db.one(`SELECT id, description_enc FROM tasks WHERE id=? AND status IN ('open','in_progress')`, id);
+    if (!t) continue;
+    let before = ''; try { before = t.description_enc ? decrypt(t.description_enc) : ''; } catch { /* keep the line alone */ }
+    db.run(`UPDATE tasks SET status=?, completed_at=?, description_enc=?, updated_at=? WHERE id=?`, status, now, encrypt(`${before ? `${before}\n\n` : ''}${why}`), now, id);
+    audit.log({ user, action: 'task.update', entity: 'task', entityId: id, ip, details: { status, automatic: true, from: 'field_request' } });
+    n++;
+  }
+  return n;
+}
+
+/**
+ * A request that can no longer be answered (review of 1.23.0): the worker's account was deactivated (routes/users.js,
+ * SCIM, SSO deprovisioning: scim.cutOff). It is closed, and so are the administrators' to-dos, which would otherwise
+ * stay open after the request dropped off Synced devices. Audited as device.field_request.close. Returns the number
+ * of to-dos closed, or null when there was no open request.
+ */
+function closeMoot(userId, actor, { ip = null, cause = 'account_deactivated' } = {}) {
+  const r = read(userId);
+  if (!r || r.status !== 'open') return null;
+  const by = actor || { username: 'system' };
+  let n = 0;
+  db.transaction(() => {
+    n = closeTasks(r, 'cancelled', 'Closed by SUDS: this person\'s account was deactivated, so the request no longer needs an answer.', { user: by, ip });
+    write(userId, { ...r, status: 'closed', decided_at: db.now(), closed_because: cause });
+  });
+  audit.log({ user: by, action: 'device.field_request.close', entity: 'user', entityId: userId, ip, details: { cause, todos_closed: n } });
+  return n;
+}
+
 /** Open requests, for Settings › Synced devices. */
-function pending() {
-  const rows = db.all(`SELECT key, value FROM settings WHERE key LIKE 'field_request:%'`);
+function pending(actor) {
+  // `_` is a wildcard to LIKE: escaped, so only keys that really begin field_request: are read.
+  const rows = db.all(`SELECT key, value FROM settings WHERE key LIKE 'field\\_request:%' ESCAPE '\\'`);
   const out = [];
   for (const r of rows) {
     let v; try { v = JSON.parse(r.value); } catch { continue; }
     if (!v || v.status !== 'open') continue;
-    const u = db.one(`SELECT id, username, display_name, role, is_active FROM users WHERE id=?`, r.key.slice(PREFIX.length));
-    if (!u || !u.is_active) continue;
+    const userId = r.key.slice(PREFIX.length);
+    const u = db.one(`SELECT id, username, display_name, role, is_active FROM users WHERE id=?`, userId);
+    // A request whose worker has been deactivated (or removed) is moot: one left open before 1.23.1 is closed here.
+    if (!u || !u.is_active) { closeMoot(userId, actor, { cause: u ? 'account_deactivated' : 'account_missing' }); continue; }
     out.push({ user_id: u.id, username: u.username, display_name: u.display_name, role: u.role, requested_at: v.at, account_field: require('./devices').accountFieldBound(u.id) });
   }
   return out.sort((a, b) => String(a.requested_at).localeCompare(String(b.requested_at)));
@@ -95,23 +134,25 @@ function decide(ctx, approve) {
   const userId = ctx.params.userId;
   const r = read(userId);
   if (!r || r.status !== 'open') throw notFound('There is no open field-device request from that person.');
+  let closed = 0;
   db.transaction(() => {
     // Narrowing only (devices.js): every device of the account is a field device from its next sync.
     if (approve) require('./devices').bindAccount(userId, 'admin', { actor: ctx.user, ip: ctx.ip });
-    const now = db.now();
-    for (const id of r.tasks || []) db.run(`UPDATE tasks SET status=?, completed_at=?, updated_at=? WHERE id=? AND status IN ('open','in_progress')`, approve ? 'done' : 'cancelled', now, now, id);
-    write(userId, { ...r, status: approve ? 'approved' : 'declined', decided_at: now, decided_by: ctx.user.id });
+    // Every administrator's to-do for it is closed, with who answered and how, so the others know it is answered.
+    const who = ctx.user.display_name || ctx.user.username;
+    closed = closeTasks(r, approve ? 'done' : 'cancelled', `${approve ? 'Approved' : 'Not approved'} by ${who} under Settings › Synced devices.`, { user: ctx.user, ip: ctx.ip });
+    write(userId, { ...r, status: approve ? 'approved' : 'declined', decided_at: db.now(), decided_by: ctx.user.id });
   });
-  audit.log({ user: ctx.user, action: approve ? 'device.field_request.approve' : 'device.field_request.decline', entity: 'user', entityId: userId, ip: ctx.ip });
+  audit.log({ user: ctx.user, action: approve ? 'device.field_request.approve' : 'device.field_request.decline', entity: 'user', entityId: userId, ip: ctx.ip, details: { todos_closed: closed } });
   return { ok: true, status: approve ? 'approved' : 'declined' };
 }
 
 function routes(r) {
   r.get('/api/me/field-device', auth.requireAuth, (ctx) => status(ctx.user));
   r.post('/api/me/field-device/request', auth.requireAuth, (ctx) => request(ctx));
-  r.get('/api/admin/field-requests', auth.requireAuth, auth.requirePerm('users:manage'), () => ({ requests: pending() }));
+  r.get('/api/admin/field-requests', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => ({ requests: pending(ctx.user) }));
   r.post('/api/admin/field-requests/:userId/approve', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => decide(ctx, true));
   r.post('/api/admin/field-requests/:userId/decline', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => decide(ctx, false));
 }
 
-module.exports = { routes, status, pending };
+module.exports = { routes, status, pending, closeMoot };

@@ -37,6 +37,8 @@ module.exports = (r) => {
       FU.reconcile('calls', row, null, ctx);
     },
     afterUpdate: (ctx, row, prev) => { FU.reconcile('calls', row, prev, ctx); },
+    // A deleted call's follow-up to-do, while still as SUDS made it, is cancelled (sync push does the same).
+    beforeDelete: (ctx, row) => { FU.cancelForDeleted('calls', row, ctx); },
     afterLoad: (ctx, x) => ({ ...withClientName(ctx, x), contact_name: x.contact_name_enc ? decrypt(x.contact_name_enc) : null, phone: x.phone_enc ? decrypt(x.phone_enc) : null, summary: x.summary_enc ? decrypt(x.summary_enc) : null, purpose: x.purpose_enc ? decrypt(x.purpose_enc) : null, contact_name_enc: undefined, phone_enc: undefined, summary_enc: undefined, purpose_enc: undefined }),
   });
   // "Crisis escalated" is a crisis whether or not the box was ticked; the crisis flag is what the reports

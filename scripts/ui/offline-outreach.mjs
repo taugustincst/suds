@@ -141,6 +141,22 @@ try {
   ok(await until(async () => (await shift()).contacts === before.contacts + 2, { timeout: 15000 }), 'signed in again, the waiting contact is sent');
   ok(await until(async () => (await chipCount(nav.page)) === 0), 'and the header count goes');
 
+  // ---- 3c. a waiting contact the office had made, and the worker had undone since (1.23.1): not "sent" ----
+  // The screen's attempt reached the office (its answer lost), the contact was deleted, and the waiting list then
+  // sends it: the office answers that it was undone, and the toast says it was not recorded rather than "sent".
+  const undoneKey = `ui-undone-${Date.now()}`;
+  const undonePayload = { type: 'outreach', occurred_at: new Date(Date.now() - 120000).toISOString(), location: 'street', modality: 'in_person', duration_minutes: 0, supplies: [] };
+  const made = await nav.page.evaluate(async ({ k, p }) => (await import('./app.js')).post('/api/interventions', p, { idempotencyKey: k, quiet: true }), { k: undoneKey, p: undonePayload });
+  eq((await nav.api('DELETE', `/api/interventions/${made.id}`)).status, 200, 'the contact is deleted at the office');
+  await nav.page.evaluate(() => document.querySelectorAll('.toast').forEach(t => t.remove())); // the last step's toasts
+  const undoneFlush = await nav.page.evaluate(async ({ k, p }) => { const q = await import('./outreach-queue.js'); await q.keep({ key: k, payload: p, what: 'no supplies' }); return q.flush({ all: true }); }, { k: undoneKey, p: undonePayload });
+  eq(undoneFlush.undone, 1, `the waiting list counts it as undone: ${JSON.stringify(undoneFlush)}`);
+  eq(undoneFlush.sent, 0, 'not as sent');
+  ok(await toastSays(nav.page, /1 waiting contact was not recorded: it had been undone/), 'the toast says it was not recorded because it had been undone');
+  ok(!/waiting contact sent/.test((await nav.page.$$eval('.toast', els => els.map(e => e.textContent))).join(' | ')), 'and not that it was sent');
+  eq((await waitingInBrowser(nav.page)).length, 0, 'it is no longer waiting');
+  eq((await nav.api('GET', `/api/interventions/${made.id}`)).status, 404, 'and the office did not make it again');
+
   // ---- 4. Undo puts "Same as last contact" back ----
   await nav.go('outreach');
   // What it offers now: the last contact entered (the one kept without its notes, a test strip).

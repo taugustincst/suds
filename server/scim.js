@@ -165,6 +165,8 @@ function cutOff(userId, actor) {
   if (!require('./config').local) require('./passkeys').remove(userId, { actor, cause: 'deactivated' });
   // Their secure referral links that could still be opened are withdrawn (server/referral-links.js).
   require('./referral-links').revokeForUser(userId, actor);
+  // An open field-device request of theirs can no longer be answered: it and the administrators' to-dos are closed.
+  if (!require('./config').local) require('./field-request').closeMoot(userId, actor);
   return db.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?), wipe_requested_at=COALESCE(wipe_requested_at, ?) WHERE user_id=?`, db.now(), db.now(), userId).changes;
 }
 

@@ -65,6 +65,20 @@ test('a contact undone and then sent again from the waiting list is not made aga
   assert.equal(onHand(), start, 'and nothing drawn again');
 });
 
+test('a contact undone the same day and then sent from the waiting list is answered as undone, not as made (1.23.1)', async () => {
+  // Within 24 hours the office still holds the first attempt's answer (server/idempotency.js); the waiting list's
+  // send must not get it back as "made" when the contact has been deleted since.
+  const start = onHand();
+  const a = ok(await nav.post('/api/interventions', body({ occurred_at: '2026-09-24T18:00:00.000Z' }), { 'Idempotency-Key': 'outreach-k6' }));
+  ok(await nav.del(`/api/interventions/${a.id}`), 200);
+  const r = ok(await nav.post('/api/interventions', body({ occurred_at: '2026-09-24T18:00:00.000Z' }), queued('outreach-k6')), 200);
+  assert.equal(r.id, a.id); assert.equal(r.deleted, true, JSON.stringify(r));
+  assert.equal(count(`SELECT COUNT(*) n FROM interventions WHERE id=?`, a.id), 0, 'still gone');
+  assert.equal(onHand(), start, 'nothing drawn again');
+  // The screen's own retry (no X-Suds-Queued) is still answered from the stored answer, as before.
+  assert.equal((await nav.post('/api/interventions', body({ occurred_at: '2026-09-24T18:00:00.000Z' }), { 'Idempotency-Key': 'outreach-k6' })).data.id, a.id);
+});
+
 test('a contact the office already has is answered as such even when it could not be made today (review of 1.23)', async () => {
   // The screen's attempt was made (its answer lost with the signal); since then its supply site was retired. The
   // waiting list's later send must find the contact, not be refused and leave the worker to enter it again.
@@ -139,4 +153,61 @@ test('only an administrator answers; Approve holds the account to the field scop
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='device.field_request.decline' AND entity_id=?`, nav2Id));
   // Declined, they may ask again.
   ok(await nav2.post('/api/me/field-device/request', {}));
+});
+
+// ---- 1.23.1: the administrators' to-dos say how the request ended, and a request that can no longer be answered
+// (the worker's account deactivated) is closed with its to-dos, not left open on the administrators' lists ----
+const fieldTodos = (uid) => H.db.all(`SELECT * FROM tasks WHERE created_by=? AND client_id IS NULL`, uid)
+  .map(t => ({ ...t, title: require('../server/crypto').decrypt(t.title_enc), details: t.description_enc ? require('../server/crypto').decrypt(t.description_enc) : '' }))
+  .filter(t => /^Field device:/.test(t.title));
+
+test('an answered request closes every administrator\'s to-do with who answered and how (1.23.1)', async () => {
+  const done = fieldTodos(navId);
+  assert.ok(done.length >= 2 && done.every(t => t.status === 'done' && /Approved by oq_admin/.test(t.details)), JSON.stringify(done.map(t => [t.status, t.details.slice(-60)])));
+  // nav2 asked again after the decline: decline that one too, and its to-dos say so.
+  ok(await admin.post(`/api/admin/field-requests/${nav2Id}/decline`, {}), 200);
+  const declined = fieldTodos(nav2Id);
+  assert.ok(declined.length >= 4 && declined.every(t => t.status === 'cancelled' && /Not approved by/.test(t.details)), JSON.stringify(declined.map(t => t.status)));
+  assert.ok(H.db.all(`SELECT details FROM audit_log WHERE action='task.update' AND details LIKE '%field_request%'`).length >= 6, 'each closed to-do is audited');
+});
+
+test('deactivating a worker with an open field-device request closes it and the administrators\' to-dos (1.23.1)', async () => {
+  const leaverId = H.makeUser('oq_leaver', 'navigator').id;
+  const leaver = H.client(); await leaver.login('oq_leaver', 'StaffPassw0rd!x');
+  ok(await leaver.post('/api/me/field-device/request', {}));
+  assert.ok(fieldTodos(leaverId).filter(t => t.status === 'open').length >= 2);
+  ok(await admin.put(`/api/users/${leaverId}`, { is_active: false }), 200);
+  const todos = fieldTodos(leaverId);
+  assert.ok(todos.length >= 2 && todos.every(t => t.status === 'cancelled' && /account was deactivated/.test(t.details)), JSON.stringify(todos.map(t => t.status)));
+  assert.equal(JSON.parse(H.db.getSetting(`field_request:${leaverId}`)).status, 'closed');
+  const a = H.db.one(`SELECT details FROM audit_log WHERE action='device.field_request.close' AND entity_id=?`, leaverId);
+  assert.ok(a, 'audited'); assert.equal(JSON.parse(a.details).todos_closed, todos.length);
+  assert.ok(!ok(await admin.get('/api/admin/field-requests'), 200).requests.some(x => x.user_id === leaverId));
+  // Re-enabled, they may ask again.
+  ok(await admin.put(`/api/users/${leaverId}`, { is_active: true }), 200);
+  await leaver.login('oq_leaver', 'StaffPassw0rd!x');
+  assert.equal(ok(await leaver.post('/api/me/field-device/request', {})).request.status, 'open');
+});
+
+test('SCIM deactivation closes it too, and one left open before 1.23.1 is closed when the list is read (1.23.1)', async () => {
+  const scimId = H.makeUser('oq_scim', 'navigator').id;
+  const s = H.client(); await s.login('oq_scim', 'StaffPassw0rd!x');
+  ok(await s.post('/api/me/field-device/request', {}));
+  require('../server/scim').deactivate(scimId, { username: 'system' });
+  assert.equal(JSON.parse(H.db.getSetting(`field_request:${scimId}`)).status, 'closed');
+  assert.equal(fieldTodos(scimId).filter(t => t.status === 'open').length, 0);
+  // Before 1.23.1 a deactivation left the request open: the administrators' list closes it as it skips it.
+  const oldId = H.makeUser('oq_old', 'navigator').id;
+  const o = H.client(); await o.login('oq_old', 'StaffPassw0rd!x');
+  ok(await o.post('/api/me/field-device/request', {}));
+  H.db.run(`UPDATE users SET is_active=0 WHERE id=?`, oldId);
+  assert.ok(!ok(await admin.get('/api/admin/field-requests'), 200).requests.some(x => x.user_id === oldId));
+  assert.equal(fieldTodos(oldId).filter(t => t.status === 'open').length, 0, 'its to-dos are closed');
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='device.field_request.close' AND entity_id=?`, oldId));
+});
+
+test('the list of requests reads only field_request: settings (`_` is not a wildcard) (1.23.1)', async () => {
+  const otherId = H.makeUser('oq_lookalike', 'navigator').id;
+  H.db.setSetting(`fieldXrequest:${otherId}`, JSON.stringify({ status: 'open', at: H.db.now(), tasks: [] }));
+  assert.ok(!ok(await admin.get('/api/admin/field-requests'), 200).requests.some(x => x.user_id === otherId));
 });

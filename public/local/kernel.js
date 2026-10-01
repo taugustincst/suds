@@ -11845,10 +11845,10 @@ var require_follow_ups = __commonJS({
         ours: (t, title) => title !== null && title.startsWith("Follow up on referral to ")
       }
     };
-    function reconcile(table, row, prev, { user, ip }) {
+    function reconcile(table, row, prev, { user, ip }, extra = {}) {
       const S = SPECS[table];
       if (!S || !row || !row.id) return null;
-      const log = (action, id, details) => audit3.log({ user, action, entity: "task", entityId: id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, ...details } });
+      const log = (action, id, details) => audit3.log({ user, action, entity: "task", entityId: id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, ...extra, ...details } });
       if (table === "referrals" && prev && !prev.outcome_recorded_at && row.outcome_recorded_at) {
         const now2 = db3.now();
         let done2 = null;
@@ -11914,6 +11914,10 @@ var require_follow_ups = __commonJS({
       }
       return done;
     }
+    function cancelForDeleted(table, row, ctx) {
+      if (!SPECS[table] || !row || !row.id) return null;
+      return reconcile(table, { ...row, follow_up_due: null, follow_up_needed: 0 }, row, ctx, { cause: "deleted" });
+    }
     function tracked(s) {
       return s.state.followUps || (s.state.followUps = /* @__PURE__ */ new Map());
     }
@@ -11948,7 +11952,7 @@ var require_follow_ups = __commonJS({
       const days = v.urgency === "emergent" ? 1 : v.urgency === "urgent" ? 3 : 14;
       v.follow_up_due = new Date(Date.now() + days * 864e5).toISOString().slice(0, 10);
     }
-    module.exports = { reconcile, track, finish, deriveCallFollowUp, defaultReferralDue, SPECS };
+    module.exports = { reconcile, cancelForDeleted, track, finish, deriveCallFollowUp, defaultReferralDue, SPECS };
   }
 });
 
@@ -12587,6 +12591,10 @@ var require_interventions = __commonJS({
         const visits = supplyVisits(c.session);
         touchVisit(c.session, row.id, visits.has(row.id) ? { countsPushed: countsPushed || visits.get(row.id).countsPushed } : { prev: e || null, countsPushed });
         FU.track("interventions", row, c);
+      },
+      // A deleted visit's untouched follow-up to-do is cancelled before the row goes (server/rules/follow-ups.js).
+      beforeDelete(row, s) {
+        FU.cancelForDeleted("interventions", row, { user: s.user, ip: "device" });
       },
       // A deleted visit puts back what it drew.
       afterDelete(row, s) {
@@ -13878,11 +13886,21 @@ var require_tasks = __commonJS({
       // A link to a call or visit the office does not have (refused in this push, or deleted) is dropped, not the to-do;
       // so is a link to someone else's: a follow-up to-do belongs to the worker who made the call or visit, and a device's
       // to-do linked to a colleague's record would stop the office making that colleague's (review of 1.23).
-      beforeStore(row) {
+      // The same for a referral (1.23.1): a to-do a device links to a referral, or re-links to another, keeps the link only
+      // when the referral is the to-do's worker's own, so a crafted link cannot hold back a colleague's follow-up or pass
+      // for a supervisor's reminder about their referral. A link the office made (a secure referral link's to-do, which is
+      // its maker's) is kept as it is when the device sends it back unchanged.
+      beforeStore(row, c) {
         for (const [col, table] of [["call_id", "calls"], ["intervention_id", "interventions"]]) {
           if (!row[col]) continue;
           const rec = require_db().one(`SELECT user_id FROM ${table} WHERE id=?`, row[col]);
           if (!rec || rec.user_id !== row.assigned_to) row[col] = null;
+        }
+        const e = c && c.existing;
+        if (row.referral_id && (!e || e.referral_id !== row.referral_id)) {
+          const rec = require_db().one(`SELECT user_id FROM referrals WHERE id=?`, row.referral_id);
+          const assignee = row.assigned_to !== void 0 ? row.assigned_to : e && e.assigned_to;
+          if (!rec || rec.user_id !== assignee) row.referral_id = null;
         }
       },
       othersMayChange(existing, row, changed, c) {
@@ -16266,6 +16284,10 @@ var require_calls = __commonJS({
       },
       finish(s) {
         FU.finish("calls", s);
+      },
+      // A deleted call's untouched follow-up to-do is cancelled before the row goes (server/rules/follow-ups.js).
+      beforeDelete(row, s) {
+        FU.cancelForDeleted("calls", row, { user: s.user, ip: "device" });
       }
     });
   }
@@ -16626,6 +16648,10 @@ var require_referrals = __commonJS({
         // A follow-up date changed or cleared by editing the referral moves or cancels its to-do (server/rules/follow-ups.js).
         afterUpdate: (ctx, row, prev) => {
           FU.reconcile("referrals", row, prev, ctx);
+        },
+        // A deleted referral's follow-up to-do, while still as SUDS made it, is cancelled (sync push does the same).
+        beforeDelete: (ctx, row) => {
+          FU.cancelForDeleted("referrals", row, ctx);
         }
       });
       r.post("/api/referrals/:id/outcome", require_auth2().requireAuth, require_auth2().requirePerm("referrals:write"), (ctx) => {
@@ -16761,6 +16787,10 @@ var require_referrals2 = __commonJS({
       },
       finish(s) {
         FU.finish("referrals", s);
+      },
+      // A deleted referral's untouched follow-up to-do is cancelled before the row goes (server/rules/follow-ups.js).
+      beforeDelete(row, s) {
+        FU.cancelForDeleted("referrals", row, { user: s.user, ip: "device" });
       },
       afterApply(row, o, c) {
         FU.track("referrals", row, c);
@@ -20260,6 +20290,267 @@ var require_referral_links = __commonJS({
   }
 });
 
+// server/devices.js
+var require_devices = __commonJS({
+  "server/devices.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var { sha256: sha2562, randomToken } = require_crypto();
+    function labelFrom(userAgent) {
+      const ua = userAgent || "";
+      if (/android/i.test(ua)) return "Android phone";
+      if (/ipad/i.test(ua)) return "iPad";
+      if (/iphone/i.test(ua)) return "iPhone";
+      return "Device";
+    }
+    function touch(user, deviceId2, ctx) {
+      const existing = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+      const label = labelFrom(ctx.headers["user-agent"]);
+      const now2 = db3.now();
+      if (existing) {
+        db3.run(`UPDATE devices SET user_id=?, last_seen_at=?, last_ip=?, sync_count=sync_count+1, label=COALESCE(label, ?) WHERE id=?`, user.id, now2, ctx.ip, label, deviceId2);
+        if (existing.user_id !== user.id && adminFull(existing)) {
+          db3.run(`UPDATE devices SET scope_set_by=NULL WHERE id=?`, deviceId2);
+          require_audit().log({ user, action: "device.scope", entity: "device", entityId: deviceId2, ip: ctx.ip, details: { from: "full", to: "full", via: "reattributed", admin_decision_cleared: true, previous_user: existing.user_id, device_user: user.id } });
+        }
+      } else {
+        const scope = db3.getSetting("field_device_default", "0") === "1" ? "field" : "full";
+        db3.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count,sync_scope,scope_changed_at,scope_set_by) VALUES(?,?,?,?,?,?,1,?,?,'default')`, deviceId2, user.id, label, now2, now2, ctx.ip, scope, scope === "field" ? now2 : null);
+      }
+      const out2 = bind(user, db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2), { ip: ctx.ip });
+      if (!existing && out2 && out2.sync_scope === "field" && !out2.field_applied_at) {
+        db3.run(`UPDATE devices SET field_applied_at=? WHERE id=?`, now2, deviceId2);
+        return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+      }
+      return out2;
+    }
+    var SCOPES = ["full", "field"];
+    function accountFieldBound(userId) {
+      if (db3.getSetting("field_device_default", "0") === "1") return true;
+      return !!db3.one(`SELECT 1 FROM field_accounts WHERE user_id=?`, userId);
+    }
+    function bindAccount(userId, via, { actor, ip } = {}) {
+      const r = db3.run(`INSERT OR IGNORE INTO field_accounts(user_id, bound_at, bound_via) VALUES(?,?,?)`, userId, db3.now(), via);
+      if (r && r.changes) require_audit().log({ user: actor || { id: userId }, action: "device.account_field", entity: "user", entityId: userId, ip, details: { via } });
+    }
+    function adminFull(d) {
+      return !!d && d.sync_scope === "full" && d.scope_set_by === "admin";
+    }
+    function effectiveField(userId, device) {
+      if (device && device.sync_scope === "field") return true;
+      if (adminFull(device)) return false;
+      return accountFieldBound(userId);
+    }
+    function bind(user, device, { ip } = {}) {
+      if (!device || device.revoked_at) return device;
+      if (device.sync_scope === "field") {
+        bindAccount(user.id, "device", { actor: user, ip });
+        return device;
+      }
+      if (effectiveField(user.id, device)) return setScope(device.id, "field", { actor: user, ip, via: "account" }) || device;
+      return device;
+    }
+    function setScope(deviceId2, scope, { actor, ip, via = "admin" } = {}) {
+      if (!SCOPES.includes(scope)) throw new Error(`setScope: unknown scope ${scope}`);
+      if (!["admin", "enrolment", "account"].includes(via)) throw new Error(`setScope: unknown route ${via}`);
+      const d = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+      if (!d) return null;
+      if (via !== "admin" && scope !== "field") throw new Error("Only an administrator can widen what a device holds");
+      if (d.sync_scope === scope) {
+        if (!(via === "admin" && scope === "full" && d.scope_set_by !== "admin")) return null;
+        db3.run(`UPDATE devices SET scope_set_by='admin' WHERE id=?`, deviceId2);
+      } else db3.run(`UPDATE devices SET sync_scope=?, scope_changed_at=?, scope_set_by=? WHERE id=?`, scope, db3.now(), via, deviceId2);
+      require_audit().log({ user: actor, action: "device.scope", entity: "device", entityId: deviceId2, ip, details: { from: d.sync_scope, to: scope, via, device_user: d.user_id } });
+      if (scope === "field") bindAccount(d.user_id, via, { actor, ip });
+      return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+    }
+    function ofSession(ctx) {
+      const id = ctx && ctx.session && ctx.session.device_id;
+      return id ? db3.one(`SELECT * FROM devices WHERE id=?`, id) : null;
+    }
+    function markWiped(deviceId2) {
+      db3.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?) WHERE id=?`, db3.now(), deviceId2);
+      db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
+    }
+    var ACK_TTL_MS = 15 * 6e4;
+    var ackKey = (deviceId2) => `device_wipe_ack:${deviceId2}`;
+    function issueWipeToken(deviceId2) {
+      const token2 = randomToken(32);
+      db3.setSetting(ackKey(deviceId2), JSON.stringify({ hash: sha2562(token2), expires: new Date(Date.now() + ACK_TTL_MS).toISOString() }));
+      return token2;
+    }
+    function ackWipe(deviceId2, token2) {
+      const raw = db3.getSetting(ackKey(deviceId2), null);
+      if (!raw || typeof token2 !== "string" || !token2) return false;
+      let rec;
+      try {
+        rec = JSON.parse(raw);
+      } catch {
+        return false;
+      }
+      if (!rec.hash || Date.parse(rec.expires || 0) < Date.now()) {
+        db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
+        return false;
+      }
+      const given = sha2562(token2);
+      if (given.length !== rec.hash.length || !(init_crypto2(), __toCommonJS(crypto_exports)).timingSafeEqual(import_buffer.Buffer.from(given), import_buffer.Buffer.from(rec.hash))) return false;
+      markWiped(deviceId2);
+      return true;
+    }
+    function requestWipeForUser(userId, { actor, ip, reason } = {}) {
+      const rows = db3.all(`SELECT id FROM devices WHERE user_id=? AND revoked_at IS NULL AND wipe_requested_at IS NULL`, userId);
+      if (!rows.length) return [];
+      const now2 = db3.now();
+      for (const d of rows) db3.run(`UPDATE devices SET wipe_requested_at=? WHERE id=?`, now2, d.id);
+      require_audit().log({ user: actor, action: "device.wipe.requested", entity: "user", entityId: userId, ip, details: { reason, devices: rows.map((d) => d.id) } });
+      return rows.map((d) => d.id);
+    }
+    module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe, setScope, ofSession, SCOPES, accountFieldBound, bindAccount, adminFull, effectiveField, bind };
+  }
+});
+
+// server/field-request.js
+var require_field_request = __commonJS({
+  "server/field-request.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var config2 = require_config();
+    var { HttpError: HttpError3, notFound } = require_http();
+    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var PREFIX = "field_request:";
+    var read = (userId) => {
+      try {
+        const v = JSON.parse(db3.getSetting(PREFIX + userId, "null"));
+        return v && typeof v === "object" ? v : null;
+      } catch {
+        return null;
+      }
+    };
+    var write = (userId, v) => db3.setSetting(PREFIX + userId, JSON.stringify(v));
+    var officeOnly = () => {
+      if (config2.local) throw new HttpError3(404, "Setting up a phone for the field is asked of the office SUDS, not of a device.");
+    };
+    function deciders() {
+      return db3.all(`SELECT * FROM users WHERE is_active=1 ORDER BY display_name`).filter((u) => auth3.hasPerm(u, "users:manage"));
+    }
+    function status(user) {
+      const devices = db3.all(`SELECT id, label, sync_scope, last_seen_at, revoked_at FROM devices WHERE user_id=? ORDER BY last_seen_at DESC`, user.id).map((d) => ({ id: d.id, label: d.label, scope: d.sync_scope, last_seen_at: d.last_seen_at, revoked: !!d.revoked_at }));
+      const r = read(user.id);
+      return {
+        local_mode: !!config2.localModeEnabled,
+        account_field: require_devices().accountFieldBound(user.id),
+        devices,
+        request: r ? { status: r.status, requested_at: r.at, decided_at: r.decided_at || null } : null
+      };
+    }
+    function request(ctx) {
+      officeOnly();
+      const user = ctx.user;
+      const prior = read(user.id);
+      if (prior && prior.status === "open") return { ok: true, already: true, ...status(user) };
+      const admins = deciders().filter((a) => a.id !== user.id);
+      const at = db3.now();
+      const title = `Field device: ${user.display_name || user.username} asks for their phone to be set up for the field`;
+      const desc = [
+        `${user.display_name || user.username} (${user.username}) asked to work with no signal on their phone.`,
+        config2.localModeEnabled ? "Offline copies are allowed on this server. Approve under Settings \u203A Synced devices \u203A Field-device requests: their phone then keeps only what a field worker needs (their own recent clients with the minimum of the record, their contacts, to-dos, supplies and lists). They set the phone up themselves from the office app." : "Offline copies are switched off on this server (the setup wizard's answer, server.json localModeEnabled, or LOCAL_MODE_ENABLED), so no phone can keep one yet. Decide whether field work needs them (docs/PLATFORM.md); approving records that this worker's phones are field devices once they are allowed.",
+        "Approving narrows what their devices hold; it never widens anything."
+      ].join("\n\n");
+      const tasks = [];
+      db3.transaction(() => {
+        for (const a of admins) {
+          const id = uuid2();
+          db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, null, a.id, user.id, encrypt3(title), encrypt3(desc), at.slice(0, 10), "normal");
+          tasks.push(id);
+        }
+        write(user.id, { status: "open", at, tasks });
+      });
+      audit3.log({ user, action: "device.field_request", entity: "user", entityId: user.id, ip: ctx.ip, details: { administrators: tasks.length, local_mode: !!config2.localModeEnabled } });
+      ctx.status = 201;
+      return { ok: true, administrators: tasks.length, ...status(user) };
+    }
+    function closeTasks(r, status2, why, { user, ip }) {
+      const now2 = db3.now();
+      let n = 0;
+      for (const id of r.tasks || []) {
+        const t = db3.one(`SELECT id, description_enc FROM tasks WHERE id=? AND status IN ('open','in_progress')`, id);
+        if (!t) continue;
+        let before = "";
+        try {
+          before = t.description_enc ? decrypt3(t.description_enc) : "";
+        } catch {
+        }
+        db3.run(`UPDATE tasks SET status=?, completed_at=?, description_enc=?, updated_at=? WHERE id=?`, status2, now2, encrypt3(`${before ? `${before}
+
+` : ""}${why}`), now2, id);
+        audit3.log({ user, action: "task.update", entity: "task", entityId: id, ip, details: { status: status2, automatic: true, from: "field_request" } });
+        n++;
+      }
+      return n;
+    }
+    function closeMoot(userId, actor, { ip = null, cause = "account_deactivated" } = {}) {
+      const r = read(userId);
+      if (!r || r.status !== "open") return null;
+      const by = actor || { username: "system" };
+      let n = 0;
+      db3.transaction(() => {
+        n = closeTasks(r, "cancelled", "Closed by SUDS: this person's account was deactivated, so the request no longer needs an answer.", { user: by, ip });
+        write(userId, { ...r, status: "closed", decided_at: db3.now(), closed_because: cause });
+      });
+      audit3.log({ user: by, action: "device.field_request.close", entity: "user", entityId: userId, ip, details: { cause, todos_closed: n } });
+      return n;
+    }
+    function pending(actor) {
+      const rows = db3.all(`SELECT key, value FROM settings WHERE key LIKE 'field\\_request:%' ESCAPE '\\'`);
+      const out2 = [];
+      for (const r of rows) {
+        let v;
+        try {
+          v = JSON.parse(r.value);
+        } catch {
+          continue;
+        }
+        if (!v || v.status !== "open") continue;
+        const userId = r.key.slice(PREFIX.length);
+        const u = db3.one(`SELECT id, username, display_name, role, is_active FROM users WHERE id=?`, userId);
+        if (!u || !u.is_active) {
+          closeMoot(userId, actor, { cause: u ? "account_deactivated" : "account_missing" });
+          continue;
+        }
+        out2.push({ user_id: u.id, username: u.username, display_name: u.display_name, role: u.role, requested_at: v.at, account_field: require_devices().accountFieldBound(u.id) });
+      }
+      return out2.sort((a, b) => String(a.requested_at).localeCompare(String(b.requested_at)));
+    }
+    function decide(ctx, approve) {
+      officeOnly();
+      const userId = ctx.params.userId;
+      const r = read(userId);
+      if (!r || r.status !== "open") throw notFound("There is no open field-device request from that person.");
+      let closed = 0;
+      db3.transaction(() => {
+        if (approve) require_devices().bindAccount(userId, "admin", { actor: ctx.user, ip: ctx.ip });
+        const who = ctx.user.display_name || ctx.user.username;
+        closed = closeTasks(r, approve ? "done" : "cancelled", `${approve ? "Approved" : "Not approved"} by ${who} under Settings \u203A Synced devices.`, { user: ctx.user, ip: ctx.ip });
+        write(userId, { ...r, status: approve ? "approved" : "declined", decided_at: db3.now(), decided_by: ctx.user.id });
+      });
+      audit3.log({ user: ctx.user, action: approve ? "device.field_request.approve" : "device.field_request.decline", entity: "user", entityId: userId, ip: ctx.ip, details: { todos_closed: closed } });
+      return { ok: true, status: approve ? "approved" : "declined" };
+    }
+    function routes(r) {
+      r.get("/api/me/field-device", auth3.requireAuth, (ctx) => status(ctx.user));
+      r.post("/api/me/field-device/request", auth3.requireAuth, (ctx) => request(ctx));
+      r.get("/api/admin/field-requests", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => ({ requests: pending(ctx.user) }));
+      r.post("/api/admin/field-requests/:userId/approve", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => decide(ctx, true));
+      r.post("/api/admin/field-requests/:userId/decline", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => decide(ctx, false));
+    }
+    module.exports = { routes, status, pending, closeMoot };
+  }
+});
+
 // server/caseload-default.js
 var require_caseload_default = __commonJS({
   "server/caseload-default.js"(exports, module) {
@@ -20504,6 +20795,7 @@ var require_scim = __commonJS({
       require_auth2().revokeAllForUser(userId);
       if (!require_config().local) require_passkeys().remove(userId, { actor, cause: "deactivated" });
       require_referral_links().revokeForUser(userId, actor);
+      if (!require_config().local) require_field_request().closeMoot(userId, actor);
       return db3.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?), wipe_requested_at=COALESCE(wipe_requested_at, ?) WHERE user_id=?`, db3.now(), db3.now(), userId).changes;
     }
     function create3(body, actor, base) {
@@ -24313,126 +24605,6 @@ var require_update = __commonJS({
   }
 });
 
-// server/devices.js
-var require_devices = __commonJS({
-  "server/devices.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var { sha256: sha2562, randomToken } = require_crypto();
-    function labelFrom(userAgent) {
-      const ua = userAgent || "";
-      if (/android/i.test(ua)) return "Android phone";
-      if (/ipad/i.test(ua)) return "iPad";
-      if (/iphone/i.test(ua)) return "iPhone";
-      return "Device";
-    }
-    function touch(user, deviceId2, ctx) {
-      const existing = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
-      const label = labelFrom(ctx.headers["user-agent"]);
-      const now2 = db3.now();
-      if (existing) {
-        db3.run(`UPDATE devices SET user_id=?, last_seen_at=?, last_ip=?, sync_count=sync_count+1, label=COALESCE(label, ?) WHERE id=?`, user.id, now2, ctx.ip, label, deviceId2);
-        if (existing.user_id !== user.id && adminFull(existing)) {
-          db3.run(`UPDATE devices SET scope_set_by=NULL WHERE id=?`, deviceId2);
-          require_audit().log({ user, action: "device.scope", entity: "device", entityId: deviceId2, ip: ctx.ip, details: { from: "full", to: "full", via: "reattributed", admin_decision_cleared: true, previous_user: existing.user_id, device_user: user.id } });
-        }
-      } else {
-        const scope = db3.getSetting("field_device_default", "0") === "1" ? "field" : "full";
-        db3.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count,sync_scope,scope_changed_at,scope_set_by) VALUES(?,?,?,?,?,?,1,?,?,'default')`, deviceId2, user.id, label, now2, now2, ctx.ip, scope, scope === "field" ? now2 : null);
-      }
-      const out2 = bind(user, db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2), { ip: ctx.ip });
-      if (!existing && out2 && out2.sync_scope === "field" && !out2.field_applied_at) {
-        db3.run(`UPDATE devices SET field_applied_at=? WHERE id=?`, now2, deviceId2);
-        return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
-      }
-      return out2;
-    }
-    var SCOPES = ["full", "field"];
-    function accountFieldBound(userId) {
-      if (db3.getSetting("field_device_default", "0") === "1") return true;
-      return !!db3.one(`SELECT 1 FROM field_accounts WHERE user_id=?`, userId);
-    }
-    function bindAccount(userId, via, { actor, ip } = {}) {
-      const r = db3.run(`INSERT OR IGNORE INTO field_accounts(user_id, bound_at, bound_via) VALUES(?,?,?)`, userId, db3.now(), via);
-      if (r && r.changes) require_audit().log({ user: actor || { id: userId }, action: "device.account_field", entity: "user", entityId: userId, ip, details: { via } });
-    }
-    function adminFull(d) {
-      return !!d && d.sync_scope === "full" && d.scope_set_by === "admin";
-    }
-    function effectiveField(userId, device) {
-      if (device && device.sync_scope === "field") return true;
-      if (adminFull(device)) return false;
-      return accountFieldBound(userId);
-    }
-    function bind(user, device, { ip } = {}) {
-      if (!device || device.revoked_at) return device;
-      if (device.sync_scope === "field") {
-        bindAccount(user.id, "device", { actor: user, ip });
-        return device;
-      }
-      if (effectiveField(user.id, device)) return setScope(device.id, "field", { actor: user, ip, via: "account" }) || device;
-      return device;
-    }
-    function setScope(deviceId2, scope, { actor, ip, via = "admin" } = {}) {
-      if (!SCOPES.includes(scope)) throw new Error(`setScope: unknown scope ${scope}`);
-      if (!["admin", "enrolment", "account"].includes(via)) throw new Error(`setScope: unknown route ${via}`);
-      const d = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
-      if (!d) return null;
-      if (via !== "admin" && scope !== "field") throw new Error("Only an administrator can widen what a device holds");
-      if (d.sync_scope === scope) {
-        if (!(via === "admin" && scope === "full" && d.scope_set_by !== "admin")) return null;
-        db3.run(`UPDATE devices SET scope_set_by='admin' WHERE id=?`, deviceId2);
-      } else db3.run(`UPDATE devices SET sync_scope=?, scope_changed_at=?, scope_set_by=? WHERE id=?`, scope, db3.now(), via, deviceId2);
-      require_audit().log({ user: actor, action: "device.scope", entity: "device", entityId: deviceId2, ip, details: { from: d.sync_scope, to: scope, via, device_user: d.user_id } });
-      if (scope === "field") bindAccount(d.user_id, via, { actor, ip });
-      return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
-    }
-    function ofSession(ctx) {
-      const id = ctx && ctx.session && ctx.session.device_id;
-      return id ? db3.one(`SELECT * FROM devices WHERE id=?`, id) : null;
-    }
-    function markWiped(deviceId2) {
-      db3.run(`UPDATE devices SET revoked_at=COALESCE(revoked_at, ?) WHERE id=?`, db3.now(), deviceId2);
-      db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
-    }
-    var ACK_TTL_MS = 15 * 6e4;
-    var ackKey = (deviceId2) => `device_wipe_ack:${deviceId2}`;
-    function issueWipeToken(deviceId2) {
-      const token2 = randomToken(32);
-      db3.setSetting(ackKey(deviceId2), JSON.stringify({ hash: sha2562(token2), expires: new Date(Date.now() + ACK_TTL_MS).toISOString() }));
-      return token2;
-    }
-    function ackWipe(deviceId2, token2) {
-      const raw = db3.getSetting(ackKey(deviceId2), null);
-      if (!raw || typeof token2 !== "string" || !token2) return false;
-      let rec;
-      try {
-        rec = JSON.parse(raw);
-      } catch {
-        return false;
-      }
-      if (!rec.hash || Date.parse(rec.expires || 0) < Date.now()) {
-        db3.run(`DELETE FROM settings WHERE key=?`, ackKey(deviceId2));
-        return false;
-      }
-      const given = sha2562(token2);
-      if (given.length !== rec.hash.length || !(init_crypto2(), __toCommonJS(crypto_exports)).timingSafeEqual(import_buffer.Buffer.from(given), import_buffer.Buffer.from(rec.hash))) return false;
-      markWiped(deviceId2);
-      return true;
-    }
-    function requestWipeForUser(userId, { actor, ip, reason } = {}) {
-      const rows = db3.all(`SELECT id FROM devices WHERE user_id=? AND revoked_at IS NULL AND wipe_requested_at IS NULL`, userId);
-      if (!rows.length) return [];
-      const now2 = db3.now();
-      for (const d of rows) db3.run(`UPDATE devices SET wipe_requested_at=? WHERE id=?`, now2, d.id);
-      require_audit().log({ user: actor, action: "device.wipe.requested", entity: "user", entityId: userId, ip, details: { reason, devices: rows.map((d) => d.id) } });
-      return rows.map((d) => d.id);
-    }
-    module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe, setScope, ofSession, SCOPES, accountFieldBound, bindAccount, adminFull, effectiveField, bind };
-  }
-});
-
 // server/routes/admin.js
 var require_admin = __commonJS({
   "server/routes/admin.js"(exports, module) {
@@ -27654,6 +27826,10 @@ var require_calls2 = __commonJS({
         },
         afterUpdate: (ctx, row, prev) => {
           FU.reconcile("calls", row, prev, ctx);
+        },
+        // A deleted call's follow-up to-do, while still as SUDS made it, is cancelled (sync push does the same).
+        beforeDelete: (ctx, row) => {
+          FU.cancelForDeleted("calls", row, ctx);
         },
         afterLoad: (ctx, x) => ({ ...withClientName(ctx, x), contact_name: x.contact_name_enc ? decrypt3(x.contact_name_enc) : null, phone: x.phone_enc ? decrypt3(x.phone_enc) : null, summary: x.summary_enc ? decrypt3(x.summary_enc) : null, purpose: x.purpose_enc ? decrypt3(x.purpose_enc) : null, contact_name_enc: void 0, phone_enc: void 0, summary_enc: void 0, purpose_enc: void 0 })
       });
@@ -42751,6 +42927,7 @@ var require_interventions2 = __commonJS({
         // this has to run before the delete — after it, there is no longer any way to find the records this
         // intervention created.
         beforeDelete: (ctx, row) => {
+          require_follow_ups().cancelForDeleted("interventions", row, ctx);
           const existing = db3.one(`SELECT * FROM expenditures WHERE intervention_id=?`, row.id);
           if (existing && existing.status === "pending") {
             db3.run(`DELETE FROM expenditures WHERE id=?`, existing.id);
@@ -42777,111 +42954,6 @@ var require_interventions2 = __commonJS({
         return { ...C, ...m.visible, option_lists: m.option_lists, DEFAULT_LOCATION: require_programme().defaultLocation(m.visible.LOCATIONS || C.LOCATIONS) };
       });
     };
-  }
-});
-
-// server/field-request.js
-var require_field_request = __commonJS({
-  "server/field-request.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var auth3 = require_auth2();
-    var audit3 = require_audit();
-    var config2 = require_config();
-    var { HttpError: HttpError3, notFound } = require_http();
-    var { uuid: uuid2, encrypt: encrypt3 } = require_crypto();
-    var PREFIX = "field_request:";
-    var read = (userId) => {
-      try {
-        const v = JSON.parse(db3.getSetting(PREFIX + userId, "null"));
-        return v && typeof v === "object" ? v : null;
-      } catch {
-        return null;
-      }
-    };
-    var write = (userId, v) => db3.setSetting(PREFIX + userId, JSON.stringify(v));
-    var officeOnly = () => {
-      if (config2.local) throw new HttpError3(404, "Setting up a phone for the field is asked of the office SUDS, not of a device.");
-    };
-    function deciders() {
-      return db3.all(`SELECT * FROM users WHERE is_active=1 ORDER BY display_name`).filter((u) => auth3.hasPerm(u, "users:manage"));
-    }
-    function status(user) {
-      const devices = db3.all(`SELECT id, label, sync_scope, last_seen_at, revoked_at FROM devices WHERE user_id=? ORDER BY last_seen_at DESC`, user.id).map((d) => ({ id: d.id, label: d.label, scope: d.sync_scope, last_seen_at: d.last_seen_at, revoked: !!d.revoked_at }));
-      const r = read(user.id);
-      return {
-        local_mode: !!config2.localModeEnabled,
-        account_field: require_devices().accountFieldBound(user.id),
-        devices,
-        request: r ? { status: r.status, requested_at: r.at, decided_at: r.decided_at || null } : null
-      };
-    }
-    function request(ctx) {
-      officeOnly();
-      const user = ctx.user;
-      const prior = read(user.id);
-      if (prior && prior.status === "open") return { ok: true, already: true, ...status(user) };
-      const admins = deciders().filter((a) => a.id !== user.id);
-      const at = db3.now();
-      const title = `Field device: ${user.display_name || user.username} asks for their phone to be set up for the field`;
-      const desc = [
-        `${user.display_name || user.username} (${user.username}) asked to work with no signal on their phone.`,
-        config2.localModeEnabled ? "Offline copies are allowed on this server. Approve under Settings \u203A Synced devices \u203A Field-device requests: their phone then keeps only what a field worker needs (their own recent clients with the minimum of the record, their contacts, to-dos, supplies and lists). They set the phone up themselves from the office app." : "Offline copies are switched off on this server (the setup wizard's answer, server.json localModeEnabled, or LOCAL_MODE_ENABLED), so no phone can keep one yet. Decide whether field work needs them (docs/PLATFORM.md); approving records that this worker's phones are field devices once they are allowed.",
-        "Approving narrows what their devices hold; it never widens anything."
-      ].join("\n\n");
-      const tasks = [];
-      db3.transaction(() => {
-        for (const a of admins) {
-          const id = uuid2();
-          db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, null, a.id, user.id, encrypt3(title), encrypt3(desc), at.slice(0, 10), "normal");
-          tasks.push(id);
-        }
-        write(user.id, { status: "open", at, tasks });
-      });
-      audit3.log({ user, action: "device.field_request", entity: "user", entityId: user.id, ip: ctx.ip, details: { administrators: tasks.length, local_mode: !!config2.localModeEnabled } });
-      ctx.status = 201;
-      return { ok: true, administrators: tasks.length, ...status(user) };
-    }
-    function pending() {
-      const rows = db3.all(`SELECT key, value FROM settings WHERE key LIKE 'field_request:%'`);
-      const out2 = [];
-      for (const r of rows) {
-        let v;
-        try {
-          v = JSON.parse(r.value);
-        } catch {
-          continue;
-        }
-        if (!v || v.status !== "open") continue;
-        const u = db3.one(`SELECT id, username, display_name, role, is_active FROM users WHERE id=?`, r.key.slice(PREFIX.length));
-        if (!u || !u.is_active) continue;
-        out2.push({ user_id: u.id, username: u.username, display_name: u.display_name, role: u.role, requested_at: v.at, account_field: require_devices().accountFieldBound(u.id) });
-      }
-      return out2.sort((a, b) => String(a.requested_at).localeCompare(String(b.requested_at)));
-    }
-    function decide(ctx, approve) {
-      officeOnly();
-      const userId = ctx.params.userId;
-      const r = read(userId);
-      if (!r || r.status !== "open") throw notFound("There is no open field-device request from that person.");
-      db3.transaction(() => {
-        if (approve) require_devices().bindAccount(userId, "admin", { actor: ctx.user, ip: ctx.ip });
-        const now2 = db3.now();
-        for (const id of r.tasks || []) db3.run(`UPDATE tasks SET status=?, completed_at=?, updated_at=? WHERE id=? AND status IN ('open','in_progress')`, approve ? "done" : "cancelled", now2, now2, id);
-        write(userId, { ...r, status: approve ? "approved" : "declined", decided_at: now2, decided_by: ctx.user.id });
-      });
-      audit3.log({ user: ctx.user, action: approve ? "device.field_request.approve" : "device.field_request.decline", entity: "user", entityId: userId, ip: ctx.ip });
-      return { ok: true, status: approve ? "approved" : "declined" };
-    }
-    function routes(r) {
-      r.get("/api/me/field-device", auth3.requireAuth, (ctx) => status(ctx.user));
-      r.post("/api/me/field-device/request", auth3.requireAuth, (ctx) => request(ctx));
-      r.get("/api/admin/field-requests", auth3.requireAuth, auth3.requirePerm("users:manage"), () => ({ requests: pending() }));
-      r.post("/api/admin/field-requests/:userId/approve", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => decide(ctx, true));
-      r.post("/api/admin/field-requests/:userId/decline", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => decide(ctx, false));
-    }
-    module.exports = { routes, status, pending };
   }
 });
 
@@ -48369,7 +48441,7 @@ var require_supervision = __commonJS({
     function referralReminders(ids) {
       const out2 = /* @__PURE__ */ new Map();
       if (!ids.length) return out2;
-      for (const t of db3.all(`SELECT id, referral_id, description_enc, created_at FROM tasks WHERE referral_id IN (${ids.map(() => "?").join(",")}) AND status IN ('open','in_progress') AND description_enc IS NOT NULL`, ...ids)) {
+      for (const t of db3.all(`SELECT id, referral_id, description_enc, created_at FROM tasks WHERE referral_id IN (${ids.map(() => "?").join(",")}) AND status IN ('open','in_progress') AND description_enc IS NOT NULL AND created_by<>assigned_to`, ...ids)) {
         let d = "";
         try {
           d = decrypt3(t.description_enc);
@@ -49102,6 +49174,7 @@ var require_push = __commonJS({
         }
         if ((existing.updated_at || existing.created_at || NEVER2) < ts.deleted_at) {
           db3.savepoint(() => {
+            if (R.beforeDelete) R.beforeDelete(existing, this);
             db3.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id);
             db3.tombstone(t.name, ts.id);
           }, (err2) => this.reject(t.name, ts.id, describeError(err2)));
@@ -49774,6 +49847,7 @@ var require_users2 = __commonJS({
         }
         if (v.is_active === 0) auth3.revokeAllForUser(u.id);
         if (v.is_active === 0 && u.is_active) require_referral_links().revokeForUser(u.id, ctx.user);
+        if (v.is_active === 0 && u.is_active && !require_config().local) require_field_request().closeMoot(u.id, ctx.user, { ip: ctx.ip });
         const passkeyCause = v.is_active === 0 ? "deactivated" : ctx.body.reset_mfa ? "two-step verification reset" : v.password ? "password reset" : null;
         const keepSession = u.id === ctx.user.id && ctx.session ? ctx.session.id : null;
         const passkeysRemoved = passkeyCause && !require_config().local ? require_passkeys().remove(u.id, { actor: ctx.user, ip: ctx.ip, cause: passkeyCause, keepSession }) : 0;
@@ -49983,6 +50057,7 @@ var require_idempotency = __commonJS({
     function applies(ctx) {
       if (ctx.method !== "POST" || !ctx.user) return false;
       if (!ctx.headers || ctx.headers["idempotency-key"] === void 0) return false;
+      if (ctx.headers["x-suds-queued"] === "1" && ctx.path === "/api/interventions") return false;
       return !EXEMPT.some((re) => re.test(ctx.path));
     }
     function requestHash(ctx) {

@@ -178,3 +178,49 @@ test('sync push: the office runs the same rule on a device\'s calls, visits and 
   assert.equal(H.db.one(`SELECT call_id FROM tasks WHERE id=?`, crafted).call_id, null, 'a link to someone else\'s call is dropped');
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='task.create' AND ip='device' AND details LIKE ?`, `%${callId}%`), 'the office\'s to-do for a pushed call is audited');
 });
+
+// ---- 1.23.1: deleting the record cancels its follow-up to-do while it is as SUDS made it, at both doors ----
+for (const [name, K] of Object.entries(KINDS)) {
+  test(`${name}: deleting it cancels its untouched follow-up to-do, audited; one the worker changed stays open (1.23.1)`, async () => {
+    const id = ok(await nav.post(K.path, K.create(inDays(3)))).id;
+    const [t] = openOf(K.col, id);
+    ok(await nav.del(`${K.path}/${id}`), 200);
+    const after = H.db.one(`SELECT * FROM tasks WHERE id=?`, t.id);
+    assert.equal(after.status, 'cancelled', 'the to-do SUDS made goes with the record');
+    const a = H.db.one(`SELECT details FROM audit_log WHERE action='task.update' AND entity_id=? AND details LIKE '%"cause":"deleted"%'`, t.id);
+    assert.ok(a, 'audited, with the cause'); assert.equal(JSON.parse(a.details)[K.col], id);
+    // The worker added details: theirs to close.
+    const id2 = ok(await nav.post(K.path, K.create(inDays(3)))).id;
+    const [t2] = openOf(K.col, id2);
+    ok(await nav.put(`/api/tasks/${t2.id}`, { description: 'Bring the bus pass' }), 200);
+    ok(await nav.del(`${K.path}/${id2}`), 200);
+    assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, t2.id).status, 'open', 'a to-do the worker changed is left for them');
+  });
+}
+
+test('sync push: a deleted call, visit or referral cancels its untouched follow-up to-do too (1.23.1)', async () => {
+  const c = H.client();
+  const login = await c.post('/api/auth/login', { username: 'funav', password: PW }, { 'X-Sync-Client': '1' });
+  const B = { Authorization: 'Bearer ' + login.data.token, Cookie: '' };
+  const push = async (body) => { const r = await H.client().post('/api/sync/push', body, B); assert.equal(r.status, 200, JSON.stringify(r.data)); assert.equal((r.data.rejected || []).length, 0, JSON.stringify(r.data.rejected)); return r.data; };
+  const later = () => new Date(Date.now() + 1000).toISOString();
+  const made = {};
+  for (const [name, K] of Object.entries(KINDS)) {
+    made[name] = ok(await nav.post(K.path, K.create(inDays(11)))).id;
+    assert.equal(openOf(K.col, made[name]).length, 1);
+  }
+  // The visit's to-do was edited by the worker: it stays.
+  const [kept] = openOf('intervention_id', made.visit);
+  ok(await nav.put(`/api/tasks/${kept.id}`, { description: 'Check the shelter list' }), 200);
+  const callTask = openOf('call_id', made.call)[0].id; const refTask = openOf('referral_id', made.referral)[0].id;
+  await push({ tables: {}, tombstones: [
+    { table_name: 'calls', id: made.call, deleted_at: later() },
+    { table_name: 'interventions', id: made.visit, deleted_at: later() },
+    { table_name: 'referrals', id: made.referral, deleted_at: later() },
+  ] });
+  assert.equal(H.db.one(`SELECT 1 FROM calls WHERE id=?`, made.call), undefined, 'the call is deleted');
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, callTask).status, 'cancelled');
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, refTask).status, 'cancelled');
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, kept.id).status, 'open', 'the worker\'s own to-do stays');
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='task.update' AND entity_id=? AND ip='device' AND details LIKE '%"cause":"deleted"%'`, callTask));
+});

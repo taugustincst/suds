@@ -502,7 +502,7 @@ class PushSession {
     if (no === 'skip') return;
     if (no) { this.reject(t.name, ts.id, no.reason, no.permanent); return; }
     if ((existing.updated_at || existing.created_at || NEVER) < ts.deleted_at) {
-      db.savepoint(() => { db.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id); db.tombstone(t.name, ts.id); }, (err) => this.reject(t.name, ts.id, describeError(err)));
+      db.savepoint(() => { if (R.beforeDelete) R.beforeDelete(existing, this); db.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id); db.tombstone(t.name, ts.id); }, (err) => this.reject(t.name, ts.id, describeError(err)));
       if (R.afterDelete) R.afterDelete(existing, this);
     }
   }
