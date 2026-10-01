@@ -61,11 +61,33 @@ tell the Programme within `[5]` business days and cooperate to limit the harm.
 view administrator(s) and analysts, named in Schedule A]`. The County keeps its SUDS server's permissions to that
 list (`county:view`, `county:manage`).
 
-4.2 **No publication.** The County will not publish, or share outside the staff in 4.1, any figure received under
-this agreement, alone or combined, until `[both parties agree in writing to a publication method; the method is to
-include small-cell protection audited over the combined release and every release it could be compared against
-(DATA-NETWORK.md, The basis)]`. The SUDS county view and its files are labelled internal and exact and have no
-publication function.
+4.2 **Publication only with the Programme's written consent, and only screened.** The County will not publish, or
+share outside the staff in 4.1, any figure received under this agreement, alone or combined, except in a
+publication release made as follows:
+
+- (a) **Consent.** The Programme has agreed in writing to the County publishing combined figures that name it
+  `[by signing this agreement with the box below ticked / by a separate letter]`, and the County has recorded that
+  agreement in SUDS (County view › Programs › Publication consent: the date of the agreement, its reference, and
+  who recorded it). The Programme may withdraw its consent in writing at any time; the County then records the
+  withdrawal the same day, and releases made after it do not name the Programme or count its figures. A release
+  already published before the withdrawal stands.
+- (b) **The method.** Only through SUDS's publication screen (County view › Publish; released in 1.21.0, the
+  consent record built for 1.22.0): the combined figures of a whole period that has ended, money and counts that are
+  not of people exact, and the totals of people and of events screened by SUDS's small-cell method, audited over the
+  combined release and every programme's own release it could be compared against
+  ([../DATA-NETWORK.md](../DATA-NETWORK.md), *The basis*), with a threshold of at least `[11]`. Never a programme's
+  own column of figures.
+- (c) **SUDS enforces (a).** A release that would name a programme with no current consent recorded is refused,
+  naming the programmes; the County's preparer may instead leave those programmes out of the release whole (their
+  figures too), and the release then states which programmes were left out for lack of consent.
+- (d) **Corrections.** A release is recorded and never changed. If it was wrong, the County withdraws it (with a
+  reason) and may publish a corrected release of exactly the same period, which SUDS screens against everything the
+  withdrawn release printed. No other release may overlap a period already published.
+
+`[ ] The Programme consents to publication under 4.2 from the date of this agreement.`
+
+Apart from such a release, the SUDS county view and its files are labelled internal and exact, and are not for
+publication.
 
 4.3 **Onward disclosure.** None, except as the law requires. If a public-records request or legal process seeks
 the figures, the County will tell the Programme `[promptly, before release where the law allows]` so it can seek

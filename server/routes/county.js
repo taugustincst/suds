@@ -54,6 +54,13 @@
 //     GET  /api/county/publications/:id    one, as published (county:view; the withdrawal's reason for county:manage)
 //     GET  /api/county/publications/:id/export  as CSV, Excel (with a Notes sheet) or JSON (county:view, export:read)
 //     POST /api/county/publications/:id/withdraw  withdraw one, with a reason: a record of its own (county:manage)
+//   Publication governance (built for 1.22.0): prepare and publish take without_consent (refuse, the default, or
+//   leave_out); a corrected release of exactly the period of a withdrawn one is allowed (county-publication.js).
+//     GET  /api/county/programmes/:id/publication-consent           its consents, current and withdrawn (county:view;
+//                                          the agreement's reference for county:manage only)
+//     POST /api/county/programmes/:id/publication-consent           record its written agreement { agreed_on,
+//                                          reference } (county:manage)
+//     POST /api/county/programmes/:id/publication-consent/withdraw  withdraw it (county:manage)
 // Every read and write is audited; a refused import is audited with why, refusals are throttled per person, and
 // a throttled attempt is audited once per window.
 const db = require('../db');
@@ -249,7 +256,10 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: 'county.view', ip: ctx.ip, details: { what: 'programmes', count: rows.length } });
     // The outcomes a submission carries, for the Enter figures form (one programme's own count: never "unduplicated" here).
     const measures = K.VALUE_KEYS.map(k => ({ key: k, label: MAP.INDICATORS[k].label.replace(/\s*\(unduplicated\)/, '').replace(/unduplicated /, '') }));
-    return { rows: rows.map(p => ({ ...K.programmeOut(p), current_submissions: p.current_submissions, last_received: p.last_received })), county_code: K.formatCode(code(ctx)), measures };
+    // Each programme's current consent to publication (built for 1.22.0): its date and who recorded it; the
+    // agreement's reference (typed text) is read on the programme's own consent route, by county:manage.
+    const consent = require('../county-publication').consents();
+    return { rows: rows.map(p => ({ ...K.programmeOut(p), current_submissions: p.current_submissions, last_received: p.last_received, publication_consent: consent.get(p.id) || null })), county_code: K.formatCode(code(ctx)), measures };
   });
   r.post('/api/county/fingerprint', ...manage, (ctx) => {
     const v = validate(ctx.body, { public_key: { type: 'string', required: true, maxLen: 4000 } });
@@ -338,6 +348,31 @@ module.exports = (r) => {
     const files = db.one(`SELECT COUNT(*) n FROM county_submissions WHERE key_id=?`, key.id).n;
     audit.log({ user: ctx.user, action: want ? 'county.programme.key.compromised' : 'county.programme.key.trusted', entity: 'county_programme', entityId: p.id, ip: ctx.ip, details: { fingerprint: key.fingerprint, files } });
     return K.programmeOut(programme(p.id));
+  });
+
+  // ---- publication consent, per programme (built for 1.22.0; server/county-publication.js) ----
+  const consentErr = (e) => { if (e instanceof require('../county-publication').PublicationError) return new HttpError(e.status, e.message, { reason: e.code, ...(e.code === 'agreed_on' || e.code === 'reference' ? { fields: { [e.code]: e.message } } : {}) }); return e; };
+  r.get('/api/county/programmes/:id/publication-consent', ...view, (ctx) => {
+    const p = programme(ctx.params.id);
+    const manages = auth.hasPerm(ctx.user, 'county:manage');
+    const rows = require('../county-publication').consentHistory(p.id, { reference: manages });
+    audit.log({ user: ctx.user, action: 'county.view', entity: 'county_programme', entityId: p.id, ip: ctx.ip, details: { what: 'publication_consent', count: rows.length, references: manages || undefined } });
+    return { programme: { id: p.id, name: p.name }, current: rows.find(x => !x.withdrawn_at) || null, rows };
+  });
+  r.post('/api/county/programmes/:id/publication-consent', ...manage, (ctx) => {
+    const p = programme(ctx.params.id);
+    const v = validate(ctx.body || {}, { agreed_on: { type: 'string', required: true, maxLen: 10 }, reference: { type: 'string', required: true, maxLen: 200 } });
+    let c; try { c = require('../county-publication').recordConsent(p.id, v, ctx.user, { today: today() }); } catch (e) { throw consentErr(e); }
+    // The agreement's reference is typed text, kept encrypted with the consent: not in the audit log.
+    audit.log({ user: ctx.user, action: 'county.publication.consent.record', entity: 'county_programme', entityId: p.id, ip: ctx.ip, details: { consent_id: c.id, agreed_on: c.agreed_on } });
+    ctx.status = 201;
+    return c;
+  });
+  r.post('/api/county/programmes/:id/publication-consent/withdraw', ...manage, (ctx) => {
+    const p = programme(ctx.params.id);
+    let c; try { c = require('../county-publication').withdrawConsent(p.id, ctx.user); } catch (e) { throw consentErr(e); }
+    audit.log({ user: ctx.user, action: 'county.publication.consent.withdraw', entity: 'county_programme', entityId: p.id, ip: ctx.ip, details: { consent_id: c.id, agreed_on: c.agreed_on } });
+    return c;
   });
 
   r.get('/api/county/submissions', ...view, (ctx) => {
@@ -557,21 +592,24 @@ module.exports = (r) => {
   const PUB = require('../county-publication');
   /** The period and choices of a release to prepare or publish, from a JSON body. */
   const pubChoices = (body) => {
-    const v = validate(body || {}, { from: { type: 'string', required: true, maxLen: 10 }, to: { type: 'string', required: true, maxLen: 10 }, entered: { type: 'string', maxLen: 10 }, threshold: { type: 'number', integer: true } });
+    const v = validate(body || {}, { from: { type: 'string', required: true, maxLen: 10 }, to: { type: 'string', required: true, maxLen: 10 }, entered: { type: 'string', maxLen: 10 }, threshold: { type: 'number', integer: true }, without_consent: { type: 'string', maxLen: 10 } });
     if (v.entered !== undefined && v.entered !== null && v.entered !== '' && !['include', 'exclude'].includes(v.entered)) throw badRequest('entered must be include or exclude.', { fields: { entered: 'must be include or exclude' } });
-    return { from: v.from, to: v.to, entered: v.entered !== 'exclude', threshold: v.threshold === undefined || v.threshold === null ? null : v.threshold };
+    // A programme with no consent to publication: refuse the release (the default), or leave it out (built for 1.22.0).
+    if (v.without_consent !== undefined && v.without_consent !== null && v.without_consent !== '' && !PUB.WITHOUT_CONSENT.includes(v.without_consent)) throw badRequest('without_consent must be refuse or leave_out.', { fields: { without_consent: 'must be refuse or leave_out' } });
+    return { from: v.from, to: v.to, entered: v.entered !== 'exclude', threshold: v.threshold === undefined || v.threshold === null ? null : v.threshold, withoutConsent: v.without_consent === 'leave_out' ? 'leave_out' : 'refuse' };
   };
   /** Prepare a release, or say why not: a refusal is audited with why (never a figure). */
   const preparePub = async (ctx, c, action) => {
     code(ctx);
     try { return await PUB.prepare(c, { today: today() }); } catch (e) {
       if (!(e instanceof PUB.PublicationError)) throw e;
-      audit.log({ user: ctx.user, action: 'county.publication.refuse', ip: ctx.ip, success: false, details: { step: action, from: c.from, to: c.to, entered: c.entered ? 'include' : 'exclude', threshold: c.threshold || undefined, reason: e.code, ...(e.refusal || {}) } });
-      throw new HttpError(e.status, e.message, { reason: e.code });
+      audit.log({ user: ctx.user, action: 'county.publication.refuse', ip: ctx.ip, success: false, details: { step: action, from: c.from, to: c.to, entered: c.entered ? 'include' : 'exclude', threshold: c.threshold || undefined, reason: e.code, ...(e.refusal || {}), ...(e.programmes ? { without_consent: e.programmes.map(p => p.id) } : {}) } });
+      throw new HttpError(e.status, e.message, { reason: e.code, ...(e.programmes ? { programmes: e.programmes } : {}) });
     }
   };
   const pubDetails = (c, p) => ({ from: c.from, to: c.to, threshold: p.T, entered: c.entered ? 'include' : 'exclude', sha256: p.sha256, release_id: p.content.release_id, programmes: p.content.programmes.length,
-    entered_programmes: p.content.figures_entered_by_the_county.programmes.length || undefined, suppressed: p.content.suppressed.map(x => `${x.key}:${x.reason}`), withheld: p.content.withheld.map(x => x.key) });
+    entered_programmes: p.content.figures_entered_by_the_county.programmes.length || undefined, suppressed: p.content.suppressed.map(x => `${x.key}:${x.reason}`), withheld: p.content.withheld.map(x => x.key),
+    left_out_without_consent: p.content.left_out_without_consent ? p.content.left_out_without_consent.length : undefined, corrects: p.content.corrects ? p.content.corrects.map(x => x.sha256) : undefined });
   r.post('/api/county/publications/prepare', ...manage, async (ctx) => {
     const c = pubChoices(ctx.body);
     const p = await preparePub(ctx, c, 'prepare');

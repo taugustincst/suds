@@ -170,7 +170,7 @@ module.exports = (r) => {
       not_unduplicated: 'People are counted by each program and summed: a person served by two programs counts twice. Not unduplicated across programs.',
       caveats: d.caveats, rule: d.rule, publication_note: d.publication_note,
       entered: entered ? 'counted' : 'left out', entered_label: K.ENTERED_LABEL, entered_note: d.entered_note,
-      award: `${d.award.note} A programme with figures whose files carry no award has value null in the award rows, and its award.status says why (not_in_file: version 1 files; none: no fund with an award). unit percent: spent against the award, in per cent.`,
+      award: `${d.award.note} A programme with figures whose files carry no award has value null in the award rows, and its award.status says why (not_in_file: version 1 files; none: no fund with an award). unit percent: spent against the award, in per cent. award_amount and award_spent_pct are the whole award; award_prorated is the award pro-rated to the period and award_spent_prorated_pct the spending against it (each programme's award.prorated and award.prorated_pct). ${K.AWARD_PRORATED_NOTE}`,
       source: 'Each programme and submission has a source: "signed" (a file the program\'s key signed), "county_entered" (' + K.ENTERED_LABEL + ') or, for a programme, "mixed". Each row\'s total_entered is the part of its total entered by the county.' };
     if (format === 'json') {
       const { caveats, rule, publication_note, entered_note, entered_label, ...rest } = d; // eslint-disable-line no-unused-vars

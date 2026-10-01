@@ -8540,6 +8540,36 @@ CREATE TRIGGER IF NOT EXISTS county_publications_no_update BEFORE UPDATE OF id, 
 CREATE TRIGGER IF NOT EXISTS county_publications_no_delete BEFORE DELETE ON county_publications
   BEGIN SELECT RAISE(ABORT, 'county_publications is append-only: a published release is never deleted'); END;
 
+-- Publication governance (migration 65; built for 1.22.0; docs/COUNTY-VIEW.md "Publication"). Office server only,
+-- never synchronised. county_publication_consents: per registered programme, that it agreed in writing to the county
+-- publishing figures that name it (the date of the agreement, its reference: typed text, encrypted; who recorded it
+-- and when), and the withdrawal of that consent (when and by whom; the row stays). A programme's current consent is
+-- its row with withdrawn_at NULL (at most one: the partial unique index). county_publication_inputs: for each release
+-- published from 1.22.0 on, the figures its audit screened (each programme's own counts of people and events, as the
+-- combined view gave them; encrypted), so that a corrected release of the same period after a withdrawal can be
+-- audited against everything the withdrawn one printed. Neither ever holds a client or anything about one.
+CREATE TABLE IF NOT EXISTS county_publication_consents (
+  id TEXT PRIMARY KEY,
+  programme_id TEXT NOT NULL REFERENCES county_programmes(id),
+  agreed_on TEXT NOT NULL,             -- the date of the programme's written agreement (YYYY-MM-DD)
+  reference_enc TEXT,                  -- the agreement's reference (typed text), AES-256-GCM
+  recorded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  recorded_by TEXT REFERENCES users(id),
+  withdrawn_at TEXT,
+  withdrawn_by TEXT REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_county_publication_consents_programme ON county_publication_consents(programme_id, recorded_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_county_publication_consents_current ON county_publication_consents(programme_id) WHERE withdrawn_at IS NULL;
+CREATE TABLE IF NOT EXISTS county_publication_inputs (
+  id TEXT PRIMARY KEY REFERENCES county_publications(id),   -- the release's own id (key rotation finds rows by id)
+  inputs_enc TEXT NOT NULL,            -- JSON { programmes: [{ id, name, values: { measure: n } }] }, AES-256-GCM
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TRIGGER IF NOT EXISTS county_publication_inputs_no_update BEFORE UPDATE OF id, created_at ON county_publication_inputs
+  BEGIN SELECT RAISE(ABORT, 'county_publication_inputs is append-only: what a release was screened from is never changed'); END;
+CREATE TRIGGER IF NOT EXISTS county_publication_inputs_no_delete BEFORE DELETE ON county_publication_inputs
+  BEGIN SELECT RAISE(ABORT, 'county_publication_inputs is append-only: what a release was screened from is never deleted'); END;
+
 -- The county connection (docs/COUNTY-VIEW.md, "Connecting"; server/county-connect.js, server/county-connect-client.js).
 -- Office server only, never synchronised (server/sync-tables.js server_only). Optional and off by default on both sides.
 -- county_connect_tokens, on a county's server: the machine tokens it issues. A connection token (scope county.submit)
@@ -12598,6 +12628,10 @@ var require_sync_tables = __commonJS({
         "county_submissions",
         // county_publications (released in 1.21.0): the county's published releases and their withdrawals.
         "county_publications",
+        // county_publication_consents and county_publication_inputs (built for 1.22.0): each programme's written consent
+        // to publication, and what each release was screened from. On the county's server only.
+        "county_publication_consents",
+        "county_publication_inputs",
         // county_connect_* and county_connection (the county connection, docs/COUNTY-VIEW.md "Connecting"): the machine
         // tokens a county issues, and on a programme's server the county it sends to and its send log. A device has none.
         "county_connect_tokens",
@@ -12631,6 +12665,8 @@ var require_sync_tables = __commonJS({
         county_programme_keys: [],
         county_submissions: ["payload_enc", "source_ref_enc"],
         county_publications: ["reason_enc"],
+        county_publication_consents: ["reference_enc"],
+        county_publication_inputs: ["inputs_enc"],
         county_connect_tokens: [],
         county_connection: ["token_enc"],
         county_connect_sends: [],
@@ -12735,6 +12771,8 @@ var require_sync_tables = __commonJS({
         ["county_submissions", "received_by"],
         ["county_submissions", "withdrawn_by"],
         ["county_publications", "created_by"],
+        ["county_publication_consents", "recorded_by"],
+        ["county_publication_consents", "withdrawn_by"],
         ["county_connect_tokens", "created_by"],
         ["county_connect_tokens", "revoked_by"],
         ["county_connection", "updated_by"],
@@ -29890,8 +29928,15 @@ var require_county = __commonJS({
     var ENTERED_NOTE = `Figures marked "entered by the county \u2014 not signed by the program" were typed or imported by the county's own staff, from a document the program sent, for a program that does not run SUDS. No key of the program signed them. They are counted unless you leave them out.`;
     var isEntered = (s) => s.source === ENTERED;
     var sourceOf = (used) => !used.length ? null : used.every(isEntered) ? ENTERED : used.some(isEntered) ? "mixed" : "signed";
-    function combined(from, to, { entered = true } = {}) {
-      const programmes = db3.all(`SELECT * FROM county_programmes ORDER BY name COLLATE NOCASE, id`);
+    function combined(from, to, { entered = true, leaveOut = null } = {}) {
+      const consentLeftOut = [];
+      const programmes = db3.all(`SELECT * FROM county_programmes ORDER BY name COLLATE NOCASE, id`).filter((p) => {
+        if (leaveOut && leaveOut.has(p.id)) {
+          consentLeftOut.push({ id: p.id, name: p.name });
+          return false;
+        }
+        return true;
+      });
       const subs = countingSubs();
       const all = new Map(programmes.map((p) => [p.id, []]));
       const byProg = new Map(programmes.map((p) => [p.id, []]));
@@ -29927,7 +29972,7 @@ var require_county = __commonJS({
             a.without++;
             continue;
           }
-          a.awards.set([f.name, f.grant_number || "", f.award.from, f.award.to].join("\0").toLowerCase(), f.award.amount);
+          a.awards.set([f.name, f.grant_number || "", f.award.from, f.award.to].join("\0").toLowerCase(), { amount: f.award.amount, prorated: prorate(f.award, from, to) });
           a.spent += f.spend.approved;
         }
       };
@@ -29953,12 +29998,16 @@ var require_county = __commonJS({
           addAward(aw, pl);
         }
         const source = sourceOf(used);
-        const awardTotal = [...aw.awards.values()].reduce((n, x) => n + x, 0);
+        const awardTotal = [...aw.awards.values()].reduce((n, x) => n + x.amount, 0);
+        const proratedTotal = [...aw.awards.values()].reduce((n, x) => n + x.prorated, 0);
         const award = !used.length ? null : {
           status: !aw.v2 ? "not_in_file" : !aw.awards.size ? "none" : aw.v1 || aw.without ? "partial" : "whole",
           amount: aw.awards.size ? round2(awardTotal) : null,
           spent: aw.awards.size ? round2(aw.spent) : null,
           pct: aw.awards.size ? round1(aw.spent / awardTotal * 100) : null,
+          // The award pro-rated to the period, and the spending against it; null when no award period overlaps the period.
+          prorated: aw.awards.size ? round2(proratedTotal) : null,
+          prorated_pct: aw.awards.size && proratedTotal > 0 ? round1(aw.spent / proratedTotal * 100) : null,
           files_without: aw.v1,
           funds_without: aw.without
         };
@@ -30006,8 +30055,8 @@ var require_county = __commonJS({
       const withAward = cols2.filter((c) => c.award && c.award.amount !== null);
       const enteredAward = withAward.filter((c) => c.aggEntered);
       const sumOf = (list, k) => round2(list.reduce((n, c) => n + c.award[k], 0));
-      const pctOf = (list) => {
-        const a = sumOf(list, "amount");
+      const pctOf = (list, of = "amount") => {
+        const a = sumOf(list, of);
         return a ? round1(sumOf(list, "spent") / a * 100) : null;
       };
       const awardRow = (key, label, pick, total, totalEntered, { money = true, percent = false } = {}) => ({
@@ -30026,6 +30075,8 @@ var require_county = __commonJS({
         rows.push(awardRow("award_amount", "Award or contract amount (each fund's award counted once)", (a) => a.amount, withAward.length ? sumOf(withAward, "amount") : null, sumOf(enteredAward, "amount")));
         rows.push(awardRow("award_spent", "Spent in this period under the funds with an award (approved or reimbursed)", (a) => a.spent, withAward.length ? sumOf(withAward, "spent") : null, sumOf(enteredAward, "spent")));
         rows.push(awardRow("award_spent_pct", "Spent against the award (%)", (a) => a.pct, pctOf(withAward), enteredAward.length ? pctOf(enteredAward) : 0, { money: false, percent: true }));
+        rows.push(awardRow("award_prorated", AWARD_PRORATED_LABEL, (a) => a.prorated, withAward.length ? sumOf(withAward, "prorated") : null, sumOf(enteredAward, "prorated")));
+        rows.push(awardRow("award_spent_prorated_pct", AWARD_PRORATED_PCT_LABEL, (a) => a.prorated_pct, pctOf(withAward, "prorated"), enteredAward.length ? pctOf(enteredAward, "prorated") : 0, { money: false, percent: true }));
       }
       const whole = cols2.filter((c) => c.status === "whole").length;
       const part = cols2.filter((c) => c.status === "part").length;
@@ -30051,6 +30102,7 @@ var require_county = __commonJS({
         headline: headline(whole, part, none, cols2.length, { entered: enteredProgrammes, leftOut: enteredLeftOut.length }),
         award: { programmes_with: withAward.length, of: cols2.filter((c) => c.agg).length, note: awardTotalsNote(withAward.length, cols2.filter((c) => c.agg).length) },
         inactive_left_out: inactiveLeftOut,
+        ...leaveOut ? { consent_left_out: consentLeftOut } : {},
         caveats: CAVEATS,
         caveat_summary: CAVEAT_SUMMARY,
         publication_note: PUBLICATION_NOTE,
@@ -30059,6 +30111,16 @@ var require_county = __commonJS({
         entered_note: ENTERED_NOTE
       };
     }
+    var AWARD_KEYS = ["award_amount", "award_spent", "award_spent_pct", "award_prorated", "award_spent_prorated_pct"];
+    var AWARD_PRORATED_LABEL = "Award pro-rated to the period (award \xD7 days of the period inside the award period \xF7 days in the award period)";
+    var AWARD_PRORATED_PCT_LABEL = "Spent against the pro-rated award (%)";
+    var AWARD_PRORATED_NOTE = `The award pro-rated to the period is each award times the days of the period that fall inside its award period, divided by the days in its award period (a quarter of a one-year award is about a quarter of it; an award whose period does not overlap the period counts 0); "spent against the award (%)" sets the period's spending against the whole award, "spent against the pro-rated award (%)" against the pro-rated one.`;
+    function prorate(award, from, to) {
+      const a = from > award.from ? from : award.from;
+      const b = to < award.to ? to : award.to;
+      if (a > b) return 0;
+      return award.amount * daysIn(a, b) / daysIn(award.from, award.to);
+    }
     function awardNote(a) {
       if (a.status === "not_in_file") return `${AWARD_NOT_IN_FILE}: its files for this period are version 1 (made before SUDS 1.21), which carry no award`;
       if (a.status === "none") return `${AWARD_NONE}: none of the funds in its files has an award amount`;
@@ -30066,7 +30128,7 @@ var require_county = __commonJS({
       return "award in every file";
     }
     function awardTotalsNote(withAward, of) {
-      return `Award totals are over the ${withAward} of ${of} program${of === 1 ? "" : "s"} with figures whose files carry an award; a program whose files carry none (${AWARD_NOT_IN_FILE}, or ${AWARD_NONE}) is not in them. The spending against the award is what the period's files spent (approved or reimbursed) under the funds with an award, and each fund's award is counted once however many files carry it.`;
+      return `Award totals are over the ${withAward} of ${of} program${of === 1 ? "" : "s"} with figures whose files carry an award; a program whose files carry none (${AWARD_NOT_IN_FILE}, or ${AWARD_NONE}) is not in them. The spending against the award is what the period's files spent (approved or reimbursed) under the funds with an award, and each fund's award is counted once however many files carry it. ${AWARD_PRORATED_NOTE}`;
     }
     var hasEntered = () => !!db3.one(`SELECT 1 x FROM county_submissions WHERE source=? LIMIT 1`, ENTERED);
     function headline(whole, part, none, of, { entered = 0, leftOut = 0 } = {}) {
@@ -30080,7 +30142,7 @@ var require_county = __commonJS({
       if (!qs.length) return { from, to, quarters: [], rows: [], days_outside_quarters: daysIn(from, to), too_many: false, entered, has_entered: hasEntered() };
       if (qs.length > MAX_QUARTERS) return { from, to, quarters: [], rows: [], too_many: true, max_quarters: MAX_QUARTERS, entered, has_entered: hasEntered() };
       const views = qs.map((q) => combined(q.from, q.to, { entered }));
-      const order = [["spending", "spend_approved"], ["spending", "spend_pending"], ...USE_ROWS().map((u) => ["use", u.code]), ...HIAA_ROWS().map((x) => ["hiaa", x.code]), ...VALUE_KEYS.map((k) => ["outcome", k]), ...["award_amount", "award_spent", "award_spent_pct"].map((k) => ["award", k])];
+      const order = [["spending", "spend_approved"], ["spending", "spend_pending"], ...USE_ROWS().map((u) => ["use", u.code]), ...HIAA_ROWS().map((x) => ["hiaa", x.code]), ...VALUE_KEYS.map((k) => ["outcome", k]), ...AWARD_KEYS.map((k) => ["award", k])];
       const rows = [];
       for (const [g, k] of order) {
         const found = views.map((v) => v.rows.find((r) => r.group === g && r.key === k));
@@ -30152,6 +30214,11 @@ var require_county = __commonJS({
       PERIOD_RULE,
       PUBLICATION_NOTE,
       SubmissionError,
+      prorate,
+      AWARD_KEYS,
+      AWARD_PRORATED_LABEL,
+      AWARD_PRORATED_PCT_LABEL,
+      AWARD_PRORATED_NOTE,
       ENTERED,
       ENTERED_LABEL,
       ENTERED_NOTE,
@@ -32437,14 +32504,15 @@ var require_county_publication_audit = __commonJS({
       }
       return [...out2.values()];
     })();
-    function buildModel({ programmes }, T, measures = SCREENED) {
+    function buildModel({ programmes, earlier = [] }, T, measures = SCREENED) {
       const vars = [];
       const cons = [];
       const v = (id, value, o = {}) => {
-        vars.push({ id, value, people: true, total: !!o.total, table: o.table, published: true, ...o.fixed ? { fixed: true } : {} });
+        vars.push({ id, value, people: true, total: !!o.total, table: o.table, published: o.published !== false, ...o.fixed ? { fixed: true } : {} });
         return vars.length - 1;
       };
-      const h = { x: programmes.map(() => ({})), X: {} };
+      const h = { x: programmes.map(() => ({})), X: {}, earlier: earlier.map(() => ({ x: {}, X: {} })) };
+      const within = WITHIN.filter(([a, b]) => measures.includes(a) && measures.includes(b));
       for (const m of measures) {
         const parts = programmes.map((p, i) => {
           const j = v(`programme.${i}.${m}`, p.values[m], { fixed: true, table: `programme.${i}.${m}` });
@@ -32454,9 +32522,37 @@ var require_county_publication_audit = __commonJS({
         const X = h.X[m] = v(`total.${m}`, programmes.reduce((n, p) => n + p.values[m], 0), { total: true, table: `total.${m}` });
         if (parts.length) cons.push({ terms: [...parts.map((j) => [j, 1]), [X, -1]], op: "=", rhs: 0 });
       }
-      const within = WITHIN.filter(([a, b]) => measures.includes(a) && measures.includes(b));
       programmes.forEach((p, i) => {
         for (const [a, b] of within) cons.push({ terms: [[h.x[i][a], 1], [h.x[i][b], -1]], op: "<=", rhs: 0, soft: true });
+      });
+      earlier.forEach((e, ei) => {
+        const now2 = new Map(programmes.map((p, i) => [p.id, i]));
+        for (const m of measures) {
+          const parts = e.programmes.map((q, qi) => {
+            const i = q.id !== void 0 ? now2.get(q.id) : void 0;
+            if (i !== void 0 && programmes[i].values[m] === q.values[m]) return h.x[i][m];
+            const j = v(`earlier.${ei}.programme.${qi}.${m}`, q.values[m], { fixed: true, table: `earlier.${ei}.programme.${qi}.${m}` });
+            h.earlier[ei].x[`${qi}.${m}`] = j;
+            return j;
+          });
+          const value = e.programmes.reduce((n, q) => n + q.values[m], 0);
+          const shown = e.printed[m];
+          const printed = typeof shown === "number" || shown === SC.primary(T);
+          if (typeof shown === "number" && shown !== value) throw new Error(`the withdrawn release printed ${m} as a number that is not the sum of what it was screened from`);
+          if (shown === SC.primary(T) && !(value > 0 && value < T)) throw new Error(`the withdrawn release printed ${m} as small, which what it was screened from is not`);
+          const X = h.earlier[ei].X[m] = v(`earlier.${ei}.total.${m}`, value, { total: true, table: `earlier.${ei}.total.${m}`, ...printed ? { fixed: true } : { published: false } });
+          if (parts.length) cons.push({ terms: [...parts.map((j) => [j, 1]), [X, -1]], op: "=", rhs: 0 });
+        }
+        e.programmes.forEach((q, qi) => {
+          for (const [a, b] of within) {
+            const ja = h.earlier[ei].x[`${qi}.${a}`];
+            const jb = h.earlier[ei].x[`${qi}.${b}`];
+            if (ja !== void 0 || jb !== void 0) {
+              const i = now2.get(q.id);
+              cons.push({ terms: [[ja !== void 0 ? ja : h.x[i][a], 1], [jb !== void 0 ? jb : h.x[i][b], -1]], op: "<=", rhs: 0, soft: true });
+            }
+          }
+        });
       });
       return { model: { vars, cons, derived: [], mirror: [], keep: [] }, h };
     }
@@ -35710,25 +35806,105 @@ var require_county_publication = __commonJS({
       return CPA.WITHHELD_WHY.protect;
     }
     function overlapping(from, to) {
-      return db3.all(`SELECT id, period_from, period_to, created_at FROM county_publications WHERE kind='release' AND period_from<=? AND period_to>=? ORDER BY period_from, created_at`, to, from);
+      return db3.all(`SELECT r.id, r.period_from, r.period_to, r.created_at, r.threshold, r.content, r.sha256, (SELECT w.created_at FROM county_publications w WHERE w.release_id=r.id) withdrawn_at
+    FROM county_publications r WHERE r.kind='release' AND r.period_from<=? AND r.period_to>=? ORDER BY r.period_from, r.created_at`, to, from);
     }
-    async function prepare({ from, to, entered = true, threshold = null }, { today }) {
+    function inputsOf(releaseId) {
+      const r = db3.one(`SELECT inputs_enc FROM county_publication_inputs WHERE id=?`, releaseId);
+      return r ? JSON.parse(decrypt3(r.inputs_enc)) : null;
+    }
+    function earlierReleases(from, to, T) {
+      const over = overlapping(from, to);
+      if (!over.length) return [];
+      const other = over.filter((o) => o.period_from !== from || o.period_to !== to);
+      if (other.length) {
+        const o = other[0];
+        refuse("overlap", `A release for ${K.humanPeriod(o.period_from, o.period_to)} was already published (${K.humanDay(o.created_at)}). Two releases whose periods overlap could be subtracted from each other, so this period cannot be published${other.length > 1 ? ` (${other.length} releases overlap it)` : ""}. A withdrawn release still counts: it was seen. Only a corrected release of exactly the same period as a withdrawn one can be published.`, 409);
+      }
+      const live = over.find((o) => !o.withdrawn_at);
+      if (live) refuse("overlap", `A release for ${K.humanPeriod(from, to)} was already published (${K.humanDay(live.created_at)}) and is not withdrawn. To publish a corrected release of this period, withdraw that one first (say why); the corrected release is then checked against everything the withdrawn one printed.`, 409);
+      const old = over.find((o) => !inputsOf(o.id));
+      if (old) refuse("overlap", `The withdrawn release for ${K.humanPeriod(from, to)} (${K.humanDay(old.created_at)}) was published before SUDS 1.22, which did not keep what a release was screened from. A corrected release could not be checked against it, so this period cannot be published again.`, 409);
+      const otherT = over.find((o) => o.threshold !== T);
+      if (otherT) refuse("threshold", `A corrected release must use the threshold of the withdrawn release it corrects (${otherT.threshold}), so that what that release printed is read the same way. Leave the threshold empty, or set it to ${otherT.threshold}.`, 400);
+      return over.map((o) => {
+        const c = JSON.parse(o.content);
+        const printed = Object.fromEntries(CPA.SCREENED.map((m) => {
+          const r = c.rows.find((x) => x.group === "outcome" && x.key === m);
+          return [m, r ? r.value : null];
+        }));
+        return { id: o.id, sha256: o.sha256, withdrawn_at: o.withdrawn_at, inputs: inputsOf(o.id), printed };
+      });
+    }
+    var userName = (id) => {
+      if (!id) return null;
+      const u = db3.one(`SELECT display_name, username FROM users WHERE id=?`, id);
+      return u ? u.display_name || u.username : null;
+    };
+    function consentOut(r, reference) {
+      return {
+        id: r.id,
+        agreed_on: r.agreed_on,
+        recorded_at: r.recorded_at,
+        recorded_by: userName(r.recorded_by),
+        withdrawn_at: r.withdrawn_at || null,
+        withdrawn_by: userName(r.withdrawn_by),
+        ...reference ? { reference: r.reference_enc ? decrypt3(r.reference_enc) : "" } : {}
+      };
+    }
+    function consents({ reference = false } = {}) {
+      const out2 = /* @__PURE__ */ new Map();
+      for (const r of db3.all(`SELECT * FROM county_publication_consents WHERE withdrawn_at IS NULL`)) out2.set(r.programme_id, consentOut(r, reference));
+      return out2;
+    }
+    function consentHistory(programmeId, { reference = false } = {}) {
+      return db3.all(`SELECT * FROM county_publication_consents WHERE programme_id=? ORDER BY recorded_at DESC, rowid DESC`, programmeId).map((r) => consentOut(r, reference));
+    }
+    function recordConsent(programmeId, { agreed_on: agreedOn, reference }, user, { today }) {
+      if (!K.isDay(agreedOn)) refuse("agreed_on", "Give the date the program agreed in writing (YYYY-MM-DD).", 400);
+      if (agreedOn > today) refuse("agreed_on", `The date of the agreement (${K.humanDay(agreedOn)}) is in the future: record it once the program has agreed in writing.`, 400);
+      const ref = K.cleanText(reference || "", 200);
+      if (ref.length < 2) refuse("reference", "Give the agreement's reference (its title, number or where it is filed), so that the agreement can be found.", 400);
+      const id = uuid2();
+      db3.transaction(() => {
+        if (db3.one(`SELECT 1 x FROM county_publication_consents WHERE programme_id=? AND withdrawn_at IS NULL`, programmeId)) refuse("consent_exists", "This program's consent to publication is already recorded. Withdraw it first to record a new agreement.", 409);
+        db3.run(`INSERT INTO county_publication_consents(id,programme_id,agreed_on,reference_enc,recorded_at,recorded_by) VALUES(?,?,?,?,?,?)`, id, programmeId, agreedOn, encrypt3(ref), db3.now(), user ? user.id : null);
+      });
+      return consentOut(db3.one(`SELECT * FROM county_publication_consents WHERE id=?`, id), true);
+    }
+    function withdrawConsent(programmeId, user) {
+      const r = db3.one(`SELECT * FROM county_publication_consents WHERE programme_id=? AND withdrawn_at IS NULL`, programmeId);
+      if (!r) refuse("no_consent", "No consent to publication is recorded for this program.", 409);
+      db3.run(`UPDATE county_publication_consents SET withdrawn_at=?, withdrawn_by=? WHERE id=?`, db3.now(), user ? user.id : null, r.id);
+      return consentOut(db3.one(`SELECT * FROM county_publication_consents WHERE id=?`, r.id), false);
+    }
+    var WITHOUT_CONSENT = ["refuse", "leave_out"];
+    async function prepare({ from, to, entered = true, threshold = null, withoutConsent = "refuse" }, { today }) {
       if (!K.isDay(from) || !K.isDay(to)) refuse("period", "Choose a period: from and to must be real dates (YYYY-MM-DD).", 400);
       if (from > to) refuse("period", `The start date (${K.humanDay(from)}) is after the end date (${K.humanDay(to)}).`, 400);
       if (to >= today) refuse("period", `The period is not over yet: it ends ${K.humanDay(to)}. A publication release covers a period that has ended.`, 400);
+      if (!WITHOUT_CONSENT.includes(withoutConsent)) refuse("without_consent", "without_consent must be refuse or leave_out.", 400);
       const floor = countyThreshold();
-      const T = threshold === null || threshold === void 0 ? floor : Number(threshold);
-      if (!Number.isInteger(T) || T < floor || T > MAX_THRESHOLD) refuse("threshold", `The threshold must be a whole number from ${floor} (the county's own) to ${MAX_THRESHOLD}.`, 400);
-      const over = overlapping(from, to);
-      if (over.length) {
-        const o = over[0];
-        refuse("overlap", `A release for ${K.humanPeriod(o.period_from, o.period_to)} was already published (${K.humanDay(o.created_at)}). Two releases whose periods overlap could be subtracted from each other, so this period cannot be published${over.length > 1 ? ` (${over.length} releases overlap it)` : ""}. A withdrawn release still counts: it was seen.`, 409);
+      const same = overlapping(from, to).filter((o) => o.period_from === from && o.period_to === to);
+      const T = threshold === null || threshold === void 0 ? same.length ? same[0].threshold : floor : Number(threshold);
+      if (!Number.isInteger(T) || T < floor || T > MAX_THRESHOLD) {
+        if (same.length && Number.isInteger(T) && T < floor) refuse("threshold", `The withdrawn release of this period used a threshold of ${T}, below the county's own threshold now (${floor}). A corrected release must use the threshold of the release it corrects, and a release never uses less than the county's own, so this period cannot be published again.`, 409);
+        refuse("threshold", `The threshold must be a whole number from ${floor} (the county's own) to ${MAX_THRESHOLD}.`, 400);
       }
-      const d = K.combined(from, to, { entered });
+      const earlier = earlierReleases(from, to, T);
+      const agreed = consents();
+      const lacking = K.combined(from, to, { entered }).programmes.filter((p) => p.status !== "none" && !agreed.has(p.id));
+      if (lacking.length && withoutConsent !== "leave_out") {
+        const e = new PublicationError("no_consent", `This release would name ${lacking.length === 1 ? "a program" : `${lacking.length} programs`} with no consent to publication recorded: ${lacking.map((p) => p.name).join("; ")}. The county publishes figures that name a program only with its written agreement. Record each program's agreement on County view \u203A Programs (Publication consent), or leave ${lacking.length === 1 ? "it" : "them"} out of this release.`, 409);
+        e.programmes = lacking.map((p) => ({ id: p.id, name: p.name }));
+        throw e;
+      }
+      const d = K.combined(from, to, { entered, ...lacking.length ? { leaveOut: new Set(lacking.map((p) => p.id)) } : {} });
       const counted = d.programmes.filter((p) => p.status !== "none");
-      if (!counted.length) refuse("no_figures", `No program has figures for ${K.humanPeriod(from, to)}${entered ? "" : " once figures entered by the county are left out"}: there is nothing to publish.`);
+      if (!counted.length) refuse("no_figures", `No program has figures for ${K.humanPeriod(from, to)}${entered ? "" : " once figures entered by the county are left out"}${lacking.length ? " once the programs with no consent to publication are left out" : ""}: there is nothing to publish.`);
       const rowOf = (g, k) => d.rows.find((r2) => r2.group === g && r2.key === k);
-      const inputs = { programmes: counted.map((p) => ({ values: Object.fromEntries(CPA.SCREENED.map((m) => [m, rowOf("outcome", m).by[p.id] || 0])) })) };
+      const own = counted.map((p) => ({ id: p.id, name: p.name, values: Object.fromEntries(CPA.SCREENED.map((m) => [m, rowOf("outcome", m).by[p.id] || 0])) }));
+      const inputs = { programmes: own, ...earlier.length ? { earlier: earlier.map((e) => ({ programmes: e.inputs.programmes, printed: e.printed })) } : {} };
       const r = await require_publication_release().runAudit(inputs, T, { kind: "county" });
       if (r.refused) {
         const e = new PublicationError("refused", r.refused.backstop ? CPA.refusalMessage({ backstop: true }) : r.refused.message);
@@ -35758,13 +35934,15 @@ var require_county_publication = __commonJS({
         release_id: r.id,
         programmes: counted.map((p) => ({ name: p.name, coverage: p.status, source: p.source })),
         figures_entered_by_the_county: { counted: entered, programmes: enteredProgs.map((p) => p.name), left_out: (d.entered_left_out || []).map((p) => p.name) },
+        ...lacking.length ? { left_out_without_consent: lacking.map((p) => p.name) } : {},
+        ...earlier.length ? { corrects: earlier.map((e) => ({ sha256: e.sha256, withdrawn: e.withdrawn_at.slice(0, 10) })) } : {},
         rows,
         suppressed,
         withheld: (r.withheld_reasons || []).map((w) => ({ key: w.measure, reason: w.reason, why: w.why })),
-        notes: notesOf(T, entered, enteredProgs, d)
+        notes: notesOf(T, entered, enteredProgs, d, { lacking, earlier })
       };
       checkAggregate(content);
-      return { content, sha256: K.sha256Hex(K.canonical(content)), audit: r.audit, T };
+      return { content, sha256: K.sha256Hex(K.canonical(content)), audit: r.audit, T, inputs: { programmes: own } };
     }
     function methodOf(T, entered) {
       return {
@@ -35777,7 +35955,7 @@ var require_county_publication = __commonJS({
         suds_version: config2.version
       };
     }
-    function notesOf(T, entered, enteredProgs, d) {
+    function notesOf(T, entered, enteredProgs, d, { lacking = [], earlier = [] } = {}) {
       const n = [
         `Combined figures of the programs listed, for the whole period. ${K.PERIOD_RULE}`,
         "Counts of people are each program's own count, added up: a person served by two programs counts twice. They are not unduplicated.",
@@ -35786,6 +35964,8 @@ var require_county_publication = __commonJS({
       ];
       if (!entered) n.push(`Figures entered by the county were left out${d.entered_left_out && d.entered_left_out.length ? ` (${d.entered_left_out.map((p) => p.name).join("; ")})` : ""}: only files the programs signed are counted.`);
       else if (enteredProgs.length) n.push(`Figures of ${enteredProgs.map((p) => p.name).join("; ")} were ${K.ENTERED_LABEL}: typed or imported by the county's staff from a document the program sent.`);
+      if (lacking.length) n.push(`Left out for lack of consent to publication: ${lacking.map((p) => p.name).join("; ")}. The county publishes figures that name a program only with its written agreement; these programs' figures are not in this release's totals.`);
+      if (earlier.length) n.push(`A corrected release: it replaces ${earlier.length === 1 ? "a release" : `${earlier.length} releases`} of the same period that ${earlier.length === 1 ? "was" : "were"} withdrawn. Its figures were screened against everything the withdrawn ${earlier.length === 1 ? "release" : "releases"} printed, so that nothing new can be worked out by setting them side by side.`);
       return n;
     }
     var ALLOWED = /* @__PURE__ */ new Set([
@@ -35811,6 +35991,10 @@ var require_county_publication = __commonJS({
       "figures_entered_by_the_county",
       "counted",
       "left_out",
+      "left_out_without_consent",
+      "corrects",
+      "sha256",
+      "withdrawn",
       "rows",
       "section",
       "group",
@@ -35839,8 +36023,10 @@ var require_county_publication = __commonJS({
     function record(prep, { from, to, entered }, user) {
       const id = uuid2();
       db3.transaction(() => {
-        const o = overlapping(from, to)[0];
-        if (o) refuse("overlap", `A release for ${K.humanPeriod(o.period_from, o.period_to)} was published while this one was being prepared: two releases whose periods overlap could be subtracted from each other.`, 409);
+        const now2 = overlapping(from, to);
+        const checked = new Set((prep.content.corrects || []).map((x) => x.sha256));
+        const o = now2.find((x) => !x.withdrawn_at || !checked.has(x.sha256));
+        if (o || now2.length !== checked.size) refuse("overlap", `A release for ${K.humanPeriod((o || now2[0]).period_from, (o || now2[0]).period_to)} was published or withdrawn while this one was being prepared: two releases whose periods overlap could be subtracted from each other. Prepare it again.`, 409);
         db3.run(
           `INSERT INTO county_publications(id,kind,period_from,period_to,threshold,entered,method,content,sha256,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)`,
           id,
@@ -35854,6 +36040,7 @@ var require_county_publication = __commonJS({
           prep.sha256,
           user ? user.id : null
         );
+        db3.run(`INSERT INTO county_publication_inputs(id,inputs_enc) VALUES(?,?)`, id, encrypt3(JSON.stringify(prep.inputs)));
       });
       return get(id);
     }
@@ -35878,11 +36065,6 @@ var require_county_publication = __commonJS({
       );
       return get(id);
     }
-    var userName = (id) => {
-      if (!id) return null;
-      const u = db3.one(`SELECT display_name, username FROM users WHERE id=?`, id);
-      return u ? u.display_name || u.username : null;
-    };
     function get(id, { reasons = false, content = true } = {}) {
       const r = db3.one(`SELECT * FROM county_publications WHERE id=? AND kind='release'`, id);
       if (!r) return null;
@@ -35925,6 +36107,8 @@ var require_county_publication = __commonJS({
         { k: "Differencing", v: c.method.differencing },
         { k: "Programs", v: c.programmes.map((p) => `${p.name}${p.coverage === "part" ? " (part of the period)" : ""}${p.source === K.ENTERED ? ` (${K.ENTERED_LABEL})` : p.source === "mixed" ? ` (some figures ${K.ENTERED_LABEL})` : ""}`).join("; ") },
         { k: "Figures entered by the county", v: c.figures_entered_by_the_county.counted ? c.figures_entered_by_the_county.programmes.length ? `Counted: ${c.figures_entered_by_the_county.programmes.join("; ")}` : "Counted (none in this period)" : `Left out${c.figures_entered_by_the_county.left_out.length ? `: ${c.figures_entered_by_the_county.left_out.join("; ")}` : ""}` },
+        ...c.left_out_without_consent ? [{ k: "Left out for lack of consent to publication", v: c.left_out_without_consent.join("; ") }] : [],
+        ...c.corrects ? [{ k: "Corrects", v: c.corrects.map((x) => `the release withdrawn on ${x.withdrawn} (SHA-256 ${x.sha256})`).join("; ") }] : [],
         ...c.notes.map((n, i) => ({ k: `Note ${i + 1}`, v: n }))
       ];
       const figures = c.rows.map((x) => ({ section: x.section, measure: x.label, value: cell(x.value), note: x.suppressed ? { small: "small", complementary: "suppressed", withheld: "withheld" }[x.suppressed] : "" }));
@@ -35939,7 +36123,29 @@ var require_county_publication = __commonJS({
         noteCols: [{ key: "measure", label: "Measure" }, { key: "shown", label: "Shown as" }, { key: "why", label: "Why (the value is never given)" }]
       };
     }
-    module.exports = { prepare, record, withdraw, get, list, sheets, overlapping, countyThreshold, checkAggregate, PublicationError, FORMAT: FORMAT2, SCHEMA_VERSION, METHOD_NAME, MAX_THRESHOLD, REVIEW_CONFIRMATION };
+    module.exports = {
+      prepare,
+      record,
+      withdraw,
+      get,
+      list,
+      sheets,
+      overlapping,
+      inputsOf,
+      countyThreshold,
+      checkAggregate,
+      PublicationError,
+      consents,
+      consentHistory,
+      recordConsent,
+      withdrawConsent,
+      WITHOUT_CONSENT,
+      FORMAT: FORMAT2,
+      SCHEMA_VERSION,
+      METHOD_NAME,
+      MAX_THRESHOLD,
+      REVIEW_CONFIRMATION
+    };
   }
 });
 
@@ -36074,7 +36280,7 @@ var require_county_connect2 = __commonJS({
           entered: entered ? "counted" : "left out",
           entered_label: K.ENTERED_LABEL,
           entered_note: d.entered_note,
-          award: `${d.award.note} A programme with figures whose files carry no award has value null in the award rows, and its award.status says why (not_in_file: version 1 files; none: no fund with an award). unit percent: spent against the award, in per cent.`,
+          award: `${d.award.note} A programme with figures whose files carry no award has value null in the award rows, and its award.status says why (not_in_file: version 1 files; none: no fund with an award). unit percent: spent against the award, in per cent. award_amount and award_spent_pct are the whole award; award_prorated is the award pro-rated to the period and award_spent_prorated_pct the spending against it (each programme's award.prorated and award.prorated_pct). ${K.AWARD_PRORATED_NOTE}`,
           source: `Each programme and submission has a source: "signed" (a file the program's key signed), "county_entered" (` + K.ENTERED_LABEL + `) or, for a programme, "mixed". Each row's total_entered is the part of its total entered by the county.`
         };
         if (format === "json") {
@@ -36912,7 +37118,8 @@ var require_county2 = __commonJS({
       (SELECT MAX(received_at) FROM county_submissions s WHERE s.programme_id=p.id) last_received FROM county_programmes p ORDER BY p.active DESC, p.name COLLATE NOCASE`);
         audit3.log({ user: ctx.user, action: "county.view", ip: ctx.ip, details: { what: "programmes", count: rows.length } });
         const measures = K.VALUE_KEYS.map((k) => ({ key: k, label: MAP.INDICATORS[k].label.replace(/\s*\(unduplicated\)/, "").replace(/unduplicated /, "") }));
-        return { rows: rows.map((p) => ({ ...K.programmeOut(p), current_submissions: p.current_submissions, last_received: p.last_received })), county_code: K.formatCode(code(ctx)), measures };
+        const consent = require_county_publication().consents();
+        return { rows: rows.map((p) => ({ ...K.programmeOut(p), current_submissions: p.current_submissions, last_received: p.last_received, publication_consent: consent.get(p.id) || null })), county_code: K.formatCode(code(ctx)), measures };
       });
       r.post("/api/county/fingerprint", ...manage, (ctx) => {
         const v = validate(ctx.body, { public_key: { type: "string", required: true, maxLen: 4e3 } });
@@ -37002,6 +37209,41 @@ var require_county2 = __commonJS({
         const files = db3.one(`SELECT COUNT(*) n FROM county_submissions WHERE key_id=?`, key.id).n;
         audit3.log({ user: ctx.user, action: want ? "county.programme.key.compromised" : "county.programme.key.trusted", entity: "county_programme", entityId: p.id, ip: ctx.ip, details: { fingerprint: key.fingerprint, files } });
         return K.programmeOut(programme(p.id));
+      });
+      const consentErr = (e) => {
+        if (e instanceof require_county_publication().PublicationError) return new HttpError3(e.status, e.message, { reason: e.code, ...e.code === "agreed_on" || e.code === "reference" ? { fields: { [e.code]: e.message } } : {} });
+        return e;
+      };
+      r.get("/api/county/programmes/:id/publication-consent", ...view, (ctx) => {
+        const p = programme(ctx.params.id);
+        const manages = auth3.hasPerm(ctx.user, "county:manage");
+        const rows = require_county_publication().consentHistory(p.id, { reference: manages });
+        audit3.log({ user: ctx.user, action: "county.view", entity: "county_programme", entityId: p.id, ip: ctx.ip, details: { what: "publication_consent", count: rows.length, references: manages || void 0 } });
+        return { programme: { id: p.id, name: p.name }, current: rows.find((x) => !x.withdrawn_at) || null, rows };
+      });
+      r.post("/api/county/programmes/:id/publication-consent", ...manage, (ctx) => {
+        const p = programme(ctx.params.id);
+        const v = validate(ctx.body || {}, { agreed_on: { type: "string", required: true, maxLen: 10 }, reference: { type: "string", required: true, maxLen: 200 } });
+        let c;
+        try {
+          c = require_county_publication().recordConsent(p.id, v, ctx.user, { today: today() });
+        } catch (e) {
+          throw consentErr(e);
+        }
+        audit3.log({ user: ctx.user, action: "county.publication.consent.record", entity: "county_programme", entityId: p.id, ip: ctx.ip, details: { consent_id: c.id, agreed_on: c.agreed_on } });
+        ctx.status = 201;
+        return c;
+      });
+      r.post("/api/county/programmes/:id/publication-consent/withdraw", ...manage, (ctx) => {
+        const p = programme(ctx.params.id);
+        let c;
+        try {
+          c = require_county_publication().withdrawConsent(p.id, ctx.user);
+        } catch (e) {
+          throw consentErr(e);
+        }
+        audit3.log({ user: ctx.user, action: "county.publication.consent.withdraw", entity: "county_programme", entityId: p.id, ip: ctx.ip, details: { consent_id: c.id, agreed_on: c.agreed_on } });
+        return c;
       });
       r.get("/api/county/submissions", ...view, (ctx) => {
         const pid = ctx.query.get("programme_id");
@@ -37258,9 +37500,10 @@ var require_county2 = __commonJS({
       });
       const PUB = require_county_publication();
       const pubChoices = (body) => {
-        const v = validate(body || {}, { from: { type: "string", required: true, maxLen: 10 }, to: { type: "string", required: true, maxLen: 10 }, entered: { type: "string", maxLen: 10 }, threshold: { type: "number", integer: true } });
+        const v = validate(body || {}, { from: { type: "string", required: true, maxLen: 10 }, to: { type: "string", required: true, maxLen: 10 }, entered: { type: "string", maxLen: 10 }, threshold: { type: "number", integer: true }, without_consent: { type: "string", maxLen: 10 } });
         if (v.entered !== void 0 && v.entered !== null && v.entered !== "" && !["include", "exclude"].includes(v.entered)) throw badRequest("entered must be include or exclude.", { fields: { entered: "must be include or exclude" } });
-        return { from: v.from, to: v.to, entered: v.entered !== "exclude", threshold: v.threshold === void 0 || v.threshold === null ? null : v.threshold };
+        if (v.without_consent !== void 0 && v.without_consent !== null && v.without_consent !== "" && !PUB.WITHOUT_CONSENT.includes(v.without_consent)) throw badRequest("without_consent must be refuse or leave_out.", { fields: { without_consent: "must be refuse or leave_out" } });
+        return { from: v.from, to: v.to, entered: v.entered !== "exclude", threshold: v.threshold === void 0 || v.threshold === null ? null : v.threshold, withoutConsent: v.without_consent === "leave_out" ? "leave_out" : "refuse" };
       };
       const preparePub = async (ctx, c, action) => {
         code(ctx);
@@ -37268,8 +37511,8 @@ var require_county2 = __commonJS({
           return await PUB.prepare(c, { today: today() });
         } catch (e) {
           if (!(e instanceof PUB.PublicationError)) throw e;
-          audit3.log({ user: ctx.user, action: "county.publication.refuse", ip: ctx.ip, success: false, details: { step: action, from: c.from, to: c.to, entered: c.entered ? "include" : "exclude", threshold: c.threshold || void 0, reason: e.code, ...e.refusal || {} } });
-          throw new HttpError3(e.status, e.message, { reason: e.code });
+          audit3.log({ user: ctx.user, action: "county.publication.refuse", ip: ctx.ip, success: false, details: { step: action, from: c.from, to: c.to, entered: c.entered ? "include" : "exclude", threshold: c.threshold || void 0, reason: e.code, ...e.refusal || {}, ...e.programmes ? { without_consent: e.programmes.map((p) => p.id) } : {} } });
+          throw new HttpError3(e.status, e.message, { reason: e.code, ...e.programmes ? { programmes: e.programmes } : {} });
         }
       };
       const pubDetails = (c, p) => ({
@@ -37282,7 +37525,9 @@ var require_county2 = __commonJS({
         programmes: p.content.programmes.length,
         entered_programmes: p.content.figures_entered_by_the_county.programmes.length || void 0,
         suppressed: p.content.suppressed.map((x) => `${x.key}:${x.reason}`),
-        withheld: p.content.withheld.map((x) => x.key)
+        withheld: p.content.withheld.map((x) => x.key),
+        left_out_without_consent: p.content.left_out_without_consent ? p.content.left_out_without_consent.length : void 0,
+        corrects: p.content.corrects ? p.content.corrects.map((x) => x.sha256) : void 0
       });
       r.post("/api/county/publications/prepare", ...manage, async (ctx) => {
         const c = pubChoices(ctx.body);
@@ -51871,8 +52116,16 @@ var require_db = __commonJS({
         d.exec(`UPDATE devices SET scope_set_by='admin' WHERE scope_set_by IS NULL AND sync_scope='full' AND scope_changed_at IS NOT NULL`);
         d.exec(`INSERT OR IGNORE INTO field_accounts(user_id, bound_at, bound_via) SELECT user_id, MIN(COALESCE(scope_changed_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))), 'migration' FROM devices WHERE sync_scope='field' GROUP BY user_id`);
       },
-      // 65: likewise held for another 1.22.0 stream's migration; a documented no-op on this branch.
-      () => {
+      // 65: county publication governance (built for 1.22.0; docs/COUNTY-VIEW.md "Publication"):
+      //     county_publication_consents (each registered programme's written agreement to publication, and its
+      //     withdrawal) and county_publication_inputs (what each release from now on was screened from, encrypted, for a
+      //     corrected release of the same period), the latter append-only (its triggers, as schema.sql declares them).
+      //     New tables: nothing to backfill (a release published before has no inputs, and a corrected release of its
+      //     period stays refused). Office server only. Self-contained and idempotent, so it can be renumbered.
+      (d) => {
+        const text = safeSchema();
+        createTablesFromSchema(d, text, ["county_publication_consents", "county_publication_inputs"], 65);
+        for (const m of text.matchAll(/CREATE TRIGGER IF NOT EXISTS county_publication_inputs_\w+ [\s\S]*?END;/g)) d.exec(m[0]);
       },
       // 66: the authenticator allow-list's grace period (built for 1.22.0, not yet released; docs/FINGERPRINT.md
       //     "Grace period"): passkeys.allowlist_grace_until, NULL for every existing passkey (none is in a grace period:

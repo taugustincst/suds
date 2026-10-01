@@ -24,8 +24,10 @@ const lastAudit = (action) => { const a = H.db.one(`SELECT * FROM audit_log WHER
 const T = 11;
 
 function freshCounty() {
-  for (const t of ['county_connect_tokens', 'county_submissions', 'county_programme_keys', 'county_programmes']) H.db.run(`DELETE FROM ${t}`);
+  for (const t of ['county_connect_tokens', 'county_publication_consents', 'county_submissions', 'county_programme_keys', 'county_programmes']) H.db.run(`DELETE FROM ${t}`);
 }
+/** Record a programme's written agreement to publication (built for 1.22.0): a release names only programmes that agreed. */
+const agree = async (id, body = { agreed_on: '2020-06-01', reference: 'Data contribution agreement, signed copy in the contracts file' }) => ok(await admin.post(`/api/county/programmes/${id}/publication-consent`, body));
 /** One fund of figures as the Enter figures form sends them; `people` sets every screened measure (a count of people or events). */
 function fund(people, extra = {}) {
   const p = String(people);
@@ -33,10 +35,11 @@ function fund(people, extra = {}) {
     contacts: '120', naloxone_kits: '80', fentanyl_strips: '300', syringes: '900', education_contacts: '5', staff_training_hours: '12.5',
     reversals: p, treatment_admissions: p, referrals_made: p, people_served: p, people_linked: p, moud_linked: p, people_trained: p, ...extra };
 }
-/** A programme not on SUDS with the county's figures for each period: [[period, people], ...]. */
-async function programme(name, figures) {
+/** A programme not on SUDS with the county's figures for each period: [[period, people], ...]; it agreed to publication unless consent: false. */
+async function programme(name, figures, { consent = true } = {}) {
   const p = ok(await admin.post('/api/county/programmes', { name, not_on_suds: true }));
   for (const [period, people, extra] of figures) ok(await admin.post(`/api/county/programmes/${p.id}/entries`, { ...period, source_ref: 'Quarterly report', funds: [fund(people, extra)] }));
+  if (consent) await agree(p.id);
   return p;
 }
 const prepare = (body, c = admin) => c.post('/api/county/publications/prepare', body);
@@ -219,7 +222,7 @@ test('determinism and the record: preparing twice gives the same hash; publishin
   assert.equal((await prepare(q)).status, 409);
 });
 
-test('withdraw: a record of its own, with the reason kept encrypted; a second withdrawal is refused; a withdrawn release still blocks overlapping periods', async () => {
+test('withdraw: a record of its own, with the reason kept encrypted; a second withdrawal is refused; a withdrawn release still blocks overlapping periods (only a corrected release of exactly its period is allowed)', async () => {
   const y = Q(2022, 1); const year = { from: '2022-01-01', to: '2022-12-31' };
   await programme('Harbor Outreach', [[y, 200]]); await programme('Ridge Recovery', [[y, 150]]);
   const p = ok(await prepare(y), 200);
@@ -235,9 +238,11 @@ test('withdraw: a record of its own, with the reason kept encrypted; a second wi
   assert.equal(ok(await admin.get(`/api/county/publications/${rec.id}`), 200).withdrawal.reason, 'A grantee corrected its figures');
   assert.ok(!('reason' in ok(await fin.get(`/api/county/publications/${rec.id}`), 200).withdrawal), 'the reason is for county:manage');
   assert.equal((await admin.post(`/api/county/publications/${rec.id}/withdraw`, { reason: 'again' })).status, 409);
-  // The same quarter, and the year around it, cannot be published: they could be subtracted from what was seen.
-  for (const period of [y, year]) { const r = await prepare(period); assert.equal(r.status, 409); assert.equal(r.data.reason, 'overlap'); }
+  // The year around it cannot be published: the two could be subtracted from what was seen. The same quarter can, as a
+  // corrected release (1.22.0) audited against everything the withdrawn one printed.
+  const r = await prepare(year); assert.equal(r.status, 409); assert.equal(r.data.reason, 'overlap');
   assert.equal(lastAudit('county.publication.refuse').details.reason, 'overlap');
+  assert.deepEqual(ok(await prepare(y), 200).content.corrects, [{ sha256: rec.sha256, withdrawn: w.withdrawal.at.slice(0, 10) }]);
   // The next quarter can.
   await programme('Next Quarter Programme', [[Q(2022, 2), 90]]);
   assert.equal((await prepare(Q(2022, 2))).status, 200);
@@ -266,7 +271,7 @@ test('refusals: a period not over, a threshold below the county\'s, no figures, 
 test('figures entered by the county: counted and named by default (signed outranks entered, as the combined view), or left out', async () => {
   const q = Q(2024, 1);
   samples = SAMPLE.sample({ periods: [q], recipient: COUNTY });
-  ok(await admin.post('/api/county/programmes', { name: samples[0].name, public_key: samples[0].public_key, compared: true }));
+  await agree(ok(await admin.post('/api/county/programmes', { name: samples[0].name, public_key: samples[0].public_key, compared: true })).id);
   ok(await admin.post('/api/county/submissions', { text: JSON.stringify(samples[0].files[0].file) }));
   await programme('Canyon Paper Reports', [[q, 60]]);
   const inc = ok(await prepare(q), 200).content;
@@ -338,4 +343,196 @@ test('the releases table is declared office-only with its encrypted reason, and 
   assert.deepEqual(SYNC.unsynced_enc.county_publications, ['reason_enc']);
   const { LOCAL_ROUTE_MODULES } = require('../server/app');
   assert.ok(!LOCAL_ROUTE_MODULES.includes('county') && !LOCAL_ROUTE_MODULES.includes('county-connect'));
+});
+
+// ---------------------------------------------------------------- publication governance (built for 1.22.0)
+test('publication consent: county:manage records and withdraws a programme\'s written agreement; county:view reads it without the reference; audited without it', async () => {
+  const p = await programme('Harbor Outreach', [], { consent: false });
+  const url = `/api/county/programmes/${p.id}/publication-consent`;
+  const body = { agreed_on: '2020-06-01', reference: 'DCA-2020-07, signed copy in the contracts file' };
+  for (const c of [fin, sup]) assert.equal((await c.post(url, body)).status, 403);
+  for (const c of [ro, nav]) assert.equal((await c.get(url)).status, 403);
+  // Checked: a real date, not in the future, and a reference to find the agreement by.
+  const future = await admin.post(url, { ...body, agreed_on: '2999-01-01' }); assert.equal(future.status, 400); assert.equal(future.data.reason, 'agreed_on');
+  assert.equal((await admin.post(url, { ...body, agreed_on: '2020-02-30' })).status, 400);
+  const noRef = await admin.post(url, { ...body, reference: 'x' }); assert.equal(noRef.status, 400); assert.equal(noRef.data.reason, 'reference');
+  const c = ok(await admin.post(url, body));
+  assert.equal(c.agreed_on, '2020-06-01'); assert.equal(c.reference, body.reference); assert.ok(c.recorded_by); assert.equal(c.withdrawn_at, null);
+  assert.equal((await admin.post(url, body)).status, 409, 'one current consent at a time');
+  const row = H.db.one(`SELECT * FROM county_publication_consents WHERE id=?`, c.id);
+  assert.ok(!row.reference_enc.includes('DCA-2020'), 'the reference is encrypted');
+  const a = lastAudit('county.publication.consent.record');
+  assert.equal(a.entity_id, p.id); assert.equal(a.details.agreed_on, '2020-06-01'); assert.ok(!JSON.stringify(a.details).includes('DCA'), 'the typed reference is not in the audit log');
+  // Programs lists it; the history shows the reference to county:manage only.
+  const listed = ok(await fin.get('/api/county/programmes'), 200).rows.find(x => x.id === p.id);
+  assert.equal(listed.publication_consent.agreed_on, '2020-06-01'); assert.ok(!('reference' in listed.publication_consent));
+  assert.ok(!('reference' in ok(await fin.get(url), 200).current));
+  assert.equal(ok(await admin.get(url), 200).current.reference, body.reference);
+  assert.equal(lastAudit('county.view').details.what, 'publication_consent');
+  // Withdrawn: kept, marked; a second withdrawal is refused; a new agreement can then be recorded.
+  for (const x of [fin, sup]) assert.equal((await x.post(`${url}/withdraw`, {})).status, 403);
+  const w = ok(await admin.post(`${url}/withdraw`, {}), 200);
+  assert.ok(w.withdrawn_at); assert.ok(w.withdrawn_by);
+  assert.equal(lastAudit('county.publication.consent.withdraw').entity_id, p.id);
+  assert.equal((await admin.post(`${url}/withdraw`, {})).status, 409);
+  assert.equal(ok(await admin.get('/api/county/programmes'), 200).rows.find(x => x.id === p.id).publication_consent, null);
+  ok(await admin.post(url, { agreed_on: '2021-01-15', reference: 'DCA-2021 renewal' }));
+  const hist = ok(await admin.get(url), 200);
+  assert.equal(hist.rows.length, 2); assert.equal(hist.current.agreed_on, '2021-01-15');
+  assert.equal((await admin.get('/api/county/programmes/nope/publication-consent')).status, 404);
+});
+
+test('a release that would name a programme without consent is refused, naming it; or the preparer leaves it out and the release says so', async () => {
+  const q = Q(2020, 1);
+  await programme('Harbor Outreach', [[q, 200]]); await programme('Ridge Recovery', [[q, 150]]);
+  const lacking = await programme('Quiet Hills Clinic', [[q, 40]], { consent: false });
+  const r = await prepare(q);
+  assert.equal(r.status, 409); assert.equal(r.data.reason, 'no_consent');
+  assert.match(r.data.error, /Quiet Hills Clinic/); assert.deepEqual(r.data.programmes, [{ id: lacking.id, name: 'Quiet Hills Clinic' }]);
+  const a = lastAudit('county.publication.refuse'); assert.equal(a.details.reason, 'no_consent'); assert.deepEqual(a.details.without_consent, [lacking.id]);
+  assert.equal((await publish({ ...q, sha256: 'f'.repeat(64), reviewed: true })).status, 409);
+  assert.equal((await prepare({ ...q, without_consent: 'maybe' })).status, 400);
+  // Left out: not named, not counted, and the release says which programmes were left out and why.
+  const p = ok(await prepare({ ...q, without_consent: 'leave_out' }), 200);
+  assert.deepEqual(p.content.programmes.map(x => x.name), ['Harbor Outreach', 'Ridge Recovery']);
+  assert.deepEqual(p.content.left_out_without_consent, ['Quiet Hills Clinic']);
+  assert.equal(screenedRow(p.content, 'people_served').value, 350, 'its figures are not in the totals');
+  assert.equal(p.content.rows.find(x => x.key === 'naloxone_kits').value, 160);
+  assert.ok(p.content.notes.some(n => /lack of consent to publication: Quiet Hills Clinic/.test(n)));
+  const rec = ok(await publish({ ...q, without_consent: 'leave_out', sha256: p.sha256, reviewed: true }));
+  assert.equal(lastAudit('county.publication.publish').details.left_out_without_consent, 1);
+  const csv = await (await admin.raw(`/api/county/publications/${rec.id}/export`)).text();
+  assert.match(csv, /Left out for lack of consent to publication,Quiet Hills Clinic/);
+  // Without the choice made again, publishing re-checks consent: refused.
+  const q2 = Q(2020, 2);
+  await programme('Second Quarter Outreach', [[q2, 60]], { consent: false });
+  assert.equal((await publish({ ...q2, sha256: 'f'.repeat(64), reviewed: true })).status, 409);
+  // Consent withdrawn after a release: the next release cannot name the programme.
+  const harbor = H.db.one(`SELECT id FROM county_programmes WHERE name='Harbor Outreach'`).id;
+  ok(await admin.post(`/api/county/programmes/${harbor}/publication-consent/withdraw`, {}), 200);
+  const q3 = Q(2020, 3);
+  ok(await admin.post(`/api/county/programmes/${harbor}/entries`, { ...q3, source_ref: 'Quarterly report', funds: [fund(90)] }));
+  const r3 = await prepare(q3); assert.equal(r3.status, 409); assert.deepEqual(r3.data.programmes.map(x => x.name), ['Harbor Outreach']);
+  // Every programme left out: nothing to publish.
+  const none = await prepare({ ...q3, without_consent: 'leave_out' }); assert.equal(none.status, 422); assert.equal(none.data.reason, 'no_figures');
+});
+
+/**
+ * Differencing across a withdrawn release and its correction: the reader holds both (the withdrawn one was seen), and
+ * each programme's own figure then and now as its own release shows it (exact when 0 or at least T, "<T" when small);
+ * a programme whose figure did not change is one unknown. Every small figure, then or now, is enumerated over the
+ * worlds that print what both releases print; each must still be able to be the lowest small value and range over
+ * ceil(T/2) values (as differencingLeaks above). before/after: each programme's figure, the same programme at the same
+ * index. Returns the leaks.
+ */
+function correctionLeaks(before, after, shownBefore, shownAfter, T) {
+  const P = Math.ceil(T / 2); const small = (x) => x > 0 && x < T; const leaks = [];
+  const unknown = []; const beforeVar = before.map(() => -1); const afterVar = after.map(() => -1);
+  after.forEach((x, i) => { if (small(x)) { afterVar[i] = unknown.length; unknown.push(`now ${i}`); } });
+  before.forEach((x, i) => { if (!small(x)) return; if (i < after.length && after[i] === x) beforeVar[i] = afterVar[i]; else { beforeVar[i] = unknown.length; unknown.push(`then ${i}`); } });
+  const knownBefore = before.reduce((n, x) => n + (small(x) ? 0 : x), 0); const knownAfter = after.reduce((n, x) => n + (small(x) ? 0 : x), 0);
+  const worlds = []; const rec = (i, acc) => { if (i === unknown.length) { worlds.push(acc); return; } for (let x = 1; x < T; x++) rec(i + 1, [...acc, x]); };
+  rec(0, []);
+  const sum = (w, vars, known) => known + vars.reduce((n, j) => n + (j >= 0 ? w[j] : 0), 0);
+  const cls = (v) => (v === 0 ? '0' : v < T ? 'small' : 'big');
+  const prints = (total, shown) => (typeof shown === 'number' ? total === shown : shown === `<${T}` ? cls(total) === 'small' : shown === 'suppressed' ? total >= T : true);
+  const symbolic = (total, shown) => (typeof shown === 'number' ? cls(total) === cls(shown) : prints(total, shown));
+  for (const m of CPA.SCREENED) {
+    const seen = worlds.filter(w => prints(sum(w, beforeVar, knownBefore), shownBefore[m]) && prints(sum(w, afterVar, knownAfter), shownAfter[m]));
+    const sym = worlds.filter(w => symbolic(sum(w, beforeVar, knownBefore), shownBefore[m]) && symbolic(sum(w, afterVar, knownAfter), shownAfter[m]));
+    unknown.forEach((name, j) => {
+      const vs = [...new Set(seen.map(w => w[j]))].sort((a, b) => a - b); const ss = [...new Set(sym.map(w => w[j]))].sort((a, b) => a - b);
+      const L = ss[0]; const U = ss[ss.length - 1];
+      if (!vs.includes(L)) leaks.push(`${m}: ${name} cannot be ${L} (${vs.join(',')})`);
+      else if (vs[vs.length - 1] - vs[0] < Math.min(P - 1, U - L)) leaks.push(`${m}: ${name} ranges only ${vs.join(',')}`);
+    });
+  }
+  return leaks;
+}
+const printedOf = (content) => Object.fromEntries(CPA.SCREENED.map(m => [m, screenedRow(content, m).value]));
+const programmeFigures = (arr) => arr.map((v, i) => ({ id: `p${i}`, values: Object.fromEntries(CPA.SCREENED.map(m => [m, v])) }));
+
+test('a corrected release of a withdrawn release\'s period: audited against everything the withdrawn one printed; brute-force differencing across the two finds nothing', async () => {
+  const q = Q(2019, 1);
+  // Named so that the combined view's order (by name) is the order of the figures below.
+  await programme('A Harbor Outreach', [[q, 200]]); await programme('B Bay Mobile Unit', [[q, 3]]); await programme('C Coast Peer Support', [[q, 4]]); await programme('D Delta Drop-in', [[q, 5]]);
+  const first = ok(await prepare(q), 200);
+  assert.equal(screenedRow(first.content, 'people_served').value, 212, 'the first release prints its total (the small figures protect each other)');
+  const rec = ok(await publish({ ...q, sha256: first.sha256, reviewed: true }));
+  const kept = H.db.one(`SELECT inputs_enc FROM county_publication_inputs WHERE id=?`, rec.id);
+  assert.ok(kept && !kept.inputs_enc.includes('Harbor'), 'what it was screened from is kept, encrypted');
+  assert.throws(() => H.db.run(`DELETE FROM county_publication_inputs WHERE id=?`, rec.id), /append-only/);
+  // Not withdrawn: refused, saying to withdraw first.
+  const live = await prepare(q); assert.equal(live.status, 409); assert.match(live.data.error, /not withdrawn/);
+  ok(await admin.post(`/api/county/publications/${rec.id}/withdraw`, { reason: 'A late file from Estuary Outreach' }), 200);
+  // The correction adds a programme with a small figure: alone, its total (218) would be printed, and beside the
+  // withdrawn 212 it would give Estuary's 6 away. Audited against the withdrawn release, it is suppressed.
+  await programme('E Estuary Outreach', [[q, 6]]);
+  const before = [200, 3, 4, 5]; const after = [200, 3, 4, 5, 6];
+  const second = ok(await prepare(q), 200);
+  const c = second.content;
+  assert.deepEqual(c.programmes.map(p => p.name[0]), ['A', 'B', 'C', 'D', 'E']);
+  assert.deepEqual(c.corrects, [{ sha256: rec.sha256, withdrawn: ok(await admin.get(`/api/county/publications/${rec.id}`), 200).withdrawal.at.slice(0, 10) }]);
+  assert.ok(c.notes.some(n => /A corrected release/.test(n)));
+  for (const m of CPA.SCREENED) assert.equal(screenedRow(c, m).value, 'suppressed', m);
+  assert.deepEqual(correctionLeaks(before, after, printedOf(first.content), printedOf(c), T), []);
+  // Not vacuous: the release the same figures make without the withdrawn one in the audit prints 218, and leaks.
+  const alone = CPA.protectCounty({ programmes: programmeFigures(after) }, T);
+  assert.equal(alone.shown.people_served, 218);
+  assert.ok(correctionLeaks(before, after, printedOf(first.content), alone.shown, T).length > 0);
+  // Published; a second correction is audited against both withdrawn releases.
+  const corrected = ok(await publish({ ...q, sha256: second.sha256, reviewed: true }));
+  assert.deepEqual(lastAudit('county.publication.publish').details.corrects, [rec.sha256]);
+  assert.match(await (await admin.raw(`/api/county/publications/${corrected.id}/export`)).text(), new RegExp(`Corrects,the release withdrawn on [0-9-]+ \\(SHA-256 ${rec.sha256}\\)`));
+  ok(await admin.post(`/api/county/publications/${corrected.id}/withdraw`, { reason: 'Checking again' }), 200);
+  assert.equal(ok(await prepare(q), 200).content.corrects.length, 2);
+  // The year around it is still refused: only exactly the same period can be corrected.
+  const year = await prepare({ from: '2019-01-01', to: '2019-12-31' }); assert.equal(year.status, 409); assert.equal(year.data.reason, 'overlap');
+});
+
+test('corrected releases across many shapes: whatever the correction changes, the two releases together leak nothing', () => {
+  const shapes = [[[200, 3, 4, 5], [200, 3, 4, 30]], [[200, 3, 4, 5], [200, 3, 4]], [[200, 5, 6, 4], [200, 5, 6, 4, 3]], [[200, 3, 4, 5], [210, 3, 4, 5]],
+    [[200, 3, 4, 5], [200, 4, 4, 5]], [[200, 150], [200, 160]], [[50, 60, 2], [50, 60, 2, 9]], [[30, 1, 2, 3, 4], [30, 1, 2, 3]], [[3], [4]], [[200, 9, 9], [200, 9, 9, 0]]];
+  for (const [before, after] of shapes) {
+    const old = CPA.protectCounty({ programmes: programmeFigures(before) }, T);
+    assert.ok(!old.refused, `${before}`);
+    const printed = Object.fromEntries(CPA.SCREENED.map(m => [m, old.shown[m]]));
+    const r = CPA.protectCounty({ programmes: programmeFigures(after), earlier: [{ programmes: programmeFigures(before), printed }] }, T);
+    assert.ok(!r.refused, `${before} -> ${after}: ${JSON.stringify(r.refused)}`);
+    assert.deepEqual(correctionLeaks(before, after, printed, r.shown, T), [], `${before} -> ${after}: ${JSON.stringify(printed)} then ${JSON.stringify(r.shown)}`);
+    // Nothing is lost when no small figure changed: the correction of a big figure prints its total.
+    if (JSON.stringify(before.slice(1)) === JSON.stringify(after.slice(1)) && before[0] !== after[0] && typeof printed.people_served === 'number') assert.equal(typeof r.shown.people_served, 'number', `${before} -> ${after}`);
+    // Every cell another release printed is fixed: never hidden or withheld by the new audit.
+    for (const { model, status } of r.parts) model.vars.forEach((v, i) => { if (v.fixed) assert.equal(status[i], v.value > 0 && v.value < T ? 'pri' : 'vis', v.id); });
+  }
+});
+
+test('a corrected release is refused when the withdrawn release kept no record of what it was screened from (published before 1.22), or its threshold differs', async () => {
+  // A release as 1.21.0 recorded it: no county_publication_inputs row.
+  const q = Q(2018, 1);
+  const C = require('../server/crypto');
+  const id = C.uuid(); const content = JSON.stringify({ rows: [] });
+  H.db.run(`INSERT INTO county_publications(id,kind,period_from,period_to,threshold,entered,method,content,sha256) VALUES(?,?,?,?,?,?,?,?,?)`, id, 'release', q.from, q.to, T, 'include', '{}', content, K.sha256Hex(content));
+  H.db.run(`INSERT INTO county_publications(id,kind,release_id,period_from,period_to,threshold,entered,method,sha256,reason_enc) VALUES(?,?,?,?,?,?,?,?,?,?)`, C.uuid(), 'withdrawal', id, q.from, q.to, T, 'include', '{}', K.sha256Hex(content), C.encrypt('old'));
+  const harbor = await programme('Harbor Outreach', [[q, 200]]);
+  const r = await prepare(q); assert.equal(r.status, 409); assert.equal(r.data.reason, 'overlap'); assert.match(r.data.error, /before SUDS 1\.22/);
+  // A threshold of its own: the correction uses the withdrawn release's when none is given, and another is refused.
+  const q2 = Q(2018, 2);
+  ok(await admin.post(`/api/county/programmes/${harbor.id}/entries`, { ...q2, source_ref: 'Quarterly report', funds: [fund(200)] }));
+  await programme('Ridge Recovery', [[q2, 150]]);
+  const p = ok(await prepare({ ...q2, threshold: 20 }), 200);
+  const rec = ok(await publish({ ...q2, threshold: 20, sha256: p.sha256, reviewed: true }));
+  ok(await admin.post(`/api/county/publications/${rec.id}/withdraw`, { reason: 'wrong threshold' }), 200);
+  const other = await prepare({ ...q2, threshold: 11 }); assert.equal(other.status, 400); assert.equal(other.data.reason, 'threshold');
+  assert.equal(ok(await prepare(q2), 200).threshold, 20);
+});
+
+test('the governance tables are office-only with their encrypted columns', () => {
+  const SYNC = require('../server/sync-tables');
+  for (const t of ['county_publication_consents', 'county_publication_inputs']) assert.ok(SYNC.server_only.includes(t), t);
+  assert.deepEqual(SYNC.unsynced_enc.county_publication_consents, ['reference_enc']);
+  assert.deepEqual(SYNC.unsynced_enc.county_publication_inputs, ['inputs_enc']);
+  // Key rotation finds both (it addresses rows by id): the reference and the inputs stay readable after a rotation.
+  const found = require('../scripts/rotate-key').encryptedColumns(H.db).map(t => `${t.table}:${t.cols.join(',')}`);
+  for (const t of ['county_publication_consents:reference_enc', 'county_publication_inputs:inputs_enc']) assert.ok(found.includes(t), t);
 });

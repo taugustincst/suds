@@ -157,9 +157,10 @@ Software cannot close these. Suggested timeline from the start of Phase 1.
   connection, off by default, were released in 1.18.0, with SUDS Server (the Linux installer and its signed
   compliance check; run in a systemd container, not yet on a real VM by the project); fingerprint sign-in and signing
   with passkeys was released in 1.19.0 (office server only); county-entered figures for grantees not on SUDS
-  (marked as entered by the county, never as signed) in 1.20.0. Minimal-PII field defaults and a field device scope, the referral
-  network, a published cross-CBO view and the outcomes dataset are planned ([STRATEGY.md](STRATEGY.md), *Built vs
-  planned, exactly*). Say a compliance report *shows* what it observed, never that SUDS Server *makes* a programme
+  (marked as entered by the county, never as signed) in 1.20.0. Minimal-PII field defaults and a field device scope
+  (off until an administrator turns them on), and the county's publication screen (screened releases of the
+  combined figures, not a dashboard), came in 1.21.0. The referral network, a published cross-CBO dashboard and the
+  outcomes dataset are planned ([STRATEGY.md](STRATEGY.md), *Built vs planned, exactly*). Say a compliance report *shows* what it observed, never that SUDS Server *makes* a programme
   compliant. Say "SUDS's own checks" for the CalOMS extract, never
   "validated" or "submission-ready" without "to verify against the DHCS data dictionary".
 - Keep this pack in step with the product: when a workstream changes status, update the scorecard.

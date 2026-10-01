@@ -811,8 +811,17 @@ const migrations = [
     d.exec(`UPDATE devices SET scope_set_by='admin' WHERE scope_set_by IS NULL AND sync_scope='full' AND scope_changed_at IS NOT NULL`);
     d.exec(`INSERT OR IGNORE INTO field_accounts(user_id, bound_at, bound_via) SELECT user_id, MIN(COALESCE(scope_changed_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))), 'migration' FROM devices WHERE sync_scope='field' GROUP BY user_id`);
   },
-  // 65: likewise held for another 1.22.0 stream's migration; a documented no-op on this branch.
-  () => {},
+  // 65: county publication governance (built for 1.22.0; docs/COUNTY-VIEW.md "Publication"):
+  //     county_publication_consents (each registered programme's written agreement to publication, and its
+  //     withdrawal) and county_publication_inputs (what each release from now on was screened from, encrypted, for a
+  //     corrected release of the same period), the latter append-only (its triggers, as schema.sql declares them).
+  //     New tables: nothing to backfill (a release published before has no inputs, and a corrected release of its
+  //     period stays refused). Office server only. Self-contained and idempotent, so it can be renumbered.
+  (d) => {
+    const text = safeSchema();
+    createTablesFromSchema(d, text, ['county_publication_consents', 'county_publication_inputs'], 65);
+    for (const m of text.matchAll(/CREATE TRIGGER IF NOT EXISTS county_publication_inputs_\w+ [\s\S]*?END;/g)) d.exec(m[0]);
+  },
   // 66: the authenticator allow-list's grace period (built for 1.22.0, not yet released; docs/FINGERPRINT.md
   //     "Grace period"): passkeys.allowlist_grace_until, NULL for every existing passkey (none is in a grace period:
   //     a list turned on under 1.21.0 refused at once). Office server only. Self-contained and idempotent, so it can be

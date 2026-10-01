@@ -12,7 +12,7 @@ const E = require('../server/county-entry');
 const SCH = require('../server/county-schedule');
 const SAMPLE = require('../scripts/county-sample');
 
-let admin, fin, nav, ro, sup;
+let admin, fin, nav, ro, sup; let base;
 let COUNTY; let fundA; let fundZero;
 const Q1 = { from: '2026-01-01', to: '2026-03-31' }; const Q2 = { from: '2026-04-01', to: '2026-06-30' };
 const H1 = { from: Q1.from, to: Q2.to };
@@ -41,7 +41,7 @@ async function registerSamples(n = 3) {
 const fileUrl = (period, funds, extra = '') => `/api/county-submission/file?from=${period.from}&to=${period.to}&county_code=${COUNTY.county_code}&county_name=${encodeURIComponent(COUNTY.county_name)}&funds=${funds.join(',')}${extra}`;
 
 before(async () => {
-  await H.start();
+  base = await H.start();
   H.db.setSetting('org_name', 'Award Test Programme');
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
   for (const [u, role] of [['awfin', 'finance'], ['awnav', 'navigator'], ['awro', 'readonly'], ['awsup', 'supervisor']]) H.makeUser(u, role);
@@ -198,6 +198,52 @@ test('an award is counted once however many files carry it: two quarters of one 
   const q = ok(await admin.get('/api/county/view?from=2025-10-01&to=2026-03-31&by=quarter'), 200);
   const qa = q.rows.find(x => x.key === 'award_amount');
   assert.deepEqual(qa.by_quarter, [80000, 80000]); assert.deepEqual(qa.by_quarter_over, [1, 1]); assert.match(q.award_note, /each quarter/);
+});
+
+test('the award pro-rated to the period (built for 1.22.0): award × days of the period inside the award period ÷ award-period days, beside the whole award; in the view, by quarter, the exports and the read API', async () => {
+  freshCounty();
+  const [rb, , hv] = await registerSamples(3);
+  ok(await importText(text(sampleFile(0, Q1, 2).file)));
+  ok(await importText(text(sampleFile(2, Q1, 2).file)));
+  const fy = SAMPLE.fiscalYearOf(Q1.from);
+  const days = (a, b) => (Date.parse(b) - Date.parse(a)) / 86400000 + 1;
+  const share = (amount) => (amount * days(Q1.from, Q1.to)) / days(fy.from, fy.to);
+  assert.equal(Math.round(K.prorate({ amount: 365, from: '2025-07-01', to: '2026-06-30' }, '2026-01-01', '2026-03-31')), 90, '90 of 365 days');
+  assert.equal(K.prorate({ amount: 1000, from: '2025-07-01', to: '2026-06-30' }, '2026-07-01', '2026-09-30'), 0, 'no overlap: 0');
+  assert.equal(K.prorate({ amount: 1000, from: '2026-02-01', to: '2026-02-28' }, '2026-01-01', '2026-03-31'), 1000, 'an award inside the period: all of it');
+  const d = ok(await admin.get(`/api/county/view?from=${Q1.from}&to=${Q1.to}`), 200);
+  const row = (k) => d.rows.find(x => x.key === k);
+  const r2 = (n) => Math.round(n * 100) / 100; const r1 = (n) => Math.round(n * 10) / 10;
+  // The whole award stays as it was; the pro-rated rows come after it.
+  assert.deepEqual(d.rows.filter(x => x.group === 'award').map(x => x.key), ['award_amount', 'award_spent', 'award_spent_pct', 'award_prorated', 'award_spent_prorated_pct']);
+  assert.equal(row('award_amount').by[hv.id], 80000);
+  assert.equal(row('award_prorated').by[hv.id], r2(share(80000)));
+  assert.equal(row('award_prorated').by[rb.id], r2(share(240000)));
+  assert.match(row('award_prorated').label, /Award pro-rated to the period/); assert.equal(row('award_spent_prorated_pct').label, 'Spent against the pro-rated award (%)');
+  const hvSpent = row('award_spent').by[hv.id];
+  assert.equal(row('award_spent_prorated_pct').by[hv.id], r1((hvSpent / share(80000)) * 100));
+  assert.ok(row('award_spent_prorated_pct').by[hv.id] > row('award_spent_pct').by[hv.id], 'a quarter against a quarter\'s share reads higher than against the whole year');
+  assert.equal(row('award_spent_prorated_pct').percent, true);
+  assert.equal(row('award_prorated').total, r2(r2(share(240000)) + r2(share(80000)))); assert.equal(row('award_prorated').total_over, 2);
+  assert.equal(d.programmes.find(p => p.id === hv.id).award.prorated, r2(share(80000)));
+  assert.match(d.award.note, /pro-rated to the period is each award times the days/);
+  // By quarter: each quarter's own share.
+  const q = ok(await admin.get(`/api/county/view?from=${Q1.from}&to=${Q1.to}&by=quarter`), 200);
+  assert.deepEqual(q.rows.find(x => x.key === 'award_prorated').by_quarter, [row('award_prorated').total]);
+  assert.ok(q.rows.find(x => x.key === 'award_spent_prorated_pct'));
+  // The exports and the read API carry them, labelled.
+  const csv = ok(await fin.get(`/api/county/view/export?from=${Q1.from}&to=${Q1.to}&format=csv`), 200);
+  assert.match(csv, /Award pro-rated to the period/); assert.match(csv, /Spent against the pro-rated award \(%\)/); assert.match(csv, /Spent against the award \(%\)/);
+  ok(await admin.put('/api/county-connect/settings', { enabled: true }), 200);
+  try {
+    const rt = ok(await admin.post('/api/county-connect/tokens', { scope: 'county.read', name: 'Award dashboard' }));
+    const res = await fetch(`${base}/api/county-connect/v1/combined?from=${Q1.from}&to=${Q1.to}`, { headers: { Authorization: `Bearer ${rt.token}` } });
+    const j = await res.json();
+    assert.equal(j.rows.find(x => x.key === 'award_prorated').by[hv.id], r2(share(80000)));
+    assert.match(j.notes.award, /award_prorated is the award pro-rated to the period/);
+    const tidy = await (await fetch(`${base}/api/county-connect/v1/combined?from=${Q1.from}&to=${Q1.to}&format=tidy-csv`, { headers: { Authorization: `Bearer ${rt.token}` } })).text();
+    assert.match(tidy, /award_spent_prorated_pct,Spent against the pro-rated award \(%\),percent/);
+  } finally { ok(await admin.put('/api/county-connect/settings', { enabled: false }), 200); }
 });
 
 test('a programme whose version 2 files carry no award at all is "no award recorded", not "award not in file"; with no award anywhere the totals are empty, never 0', async () => {

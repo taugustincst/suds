@@ -194,7 +194,79 @@ test('every buyer document names a version on the stamped minor line', () => {
   assert.deepEqual(silent, [], `these never mention ${minor(version)}: say what ${minor(version)} changed for their reader (or that it changed nothing)`);
 });
 
+// ---- 5. Released features are not called unbuilt or planned (built for 1.22.0) ----
+// The market review of 1.21.0 found documents a buyer reads still calling released features unbuilt: COUNTY-KIT
+// "until the publication screen … exists", DATA-NETWORK "Not built: the publication screen", DEMO-SCRIPT naming the
+// field device scope as planned, and the data contribution agreement saying SUDS has no publication function. This
+// keeps it mechanical: each feature phrase below, with the release that shipped it (whose CHANGELOG heading has a
+// date), is looked for in every buyer, market and security document; a sentence that names it and says "not built",
+// "planned", "not yet" or "until … exists" fails. A sentence that also says "released" (or is struck through) is
+// about the release that shipped it and is not flagged. Add a row when a release ships what the documents called planned.
+const RELEASED_FEATURES = [
+  [/\bcounty view\b/i, '1.18.0'],
+  [/\bcounty connection\b/i, '1.18.0'],
+  [/\bfingerprint sign-in\b/i, '1.19.0'],
+  [/\bcounty-entered figures\b|\bfigures (?:that )?the county enter(?:s|ed)\b/i, '1.20.0'],
+  [/\bpublication screen\b/i, '1.21.0'],
+  [/\bpublication function\b/i, '1.21.0'],
+  [/\bfield[- ]device scope\b/i, '1.21.0'],
+  [/\bauthenticator allow-list\b/i, '1.21.0'],
+  [/\baward amounts\b/i, '1.21.0'],
+];
+const UNBUILT = /\bnot built\b|\bplanned\b|\bnot yet\b|\buntil\b[^.;]*\bexists?\b|\bha(?:s|ve) no\b[^.;]*\bfunction\b/i;
+/** Buyer, market and security documents: README.md, SECURITY.md, BUYER_DOCS, docs/market/** and docs/security/**. */
+function buyerFacing() {
+  const out = new Set(['README.md', 'SECURITY.md', ...BUYER_DOCS].filter(f => fs.existsSync(path.join(ROOT, f))));
+  for (const d of ['docs/market', 'docs/security']) for (const f of walk(path.join(ROOT, d), '.md')) out.add(rel(f));
+  return [...out].sort();
+}
+/** The sentences of a Markdown text: paragraphs, list items and table rows, each split at . ! ? and ;. */
+function sentences(text) {
+  const blocks = [];
+  let cur = [];
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t || /^(?:[-*+]|\d+\.)\s/.test(t) || t.startsWith('#') || t.startsWith('|')) { if (cur.length) blocks.push(cur.join(' ')); cur = []; }
+    // A table row is one unit (a feature in one cell, its state in the next), its cells joined by " — ".
+    if (t.startsWith('|')) { blocks.push(t.replace(/^\|\s*|\s*\|$/g, '').split(/\s\|\s/).join(' — ')); continue; }
+    if (t) cur.push(t.replace(/^(?:[-*+]|\d+\.)\s+/, ''));
+  }
+  if (cur.length) blocks.push(cur.join(' '));
+  return blocks.flatMap(b => flat(b).split(/(?<=[.!?;])\s+/)).filter(Boolean);
+}
+/** Each sentence that names a released feature and calls it unbuilt: [feature, release, sentence]. */
+function unbuiltClaims(text, released) {
+  const out = [];
+  for (const s of sentences(text)) {
+    if (!UNBUILT.test(s) || /\breleased\b|~~/i.test(s)) continue;
+    for (const [re, v] of RELEASED_FEATURES) if (released(v) && re.test(s)) out.push([re.source, v, s]);
+  }
+  return out;
+}
+
+test('no buyer, market or security document calls a released feature "not built", "planned", "not yet" or "until … exists"', () => {
+  const { version } = stampedRelease();
+  const log = read('CHANGELOG.md');
+  for (const [, v] of RELEASED_FEATURES) assert.match(log, new RegExp(`^## ${v.replace(/\./g, '\\.')} — \\d{4}-\\d{2}-\\d{2}\\s*$`, 'm'), `${v} is a dated release in CHANGELOG.md`);
+  const released = (v) => cmp(v, version) <= 0;
+  const stale = [];
+  for (const f of buyerFacing()) for (const [, v, s] of unbuiltClaims(read(f), released)) stale.push(`${f}: released in ${v}, but "${s.slice(0, 220)}"`);
+  assert.deepEqual(stale, [], 'say what was released (and what is still not built) instead');
+});
+
 test('the checks find what they are for', () => {
+  // Released features called unbuilt: what the review of 1.21.0 found, and what is fine.
+  const all = () => true;
+  for (const s of ['nothing on the county view is for publication until the publication screen over the combined release exists.',
+    '**Not built:** the publication screen over the combined release (so nothing from the county view can be published), and the template.',
+    'Planned capabilities (the referral network, the outcomes dataset, a field device scope, a published county dashboard) are named as planned.',
+    'The SUDS county view and its files are labelled internal and exact and have no publication function.',
+    '| Authenticator allow-list | Not yet |']) assert.ok(unbuiltClaims(s, all).length, s);
+  for (const s of ['The publication screen is released in 1.21.0.', 'A published county dashboard is planned.', '~~Publication screen~~: not built until 1.21.0.',
+    'The county view was planned in 1.17.0 and released in 1.18.0.', 'Each consent in the county view is built for 1.22.0, not yet released.']) assert.deepEqual(unbuiltClaims(s, all), [], s);
+  assert.equal(unbuiltClaims('The publication screen is planned.', (v) => v === '1.18.0').length, 0, 'a feature not yet released may be called planned');
+  assert.deepEqual(sentences('A first. A second; a third\n\n- an item\n| cell one | cell two |'), ['A first.', 'A second;', 'a third', 'an item', 'cell one — cell two']);
+
   // Audit actions: both branches of a ternary, a const, the throttle helper; never a non-action string.
   assert.deepEqual([...actionsIn(`audit.log({ user, action: entered ? 'county.entry.withdraw' : 'county.submission.withdraw', ip })`)].sort(), ['county.entry.withdraw', 'county.submission.withdraw']);
   assert.deepEqual([...actionsIn(`const action = out.status === 'duplicate' ? 'county.submission.duplicate' : 'county.submission.import';`)].sort(), ['county.submission.duplicate', 'county.submission.import']);

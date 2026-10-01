@@ -150,6 +150,9 @@ module.exports = {
     'county_signing_keys', 'county_programmes', 'county_programme_keys', 'county_submissions',
     // county_publications (released in 1.21.0): the county's published releases and their withdrawals.
     'county_publications',
+    // county_publication_consents and county_publication_inputs (built for 1.22.0): each programme's written consent
+    // to publication, and what each release was screened from. On the county's server only.
+    'county_publication_consents', 'county_publication_inputs',
     // county_connect_* and county_connection (the county connection, docs/COUNTY-VIEW.md "Connecting"): the machine
     // tokens a county issues, and on a programme's server the county it sends to and its send log. A device has none.
     'county_connect_tokens', 'county_connection', 'county_connect_sends',
@@ -168,6 +171,7 @@ module.exports = {
     privacy_incident_clients: ['client_name_enc'], fhir_jwt_assertions: [], caloms_submissions: ['file_enc'], client_revisions: ['changes_enc'], ai_usage: [],
     caloms_submission_events: [], referral_links: ['packet_enc', 'ack_by_enc', 'ack_note_enc'],
     county_signing_keys: ['private_key_enc'], county_programmes: [], county_programme_keys: [], county_submissions: ['payload_enc', 'source_ref_enc'], county_publications: ['reason_enc'],
+    county_publication_consents: ['reference_enc'], county_publication_inputs: ['inputs_enc'],
     county_connect_tokens: [], county_connection: ['token_enc'], county_connect_sends: [],
     passkeys: [], webauthn_challenges: [], signature_evidence: ['evidence_enc'], authenticator_metadata: [],
     idempotency_keys: ['response_enc'],
@@ -203,6 +207,7 @@ module.exports = {
     ['caloms_submissions', 'uploaded_by'], ['caloms_submission_events', 'user_id'], ['referral_links', 'created_by'], ['referral_links', 'revoked_by'],
     ['county_signing_keys', 'created_by'], ['county_signing_keys', 'retired_by'], ['county_programmes', 'created_by'], ['county_programme_keys', 'added_by'], ['county_programme_keys', 'replaced_by'],
     ['county_programme_keys', 'compromised_by'], ['county_submissions', 'received_by'], ['county_submissions', 'withdrawn_by'], ['county_publications', 'created_by'],
+    ['county_publication_consents', 'recorded_by'], ['county_publication_consents', 'withdrawn_by'],
     ['county_connect_tokens', 'created_by'], ['county_connect_tokens', 'revoked_by'], ['county_connection', 'updated_by'], ['county_connect_sends', 'sent_by'],
     ['passkeys', 'user_id'], ['signature_evidence', 'user_id'], ['webauthn_challenges', 'user_id'],
   ],
