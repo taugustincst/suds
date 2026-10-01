@@ -1,0 +1,12 @@
+$ systemctl start suds-compliance
+Job for suds-compliance.service failed because the control process exited with error code.
+See "systemctl status suds-compliance.service" and "journalctl -xeu suds-compliance.service" for details.
+Result: FAIL  (38 pass, 1 fail, 6 warning, 2 could not check)
+Wrote /var/lib/suds-compliance/compliance-2026-10-01T05-02-57-630Z.json
+  app.passkeys: pass
+  app.https: pass
+  app.backups: pass
+  app.dr_drill: pass
+  host.release_integrity: pass
+
+WEBAUTHN_RP_ID is set in /etc/suds/suds.env: nothing to add.

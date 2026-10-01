@@ -75,6 +75,40 @@ No migration, no new route and no new permission; one new audit action, `device.
   clinical notes keeps it in the phone's main menu, and **Supplies** folds into More for them instead (still at most
   12 top-level entries; navigators unchanged).
 
+### Evidence on 1.23.0: recovery drill, upgrade drill and installer run
+
+Evidence and tests only; no change to what SUDS does. One finding for the owner, recorded and not fixed here.
+
+- **Recovery drill on 1.23.0** (docs/evidence/dr-drill-2026-10-01-v1.23.0/): `scripts/dr-exercise.js --clients 20000`
+  on the released tree (`9877d07`, schema 67, 79 tables): 11 of 11 checks, drill RTO 4.5 s, host-procedure RTO 3 s,
+  RPO 5 s, within a second of the five earlier drills; the signed report verifies with the public key beside it.
+- **Upgrade drill to 1.23.0** (docs/evidence/upgrade-drill-2026-10-01-v1.23.0/): databases written by 1.21.0 and
+  1.22.0 (20,000 fictional clients each) opened by 1.23.0, migrations 64 to 67 and 67. The driver now has the older
+  release narrow a device to the field scope, turn the authenticator allow-list on (a metadata file signed under the
+  TEST-ONLY root) with a passkey enrolled before it and an attested one under it, make follow-up to-dos from a call and
+  a visit, send a supervisor's reminder to sign a draft, record each programme's consent to publication (1.22.0) and
+  publish a county release. 1.23.0 keeps every one of those rows unchanged by the columns the older release had; tells
+  the field device, and its account's next new device, `field`; refuses the passkey from before the list after 1.21.0
+  and honours its grace period after 1.22.0; moves the to-dos when their dates change, with no second one; closes the
+  reminder when the draft is signed; and publishes a corrected release of the older release's period after 1.22.0
+  (refused after 1.21.0, which kept no inputs, as documented). Schema identical to a fresh install, nothing lost; 28 of
+  28 steps and 11 of 11 drill checks each.
+- **`test/fixtures/release-v1.22.0.sql`** (`make-release-fixture.js --rich` from `8b136df`; the maker now writes a
+  release's county publication releases, withdrawal, consents and corrected release through that release's API, since
+  their CHECKs refuse made-up rows) joins the release-fixture upgrade test, and `test/migrations.test.js` checks 1.23.0's
+  first start on it: the county publication tables, the field device and its account, the passkeys (attested, and in a
+  grace period), the sessions, the follow-up to-dos and a reminder come through unchanged by 1.22.0's columns; the new
+  `tasks` columns are NULL; an old to-do is linked and moved the first time its call's or visit's date changes; the
+  reminder closes; the audit chain verifies.
+- **Installer run on 1.23.0** (docs/evidence/installer-container-run-2026-10-01-v1.23.0/): `install.sh` 1.23.0 on
+  Ubuntu 24.04 with systemd in a container (38 pass, 1 fail: the container's clock; drills 11 of 11 and, with the
+  escrowed key file, 12 of 12); `upgrade.sh` 1.22.0 → 1.23.0 with the installed 1.22.0 script (exit 0, migration 67,
+  the same compliance result). The 1.21.0 run's findings are closed: under the service's sandbox SUDS logs "listening
+  on", with no unhandled rejection, and `/api/setup/status` and `/api/app/info` answer 200 for a signed-in session;
+  the dry run from a zip names the possible hand-over; the staging line names the operator's checksum. **Finding:**
+  1.22.0 and 1.23.0 ship the same `upgrade.sh` and `lib.sh`, so the installed upgrader rightly ran the upgrade itself
+  and the hand-over between two real releases has still not been seen; it was exercised again with a probe build.
+
 ## 1.23.0 — 2026-10-01
 
 A feature release (migration 67; new routes `POST /api/supervision/referrals/:id/remind`, `GET /api/me/field-device`,

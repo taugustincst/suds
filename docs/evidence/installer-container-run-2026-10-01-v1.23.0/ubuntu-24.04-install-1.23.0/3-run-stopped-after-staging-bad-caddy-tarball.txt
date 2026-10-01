@@ -1,0 +1,66 @@
++ exec deploy/linux/install.sh --domain=suds.county.test --admin-cidr=10.20.0.0/16 --offsite=/mnt/suds-offsite --anchors=/mnt/worm/suds-anchors --tls=county-cert --cert=/root/pki/site.pem --key=/root/pki/site.key --ca-file=/root/pki/ca.pem --source=/root/suds-v1.23.0.zip --release-sha256=aa785678b0fe28967732fdf4826c5a89a25337c7fcae03512ca7105e45795a81 --node-tarball=/root/node-v22.23.3-linux-x64.tar.xz --caddy-tarball=/root/caddy-truncated.tar.gz --ntp-server=time.county.test '--accept-unencrypted-disk=installer drill in a systemd container: no LUKS volume attached' --console-access
+SUDS Server installer — SUDS 1.23.0
+
+== Checking the host ==
+  - Ubuntu 24.04.5 LTS (debian family)
+WARNING: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: !!! /var/lib/suds IS NOT ON AN ENCRYPTED VOLUME. Client records will sit on this disk unencrypted at rest
+WARNING: !!! (only the PHI fields SUDS encrypts itself are protected). Accepted by the operator: installer drill in a systemd container: no LUKS volume attached
+WARNING: !!! Every compliance report will carry this as RISK ACCEPTED until the data is moved to a LUKS volume.
+WARNING: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  - data volume: /var/lib is on overlay from overlay (not a local block device)
+  - --console-access: the SSH lock-out check is skipped (you are at the console)
+  - the shares are writable by suds: /mnt/worm/suds-anchors /mnt/suds-offsite
+
+== Packages ==
+Ign:1 https://archive.ubuntu.com/ubuntu noble InRelease
+Ign:2 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+Ign:3 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+Ign:4 https://security.ubuntu.com/ubuntu noble-security InRelease
+Ign:1 https://archive.ubuntu.com/ubuntu noble InRelease
+Ign:4 https://security.ubuntu.com/ubuntu noble-security InRelease
+Ign:2 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+Ign:3 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+Ign:4 https://security.ubuntu.com/ubuntu noble-security InRelease
+Ign:1 https://archive.ubuntu.com/ubuntu noble InRelease
+Ign:2 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+Ign:3 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+Err:4 https://security.ubuntu.com/ubuntu noble-security InRelease
+  Temporary failure resolving 'security.ubuntu.com'
+Err:1 https://archive.ubuntu.com/ubuntu noble InRelease
+  Temporary failure resolving 'archive.ubuntu.com'
+Err:2 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+  Temporary failure resolving 'archive.ubuntu.com'
+Err:3 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+  Temporary failure resolving 'archive.ubuntu.com'
+Reading package lists...
+W: Failed to fetch https://archive.ubuntu.com/ubuntu/dists/noble/InRelease  Temporary failure resolving 'archive.ubuntu.com'
+W: Failed to fetch https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease  Temporary failure resolving 'archive.ubuntu.com'
+W: Failed to fetch https://archive.ubuntu.com/ubuntu/dists/noble-backports/InRelease  Temporary failure resolving 'archive.ubuntu.com'
+W: Failed to fetch https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease  Temporary failure resolving 'security.ubuntu.com'
+W: Some index files failed to download. They have been ignored, or old ones used instead.
+Reading package lists...
+Building dependency tree...
+Reading state information...
+ca-certificates is already the newest version (20260601~24.04.1).
+xz-utils is already the newest version (5.6.1+really5.4.5-1ubuntu0.3).
+unzip is already the newest version (6.0-28ubuntu4.1).
+ufw is already the newest version (0.36.2-6).
+unattended-upgrades is already the newest version (2.9.1+nmu4ubuntu1).
+systemd-timesyncd is already the newest version (255.4-1ubuntu8.17).
+0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+
+== Staging SUDS 1.23.0 ==
+  - suds-v1.23.0.zip: sha256 matches the checksum given with --release-sha256
+
+== Node.js (pinned: v22.23.3) ==
+  - node-v22.23.3-linux-x64.tar.xz: sha256 matches the pinned checksum
+
+== Caddy (pinned: 2.10.2) ==
+REFUSED: checksum mismatch for caddy_2.10.2_linux_amd64.tar.gz: expected sha512 747df7ee74de188485157a383633a1a963fd9233b71fbb4a69ddcbcc589ce4e2cc82dacf5dbbe136cb51d17e14c59daeb5d9bc92487610b0f3b93680b2646546, got 2ac28ab6e061360bcf9e2ab49f8604623e43d5ace3113649c2ed863e0999ea654a63ed3adc178d7a252db4613d95d8a48a361dc98d2a99a5ea67b9ab356fb1a8. Refusing to install it (a corrupted or substituted download).
+exit 1
+1.23.0
+node
+node-v22.23.3
+operator
+ls: cannot access '/etc/suds': No such file or directory

@@ -1,0 +1,40 @@
+
+$ curl https://suds.county.test/api/health (through Caddy, the county CA)
+{"ok":true,"uptime_seconds":26,"database":"ok"}
+HTTP 200
+
+$ curl -I http://suds.county.test/
+HTTP 308 -> https://suds.county.test/
+
+$ response headers (HSTS)
+strict-transport-security: max-age=31536000; includeSubDomains; preload
+
+$ grep -E 'RELEASE_CHECKSUM|SUDS_VERSION' /etc/suds/suds-server.conf
+SUDS_VERSION=1.23.0
+SUDS_RELEASE_CHECKSUM_SOURCE=operator
+
+$ cat /opt/suds/current/.suds-release-checksum
+operator
+
+$ grep -E 'WEBAUTHN|TRUST_PROXY' /etc/suds/suds.env
+TRUST_PROXY=1
+WEBAUTHN_RP_ID=suds.county.test
+WEBAUTHN_ORIGINS=https://suds.county.test
+
+$ ls -l /mnt/suds-offsite /var/lib/suds/backups (first backup and drill, made by the installer)
+/mnt/suds-offsite:
+total 1412
+-rw------- 1 suds suds 1441820 Oct  1 05:00 suds-2026-10-01T05-00-49-588Z.db.enc
+
+/var/lib/suds/backups:
+total 1424
+-rw------- 1 suds suds    6641 Oct  1 05:00 dr-drill-2026-10-01T05-00-49-587Z.json
+-rw------- 1 suds suds    2503 Oct  1 05:00 dr-drill-2026-10-01T05-00-49-587Z.txt
+-rw------- 1 suds suds 1441820 Oct  1 05:00 suds-2026-10-01T05-00-49-588Z.db.enc
+
+$ first administrator (guest, the temporary password from /var/lib/suds/first-admin-password.txt, not printed) signs in over HTTPS
+"username":"guest"
+"role":"admin"
+"must_change_password":true
+"mfaPending":false
+HTTP 200

@@ -1,0 +1,151 @@
++ exec deploy/linux/install.sh --domain=suds.county.test --admin-cidr=10.20.0.0/16 --offsite=/mnt/suds-offsite --anchors=/mnt/worm/suds-anchors --tls=county-cert --cert=/root/pki/site.pem --key=/root/pki/site.key --ca-file=/root/pki/ca.pem --source=/root/suds-v1.23.0.zip --release-sha256=aa785678b0fe28967732fdf4826c5a89a25337c7fcae03512ca7105e45795a81 --node-tarball=/root/node-v22.23.3-linux-x64.tar.xz --caddy-tarball=/root/caddy_2.10.2_linux_amd64.tar.gz --ntp-server=time.county.test '--accept-unencrypted-disk=installer drill in a systemd container: no LUKS volume attached' --console-access --dry-run
+SUDS Server installer — SUDS 1.23.0 (dry run: nothing is changed)
+
+== Checking the host ==
+  - Ubuntu 24.04.5 LTS (debian family)
+  - data volume: /var/lib is on overlay from overlay (not a local block device)
+WARNING: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: !!! /var/lib/suds IS NOT ON AN ENCRYPTED VOLUME. Client records will sit on this disk unencrypted at rest
+WARNING: !!! (only the PHI fields SUDS encrypts itself are protected). Accepted by the operator: installer drill in a systemd container: no LUKS volume attached
+WARNING: !!! Every compliance report will carry this as RISK ACCEPTED until the data is moved to a LUKS volume.
+WARNING: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  - --console-access: the SSH lock-out check is skipped (you are at the console)
++ useradd --system --user-group --home-dir /var/lib/suds --no-create-home --shell /usr/sbin/nologin suds
+WARNING: /mnt/worm/suds-anchors (the anchor share, write-once; owner root:root, mode 755) will probably not be writable by the new suds user: the real run refuses then. Create the user first (the useradd above) and give it write access, e.g. chown suds:suds /mnt/worm/suds-anchors && chmod 0700 /mnt/worm/suds-anchors
+WARNING: /mnt/suds-offsite (the offsite share; owner root:root, mode 755) will probably not be writable by the new suds user: the real run refuses then. Create the user first (the useradd above) and give it write access, e.g. chown suds:suds /mnt/suds-offsite && chmod 0700 /mnt/suds-offsite
+
+== Packages ==
++ env DEBIAN_FRONTEND=noninteractive apt-get update -q
++ env DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends ca-certificates xz-utils unzip ufw unattended-upgrades systemd-timesyncd
+
+== Staging SUDS 1.23.0 ==
+  - suds-v1.23.0.zip: sha256 matches the checksum given with --release-sha256
++ unzip -q /tmp/tmp.MQTMRqlfDo/suds-v1.23.0.zip -d /tmp/tmp.MQTMRqlfDo
++ install -d -m 0755 -o root -g root /opt/suds /opt/suds/1.23.0.partial
++ copy /tmp/tmp.MQTMRqlfDo/suds-v1.23.0 into /opt/suds/1.23.0.partial (without .git, node_modules, data, test), record how its zip was checked (operator) in .suds-release-checksum, write its manifest
++ chown -R root:root /opt/suds/1.23.0.partial
++ chmod -R u=rwX\,go=rX /opt/suds/1.23.0.partial
++ chmod -R a-w /opt/suds/1.23.0.partial
++ mv -T /opt/suds/1.23.0.partial /opt/suds/1.23.0
+
+== Node.js (pinned: v22.23.3) ==
+  - node-v22.23.3-linux-x64.tar.xz: sha256 matches the pinned checksum
++ install -d -m 0755 -o root -g root /opt/suds /opt/suds/node-v22.23.3
++ tar -xJf /tmp/tmp.2H73L2J6n4/node-v22.23.3-linux-x64.tar.xz -C /opt/suds/node-v22.23.3 --strip-components=1 --no-same-owner --preserve-permissions
++ chown -R root:root /opt/suds/node-v22.23.3
++ chmod -R u=rwX\,go=rX /opt/suds/node-v22.23.3
++ chmod -R a-w /opt/suds/node-v22.23.3
++ ln -sfn node-v22.23.3 /opt/suds/node.new
++ mv -Tf /opt/suds/node.new /opt/suds/node
+
+== Caddy (pinned: 2.10.2) ==
+  - caddy_2.10.2_linux_amd64.tar.gz: sha512 matches the pinned checksum
++ install -d -m 0755 -o root -g root /opt/caddy /opt/caddy/2.10.2
++ tar -xzf /tmp/tmp.RCVtyyXtFf/caddy_2.10.2_linux_amd64.tar.gz -C /opt/caddy/2.10.2 --no-same-owner caddy
++ chown -R root:root /opt/caddy/2.10.2
++ chmod 0755 /opt/caddy/2.10.2 /opt/caddy/2.10.2/caddy
++ ln -sfn 2.10.2 /opt/caddy/current.new
++ mv -Tf /opt/caddy/current.new /opt/caddy/current
+
+== Service account and directories ==
++ useradd --system --user-group --home-dir /var/lib/caddy --no-create-home --shell /usr/sbin/nologin caddy
++ install -d -m 0700 -o suds -g suds /var/lib/suds
++ install -d -m 0700 -o caddy -g caddy /var/lib/caddy
++ install -d -m 0755 -o root -g root /etc/suds /etc/caddy /opt/suds /opt/caddy
++ install -d -m 0700 -o root -g root /etc/suds/credentials
++ install -d -m 0750 -o root -g suds /var/lib/suds-compliance
+
+== SUDS 1.23.0 ==
++ ln -sfn 1.23.0 /opt/suds/current.new
++ mv -Tf /opt/suds/current.new /opt/suds/current
+
+== Keys ==
++ generate 32 random bytes as hex into /etc/suds/credentials/suds_encryption_key (mode 0600, owner root:root)
++ generate 32 random bytes as hex into /etc/suds/credentials/suds_index_key (mode 0600, owner root:root)
++ generate 32 random bytes as hex into /etc/suds/credentials/suds_backup_key (mode 0600, owner root:root)
++ generate 32 random bytes as hex into /etc/suds/credentials/suds_signing_key (mode 0600, owner root:root)
++ chmod 0600 /etc/suds/credentials/suds_\*
++ chown root:root /etc/suds/credentials/suds_\*
++ generate 32 random bytes as hex into /etc/suds/compliance-signing-key (mode 0600, owner root:root)
++ write /etc/suds/compliance-signing-key.pub.pem (mode 0644, owner root:root): the public half of /etc/suds/compliance-signing-key
+
+== Configuration ==
++ write /etc/suds/suds.env (mode 0644, owner root:root, 620 bytes)
++ write /etc/suds/provision.json (mode 0644, owner root:root, 319 bytes)
++ install -m 0644 -o root -g root /root/pki/ca.pem /etc/suds/ca.pem
++ write /etc/suds/suds-server.conf (mode 0644, owner root:root, 1011 bytes)
++ install -d -m 0755 -o root -g root /etc/systemd/system /etc/systemd/system/suds.service.d
++ write /etc/systemd/system/suds.service.d/10-site.conf (mode 0644, owner root:root, 225 bytes)
++ install -d -m 0750 -o root -g caddy /etc/caddy/tls
++ install -m 0644 -o root -g caddy /root/pki/site.pem /etc/caddy/tls/cert.pem
++ install -m 0640 -o root -g caddy /root/pki/site.key /etc/caddy/tls/key.pem
++ write /etc/caddy/suds-tls.caddy (mode 0644, owner root:root, 79 bytes)
++ write /etc/caddy/suds.env (mode 0644, owner root:root, 119 bytes)
+
+== Firewall (443; SSH from 10.20.0.0/16 only) ==
++ ufw default deny incoming
++ ufw default allow outgoing
++ ufw allow proto tcp from 10.20.0.0/16 to any port 22 comment SUDS\ Server:\ SSH\ from\ the\ administration\ network
++ ufw allow 443/tcp comment SUDS\ Server:\ HTTPS
++ ufw delete allow 80/tcp
++ ufw delete allow OpenSSH
++ ufw delete allow 22/tcp
++ ufw delete allow 22
++ ufw --force enable
+
+== Time synchronisation (audit timestamps depend on it) ==
++ install -d -m 0755 -o root -g root /etc/systemd/timesyncd.conf.d
++ write /etc/systemd/timesyncd.conf.d/suds.conf (mode 0644, owner root:root, 27 bytes)
++ systemctl enable --now systemd-timesyncd
++ systemctl restart systemd-timesyncd
++ timedatectl set-ntp true
+
+== Automatic security updates (security only) ==
++ install -d -m 0755 -o root -g root /etc/apt/apt.conf.d
++ write /etc/apt/apt.conf.d/20auto-upgrades (mode 0644, owner root:root, 79 bytes)
++ systemctl enable --now apt-daily.timer apt-daily-upgrade.timer
+
+== System journal: persistent, kept 400 days, at most 8G ==
++ install -d -m 0755 -o root -g root /etc/systemd/journald.conf.d
++ write /etc/systemd/journald.conf.d/suds.conf (mode 0644, owner root:root, 267 bytes)
++ install -d -m 2755 -o root -g systemd-journal /var/log/journal
++ systemctl restart systemd-journald
+  - recommended, not required: install auditd so the OS records logins, sudo and changes to /etc/suds
+
+== Services ==
++ install -m 0644 -o root -g root /tmp/tmp.MQTMRqlfDo/suds-v1.23.0/deploy/linux/suds.service /etc/systemd/system/suds.service
++ install -m 0644 -o root -g root /tmp/tmp.MQTMRqlfDo/suds-v1.23.0/deploy/linux/suds-compliance.service /etc/systemd/system/suds-compliance.service
++ install -m 0644 -o root -g root /tmp/tmp.MQTMRqlfDo/suds-v1.23.0/deploy/linux/suds-compliance.timer /etc/systemd/system/suds-compliance.timer
++ install -m 0644 -o root -g root /tmp/tmp.MQTMRqlfDo/suds-v1.23.0/deploy/linux/caddy.service /etc/systemd/system/caddy.service
++ install -m 0644 -o root -g root /tmp/tmp.MQTMRqlfDo/suds-v1.23.0/Caddyfile /etc/caddy/Caddyfile
++ systemctl daemon-reload
++ systemctl enable --now suds.service
++ systemctl enable --now caddy.service
++ systemctl enable --now suds-compliance.timer
++ systemctl restart caddy.service
++ wait up to 180s for http://127.0.0.1:8080/api/health/ready
+  - SUDS is up on 127.0.0.1:8080, served at https://suds.county.test
+
+== First backup and recovery drill ==
++ systemd-run --quiet --wait --pipe --collect --uid=suds --gid=suds --working-directory=/opt/suds/current -p EnvironmentFile=/etc/suds/suds.env -E SUDS_ENV=production -E SUDS_DATA_DIR=/var/lib/suds -p UMask=0077 -p LoadCredential=suds_encryption_key:/etc/suds/credentials/suds_encryption_key -p LoadCredential=suds_index_key:/etc/suds/credentials/suds_index_key -p LoadCredential=suds_backup_key:/etc/suds/credentials/suds_backup_key -p LoadCredential=suds_signing_key:/etc/suds/credentials/suds_signing_key /opt/suds/node/bin/node --no-warnings=ExperimentalWarning scripts/dr-drill.js --offsite
+  - the first backup is on the offsite share and the first recovery drill passed (its signed report is in /var/lib/suds/backups)
+
+===================================================================================================
+ KEY ESCROW — YOUR STEP, NOW. New keys were generated: suds_encryption_key suds_index_key suds_backup_key suds_signing_key compliance-signing-key
+ They are in /etc/suds/credentials (root only). Without them no backup can ever be restored and no record read.
+ Copy that directory to your key custodian's escrow (the county secrets manager, or an encrypted
+ medium in a safe) as your key-custody procedure says, record who holds it, and prove it with a recovery
+ drill using the escrowed copy (Settings > System & backups). This installer does not do it for you.
+ The compliance signing key (/etc/suds/compliance-signing-key) stays on this host; give its public key
+ (/etc/suds/compliance-signing-key.pub.pem) and key id to your auditor. The values were not printed and are not in any log.
+===================================================================================================
+
+First sign-in: the temporary administrator password is in /var/lib/suds/first-admin-password.txt (sudo cat it once; it is deleted when changed). Sign in at https://suds.county.test, change it and enrol two-step verification.
+
+== Compliance check ==
++ wait up to 90s for https://suds.county.test/api/health/ready (through Caddy)
++ (the compliance check below runs with every KEY=value line of /etc/suds/suds.env in its environment, as suds-compliance.service does)
++ env SUDS_ENV=production SUDS_DATA_DIR=/var/lib/suds /opt/suds/node/bin/node --no-warnings=ExperimentalWarning /opt/suds/current/scripts/compliance-check.js
+
+Done. On a new server the installer runs the first backup and recovery drill itself; if they could not run, they show as "pending first run" (a warning) until SUDS has run them, within the hour. Upgrade with deploy/linux/upgrade.sh <version>; the weekly compliance report is on Settings > Security status.
+exit 0

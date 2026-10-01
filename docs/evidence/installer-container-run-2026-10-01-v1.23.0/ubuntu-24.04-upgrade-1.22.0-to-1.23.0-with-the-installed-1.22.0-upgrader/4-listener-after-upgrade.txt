@@ -1,0 +1,23 @@
+
+$ version running
+1.23.0
+
+$ grep -n RestrictAddressFamilies /etc/systemd/system/suds.service
+67:RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+$ os.networkInterfaces() in a unit with the same RestrictAddressFamilies, and without it
+restricted: ERR_SYSTEM_ERROR A system error occurred: uv_interface_addresses returned Unknown system error 97 (Unknown system error 97)
+unrestricted: lo
+
+$ journalctl -u suds (since this start, Thu 2026-10-01 05:02:29 UTC): the 'listening on' line, and unhandled rejections
+  [suds] SUD Navigator Services Tracker listening on http://localhost:8080 (production)
+  unhandled rejections since this start: 0
+
+$ POST /api/auth/login (guest, the temporary password from /var/lib/suds/first-admin-password.txt, not printed)
+HTTP 200
+
+$ GET /api/setup/status (signed in)
+HTTP 200 listener: {"scheme":"http","host":"127.0.0.1","port":8080,"tls":false,"urls":["http://localhost:8080"],"friendly":null,"lan":[],"hostname":"1a1c8aeea0c6","mdns":false}
+
+$ GET /api/app/info (signed in)
+HTTP 200 listener: {"scheme":"http","host":"127.0.0.1","port":8080,"tls":false,"urls":["http://localhost:8080"],"friendly":null,"lan":[],"hostname":"1a1c8aeea0c6","mdns":false}
