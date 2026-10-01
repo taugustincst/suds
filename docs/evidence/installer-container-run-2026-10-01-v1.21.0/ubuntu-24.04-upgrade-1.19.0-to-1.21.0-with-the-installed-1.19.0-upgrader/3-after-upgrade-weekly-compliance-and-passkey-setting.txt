@@ -1,0 +1,24 @@
+$ systemctl start suds-compliance
+Job for suds-compliance.service failed because the control process exited with error code.
+See "systemctl status suds-compliance.service" and "journalctl -xeu suds-compliance.service" for details.
+Result: FAIL  (32 pass, 2 fail, 11 warning, 2 could not check)
+Wrote /var/lib/suds-compliance/compliance-2026-10-01T00-53-25-649Z.json
+  app.passkeys: fail — not working: WEBAUTHN_RP_ID is not set — Sign-in on; signatures and approvals on; fingerprint or authenticator code required for signing: no. WEBAUTHN_RP_ID is not set, so no one can add or use a passkey (fingerprint sign-in) on this server. Add these two lines to /etc/suds/suds.env and run: systemctl restart suds WEBAUTHN_RP_ID=suds.county.test WEBAUTHN_ORIGINS=https://suds.county.test (an upgrad
+  app.https: pass
+  app.backups: warn — every 4 h; last never: pending first run (expected on day one) — Scheduled since 2026-10-01T00:51:59.381Z: the first backup runs at the next hourly check. Until 2026-10-01T08:51:59.381Z (twice the interval) "never" is expected; after that it is a failure. Or back up now from System & backups.
+  app.dr_drill: warn — never run: pending first run (expected on day one) — The monthly drill is on (since 2026-10-01T00:51:59.382Z) and runs once there is a backup; until 2026-11-01T00:51:59.382Z "never" is expected, after that it is a failure. Or run one now from System & backups, or npm run dr-drill.
+  host.release_integrity: pass
+
+$ printf "WEBAUTHN_RP_ID=suds.county.test\nWEBAUTHN_ORIGINS=https://suds.county.test\n" >> /etc/suds/suds.env && systemctl restart suds
+$ journalctl -u suds (this start): lines naming WEBAUTHN_RP_ID
+  "WEBAUTHN_RP_ID is not set" lines: 0
+$ systemctl start suds-compliance
+Job for suds-compliance.service failed because the control process exited with error code.
+See "systemctl status suds-compliance.service" and "journalctl -xeu suds-compliance.service" for details.
+Result: FAIL  (33 pass, 1 fail, 11 warning, 2 could not check)
+Wrote /var/lib/suds-compliance/compliance-2026-10-01T00-53-42-244Z.json
+  app.passkeys: pass
+  app.https: pass
+  app.backups: warn — every 4 h; last never: pending first run (expected on day one) — Scheduled since 2026-10-01T00:51:59.381Z: the first backup runs at the next hourly check. Until 2026-10-01T08:51:59.381Z (twice the interval) "never" is expected; after that it is a failure. Or back up now from System & backups.
+  app.dr_drill: warn — never run: pending first run (expected on day one) — The monthly drill is on (since 2026-10-01T00:51:59.382Z) and runs once there is a backup; until 2026-11-01T00:51:59.382Z "never" is expected, after that it is a failure. Or run one now from System & backups, or npm run dr-drill.
+  host.release_integrity: pass

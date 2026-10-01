@@ -1,0 +1,112 @@
++ id -u suds
++ useradd --system --user-group --home-dir /var/lib/suds --no-create-home --shell /usr/sbin/nologin suds
++ chown suds:suds /mnt/suds-offsite /mnt/worm/suds-anchors
++ chmod 0700 /mnt/suds-offsite /mnt/worm/suds-anchors
++ cd /root/suds-v1.19.0
++ exec deploy/linux/install.sh --domain=suds.county.test --admin-cidr=10.20.0.0/16 --offsite=/mnt/suds-offsite --anchors=/mnt/worm/suds-anchors --tls=county-cert --cert=/root/pki/site.pem --key=/root/pki/site.key --ca-file=/root/pki/ca.pem --source=/root/suds-v1.19.0.zip --release-sha256=c927808937892f9c474a01eee07a8f13c390d54db98ae6425eaa3f99a19bf2ed --node-tarball=/root/node-v22.23.3-linux-x64.tar.xz --caddy-tarball=/root/caddy_2.10.2_linux_amd64.tar.gz --ntp-server=time.county.test '--accept-unencrypted-disk=installer drill in a systemd container: no LUKS volume attached' --console-access --skip-compliance-check
+SUDS Server installer — SUDS 1.19.0
+
+== Checking the host ==
+  - Ubuntu 24.04.5 LTS (debian family)
+WARNING: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: !!! /var/lib/suds IS NOT ON AN ENCRYPTED VOLUME. Client records will sit on this disk unencrypted at rest
+WARNING: !!! (only the PHI fields SUDS encrypts itself are protected). Accepted by the operator: installer drill in a systemd container: no LUKS volume attached
+WARNING: !!! Every compliance report will carry this as RISK ACCEPTED until the data is moved to a LUKS volume.
+WARNING: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  - data volume: /var/lib is on overlay from overlay (not a local block device)
+  - --console-access: the SSH lock-out check is skipped (you are at the console)
+
+== Packages ==
+Ign:1 https://archive.ubuntu.com/ubuntu noble InRelease
+Ign:2 https://security.ubuntu.com/ubuntu noble-security InRelease
+Ign:3 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+Ign:4 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+Ign:1 https://archive.ubuntu.com/ubuntu noble InRelease
+Ign:2 https://security.ubuntu.com/ubuntu noble-security InRelease
+Ign:3 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+Ign:4 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+Ign:1 https://archive.ubuntu.com/ubuntu noble InRelease
+Ign:2 https://security.ubuntu.com/ubuntu noble-security InRelease
+Ign:3 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+Ign:4 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+Err:1 https://archive.ubuntu.com/ubuntu noble InRelease
+  Temporary failure resolving 'archive.ubuntu.com'
+Err:2 https://security.ubuntu.com/ubuntu noble-security InRelease
+  Temporary failure resolving 'security.ubuntu.com'
+Err:3 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+  Temporary failure resolving 'archive.ubuntu.com'
+Err:4 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+  Temporary failure resolving 'archive.ubuntu.com'
+Reading package lists...
+W: Failed to fetch https://archive.ubuntu.com/ubuntu/dists/noble/InRelease  Temporary failure resolving 'archive.ubuntu.com'
+W: Failed to fetch https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease  Temporary failure resolving 'archive.ubuntu.com'
+W: Failed to fetch https://archive.ubuntu.com/ubuntu/dists/noble-backports/InRelease  Temporary failure resolving 'archive.ubuntu.com'
+W: Failed to fetch https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease  Temporary failure resolving 'security.ubuntu.com'
+W: Some index files failed to download. They have been ignored, or old ones used instead.
+Reading package lists...
+Building dependency tree...
+Reading state information...
+ca-certificates is already the newest version (20260601~24.04.1).
+xz-utils is already the newest version (5.6.1+really5.4.5-1ubuntu0.3).
+unzip is already the newest version (6.0-28ubuntu4.1).
+ufw is already the newest version (0.36.2-6).
+unattended-upgrades is already the newest version (2.9.1+nmu4ubuntu1).
+systemd-timesyncd is already the newest version (255.4-1ubuntu8.17).
+0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+
+== Staging SUDS 1.19.0 ==
+  - suds-v1.19.0.zip: sha256 matches the pinned checksum
+
+== Node.js (pinned: v22.23.3) ==
+  - node-v22.23.3-linux-x64.tar.xz: sha256 matches the pinned checksum
+
+== Caddy (pinned: 2.10.2) ==
+  - caddy_2.10.2_linux_amd64.tar.gz: sha512 matches the pinned checksum
+  - Caddy answers v2.10.2
+
+== Service account and directories ==
+  - user suds exists
+
+== SUDS 1.19.0 ==
+
+== Keys ==
+  - compliance signing key id 66553f019d0a3fbe (public key /etc/suds/compliance-signing-key.pub.pem: give it to your auditor)
+
+== Configuration ==
+
+== Firewall (443; SSH from 10.20.0.0/16 only) ==
+Default incoming policy changed to 'deny'
+(be sure to update your rules accordingly)
+Default outgoing policy changed to 'allow'
+(be sure to update your rules accordingly)
+Rules updated
+Rules updated
+Firewall is active and enabled on system startup
+
+== Time synchronisation (audit timestamps depend on it) ==
+
+== Automatic security updates (security only) ==
+
+== System journal: persistent, kept 400 days, at most 8G ==
+  - recommended, not required: install auditd so the OS records logins, sudo and changes to /etc/suds
+
+== Services ==
+Created symlink /etc/systemd/system/multi-user.target.wants/suds.service → /etc/systemd/system/suds.service.
+Created symlink /etc/systemd/system/multi-user.target.wants/caddy.service → /etc/systemd/system/caddy.service.
+Created symlink /etc/systemd/system/timers.target.wants/suds-compliance.timer → /etc/systemd/system/suds-compliance.timer.
+  - SUDS is up on 127.0.0.1:8080, served at https://suds.county.test
+
+===================================================================================================
+ KEY ESCROW — YOUR STEP, NOW. New keys were generated: suds_encryption_key suds_index_key suds_backup_key suds_signing_key compliance-signing-key
+ They are in /etc/suds/credentials (root only). Without them no backup can ever be restored and no record read.
+ Copy that directory to your key custodian's escrow (the county secrets manager, or an encrypted
+ medium in a safe) as your key-custody procedure says, record who holds it, and prove it with a recovery
+ drill using the escrowed copy (Settings > System & backups). This installer does not do it for you.
+ The compliance signing key (/etc/suds/compliance-signing-key) stays on this host; give its public key
+ (/etc/suds/compliance-signing-key.pub.pem) and key id to your auditor. The values were not printed and are not in any log.
+===================================================================================================
+
+First sign-in: the temporary administrator password is in /var/lib/suds/first-admin-password.txt (sudo cat it once; it is deleted when changed). Sign in at https://suds.county.test, change it and enrol two-step verification.
+
+Done. On a new server the first scheduled backup (within 4 hours) and the first recovery drill (within a month, or run one now) show as "pending first run" until they have run. Upgrade with deploy/linux/upgrade.sh <version>; the weekly compliance report is on Settings > Security status.
+exit 0

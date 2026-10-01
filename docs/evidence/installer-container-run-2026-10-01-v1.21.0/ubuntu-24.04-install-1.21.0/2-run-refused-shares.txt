@@ -1,0 +1,31 @@
++ exec deploy/linux/install.sh --domain=suds.county.test --admin-cidr=10.20.0.0/16 --offsite=/mnt/suds-offsite --anchors=/mnt/worm/suds-anchors --tls=county-cert --cert=/root/pki/site.pem --key=/root/pki/site.key --ca-file=/root/pki/ca.pem --source=/root/suds-v1.21.0.zip --release-sha256=b69f629f2cc9587c1f32b021de8a86cd24484aa0b34b8cafc331d5f4485f2207 --node-tarball=/root/node-v22.23.3-linux-x64.tar.xz --caddy-tarball=/root/caddy_2.10.2_linux_amd64.tar.gz --ntp-server=time.county.test '--accept-unencrypted-disk=installer drill in a systemd container: no LUKS volume attached' --console-access
+SUDS Server installer — SUDS 1.21.0
+
+== Checking the host ==
+  - Ubuntu 24.04.5 LTS (debian family)
+  - data volume: /var/lib is on overlay from overlay (not a local block device)
+  - --console-access: the SSH lock-out check is skipped (you are at the console)
+WARNING: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: !!! /var/lib/suds IS NOT ON AN ENCRYPTED VOLUME. Client records will sit on this disk unencrypted at rest
+WARNING: !!! (only the PHI fields SUDS encrypts itself are protected). Accepted by the operator: installer drill in a systemd container: no LUKS volume attached
+WARNING: !!! Every compliance report will carry this as RISK ACCEPTED until the data is moved to a LUKS volume.
+WARNING: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  - creating the suds service account now, so the shares can be checked as it
+REFUSED: 2 shares are not writable by the suds user (uid 996, gid 996):
+  /mnt/worm/suds-anchors (the anchor share, write-once; owner root:root, mode 755)
+  /mnt/suds-offsite (the offsite share; owner root:root, mode 755)
+Give the suds user write access, then run this again. Where root can change the mount's ownership (a local disk, or a share that keeps it):
+  chown suds:suds /mnt/worm/suds-anchors && chmod 0700 /mnt/worm/suds-anchors
+  chown suds:suds /mnt/suds-offsite && chmod 0700 /mnt/suds-offsite
+or keep the owner and add an ACL:
+  setfacl -m u:suds:rwx /mnt/worm/suds-anchors
+  setfacl -m u:suds:rwx /mnt/suds-offsite
+On an NFS or SMB share whose server decides ownership (root squashed, or mapped), grant uid 996 / gid 996 write access on the share's server instead. The anchor share needs create and write only: it is write-once.
+exit 1
+
+$ ls -d /opt/suds /etc/suds; id suds; chown suds:suds /mnt/suds-offsite /mnt/worm/suds-anchors && chmod 0700 /mnt/suds-offsite /mnt/worm/suds-anchors && stat -c '%n %U:%G %a' /mnt/suds-offsite /mnt/worm/suds-anchors
+ls: cannot access '/opt/suds': No such file or directory
+ls: cannot access '/etc/suds': No such file or directory
+uid=996(suds) gid=996(suds) groups=996(suds)
+/mnt/suds-offsite suds:suds 700
+/mnt/worm/suds-anchors suds:suds 700

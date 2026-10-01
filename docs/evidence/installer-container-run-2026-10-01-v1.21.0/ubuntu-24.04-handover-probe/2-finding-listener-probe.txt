@@ -1,0 +1,21 @@
+
+$ grep -n RestrictAddressFamilies /etc/systemd/system/suds.service
+67:RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+$ os.networkInterfaces() in a unit with the same RestrictAddressFamilies, and without it
+restricted: ERR_SYSTEM_ERROR A system error occurred: uv_interface_addresses returned Unknown system error 97 (Unknown system error 97)
+unrestricted: lo
+
+$ journalctl -u suds: the start's 'listening on' line, and unhandled rejections
+  [suds] unhandled rejection: SystemError [ERR_SYSTEM_ERROR]: A system error occurred: uv_interface_addresses returned Unknown system error 97 (Unknown system error 97)
+
+$ POST /api/auth/login (guest, the temporary password from /var/lib/suds/first-admin-password.txt, not printed)
+HTTP 200
+
+$ GET /api/setup/status (signed in)
+{"error":"Internal server error"}
+HTTP 500
+
+$ GET /api/app/info (signed in)
+{"error":"Internal server error"}
+HTTP 500
