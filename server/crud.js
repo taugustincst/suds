@@ -41,7 +41,9 @@ function assertFresh(ctx, row, entity) {
 /**
  * opts: { table, entity, perm, shape (default: the table's rules' fields, plus extraShape), clientRequired, dateCol, ownerCol, unlinked, joins, select, filters(ctx,where,params),
  *   beforeInsert(ctx,v), afterInsert(ctx,row), beforeUpdate(ctx,v,row), afterUpdate(ctx,mergedRow,prevRow),
- *   beforeDelete(ctx,row), afterLoad(ctx,row), canEdit(ctx,row), canDelete(ctx,row), insertResult(ctx,row) }
+ *   beforeDelete(ctx,row), afterLoad(ctx,row), canEdit(ctx,row), canDelete(ctx,row), insertResult(ctx,row),
+ *   precheck(ctx,v): refuses a new row before anything else (a replay included),
+ *   keyedId(ctx,v): true when a new row's id is to come from the request's Idempotency-Key }
  */
 function build(r, opts) {
   const { table, entity, perm, dateCol = 'created_at', ownerCol = 'user_id', joins = '', select = `${table}.*`, clientRequired = true } = opts;
@@ -121,8 +123,23 @@ function build(r, opts) {
     if (clientRequired && !v.client_id) throw require('./http').badRequest('client_id is required');
     checkClient(ctx, v.client_id);
     rules.assertWrite(table, rules.toColumns(table, v), ctx);
+    if (opts.precheck) opts.precheck(ctx, v);
+    // A durable answer to a retried save (opts.keyedId, 1.23.0): the row's id is derived from the caller and their
+    // Idempotency-Key, so a repeat finds the row it made even after server/idempotency.js has forgotten the key
+    // (24 hours): a street-outreach contact kept on a phone while offline may be sent again days later
+    // (public/outreach-queue.js). Only this caller's key gives this id. The repeat is answered with the row's id and
+    // changes nothing, also when the row has since been deleted (an undone contact is not made again).
+    const key = opts.keyedId && opts.keyedId(ctx, v) ? idempotencyKeyOf(ctx) : null;
+    const id = key ? keyedId(table, ctx.user.id, key) : uuid();
+    if (key) {
+      const prior = db.one(`SELECT id, client_id FROM ${table} WHERE id=?`, id);
+      const gone = !prior && !!db.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=?`, table, id);
+      if (prior || gone) {
+        audit.log({ user: ctx.user, action: `${entity}.create.replayed`, entity, entityId: id, clientId: (prior && prior.client_id) || null, ip: ctx.ip, details: gone ? { deleted: true } : undefined });
+        ctx.status = 200; return { id, replayed: true, ...(gone ? { deleted: true } : {}) };
+      }
+    }
     if (opts.beforeInsert) opts.beforeInsert(ctx, v);
-    const id = uuid();
     const cols = { id, ...v };
     // validate() turns a blank field into an explicit null, not undefined — an owner picker left on its
     // "defaults to you" blank option (interventions.js's Worker field) must fall back to the caller the same
@@ -176,9 +193,20 @@ function build(r, opts) {
   });
 }
 
+// The Idempotency-Key a request carries (server/idempotency.js checks its form), or null.
+function idempotencyKeyOf(ctx) {
+  const k = ctx.headers && ctx.headers['idempotency-key'];
+  return typeof k === 'string' && k && k.length <= 255 && /^[\x21-\x7e]+$/.test(k) ? k : null;
+}
+/** A row id from (table, user, key): the same three always give the same id, shaped as a version-4 UUID. */
+function keyedId(table, userId, key) {
+  const x = require('./crypto').sha256(`keyed-id|${table}|${userId}|${key}`);
+  return `${x.slice(0, 8)}-${x.slice(8, 12)}-4${x.slice(13, 16)}-${'89ab'[parseInt(x[16], 16) & 3]}${x.slice(17, 20)}-${x.slice(20, 32)}`;
+}
+
 // owner-or-supervisor edit rule
 function ownerOrManager(col = 'user_id') {
   return (ctx, row) => row[col] === ctx.user.id || auth.hasPerm(ctx.user, 'records:manage-others');
 }
 
-module.exports = { build, ownerOrManager, clientExists, assertFresh, STALE_MESSAGE };
+module.exports = { build, ownerOrManager, clientExists, assertFresh, keyedId, STALE_MESSAGE };

@@ -667,7 +667,27 @@ route('admin', async (r) => {
     async devices() {
       const { devices } = await get('/api/admin/devices');
       const act = async (id, action) => { await post(`/api/admin/devices/${id}/${action}`, {}); refresh(); };
+      // Field-device requests (1.23.0, server/field-request.js): a worker's "Set up this phone for the field". Approve
+      // makes every device the person syncs from a field device (narrowing only); Decline answers no. Either closes
+      // the to-do every administrator was given.
+      const { requests = [] } = await get('/api/admin/field-requests', { quiet: true }).catch(() => ({ requests: [] }));
+      const answer = async (x, approve) => {
+        const ok = await confirmDialog(approve ? 'Approve a field device' : 'Decline the request',
+          approve ? `Every phone or tablet ${x.display_name} syncs from, now or later, becomes a field device at its next sync: it keeps only what a field worker needs. This narrows what their devices hold; you can still let one device hold everything below.`
+            : `${x.display_name} is told their request was not approved. Nothing about their devices changes.`, { okText: approve ? 'Approve' : 'Decline', danger: !approve });
+        if (!ok) return;
+        await post(`/api/admin/field-requests/${x.user_id}/${approve ? 'approve' : 'decline'}`, {});
+        toast(approve ? `Approved: ${x.display_name}'s devices are field devices from their next sync` : 'Declined', 'ok'); refresh();
+      };
+      const requestsCard = requests.length ? h('section', { class: 'card mb', 'aria-labelledby': 'field-req-h', 'data-field-requests': String(requests.length) },
+        h('h2', { id: 'field-req-h' }, `Field-device requests (${requests.length})`),
+        h('p', { class: 'small muted' }, 'Workers who asked, from Set up this phone for the field, to work with no signal. Offline copies must also be allowed on this server (the setup wizard\'s answer, or LOCAL_MODE_ENABLED) for a phone to keep one.'),
+        h('ul', { class: 'outreach-list' }, requests.map(x => h('li', { 'data-field-request-user': x.user_id },
+          h('b', {}, x.display_name), ` (${x.username}) · asked ${fmt.dt(x.requested_at)}`, x.account_field ? ' · their devices are already field devices' : '', ' ',
+          h('button', { type: 'button', class: 'btn sm primary', 'data-field-approve': x.user_id, 'aria-label': `Approve a field device for ${x.display_name}`, onClick: () => answer(x, true) }, 'Approve'), ' ',
+          h('button', { type: 'button', class: 'btn sm', 'data-field-decline': x.user_id, 'aria-label': `Decline the field-device request of ${x.display_name}`, onClick: () => answer(x, false) }, 'Decline'))))) : null;
       return h('div', {},
+        requestsCard,
         h('div', { class: 'banner small mb' }, 'One row per device (a browser running the offline copy, local mode) that has synced with this server. "Revoke" blocks it from syncing again until cleared. "Wipe" additionally erases its local database, the next time it tries to sync — it cannot reach a device that is never opened again; that limitation is inherent to working offline, not a bug in this feature.'),
         h('p', { class: 'small mb', 'data-field-device-help': '1' }, 'Holds: "Everything" is all its user may see. A "Field device" holds only what a field worker needs: their own caseload assigned or seen recently (name, participant code and safety flags only), their contacts, their to-dos, supplies and lists; no notes, documents, consents or intake details. The change reaches the device at its next sync: it sends its changes first, then removes the rest. Once one of a person\'s devices is a field device (or while new devices start as field devices), every device they sync from is one, a new or reinstalled one too, unless you choose "Hold everything" for that device. Account settings (password, two-step verification, fingerprint sign-in) are changed in a browser, not from a field device. Set the window under ', h('a', { href: '#/admin?tab=settings&section=minimal' }, 'Program › Minimal personal information'), '.'),
         table([

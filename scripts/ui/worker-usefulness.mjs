@@ -155,13 +155,17 @@ try {
   ok(await toastSays(peer.page, /Undone/), 'Undo takes the contact back');
   await settle(peer.page);
   eq(await contacts(), c0, 'and My shift no longer counts it');
+  // 1.23.0: the undone contact's bundle is not offered again; with no contact before it, there is nothing to offer.
+  ok(await peer.page.$eval('[data-outreach-same]', b => b.hidden), 'after Undo of the only contact, "Same as last contact" is gone');
+  await peer.page.click(`[data-outreach-item="${first}"] [data-step="1"]`);
+  await peer.page.click(`[data-outreach-item="${second}"] [data-step="1"]`); await peer.page.click(`[data-outreach-item="${second}"] [data-step="1"]`);
+  await peer.page.click('[data-outreach-save]');
+  await peer.page.waitForSelector('[data-undo-toast]'); await settle(peer.page);
+  eq(await contacts(), c0 + 1, 'saved again, it counts once');
   // Same as last contact fills the counts in one tap.
   await peer.page.click('[data-outreach-same]');
   eq(await peer.page.inputValue(`[data-outreach-item="${first}"] input`), '1', '"Same as last contact" fills in the first item');
   eq(await peer.page.inputValue(`[data-outreach-item="${second}"] input`), '2', 'and the second');
-  await peer.page.click('[data-outreach-save]');
-  await peer.page.waitForSelector('[data-undo-toast]'); await settle(peer.page);
-  eq(await contacts(), c0 + 1, 'saved again, it counts once');
   await peer.ctx.close();
 
   // ======== a counselor writes a structured note ========

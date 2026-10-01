@@ -553,6 +553,7 @@ body:has([data-outreach]) .fab { display: none; }
 html:has([data-outreach]) { scroll-padding-bottom: 6rem; }
 .outreach-same { width: 100%; min-height: 3rem; justify-content: flex-start; text-align: left; white-space: normal; margin-bottom: .5rem; overflow-wrap: anywhere; }
 .outreach-same[hidden] { display: none; }
+.queue-chip[hidden], .outreach-waiting[hidden] { display: none; }
 /* The header's sync state on a device that syncs with the office (app.js syncChip). */
 .sync-chip { text-decoration: none; white-space: nowrap; }
 .sync-chip.pending { border-color: var(--warn); color: var(--text); background: var(--warn-soft, transparent); font-weight: 650; }

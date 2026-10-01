@@ -1,4 +1,5 @@
 // SUDS frontend core: API client, hash router, DOM + form helpers, session/idle handling.
+import { queueChip, autoFlush } from './outreach-queue.js';
 export const state = { user: null, org: 'SUDS', constants: null, users: [], funds: [], idleMinutes: 15, prefs: {}, local: false };
 // Local mode: the whole server runs inside this page (the offline copy). Requests go to the in-page kernel.
 // window.SUDS_FORCE_LOCAL is set by a small external script tag, before this module loads, on builds
@@ -219,11 +220,16 @@ export function setOffline(on) {
   state.offline = on;
   document.documentElement.classList.toggle('offline', on);
   if (on) {
-    offlineBanner = banner('Offline — changes can\'t be saved until you reconnect. SUDS needs a connection to the office server.', 'error', { id: 'offline' });
-    if (offlineBanner) offlineBanner.firstChild.append(' ', h('a', { href: 'get-app.html', class: 'small' }, 'Use SUDS on this device'));
+    // 1.23.0: what happens to the contact in hand (Street outreach keeps one that names nobody on the phone and
+    // sends it when there is signal, public/outreach-queue.js), and, for a worker who needs the rest with no
+    // signal, how to have this phone set up for the field (views/outreach.js field-phone). It no longer offers
+    // get-app.html, SUDS on this device: a different SUDS, with none of the office's records, that cannot send the
+    // contact in hand to the office.
+    offlineBanner = banner('Offline — SUDS can\'t reach the office server. On Street outreach, a contact that names nobody is kept on this phone and sent when you\'re back online; anything else stays in its form until you reconnect.', 'error', { id: 'offline' });
+    if (offlineBanner && state.user) offlineBanner.firstChild.append(' ', h('a', { href: '#/field-phone', class: 'small', 'data-field-phone-link': '1' }, 'Set up this phone for the field'));
   } else {
     document.querySelectorAll('#banners [data-banner="offline"]').forEach(b => b.remove());
-    if (offlineBanner) { toast('Back online', 'ok'); offlineBanner = null; }
+    if (offlineBanner) { toast('Back online', 'ok'); offlineBanner = null; autoFlush(); }
   }
 }
 window.addEventListener('offline', () => setOffline(true));
@@ -2047,7 +2053,7 @@ async function renderPage() {
   const main = h('main', { class: 'main', id: 'main', tabindex: '-1' }, h('div', { class: 'boot', role: waiting ? 'status' : null, 'data-loading': waiting ? '1' : null }, waiting || 'Loading…'));
   const side = sidebar(r);
   const qa = quickActions();
-  const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), syncChip(), dueBell(), mfaLink(), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
+  const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), syncChip(), queueChip(), dueBell(), mfaLink(), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
   if (qa) layout.querySelector('.fab button')?.addEventListener('click', () => qa.click());
   const focusWas = focusKey(document.activeElement, app);
   clear(app).append(layout);

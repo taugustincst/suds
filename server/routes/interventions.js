@@ -90,6 +90,19 @@ function encodeCode(v) {
   delete v.participant_code;
 }
 
+// ---- a contact kept on a phone while offline (1.23.0) ----
+// The office app keeps no PHI in the browser (docs/security/THREAT-MODEL.md), so Street outreach waits to send only
+// a contact that names nobody: no client, no participant code, no notes, nothing but the kind of contact, a coarse
+// place, the time and the supplies (public/outreach-queue.js). Such a contact is sent with X-Suds-Queued: 1, and the
+// office holds it to exactly that, so a browser that kept more than it should is told so rather than believed.
+const QUEUED_REFUSED = ['client_id', 'summary', 'participant_code', 'note', 'follow_up_due', 'cost', 'funding_source_id', 'budget_line_id'];
+function checkQueued(ctx, v) {
+  if (!ctx.headers || ctx.headers['x-suds-queued'] !== '1') return;
+  const bad = QUEUED_REFUSED.filter(k => v[k] !== undefined && v[k] !== null && v[k] !== '');
+  if (!C.CLIENTLESS_INTERVENTION_TYPES.includes(v.type)) bad.push('type');
+  if (bad.length) throw badRequest('A contact kept on a phone while offline names nobody: no client, participant code or notes. Enter this one again on Street outreach.', { fields: Object.fromEntries(bad.map(k => [k, 'is not kept while offline'])) });
+}
+
 // ---- a note written with the visit (1.14.0) ----
 // The visit form's "Add a note": the note a substantive visit needs (the summary holds no names or health
 // details) written in the same dialog and saved with the visit in one request. It is an ordinary draft note,
@@ -168,6 +181,12 @@ module.exports = (r) => {
       // kit given on an outreach contact or a follow-up counts the same as one on a distribution visit).
       if (ctx.query.get('naloxone') === '1') where.push('interventions.naloxone_kits > 0');
     },
+    // A street-outreach contact sent from the phone's waiting list (public/outreach-queue.js, 1.23.0): its id comes
+    // from its Idempotency-Key (crud.js keyedId), so however often and however late it is sent it is one contact,
+    // counted and drawn from the stock once. Every contact with no client is keyed the same way, so the screen's
+    // first attempt (whose answer may have been lost with the signal) and the list's later one are the same request.
+    keyedId: (ctx, v) => !v.client_id,
+    precheck: checkQueued,
     afterLoad: (ctx, row) => withLines(decodeSummary(require('../client-name').withClientName(ctx, row))),
     beforeInsert: (ctx, v) => { planNote(ctx, v); v._log_time = v.log_time; delete v.log_time; v._time_category = v.time_category; delete v.time_category; v._service_date = v.service_date || null; delete v.service_date; if (v.cost !== undefined && v.cost !== null) v.cost = cents(v.cost); encodeSummary(v); encodeCode(v); checkCostPermission(ctx, v);
       // Nobody chose a fund (the field was not on the form: a role not shown it, or an API client): the

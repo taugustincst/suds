@@ -98,16 +98,20 @@ try {
   await nav.focus('[data-outreach-save]'); await nav.keyboard.press('Enter');
   ok(await toast(nav, /Contact saved: 1 Naloxone kit\./), 'Enter on Save saves (one kit, singular)');
   await settle(nav);
-  // No signal at the office server: the offline message once (not wrapped in "Not saved: … Nothing was lost"),
-  // with the focus on it and the entry kept (1.17.1).
-  const offlineMessage = await nav.evaluate(async () => (await import('./app.js')).OFFLINE_MESSAGE);
+  // No signal at the office server, with notes in the form (1.17.1; 1.23.0): a contact with notes is not kept on the
+  // phone (a contact that names nobody is, scripts/ui/offline-outreach.mjs), so the screen says so once, with the
+  // focus on it, offers to keep it without the notes, and keeps the entry in the form.
   await nav.tap(`[data-outreach-item="${kit.id}"] [data-step="1"]`);
+  await nav.fill('[data-outreach-notes]', 'Asked about the morning van');
   offline = true; await navCtx.setOffline(true);
   await nav.focus('[data-outreach-save]'); await nav.keyboard.press('Enter');
   ok(await until(() => nav.$eval('[data-outreach-error]', e => !e.classList.contains('hidden'))), 'saving with no connection says so');
-  eq(await nav.textContent('[data-outreach-error]'), offlineMessage, 'in the offline message alone, said once');
+  const said = await nav.textContent('[data-outreach-error]');
+  ok(/^No signal\. This contact has a participant code or notes/.test(said) && said.split('No signal').length === 2 && !/Not saved:/.test(said), 'in one message, said once: notes are not kept on a phone', said);
+  ok(await nav.$('[data-outreach-error] [data-outreach-keep-bare]'), 'offering to keep it without the code and notes');
   ok(await nav.evaluate(() => document.activeElement && document.activeElement.matches('[data-outreach-error]')), 'and the focus moves to it');
   eq(await nav.inputValue(`[data-outreach-item="${kit.id}"] input`), '1', 'the entry is kept');
+  eq(await nav.inputValue('[data-outreach-notes]'), 'Asked about the morning van', 'notes and all');
   offline = false; await navCtx.setOffline(false);
   await nav.focus('[data-outreach-save]'); await nav.keyboard.press('Enter');
   ok(await toast(nav, /Contact saved: 1 Naloxone kit\./), 'back online, the same entry saves');

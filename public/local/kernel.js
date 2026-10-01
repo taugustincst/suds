@@ -19297,8 +19297,19 @@ var require_crud = __commonJS({
         if (clientRequired && !v.client_id) throw require_http().badRequest("client_id is required");
         checkClient(ctx, v.client_id);
         rules.assertWrite(table, rules.toColumns(table, v), ctx);
+        if (opts.precheck) opts.precheck(ctx, v);
+        const key = opts.keyedId && opts.keyedId(ctx, v) ? idempotencyKeyOf(ctx) : null;
+        const id = key ? keyedId(table, ctx.user.id, key) : uuid2();
+        if (key) {
+          const prior = db3.one(`SELECT id, client_id FROM ${table} WHERE id=?`, id);
+          const gone = !prior && !!db3.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=?`, table, id);
+          if (prior || gone) {
+            audit3.log({ user: ctx.user, action: `${entity}.create.replayed`, entity, entityId: id, clientId: prior && prior.client_id || null, ip: ctx.ip, details: gone ? { deleted: true } : void 0 });
+            ctx.status = 200;
+            return { id, replayed: true, ...gone ? { deleted: true } : {} };
+          }
+        }
         if (opts.beforeInsert) opts.beforeInsert(ctx, v);
-        const id = uuid2();
         const cols2 = { id, ...v };
         if (ownerCol && (cols2[ownerCol] === void 0 || cols2[ownerCol] === null || restrictOwner && !auth3.hasPerm(ctx.user, ownerAll))) cols2[ownerCol] = ctx.user.id;
         if (opts.creatorCol) cols2[opts.creatorCol] = ctx.user.id;
@@ -19344,10 +19355,18 @@ var require_crud = __commonJS({
         return { ok: true };
       });
     }
+    function idempotencyKeyOf(ctx) {
+      const k = ctx.headers && ctx.headers["idempotency-key"];
+      return typeof k === "string" && k && k.length <= 255 && /^[\x21-\x7e]+$/.test(k) ? k : null;
+    }
+    function keyedId(table, userId, key) {
+      const x = require_crypto().sha256(`keyed-id|${table}|${userId}|${key}`);
+      return `${x.slice(0, 8)}-${x.slice(8, 12)}-4${x.slice(13, 16)}-${"89ab"[parseInt(x[16], 16) & 3]}${x.slice(17, 20)}-${x.slice(20, 32)}`;
+    }
     function ownerOrManager(col = "user_id") {
       return (ctx, row) => row[col] === ctx.user.id || auth3.hasPerm(ctx.user, "records:manage-others");
     }
-    module.exports = { build, ownerOrManager, clientExists, assertFresh, STALE_MESSAGE };
+    module.exports = { build, ownerOrManager, clientExists, assertFresh, keyedId, STALE_MESSAGE };
   }
 });
 
@@ -42561,6 +42580,13 @@ var require_interventions2 = __commonJS({
       v.participant_code_idx = idx;
       delete v.participant_code;
     }
+    var QUEUED_REFUSED = ["client_id", "summary", "participant_code", "note", "follow_up_due", "cost", "funding_source_id", "budget_line_id"];
+    function checkQueued(ctx, v) {
+      if (!ctx.headers || ctx.headers["x-suds-queued"] !== "1") return;
+      const bad = QUEUED_REFUSED.filter((k) => v[k] !== void 0 && v[k] !== null && v[k] !== "");
+      if (!C.CLIENTLESS_INTERVENTION_TYPES.includes(v.type)) bad.push("type");
+      if (bad.length) throw badRequest("A contact kept on a phone while offline names nobody: no client, participant code or notes. Enter this one again on Street outreach.", { fields: Object.fromEntries(bad.map((k) => [k, "is not kept while offline"])) });
+    }
     var notes = require_notes2();
     var NOTE_KEYS = ["kind", "format", "title", "content", "structured", "part2_protected", "counseling_note", "cosign_requested"];
     function planNote(ctx, v) {
@@ -42630,6 +42656,12 @@ var require_interventions2 = __commonJS({
           if (ctx.query.get("funding") === "none") where.push("interventions.funding_source_id IS NULL");
           if (ctx.query.get("naloxone") === "1") where.push("interventions.naloxone_kits > 0");
         },
+        // A street-outreach contact sent from the phone's waiting list (public/outreach-queue.js, 1.23.0): its id comes
+        // from its Idempotency-Key (crud.js keyedId), so however often and however late it is sent it is one contact,
+        // counted and drawn from the stock once. Every contact with no client is keyed the same way, so the screen's
+        // first attempt (whose answer may have been lost with the signal) and the list's later one are the same request.
+        keyedId: (ctx, v) => !v.client_id,
+        precheck: checkQueued,
         afterLoad: (ctx, row) => withLines(decodeSummary(require_client_name().withClientName(ctx, row))),
         beforeInsert: (ctx, v) => {
           planNote(ctx, v);
@@ -42729,6 +42761,111 @@ var require_interventions2 = __commonJS({
         return { ...C, ...m.visible, option_lists: m.option_lists, DEFAULT_LOCATION: require_programme().defaultLocation(m.visible.LOCATIONS || C.LOCATIONS) };
       });
     };
+  }
+});
+
+// server/field-request.js
+var require_field_request = __commonJS({
+  "server/field-request.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var config2 = require_config();
+    var { HttpError: HttpError3, notFound } = require_http();
+    var { uuid: uuid2, encrypt: encrypt3 } = require_crypto();
+    var PREFIX = "field_request:";
+    var read = (userId) => {
+      try {
+        const v = JSON.parse(db3.getSetting(PREFIX + userId, "null"));
+        return v && typeof v === "object" ? v : null;
+      } catch {
+        return null;
+      }
+    };
+    var write = (userId, v) => db3.setSetting(PREFIX + userId, JSON.stringify(v));
+    var officeOnly = () => {
+      if (config2.local) throw new HttpError3(404, "Setting up a phone for the field is asked of the office SUDS, not of a device.");
+    };
+    function deciders() {
+      return db3.all(`SELECT * FROM users WHERE is_active=1 ORDER BY display_name`).filter((u) => auth3.hasPerm(u, "users:manage"));
+    }
+    function status(user) {
+      const devices = db3.all(`SELECT id, label, sync_scope, last_seen_at, revoked_at FROM devices WHERE user_id=? ORDER BY last_seen_at DESC`, user.id).map((d) => ({ id: d.id, label: d.label, scope: d.sync_scope, last_seen_at: d.last_seen_at, revoked: !!d.revoked_at }));
+      const r = read(user.id);
+      return {
+        local_mode: !!config2.localModeEnabled,
+        account_field: require_devices().accountFieldBound(user.id),
+        devices,
+        request: r ? { status: r.status, requested_at: r.at, decided_at: r.decided_at || null } : null
+      };
+    }
+    function request(ctx) {
+      officeOnly();
+      const user = ctx.user;
+      const prior = read(user.id);
+      if (prior && prior.status === "open") return { ok: true, already: true, ...status(user) };
+      const admins = deciders().filter((a) => a.id !== user.id);
+      const at = db3.now();
+      const title = `Field device: ${user.display_name || user.username} asks for their phone to be set up for the field`;
+      const desc = [
+        `${user.display_name || user.username} (${user.username}) asked to work with no signal on their phone.`,
+        config2.localModeEnabled ? "Offline copies are allowed on this server. Approve under Settings \u203A Synced devices \u203A Field-device requests: their phone then keeps only what a field worker needs (their own recent clients with the minimum of the record, their contacts, to-dos, supplies and lists). They set the phone up themselves from the office app." : "Offline copies are switched off on this server (the setup wizard's answer, server.json localModeEnabled, or LOCAL_MODE_ENABLED), so no phone can keep one yet. Decide whether field work needs them (docs/PLATFORM.md); approving records that this worker's phones are field devices once they are allowed.",
+        "Approving narrows what their devices hold; it never widens anything."
+      ].join("\n\n");
+      const tasks = [];
+      db3.transaction(() => {
+        for (const a of admins) {
+          const id = uuid2();
+          db3.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`, id, null, a.id, user.id, encrypt3(title), encrypt3(desc), at.slice(0, 10), "normal");
+          tasks.push(id);
+        }
+        write(user.id, { status: "open", at, tasks });
+      });
+      audit3.log({ user, action: "device.field_request", entity: "user", entityId: user.id, ip: ctx.ip, details: { administrators: tasks.length, local_mode: !!config2.localModeEnabled } });
+      ctx.status = 201;
+      return { ok: true, administrators: tasks.length, ...status(user) };
+    }
+    function pending() {
+      const rows = db3.all(`SELECT key, value FROM settings WHERE key LIKE 'field_request:%'`);
+      const out2 = [];
+      for (const r of rows) {
+        let v;
+        try {
+          v = JSON.parse(r.value);
+        } catch {
+          continue;
+        }
+        if (!v || v.status !== "open") continue;
+        const u = db3.one(`SELECT id, username, display_name, role, is_active FROM users WHERE id=?`, r.key.slice(PREFIX.length));
+        if (!u || !u.is_active) continue;
+        out2.push({ user_id: u.id, username: u.username, display_name: u.display_name, role: u.role, requested_at: v.at, account_field: require_devices().accountFieldBound(u.id) });
+      }
+      return out2.sort((a, b) => String(a.requested_at).localeCompare(String(b.requested_at)));
+    }
+    function decide(ctx, approve) {
+      officeOnly();
+      const userId = ctx.params.userId;
+      const r = read(userId);
+      if (!r || r.status !== "open") throw notFound("There is no open field-device request from that person.");
+      db3.transaction(() => {
+        if (approve) require_devices().bindAccount(userId, "admin", { actor: ctx.user, ip: ctx.ip });
+        const now2 = db3.now();
+        for (const id of r.tasks || []) db3.run(`UPDATE tasks SET status=?, completed_at=?, updated_at=? WHERE id=? AND status IN ('open','in_progress')`, approve ? "done" : "cancelled", now2, now2, id);
+        write(userId, { ...r, status: approve ? "approved" : "declined", decided_at: now2, decided_by: ctx.user.id });
+      });
+      audit3.log({ user: ctx.user, action: approve ? "device.field_request.approve" : "device.field_request.decline", entity: "user", entityId: userId, ip: ctx.ip });
+      return { ok: true, status: approve ? "approved" : "declined" };
+    }
+    function routes(r) {
+      r.get("/api/me/field-device", auth3.requireAuth, (ctx) => status(ctx.user));
+      r.post("/api/me/field-device/request", auth3.requireAuth, (ctx) => request(ctx));
+      r.get("/api/admin/field-requests", auth3.requireAuth, auth3.requirePerm("users:manage"), () => ({ requests: pending() }));
+      r.post("/api/admin/field-requests/:userId/approve", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => decide(ctx, true));
+      r.post("/api/admin/field-requests/:userId/decline", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => decide(ctx, false));
+    }
+    module.exports = { routes, status, pending };
   }
 });
 
@@ -42862,6 +42999,7 @@ var require_me = __commonJS({
     var MAX_PREF_BYTES = 8e3;
     module.exports = (r) => {
       r.get("/api/me", auth3.requireAuth, (ctx) => auth3.publicUser(ctx.user));
+      require_field_request().routes(r);
       r.get("/api/me/prefs", auth3.requireAuth, (ctx) => {
         const out2 = {};
         for (const p of db3.all(`SELECT key, value FROM user_prefs WHERE user_id=?`, ctx.user.id)) {
