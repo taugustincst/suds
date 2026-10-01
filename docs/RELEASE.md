@@ -68,14 +68,20 @@ a stabilisation release, 1.23.1, and these commitments, which hold until this se
    previous feature release fails unless a security exception is recorded. A red `release-policy` job fails the CI
    run, and the release gate refuses a commit whose CI run failed.
 
-**1.23.1 record (it becomes *the* Record paragraph, under its own bold *Record* heading, when the integrator stamps
-1.23.1).** 1.23.1 ships **without a policy exception**: a patch of 1.23.0 under the patch rules (no migration, no new
-or widened permission, no new route, within the 1,500-line limit; `node scripts/release-policy.js --version 1.23.1
---previous v1.23.0 --previous-ref 9877d07` passes), with fixes, hardening, tests, documentation and evidence only.
-It is the first release under *Stabilisation*: the owner tags it, in the same push as the ten owed tags if they are
-not pushed by then (*Before 1.23.1* in the hand-off), and `release.yml` and its `Web app` run publish it. If 1.23.1
-has to go live before the owner has pushed any tag, the direct `gh-pages` push is said here and in the exceptions
-table, as point 4 requires; it is not a policy exception (the patch rules pass), but it is not the gate either.
+**Record: 1.23.1 ships without a policy exception.** 1.23.1 is a patch of 1.23.0 under the patch rules, the first
+release under *Stabilisation*: no migration, no new or widened permission, no new route, and 475 lines added outside
+docs, tests and generated files, within the 1,500-line limit (`node scripts/release-policy.js --version 1.23.1
+--previous v1.23.0 --previous-ref 9877d07` passes). It carries fixes (the open
+items 1.23.0 left, a device's to-do linked to a colleague's referral, the outreach waiting list, the office app's
+service worker and offline page, the worker-facing fixes on a phone), the release-policy check on every push, these
+commitments, tests, documentation and the evidence on the released 1.23.0; the exceptions table has no row for it. It
+is released as one commit, "Release 1.23.1" (a patch keeps its minor's SBOM, `sbom-1.23.0`), and that commit is the
+one CI passes and the owner tags: `v1.23.1` goes in the same push as the ten tags owed before it (step 2 of
+[evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), it is the newest tag, and its `release.yml` run, whose
+gate passes with no `policy_exception`, is the Latest release and starts the `Web app` run that publishes it. If
+1.23.1 has to go live before the owner has pushed the tags, the direct `gh-pages` push is said here and in the
+exceptions table, as point 4 requires; it is not a policy exception (the patch rules pass), but it is not the gate
+either.
 
 ### Supported versions
 
@@ -334,12 +340,14 @@ change: 1.16.0 is the previous feature release) and for any 1.16.x patch (whose 
 `v1.16.2`: 1.16.3 and 1.16.4 alone count 1,137 of the 1,500 lines), `scripts/migration-order.js`'s baseline, and
 *Backports* step B, whose `git rev-parse 'v1.16.4^{commit}'` fails without the tag.
 
-**Now ten tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.23.0). 1.17.1, 1.18.0,
-1.19.0, 1.20.0, 1.21.0, 1.22.0 and 1.23.0 were published the same way, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`, `v1.17.1`,
-`v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0` and `v1.23.0`, pushed together while `main` says 1.23.0. The hand-off has the checks, the tag commands, the one push,
-what each tag's runs do (the 1.16.x gates refuse, the other eight need a *Run workflow* with `policy_exception`, and
-only `v1.23.0`'s `Web app` run is approved: it republishes the build already live), and the SHA-256 each release
-zip will have, rebuilt from each commit (1.23.0's is recorded by a later commit on `main`). The paragraphs below are the reasoning of 1.17.0's time, for three tags;
+**Now eleven tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.23.1). 1.17.1, 1.18.0,
+1.19.0, 1.20.0, 1.21.0, 1.22.0 and 1.23.0 were published the same way, and 1.23.1 was stamped before the owner pushed
+them, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`, `v1.17.1`, `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`,
+`v1.22.0`, `v1.23.0` and `v1.23.1`, pushed together while `main` says 1.23.1. The hand-off has the checks, the tag
+commands, the one push, what each tag's runs do (the 1.16.x gates refuse, the eight from `v1.17.0` to `v1.23.0` need a
+*Run workflow* with `policy_exception`, `v1.23.1`'s gate passes, and only `v1.23.1`'s `Web app` run is approved: it
+publishes 1.23.1), and the SHA-256 each release zip will have, rebuilt from each commit (1.23.1's is recorded by a
+later commit on `main`). The paragraphs below are the reasoning of 1.17.0's time, for three tags;
 the rule they set, never an older tag alone, is unchanged.
 
 **Tag 1.16.3, 1.16.4 and 1.17.0 in one push, never 1.16.x alone** (engineering review of 1.17.0, H1). 1.17.0 is on

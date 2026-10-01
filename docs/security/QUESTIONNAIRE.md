@@ -170,8 +170,8 @@ their tags.
 **How to verify one of these builds instead**, from any clone of the repository:
 
 1. **Find the commit, and check it is on `main` with CI green.** Each commit is in the table in
-   [../evidence/RELEASE-HANDOFF.md](../evidence/RELEASE-HANDOFF.md) (1.23.0's is the commit after `Release 1.23.0`,
-   found by its subject, as step 1 there shows). Check it with `git merge-base --is-ancestor <commit> origin/main` and
+   [../evidence/RELEASE-HANDOFF.md](../evidence/RELEASE-HANDOFF.md) (1.23.1's, until a later commit records its hash,
+   is the commit `Release 1.23.1` itself, found by its subject, as step 1 there shows). Check it with `git merge-base --is-ancestor <commit> origin/main` and
    `gh run list --workflow ci.yml --commit <commit>`.
 2. **The zip.** Build it from the commit with
    `git archive --format=zip --prefix=suds-vX.Y.Z/ -o suds-vX.Y.Z.zip <commit>`, run `sha256sum`, and compare the

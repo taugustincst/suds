@@ -4,7 +4,25 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
-### Release discipline (stabilisation)
+## 1.23.1 — 2026-10-01
+
+A stabilisation patch of 1.23.0: fixes, tests, documentation and evidence, with no migration, no new or widened
+permission and no new route (`node scripts/release-policy.js --version 1.23.1 --previous v1.23.0 --previous-ref 9877d07`
+passes: 475 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It is the first release
+under the new *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record: 1.23.1*) and
+passes the release policy with no exception: a feature freeze until 2026-10-29, no policy exception except a security
+fix, 1.23.x as the supported line, every release tagged by the owner and published by `release.yml`, and CI checking
+the release policy on every push. It closes the open items 1.23.0 left (a field-device request left open by a
+deactivated account; a deleted call, visit or referral's follow-up to-do), a device's to-do linked to a colleague's
+referral, an outreach contact undone after it reached the office, the office app's service worker stalling on a
+server with offline copies off, and the worker-facing rough edges of 1.23.0 on a phone; and it adds the recovery
+drill, upgrade drill and installer run on the released 1.23.0. Upgrading needs nothing beyond replacing the files and
+restarting. What an administrator should know: one new audit action, `device.field_request.close`; field-device
+requests and to-dos left open by a deactivated account close the next time an administrator opens the list; and the
+office app now keeps, for the open tab only, who is signed in and the programme's lists in `sessionStorage` (no PHI),
+so a reload with no signal still opens Street outreach (docs/security/DATA-INVENTORY.md).
+
+### Release discipline: the policy checked on every push, and the stabilisation commitments
 
 - Fixed: the release policy was checked only in `release.yml`'s gate, which no release since 1.16.2 has been through,
   so nothing turned red when work after a release broke it. CI's new `release-policy` job
@@ -52,26 +70,26 @@ No migration, no new route and no new permission; one new audit action, `device.
   sent back unchanged, is kept), and the queue counts as a reminder only a to-do someone else gave the worker
   (`server/rules/tasks.js`, `server/routes/supervision.js`).
 
-### Worker polish (stream S5)
+### Fixed: field-device messages, to-do names and the phone layout
 
-* Fixed: approving a field-device request while offline copies are off on the office server (the default) told the
+- Fixed: approving a field-device request while offline copies are off on the office server (the default) told the
   administrator the person's "devices are field devices from their next sync" and told the worker "every phone you
   sync is a field device", though no phone could keep an offline copy. Synced devices now says offline copies are off
   and what turns them on (`LOCAL_MODE_ENABLED=true`, or `"localModeEnabled": true` in `data/server.json`, then a
   restart), in the request card, the Approve dialog and the result; the worker's *Set up this phone for the field*
   says *Approved, but not ready yet* — their account is set as a field account, their office has not turned on
   offline copies, and to ask their SUDS administrator. Messages only; no route or setting changed.
-* Fixed: on a phone, a to-do row's Open button was heard as "Open Call about detox bedUrgent"; it is now
+- Fixed: on a phone, a to-do row's Open button was heard as "Open Call about detox bedUrgent"; it is now
   "Open: Call about detox bed (Urgent)" (every phone list whose row has its own control).
-* Fixed: unticking **Follow-up needed** on the call form left the date showing, though the server clears it on save;
+- Fixed: unticking **Follow-up needed** on the call form left the date showing, though the server clears it on save;
   the form now clears it too.
-* Fixed (phone, 390 px): a banner (the 2-step reminder) sat over the open menu's brand and programme name; the menu
+- Fixed (phone, 390 px): a banner (the 2-step reminder) sat over the open menu's brand and programme name; the menu
   now covers the banners. The offline banner is one short line and a **Working offline** link (it was five lines;
   the full explanation is still said to a screen reader once). The **+ Log** button no longer covers the Part 2
   notice badge on Home: the alert badges stop short of its column and wrap.
-* Fixed: Home's **To-dos for today** had no cap (nine rows pushed *Continue where you left off* far down a phone); it
+- Fixed: Home's **To-dos for today** had no cap (nine rows pushed *Continue where you left off* far down a phone); it
   shows at most five, overdue first, then **N more due to-dos**, which opens To-dos.
-* Fixed: clinicians lost **Notes** from the phone menu in 1.23.0 though their day is notes; anyone who writes
+- Fixed: clinicians lost **Notes** from the phone menu in 1.23.0 though their day is notes; anyone who writes
   clinical notes keeps it in the phone's main menu, and **Supplies** folds into More for them instead (still at most
   12 top-level entries; navigators unchanged).
 
@@ -109,7 +127,7 @@ Evidence and tests only; no change to what SUDS does. One finding for the owner,
   1.22.0 and 1.23.0 ship the same `upgrade.sh` and `lib.sh`, so the installed upgrader rightly ran the upgrade itself
   and the hand-over between two real releases has still not been seen; it was exercised again with a probe build.
 
-### Offline office app, to-dos and sample referrals (1.23.1)
+### Fixed: the office app with no signal, to-dos that open their record, and the sample referrals
 
 - Fixed: the office app's service worker never finished installing on an office server with local mode off (the
   default): the server rightly answers 404 for `local/*`, and `Cache.add()` and its retry left those answers unread,
