@@ -150,6 +150,8 @@ administrator's temporary password is in no transcript.
 
 ## Findings
 
+**Status (1.22.0, built, not yet released):** findings 1 to 3 are fixed in the 1.22.0 code: the listener reads "no LAN addresses" when the sandbox refuses the interface list (`server/listener.js`, `test/listener-sandbox.test.js`); a dry run from a zip says the release's own upgrader may take over; the zip's checksum note names the operator's checksum (`test/deploy-linux.test.js`). This run is 1.21.0's and is kept as recorded.
+
 Recorded, not fixed here (no code was changed by this run).
 
 1. **Product defect: `os.networkInterfaces()` fails inside the installed `suds.service`, and three things break with

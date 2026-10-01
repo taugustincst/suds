@@ -15,7 +15,13 @@ const KEEP_ALIVE_MS = 65_000;
 
 function lanAddresses() {
   const out = [];
-  for (const [name, addrs] of Object.entries(os.networkInterfaces())) for (const a of addrs || []) if (a.family === 'IPv4' && !a.internal) out.push({ iface: name, address: a.address });
+  // Under SUDS Server's systemd sandbox (RestrictAddressFamilies without AF_NETLINK, deploy/linux/suds.service) the
+  // interface list cannot be read and os.networkInterfaces() throws (EAFNOSUPPORT). Behind Caddy the LAN addresses are
+  // not needed, so that is "none", never an error: it used to abort start() before "listening on" and the setup
+  // wizard's relisten handler, and gave 500s on /api/setup/status and /api/app/info (installer run on 1.21.0).
+  let ifaces;
+  try { ifaces = os.networkInterfaces(); } catch { return out; }
+  for (const [name, addrs] of Object.entries(ifaces || {})) for (const a of addrs || []) if (a.family === 'IPv4' && !a.internal) out.push({ iface: name, address: a.address });
   return out;
 }
 

@@ -218,16 +218,17 @@ ssh_lockout_guard() {
 # ---- downloads, each checked against a pinned checksum before it is used ----
 # fetch URL DEST — HTTPS only, TLS 1.2+, no redirects to plain HTTP.
 fetch() { act curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -o "$2" "$1"; }
-# verify_sum sha256|sha512 FILE HEX — refuses on a mismatch; in a dry run a file that does not exist yet is planned.
+# verify_sum sha256|sha512 FILE HEX [WHAT] — refuses on a mismatch; in a dry run a file that does not exist yet is planned.
+# WHAT names the checksum in the note ("the pinned checksum" unless given: the release zip's is the operator's).
 verify_sum() {
-  local algo=$1 file=$2 want=$3 have
+  local algo=$1 file=$2 want=$3 what=${4:-the pinned checksum} have
   if [[ ! -f "$file" ]]; then
     (( DRY )) && { printf '+ %s\n' "$(quoted "${algo}sum" -c) <<< \"$want  $(basename "$file")\" (refuse on mismatch)"; return 0; }
     die "$file is missing"
   fi
   have=$("${algo}sum" "$file" | awk '{print $1}')
   [[ "$have" == "$want" ]] || die "checksum mismatch for $(basename "$file"): expected ${algo} $want, got $have. Refusing to install it (a corrupted or substituted download)."
-  note "$(basename "$file"): ${algo} matches the pinned checksum"
+  note "$(basename "$file"): ${algo} matches ${what}"
 }
 
 # install_node CODE_TREE — the Node.js release pinned in CODE_TREE/deploy/linux/pins, into /opt/suds/node-<v>.
@@ -344,7 +345,10 @@ stage_release() {
       die "no independent checksum for suds-v$ver.zip. Pass --release-sha256=<hex>, taken from a channel other than the download: the SHA-256 published in the GitHub Release notes for v$ver AND recorded in that version's CHANGELOG section on the main branch (not at the tag: the zip is built from the tagged commit, so its checksum is added after it); they must agree (docs/SELF-HOSTING.md, Upgrading). Or knowingly pass --trust-release-checksum to accept the .sha256 file from the same release."
     fi
     [[ "$want" =~ ^[0-9a-f]{64}$ ]] || (( DRY )) || die "the release checksum is not a SHA-256"
-    verify_sum sha256 "$zip" "$want"
+    case "$RELEASE_CHECKSUM_SOURCE" in
+      same-release) verify_sum sha256 "$zip" "$want" "the .sha256 published beside it" ;;
+      *) verify_sum sha256 "$zip" "$want" "the checksum given with --release-sha256" ;;
+    esac
     if (( DRY )); then
       printf '+ unzip -q %s -d %s\n' "$zip" "$tmp"; from="$tmp/suds-v$ver"
     else

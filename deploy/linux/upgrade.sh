@@ -73,6 +73,11 @@ stage_release "$VERSION"
 # upgrade.sh or lib.sh in it takes over from here, with the same arguments; it finds the stage complete and goes on
 # from step 1. Nothing has been stopped or changed yet. SUDS_UPGRADER_HANDOVER marks the hand-over, so it happens once.
 staged_upgrader="$STAGED_TREE/deploy/linux/upgrade.sh"
+# A dry run from a zip does not unpack it, so it cannot tell whether the release's upgrade.sh differs: it says what the
+# real run will do, rather than show only this (installed) upgrader's plan as if it were the one that runs.
+if (( DRY )) && [[ -z "${SUDS_UPGRADER_HANDOVER:-}" && ! -f "$staged_upgrader" ]]; then
+  printf '+ if SUDS %s'"'"'s own upgrade.sh or lib.sh differs from this one, hand over to it (%s) with the same arguments: the steps below are then that upgrader'"'"'s\n' "$VERSION" "$CODE_BASE/$VERSION/deploy/linux/upgrade.sh"
+fi
 if [[ -z "${SUDS_UPGRADER_HANDOVER:-}" && -f "$staged_upgrader" && -f "$STAGED_TREE/deploy/linux/lib.sh" ]] \
   && ! { cmp -s "$HERE/upgrade.sh" "$staged_upgrader" && cmp -s "$HERE/lib.sh" "$STAGED_TREE/deploy/linux/lib.sh"; }; then
   if (( DRY )); then

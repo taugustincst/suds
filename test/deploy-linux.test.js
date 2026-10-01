@@ -304,6 +304,12 @@ test('a release zip needs a checksum from another channel: refused without --rel
   const up = fixture({ current: '1.16.0' });
   r = run('upgrade.sh', ['--dry-run', '9.9.9'], up);
   assert.match(r.err, /REFUSED: no independent checksum/);
+  // With the operator's checksum: the note names it (not "the pinned checksum"), and the dry run, which does not unpack
+  // the zip, says the release's own upgrader may take over (installer run on 1.21.0, findings 2 and 3).
+  r = run('upgrade.sh', ['--dry-run', '9.9.9', `--source=${zip}`, `--release-sha256=${good}`], up);
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.out, /suds-v9\.9\.9\.zip: sha256 matches the checksum given with --release-sha256/);
+  assert.match(r.out, /\+ if SUDS 9\.9\.9's own upgrade\.sh or lib\.sh differs from this one, hand over to it/);
   fs.rmSync(fx.dir, { recursive: true, force: true }); fs.rmSync(up.dir, { recursive: true, force: true });
 });
 

@@ -4,6 +4,21 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Fixed: SUDS Server problems the installer run on 1.21.0 found
+
+Built for 1.22.0, not yet released. No migration.
+
+- **The listener no longer fails to start under SUDS Server's sandbox.** `deploy/linux/suds.service` restricts the
+  address families to IPv4, IPv6 and Unix sockets, so `os.networkInterfaces()` throws there; `server/listener.js`
+  read it on every start, which logged an unhandled rejection, never printed "listening on", left the setup wizard's
+  listener switch without its handler, and gave signed-in staff a 500 on `/api/setup/status` and `/api/app/info` (the
+  *Get the app* page stayed empty). Behind Caddy the LAN addresses are not needed: they are now "none" when the list
+  cannot be read (`test/listener-sandbox.test.js`). The sandbox stays as tight as it was.
+- **`upgrade.sh --dry-run` from a zip says the release's own upgrader may take over**, since a dry run does not unpack
+  the zip and so cannot compare them; before, it showed only the installed upgrader's plan.
+- **The release zip's checksum note names the operator's checksum** ("matches the checksum given with
+  --release-sha256"), not "the pinned checksum", which is Node.js's and Caddy's.
+
 ### Field devices: the scope follows the account (built for 1.22.0, not yet released)
 
 - **The field scope can no longer be left through the device id.** The id a device sends is its own word, and
