@@ -4,6 +4,31 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Offline office app, to-dos and sample referrals (1.23.1)
+
+- Fixed: the office app's service worker never finished installing on an office server with local mode off (the
+  default): the server rightly answers 404 for `local/*`, and `Cache.add()` and its retry left those answers unread,
+  each holding one of the browser's six connections to the server, so the install stopped at 19 of 62 files and every
+  later request from the worker (`/api/health` included) waited for ever; with no signal, pages then failed and a
+  reload did not load at all. The worker now fetches each file itself and cancels every answer it does not keep
+  (`public/sw.js`; `test/sw-phi.test.js`).
+- Fixed: with no signal, a page that needs the office showed the browser's "Failed to fetch dynamically imported
+  module …"; it now shows a plain *You're offline* page with a link to Street outreach (any other failure keeps its own
+  message). A reload with no signal loads the app from the worker's copy and keeps the person signed in on that tab
+  (who is signed in and the programme's lists, in `sessionStorage`, no PHI; checked with the office again when the
+  signal is back), so Street outreach's waiting list still works (docs/security/DATA-INVENTORY.md).
+  `scripts/ui/offline-outreach.mjs` now covers the office app's worker and the app offline.
+- Fixed: a to-do that came from a call, a visit or a referral did not open it. Its row and **Edit to-do** now offer
+  **Open the call**, **Open the visit** or **Open the referral**; a supervisor's reminder opens the referral's
+  **Record outcome** form. The reminder's details no longer end with the referral's record id and give the date as the
+  app does ("Jun 19, 2026"); a reminder made by 1.23.0 is still recognised (`test/supervision-referrals.test.js`).
+- Fixed: none of the sample referrals (`npm run seed`, Load sample data) cited a consent or had its accounting row, so
+  editing an open one, even only its follow-up date, asked for a consent. They now cite the client's consent and have
+  their accounting rows (`test/demo.test.js`). And an edit that changes only a shared referral's follow-up date or
+  notes, which tells the provider nothing new, no longer asks for a disclosure basis, over REST or by sync; any change
+  that does (status, provider, warm hand-off, appointment, urgency, what is shared) still passes the consent gate
+  (`test/disclosure-gates.test.js`).
+
 ## 1.23.0 — 2026-10-01
 
 A feature release (migration 67; new routes `POST /api/supervision/referrals/:id/remind`, `GET /api/me/field-device`,

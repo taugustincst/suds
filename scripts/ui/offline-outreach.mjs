@@ -12,7 +12,10 @@
 //     (an office server with local mode off: before, the unread 404s held every connection and the install never
 //     finished); with no signal, Clients, To-dos and Street outreach open from the menu; a reload with no signal
 //     loads the app from the worker's copy and shows a plain offline page (not "Failed to fetch dynamically imported
-//     module") that links to Street outreach, whose waiting list still works and is sent when the signal is back.
+//     module") that links to Street outreach, whose waiting list still works and is sent when the signal is back;
+//   * 1.23.1: a to-do opens the record it came from: a supervisor's reminder opens the referral's Record outcome form
+//     (from the list at 1280 px and from the to-do on a phone), with no record id in its details; a visit's
+//     follow-up opens the visit.
 // Every new state is put through axe (WCAG 2.1 A/AA).
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
@@ -248,6 +251,46 @@ try {
   ok(await until(async () => (await chipCount(p)) === 0, { timeout: 15000 }), 'back online, it is sent');
   ok(await until(async () => (await shift6()) === officeBefore + 1), 'and the office has it, once');
   await phone.ctx.close();
+
+  // ---- 7. a to-do opens the record it came from (evaluation of 1.23.0) ----
+  const boss = await session('jwalker', PW);
+  const waitingRef = ((await boss.api('GET', '/api/supervision/queue')).data.referrals_awaiting_outcome || []).find(x => x.may_remind && !x.reminded_at && x.worker === 'Maria Rivera');
+  ok(waitingRef, 'the sample data has a referral of Maria\'s waiting to hear what happened');
+  const sent = await boss.api('POST', `/api/supervision/referrals/${waitingRef.id}/remind`, {});
+  eq(sent.status, 200, 'the supervisor reminds her', sent.data);
+  await boss.ctx.close();
+  const desk = await session('mrivera', PW);
+  const reminder = ((await desk.api('GET', '/api/tasks?status=open&limit=500')).data.rows || []).find(t => t.id === sent.data.task);
+  ok(reminder && !reminder.description.includes(waitingRef.id) && !/Reference:/.test(reminder.description), 'the reminder\'s details carry no record id', reminder && reminder.description);
+  ok(reminder && /\(sent [A-Z][a-z]{2} \d{1,2}, \d{4}\)/.test(reminder.description), 'and give the date as the app does ("Jun 19, 2026")', reminder && reminder.description);
+  await desk.go('tasks');
+  const srcBtn = `tr:has-text("${reminder.title}") [data-task-source="referral"]`;
+  ok(await desk.page.$(srcBtn), 'the reminder\'s row offers Open the referral');
+  await desk.page.click(srcBtn);
+  await desk.page.waitForSelector('.modal-bg .modal');
+  ok(/Referral to /.test(await desk.page.textContent('.modal-bg .modal h2')) && await desk.page.$('.modal-bg .modal button[type=submit]:text-is("Record outcome")'), 'it opens the referral\'s Record outcome form', await desk.page.textContent('.modal-bg .modal h2'));
+  await axe(desk.page, 'Record outcome opened from a reminder to-do');
+  await desk.page.click('.modal-bg .modal button:text-is("Cancel")');
+  // A visit's follow-up opens the visit.
+  const cl = ((await desk.api('GET', '/api/caseload')).data.caseload || [])[0];
+  const visit = await desk.api('POST', '/api/interventions', { client_id: cl.id, type: 'case_management', occurred_at: new Date().toISOString(), duration_minutes: 15, follow_up_due: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10) });
+  eq(visit.status, 201, 'a visit with a follow-up date', visit.data);
+  const fu = ((await desk.api('GET', '/api/tasks?status=open&limit=500')).data.rows || []).find(t => t.intervention_id === visit.data.id);
+  ok(fu, 'makes its follow-up to-do');
+  await desk.go(`tasks?id=${fu.id}`);
+  await desk.page.waitForSelector('.modal-bg .modal [data-task-source="visit"]');
+  await axe(desk.page, 'Edit to-do with Open the visit');
+  await desk.page.click('.modal-bg .modal [data-task-source="visit"]');
+  ok(await until(() => desk.page.$(`[data-visit-view="${visit.data.id}"]`)), 'Edit to-do offers Open the visit, which opens it');
+  await desk.ctx.close();
+  // On a phone, the reminder (a row that opens the to-do) offers it too.
+  const mob = await session('mrivera', PW, { width: 390, height: 844 });
+  await mob.go('tasks');
+  await mob.page.click(`.compact-row:has-text("${reminder.title}") .secondary`);
+  await mob.page.waitForSelector('.modal-bg .modal [data-task-source="referral"]');
+  await mob.page.click('.modal-bg .modal [data-task-source="referral"]');
+  ok(await until(() => mob.page.$('.modal-bg .modal button[type=submit]:text-is("Record outcome")')), 'on a phone, the reminder\'s Open the referral opens Record outcome');
+  await mob.ctx.close();
 } catch (e) {
   fail(`threw: ${e && e.stack ? e.stack.split('\n').slice(0, 4).join(' | ') : e}`);
 }
