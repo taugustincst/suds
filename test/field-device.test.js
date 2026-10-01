@@ -439,3 +439,43 @@ test('a field device\'s sync session reaches signing in and out under /api/auth/
   const b = H.client(); await b.login(w.username, PW);
   assert.equal((await b.get('/api/auth/sessions')).status, 200);
 });
+
+// ---- integration review of 1.22.0 ----
+test('a device revoked, or told to erase itself, while its sync session is open: the session ends at its next request', async () => {
+  for (const how of ['revoke', 'wipe']) {
+    const w = H.makeUser(`fd${how}open`, 'navigator', PW);
+    const dev = uuid();
+    const field = await deviceSession(w, dev, { field_device: true });
+    ok(await field.c.get(`/api/sync/pull?since=${encodeURIComponent(NEVER)}`), 200, 'pull before');
+    // A whole device of another account: its sync session reaches the rest of the API.
+    const other = H.makeUser(`fd${how}whole`, 'navigator', PW);
+    const wholeDev = uuid();
+    const whole = await deviceSession(other, wholeDev);
+    assert.equal((await whole.c.get('/api/clients')).status, 200, 'a whole device\'s session reaches the API');
+    for (const d of [dev, wholeDev]) ok(await admin.post(`/api/admin/devices/${d}/${how}`, {}), 200, how);
+    const pulled = await field.c.get(`/api/sync/pull?since=${encodeURIComponent(NEVER)}`);
+    assert.equal(pulled.status, 403, `${how}: a pull on the open session is refused: ${JSON.stringify(pulled.data)}`);
+    assert.equal(pulled.data[how === 'revoke' ? 'deviceRevoked' : 'wipeRequested'], true);
+    const now = new Date().toISOString();
+    assert.equal((await field.c.post('/api/sync/push', { device_now: now, tables: { interventions: [{ id: uuid(), user_id: w.id, type: 'outreach', occurred_at: now, created_at: now, updated_at: now }] } })).status, 401, `${how}: and the session is over`);
+    assert.equal((await whole.c.get('/api/clients')).status, 403, `${how}: the whole device's session no longer reaches the API`);
+    assert.equal((await whole.c.get('/api/clients')).status, 401, `${how}: its session is over`);
+    assert.ok(H.db.one(`SELECT revoked_at FROM sessions WHERE device_id=? AND sync_client=1`, wholeDev).revoked_at);
+  }
+});
+
+test('an outreach contact taken back on a field device (Undo): its deletion lands at the office', async () => {
+  const w = H.makeUser('fdundo', 'navigator', PW);
+  const { c } = await deviceSession(w, uuid(), { field_device: true });
+  ok(await c.get(`/api/sync/pull?since=${encodeURIComponent(NEVER)}`), 200, 'pull under the field scope first');
+  const now = new Date().toISOString();
+  const visit = uuid();
+  const res = ok(await c.post('/api/sync/push', { device_now: now, tables: { interventions: [{ id: visit, user_id: w.id, type: 'outreach', occurred_at: now, duration_minutes: 2, created_at: now, updated_at: now }] } }), 200, 'the contact');
+  assert.equal(res.rejected.length, 0, JSON.stringify(res.rejected));
+  // Undo deletes the visit on the device (DELETE /api/interventions/:id in its kernel); the deletion is pushed.
+  const later = new Date(Date.now() + 1000).toISOString();
+  const del = ok(await c.post('/api/sync/push', { device_now: later, tombstones: [{ table_name: 'interventions', id: visit, deleted_at: later }] }), 200, 'the deletion');
+  assert.deepEqual(del.rejected, []);
+  assert.equal(H.db.one(`SELECT 1 AS x FROM interventions WHERE id=?`, visit), undefined, 'the contact is gone at the office');
+  assert.ok(H.db.one(`SELECT 1 AS x FROM tombstones WHERE table_name='interventions' AND id=?`, visit), 'and other devices are told');
+});

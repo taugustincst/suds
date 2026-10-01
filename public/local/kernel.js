@@ -50530,6 +50530,13 @@ var require_auth2 = __commonJS({
       return devices.effectiveField(s.user_id, device);
     }
     function assertSyncSessionReach(ctx) {
+      if (ctx.session && ctx.session.device_id && ctx.path !== "/api/auth/logout") {
+        const d = db3.one(`SELECT revoked_at, wipe_requested_at FROM devices WHERE id=?`, ctx.session.device_id);
+        if (d && (d.revoked_at || d.wipe_requested_at)) {
+          db3.run(`UPDATE sessions SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, db3.now(), ctx.session.id);
+          throw new HttpError3(403, "This device has been revoked or told to erase itself, so it can no longer sync. Sign in again to be told what to do.", { deviceRevoked: !!d.revoked_at, wipeRequested: !!d.wipe_requested_at });
+        }
+      }
       if (!ctx.session || !ctx.session.sync_client || ctx.path.startsWith("/api/sync/") || FIELD_SESSION_AUTH_PATHS.has(ctx.path)) return;
       if (!fieldSyncSession(ctx)) return;
       if (ctx.path.startsWith("/api/auth/")) throw new HttpError3(403, FIELD_SESSION_ACCOUNT_MESSAGE, { fieldDevice: true, useBrowser: true });
