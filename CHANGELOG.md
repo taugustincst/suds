@@ -182,6 +182,36 @@ an outreach worker's, a peer's, a counselor's and a supervisor's day at 390 px a
   `scripts/ui/run-all.sh`. `scripts/ui/r10-ai.mjs` now chooses *narrative* for its narrative-note step, since a new
   note starts in the clinician's last format.
 
+### Evidence on 1.21.0: recovery drill, upgrade drill and installer run
+
+Evidence and tests only; no change to what SUDS does. Two findings for the owner, recorded and not fixed here.
+
+- **Recovery drill on 1.21.0** (docs/evidence/dr-drill-2026-10-01-v1.21.0/): `scripts/dr-exercise.js --clients 20000`
+  on the released tree (`348e18c`, schema 63, 76 tables): 11 of 11 checks, drill RTO 4 s, host-procedure RTO 3.9 s,
+  RPO 5 s; the signed report verifies with the public key beside it.
+- **Upgrade drill to 1.21.0** (docs/evidence/upgrade-drill-2026-10-01-v1.21.0/): databases written by 1.16.2, 1.19.0
+  and 1.20.0 (20,000 fictional clients each) opened by 1.21.0, migrations 61 to 63 included. The driver now has the
+  older release also enrol and use a passkey (1.19.0 on), sign in a sync device, and (1.20.0) enter a county quarter
+  for a programme not on SUDS; 1.21.0 keeps every county row, session, device and passkey unchanged, gives devices
+  `sync_scope` full, no client a participant code, no passkey an attestation and no older session a `device_id`,
+  signs the passkey and the device in again and publishes a screened county release. Schema identical to a fresh
+  install, nothing lost; 25 of 25, 27 of 27 and 27 of 27 steps, 11 of 11 drill checks each.
+- **`test/fixtures/release-v1.20.0.sql`** (`make-release-fixture.js --rich` from `8f365b4`; the maker now writes the
+  county rows of a release with county-entered figures through that release's API, since its CHECK refuses made-up
+  ones) joins the release-fixture upgrade test, and `test/migrations.test.js` checks 1.21.0's first start on it:
+  county rows, a county-entered one included, survive unchanged; the passkey, the device and the sessions keep their
+  values with the new columns' defaults; the audit chain verifies.
+- **Installer run on 1.21.0** (docs/evidence/installer-container-run-2026-10-01-v1.21.0/): `install.sh` 1.21.0 on
+  Ubuntu 24.04 with systemd in a container (38 pass, 1 fail: the container's clock; drills 11 of 11); `upgrade.sh`
+  1.20.0 → 1.21.0 with 1.21.0's own script, as documented, and with the installed 1.20.0 one (the same result);
+  1.19.0 → 1.21.0 with the installed 1.19.0 script, where 1.21.0 names the two `WEBAUTHN_*` lines at start and in
+  `app.passkeys`; the hand-over exercised with a probe build. **Findings:** `deploy/linux/suds.service` lacks
+  `AF_NETLINK` in `RestrictAddressFamilies`, so `os.networkInterfaces()` throws in `server/listener.js`: an unhandled
+  rejection at every start and HTTP 500 from `/api/setup/status` and `/api/app/info` for a signed-in session (since
+  1.19.0 at least); and `upgrade.sh --dry-run` from a zip does not show the hand-over.
+- Citations moved to this evidence: the evidence index, BACKUP-AND-DR, the questionnaire's recovery and installer
+  bullets and the county RFI answers.
+
 ## 1.21.0 — 2026-09-30
 
 A feature release (migrations 61, 62 and 63; the county publication, field-device, authenticator allow-list and

@@ -1,0 +1,365 @@
+[dr-exercise] PASS Seed a fresh database with the fictional sample data (npm run seed) (1053 ms) — Seeded 12 clients, 140 visits, 70 calls, 45 notes, 15 resources.
+[dr-exercise] PASS Add 20000 fictional clients with 8 visits each, every creation audited (12694 ms) — 20012 clients, 20001 audit entries
+[dr-exercise] PASS Seal an audit anchor outside the database (AUDIT_ANCHOR_DIR) before the backup (104 ms) — anchor-2026-10-01T00-29-59-615Z-000000020001.json
+[dr-exercise] PASS Encrypted backup through the scheduled-backup path (online copy, AES-256-GCM, read back and verified) (5038 ms) — suds-2026-10-01T00-29-59-695Z.db.enc, 176316 KB, sqlite-online-backup, verified=true
+[dr-exercise] PASS Recovery drill: npm run dr-drill -- --backup <file> --keys-file <escrowed keys.json> (4957 ms) — 11/11 checks passed; RTO 4 s; RPO 5 s; audit entries verified 20001
+[dr-exercise] PASS Host restore procedure into a fresh data directory (node scripts/backup.js --restore) (3359 ms) — Restored to /tmp/suds-dr-exercise-0xZmYA/fresh-data/suds.db (20012 clients, schema 63).
+[dr-exercise] PASS The restored copy serves: SUDS started on the fresh data directory and answered /api/health (3901 ms) — HTTP 200
+[dr-exercise] PASS Row counts in the fresh data directory equal the source at backup time (374 ms) — 76 tables; clients 20012, interventions 160140, notes 45, audit_log 20001 -> 20001
+[dr-exercise] PASS Audit hash chain verifies end to end in the restored copy (0 ms) — {"ok":true,"checked":20001,"anchoredAt":1,"lastId":20001,"checkpointed":false}
+[dr-exercise] PASS Signed drill report verifies with the signing public key only (npm run verify-dr-report) (44 ms) — public key: supplied (key id 915f3a708d459eb4); VERIFIED
+
+===== signed drill report (text) =====
+SUDS disaster-recovery drill — PASSED
+Started 2026-10-01T00:30:04.831Z, finished 2026-10-01T00:30:09.562Z (cli, by cli) on vm, SUDS 1.21.0
+
+Backup restored: suds-2026-10-01T00-29-59-695Z.db.enc — the given copy in /tmp/suds-dr-exercise-0xZmYA/data/backups (taken 2026-10-01T00:29:59.695Z)
+Keys used: escrow file (escrowed-keys.json)
+RTO (restore to serving): 4 s — target 60 min — met
+RPO (age of that backup): 5 s — target 24 h — met
+
+Checks:
+  [PASS] The escrowed key file opens the backup — escrow file escrowed-keys.json; encryption key 1e8ef01a10f3, index key 9164f9022d21
+  [PASS] The restored file passes SQLite integrity_check — ok
+  [PASS] The encryption key in custody opens this backup
+  [PASS] Schema is at this build's version (63) — schema 63
+  [PASS] Every table holds the rows the backup was taken with — 76 tables
+  [PASS] The audit chain verifies end to end — 20001 entries
+  [PASS] The restored audit chain matches the anchors written before the backup — 2 matched, 0 written after this backup
+  [PASS] A sample of encrypted fields decrypts — 157 values across every *_enc column
+  [PASS] The application serves from the restored copy (/api/health) — healthy
+  [PASS] Password and second-factor sign-in work — login HTTP 200, MFA HTTP 200
+  [PASS] An authenticated read returns the restored records — HTTP 200, 20012 clients
+
+Rows the live server holds beyond this backup: clients 0, notes 0, interventions 0, referrals 0, tasks 0, audit_log 1
+
+The backup was restored into a temporary directory, checked by a separate process that was never given the live database's path, and deleted afterwards. The live database received only this result (a settings row and an audit entry).
+Integrity: SHA-256 b93afc67b824d848e5334b8fe730a2a16e6243c27c0fdf3e5ce7173d2002860a
+           HMAC-SHA256 24c752228baeaa9cb76fd57cfa506228018bc9e291827e64c92d91afe1c45fa4
+           Ed25519 signature IDBQNtDx84OVHOcrI6sdIx6nGLEmBm9GSjotnLS/XkH4p/o67+iO0zG6wmHjuYV7z5BW25AgTNUwQCQE14HODw==
+           signing key 915f3a708d459eb4 (public key published at GET /api/admin/security/signing-key)
+Verify with the public key only: npm run verify-dr-report -- <the .json report> --public-key <signing-key.pem>
+The JSON report beside this file is the record of the drill; this text is a convenience copy.
+
+===== signed drill report (JSON) =====
+{
+  "report": {
+    "kind": "suds-dr-drill",
+    "version": 1,
+    "signed_by": {
+      "algorithm": "Ed25519",
+      "key_id": "915f3a708d459eb4"
+    },
+    "ok": true,
+    "started_at": "2026-10-01T00:30:04.831Z",
+    "finished_at": "2026-10-01T00:30:09.562Z",
+    "trigger": "cli",
+    "by": {
+      "username": "cli"
+    },
+    "server": {
+      "version": "1.21.0",
+      "host": "vm",
+      "schema_version": 63
+    },
+    "backup": {
+      "file": "suds-2026-10-01T00-29-59-695Z.db.enc",
+      "copy": "given",
+      "dir": "/tmp/suds-dr-exercise-0xZmYA/data/backups",
+      "offsite_configured": false,
+      "taken_at": "2026-10-01T00:29:59.695Z",
+      "made_for_drill": false,
+      "decrypted_bytes": 180547584,
+      "latest_record_at": "2026-10-01T00:29:58.666Z"
+    },
+    "keys": {
+      "source": "escrow file",
+      "file": "escrowed-keys.json",
+      "encryption_key_fingerprint": "1e8ef01a10f3",
+      "index_key_fingerprint": "9164f9022d21",
+      "backup_key": true,
+      "same_as_running_server": true
+    },
+    "rto": {
+      "seconds": 4,
+      "target_minutes": 60,
+      "met": true,
+      "measures": "from starting the restore (reading and decrypting the backup) to the restored copy answering /api/health"
+    },
+    "rpo": {
+      "seconds": 5,
+      "target_hours": 24,
+      "met": true,
+      "measures": "age of the newest backup at the time of the drill: what a loss at that moment would have cost"
+    },
+    "elapsed_seconds": 4.7,
+    "schema": {
+      "restored_from": 63,
+      "now": 63
+    },
+    "counts": {
+      "restored": {
+        "ai_usage": 0,
+        "api_keys": 0,
+        "asam_assessments": 0,
+        "assignments": 21,
+        "audit_log": 20001,
+        "audit_maintenance": 0,
+        "authenticator_metadata": 0,
+        "breakglass_events": 0,
+        "budget_lines": 12,
+        "calls": 70,
+        "caloms_records": 4,
+        "caloms_submission_events": 0,
+        "caloms_submissions": 0,
+        "care_plan_goals": 0,
+        "care_plan_steps": 0,
+        "client_form_files": 1,
+        "client_forms": 6,
+        "client_revisions": 0,
+        "clients": 20012,
+        "complaints": 0,
+        "consents": 16,
+        "county_connect_sends": 0,
+        "county_connect_tokens": 0,
+        "county_connection": 0,
+        "county_programme_keys": 0,
+        "county_programmes": 0,
+        "county_publications": 0,
+        "county_signing_keys": 0,
+        "county_submissions": 0,
+        "court_orders": 0,
+        "devices": 0,
+        "disclosure_agreements": 0,
+        "disclosures": 6,
+        "episodes": 11,
+        "expenditures": 24,
+        "fhir_jwt_assertions": 0,
+        "form_templates": 3,
+        "funding_sources": 2,
+        "idempotency_keys": 0,
+        "import_items": 0,
+        "import_rows": 0,
+        "imports": 0,
+        "intervention_supplies": 0,
+        "interventions": 160140,
+        "note_addenda": 0,
+        "notes": 45,
+        "option_overrides": 0,
+        "outcome_measures": 0,
+        "overdose_events": 0,
+        "part2_notices": 9,
+        "passkeys": 0,
+        "patient_requests": 0,
+        "policy_documents": 0,
+        "prevention_events": 7,
+        "privacy_incident_clients": 0,
+        "privacy_incidents": 0,
+        "problem_history": 0,
+        "problems": 0,
+        "referral_links": 0,
+        "referrals": 27,
+        "resource_photos": 23,
+        "resources": 15,
+        "sessions": 0,
+        "settings": 12,
+        "signature_evidence": 0,
+        "supply_items": 6,
+        "supply_ledger": 7,
+        "supply_sites": 1,
+        "suprt_assessments": 0,
+        "tasks": 27,
+        "time_entries": 132,
+        "tombstones": 0,
+        "user_permission_overrides": 0,
+        "user_prefs": 0,
+        "users": 7,
+        "webauthn_challenges": 0
+      },
+      "live_minus_backup": {
+        "clients": 0,
+        "notes": 0,
+        "interventions": 0,
+        "referrals": 0,
+        "tasks": 0,
+        "audit_log": 1
+      }
+    },
+    "audit": {
+      "entries_verified": 20001,
+      "anchors": {
+        "total": 2,
+        "matched": 2,
+        "newer": 0,
+        "other_key": 0,
+        "purged": 0,
+        "bad": 0
+      }
+    },
+    "decrypt_sample": {
+      "tried": 157,
+      "failed": 0
+    },
+    "checks": [
+      {
+        "name": "The escrowed key file opens the backup",
+        "ok": true,
+        "detail": "escrow file escrowed-keys.json; encryption key 1e8ef01a10f3, index key 9164f9022d21"
+      },
+      {
+        "name": "The restored file passes SQLite integrity_check",
+        "ok": true,
+        "detail": "ok"
+      },
+      {
+        "name": "The encryption key in custody opens this backup",
+        "ok": true,
+        "detail": null
+      },
+      {
+        "name": "Schema is at this build's version (63)",
+        "ok": true,
+        "detail": "schema 63"
+      },
+      {
+        "name": "Every table holds the rows the backup was taken with",
+        "ok": true,
+        "detail": "76 tables"
+      },
+      {
+        "name": "The audit chain verifies end to end",
+        "ok": true,
+        "detail": "20001 entries"
+      },
+      {
+        "name": "The restored audit chain matches the anchors written before the backup",
+        "ok": true,
+        "detail": "2 matched, 0 written after this backup"
+      },
+      {
+        "name": "A sample of encrypted fields decrypts",
+        "ok": true,
+        "detail": "157 values across every *_enc column"
+      },
+      {
+        "name": "The application serves from the restored copy (/api/health)",
+        "ok": true,
+        "detail": "healthy"
+      },
+      {
+        "name": "Password and second-factor sign-in work",
+        "ok": true,
+        "detail": "login HTTP 200, MFA HTTP 200"
+      },
+      {
+        "name": "An authenticated read returns the restored records",
+        "ok": true,
+        "detail": "HTTP 200, 20012 clients"
+      }
+    ],
+    "adjustments": [],
+    "failures": [],
+    "live_database_untouched": true
+  },
+  "integrity": {
+    "sha256": "b93afc67b824d848e5334b8fe730a2a16e6243c27c0fdf3e5ce7173d2002860a",
+    "hmac_sha256": "24c752228baeaa9cb76fd57cfa506228018bc9e291827e64c92d91afe1c45fa4",
+    "ed25519_signature": "IDBQNtDx84OVHOcrI6sdIx6nGLEmBm9GSjotnLS/XkH4p/o67+iO0zG6wmHjuYV7z5BW25AgTNUwQCQE14HODw==",
+    "signing_key_id": "915f3a708d459eb4",
+    "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEApk9jRwJtt3AVtTDXcBV61Mlcc1z48znxyGKSOKLpq18=\n-----END PUBLIC KEY-----\n",
+    "algorithm": "SHA-256, HMAC-SHA256 (index key) and an Ed25519 signature (signing key) over the canonical JSON of \"report\" (keys sorted)"
+  }
+}
+
+===== exercise summary =====
+{
+  "kind": "suds-dr-exercise",
+  "ok": true,
+  "environment": "development exercise on a throwaway seeded database (fictional data); not a production drill",
+  "started_at": "2026-10-01T00:29:45.775Z",
+  "finished_at": "2026-10-01T00:30:14.168Z",
+  "host": {
+    "node": "v22.22.2",
+    "platform": "linux 6.18.44-fc-v50",
+    "cpus": 4,
+    "memory_gb": 16
+  },
+  "suds_version": "1.21.0",
+  "steps": [
+    {
+      "name": "Seed a fresh database with the fictional sample data (npm run seed)",
+      "ms": 1053,
+      "ok": true,
+      "detail": "Seeded 12 clients, 140 visits, 70 calls, 45 notes, 15 resources."
+    },
+    {
+      "name": "Add 20000 fictional clients with 8 visits each, every creation audited",
+      "ms": 12694,
+      "ok": true,
+      "detail": "20012 clients, 20001 audit entries"
+    },
+    {
+      "name": "Seal an audit anchor outside the database (AUDIT_ANCHOR_DIR) before the backup",
+      "ms": 104,
+      "ok": true,
+      "detail": "anchor-2026-10-01T00-29-59-615Z-000000020001.json"
+    },
+    {
+      "name": "Encrypted backup through the scheduled-backup path (online copy, AES-256-GCM, read back and verified)",
+      "ms": 5038,
+      "ok": true,
+      "detail": "suds-2026-10-01T00-29-59-695Z.db.enc, 176316 KB, sqlite-online-backup, verified=true"
+    },
+    {
+      "name": "Recovery drill: npm run dr-drill -- --backup <file> --keys-file <escrowed keys.json>",
+      "ms": 4957,
+      "ok": true,
+      "detail": "11/11 checks passed; RTO 4 s; RPO 5 s; audit entries verified 20001"
+    },
+    {
+      "name": "Host restore procedure into a fresh data directory (node scripts/backup.js --restore)",
+      "ms": 3359,
+      "ok": true,
+      "detail": "Restored to /tmp/suds-dr-exercise-0xZmYA/fresh-data/suds.db (20012 clients, schema 63)."
+    },
+    {
+      "name": "The restored copy serves: SUDS started on the fresh data directory and answered /api/health",
+      "ms": 3901,
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "Row counts in the fresh data directory equal the source at backup time",
+      "ms": 374,
+      "ok": true,
+      "detail": "76 tables; clients 20012, interventions 160140, notes 45, audit_log 20001 -> 20001"
+    },
+    {
+      "name": "Audit hash chain verifies end to end in the restored copy",
+      "ms": 0,
+      "ok": true,
+      "detail": "{\"ok\":true,\"checked\":20001,\"anchoredAt\":1,\"lastId\":20001,\"checkpointed\":false}"
+    },
+    {
+      "name": "Signed drill report verifies with the signing public key only (npm run verify-dr-report)",
+      "ms": 44,
+      "ok": true,
+      "detail": "public key: supplied (key id 915f3a708d459eb4); VERIFIED"
+    }
+  ],
+  "drill": {
+    "ok": true,
+    "rto_seconds": 4,
+    "rpo_seconds": 5,
+    "rto_target_minutes": 60,
+    "rpo_target_hours": 24,
+    "checks_passed": 11,
+    "checks_total": 11,
+    "audit_entries_verified": 20001,
+    "report_sha256": "b93afc67b824d848e5334b8fe730a2a16e6243c27c0fdf3e5ce7173d2002860a",
+    "signing_key_id": "915f3a708d459eb4"
+  },
+  "host_restore_to_health_seconds": 3.9,
+  "report_file": "dr-drill-2026-10-01T00-30-04-831Z.json"
+}
+[dr-exercise] evidence written to /tmp/claude-0/-home-user-suds/d4ee5b51-c604-5f92-b8c2-e9f94f21d1eb/scratchpad/p4/dr-out

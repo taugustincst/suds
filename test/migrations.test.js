@@ -301,8 +301,10 @@ test('migration 46: a preferred name with no search index gets one; a written in
 // 58 and 59 run on a database that already holds rows in the county tables of 56 and 57 (county_connection, a
 // single-row table, holds its one row), and on sessions it opened (below). 1.19.0 (schema 59, --rich, made from
 // 3dc20dc, the released commit) is the release before 1.20.0: migration 60 rebuilds county_submissions while it holds
-// the signed rows --rich made there, and adds county_programmes.on_suds to programmes that exist.
-for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql', 'release-v1.15.3.sql', 'release-v1.16.4.sql', 'release-v1.18.0.sql', 'release-v1.19.0.sql']) {
+// the signed rows --rich made there, and adds county_programmes.on_suds to programmes that exist. 1.20.0 (schema 60,
+// --rich, made from 8f365b4, the released commit) is the release before 1.21.0: migrations 61 to 63 run on a database
+// whose county_submissions holds signed rows and a county-entered one that 1.20.0 wrote through its own API.
+for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql', 'release-v1.15.3.sql', 'release-v1.16.4.sql', 'release-v1.18.0.sql', 'release-v1.19.0.sql', 'release-v1.20.0.sql']) {
   const sql = fs.readFileSync(path.join(__dirname, 'fixtures', fixture), 'utf8');
   const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
   test(`a SUDS ${expect.version} database (schema ${expect.schema_version}) upgrades to the current schema with its records intact`, () => {
@@ -608,6 +610,91 @@ test('SUDS 1.20.0\'s first start on a 1.19.0 database: county submissions surviv
     const chain = require('../server/audit').verifyChain();
     assert.equal(chain.ok, true, 'the audit chain verifies');
     assert.ok(chain.checked >= auditBefore, `every audit entry 1.19.0 wrote is checked (${chain.checked} >= ${auditBefore})`);
+  } finally {
+    require('../server/db').close();
+    require('../server/db').open(dbPath);
+    fs.rmSync(fdir, { recursive: true, force: true });
+  }
+});
+
+// SUDS 1.21.0's first start on a 1.20.0 database (upgrade drill of 1.21.0, docs/evidence/upgrade-drill-2026-10-01-v1.21.0):
+// the database 1.20.0 wrote itself (release-v1.20.0.sql), whose county_submissions holds signed files it imported and a
+// quarter its county entered for a programme not on SUDS, with a passkey, a sync device and sessions 1.20.0 opened
+// (a passkey sign-in, one still owing its code, a device's sync sign-in). Migrations 61 to 63 add county_publications,
+// devices.sync_scope ('full' for every existing device), sessions.device_id, clients.participant_code_enc/_idx,
+// passkeys.attestation and authenticator_metadata: every county row must come through unchanged, the sessions still
+// sign their holders in, the defaults are the ones that change nothing, and the audit chain still verifies.
+test('SUDS 1.21.0\'s first start on a 1.20.0 database: county rows (a county-entered one too) survive, sessions survive, audit chain verifies', () => {
+  const { sha256, decrypt } = require('../server/crypto');
+  const sql = fs.readFileSync(path.join(__dirname, 'fixtures', 'release-v1.20.0.sql'), 'utf8');
+  const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
+  assert.equal(expect.version, '1.20.0'); assert.equal(expect.schema_version, 60);
+  const fdir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-first-start-1.20.0-'));
+  const fpath = path.join(fdir, 'suds.db');
+  const d = new DatabaseSync(fpath);
+  d.exec(sql);
+  const colsIn = (t) => d.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+  assert.ok(!colsIn('devices').includes('sync_scope'), '1.20.0 had no devices.sync_scope');
+  assert.ok(!colsIn('sessions').includes('device_id'), '1.20.0 had no sessions.device_id');
+  assert.ok(!colsIn('clients').includes('participant_code_enc'), '1.20.0 had no participant codes');
+  assert.ok(!colsIn('passkeys').includes('attestation'), '1.20.0 had no passkeys.attestation');
+  for (const t of ['county_publications', 'authenticator_metadata']) assert.ok(!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(t), `1.20.0 had no ${t}`);
+  const SUBS = `SELECT id, programme_id, key_id, period_from, period_to, sha256, signature, superseded_by, withdrawn_at, payload_enc, source, entered_via, source_ref_enc FROM county_submissions ORDER BY id`;
+  const subsBefore = d.prepare(SUBS).all().map((r) => ({ ...r }));
+  const signed = subsBefore.filter((r) => r.source === 'signed'); const entered = subsBefore.filter((r) => r.source === 'county_entered');
+  assert.ok(signed.length >= 3 && signed.every((r) => r.key_id && r.signature), `the fixture holds ${signed.length} signed county submissions, each with its key and signature`);
+  assert.ok(signed.some((r) => r.superseded_by), 'one of them superseded by a later file');
+  assert.equal(entered.length, 1, 'and one quarter the county entered');
+  assert.ok(entered[0].key_id === null && entered[0].signature === null && entered[0].entered_via && entered[0].source_ref_enc, 'entered: no key, no signature, how it was entered and where it came from');
+  const payloads = Object.fromEntries(subsBefore.map((r) => [r.id, decrypt(r.payload_enc)]));
+  const sourceRef = decrypt(entered[0].source_ref_enc);
+  const programmes = d.prepare(`SELECT id, on_suds FROM county_programmes ORDER BY id`).all().map((r) => ({ ...r }));
+  assert.deepEqual(programmes.map((p) => p.on_suds).sort(), [0, 1], 'a programme on SUDS and one not');
+  // What 1.20.0 held for a person signing in: a passkey, a sync device, and three sessions.
+  const user = d.prepare(`SELECT id FROM users WHERE is_active=1 AND role='navigator' ORDER BY rowid LIMIT 1`).get();
+  const now = new Date(); const later = new Date(now.getTime() + 8 * 3600_000);
+  d.prepare(`INSERT INTO passkeys(id,user_id,credential_id,public_key,alg,sign_count,rp_id,name) VALUES(?,?,?,?,?,?,?,?)`).run('fixture-passkey', user.id, 'Y3JlZC1maXh0dXJl', 'MFkwEwYHKoZIzj0CAQ', -7, 4, 'suds.example.org', 'Fixture phone');
+  d.prepare(`INSERT INTO devices(id,user_id,label,last_ip,sync_count) VALUES(?,?,?,?,?)`).run('fixture-device', user.id, 'Android phone', '10.0.0.7', 12);
+  const passkeyBefore = { ...d.prepare(`SELECT * FROM passkeys WHERE id='fixture-passkey'`).get() };
+  const deviceBefore = { ...d.prepare(`SELECT * FROM devices WHERE id='fixture-device'`).get() };
+  const tokens = { passkey: 'fixture-1.20-passkey', owesCode: 'fixture-1.20-owes-code', device: 'fixture-1.20-device' };
+  const ins = d.prepare(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,mfa_source,reauth_at,reauth_method,passkey_id,sync_client) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  ins.run(sha256(tokens.passkey), user.id, now.toISOString(), now.toISOString(), later.toISOString(), 0, '127.0.0.1', 'fixture', null, now.toISOString(), 'passkey', 'fixture-passkey', 0);
+  ins.run(sha256(tokens.owesCode), user.id, now.toISOString(), now.toISOString(), later.toISOString(), 1, '127.0.0.1', 'fixture', null, null, null, null, 0);
+  ins.run(sha256(tokens.device), user.id, now.toISOString(), now.toISOString(), later.toISOString(), 0, '10.0.0.7', 'fixture device', null, now.toISOString(), 'password', null, 1);
+  const auditBefore = d.prepare(`SELECT COUNT(*) n FROM audit_log`).get().n;
+  d.close();
+  require('../server/db').close();
+  try {
+    require('../server/db').open(fpath);
+    assert.equal(db().getSetting('schema_version'), String(require('../server/db').LATEST_SCHEMA_VERSION));
+    assertSameShape(schemaShape(db().get()), freshShape(), '1.20.0 (first start)');
+    assert.deepEqual(db().all(SUBS).map((r) => ({ ...r })), subsBefore, 'every county submission kept unchanged: the signed ones and the county-entered one');
+    for (const r of subsBefore) assert.equal(decrypt(db().one(`SELECT payload_enc FROM county_submissions WHERE id=?`, r.id).payload_enc), payloads[r.id], `submission ${r.id}'s payload still decrypts to what it was`);
+    assert.equal(decrypt(db().one(`SELECT source_ref_enc FROM county_submissions WHERE id=?`, entered[0].id).source_ref_enc), sourceRef, 'the entered quarter\'s source still decrypts');
+    assert.deepEqual(db().all(`SELECT id, on_suds FROM county_programmes ORDER BY id`).map((r) => ({ ...r })), programmes, 'each programme keeps on_suds');
+    assert.deepEqual(db().all('PRAGMA foreign_key_check'), []);
+    // Migrations 61 and 63: the new tables, empty.
+    for (const t of ['county_publications', 'authenticator_metadata']) assert.equal(db().one(`SELECT COUNT(*) n FROM "${t}"`).n, 0, `${t} exists and starts empty`);
+    // Migration 62: the device keeps everything and syncs everything (full); no client has a participant code.
+    const dev = { ...db().one(`SELECT * FROM devices WHERE id='fixture-device'`) };
+    assert.deepEqual(dev, { ...deviceBefore, sync_scope: 'full', scope_changed_at: null, field_applied_at: null }, 'the device: unchanged, scope full');
+    assert.equal(db().one(`SELECT COUNT(*) n FROM clients WHERE participant_code_enc IS NOT NULL OR participant_code_idx IS NOT NULL`).n, 0, 'no client has a participant code');
+    // Migration 63: the passkey keeps everything, with no attestation (none was attested before the allow-list).
+    assert.deepEqual({ ...db().one(`SELECT * FROM passkeys WHERE id='fixture-passkey'`) }, { ...passkeyBefore, attestation: null }, 'the passkey: unchanged, unattested');
+    const S = (t) => ({ ...db().one(`SELECT mfa_pending, revoked_at, reauth_method, passkey_id, sync_client, device_id FROM sessions WHERE id=?`, sha256(tokens[t])) });
+    assert.deepEqual(S('passkey'), { mfa_pending: 0, revoked_at: null, reauth_method: 'passkey', passkey_id: 'fixture-passkey', sync_client: 0, device_id: null }, 'the passkey session after migrations 61-63');
+    assert.deepEqual(S('owesCode'), { mfa_pending: 1, revoked_at: null, reauth_method: null, passkey_id: null, sync_client: 0, device_id: null }, 'the session owing its code');
+    assert.deepEqual(S('device'), { mfa_pending: 0, revoked_at: null, reauth_method: 'password', passkey_id: null, sync_client: 1, device_id: null }, 'the device\'s sync session: no device_id (it predates the column)');
+    const auth = require('../server/auth');
+    const ctx = { cookies: { suds_session: tokens.passkey }, headers: {} };
+    assert.equal((auth.resolveSession(ctx) || {}).id, user.id, 'a session 1.20.0 opened with a passkey still signs its holder in');
+    const pending = { cookies: { suds_session: tokens.owesCode }, headers: {} };
+    auth.resolveSession(pending);
+    assert.equal(pending.session.mfa_pending, 1, 'and one still owing its second factor still owes it');
+    const chain = require('../server/audit').verifyChain();
+    assert.equal(chain.ok, true, 'the audit chain verifies');
+    assert.ok(chain.checked >= auditBefore, `every audit entry 1.20.0 wrote is checked (${chain.checked} >= ${auditBefore})`);
   } finally {
     require('../server/db').close();
     require('../server/db').open(dbPath);

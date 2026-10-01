@@ -1,0 +1,51 @@
+$ cp /root/files/suds-v1.21.100.zip /root/ && /opt/suds/current/deploy/linux/upgrade.sh 1.21.100 --source=/root/suds-v1.21.100.zip --release-sha256=83dd58ca0913c67da3c3a67b440b72417ac9025d7d194512cfa2c73248f7e4fc --node-tarball=/root/node-v22.23.3-linux-x64.tar.xz --caddy-tarball=/root/caddy_2.10.2_linux_amd64.tar.gz --dry-run; echo "exit $?"
+SUDS Server upgrade: 1.21.99 -> 1.21.100
+
+== 1. Stage 1.21.100 ==
+  - suds-v1.21.100.zip: sha256 matches the pinned checksum
++ unzip -q /tmp/tmp.QoEC13lQ57/suds-v1.21.100.zip -d /tmp/tmp.QoEC13lQ57
++ install -d -m 0755 -o root -g root /opt/suds /opt/suds/1.21.100.partial
++ copy /tmp/tmp.QoEC13lQ57/suds-v1.21.100 into /opt/suds/1.21.100.partial (without .git, node_modules, data, test), record how its zip was checked (operator) in .suds-release-checksum, write its manifest
++ chown -R root:root /opt/suds/1.21.100.partial
++ chmod -R u=rwX\,go=rX /opt/suds/1.21.100.partial
++ chmod -R a-w /opt/suds/1.21.100.partial
++ mv -T /opt/suds/1.21.100.partial /opt/suds/1.21.100
+  - Node.js v22.23.3 already installed
+  - Caddy 2.10.2 already installed
++ ln -sfn 2.10.2 /opt/caddy/current.new
++ mv -Tf /opt/caddy/current.new /opt/caddy/current
+
+== 2-3. Stop SUDS and take a backup ==
++ systemctl stop suds.service
++ install -d -m 0700 -o suds -g suds /var/lib/suds/backups /var/lib/suds/backups/pre-upgrade-20261001T005558Z
++ systemd-run --quiet --wait --pipe --collect --uid=suds --gid=suds --working-directory=/opt/suds/current -p EnvironmentFile=/etc/suds/suds.env -E SUDS_ENV=production -E SUDS_DATA_DIR=/var/lib/suds -p UMask=0077 -p LoadCredential=suds_encryption_key:/etc/suds/credentials/suds_encryption_key -p LoadCredential=suds_index_key:/etc/suds/credentials/suds_index_key -p LoadCredential=suds_backup_key:/etc/suds/credentials/suds_backup_key -p LoadCredential=suds_signing_key:/etc/suds/credentials/suds_signing_key /opt/suds/node/bin/node --no-warnings=ExperimentalWarning scripts/backup.js /var/lib/suds/backups/pre-upgrade-20261001T005558Z
+
+== 4. Switch to 1.21.100 ==
++ ln -sfn node-v22.23.3 /opt/suds/node.new
++ mv -Tf /opt/suds/node.new /opt/suds/node
++ ln -sfn 1.21.100 /opt/suds/current.new
++ mv -Tf /opt/suds/current.new /opt/suds/current
++ install -m 0644 -o root -g root /tmp/tmp.QoEC13lQ57/suds-v1.21.100/deploy/linux/suds.service /etc/systemd/system/suds.service
++ install -m 0644 -o root -g root /tmp/tmp.QoEC13lQ57/suds-v1.21.100/deploy/linux/suds-compliance.service /etc/systemd/system/suds-compliance.service
++ install -m 0644 -o root -g root /tmp/tmp.QoEC13lQ57/suds-v1.21.100/deploy/linux/suds-compliance.timer /etc/systemd/system/suds-compliance.timer
++ install -m 0644 -o root -g root /tmp/tmp.QoEC13lQ57/suds-v1.21.100/deploy/linux/caddy.service /etc/systemd/system/caddy.service
++ install -m 0644 -o root -g root /tmp/tmp.QoEC13lQ57/suds-v1.21.100/Caddyfile /etc/caddy/Caddyfile
++ set SUDS_VERSION=1.21.100 in /etc/suds/suds-server.conf
++ set SUDS_RELEASE_CHECKSUM_SOURCE=operator in /etc/suds/suds-server.conf
+  - passkeys: WEBAUTHN_RP_ID/WEBAUTHN_ORIGINS in /etc/suds/suds.env kept as set
++ systemctl daemon-reload
+
+== 5. Start and check ==
++ systemctl start suds.service
++ wait up to 300s for http://127.0.0.1:8080/api/health/ready
+  - SUDS 1.21.100 is ready
+  - Caddy is now 2.10.2 and has a new Caddyfile: restarting it
++ systemctl restart caddy.service
+
+== Compliance check ==
++ wait up to 90s for https://suds.county.test/api/health/ready (through Caddy)
++ (the compliance check below runs with every KEY=value line of /etc/suds/suds.env in its environment, as suds-compliance.service does)
++ env TRUST_PROXY=1 LOCAL_MODE_ENABLED=false MFA_REQUIRED_ROLES=admin\,supervisor\,clinician\,navigator\,finance\,readonly AUDIT_ANCHOR_DIR=/mnt/worm/suds-anchors SUDS_PROVISION_FILE=/etc/suds/provision.json SUDS_SKIP_SETUP=1 SUDS_COMPLIANCE_DIR=/var/lib/suds-compliance SUDS_COMPLIANCE_PUBLIC_KEY_FILE=/etc/suds/compliance-signing-key.pub.pem WEBAUTHN_RP_ID=suds.county.test WEBAUTHN_ORIGINS=https://suds.county.test SUDS_ENV=production SUDS_DATA_DIR=/var/lib/suds /opt/suds/node/bin/node --no-warnings=ExperimentalWarning /opt/suds/current/scripts/compliance-check.js
+
+Upgraded to 1.21.100. The previous release stays in /opt/suds/1.21.99 until you remove it; the pre-upgrade backup is /var/lib/suds/backups/pre-upgrade-20261001T005558Z.
+exit 0
