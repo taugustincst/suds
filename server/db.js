@@ -838,6 +838,15 @@ const migrations = [
     d.exec('CREATE INDEX IF NOT EXISTS idx_tasks_call ON tasks(call_id)');
     d.exec('CREATE INDEX IF NOT EXISTS idx_tasks_intervention ON tasks(intervention_id)');
   },
+  // 68: duplicate time entries (built for 1.24.0; server/rules/time_entries.js duplicatesOf, docs/USER_GUIDE.md
+  //     "Possible duplicate time"). time_entries.start_time (optional HH:MM, NULL for every existing entry: none
+  //     had one) and time_entries.duplicate_of (the entry a device's pushed entry may duplicate, for review; NULL
+  //     for every existing entry: nothing was flagged before). Self-contained and idempotent, so it can be
+  //     renumbered.
+  (d) => {
+    addColumn(d, 'time_entries', 'start_time', 'TEXT');
+    addColumn(d, 'time_entries', 'duplicate_of', 'TEXT');
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

@@ -7297,7 +7297,14 @@ CREATE TABLE IF NOT EXISTS time_entries (
   approved_at TEXT,
   approval_note_enc TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  -- When the time started (HH:MM, the worker's wall clock; optional, 1.24.0): with minutes, the range the
+  -- duplicate check compares (server/rules/time_entries.js duplicatesOf).
+  start_time TEXT,
+  -- Another entry this one may duplicate, set by the office when a device's push lands one (it cannot answer the
+  -- "possible duplicate" question a form asks), for a supervisor to merge or dismiss (1.24.0). Office-set: a
+  -- device never writes it. No foreign key: the entry it names can be merged away; readers join to check.
+  duplicate_of TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries(user_id, work_date);
 CREATE INDEX IF NOT EXISTS idx_time_status ON time_entries(status, work_date);
@@ -11771,13 +11778,14 @@ var require_shared = __commonJS({
     }
     function recordedOrChanged(entity, table, id, userId) {
       return !!require_db().one(
-        `SELECT 1 FROM audit_log WHERE user_id=? AND entity_id=? AND ((entity=? AND action IN (?,?,?)) OR (entity=? AND action IN ('sync.overwrite','sync.record'))) LIMIT 1`,
+        `SELECT 1 FROM audit_log WHERE user_id=? AND entity_id=? AND ((entity=? AND action IN (?,?,?,?)) OR (entity=? AND action IN ('sync.overwrite','sync.record'))) LIMIT 1`,
         userId,
         id,
         entity,
         `${entity}.create`,
         `${entity}.update`,
         entity === "time_entry" ? "time.submit" : `${entity}.create`,
+        `${entity}.merge`,
         table
       );
     }
@@ -16358,8 +16366,47 @@ var require_time_entries = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var { define: define2, refuse } = require_core();
+    var { decrypt: decrypt3 } = require_crypto();
+    var { define: define2, refuse, flag } = require_core();
     var { periodProblem, ownedBy, officeRuling } = require_shared();
+    var START = /^([01]\d|2[0-3]):[0-5]\d$/;
+    var DUP_COLS = ["user_id", "work_date", "start_time", "minutes", "description_enc"];
+    var toMin = (t) => t && START.test(t) ? Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5)) : null;
+    var sameNote = (a, b) => {
+      const n = (x) => String(x || "").trim().replace(/\s+/g, " ").toLowerCase();
+      return !!n(a) && n(a) === n(b);
+    };
+    function rangeOf(e) {
+      const s = toMin(e.start_time);
+      return s === null ? null : [s, s + (Number(e.minutes) || 0)];
+    }
+    function duplicatesOf(e, { exclude = [] } = {}) {
+      if (!e || !e.user_id || !e.work_date) return [];
+      const skip = new Set([e.id, ...exclude].filter(Boolean));
+      const mine = rangeOf(e);
+      const out2 = [];
+      for (const row of db3.all(`SELECT * FROM time_entries WHERE user_id=? AND work_date=? ORDER BY created_at, id`, e.user_id, e.work_date)) {
+        if (skip.has(row.id)) continue;
+        const reasons = [];
+        const theirs = rangeOf(row);
+        if (mine && theirs && mine[0] < theirs[1] && theirs[0] < mine[1]) reasons.push("overlap");
+        if (Number(row.minutes) === Number(e.minutes) && e.description && row.description_enc) {
+          let note = null;
+          try {
+            note = decrypt3(row.description_enc);
+          } catch {
+            note = null;
+          }
+          if (sameNote(note, e.description)) reasons.push("same_note");
+        }
+        if (reasons.length) out2.push({ row, reasons });
+      }
+      return out2;
+    }
+    function clearMarksTo(id, to = null) {
+      db3.run(`UPDATE time_entries SET duplicate_of=?, updated_at=? WHERE duplicate_of=? AND id<>?`, to, db3.now(), id, to || "");
+    }
+    var touchesDuplicateCheck = (c) => !c.existing || c.changed().some((k) => DUP_COLS.includes(k));
     var RULING = ["status", "approved_by", "approved_at", "approval_note_enc"];
     var APPROVED = "This time entry has been approved and is part of a signed-off time sheet, so it cannot be changed or deleted. Ask a supervisor to reopen it (return it for correction) first.";
     var owned = ownedBy(["user_id"], "time:all");
@@ -16376,7 +16423,9 @@ var require_time_entries = __commonJS({
         funding_source_id: { type: "string" },
         description: { type: "string", maxLen: 500 },
         intervention_id: { type: "string" },
-        call_id: { type: "string" }
+        call_id: { type: "string" },
+        // When it started (HH:MM, optional; 1.24.0): with minutes, the range the duplicate check compares.
+        start_time: { type: "string", pattern: START }
       },
       owner: { col: "user_id", all: "time:all" },
       // 'not permitted …' is one of sync-tables.js's permanent reasons: the device stops resending the edit.
@@ -16402,9 +16451,31 @@ var require_time_entries = __commonJS({
         initial: (s) => s === "submitted" ? "submitted" : "draft",
         mayMove: (from, to, row2, e) => to === "submitted" && (from === "draft" || from === "rejected" && String(row2.approved_at ?? "") === String(e.approved_at ?? ""))
       }),
-      afterApply: (row, o, c) => require_shared().logRecordedFor("time_entries", row, c)
+      // A device's entry that may duplicate another of the same worker's that day lands (the device cannot answer the
+      // question a form asks, and refusing it would lose work done offline) and is marked for review: duplicate_of names
+      // the earliest such entry, shown as "Possible duplicate" on the time list and the approval queue, where it is
+      // merged (POST /api/time/:id/merge) or dismissed (POST /api/time/:id/not-duplicate). The device is told (a flag),
+      // and the audit trail records it as sync.conflict, flagged 'duplicate', naming no description. An edit that no
+      // longer matches anything clears the mark. duplicate_of is the office's: a device never writes it (not declared).
+      beforeStore(row, c) {
+        if (!touchesDuplicateCheck(c)) return;
+        const e = { id: row.id, user_id: c.plain("user_id"), work_date: c.plain("work_date"), start_time: c.plain("start_time"), minutes: c.plain("minutes"), description: c.plain("description_enc") };
+        const found = duplicatesOf(e).filter((d) => d.row.duplicate_of !== row.id);
+        row.duplicate_of = found.length ? found[0].row.id : null;
+        if (found.length) c.flags.push(flag("was accepted, but it may duplicate another time entry for the same worker and day; a supervisor will review it", { code: "duplicate" }));
+      },
+      afterApply: (row, o, c) => require_shared().logRecordedFor("time_entries", row, c),
       // separation of duties
+      // A device's deletion: the entry is no longer anyone's possible duplicate.
+      beforeDelete: (stored) => {
+        clearMarksTo(stored.id);
+      }
     });
+    module.exports.duplicatesOf = duplicatesOf;
+    module.exports.touchesDuplicateCheck = touchesDuplicateCheck;
+    module.exports.rangeOf = rangeOf;
+    module.exports.sameNote = sameNote;
+    module.exports.clearMarksTo = clearMarksTo;
   }
 });
 
@@ -26791,6 +26862,10 @@ var require_time = __commonJS({
     var C = require_constants();
     var { withClientName, SELECT: NAME_COLS } = require_client_name();
     var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var audit3 = require_audit();
+    var { HttpError: HttpError3, notFound, forbidden, badRequest } = require_http();
+    var { validate } = require_validate();
+    var TE = require_time_entries();
     function encDescription(v) {
       if (v.description !== void 0) {
         v.description_enc = v.description ? encrypt3(String(v.description)) : null;
@@ -26815,6 +26890,67 @@ var require_time = __commonJS({
       if (!t || mayReadDescription(user, t)) return t;
       return { ...t, description: null, description_withheld: !!(t.description || t.description_enc) };
     }
+    var JOINS = "JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id";
+    var SELECT = `time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${NAME_COLS}`;
+    var present = (ctx, x) => ({ ...withheldFor(ctx.user, presentTime(withClientName(ctx, x))), source: x.intervention_id ? "visit" : x.call_id ? "call" : "manual" });
+    function mayRead2(ctx, row) {
+      if (row.client_id) return auth3.canAccessClient(ctx.user, row.client_id, { deidentified: true });
+      return row.user_id === ctx.user.id || auth3.hasPerm(ctx.user, "time:all");
+    }
+    var ownerOf = (ctx, v) => auth3.hasPerm(ctx.user, "time:all") && v.user_id ? v.user_id : ctx.user.id;
+    var asked = (ctx) => !!(ctx.body && typeof ctx.body === "object" && ctx.body.save_anyway === true);
+    function duplicateQuestion(ctx, e) {
+      const found = TE.duplicatesOf(e);
+      if (!found.length) return { found, shown: [], hidden: [] };
+      const readable = found.filter((d) => mayRead2(ctx, d.row));
+      const hidden = found.filter((d) => !readable.includes(d));
+      const rows = readable.length ? db3.all(`SELECT ${SELECT} FROM time_entries ${JOINS} WHERE time_entries.id IN (${readable.map(() => "?").join(",")})`, ...readable.map((d) => d.row.id)) : [];
+      const R = require_rules().forTable("time_entries");
+      const shown = readable.map((d) => {
+        const x = present(ctx, rows.find((y) => y.id === d.row.id));
+        const locked = d.row.status === "approved";
+        return {
+          id: x.id,
+          work_date: x.work_date,
+          start_time: x.start_time || null,
+          minutes: x.minutes,
+          category: x.category,
+          client_id: x.client_id,
+          client_code: x.client_code,
+          client_name: x.client_name || null,
+          funding_source: x.funding_source || null,
+          worker: x.worker,
+          description: x.description,
+          description_withheld: !!x.description_withheld,
+          status: x.status || "draft",
+          source: x.source,
+          updated_at: x.updated_at,
+          locked,
+          may_merge: !locked && !R.editableBy(ctx.user, d.row),
+          reasons: d.reasons
+        };
+      });
+      return { found, shown, hidden };
+    }
+    var DUPLICATE = "This looks like time already logged: the same worker and day, with overlapping times or the same minutes and description. Merge it into the entry already there, save it anyway, or cancel.";
+    function askUnlessAnswered(ctx, q, entityId) {
+      if (!q.shown.length || asked(ctx)) return;
+      for (const x of q.shown) audit3.log({ user: ctx.user, action: "time_entry.duplicate.warn", entity: "time_entry", entityId: x.id, clientId: x.client_id || null, ip: ctx.ip, details: { reasons: x.reasons, for: entityId || "new" } });
+      throw new HttpError3(409, DUPLICATE, { duplicate: true, candidates: q.shown });
+    }
+    function overridden(ctx, id, clientId) {
+      const q = ctx.timeDuplicates;
+      if (q && q.shown.length && asked(ctx)) audit3.log({ user: ctx.user, action: "time_entry.duplicate.override", entity: "time_entry", entityId: id, clientId: clientId || null, ip: ctx.ip, details: { candidates: q.shown.map((x) => x.id), reasons: [...new Set(q.shown.flatMap((x) => x.reasons))] } });
+    }
+    function reach(ctx, row) {
+      if (row.client_id) {
+        auth3.assertClientAccess(ctx, row.client_id, { deidentified: true });
+        return;
+      }
+      if (row.user_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "time:all")) throw forbidden("That record belongs to another worker");
+    }
+    var clearMarksTo = TE.clearMarksTo;
+    var fmtMin = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
     module.exports = (r) => {
       crud.build(r, {
         table: "time_entries",
@@ -26823,14 +26959,9 @@ var require_time = __commonJS({
         perm: "time",
         dateCol: "work_date",
         clientRequired: false,
-        // Time is personal: an entry with no client can only be read by the worker who logged it, or a manager
-        // (time:all) -- sync-tables.js `unlinked`, which crud.js applies to these routes.
-        joins: "JOIN users u ON u.id=time_entries.user_id LEFT JOIN clients c ON c.id=time_entries.client_id LEFT JOIN funding_sources f ON f.id=time_entries.funding_source_id",
-        select: `time_entries.*, u.display_name AS worker, c.client_code, f.name AS funding_source, ${NAME_COLS}`,
-        // source (1.14.0): where the entry came from — 'visit' (logged with a visit: "Also log this as a time
-        // entry"), 'call' (logged with a call) or 'manual' — so a list can mark the generated ones and the time
-        // form can warn before the same work is logged twice.
-        afterLoad: (ctx, x) => ({ ...withheldFor(ctx.user, presentTime(withClientName(ctx, x))), source: x.intervention_id ? "visit" : x.call_id ? "call" : "manual" }),
+        joins: JOINS,
+        select: SELECT,
+        afterLoad: present,
         // shape, owner (time:all), canEdit and the fund-period check: server/rules/time_entries.js.
         filters: (ctx, where, params) => {
           if (!auth3.hasPerm(ctx.user, "time:all")) {
@@ -26854,12 +26985,117 @@ var require_time = __commonJS({
         },
         // Reassigning whose hours these are is a time:all action (see public/views/time.js, which only shows the
         // Worker picker when can('time:all')): the rules' owner, which crud.js applies on insert and update alike.
+        // A likely duplicate (1.24.0) is asked about (409, { duplicate, candidates }) unless the request says
+        // save_anyway: true, which is audited as an override. Matches the user may not read never block.
         beforeInsert: (ctx, v) => {
+          const q = duplicateQuestion(ctx, { user_id: ownerOf(ctx, v), work_date: v.work_date, start_time: v.start_time, minutes: v.minutes, description: v.description });
+          askUnlessAnswered(ctx, q, null);
+          ctx.timeDuplicates = q;
+          if (q.hidden.length && !q.shown.length) v.duplicate_of = q.hidden[0].row.id;
           encDescription(v);
         },
-        beforeUpdate: (ctx, v) => {
+        afterInsert: (ctx, row) => {
+          overridden(ctx, row.id, row.client_id);
+        },
+        beforeUpdate: (ctx, v, row) => {
+          const was = presentTime({ description_enc: row.description_enc }).description;
+          const pick = (k, cur) => v[k] !== void 0 ? v[k] : cur;
+          const after = { id: row.id, user_id: v.user_id || row.user_id, work_date: pick("work_date", row.work_date), start_time: pick("start_time", row.start_time), minutes: pick("minutes", row.minutes), description: pick("description", was) };
+          const before = { user_id: row.user_id, work_date: row.work_date, start_time: row.start_time, minutes: row.minutes, description: was };
+          if (Object.keys(before).some((k) => String(after[k] ?? "") !== String(before[k] ?? ""))) {
+            const q = duplicateQuestion(ctx, after);
+            askUnlessAnswered(ctx, q, row.id);
+            ctx.timeDuplicates = q;
+            v.duplicate_of = q.hidden.length && !q.shown.length ? q.hidden[0].row.id : null;
+          }
           encDescription(v);
+        },
+        afterUpdate: (ctx, merged) => {
+          overridden(ctx, merged.id, merged.client_id);
+        },
+        // An entry deleted is no longer anyone's possible duplicate.
+        beforeDelete: (ctx, row) => {
+          clearMarksTo(row.id);
         }
+      });
+      r.post("/api/time/:id/merge", auth3.requireAuth, auth3.requirePerm("time:write"), (ctx) => {
+        const R = require_rules();
+        const body = ctx.body && typeof ctx.body === "object" ? ctx.body : {};
+        const kept = db3.one(`SELECT * FROM time_entries WHERE id=?`, ctx.params.id);
+        if (!kept) throw notFound("Time entry not found");
+        reach(ctx, kept);
+        R.assertEditable("time_entries", ctx, kept);
+        crud.assertFresh(ctx, kept, "time_entry");
+        const times = body.times === void 0 ? "union" : body.times;
+        if (!["union", "keep"].includes(times)) throw badRequest('times must be "union" or "keep"');
+        if (!!body.from_id === !!body.entry) throw badRequest("Send either from_id (a stored entry) or entry (a new one)");
+        let other;
+        let fromId = null;
+        if (body.from_id) {
+          if (body.from_id === kept.id) throw badRequest("An entry cannot be merged into itself");
+          const stored = db3.one(`SELECT * FROM time_entries WHERE id=?`, String(body.from_id));
+          if (!stored) throw notFound("Time entry not found");
+          reach(ctx, stored);
+          R.assertEditable("time_entries", ctx, stored, { deleting: true });
+          other = { ...stored, description: presentTime({ description_enc: stored.description_enc }).description };
+          fromId = stored.id;
+        } else {
+          if (typeof body.entry !== "object") throw badRequest("entry must be an object");
+          const v = validate(body.entry, TE.shape());
+          if (v.client_id) {
+            if (!crud.clientExists(v.client_id)) throw notFound("Client not found");
+            auth3.assertClientAccess(ctx, v.client_id, { deidentified: true });
+          }
+          R.assertWrite("time_entries", R.toColumns("time_entries", v), ctx);
+          other = { ...v, user_id: ownerOf(ctx, v) };
+        }
+        if (other.user_id !== kept.user_id || other.work_date !== kept.work_date) throw badRequest("Only entries for the same worker on the same day can be merged");
+        const keptNote = presentTime({ description_enc: kept.description_enc }).description || "";
+        const otherNote = other.description || "";
+        const note = !otherNote || TE.sameNote(keptNote, otherNote) ? keptNote : !keptNote ? otherNote : `${keptNote}
+${otherNote}`;
+        if (note.length > 500) throw badRequest("Together the two descriptions are longer than 500 characters. Shorten one of them first, then merge.", { fields: { description: "max length 500" } });
+        const set = {};
+        if (note !== keptNote) set.description = note;
+        if (times === "union") {
+          const a = TE.rangeOf(kept), b = TE.rangeOf(other);
+          if (a && b && a[0] <= b[1] && b[0] <= a[1]) {
+            const start2 = Math.min(a[0], b[0]), end = Math.max(a[1], b[1]);
+            if (end - start2 > 1440) throw badRequest("Together the two entries are longer than a day");
+            if (start2 !== a[0]) set.start_time = fmtMin(start2);
+            if (end - start2 !== kept.minutes) set.minutes = end - start2;
+          } else if (!kept.start_time && other.start_time) set.start_time = other.start_time;
+        }
+        for (const k of ["client_id", "funding_source_id", "intervention_id", "call_id"]) if (!kept[k] && other[k]) set[k] = other[k];
+        if (!kept.billable && other.billable) set.billable = 1;
+        if (set.client_id) auth3.assertClientAccess(ctx, set.client_id, { deidentified: true });
+        R.assertWrite("time_entries", { id: kept.id, ...R.toColumns("time_entries", set) }, ctx, { existing: kept });
+        const fields = Object.keys(set);
+        const cols2 = { ...set };
+        encDescription(cols2);
+        const keys = Object.keys(cols2);
+        db3.transaction(() => {
+          db3.run(`UPDATE time_entries SET ${keys.map((k) => `${k}=?, `).join("")}duplicate_of=NULL, updated_at=? WHERE id=?`, ...keys.map((k) => cols2[k]), db3.now(), kept.id);
+          if (fromId) {
+            clearMarksTo(fromId, kept.id);
+            db3.run(`DELETE FROM time_entries WHERE id=?`, fromId);
+            db3.tombstone("time_entries", fromId);
+          }
+        });
+        if (fromId) audit3.log({ user: ctx.user, action: "time_entry.delete", entity: "time_entry", entityId: fromId, clientId: other.client_id || null, ip: ctx.ip, details: { merged_into: kept.id } });
+        audit3.log({ user: ctx.user, action: "time_entry.merge", entity: "time_entry", entityId: kept.id, clientId: kept.client_id || set.client_id || null, ip: ctx.ip, details: { merged: fromId || "new entry", times, fields } });
+        const now2 = db3.one(`SELECT minutes, start_time, updated_at FROM time_entries WHERE id=?`, kept.id);
+        return { ok: true, id: kept.id, merged: fromId, ...now2 };
+      });
+      r.post("/api/time/:id/not-duplicate", auth3.requireAuth, auth3.requirePerm("time:write", "time:approve"), (ctx) => {
+        const row = db3.one(`SELECT * FROM time_entries WHERE id=?`, ctx.params.id);
+        if (!row) throw notFound("Time entry not found");
+        reach(ctx, row);
+        if (row.user_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "time:all") && !auth3.hasPerm(ctx.user, "time:approve")) throw forbidden("Only the worker, a manager or an approver can clear this");
+        if (!row.duplicate_of) return { ok: true, unchanged: true };
+        db3.run(`UPDATE time_entries SET duplicate_of=NULL, updated_at=? WHERE id=?`, db3.now(), row.id);
+        audit3.log({ user: ctx.user, action: "time_entry.duplicate.dismiss", entity: "time_entry", entityId: row.id, clientId: row.client_id || null, ip: ctx.ip, details: { was: row.duplicate_of } });
+        return { ok: true };
       });
       r.get("/api/time/summary", auth3.requireAuth, auth3.requirePerm("time:read", "time:write"), (ctx) => {
         const from = ctx.query.get("from") || new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
@@ -48580,8 +48816,9 @@ var require_supervision = __commonJS({
         ORDER BY n.created_at LIMIT 100`, staleBefore, ...sf.params));
         }
         if (auth3.hasPerm(ctx.user, "time:approve")) {
-          out2.time_awaiting_approval = named(ctx, db3.all(`SELECT t.id, t.user_id, t.client_id, t.work_date, t.minutes, t.category, t.billable, t.submitted_at, u.display_name AS worker, c.client_code, ${NAME_COLS}, f.name AS funding_source
-        FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id
+          out2.time_awaiting_approval = named(ctx, db3.all(`SELECT t.id, t.user_id, t.client_id, t.work_date, t.start_time, t.minutes, t.category, t.billable, t.submitted_at, u.display_name AS worker, c.client_code, ${NAME_COLS}, f.name AS funding_source,
+          dup.id AS duplicate_of, dup.start_time AS duplicate_start_time, dup.minutes AS duplicate_minutes, dup.status AS duplicate_status
+        FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id LEFT JOIN time_entries dup ON dup.id=t.duplicate_of
         WHERE t.status='submitted' AND t.user_id<>? AND ${tf.sql} ORDER BY t.work_date LIMIT 200`, ctx.user.id, ...tf.params));
           out2.time_totals = db3.one(`SELECT COUNT(*) entries, COALESCE(SUM(minutes),0) minutes FROM time_entries t WHERE t.status='submitted' AND t.user_id<>? AND ${tf.sql}`, ctx.user.id, ...tf.params);
         }
@@ -52718,6 +52955,15 @@ var require_db = __commonJS({
         addColumn(d, "tasks", "intervention_id", "TEXT REFERENCES interventions(id) ON DELETE SET NULL");
         d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_call ON tasks(call_id)");
         d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_intervention ON tasks(intervention_id)");
+      },
+      // 68: duplicate time entries (built for 1.24.0; server/rules/time_entries.js duplicatesOf, docs/USER_GUIDE.md
+      //     "Possible duplicate time"). time_entries.start_time (optional HH:MM, NULL for every existing entry: none
+      //     had one) and time_entries.duplicate_of (the entry a device's pushed entry may duplicate, for review; NULL
+      //     for every existing entry: nothing was flagged before). Self-contained and idempotent, so it can be
+      //     renumbered.
+      (d) => {
+        addColumn(d, "time_entries", "start_time", "TEXT");
+        addColumn(d, "time_entries", "duplicate_of", "TEXT");
       }
     ];
     var PERF_INDEXES_47 = [
