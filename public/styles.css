@@ -232,6 +232,8 @@ details.section { border: 1px solid var(--border); border-radius: 8px; padding: 
   .toasts { bottom: calc(5.75rem + env(safe-area-inset-bottom)); }
   /* Checkboxes in lists are tapped one-handed between visits; 13px is a mis-tap waiting to happen. */
   table input[type="checkbox"], .check input[type="checkbox"], .compact-row input[type="checkbox"] { width: 24px; height: 24px; margin: 0 .4rem 0 0; accent-color: var(--primary); flex: 0 0 auto; }
+  /* Home's to-do box too (1.23.3): its label is .today-check, not .check, since 1.23.2, and the box had shrunk to 13px. */
+  .today-check input[type="checkbox"] { width: 24px; height: 24px; margin: 0; accent-color: var(--primary); }
   table td:has(> input[type="checkbox"]:only-child) { padding: .5rem .35rem; }
   /* The tab strip scrolls sideways; fade the right edge so the tabs off-screen are not a secret. */
   .tabs { position: relative; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent); scroll-snap-type: x proximity; }

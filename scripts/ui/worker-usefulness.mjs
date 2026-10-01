@@ -146,6 +146,13 @@ try {
   ok(await until(() => nav.page.$('.modal')), 'it opens the call');
   ok(/Bed callback/.test(await nav.page.textContent('.modal')) && !(await nav.page.$('.modal input[name=title]')), 'the call itself, not the to-do\'s form', (await nav.page.textContent('.modal')).slice(0, 200));
   await axe(nav.page, 'a call opened from its to-do row (390 px)');
+  // 1.23.3 (D5): deleting the call says its open follow-up to-do goes with it (cancelled). Asked, and not done here.
+  await nav.page.locator('.modal button', { hasText: /^Delete call$/ }).click();
+  ok(await until(async () => (await nav.page.$$('.modal-bg')).length > 1), 'Delete call asks first');
+  const askDel = await nav.page.locator('.modal-bg').last().textContent();
+  ok(/Delete this contact record\? Its open follow-up to-do is cancelled too/.test(askDel), 'and says its open follow-up to-do is cancelled too', askDel.slice(0, 200));
+  await nav.page.locator('.modal-bg').last().locator('button', { hasText: /^Cancel$/ }).click();
+  await until(async () => (await nav.page.$$('.modal-bg')).length === 1);
   await nav.page.keyboard.press('Escape'); await settle(nav.page);
   await axe(nav.page, 'To-dos on a phone (390 px)');
 

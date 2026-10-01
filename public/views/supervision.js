@@ -138,7 +138,9 @@ route('supervision', async (r) => {
   // the client's record, through the ordinary to-do route (POST /api/tasks: encrypted title and details,
   // audited). One open reminder per author and client: it asks for that draft and closes once the author has no
   // draft left on the client's record (server/rules/notes.js closeSignReminders), so a draft whose author already
-  // has one there is not reminded again, whoever sent it. Recognised by its last line, SIGN_REMINDER.
+  // has one there is not reminded again, whoever sent it. Recognised by its last line, SIGN_REMINDER, and (1.23.3) only
+  // when the office says it is one (`sign_reminder`: its maker may send reminders, server/rules/notes.js isSignReminder),
+  // so a to-do anyone else wrote with the line does not show a draft as reminded.
   const drafts = q.unsigned_notes || [];
   const overdue = drafts.filter(d => d.overdue).length;
   const mayRemind = can('tasks:write');
@@ -148,9 +150,10 @@ route('supervision', async (r) => {
       const open = (await get('/api/tasks?status=open&limit=1000', { quiet: true })).rows || [];
       const byPair = new Map();
       for (const t of open) {
+        if (!t.sign_reminder) continue;
         const m = OLD_REMINDER_REF.exec(t.description || '');
         if (m) reminded.set(m[1], t);
-        else if ((t.description || '').includes(SIGN_REMINDER) && t.created_by !== t.assigned_to && !byPair.has(pairOf(t.client_id, t.assigned_to))) byPair.set(pairOf(t.client_id, t.assigned_to), t);
+        else if ((t.description || '').includes(SIGN_REMINDER) && !byPair.has(pairOf(t.client_id, t.assigned_to))) byPair.set(pairOf(t.client_id, t.assigned_to), t);
       }
       for (const d of drafts) if (!reminded.has(d.id) && byPair.has(pairOf(d.client_id, d.author_id))) reminded.set(d.id, byPair.get(pairOf(d.client_id, d.author_id)));
     } catch { /* no reminders known: every row still offers one, and the server audits each */ }
@@ -158,8 +161,10 @@ route('supervision', async (r) => {
   const remindable = (r) => mayRemind && r.author_id && r.author_id !== state.user.id;
   const remind = (r) => post('/api/tasks', {
     client_id: r.client_id, assigned_to: r.author_id,
-    title: `Finish and sign your ${fmt.label(r.kind).toLowerCase()} note from ${fmt.date(r.created_at)}`,
-    description: `${state.user.display_name} asked you to finish and sign this draft note${r.overdue ? ', which is overdue' : ''}. Open it from the client's Notes tab.\n${SIGN_REMINDER}`,
+    // It covers every draft of theirs on that client's record and closes when the last is signed (or deleted), so it
+    // names the client, not one note (market evaluation of 1.23.2, D3); the last line stays SIGN_REMINDER.
+    title: `Finish and sign your draft notes for ${who(r)}`,
+    description: `${state.user.display_name} asked you to finish and sign your draft notes on ${who(r)}'s record${r.overdue ? ' (at least one is overdue)' : ''}. Open them from the client's Notes tab. This reminder is closed for you once they are all signed.\n${SIGN_REMINDER}`,
     due_at: fmt.today(), priority: r.overdue ? 'high' : 'normal',
   });
   const remindOne = async (r, btn) => {

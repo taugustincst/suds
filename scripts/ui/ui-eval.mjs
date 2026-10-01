@@ -99,7 +99,10 @@ try {
     ok(task && !task.description.includes(one.id) && !/Reference:/.test(task.description), 'its details carry no record id (1.23.2)', task && task.description);
     eq(task && task.assigned_to, one.author_id, 'assigned to the note\'s author');
     eq(task && task.client_id, one.client_id, 'on the note\'s client');
-    ok(task && /^Finish and sign your .* note from /.test(task.title), 'titled without the note\'s content', task && task.title);
+    // 1.23.3 (D3): it covers all the author's drafts on the client's record, so it names the client, not one note.
+    ok(task && /^Finish and sign your draft notes for /.test(task.title), 'titled for the author\'s drafts on that client, without a note\'s content', task && task.title);
+    ok(task && /once they are all signed/.test(task.description), 'and says it closes once they are all signed', task && task.description);
+    eq(task && task.sign_reminder, true, 'the office marks it a sign reminder (its maker countersigns notes)');
 
     // Remind all overdue authors: confirmation, de-duplicated, one per note.
     const expected = new Set(overdue.filter(x => pair(x) !== pair(one)).map(pair)).size;
@@ -124,6 +127,24 @@ try {
     const navDrafts = overdue.filter(d => theirs.some(t => isReminder(t) && `${t.client_id} ${t.assigned_to}` === pair(d)));
     if (overdue.some(d => d.author === 'Maria Rivera')) ok(navDrafts.length > 0, 'the navigator has the reminders for her drafts');
     await axe(sup.page, 'supervision queue with reminders');
+    // 1.23.3 (D2): the reminder leads to the drafts it asks about: "Open <client>'s notes", on the client's Notes tab
+    // showing the author's own drafts. It used to open only as Edit to-do.
+    const navReminder = theirs.find(t => t.sign_reminder && navDrafts.some(d => `${t.client_id} ${t.assigned_to}` === pair(d)));
+    ok(navReminder, 'the navigator has a sign reminder to open');
+    if (navReminder) {
+      await nav.go(`tasks?id=${navReminder.id}`);
+      ok(await until(() => nav.page.$('.modal [data-task-source="notes"]')), 'her reminder offers the client\'s notes');
+      const label = await nav.page.textContent('.modal [data-task-source="notes"]');
+      ok(/^Open .+'s notes$/.test(label), 'named "Open <client>\'s notes"', label);
+      await nav.page.click('.modal [data-task-source="notes"]');
+      ok(await until(() => nav.page.evaluate((cid) => location.hash.startsWith(`#/client/${cid}/notes?drafts=mine`), navReminder.client_id)), 'which opens the client\'s Notes tab on her drafts', await nav.page.evaluate(() => location.hash));
+      await settle(nav.page);
+      ok(await until(() => nav.page.$('[data-my-drafts]')), 'showing her own drafts');
+      const shown = await nav.page.evaluate(() => document.querySelector('[data-my-drafts]').textContent);
+      ok(/Your draft notes on this record \(\d+\)/.test(shown), 'counted, with a way back to all notes', shown.slice(0, 120));
+      ok(await nav.page.$('[data-my-drafts] a[data-all-notes]'), 'and "Show all notes"');
+      await axe(nav.page, 'a client\'s Notes tab on the reader\'s drafts');
+    }
   }
 
   // ------------------------------------------------------------------------------------------------ 2 + 3

@@ -253,7 +253,12 @@ route('client', async (r) => {
     async interventions() { const d = await get(`/api/interventions?client_id=${id}&limit=500`); return interventionTable(d.rows, { showClient: false, onChange: refresh }); },
     async calls() { const d = await get(`/api/calls?client_id=${id}&limit=500`); return callTable(d.rows, { showClient: false, onChange: refresh }); },
     async notes() {
-      const d = await get(`/api/notes?client_id=${id}&limit=500`);
+      // ?drafts=mine (1.23.3): the reader's own drafts on this record, which a supervisor's "finish and sign" reminder
+      // opens (tasks.js sourceButton); "Show all notes" goes back to the whole tab.
+      const myDrafts = !!(r.query && r.query.get('drafts') === 'mine');
+      const d = await get(`/api/notes?client_id=${id}&limit=500${myDrafts ? '&status=draft&mine=1' : ''}`);
+      if (myDrafts) return h('div', { 'data-my-drafts': '1' }, h('p', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('span', {}, h('b', {}, d.rows.length ? `Your draft notes on this record (${d.rows.length})` : 'You have no draft notes on this record'), d.rows.length ? ' — open one to finish and sign it.' : ''), h('a', { href: `#/client/${id}/notes`, 'data-all-notes': '1' }, 'Show all notes')),
+        noteTable(d.rows, { showClient: false, onChange: refresh }));
       // An administrator holds break-glass but had nowhere to use it except a note link they could not see.
       const breakGlass = !can('notes:clinical:read') && can('notes:clinical:breakglass') ? h('button', { class: 'btn sm danger', 'data-breakglass': '1', onClick: async () => {
         // The server insists on a reason of at least 15 characters; the dialog asks for the same, so a

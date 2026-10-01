@@ -45,9 +45,10 @@ function addsSignReminder(row, existing) {
   if (next === undefined || next === null) return false;
   const { SIGN_REMINDER } = require('./notes');
   if (!String(next).includes(SIGN_REMINDER)) return false;
-  let before = ''; try { before = existing.description_enc ? require('../crypto').decrypt(existing.description_enc) : ''; } catch { before = ''; }
+  let before = ''; try { before = existing && existing.description_enc ? require('../crypto').decrypt(existing.description_enc) : ''; } catch { before = ''; }
   return !before.includes(SIGN_REMINDER);
 }
+const SIGN_REMINDER_REFUSED = 'Only a supervisor who countersigns notes can send a reminder to sign them';
 
 module.exports = define({
   table: 'tasks',
@@ -67,6 +68,9 @@ module.exports = define({
     // to-do's maker may write that line into one, so a worker cannot turn a to-do someone gave them into a reminder that
     // keeps Remind away and closes when they sign (review of 1.23.2).
     if (c.existing && c.existing.created_by !== c.user.id && addsSignReminder(row, c.existing)) return notPermitted('Only whoever made this to-do can make it a reminder to sign notes');
+    // And only someone who may send one (notes:cosign, the supervision queue's Remind), new or edited, over REST or a
+    // push (market evaluation of 1.23.2: a navigator's to-do for a colleague, with the line, passed for a supervisor's).
+    if (addsSignReminder(row, c.existing) && !require('./notes').maySendSignReminder(c.user)) return notPermitted(SIGN_REMINDER_REFUSED);
     if (c.existing) return null;
     // A notice a device raised for an edit made on it is that device's copy: the office raises its own when the edit
     // lands (clients.js afterApply), linked in its audit trail, so the device's is not taken (it would arrive as the

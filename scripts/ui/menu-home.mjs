@@ -185,10 +185,12 @@ try {
       // Now the box alone completes it, named "Mark done: <title>"; the title opens it; "Done" has an Undo.
       const first = await s.page.evaluate(() => { const row = document.querySelector('.today-item[data-today-task]'); const box = row.querySelector('input[type=checkbox]'); const open = row.querySelector('[data-today-open]');
         const r = (e) => { const b = e.getBoundingClientRect(); return [Math.round(b.width), Math.round(b.height)]; };
-        return { id: row.dataset.todayTask, name: box.getAttribute('aria-label'), title: open && open.textContent, openIsButton: open && open.tagName === 'BUTTON', titleInLabel: !!(open && open.closest('label')), boxTarget: r(box.closest('label') || box), openTarget: open && r(open) }; });
+        return { id: row.dataset.todayTask, name: box.getAttribute('aria-label'), title: open && open.textContent, openIsButton: open && open.tagName === 'BUTTON', titleInLabel: !!(open && open.closest('label')), boxTarget: r(box.closest('label') || box), openTarget: open && r(open), box: r(box) }; });
       eq(first.name, `Mark done: ${first.title}`, 'N1: the box is named "Mark done: <title>"');
       ok(first.openIsButton && !first.titleInLabel, 'N1: the title is its own button, outside the box\'s label', first);
       ok(first.boxTarget[0] >= 24 && first.boxTarget[1] >= 24 && first.openTarget[1] >= 24, 'N1: the box and the title are each at least 24 px to hit', first);
+      // 1.23.3 (D4): the box itself is drawn at 24 px on a phone again (1.23.2's label lost the class that sized it: 13 px).
+      eq(first.box.join(' x '), '24 x 24', 'D4: Home\'s to-do box is 24 × 24 px on a phone');
       const status = async () => (await s.api('GET', `/api/tasks/${first.id}`)).data.row.status;
       await s.page.click(`[data-today-open="${first.id}"]`);
       ok(await until(() => s.page.$('.modal')), 'N1: the title opens the to-do (or the record it came from)');

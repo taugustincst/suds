@@ -90,6 +90,9 @@ function presentTask(t) {
   // A notice's title names the client by code (it is written once, for whoever reads it); shown as every list
   // shows a client: the name, where this reader may see it (r8 M2).
   if (o.notice && o.client_name && o.client_code) o.title = o.title.replace(`${o.client_code}'s record`, `${o.client_name}'s record`);
+  // A supervisor's reminder to sign notes (1.23.3): its maker may send one (rules/notes.js isSignReminder), not merely
+  // its text; Supervision and the to-do's own view trust this flag, never the words.
+  if (o.description && !o.notice && require('../rules/notes').isSignReminder(t, o.description)) o.sign_reminder = true;
   return o;
 }
 module.exports.presentTask = presentTask;

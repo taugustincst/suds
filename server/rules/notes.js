@@ -33,14 +33,35 @@ const SIGNED_KEEPS = ['kind', 'format', 'title_enc', 'content_enc', 'structured_
  * with that line still closes when that note is signed.
  */
 const SIGN_REMINDER = 'This reminder closes itself once your draft notes on this client\'s record are signed.';
-function closeSignReminders(authorId, noteId, clientId) {
+const OLD_REMINDER_REF = /Reference: supervision reminder for note ([\w-]+)/;
+// Who may send one: whoever sees the drafts it is about and has Remind, that is holds notes:cosign (the supervision
+// queue's unsigned notes are theirs; public/views/supervision.js). Checked against the maker's account as it is now.
+const maySendSignReminder = (user) => auth.hasPerm(user, 'notes:cosign');
+const makerMaySend = (userId) => { const u = userId && db.one(`SELECT id, role FROM users WHERE id=?`, userId); return !!u && maySendSignReminder(u); };
+/**
+ * Is this to-do a supervisor's sign reminder (1.23.3)? Its details carry the reminder's line (or the line before
+ * 1.23.2), it was given to its assignee by someone else, and that someone may send one (notes:cosign). Until 1.23.3
+ * anyone could make a to-do with the line in it for a colleague, and it passed for a supervisor's: Supervision showed the
+ * colleague's draft as reminded, and signing closed it (market evaluation of 1.23.2). Such a to-do is an ordinary one.
+ * `text` is the decrypted details. The UI trusts the `sign_reminder` flag the to-do routes set from this.
+ */
+function isSignReminder(t, text) {
+  if (!t || !text || !t.created_by || t.created_by === t.assigned_to) return false;
+  if (!text.includes(SIGN_REMINDER) && !OLD_REMINDER_REF.test(text)) return false;
+  return makerMaySend(t.created_by);
+}
+// `cause: 'deleted'`: the last draft was deleted, not signed, so the reminder is cancelled rather than done (1.23.3).
+function closeSignReminders(authorId, noteId, clientId, { cause = 'signed' } = {}) {
   const { decrypt } = require('../crypto');
   const ref = `Reference: supervision reminder for note ${noteId}`;
   const draftsLeft = db.one(`SELECT COUNT(*) n FROM notes WHERE author_id=? AND client_id IS ? AND status='draft' AND deleted_at IS NULL AND id<>?`, authorId, clientId, noteId).n;
-  const done = db.all(`SELECT id, created_by, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS ? AND description_enc IS NOT NULL`, authorId, clientId)
-    .filter(t => { let text; try { text = decrypt(t.description_enc); } catch { return false; } return text.includes(ref) || (!draftsLeft && t.created_by !== authorId && text.includes(SIGN_REMINDER)); });
+  const done = db.all(`SELECT id, created_by, assigned_to, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS ? AND description_enc IS NOT NULL`, authorId, clientId)
+    .filter(t => { let text; try { text = decrypt(t.description_enc); } catch { return false; } return isSignReminder(t, text) && (text.includes(ref) || (!draftsLeft && text.includes(SIGN_REMINDER))); });
   const now = db.now();
-  for (const t of done) db.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now, now, t.id);
+  for (const t of done) {
+    if (cause === 'deleted') db.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, now, t.id);
+    else db.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now, now, t.id);
+  }
   return done.map(t => t.id);
 }
 
@@ -218,8 +239,8 @@ module.exports = define({
     if (c.existing && c.existing.status !== 'draft') return;
     // A draft deleted on a device: as over REST, a reminder to sign that author's drafts on this record closes once none is left.
     if (c.existing && !c.existing.deleted_at && row.deleted_at) {
-      const reminders = closeSignReminders(c.existing.author_id, c.existing.id, c.existing.client_id);
-      for (const id of reminders) require('../audit').log({ user: c.user, action: 'task.update', entity: 'task', entityId: id, clientId: c.existing.client_id, ip: 'device', details: { via: 'sync', status: 'done', cause: 'deleted', note: c.existing.id } });
+      const reminders = closeSignReminders(c.existing.author_id, c.existing.id, c.existing.client_id, { cause: 'deleted' });
+      for (const id of reminders) require('../audit').log({ user: c.user, action: 'task.update', entity: 'task', entityId: id, clientId: c.existing.client_id, ip: 'device', details: { via: 'sync', status: 'cancelled', cause: 'deleted', note: c.existing.id } });
       return;
     }
     const n = db.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required, ai_assisted FROM notes WHERE id=?`, row.id);
@@ -232,6 +253,7 @@ module.exports = define({
 });
 module.exports.closeSignReminders = closeSignReminders;
 module.exports.SIGN_REMINDER = SIGN_REMINDER;
+Object.assign(module.exports, { isSignReminder, maySendSignReminder });
 module.exports.reissueAddenda = reissueAddenda;
 Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts, aiReviewed, keepAiAssisted, strongSigningRequired });
 

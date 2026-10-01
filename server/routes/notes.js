@@ -352,7 +352,7 @@ module.exports = (r) => {
     if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'records:manage-others')) throw forbidden();
     db.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), n.id);
     // The author's last draft on this record gone: a reminder to sign their drafts here has nothing left to ask (review of 1.23.2).
-    const reminders = require('../rules/notes').closeSignReminders(n.author_id, n.id, n.client_id);
+    const reminders = require('../rules/notes').closeSignReminders(n.author_id, n.id, n.client_id, { cause: 'deleted' });
     audit.log({ user: ctx.user, action: 'note.delete', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reminders.length ? { reminders_closed: reminders } : undefined });
     return { ok: true };
   });

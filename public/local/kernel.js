@@ -13666,21 +13666,35 @@ var require_notes = __commonJS({
       "ai_assisted"
     ];
     var SIGN_REMINDER = "This reminder closes itself once your draft notes on this client's record are signed.";
-    function closeSignReminders(authorId, noteId, clientId) {
+    var OLD_REMINDER_REF = /Reference: supervision reminder for note ([\w-]+)/;
+    var maySendSignReminder = (user) => auth3.hasPerm(user, "notes:cosign");
+    var makerMaySend = (userId) => {
+      const u = userId && db3.one(`SELECT id, role FROM users WHERE id=?`, userId);
+      return !!u && maySendSignReminder(u);
+    };
+    function isSignReminder(t, text) {
+      if (!t || !text || !t.created_by || t.created_by === t.assigned_to) return false;
+      if (!text.includes(SIGN_REMINDER) && !OLD_REMINDER_REF.test(text)) return false;
+      return makerMaySend(t.created_by);
+    }
+    function closeSignReminders(authorId, noteId, clientId, { cause = "signed" } = {}) {
       const { decrypt: decrypt3 } = require_crypto();
       const ref = `Reference: supervision reminder for note ${noteId}`;
       const draftsLeft = db3.one(`SELECT COUNT(*) n FROM notes WHERE author_id=? AND client_id IS ? AND status='draft' AND deleted_at IS NULL AND id<>?`, authorId, clientId, noteId).n;
-      const done = db3.all(`SELECT id, created_by, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS ? AND description_enc IS NOT NULL`, authorId, clientId).filter((t) => {
+      const done = db3.all(`SELECT id, created_by, assigned_to, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS ? AND description_enc IS NOT NULL`, authorId, clientId).filter((t) => {
         let text;
         try {
           text = decrypt3(t.description_enc);
         } catch {
           return false;
         }
-        return text.includes(ref) || !draftsLeft && t.created_by !== authorId && text.includes(SIGN_REMINDER);
+        return isSignReminder(t, text) && (text.includes(ref) || !draftsLeft && text.includes(SIGN_REMINDER));
       });
       const now2 = db3.now();
-      for (const t of done) db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now2, now2, t.id);
+      for (const t of done) {
+        if (cause === "deleted") db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, now2, t.id);
+        else db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now2, now2, t.id);
+      }
       return done.map((t) => t.id);
     }
     function reissueAddenda(noteId, was, now2) {
@@ -13846,8 +13860,8 @@ var require_notes = __commonJS({
         if (c.signRefused) require_audit().log({ user: c.user, action: "note.sign.failed", entity: "note", entityId: row.id, clientId: c.existing ? c.existing.client_id : row.client_id, ip: "device", success: false, details: { via: "sync", reason: "fingerprint or authenticator code required", kept: "draft" } });
         if (c.existing && c.existing.status !== "draft") return;
         if (c.existing && !c.existing.deleted_at && row.deleted_at) {
-          const reminders2 = closeSignReminders(c.existing.author_id, c.existing.id, c.existing.client_id);
-          for (const id of reminders2) require_audit().log({ user: c.user, action: "task.update", entity: "task", entityId: id, clientId: c.existing.client_id, ip: "device", details: { via: "sync", status: "done", cause: "deleted", note: c.existing.id } });
+          const reminders2 = closeSignReminders(c.existing.author_id, c.existing.id, c.existing.client_id, { cause: "deleted" });
+          for (const id of reminders2) require_audit().log({ user: c.user, action: "task.update", entity: "task", entityId: id, clientId: c.existing.client_id, ip: "device", details: { via: "sync", status: "cancelled", cause: "deleted", note: c.existing.id } });
           return;
         }
         const n = db3.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required, ai_assisted FROM notes WHERE id=?`, row.id);
@@ -13860,6 +13874,7 @@ var require_notes = __commonJS({
     });
     module.exports.closeSignReminders = closeSignReminders;
     module.exports.SIGN_REMINDER = SIGN_REMINDER;
+    Object.assign(module.exports, { isSignReminder, maySendSignReminder });
     module.exports.reissueAddenda = reissueAddenda;
     Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts, aiReviewed, keepAiAssisted, strongSigningRequired });
     var readsCounseling = (user) => auth3.hasPerm(user, "notes:clinical:write");
@@ -13908,12 +13923,13 @@ var require_tasks = __commonJS({
       if (!String(next).includes(SIGN_REMINDER)) return false;
       let before = "";
       try {
-        before = existing.description_enc ? require_crypto().decrypt(existing.description_enc) : "";
+        before = existing && existing.description_enc ? require_crypto().decrypt(existing.description_enc) : "";
       } catch {
         before = "";
       }
       return !before.includes(SIGN_REMINDER);
     }
+    var SIGN_REMINDER_REFUSED = "Only a supervisor who countersigns notes can send a reminder to sign them";
     module.exports = define2({
       table: "tasks",
       // The record whose follow-up this to-do is (server/rules/follow-ups.js): a device's to-do carries its call's or
@@ -13935,6 +13951,7 @@ var require_tasks = __commonJS({
       authorise(row, c) {
         if (c.existing && c.existing.assigned_to !== c.user.id && isNotice(c.existing)) return notPermitted(NOTICE);
         if (c.existing && c.existing.created_by !== c.user.id && addsSignReminder(row, c.existing)) return notPermitted("Only whoever made this to-do can make it a reminder to sign notes");
+        if (addsSignReminder(row, c.existing) && !require_notes().maySendSignReminder(c.user)) return notPermitted(SIGN_REMINDER_REFUSED);
         if (c.existing) return null;
         return c.via === "sync" && deviceNotice(row, c) ? { reason: null, quiet: true } : null;
       },
@@ -42670,7 +42687,7 @@ var require_notes2 = __commonJS({
         if (n.status !== "draft") throw badRequest("Signed notes are part of the legal record and cannot be deleted");
         if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden();
         db3.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), n.id);
-        const reminders = require_notes().closeSignReminders(n.author_id, n.id, n.client_id);
+        const reminders = require_notes().closeSignReminders(n.author_id, n.id, n.client_id, { cause: "deleted" });
         audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reminders.length ? { reminders_closed: reminders } : void 0 });
         return { ok: true };
       });
@@ -43171,6 +43188,7 @@ var require_tasks2 = __commonJS({
         if (revs.length) o.notice_revisions = revs;
       }
       if (o.notice && o.client_name && o.client_code) o.title = o.title.replace(`${o.client_code}'s record`, `${o.client_name}'s record`);
+      if (o.description && !o.notice && require_notes().isSignReminder(t, o.description)) o.sign_reminder = true;
       return o;
     }
     module.exports.presentTask = presentTask;

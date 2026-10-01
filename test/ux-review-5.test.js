@@ -284,8 +284,10 @@ test('a "finish and sign" reminder carries no record id and closes once the auth
   assert.equal(r.status, 201, JSON.stringify(r.data));
   const seen = (await clin.get('/api/tasks?mine=1&status=open&limit=1000')).data.rows.find(t => t.id === r.data.id);
   assert.ok(!seen.description.includes(n1) && !seen.description.includes(n2) && !/Reference:/.test(seen.description), 'no record id in what the worker reads');
-  // The worker's own to-do with the same words is not a reminder.
-  const own = await clin.post('/api/tasks', { client_id: c.data.id, title: 'Mine', description: SIGN_REMINDER, due_at: today });
+  // The worker's own to-do with the same words is not a reminder (1.23.3: the line is refused from them; one written
+  // before 1.23.3 is left alone).
+  assert.equal((await clin.post('/api/tasks', { client_id: c.data.id, title: 'Mine', description: SIGN_REMINDER, due_at: today })).status, 403);
+  const own = { data: { id: legacyTask(c.data.id, U.clin, U.clin, SIGN_REMINDER) } };
   assert.equal((await clin.post(`/api/notes/${n1}/sign`, { password: PW })).status, 200);
   assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r.data.id).status, 'open', 'another draft on this client is still unsigned');
   // The last draft, signed on a device and pushed: the office closes the reminder.
@@ -310,6 +312,61 @@ test('only a to-do\'s maker can make it a sign reminder; deleting the last draft
   const r = await sup.post('/api/tasks', { client_id: c.data.id, assigned_to: U.clin, title: 'Finish and sign your administrative note', description: `Sup asked you to finish and sign this draft note.\n${SIGN_REMINDER}`, due_at: today });
   assert.equal((await clin.put(`/api/tasks/${r.data.id}`, { due_at: today })).status, 200, 'the worker can still edit a real reminder');
   assert.equal((await clin.del(`/api/notes/${n1}`)).status, 200);
-  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r.data.id).status, 'done', 'no draft left to sign: the reminder closes');
+  // 1.23.3 (D5): closed as cancelled, not done: nothing was signed.
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r.data.id).status, 'cancelled', 'no draft left to sign: the reminder is cancelled');
   assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, given.data.id).status, 'open', 'the ordinary to-do is left alone');
+  const a = JSON.parse(H.db.one(`SELECT details FROM audit_log WHERE action='note.delete' AND entity_id=?`, n1).details);
+  assert.deepEqual(a.reminders_closed, [r.data.id]);
+});
+
+// A to-do as it could be written before 1.23.3: straight into the table, with the details encrypted.
+function legacyTask(clientId, assignedTo, createdBy, description) {
+  const id = randomUUID(); const { encrypt } = require('../server/crypto');
+  H.db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,status) VALUES(?,?,?,?,?,?,?,?,?)`, id, clientId, assignedTo, createdBy, encrypt('Finish and sign your administrative note'), encrypt(description), today, 'normal', 'open');
+  return id;
+}
+
+// Market evaluation of 1.23.2 (D1): any staff member could make a to-do for a colleague whose details end with the
+// reminder's line; Supervision then showed the colleague's draft as reminded (and hid Remind author), and signing closed
+// it. 1.23.3: only someone who may send a reminder (notes:cosign, the supervision queue's) writes the line, over REST or
+// a push, and only theirs is recognised (the `sign_reminder` mark, closing on sign).
+test('only a supervisor who countersigns can send a sign reminder; a forged one is refused or not counted (1.23.3)', async () => {
+  const { SIGN_REMINDER } = require('../server/rules/notes');
+  const c = await clin.post('/api/clients', { first_name: 'Rem', last_name: 'Inderfour', status: 'active', confirm_duplicate: true });
+  const draft = (await clin.post('/api/notes', { client_id: c.data.id, kind: 'admin', content: 'Draft.', occurred_at: iso() })).data.id;
+  const body = { client_id: c.data.id, assigned_to: U.clin, title: 'Finish and sign your draft notes', description: `Asked to sign.\n${SIGN_REMINDER}`, due_at: today };
+  // A navigator: refused over REST, new or as an edit of their own to-do.
+  const forged = await nav.post('/api/tasks', body);
+  assert.equal(forged.status, 403, JSON.stringify(forged.data));
+  assert.match(forged.data.error || '', /countersigns notes/);
+  const plain = await nav.post('/api/tasks', { ...body, description: 'Asked to sign.' });
+  assert.equal(plain.status, 201, 'an ordinary to-do for a colleague still goes');
+  assert.equal((await nav.put(`/api/tasks/${plain.data.id}`, { description: `Asked to sign.\n${SIGN_REMINDER}` })).status, 403, 'nor added to their own to-do later');
+  // And by a push: the row is refused.
+  const pushed = randomUUID();
+  const push = await nav.post('/api/sync/push', { device_now: iso(), tables: { tasks: [{ id: pushed, client_id: c.data.id, assigned_to: U.clin, created_by: U.nav, title_enc: 'Finish and sign', description_enc: `Asked.\n${SIGN_REMINDER}`, due_at: today, priority: 'normal', status: 'open', created_at: iso(), updated_at: iso() }] } });
+  assert.equal(push.status, 200, JSON.stringify(push.data));
+  assert.equal(H.db.one(`SELECT id FROM tasks WHERE id=?`, pushed), undefined, 'the pushed reminder is not stored');
+  assert.ok(push.data.rejected.some(x => x.id === pushed), JSON.stringify(push.data));
+  // The same to-do without the line goes: the line is what was refused.
+  const plainPushed = randomUUID();
+  const push2 = await nav.post('/api/sync/push', { device_now: iso(), tables: { tasks: [{ id: plainPushed, client_id: c.data.id, assigned_to: U.clin, created_by: U.nav, title_enc: 'Finish and sign', description_enc: 'Asked.', due_at: today, priority: 'normal', status: 'open', created_at: iso(), updated_at: iso() }] } });
+  assert.equal(push2.data.applied.tasks, 1, JSON.stringify(push2.data));
+  // One made before 1.23.3 by a navigator: not marked, so Supervision does not count it, and signing leaves it open.
+  const legacy = legacyTask(c.data.id, U.clin, U.nav, `Asked to sign.\n${SIGN_REMINDER}`);
+  const legacyOld = legacyTask(c.data.id, U.clin, U.nav, `Asked.\nReference: supervision reminder for note ${draft}`);
+  // A real one, from the supervisor: marked, and closed (done) when the draft is signed.
+  const real = await sup.post('/api/tasks', body);
+  assert.equal(real.status, 201, JSON.stringify(real.data));
+  const rows = (await sup.get('/api/tasks?status=open&limit=1000')).data.rows;
+  const mark = (id) => !!(rows.find(t => t.id === id) || {}).sign_reminder;
+  assert.equal(mark(real.data.id), true, 'the supervisor\'s reminder is marked sign_reminder');
+  assert.equal(mark(legacy), false, 'the navigator\'s is not');
+  assert.equal(mark(legacyOld), false, 'nor their old-style one');
+  assert.equal(mark(plain.data.id), false, 'nor an ordinary to-do');
+  assert.equal((await clin.post(`/api/notes/${draft}/sign`, { password: PW })).status, 200);
+  const st = (id) => H.db.one(`SELECT status FROM tasks WHERE id=?`, id).status;
+  assert.equal(st(real.data.id), 'done', 'the supervisor\'s reminder closes on signing');
+  assert.equal(st(legacy), 'open', 'the forged one does not');
+  assert.equal(st(legacyOld), 'open', 'nor the forged old-style one');
 });

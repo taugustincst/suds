@@ -40,7 +40,8 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone, 
   }
   const m = modal(isNew ? (isText ? 'Log text message' : 'Log call') : `Edit ${noun}`, f, { wide: true });
 }
-const deleteCall = async (r, onChange, m) => { if (await confirmDialog(r.method === 'text' ? 'Delete text' : 'Delete call', 'Delete this contact record?', { danger: true, okText: 'Delete' })) { await del(`/api/calls/${r.id}`); if (m) m.close(); onChange && onChange(); } };
+// The confirmation says what else goes: an open follow-up to-do is cancelled with the record (1.23.3).
+const deleteCall = async (r, onChange, m) => { const also = await (await import('./tasks.js')).deleteNotice('call_id', r); if (await confirmDialog(r.method === 'text' ? 'Delete text' : 'Delete call', `Delete this contact record?${also}`, { danger: true, okText: 'Delete' })) { await del(`/api/calls/${r.id}`); if (m) m.close(); onChange && onChange(); } };
 const mayEditCall = (r) => can('calls:write') && mayChange(r.user_id);
 /** A call or text to read in full (the list cuts its summary): Edit and Delete for its worker or a supervisor. */
 export function openCallView(r, { onChange } = {}) {

@@ -448,7 +448,8 @@ export async function openRepeatInterventionForm(clientId, clientDisplay, onDone
 const suppliesOf = (r) => (r.supplies && r.supplies.length
   ? r.supplies.map((x, i) => [i ? ' ' : null, badge(`${x.quantity} ${x.item}`, x.category === 'naloxone' ? 'ok' : 'info')])
   : [r.naloxone_kits ? badge(`${r.naloxone_kits} naloxone`, 'ok') : null, r.fentanyl_strips ? [' ', badge(`${r.fentanyl_strips} FTS`, 'info')] : null]).concat(r.syringes_returned ? [' ', badge(`${r.syringes_returned} returned${r.returns_estimated ? ' (est.)' : ''}`, '')] : []);
-const deleteVisit = async (r, onChange, m) => { if (await confirmDialog('Delete visit', 'Delete this visit? This is logged.', { danger: true, okText: 'Delete' })) { await del(`/api/interventions/${r.id}`); toast('Deleted'); if (m) m.close(); onChange && onChange(); } };
+// The confirmation says what else goes: an open follow-up to-do is cancelled with the visit (1.23.3).
+const deleteVisit = async (r, onChange, m) => { const also = await (await import('./tasks.js')).deleteNotice('intervention_id', r); if (await confirmDialog('Delete visit', `Delete this visit? This is logged.${also}`, { danger: true, okText: 'Delete' })) { await del(`/api/interventions/${r.id}`); toast('Deleted'); if (m) m.close(); onChange && onChange(); } };
 /**
  * A visit to read in full, from any row of a visits list: a colleague's visit had nowhere to be read but the
  * 120 characters of its summary the list shows (1.16.0 opened every client to navigators and clinicians, for

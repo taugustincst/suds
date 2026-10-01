@@ -38,18 +38,40 @@ export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
 // (server/routes/supervision.js) straight in the referral's Record outcome form, which is what it asks for.
 const REMINDER = /^Record what happened with your referral to /;
 const SOURCES = [['referral_id', 'referral', 'referrals:read', '/api/referrals/'], ['intervention_id', 'visit', 'interventions:read', '/api/interventions/'], ['call_id', 'call', 'calls:read', '/api/calls/']];
+// A supervisor's reminder to finish and sign notes (1.23.3; the office's `sign_reminder` mark, server/rules/notes.js
+// isSignReminder) has no note id (that would be a new column), but it is about the author's drafts on its client's
+// record: it opens the client's Notes tab showing the reader's own drafts. It used to open only as Edit to-do, with no way
+// to the notes it asks for (market evaluation of 1.23.2, D2).
+const readsNotes = () => ['notes:admin:read', 'notes:clinical:read', 'notes:admin:write', 'notes:clinical:write'].some(p => can(p));
 function sourceOf(t) {
+  if (t && t.sign_reminder && t.client_id && readsNotes()) return { id: t.client_id, noun: 'notes', label: `Open ${t.client_name || t.client_code || 'the client'}'s notes` };
   for (const [col, noun, perm, url] of SOURCES) if (t && t[col] && can(perm)) return { id: t[col], noun, url };
   return null;
 }
 async function openSource(t, onDone) {
   const s = sourceOf(t);
+  if (s.noun === 'notes') { nav(`client/${encodeURIComponent(s.id)}/notes?drafts=mine`); return; }
   let row;
   try { row = (await get(s.url + encodeURIComponent(s.id))).row; } catch (e) { toast(e && e.status === 404 ? `That ${s.noun} is no longer there.` : (e && e.message) || `The ${s.noun} could not be opened.`, 'error'); return; }
   if (s.noun === 'call') (await import('./calls.js')).openCallView(row, { onChange: onDone });
   else if (s.noun === 'visit') (await import('./interventions.js')).openVisitView(row, { onChange: onDone });
   else if (REMINDER.test(t.title || '') && !row.outcome_recorded_at && can('referrals:write')) (await import('./referrals.js')).openOutcomeForm(row, onDone);
   else nav(`client/${row.client_id}/referrals`);
+}
+/**
+ * What deleting a call, visit or referral does to its to-dos, as a sentence for the confirmation (1.23.3), or '' when
+ * it has none open: its follow-up to-do is cancelled while it is as SUDS made it, and a referral's supervisor's
+ * reminder to record its outcome is cancelled (server/rules/follow-ups.js cancelForDeleted). `col` is the to-do's link.
+ */
+export async function deleteNotice(col, rec) {
+  if (!rec || !rec.id || !rec.client_id || !can('tasks:read')) return '';
+  let rows; try { rows = (await get(`/api/tasks?client_id=${encodeURIComponent(rec.client_id)}&status=open&limit=500`, { quiet: true })).rows || []; } catch { return ''; }
+  const linked = rows.filter(t => t[col] === rec.id);
+  const reminder = col === 'referral_id' && linked.some(t => REMINDER.test(t.title || ''));
+  const followUp = linked.some(t => !(col === 'referral_id' && REMINDER.test(t.title || '')));
+  if (!followUp && !reminder) return '';
+  const what = [followUp ? 'its open follow-up to-do' : null, reminder ? 'the supervisor\'s reminder to record its outcome' : null].filter(Boolean).join(' and ');
+  return ` ${what[0].toUpperCase()}${what.slice(1)} ${followUp && reminder ? 'are' : 'is'} cancelled too${followUp ? ' (a follow-up to-do someone has edited is left open)' : ''}.`;
 }
 /** The same on a phone's to-do row (1.23.2), which opens the to-do itself on a tap: this button opens the record,
  *  named with the to-do's title for a screen reader ("Open the call: Call back"). */
@@ -59,11 +81,12 @@ function rowSource(t, onDone) {
   b.addEventListener('click', (e) => e.stopPropagation());
   return b;
 }
-/** "Open the call", "Open the visit" or "Open the referral" for a to-do that came from one, else null. */
+/** "Open the call", "Open the visit" or "Open the referral" for a to-do that came from one ("Open <client>'s notes" for a
+ *  reminder to sign them), else null. */
 export function sourceButton(t, close, onDone) {
   const s = sourceOf(t);
   if (!s) return null;
-  return h('button', { type: 'button', class: 'btn sm', 'data-task-source': s.noun, onClick: () => { if (close) close(); openSource(t, onDone); } }, `Open the ${s.noun}`);
+  return h('button', { type: 'button', class: 'btn sm', 'data-task-source': s.noun, onClick: () => { if (close) close(); openSource(t, onDone); } }, s.label || `Open the ${s.noun}`);
 }
 // A to-do is changed by whoever it is assigned to or made it, or someone who manages others' records
 // (server/rules/tasks.js editableBy); anyone who can write to-dos may still mark it done.
