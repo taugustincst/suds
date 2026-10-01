@@ -112,7 +112,8 @@ try {
 
   // L2: Maria's own hours are not one of the program's tiles.
   await go('dashboard');
-  const tiles = await page.evaluate(() => { const hd = document.querySelector('[data-tiles-heading]'); return hd && hd.nextElementSibling ? hd.nextElementSibling.textContent : ''; });
+  // The tiles fold under their heading (1.23.0): the heading is the fold's summary, the tiles its content.
+  const tiles = await page.evaluate(() => { const fold = document.querySelector('[data-tiles-heading]')?.closest('[data-home-fold]'); const grid = fold && fold.querySelector(':scope > .grid'); return grid ? grid.textContent : ''; });
   ok(tiles && !tiles.includes('My hours logged'), 'the program tiles do not hold Maria\'s own hours');
   ok(/Your own work/.test(await page.textContent('[data-own-tiles]').catch(() => '')), 'which sit under "Your own work"');
   // L9: to-do assignees.

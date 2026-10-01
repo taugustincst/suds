@@ -41,6 +41,16 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-10-01 — Claude: worker-first menu and phone Home (branch `ux/123-menu-home`, not pushed)
+
+- Built for 1.23.0, not yet released; no migration, no new permission or route. The menu's pages and their placement
+  by role, programme profile and phone live in `public/nav.js` (pure; `test/nav-menu.test.js` checks every role ×
+  profile × module switches × screen). Street outreach is in front-line workers' main menu in the harm-reduction and
+  treatment-adjacent profiles; the Waitlist folds into More in harm reduction, Notes on a phone; Funding & spending and
+  Policies & contracts are under a navigator's More (they were in no menu). The phone Home opens on To-dos for today;
+  the program-wide cards fold (prefs `home_folded`); the welcome card has a ×. Measurements in CHANGELOG
+  (*Worker-first menu and phone Home*). The browser suite is **59 scripts** with `menu-home.mjs` and `offline-outreach.mjs`.
+
 ### 2026-10-01 — Claude: 1.22.0 (day to day for workers, field scope by account, publication consent, grace period)
 
 - **What shipped.** One feature release under a recorded policy exception (docs/RELEASE.md, *Record: 1.22.0*), on

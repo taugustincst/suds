@@ -598,6 +598,18 @@ pre.county-pem { overflow-wrap: anywhere; word-break: break-all; }
 .tabs-scroll.more-right > .tabs-cue.right, .tabs-scroll.more-left > .tabs-cue.left { display: flex; }
 /* dashboard.js: the welcome, once, beside everything else on Home (it was a dialog over all of it). */
 .welcome-card { border-left: 4px solid var(--primary); }
+.welcome-card .welcome-close { font-size: 1.25rem; line-height: 1; min-width: 44px; min-height: 44px; padding: 0; }
+/* Home's program-wide cards fold away (1.23.0): the heading is the summary, with the usual disclosure triangle. */
+details.home-fold > summary { cursor: pointer; display: flex; align-items: center; flex-wrap: wrap; gap: .25rem .5rem; }
+@media (pointer: coarse) { details.home-fold > summary { min-height: 44px; } }
+details.home-fold > summary::before { content: '▸' / ''; color: var(--muted); }
+details.home-fold[open] > summary::before { content: '▾' / ''; }
+details.home-fold > summary::-webkit-details-marker { display: none; }
+details.home-fold > summary h2 { margin: 0; }
+details.home-fold[open] > summary { margin-bottom: .6rem; }
+details.home-fold:not(.card) > summary { margin-bottom: .4rem; }
+.home-alerts { gap: .4rem; }
+.home-foot { margin-top: 1rem; }
 .welcome-steps { margin: .25rem 0 .75rem; padding-left: 1.1rem; } .welcome-steps li { margin: .3rem 0; }
 /* The phone's top-right shortcut to the client list says what it is (a lone 👤 read as "my account"). */
 .mobilebar a.mobilebar-clients { font-size: .9rem; font-weight: 600; display: inline-flex; align-items: center; gap: .3rem; }

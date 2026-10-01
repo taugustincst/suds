@@ -74,7 +74,7 @@ test('the funder report\'s submission is read from one snapshot of the data', as
 });
 
 const PUBLIC = path.join(__dirname, '..', 'public');
-const sources = () => [path.join(PUBLIC, 'app.js'), ...fs.readdirSync(path.join(PUBLIC, 'views')).map(f => path.join(PUBLIC, 'views', f))]
+const sources = () => [path.join(PUBLIC, 'app.js'), path.join(PUBLIC, 'nav.js'), ...fs.readdirSync(path.join(PUBLIC, 'views')).map(f => path.join(PUBLIC, 'views', f))]
   .map(f => [path.relative(PUBLIC, f), fs.readFileSync(f, 'utf8')]);
 
 test('one verb per action: the old words for logging a visit, making a referral and the client list are gone from public/', () => {
@@ -92,15 +92,18 @@ test('one verb per action: the old words for logging a visit, making a referral 
 });
 
 test('the sidebar has State reporting and SUPRT-A entries, shown only when the module is on; the funder report is in a front-line worker\'s More', () => {
-  const app = fs.readFileSync(path.join(PUBLIC, 'app.js'), 'utf8');
+  // The menu's entries live in nav.js (1.23.0); app.js builds the menu from them.
+  const app = fs.readFileSync(path.join(PUBLIC, 'nav.js'), 'utf8');
   const entry = (name) => (app.match(new RegExp(`\\{ name: '${name}',[^\\n]*`)) || [''])[0];
   assert.match(entry('caloms'), /label: 'State reporting'/);
-  assert.match(entry('caloms'), /show: \(\) =>[^\n]*moduleOn\('caloms'\)/);
+  assert.match(entry('caloms'), /show: \(c\) =>[^\n]*c\.moduleOn\('caloms'\)/);
   assert.match(entry('suprt'), /label: 'SUPRT-A'/);
-  assert.match(entry('suprt'), /show: \(\) => moduleOn\('suprt'\)/);
-  assert.match(entry('funder'), /more: true/, 'the funder report folds into More for front-line roles instead of vanishing');
-  assert.doesNotMatch(entry('waitlist'), /more: true/, 'Waitlist is in the main list');
-  assert.match(app, /\(n\.show && !n\.show\(\)\)/, 'navPlacement honours show()');
+  assert.match(entry('suprt'), /show: \(c\) => c\.moduleOn\('suprt'\)/);
+  assert.match(entry('funder'), /front: 'more'/, 'the funder report folds into More for front-line roles instead of vanishing');
+  // Waitlist: in the main list of a treatment-adjacent programme, under More in a harm-reduction one (1.23.0,
+  // test/nav-menu.test.js has the placement for every role and profile).
+  assert.match(entry('waitlist'), /front: \{ harm_reduction: 'more' \}/);
+  assert.match(app, /\(n\.show && !n\.show\(c\)\)/, 'the placement honours show()');
   // Both pages are registered views, so the entries lead somewhere.
   assert.match(fs.readFileSync(path.join(PUBLIC, 'views', 'caloms.js'), 'utf8'), /route\('caloms'/);
   assert.match(fs.readFileSync(path.join(PUBLIC, 'views', 'suprt.js'), 'utf8'), /route\('suprt'/);

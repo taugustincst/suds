@@ -1,7 +1,7 @@
 # Releasing SUDS
 
 ## Production readiness checklist (per release)
-- [ ] CI is green for the exact commit being released: `npm test`, the browser suite (`scripts/ui/run-all.sh`, 57 scripts including the first-run wizard, local mode, sync, device encryption and recovery, the static build, accessibility and the QA-regression script `a11y-round4`), Node 24 and the recovery drill. The release workflow enforces this (see *Release gate* below); the box is here so nobody tags a commit they have not seen pass
+- [ ] CI is green for the exact commit being released: `npm test`, the browser suite (`scripts/ui/run-all.sh`, 59 scripts including the first-run wizard, local mode, sync, device encryption and recovery, the static build, accessibility and the QA-regression script `a11y-round4`), Node 24 and the recovery drill. The release workflow enforces this (see *Release gate* below); the box is here so nobody tags a commit they have not seen pass
 - [ ] `CHANGELOG.md` has a section for the version, `package.json` version matches
 - [ ] Docs updated (`README.md`, `docs/INSTALL.md`, `docs/DEPLOYMENT.md`, `docs/HIPAA.md`), and the documents that name a release moved to this one: the questionnaire's *Checked against*, the evidence index's *Version.*, a new SBOM for a new minor (*Stamp checklist: the documents that name a release*, below; `test/doc-currency.test.js`)
 - [ ] No secrets, databases or `data/` contents in the tree (`git status`, `.gitignore`)
@@ -455,7 +455,7 @@ QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` r
 | CI job | What it proves |
 | --- | --- |
 | `test` | `npm test`, the committed kernel and generated schema match their sources, the package builds, browser modules parse |
-| `browser` | the whole browser suite, `scripts/ui/run-all.sh` — 57 scripts, including `accessibility` (fails on any WCAG 2.1 AA finding) and the QA-regression script `a11y-round4` |
+| `browser` | the whole browser suite, `scripts/ui/run-all.sh` — 59 scripts, including `accessibility` (fails on any WCAG 2.1 AA finding) and the QA-regression script `a11y-round4` |
 | `node24` | `npm test` on the next Node LTS line |
 | `thorough` | the performance checks (`test/thorough/`) and timing budgets, at full size |
 | `thorough-sdc` | the statistical-disclosure-control attacker sweeps at full size (`scripts/test-thorough.js` `SDC_SWEEPS`) |

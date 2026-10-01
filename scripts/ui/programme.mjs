@@ -61,10 +61,13 @@ try {
   const nav = await session('mrivera', PW);
   {
     const sb = await sidebar(nav.page);
-    ok(sb.main.length <= 11, `a navigator's sidebar shows ${sb.main.length} pages, not 19`, sb.main);
-    for (const want of ['Home', 'Clients', 'Waitlist', 'To-dos', 'Visits', 'Calls & texts', 'Supplies', 'Resource directory']) ok(sb.main.includes(want), `the navigator's sidebar has ${want}`, sb.main);
+    // 1.23.0: Street outreach joined the main list (12 pages; test/nav-menu.test.js holds the placement per role and profile).
+    ok(sb.main.length <= 12, `a navigator's sidebar shows ${sb.main.length} pages, not 19`, sb.main);
+    for (const want of ['Home', 'Clients', 'Waitlist', 'To-dos', 'Visits', 'Calls & texts', 'Supplies', 'Street outreach', 'Resource directory']) ok(sb.main.includes(want), `the navigator's sidebar has ${want}`, sb.main);
     // The funder report is under More (1.14.0): a navigator runs it for their own caseload.
-    for (const not of ['Funding & spending', 'Policies & contracts', 'Settings']) ok(!sb.main.includes(not) && !(sb.more || []).includes(not), `${not} is not in a navigator's sidebar`, sb);
+    ok(!sb.main.includes('Settings') && !(sb.more || []).includes('Settings'), 'Settings is not in a navigator\'s sidebar', sb);
+    // 1.23.0: every page a navigator may open is in the menu: the programme's money and contracts under More.
+    for (const p of ['Funding & spending', 'Policies & contracts']) ok(!sb.main.includes(p) && (sb.more || []).includes(p), `${p} is under a navigator's More, not in the everyday list`, sb);
     ok(!sb.main.includes('Import'), 'Import is not in the everyday list', sb.main);
     ok(!sb.sections.includes('Program'), 'a navigator has no Program section', sb.sections);
     ok(sb.more && sb.more.includes('Reports') && sb.more.includes('Funder report') && sb.more.includes('My time') && sb.more.includes('Import'), 'the rest of what a navigator may open is folded under More', sb.more);

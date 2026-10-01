@@ -253,9 +253,73 @@ async function drawHome(r) {
     try { await put(`/api/tasks/${t.id}`, { status: 'done' }); toast('Done ✓', 'ok'); nav('dashboard?_=' + Date.now()); }
     catch (err) { if (box) { box.checked = false; box.disabled = false; } toast(err.message || 'Could not mark that done. Check your connection and try again.', 'error'); }
   };
+  // A phone's Home is triage (1.23.0): today's work first — to-dos due and overdue (follow-ups included), then the
+  // things waiting on this person (unsigned notes, clients to call, as one compact row of links), then where they
+  // left off — and the rest below: the welcome, the program-wide figures folded, the auto-refresh switch at the foot.
+  // A first sign-in used to show the welcome card, the switch and the status links before "To-dos for today", which
+  // sat below the first screen. A computer keeps its layout.
+  const phone = typeof matchMedia === 'function' && matchMedia('(max-width: 640px)').matches;
+  // The program-wide cards fold away, each remembered for this person on every device (prefs home_folded: { key:
+  // true } folded, false open). Not chosen yet: folded on a phone, open on a computer.
+  const foldedNow = () => prefs.get('home_folded', null) || {};
+  const isFolded = (key) => (key in foldedNow() ? !!foldedNow()[key] : phone);
+  const fold = (key, attrs, summary, ...body) => {
+    const d = h('details', { ...attrs, class: `${attrs.class || ''} home-fold`.trim(), 'data-home-fold': key, open: isFolded(key) ? null : true }, h('summary', {}, summary), ...body);
+    // Only a change the person made is saved: creating the element open fires a toggle as well.
+    d.addEventListener('toggle', () => { if (!d.open === isFolded(key)) return; prefs.set('home_folded', { ...foldedNow(), [key]: !d.open }); });
+    return d;
+  };
+  const alertRow = alerts.length ? h('div', { class: `row mb${phone ? ' home-alerts' : ''}`, 'data-home-alerts': '1' }, alerts.map(([k, t, href]) => h('a', { href, class: `badge ${k}`, style: { fontSize: '.9rem', padding: '.4rem .8rem' } }, t))) : null;
+  const todosCard = !showTodos ? null : h('div', { class: phone ? 'card mb' : 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'To-dos for today'), can('tasks:read') ? h('a', { href: '#/tasks' }, 'All to-dos') : null),
+    cont.due_today.length ? cont.due_today.map(t => h('div', { class: 'today-item', 'data-overdue': isOverdue(t) ? '1' : '0' }, h('label', { class: 'check', style: { marginTop: 0 } }, h('span', { class: 'tap-target' }, h('input', { type: 'checkbox', 'aria-label': `Mark "${t.title}" done`, onChange: (e) => done(t, e.target) })), h('span', {}, t.title, t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null)), h('span', { class: 'small today-due', style: isOverdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, isOverdue(t) ? [badge('Overdue', 'danger'), ' '] : null, h('span', { class: 'nowrap' }, fmt.dt(t.due_at))))) : emptyState('Nothing due today', 'Reminders you set for today will appear here.', can('tasks:write') ? h('button', { class: 'btn sm', onClick: async () => (await import('./tasks.js')).openTaskForm(null, { onDone: () => nav('dashboard?_=' + Date.now()) }) }, '+ Add a reminder') : null));
+  const continueCard = !showContinue ? null : h('div', { class: phone ? 'card mb' : 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Continue where you left off'), window.SUDS_STATIC_HOST ? null : h('span', { class: 'muted small' }, 'from any device')),
+    cont.drafts.length ? h('div', { class: 'mb' }, h('h3', { class: 'eyebrow' }, 'Unfinished notes'), cont.drafts.slice(0, 4).map(n => h('div', { class: 'today-item' }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, n.title || `${fmt.label(n.format, 'NOTE_FORMATS')} note`, h('span', { class: 'muted small' }, ` · ${n.client_name}`)), h('span', { class: 'muted small' }, fmt.ago(n.updated_at))))) : null,
+    cont.recent.length ? h('div', {}, h('h3', { class: 'eyebrow' }, 'Recent clients'), h('div', { class: 'row' }, cont.recent.slice(0, 8).map(x => h('a', { class: 'chip', href: `#/client/${x.id}` }, x.display_name)))) : null,
+    !cont.drafts.length && !cont.recent.length ? emptyState('You are all caught up', 'Clients and notes you open show here, ready to pick up on your phone or computer.', can('clients:read') ? h('a', { class: 'btn', 'data-empty-action': 'clients', href: '#/clients' }, 'Open the client list') : null) : null);
+  const handoffCard = handoffs && handoffs.rows.length ? fold('handoffs', { class: 'card mb', 'data-handoffs': '1' }, [h('h2', {}, 'Hand-offs from the last 24h'), ' ', h('span', { class: 'muted small' }, 'for the whole team')],
+    handoffs.rows.map(n => h('div', { class: 'hand-off' }, h('div', {}, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, h('b', {}, n.title || 'Hand-off')), ' ', h('span', { class: 'muted small' }, `· ${n.client_name || n.client_code} · ${n.author} · ${fmt.dt(n.occurred_at)}`)), h('div', { class: 'small excerpt' }, n.excerpt)))) : null;
+  const otherDevice = cont.other_device && !state.local ? h('div', { class: 'muted small mb' }, `Also signed in on ${cont.other_device.mobile ? 'your phone' : 'another computer'} (${fmt.ago(cont.other_device.last_seen_at) === 'today' ? 'active today' : fmt.ago(cont.other_device.last_seen_at)}). Everything stays in sync.`) : null;
+  const smallCells = d.small_cells ? h('p', { class: 'small muted mb', 'data-small-cells': '1' }, `Counts of people from 1 to ${d.small_cells.threshold - 1} are shown as "<${d.small_cells.threshold}" for your role, as they are in the funder report.`) : null;
+  const rest = [
+    // Whose figures these are: the program's for anyone who sees every client, otherwise their own caseload's.
+    // "Open referrals 13 — needs attention" read as the worker's own 13 (hours and to-dos stay their own).
+    // Someone's own hours are not the program's figure: they sat among the program's tiles (r7 L2).
+    d.time && !can('time:all') ? [h('h2', { class: 'eyebrow', 'data-own-tiles': '1' }, 'Your own work'),
+      h('div', { class: 'grid cols-4 mb', style: { gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 11.25rem), 1fr))' } }, stat('My hours logged (90 days)', (d.time.minutes / 60).toFixed(1), '', 'time'))] : null,
+    fold('tiles', { class: 'mb' }, h('h2', { class: 'eyebrow', 'data-tiles-heading': '1' }, can('clients:all') ? 'The whole program at a glance' : can('clients:read') ? 'Your caseload at a glance' : 'The program at a glance'),
+      h('div', { class: 'grid cols-4 mb' },
+        stat('Active clients', fmt.num(c.active), '', 'clients?status=active', 'All active clients, any time — not limited to the last 90 days'), stat('High-risk clients', fmt.num(c.high_risk), c.high_risk ? 'danger' : '', 'clients?status=active&risk=high'), stat('Visits (90 days)', fmt.num(i.total), '', 'interventions', `${fmt.date(d.from)} – ${fmt.date(d.to)}; other numbers on this page are all-time`), stat('Naloxone kits given', fmt.num(i.naloxone_kits), '', `interventions?naloxone=1&from=${String(d.from).slice(0, 10)}&to=${String(d.to).slice(0, 10)}`, 'Kits handed out on any visit in the last 90 days, whatever the visit type'),
+        stat('Calls', fmt.num(d.calls.total), '', 'calls'), stat('Open referrals', fmt.num(d.referrals.open), d.referrals.open ? 'warn' : '', 'referrals?status=open'),
+        pr ? h('div', { 'data-patient-requests': '1', style: { display: 'contents' } }, stat('Open client rights requests', pr.overdue ? `${fmt.num(pr.n)} (${pr.overdue} overdue)` : fmt.num(pr.n), pr.overdue ? 'danger' : pr.n ? 'warn' : '', 'clients?status=all&patient_requests=1', 'Requests for access, amendment, restriction or an accounting of disclosures — each must be answered within 30 days')) : null, d.time && can('time:all') ? stat('Team hours logged', (d.time.minutes / 60).toFixed(1), '', 'time') : null, d.budget && can('budget:approve') ? stat('Spent of budget', h('span', {}, h('span', { class: 'money' }, fmt.money(d.budget.spent)), ' / ', h('span', { class: 'money' }, fmt.money(d.budget.total))), '', 'budget') : null, supplies ? supplies.tile : null)),
+    h('div', { class: 'grid cols-2' },
+      can('clients:read') ? h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Your clients who need a check-in'), h('a', { href: '#/clients' }, 'All clients')),
+        caseload.caseload.length ? caseload.caseload.slice(0, 8).map(x => h('div', { class: 'today-item' }, h('div', {}, h('a', { href: `#/client/${x.id}` }, x.display_name), ' ', badge(x.risk_level ? fmt.label(x.risk_level) : 'Not assessed', statusKind(x.risk_level))), h('div', { class: 'small muted' }, 'last contact ', fmt.ago(x.last_contact), x.overdue_tasks ? [' ', badge(`${x.overdue_tasks} overdue`, 'danger')] : null)))
+          : can('clients:all') ? emptyState('Nothing on your own caseload', c.active ? `You see every client already (${c.active} active). This list only shows people assigned to you directly.` : sample ? 'Add the first client, or load the sample data above to look around.' : 'Add the first client.', c.active ? h('a', { class: 'btn', 'data-empty-action': 'clients', href: '#/clients' }, 'Open the client list') : newClientBtn())
+          : emptyState('No clients assigned to you yet', can('clients:write') ? 'Add your first client, or ask your supervisor to assign clients to you.' : 'Ask your supervisor to assign clients to you.', newClientBtn())) : null,
+      fold('activity', { class: 'card' }, h('h2', { 'data-activity-heading': '1' }, activityHeading), bars(i.by_type.slice(0, 8), { list: 'INTERVENTION_TYPES', link: x => `interventions?type=${x.k}` }), h('div', { class: 'mt' }, sparkline(i.by_week.map(w => w.n), { label: 'Visits per week, last 90 days' }), h('div', { class: 'muted small' }, 'visits per week'))),
+      state.user.role === 'admin' && !state.local ? h('div', { class: 'card' }, h('h2', {}, 'Use SUDS on phones and tablets'), h('p', { class: 'small muted' }, 'There is no app to install: staff open SUDS in the browser on the office Wi-Fi and add it to their home screen. Show them the QR code under Settings → Network & devices, or send them to ', h('a', { href: 'get-app.html' }, 'Use SUDS on your phone or tablet'), '.'), h('a', { class: 'btn sm', href: '#/admin?tab=network' }, 'Connect a device')) : null,
+      d.consents_expiring.length ? fold('consents', { class: 'card' }, h('h2', {}, 'Consents expiring soon'), table([{ label: 'Client', render: r => h('a', { href: `#/client/${r.client_id}` }, r.client_code) }, { label: 'Type', render: r => fmt.label(r.type) }, { label: 'Recipient', key: 'recipient' }, { label: 'Expires', render: r => fmt.date(r.expires_at) }], d.consents_expiring, { wrap: false })) : null),
+  ];
+  const welcome = welcomeCard({ force, experienced });
+  if (phone) {
+    return h('div', { 'data-home-layout': 'phone' },
+      pageHead(`${greet}, ${who}`),
+      // Help at the foot of the menu opens the welcome on purpose (?welcome=1): then it comes first.
+      force ? welcome : null,
+      securityNotes,
+      reportsLead,
+      todosCard,
+      alertRow,
+      continueCard,
+      force ? null : welcome,
+      recoveryPrompt, backupReminder, sample, setupCard, otherDevice, smallCells,
+      handoffCard,
+      ...rest,
+      h('div', { class: 'home-foot', 'data-home-foot': '1' }, autoToggle));
+  }
   return h('div', {},
     pageHead(`${greet}, ${who}`, autoToggle),
-    welcomeCard({ force, experienced }),
+    welcome,
     recoveryPrompt,
     backupReminder,
     securityNotes,
@@ -263,37 +327,13 @@ async function drawHome(r) {
     setupCard,
     // A device copy keeps its own sign-ins, all on this device, and syncs with nothing on its own: "another
     // computer … stays in sync" was wrong there.
-    cont.other_device && !state.local ? h('div', { class: 'muted small mb' }, `Also signed in on ${cont.other_device.mobile ? 'your phone' : 'another computer'} (${fmt.ago(cont.other_device.last_seen_at) === 'today' ? 'active today' : fmt.ago(cont.other_device.last_seen_at)}). Everything stays in sync.`) : null,
-    d.small_cells ? h('p', { class: 'small muted mb', 'data-small-cells': '1' }, `Counts of people from 1 to ${d.small_cells.threshold - 1} are shown as "<${d.small_cells.threshold}" for your role, as they are in the funder report.`) : null,
+    otherDevice,
+    smallCells,
     reportsLead,
-    alerts.length ? h('div', { class: 'row mb' }, alerts.map(([k, t, href]) => h('a', { href, class: `badge ${k}`, style: { fontSize: '.9rem', padding: '.4rem .8rem' } }, t))) : null,
-    showTodos || showContinue ? h('div', { class: 'grid cols-2 mb' },
-      !showTodos ? null : h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'To-dos for today'), can('tasks:read') ? h('a', { href: '#/tasks' }, 'All to-dos') : null),
-        cont.due_today.length ? cont.due_today.map(t => h('div', { class: 'today-item', 'data-overdue': isOverdue(t) ? '1' : '0' }, h('label', { class: 'check', style: { marginTop: 0 } }, h('span', { class: 'tap-target' }, h('input', { type: 'checkbox', 'aria-label': `Mark "${t.title}" done`, onChange: (e) => done(t, e.target) })), h('span', {}, t.title, t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null)), h('span', { class: 'small today-due', style: isOverdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, isOverdue(t) ? [badge('Overdue', 'danger'), ' '] : null, h('span', { class: 'nowrap' }, fmt.dt(t.due_at))))) : emptyState('Nothing due today', 'Reminders you set for today will appear here.', can('tasks:write') ? h('button', { class: 'btn sm', onClick: async () => (await import('./tasks.js')).openTaskForm(null, { onDone: () => nav('dashboard?_=' + Date.now()) }) }, '+ Add a reminder') : null)),
-      !showContinue ? null : h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Continue where you left off'), window.SUDS_STATIC_HOST ? null : h('span', { class: 'muted small' }, 'from any device')),
-        cont.drafts.length ? h('div', { class: 'mb' }, h('h3', { class: 'eyebrow' }, 'Unfinished notes'), cont.drafts.slice(0, 4).map(n => h('div', { class: 'today-item' }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, n.title || `${fmt.label(n.format, 'NOTE_FORMATS')} note`, h('span', { class: 'muted small' }, ` · ${n.client_name}`)), h('span', { class: 'muted small' }, fmt.ago(n.updated_at))))) : null,
-        cont.recent.length ? h('div', {}, h('h3', { class: 'eyebrow' }, 'Recent clients'), h('div', { class: 'row' }, cont.recent.slice(0, 8).map(x => h('a', { class: 'chip', href: `#/client/${x.id}` }, x.display_name)))) : null,
-        !cont.drafts.length && !cont.recent.length ? emptyState('You are all caught up', 'Clients and notes you open show here, ready to pick up on your phone or computer.', can('clients:read') ? h('a', { class: 'btn', 'data-empty-action': 'clients', href: '#/clients' }, 'Open the client list') : null) : null)) : null,
-    handoffs && handoffs.rows.length ? h('div', { class: 'card mb', 'data-handoffs': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'Hand-offs from the last 24h'), h('span', { class: 'muted small' }, 'for the whole team')),
-      handoffs.rows.map(n => h('div', { class: 'hand-off' }, h('div', {}, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, h('b', {}, n.title || 'Hand-off')), ' ', h('span', { class: 'muted small' }, `· ${n.client_name || n.client_code} · ${n.author} · ${fmt.dt(n.occurred_at)}`)), h('div', { class: 'small excerpt' }, n.excerpt)))) : null,
-    // Whose figures these are: the program's for anyone who sees every client, otherwise their own caseload's.
-    // "Open referrals 13 — needs attention" read as the worker's own 13 (hours and to-dos stay their own).
-    // Someone's own hours are not the program's figure: they sat among the program's tiles (r7 L2).
-    d.time && !can('time:all') ? [h('h2', { class: 'eyebrow', 'data-own-tiles': '1' }, 'Your own work'),
-      h('div', { class: 'grid cols-4 mb', style: { gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 11.25rem), 1fr))' } }, stat('My hours logged (90 days)', (d.time.minutes / 60).toFixed(1), '', 'time'))] : null,
-    h('h2', { class: 'eyebrow', 'data-tiles-heading': '1' }, can('clients:all') ? 'The whole program at a glance' : can('clients:read') ? 'Your caseload at a glance' : 'The program at a glance'),
-    h('div', { class: 'grid cols-4 mb' },
-      stat('Active clients', fmt.num(c.active), '', 'clients?status=active', 'All active clients, any time — not limited to the last 90 days'), stat('High-risk clients', fmt.num(c.high_risk), c.high_risk ? 'danger' : '', 'clients?status=active&risk=high'), stat('Visits (90 days)', fmt.num(i.total), '', 'interventions', `${fmt.date(d.from)} – ${fmt.date(d.to)}; other numbers on this page are all-time`), stat('Naloxone kits given', fmt.num(i.naloxone_kits), '', `interventions?naloxone=1&from=${String(d.from).slice(0, 10)}&to=${String(d.to).slice(0, 10)}`, 'Kits handed out on any visit in the last 90 days, whatever the visit type'),
-      stat('Calls', fmt.num(d.calls.total), '', 'calls'), stat('Open referrals', fmt.num(d.referrals.open), d.referrals.open ? 'warn' : '', 'referrals?status=open'),
-      pr ? h('div', { 'data-patient-requests': '1', style: { display: 'contents' } }, stat('Open client rights requests', pr.overdue ? `${fmt.num(pr.n)} (${pr.overdue} overdue)` : fmt.num(pr.n), pr.overdue ? 'danger' : pr.n ? 'warn' : '', 'clients?status=all&patient_requests=1', 'Requests for access, amendment, restriction or an accounting of disclosures — each must be answered within 30 days')) : null, d.time && can('time:all') ? stat('Team hours logged', (d.time.minutes / 60).toFixed(1), '', 'time') : null, d.budget && can('budget:approve') ? stat('Spent of budget', h('span', {}, h('span', { class: 'money' }, fmt.money(d.budget.spent)), ' / ', h('span', { class: 'money' }, fmt.money(d.budget.total))), '', 'budget') : null, supplies ? supplies.tile : null),
-    h('div', { class: 'grid cols-2' },
-      can('clients:read') ? h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Your clients who need a check-in'), h('a', { href: '#/clients' }, 'All clients')),
-        caseload.caseload.length ? caseload.caseload.slice(0, 8).map(x => h('div', { class: 'today-item' }, h('div', {}, h('a', { href: `#/client/${x.id}` }, x.display_name), ' ', badge(x.risk_level ? fmt.label(x.risk_level) : 'Not assessed', statusKind(x.risk_level))), h('div', { class: 'small muted' }, 'last contact ', fmt.ago(x.last_contact), x.overdue_tasks ? [' ', badge(`${x.overdue_tasks} overdue`, 'danger')] : null)))
-          : can('clients:all') ? emptyState('Nothing on your own caseload', c.active ? `You see every client already (${c.active} active). This list only shows people assigned to you directly.` : sample ? 'Add the first client, or load the sample data above to look around.' : 'Add the first client.', c.active ? h('a', { class: 'btn', 'data-empty-action': 'clients', href: '#/clients' }, 'Open the client list') : newClientBtn())
-          : emptyState('No clients assigned to you yet', can('clients:write') ? 'Add your first client, or ask your supervisor to assign clients to you.' : 'Ask your supervisor to assign clients to you.', newClientBtn())) : null,
-      h('div', { class: 'card' }, h('h2', { 'data-activity-heading': '1' }, activityHeading), bars(i.by_type.slice(0, 8), { list: 'INTERVENTION_TYPES', link: x => `interventions?type=${x.k}` }), h('div', { class: 'mt' }, sparkline(i.by_week.map(w => w.n), { label: 'Visits per week, last 90 days' }), h('div', { class: 'muted small' }, 'visits per week'))),
-      state.user.role === 'admin' && !state.local ? h('div', { class: 'card' }, h('h2', {}, 'Use SUDS on phones and tablets'), h('p', { class: 'small muted' }, 'There is no app to install: staff open SUDS in the browser on the office Wi-Fi and add it to their home screen. Show them the QR code under Settings → Network & devices, or send them to ', h('a', { href: 'get-app.html' }, 'Use SUDS on your phone or tablet'), '.'), h('a', { class: 'btn sm', href: '#/admin?tab=network' }, 'Connect a device')) : null,
-      d.consents_expiring.length ? h('div', { class: 'card' }, h('h2', {}, 'Consents expiring soon'), table([{ label: 'Client', render: r => h('a', { href: `#/client/${r.client_id}` }, r.client_code) }, { label: 'Type', render: r => fmt.label(r.type) }, { label: 'Recipient', key: 'recipient' }, { label: 'Expires', render: r => fmt.date(r.expires_at) }], d.consents_expiring, { wrap: false })) : null));
+    alertRow,
+    showTodos || showContinue ? h('div', { class: 'grid cols-2 mb' }, todosCard, continueCard) : null,
+    handoffCard,
+    ...rest);
 }
 // "Your first day" is for a first day (r9 L6): someone who logged a visit or wrote a note before today, as every
 // worker has after an upgrade, is not asked to "Log your first visit". Remembered once known (prefs first_day_skip).
