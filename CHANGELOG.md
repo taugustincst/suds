@@ -4,6 +4,53 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Security documents: the pen-test scope from the threat model, honest release integrity, a fuller county packet (no migration, permission or route)
+
+Built for 1.22.0, not yet released. These fix findings of the market evaluation of 1.21.0.
+
+- **Penetration-test scope** (`docs/security/PEN-TEST-SCOPE.md`). A merge had duplicated four county rows; those
+  are gone. QUESTIONNAIRE #38 claimed rows that did not exist, and they are now added:
+  - *Field devices and participant codes*: scope enforcement, where a session's scope comes from (a sync sign-in
+    with no `X-Device-Id`, a fresh id or another device's id), push refusals, and the sync session's reach into
+    `/api/auth/*`;
+  - *Authenticator allow-list and metadata upload*: attestation formats, synced passkeys refused, the FIDO
+    Metadata Service file's chain, rollback and test root;
+  - *County file version 2: award amounts*;
+  - *SUDS Server upgrade hand-over*;
+  - *SUDS on this device*;
+  - *Data at rest and keys*.
+
+  Input handling, disclosure controls, audit integrity and the release pipeline now include the threats the threat
+  model lists for them. `test/pen-test-scope.test.js` maps every row of the threat model's mitigation tables to a
+  scope row through an explicit table. It fails on a threat with no row, on a stale mapping and on a duplicated
+  row, and checks that #38 names only rows the scope has.
+- **Release integrity, said plainly.** QUESTIONNAIRE #36 and #39, the RFI template, BUYER-GUIDE-IT and the threat
+  model now say that 1.16.3 to 1.21.0 were published without a tag, without a GitHub Release and without the release
+  gate's approval: direct pushes to `gh-pages`, recorded as policy exceptions. They say what that means for a county
+  verifying a build, and how to verify one against its commit instead: rebuild the zip and compare its SHA-256 with
+  the tag hand-off, and run `scripts/release-site-check.js` against the commit. That check was run on 1 October 2026
+  against 1.20.0's site and commit `8f365b4`, and the 71 built files matched byte for byte. The RFI template has a new
+  *Release integrity* answer.
+- **The authenticator allow-list and synced passkeys.** QUESTIONNAIRE #19a and the RFI now say that with the
+  allow-list on, synced passkeys (iCloud Keychain, Google Password Manager: attestation `none` or `apple`) cannot be
+  added, and that turning it on ends unproven passkeys with no grace period.
+- **`scripts/release-state.js`**: a new check fails while released versions are untagged and QUESTIONNAIRE #36,
+  #39 or the RFI's *Release integrity* answer does not say they were "published without a tag" and name the first
+  and last of them (`untagged-undisclosed`, `untagged-range`). Untagged versions come from the hand-off's owed tags,
+  and from origin's tags when it can be reached. Tested with synthetic documents, and against the repository's own
+  answers with the phrase removed.
+- **County evidence packet** (`scripts/county-packet.js`): now also holds THREAT-MODEL, DATA-INVENTORY,
+  LOGGING-AND-AUDIT, COUNTY-VIEW, BACKUP-AND-DR and INCIDENT-RESPONSE. Its README flags every file that states a
+  release of an older minor line than the packet's as **Older than this release**: today the accessibility report
+  (levels established on 1.11.0) and the recovery, upgrade and installer evidence and latest drill (1.20.0). The
+  flag appears in a list above the table and in the file's row.
+- **Accessibility conformance report** (`docs/accessibility/ACR-WCAG21.md`), revised for 1.21.0 with a dated note.
+  The automated axe audits now cover the screens 1.21.0 added: the Publish tab and its dialogs, the field-device
+  settings and device screens, participant-code mode, the authenticator allow-list card, the award fields and the
+  county reminders. The note names the script and the widths for each. For these screens neither the manual review
+  nor any screen-reader testing was done, and screen-reader testing of the product is still pending (an owner item).
+  No conformance level changed.
+
 ## 1.21.0 — 2026-09-30
 
 A feature release (migrations 61, 62 and 63; the county publication, field-device, authenticator allow-list and
