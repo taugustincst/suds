@@ -93,6 +93,9 @@ function housekeeping() {
     // The county's side: refusals of county connection calls counted in a window whose hour is over are summarised.
     try { require('./county-connect').sweepRefusals(); } catch (e) { console.error('[suds] county connection refusals', e && e.message || e); }
     require('./county-connect-client').autoSendIfDue().catch((e) => console.error('[suds] county connection automatic send', e && e.message || e));
+    // The authenticator allow-list's grace periods that are over (docs/FINGERPRINT.md "Grace period"): the passkeys are
+    // refused from that moment anyway; here any session they still have ends, and the end is audited.
+    try { require('./passkeys').allowlist.expireGrace(); } catch (e) { console.error('[suds] authenticator allow-list grace periods', e && e.message || e); }
     // Monthly recovery drill, if an administrator turned it on (off by default). Runs in the background.
     require('./dr-drill').runIfDue();
     // A new host compliance report (the weekly suds-compliance.timer) is recorded in the audit log.

@@ -800,6 +800,16 @@ const migrations = [
     addColumn(d, 'passkeys', 'attestation', 'TEXT');
     createTablesFromSchema(d, safeSchema(), ['authenticator_metadata'], 63);
   },
+  // 64: a number held for another 1.22.0 stream's migration (the release's integration puts it here). A documented
+  //     no-op on this branch.
+  () => {},
+  // 65: likewise held for another 1.22.0 stream's migration; a documented no-op on this branch.
+  () => {},
+  // 66: the authenticator allow-list's grace period (built for 1.22.0, not yet released; docs/FINGERPRINT.md
+  //     "Grace period"): passkeys.allowlist_grace_until, NULL for every existing passkey (none is in a grace period:
+  //     a list turned on under 1.21.0 refused at once). Office server only. Self-contained and idempotent, so it can be
+  //     renumbered.
+  (d) => { addColumn(d, 'passkeys', 'allowlist_grace_until', 'TEXT'); },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

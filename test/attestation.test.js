@@ -246,7 +246,8 @@ async function passkeyLogin(a) {
   return c.post('/api/auth/passkeys/login', { credential: a.get(o.data.publicKey) });
 }
 const lastAudit = (action) => { const r = H.db.one(`SELECT * FROM audit_log WHERE action=? ORDER BY id DESC LIMIT 1`, action); return r ? { ...r, details: JSON.parse(r.details || 'null') } : null; };
-const setList = (body) => admin.put('/api/admin/authenticator-allowlist', { password: APW, ...body });
+// The 1.21.0 tests below are about refusal at once: a grace period of 0 days (1.22.0's tests pass their own).
+const setList = (body) => admin.put('/api/admin/authenticator-allowlist', { password: APW, grace_days: 0, ...body });
 
 test('only an administrator reads or changes the allow-list; a change and a metadata upload need the password again, every time', async () => {
   const nav = await person('al_nav'); const sup = await person('al_sup', 'supervisor');
@@ -261,6 +262,8 @@ test('only an administrator reads or changes the allow-list; a change and a meta
   assert.equal(g.data.enabled, false, 'off by default');
   assert.equal(g.data.metadata, null);
   assert.equal(g.data.trust_root.sha256, A.FIDO_MDS_ROOT_SHA256);
+  assert.equal(g.data.grace_days, 14, 'a grace period of 14 days until the administrator chooses (1.22.0)');
+  assert.equal(g.data.grace_max_days, 90);
   // The generic settings route does not reach it: the keys are not settings it accepts.
   await admin.put('/api/admin/settings', { authn_allowlist: '1', authn_allowlist_models: '[]' });
   assert.equal(H.db.getSetting('authn_allowlist', '0'), '0', 'PUT /api/admin/settings cannot turn it on');
@@ -458,6 +461,130 @@ test('turning it on, or a metadata file that refuses a model, ends the sessions 
   assert.equal((await admin.post('/api/admin/authenticator-metadata', { blob: blob(), password: APW })).status, 200);
   const n2 = (await admin.post('/api/admin/authenticator-allowlist/preview', { enabled: false, models })).data.affected.passkey_count;
   assert.equal((await setList({ enabled: false, models, acknowledge_affected: n2 })).status, 200);
+});
+
+// ---------------------------------------------------------------- the grace period (built for 1.22.0)
+const withInterAttest = (ad, cdh, x) => { const m = packedFull(makerCa)(ad, cdh, x); m.attStmt.set('x5c', [...m.attStmt.get('x5c'), makerCa.der]); return m; };
+async function signInWith(a) {
+  const app = require('../server/app'); for (const k of ['passkey-options:127.0.0.1', 'login:127.0.0.1']) app.rateLimitReset(k);
+  const c = H.client();
+  const o = await c.post('/api/auth/passkeys/login/options', {});
+  const r = await c.post('/api/auth/passkeys/login', { credential: a.get(o.data.publicKey) });
+  return Object.assign(r, { client: c });
+}
+const pkOf = (userId) => H.db.one(`SELECT * FROM passkeys WHERE user_id=? ORDER BY created_at DESC LIMIT 1`, userId);
+const preview = async (body) => (await admin.post('/api/admin/authenticator-allowlist/preview', body)).data.affected;
+const listOff = async (models) => {
+  const n = (await preview({ enabled: false, models })).passkey_count;
+  assert.equal((await setList({ enabled: false, models, acknowledge_affected: n })).status, 200);
+};
+
+test('grace period: turning the list on keeps a refused passkey working until a date, told to its owner and the administrator; then it stops (fake clock), audited', async () => {
+  const L = require('../server/authenticator-allowlist');
+  assert.equal((await admin.post('/api/admin/authenticator-metadata', { blob: blob(), password: APW })).status, 200);
+  const models = [{ name: 'Test key', aaguid: AAGUID }];
+  await listOff(models);
+  const p = await person('gr_only'); const old = key({ aaguid: aaguidBuf(OTHER_AAGUID) });
+  assert.equal((await enrol(p.c, old)).status, 201, 'added while the list is off: the account\'s only second factor');
+  const q = await person('gr_totp');
+  assert.equal((await enrol(q.c, key())).status, 201, 'another, with an authenticator app as well');
+  H.db.run(`UPDATE users SET mfa_enabled=1 WHERE id=?`, q.u.id);
+  for (const bad of [-1, 91, 2.5]) assert.equal((await admin.post('/api/admin/authenticator-allowlist/preview', { enabled: true, models, grace_days: bad })).status, 400, `grace_days ${bad} is refused`);
+  // The preview: whose, when, and who loses their only second factor.
+  const t0 = Date.now();
+  const pv = await preview({ enabled: true, models, grace_days: 10 });
+  const mine = pv.accounts.find((x) => x.username === 'gr_only');
+  assert.ok(mine && mine.only_factor, 'an account whose only second factor stops is marked');
+  assert.ok(pv.only_factor_accounts.some((x) => x.username === 'gr_only'), 'and listed apart');
+  assert.ok(!pv.only_factor_accounts.some((x) => x.username === 'gr_totp'), 'not one with an authenticator app');
+  const stops = Date.parse(mine.passkeys[0].stops_at);
+  assert.ok(Math.abs(stops - (t0 + 10 * 86400000)) < 60_000, 'it stops 10 days from now');
+  assert.equal(pv.grace_days, 10); assert.ok(pv.grace_until); assert.equal(pv.stops_now_count, 0);
+  // Saved: the passkey keeps working, and no session it opens outlives the grace period.
+  const on = await setList({ enabled: true, models, grace_days: 10, acknowledge_affected: pv.passkey_count });
+  assert.equal(on.status, 200, JSON.stringify(on.data));
+  assert.equal(on.data.grace_days, 10, 'the grace period is kept for next time');
+  const au = lastAudit('security.authenticator_allowlist');
+  assert.equal(au.details.grace_days, 10); assert.ok(au.details.grace_passkeys >= 2); assert.ok(au.details.only_factor_users.includes(p.u.id)); assert.equal(au.details.stops_now, 0);
+  const until = pkOf(p.u.id).allowlist_grace_until;
+  assert.ok(until && Math.abs(Date.parse(until) - stops) < 60_000);
+  const s = await signInWith(old);
+  assert.equal(s.status, 200, 'in its grace period the passkey still signs in');
+  assert.equal(lastAudit('auth.login').details.allowlist_grace_until, until, 'and the sign-in is audited with the date');
+  const sessionEnd = () => H.db.one(`SELECT expires_at FROM sessions WHERE passkey_id=? AND revoked_at IS NULL`, pkOf(p.u.id).id).expires_at;
+  assert.ok(Date.parse(sessionEnd()) <= Date.parse(until), 'the session it opened expires by the end of the grace period');
+  // A session lifetime longer than the grace period (an administrator's setting) is cut to it.
+  H.db.run(`UPDATE sessions SET expires_at=? WHERE passkey_id=?`, new Date(Date.parse(until) + 86400000).toISOString(), pkOf(p.u.id).id);
+  // Its owner is told: on every page (the session's user) and on My profile.
+  const me = (await s.client.get('/api/auth/me')).data.user;
+  assert.equal(me.passkey_grace.until, until); assert.equal(me.passkey_grace.totp, false); assert.equal(me.passkeys, 1, 'still the account\'s second factor for now');
+  const mineList = (await p.c.get('/api/auth/passkeys')).data;
+  assert.equal(mineList.grace.until, until); assert.equal(mineList.passkeys[0].accepted, true); assert.equal(mineList.passkeys[0].stops_at, until); assert.equal(mineList.passkeys[0].stop_reason, 'unattested');
+  // The administrator's card shows the dates in force.
+  const cur = (await admin.get('/api/admin/authenticator-allowlist')).data.affected;
+  assert.equal(cur.accounts.find((x) => x.username === 'gr_only').passkeys[0].stops_at, until);
+  // Saving again with a longer grace period does not lengthen it; a shorter one shortens it, and its sessions.
+  const n2 = (await preview({ enabled: true, models, grace_days: 30 })).passkey_count;
+  assert.equal((await setList({ enabled: true, models, grace_days: 30, acknowledge_affected: n2 })).status, 200);
+  assert.equal(pkOf(p.u.id).allowlist_grace_until, until, 'a re-save never lengthens a grace period');
+  assert.equal((await setList({ enabled: true, models, grace_days: 3, acknowledge_affected: n2 })).status, 200);
+  const shorter = pkOf(p.u.id).allowlist_grace_until;
+  assert.ok(Date.parse(shorter) < Date.parse(until) - 6 * 86400000, 'a shorter one shortens it');
+  assert.equal(sessionEnd(), shorter, 'and its session ends with it');
+  // The fake clock: accepted until the end, refused from it.
+  const pk = pkOf(p.u.id); const end = Date.parse(shorter);
+  assert.equal(L.passkeyAllowed(pk, { now: new Date(end - 1000) }).ok, true);
+  assert.deepEqual(L.passkeyAllowed(pk, { now: new Date(end) }), { ok: false, reason: 'unattested' });
+  assert.equal(L.expireGrace({ now: new Date(end - 1000) }).passkeys, 0, 'nothing ends before its time');
+  const ex = L.expireGrace({ now: new Date(end + 1000) });
+  assert.ok(ex.passkeys >= 1 && ex.sessions_ended >= 1, JSON.stringify(ex));
+  const ge = lastAudit('security.authenticator_allowlist.grace_ended');
+  assert.ok(ge.details.users.includes(p.u.id) && ge.details.passkey_ids.includes(pk.id)); assert.equal(ge.user_id, null);
+  assert.equal(pkOf(p.u.id).allowlist_grace_until, null, 'the date is cleared');
+  assert.equal((await s.client.get('/api/clients')).status, 401, 'the session it opened has ended');
+  const refused = await signInWith(old);
+  assert.equal(refused.status, 403); assert.equal(refused.data.passkeyError, 'not_allowed');
+  assert.equal((await p.c.get('/api/auth/me')).data.user.passkey_grace, null, 'no notice once it has stopped');
+  // A passkey already refused is not revived by another change with a grace period.
+  const n3 = await preview({ enabled: true, models, grace_days: 14 });
+  assert.equal(n3.accounts.find((x) => x.username === 'gr_only').passkeys[0].stops_at, null, 'already refused: it stops at once');
+  assert.ok(n3.stops_now_count >= 1);
+  assert.equal((await setList({ enabled: true, models, grace_days: 14, acknowledge_affected: n3.passkey_count })).status, 200);
+  assert.equal((await signInWith(old)).status, 403);
+  await listOff(models);
+  assert.equal(pkOf(q.u.id).allowlist_grace_until, null, 'turning the list off clears every grace period');
+});
+
+test('grace period: never for a model reported compromised or revoked; narrowing the list gives one to a passkey it no longer lists', async () => {
+  const models = [{ name: 'Test key', aaguid: AAGUID }, { name: 'Another test key', aaguid: OTHER_AAGUID }];
+  assert.equal((await admin.post('/api/admin/authenticator-metadata', { blob: blob(), password: APW })).status, 200);
+  await listOff(models);
+  const p = await person('gr_status'); const old = key();
+  assert.equal((await enrol(p.c, old)).status, 201, 'never attested; its device reports a listed model');
+  let n = (await preview({ enabled: true, models, grace_days: 10 })).passkey_count;
+  assert.equal((await setList({ enabled: true, models, grace_days: 10, acknowledge_affected: n })).status, 200);
+  const s = await signInWith(old);
+  assert.equal(s.status, 200, 'in its grace period');
+  // The Metadata Service reports the model compromised: refused at once, grace or not, and its session ends.
+  assert.equal((await admin.post('/api/admin/authenticator-metadata', { blob: blob({ statuses: [{ status: 'ATTESTATION_KEY_COMPROMISE', effectiveDate: '2026-01-01' }] }), password: APW })).status, 200);
+  assert.equal((await s.client.get('/api/clients')).status, 401, 'its session ended with the upload');
+  const r = await signInWith(old);
+  assert.equal(r.status, 403); assert.equal(lastAudit('auth.passkey.not_allowed').details.reason, 'status');
+  assert.equal((await p.c.get('/api/auth/passkeys')).data.passkeys[0].accepted, false);
+  // A change saved while the model is reported compromised gives it no grace period.
+  const pv = await preview({ enabled: true, models: [models[1]], grace_days: 10 });
+  assert.equal(pv.accounts.find((x) => x.username === 'gr_status').passkeys[0].stops_at, null);
+  assert.equal((await admin.post('/api/admin/authenticator-metadata', { blob: blob(), password: APW })).status, 200);
+  // Narrowing: a passkey attested for a model the list then drops gets the grace period.
+  const q = await person('gr_narrow'); const other = key({ aaguid: aaguidBuf(OTHER_AAGUID) });
+  assert.equal((await enrol(q.c, other, { attest: withInterAttest })).status, 201, 'attested for a listed model');
+  assert.equal((await signInWith(other)).status, 200);
+  const nv = await preview({ enabled: true, models: [models[0]], grace_days: 5 });
+  const mine = nv.accounts.find((x) => x.username === 'gr_narrow');
+  assert.equal(mine.passkeys[0].reason, 'not listed'); assert.ok(mine.passkeys[0].stops_at);
+  assert.equal((await setList({ enabled: true, models: [models[0]], grace_days: 5, acknowledge_affected: nv.passkey_count })).status, 200);
+  assert.equal((await signInWith(other)).status, 200, 'it keeps working for the grace period');
+  await listOff(models);
 });
 
 test('office server only: none of the attestation or allow-list code is in the browser kernel, and its routes are not mounted there', () => {

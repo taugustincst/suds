@@ -48,7 +48,9 @@ module.exports = (r) => {
     return { passkeys: P.list(ctx.user.id), max: P.MAX_PER_USER, signin: pol.passkeySignin, signing: pol.passkeySigning, strong_required: pol.signStrongRequired,
       available: here.ok, reason: here.ok ? null : here.reason, totp: !!db.one(`SELECT mfa_enabled FROM users WHERE id=?`, ctx.user.id).mfa_enabled,
       // The authenticator allow-list, when on: which models this programme accepts (My profile says so).
-      allowlist: P.allowlist.enabled() ? { models: P.allowlist.models().map((m) => m.name) } : null };
+      allowlist: P.allowlist.enabled() ? { models: P.allowlist.models().map((m) => m.name) } : null,
+      // Passkeys in the allow-list's grace period (1.22.0): when they stop (My profile says so).
+      grace: P.graceNotice(ctx.user.id) };
   });
   // Adding one needs the password again, and the authenticator code with two-step verification on.
   r.post('/api/auth/passkeys/register/options', async (ctx) => {
@@ -128,19 +130,23 @@ module.exports = (r) => {
   const describeModels = (list) => list.map((m) => ({ ...m, ...L.modelStanding(m.aaguid) }));
   r.get('/api/admin/authenticator-allowlist', auth.requireAuth, auth.requirePerm('settings:manage'), () => {
     const st = L.status();
-    return { ...st, catalog: L.catalog(), affected: L.affected({ on: st.enabled, list: L.models() }), max_models: L.MAX_MODELS,
+    return { ...st, catalog: L.catalog(), affected: L.affected({ on: st.enabled, list: L.models(), current: true }), max_models: L.MAX_MODELS,
       trust_root: { subject: 'GlobalSign Root CA - R3 (the FIDO Metadata Service\'s)', sha256: A.FIDO_MDS_ROOT_SHA256, signer: A.MDS_SIGNER_HOST }, formats: A.SUPPORTED_FORMATS };
   });
-  // What saving { enabled, models } would do, before it is saved: each model's standing in the loaded metadata, and
-  // the accounts whose passkeys would stop working.
+  // What saving { enabled, models, grace_days } would do, before it is saved: each model's standing in the loaded
+  // metadata, and the accounts whose passkeys would stop working, and when (the grace period, 1.22.0).
+  const graceRule = { type: 'number', integer: true, min: 0, max: L.GRACE_MAX_DAYS };
   r.post('/api/admin/authenticator-allowlist/preview', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
-    const v = validate(ctx.body || {}, { enabled: { type: 'boolean' }, models: modelsRule }, { partial: true });
+    const v = validate(ctx.body || {}, { enabled: { type: 'boolean' }, models: modelsRule, grace_days: graceRule }, { partial: true });
     const list = L.normaliseModels(v.models || [], badRequest);
-    return { models: describeModels(list), affected: L.affected({ on: !!v.enabled, list }) };
+    const days = v.grace_days ?? L.graceDays();
+    return { models: describeModels(list), affected: L.affected({ on: !!v.enabled, list, days }) };
   });
   r.put('/api/admin/authenticator-allowlist', auth.requireAuth, auth.requirePerm('settings:manage'), async (ctx) => {
-    const v = validate(ctx.body || {}, { enabled: { type: 'boolean', required: true }, models: { ...modelsRule, required: true }, acknowledge_affected: { type: 'number', min: 0, integer: true }, ...reauthRules });
+    const v = validate(ctx.body || {}, { enabled: { type: 'boolean', required: true }, models: { ...modelsRule, required: true }, grace_days: graceRule, acknowledge_affected: { type: 'number', min: 0, integer: true }, ...reauthRules });
     const on = !!v.enabled;
+    // The grace period (0-90 days; 14 until the administrator chooses): kept for the next change too.
+    const days = v.grace_days ?? L.graceDays();
     const list = L.normaliseModels(v.models, badRequest);
     // Checked before the password is asked for, so a list that cannot work is said before anything is spent.
     if (on) {
@@ -153,15 +159,22 @@ module.exports = (r) => {
     }
     // Who it stops: the administrator confirms the number they were shown (preview), so a save cannot cut people off
     // unseen, or more people than were seen.
-    const aff = L.affected({ on, list });
+    const aff = L.affected({ on, list, days });
     if (aff.passkey_count && v.acknowledge_affected !== aff.passkey_count) throw new HttpError(409, `${aff.passkey_count} passkey${aff.passkey_count === 1 ? '' : 's'} of ${aff.account_count} account${aff.account_count === 1 ? '' : 's'} would stop working. Review them and confirm.`, { affected: aff });
     await auth.verifySigner(ctx, v, { action: 'security.authenticator_allowlist.failed', purpose: 'change the authenticator allow-list', fresh: true });
     const before = L.status();
-    let ended = 0;
-    db.transaction(() => { db.setSetting('authn_allowlist', on ? '1' : '0'); db.setSetting('authn_allowlist_models', JSON.stringify(list)); ended = L.endRefusedSessions({ keepSession: ctx.session && ctx.session.id }); });
+    let ended = 0; let grace = { passkeys: 0, until: null };
+    // The grace periods are worked out against the setting in force (who was working until now), then the new one saved.
+    db.transaction(() => {
+      grace = L.applyGrace({ on, list, days });
+      db.setSetting('authn_allowlist_grace_days', String(days));
+      db.setSetting('authn_allowlist', on ? '1' : '0'); db.setSetting('authn_allowlist_models', JSON.stringify(list));
+      ended = L.endRefusedSessions({ keepSession: ctx.session && ctx.session.id });
+    });
     audit.log({ user: ctx.user, action: 'security.authenticator_allowlist', ip: ctx.ip, details: { enabled: on, was_enabled: before.enabled, models: list.map((m) => m.aaguid),
-      affected_accounts: aff.account_count, affected_passkeys: aff.passkey_count, affected_users: aff.accounts.slice(0, 200).map((a) => a.user_id), sessions_ended: ended || undefined, mds_no: (L.metadataInfo() || {}).no ?? null } });
-    return { ...L.status(), affected: aff };
+      affected_accounts: aff.account_count, affected_passkeys: aff.passkey_count, affected_users: aff.accounts.slice(0, 200).map((a) => a.user_id), sessions_ended: ended || undefined, mds_no: (L.metadataInfo() || {}).no ?? null,
+      grace_days: days, grace_passkeys: grace.passkeys, grace_until: grace.until, stops_now: aff.stops_now_count, only_factor_users: aff.only_factor_accounts.slice(0, 200).map((a) => a.user_id) } });
+    return { ...L.status(), affected: L.affected({ on, list, current: true }) };
   });
   // The FIDO Metadata Service BLOB (blob.jwt, a few megabytes), which the administrator downloads from
   // https://mds3.fidoalliance.org/ and uploads here as text: SUDS makes no outbound call. Up to 20 MB, for an
@@ -183,7 +196,7 @@ module.exports = (r) => {
     const ended = L.endRefusedSessions({ keepSession: ctx.session && ctx.session.id });
     audit.log({ user: ctx.user, action: 'security.authenticator_metadata', ip: ctx.ip, details: { no: info.no, next_update: info.next_update, entries: info.entries, sha256: info.sha256, test_root: info.test_root || undefined, sessions_ended: ended || undefined } });
     const st = L.status();
-    return { metadata: info, models: st.models, affected: L.affected({ on: st.enabled, list: L.models() }) };
+    return { metadata: info, models: st.models, affected: L.affected({ on: st.enabled, list: L.models(), current: true }) };
   });
 
   // ---- the evidence of a fingerprint-confirmed signature, for an auditor ----

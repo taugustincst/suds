@@ -152,11 +152,26 @@ function take(challenge, { purpose, userId = null, sessionId = null }) {
 const attestedOf = (p) => { try { const a = JSON.parse(p.attestation || 'null'); return !!(a && a.verified); } catch { return false; } };
 const present = (p) => { const al = L.passkeyAllowed(p); return { id: p.id, name: p.name, created_at: p.created_at, last_used_at: p.last_used_at, transports: p.transports ? JSON.parse(p.transports) : [], aaguid: p.aaguid,
   algorithm: W.ALG_NAMES[p.alg] || String(p.alg), synced: !!p.backed_up, flagged: !!p.flagged_at, flagged_at: p.flagged_at || null, flag_reason: p.flag_reason || null,
-  attested: attestedOf(p), accepted: al.ok, not_accepted_reason: al.ok ? null : al.reason }; };
+  attested: attestedOf(p), accepted: al.ok, not_accepted_reason: al.ok ? null : al.reason,
+  // In the allow-list's grace period (1.22.0): accepted until `stops_at`, then refused for `stop_reason`.
+  stops_at: al.grace_until || null, stop_reason: al.grace_until ? al.reason : null }; };
 /** The passkeys of an account that can be used now: not disabled as a possible copy, and accepted by the allow-list. */
 function usable(userId) { return db.all(`SELECT * FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, userId).filter((p) => L.passkeyAllowed(p).ok); }
 /** How many (auth.passkeyCount: whether a passkey counts as the account's second factor). */
 function usableCount(userId) { return L.enabled() ? usable(userId).length : db.one(`SELECT COUNT(*) n FROM passkeys WHERE user_id=? AND flagged_at IS NULL`, userId).n; }
+/**
+ * The account's passkeys in the allow-list's grace period (docs/FINGERPRINT.md "Grace period"), for the notice on every
+ * page and My profile: { until (the first to stop), passkeys: [{ id, name, stops_at }], totp } or null.
+ */
+function graceNotice(userId) {
+  if (!L.enabled()) return null;
+  const rows = db.all(`SELECT * FROM passkeys WHERE user_id=? AND flagged_at IS NULL AND allowlist_grace_until IS NOT NULL ORDER BY allowlist_grace_until`, userId)
+    .map((p) => ({ p, al: L.passkeyAllowed(p) })).filter((x) => x.al.ok && x.al.grace_until);
+  if (!rows.length) return null;
+  return { until: rows[0].al.grace_until, passkeys: rows.map((x) => ({ id: x.p.id, name: x.p.name, stops_at: x.al.grace_until })),
+    accepted_left: usable(userId).filter((p) => !L.passkeyAllowed(p).grace_until).length,
+    totp: !!(db.one(`SELECT mfa_enabled FROM users WHERE id=?`, userId) || {}).mfa_enabled };
+}
 function list(userId) { return db.all(`SELECT * FROM passkeys WHERE user_id=? ORDER BY created_at`, userId).map(present); }
 function findByCredential(credentialId) { return typeof credentialId === 'string' && credentialId.length <= 1400 ? db.one(`SELECT * FROM passkeys WHERE credential_id=?`, credentialId) : null; }
 const descriptor = (p) => ({ type: 'public-key', id: p.credential_id, ...(p.transports ? { transports: JSON.parse(p.transports) } : {}) });
@@ -303,6 +318,15 @@ function checkAssertion(ctx, credential, pk, rp, challengeHash) {
   return r;
 }
 
+// A passkey signing in inside the allow-list's grace period: the session it opens expires when the grace period ends
+// (no session outlives it). Returns the end, or null.
+function graceEnd(pk) {
+  const al = L.passkeyAllowed(pk);
+  if (!al.grace_until) return null;
+  L.capGraceSessions(pk.id, al.grace_until);
+  return al.grace_until;
+}
+
 // ---- sign-in ----
 /**
  * Options for "Sign in with fingerprint". Without a session: a discoverable-credential request only (no
@@ -370,7 +394,8 @@ function loginFinish(ctx, { credential }) {
   if (second) {
     A.clearFailures(user.id);
     db.run(`UPDATE sessions SET mfa_pending=0, mfa_source='passkey', reauth_at=?, reauth_method='passkey', passkey_id=? WHERE id=?`, db.now(), pk.id, ctx.session.id);
-    audit.log({ user: who, action: 'auth.login', ip: ctx.ip, details: { mfa: true, method: 'passkey', passkey: pk.id } });
+    const grace = graceEnd(pk);
+    audit.log({ user: who, action: 'auth.login', ip: ctx.ip, details: { mfa: true, method: 'passkey', passkey: pk.id, ...(grace ? { allowlist_grace_until: grace } : {}) } });
     return { user: A.publicUser(user), mfaPending: false };
   }
   // "Require single sign-on": a passkey is refused like a password, except for the named emergency accounts.
@@ -381,8 +406,9 @@ function loginFinish(ctx, { credential }) {
   }
   db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL, last_login_at=? WHERE id=?`, db.now(), user.id);
   const token = A.createSession(user, ctx, { mfaPending: false, mfaSource: 'passkey', reauthMethod: 'passkey', passkeyId: pk.id });
+  const grace = graceEnd(pk);
   if (emergency) console.warn(`[suds] emergency (break-glass) passkey sign-in by ${user.username} while single sign-on is required`);
-  audit.log({ user: who, action: 'auth.login', ip: ctx.ip, details: { method: 'passkey', passkey: pk.id, ...(emergency ? { emergency_account: true } : {}) } });
+  audit.log({ user: who, action: 'auth.login', ip: ctx.ip, details: { method: 'passkey', passkey: pk.id, ...(emergency ? { emergency_account: true } : {}), ...(grace ? { allowlist_grace_until: grace } : {}) } });
   return { token, user: A.publicUser(user), mfaPending: false, mfaSetupRequired: false, mfaSetupDeadline: null };
 }
 
@@ -574,4 +600,4 @@ function adoption() {
 }
 
 module.exports = { CHALLENGE_MS, MAX_PER_USER, MAX_OPEN_PER_IP, PURPOSES, relyingParty, configuredRpId, availability, issue, take, purge, list, remove, rename, registrationOptions, registrationFinish,
-  loginOptions, loginFinish, bindingFor, signingOptions, confirm, evidenceFor, enrolmentOf, noteEvidence, adoption, userHandle, usable, usableCount, allowlist: L };
+  loginOptions, loginFinish, bindingFor, signingOptions, confirm, evidenceFor, enrolmentOf, noteEvidence, adoption, userHandle, usable, usableCount, graceNotice, allowlist: L };

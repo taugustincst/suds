@@ -167,7 +167,11 @@ CREATE TABLE IF NOT EXISTS passkeys (
   -- allow-list"): JSON { verified, fmt, type, aaguid, mds_no, verified_at }. NULL for a passkey added while the list
   -- was off (attestation 'none': its AAGUID is only what the device said), which the list, once on, does not accept.
   -- The attestation certificate itself is not kept (migration 63).
-  attestation TEXT
+  attestation TEXT,
+  -- The authenticator allow-list's grace period (built for 1.22.0, migration 66): when an administrator turned the list
+  -- on or narrowed it, a passkey it would refuse that was working until then keeps working until this time (UTC ISO),
+  -- unless its model is reported compromised or revoked. NULL: no grace (accepted, or refused already).
+  allowlist_grace_until TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
 
