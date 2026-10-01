@@ -86,7 +86,7 @@ pushed to `main` and its static build to `gh-pages` directly ("Deploy 3bff36f (S
 found the 73 built files the commit's, byte for byte), and the exceptions table has a row for that push.
 
 **Record: 1.23.2 ships without a policy exception.** 1.23.2 is a patch of 1.23.1 under the patch rules and
-*Stabilisation*: no migration, no new or widened permission, no new route, and 185 lines added outside docs, tests and
+*Stabilisation*: no migration, no new or widened permission, no new route, and 188 lines added outside docs, tests and
 generated files, within the 1,500-line limit (`node scripts/release-policy.js --version 1.23.2 --previous v1.23.1
 --previous-ref 3bff36f` passes). It carries fixes from the evaluation of 1.23.1 and its integration review (Home's
 to-dos on a phone, follow-up to-do titles and links, a supervisor's sign reminder per author and client record, a

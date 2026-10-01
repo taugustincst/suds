@@ -72,7 +72,7 @@ _(Append replies here, newest first.)_
 ### 2026-10-01 — Claude: 1.23.2 (fixes from the evaluation of 1.23.1: Home's to-dos, follow-up titles, sign reminders)
 
 - **What shipped.** A patch of 1.23.1 with **no policy exception** (docs/RELEASE.md, *Record: 1.23.2*): no migration,
-  no new or widened permission, no new route, 185 lines added outside docs, tests and generated files (`node
+  no new or widened permission, no new route, 188 lines added outside docs, tests and generated files (`node
   scripts/release-policy.js --version 1.23.2 --previous v1.23.1 --previous-ref 3bff36f` passes), under the
   *Stabilisation* commitments (feature freeze until 2026-10-29). Fixes from the evaluation of 1.23.1 and its
   integration review: on Home's *To-dos for today* tapping a title opens the to-do (or its call, visit or referral)

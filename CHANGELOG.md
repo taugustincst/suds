@@ -9,7 +9,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 A patch of 1.23.1 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
 1.23.2*): fixes from the evaluation of 1.23.1 and its integration review, tests and documentation, with no migration,
 no new or widened permission and no new route (`node scripts/release-policy.js --version 1.23.2 --previous v1.23.1
---previous-ref 3bff36f` passes: 185 lines added outside docs, tests and generated files, of the 1,500 a patch may add).
+--previous-ref 3bff36f` passes: 188 lines added outside docs, tests and generated files, of the 1,500 a patch may add).
 It passes the release policy with no exception. It fixes Home's *To-dos for today* on a phone (tapping a title no
 longer marks the to-do done; **Undo** reopens it as it was), the follow-up to-dos of a call with no purpose, a deleted
 referral's reminder and a follow-up left open by a sync push that moved and deleted its record at once, a clinician's
