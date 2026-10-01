@@ -4,14 +4,25 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
-### Fixed: a moved sign reminder, Home's focus, and what a delete does to its to-dos (built for 1.23.4, not yet released)
+## 1.23.4 — 2026-10-01
 
-A patch of 1.23.3 under the *Stabilisation* commitments: no migration, no new or widened permission, no new route.
-Fixes from the market evaluation of 1.23.3. What an administrator should know: a supervisor's *Finish and sign*
-reminder can now be given to someone else, or moved to another client, only by whoever sent it (or someone who holds
-*Countersign notes*), over the web app or a device's sync; and a reminder cancelled because its author's last draft
-was deleted now has its own audit entry (`task.update`, status `cancelled`, cause `deleted`, the note's id) over the
-web app as well as from a device, as the 1.23.3 notes already said.
+A patch of 1.23.3 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
+1.23.4*): fixes from the market evaluation of 1.23.3 and the integration review, tests and documentation, with no
+migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.23.4 --previous
+v1.23.3 --previous-ref c02a261` passes: 90 lines added outside docs, tests and generated files, of the 1,500 a patch
+may add). It passes the release policy with no exception. It keeps a supervisor's *Finish and sign* reminder with the
+author and client it was sent for, keeps Home's keyboard focus when Home is laid out again, lists the to-do just done
+first when **View in Done** opens the Done list, says what deleting a draft, call, visit or referral does to its
+to-dos, and offers a to-do's tick box only where you may mark it done. Upgrading needs nothing beyond replacing the
+files and restarting. What an administrator should know: no new audit action; a *Finish and sign* reminder can now be
+given to someone else, or moved to another client, only by whoever made it or someone who holds *Countersign notes*
+(`notes:cosign`), over the web app or a device's sync (its assignee can still change its date, priority, status and
+details); the To-dos list shows a to-do's tick box only where the office would let you mark it done (your own, one
+you made, or anyone's if you manage others' records); and at the office, each reminder cancelled because its author's
+last draft was deleted now writes one more audit entry of its own (`task.update`, status `cancelled`, cause
+`deleted`, the note's id), as a device's sync already did.
+
+### Fixed: a moved sign reminder, Home's focus, and what a delete does to its to-dos
 
 - Fixed: the worker a *Finish and sign* reminder was given to could reassign it to a colleague, or move it to another
   client, and it still counted there: Supervision showed the colleague's draft as reminded (**Sent**, with no **Remind
@@ -43,7 +54,7 @@ web app as well as from a device, as the 1.23.3 notes already said.
   save itself always finished before the button appeared). The to-do just done is now listed first in Done, marked
   *Just done*, and is read on its own if the list does not have it.
 
-### Fixed in the integration of 1.23.4
+### Fixed in the review of the 1.23.4 integration
 
 - Fixed: the To-dos list offered a tick box on a colleague's to-do and said "you can mark it done", but the office
   refuses that (only whoever it is assigned to or made it, or someone who manages others' records, may change it,

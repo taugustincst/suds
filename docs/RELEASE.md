@@ -119,6 +119,21 @@ the `thorough` and `webkit` jobs re-run once after failures the same app code ha
 1.23.3)"; `release-site-check` found the 73 built files the commit's, byte for byte), and the exceptions table has a
 row for it.
 
+**Record: 1.23.4 ships without a policy exception.** 1.23.4 is a patch of 1.23.3 under the patch rules and
+*Stabilisation*: no migration, no new or widened permission, no new route, and 90 lines added outside docs, tests and
+generated files, within the 1,500-line limit (`node scripts/release-policy.js --version 1.23.4 --previous v1.23.3
+--previous-ref c02a261` passes). It carries fixes from the market evaluation of 1.23.3 and the integration review (a
+*Finish and sign* reminder that only its maker or someone who countersigns notes can give to someone else or move to
+another client, Home's keyboard focus kept through a re-layout, the to-do just done listed first by **View in Done**,
+clearer reminder and delete wording, and no tick box on a to-do you may not mark done), tests and documentation; the
+exceptions table has no row for it. It is released as one commit, "Release 1.23.4" (a patch keeps its minor's SBOM,
+`sbom-1.23.0`), and that commit is the one CI passes and the owner tags: `v1.23.4` goes in the same push as the
+thirteen tags owed before it (step 2 of [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), it is the newest
+tag, and its `release.yml` run, whose gate passes with no `policy_exception`, is the Latest release and starts the
+`Web app` run that publishes it. If 1.23.4 has to go live before the owner has pushed the tags, the direct `gh-pages`
+push is said here and in the exceptions table, as point 4 requires; it is not a policy exception (the patch rules
+pass), but it is not the gate either.
+
 ### Supported versions
 
 | Line | Gets | For how long |
@@ -379,15 +394,16 @@ change: 1.16.0 is the previous feature release) and for any 1.16.x patch (whose 
 `v1.16.2`: 1.16.3 and 1.16.4 alone count 1,137 of the 1,500 lines), `scripts/migration-order.js`'s baseline, and
 *Backports* step B, whose `git rev-parse 'v1.16.4^{commit}'` fails without the tag.
 
-**Now thirteen tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.23.3). 1.17.1,
-1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1 and 1.23.2 were published the same way, and 1.23.3 was stamped
-before the owner pushed them, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`, `v1.17.1`, `v1.18.0`, `v1.19.0`,
-`v1.20.0`, `v1.21.0`, `v1.22.0`, `v1.23.0`, `v1.23.1`, `v1.23.2` and `v1.23.3`, pushed together while `main` says
-1.23.3. The hand-off has the checks, the tag commands, the one push, what each tag's runs do (the 1.16.x gates refuse,
-the eight from `v1.17.0` to `v1.23.0` need a *Run workflow* with `policy_exception`, the gates of `v1.23.1`, `v1.23.2`
-and `v1.23.3` pass, and only `v1.23.3`'s `Web app` run is approved: it publishes 1.23.3), and the SHA-256 each release
-zip will have, rebuilt from each commit (1.23.3's is recorded by a later commit on `main`). The paragraphs below are
-the reasoning of 1.17.0's time, for three tags; the rule they set, never an older tag alone, is unchanged.
+**Now fourteen tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.23.4). 1.17.1,
+1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2 and 1.23.3 were published the same way, and 1.23.4 was
+stamped before the owner pushed them, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`, `v1.17.1`, `v1.18.0`,
+`v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0`, `v1.23.0`, `v1.23.1`, `v1.23.2`, `v1.23.3` and `v1.23.4`, pushed together
+while `main` says 1.23.4. The hand-off has the checks, the tag commands, the one push, what each tag's runs do (the
+1.16.x gates refuse, the eight from `v1.17.0` to `v1.23.0` need a *Run workflow* with `policy_exception`, the gates of
+`v1.23.1`, `v1.23.2`, `v1.23.3` and `v1.23.4` pass, and only `v1.23.4`'s `Web app` run is approved: it publishes
+1.23.4), and the SHA-256 each release zip will have, rebuilt from each commit (1.23.4's is recorded by a later commit
+on `main`). The paragraphs below are the reasoning of 1.17.0's time, for three tags; the rule they set, never an older
+tag alone, is unchanged.
 
 **Tag 1.16.3, 1.16.4 and 1.17.0 in one push, never 1.16.x alone** (engineering review of 1.17.0, H1). 1.17.0 is on
 `gh-pages` with no tag, so a `v1.16.4` pushed on its own is the newest release tag there is. Its own `release.yml`
