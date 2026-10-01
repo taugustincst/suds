@@ -100,6 +100,14 @@ function compareMigrations(prev, next) {
  */
 const DEPENDENCY_CHANGES = [
   {
+    dependency: 'schema.sql:table:tasks', fingerprint: '3dd3e8683695e060',
+    reason: '1.23.0 (migration 67, follow-up to-dos that follow edits) adds two nullable columns, call_id and '
+      + 'intervention_id (each REFERENCES its table ON DELETE SET NULL), and their indexes. Additive: a database that '
+      + 'runs migration 19 or 24 now builds tasks with the two columns already there (every row NULL), migration 67 adds '
+      + 'each only when missing (addColumn) and creates the indexes IF NOT EXISTS, and test/migrations.test.js upgrades '
+      + 'the 1.6.1 fixture and the release fixtures to the same structure as a fresh install.',
+  },
+  {
     dependency: 'schema.sql:table:clients', fingerprint: '8e14a1accad7079b',
     reason: '1.21.0 (migration 62, field devices and participant-code clients) adds two nullable columns, '
       + 'participant_code_enc and participant_code_idx, and the partial index idx_clients_participant_code. Additive: a '
