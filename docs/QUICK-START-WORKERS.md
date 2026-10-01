@@ -22,7 +22,7 @@ Your menu is built for your role, so you may not see every card's button. If one
 4. Need to check back? Set **Remind me to follow up on** (a visit) or **Remind me to call back on** (a call). The
    to-do appears on your list for that day.
 5. Paid time? Tick **Also log this as a time entry** (a call: **Also log as time entry**).
-6. Press **Save**.
+6. Press **Save** (a visit), **Log call** (a call) or **Log text** (a text).
 
 You closed the form by accident? Open **Log a visit** again and choose *Resume* when it asks **Resume your unsent
 visit?**
@@ -50,6 +50,8 @@ notes, choose **Keep it without the code and notes**. You will see the waiting c
 
 1. **To-dos** in the menu (or **To-dos for today** on Home) lists what is due. **Overdue** ones are marked.
 2. Done? Tick its box in the list. Several at once: tick them in the **Select** column, then **Mark selected done**.
+   On Home, the box marks it done and the message offers **Undo**; tapping the to-do's title opens it (or the call,
+   visit or referral it came from). On a phone's To-dos list, **Open the call** (or visit, or referral) is on the row.
 3. New reminder: **+ Log → To-do** (or **+ Add a to-do** on the To-dos page). Use the quick dates under the due date:
    **Today**, **Tomorrow**, **In 3 days**, **In a week**.
 4. Push one back: open it and press **Tomorrow**.
@@ -62,7 +64,8 @@ the to-do is cancelled.
 ## 4. Write and sign a note
 
 1. **+ Log → Note**, or **+ New note** on the Notes page, or **Add a note** inside **Log a visit**.
-2. Choose the **Note type** and write. It saves as a draft while you type.
+2. Choose the **Note type** and write (a clinician's starts as a **Clinical** note in the **Progress** format). It
+   saves as a draft while you type.
 3. Finished? Press **Save & sign**, or open the draft later and press **Sign & lock**, then **Sign note** in the
    *Electronic signature* box. A signed note cannot be changed.
 4. Want your supervisor to look at it? Tick **Request supervisor co-sign / review** before signing.
@@ -108,5 +111,5 @@ phone (card 2).
 
 ---
 
-*Checked against the app's own labels (public/views and public/app.js) for 1.23.1. A label that changes in a later
-release is changed here in the same release.*
+*Checked against the app's own labels (public/views and public/app.js) for 1.23.2 (built for 1.23.2, not yet
+released). A label that changes in a later release is changed here in the same release.*

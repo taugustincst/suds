@@ -4,6 +4,47 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Fixes from the evaluation of 1.23.1 and its integration review (built for 1.23.2, not yet released)
+
+A patch under the patch rules: no migration, no new or widened permission, no new route. Upgrading needs nothing beyond
+replacing the files and restarting.
+
+- Fixed: on Home's *To-dos for today*, tapping a to-do's title marked it done, because the title was inside the
+  checkbox's label and the box saves at once. Now only the box marks it done (named "Mark done: <title>" for a screen
+  reader), the title is a button that opens the to-do, or the call, visit or referral it came from, as *Open the call*
+  does on the To-dos page, and the "Done" message has an **Undo** that reopens it. Each is at least 24 px to hit, and
+  44 px on a touch screen.
+- Fixed: a to-do from a call, visit or referral offered its record only inside Edit on a phone. The phone To-dos list
+  now has **Open the call** (or visit, or referral) on the row itself.
+- Fixed: a call or text with no Purpose gave a follow-up to-do titled "Call back: client", the stored value. It is now
+  "Call back" (or "Text back") for the client, whom the to-do names already, and "Call back: Family" (the call form's
+  words) for anyone else. A to-do made by 1.23.0 or 1.23.1 with the old title is still SUDS's own: changing the call's
+  date moves it.
+- Fixed: with offline copies off on the office server, *Set up this phone for the field* said both that the worker may
+  make the phone a field device themselves and that an administrator decides first. It now says only the second.
+- Fixed: on a phone, a link or button brought into view from the keyboard could stop under the floating **+ Log**
+  button; the page now scrolls it clear. The browser suite checks that nothing is left under the button at the end of
+  Home (its cards open) and the main lists at 390 × 844.
+- Fixed: a clinician's new note, with no format remembered, started as a narrative and was read as an administrative
+  one. A holder of `notes:clinical:write` now starts a **Clinical** note in the **Progress** format (while Progress is
+  on the programme's list); an administrative note still starts as a narrative, and a navigator's form is unchanged.
+- Fixed: a sync push that changed a call's, visit's or referral's follow-up date and deleted it in the same batch left
+  its follow-up to-do open, with its link cleared: the delete looked for a to-do due on the new date, which the office
+  had not moved it to yet. The to-do is now found by its link and the date it had before the push, and cancelled
+  (audited as `task.update` with cause `deleted`), as for any other deletion.
+- Fixed: a supervisor's reminder to record a referral's outcome (*Remind worker*) stayed open when the referral was
+  deleted. Deleting the referral, at the office or from a device, now cancels it, audited as `task.update` with cause
+  `deleted`. The reminder is still recognised by its `referral.remind` audit entry, now in one place
+  (server/rules/follow-ups.js) for the queue and the delete.
+- Fixed: a supervisor's *Finish and sign* reminder ended "Reference: supervision reminder for note <record id>", which
+  the worker read as noise. Its last line now says what closes it: once the author's draft notes on that client's
+  record are signed (at the office or on a device), it closes. One reminder covers an author's drafts on one client's
+  record, so *Remind all overdue authors* sends one per author and client. A reminder made by 1.23.0 or 1.23.1, with the
+  id line, still closes when its note is signed.
+- Docs: docs/QUICK-START-WORKERS.md names a call's button **Log call** (and a text's **Log text**), not "Save", and
+  describes Home's to-dos and the new note type; docs/market/EVALUATION-RESPONSE.md and STRATEGY.md state 1.23.1 as
+  the latest release.
+
 ## 1.23.1 — 2026-10-01
 
 A stabilisation patch of 1.23.0: fixes, tests, documentation and evidence, with no migration, no new or widened
