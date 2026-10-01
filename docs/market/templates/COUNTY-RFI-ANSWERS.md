@@ -155,8 +155,9 @@ for build tooling, the container base and CI actions. Evidence:
 had each put on GitHub Pages by a direct push to `gh-pages`, and each is recorded in the exceptions table
 ([../../RELEASE.md](../../RELEASE.md), *The exceptions in one place*); 1.23.1 and 1.23.2, the first releases under the
 stabilisation commitments, broke none of the release policy, but were published that way because the tags were still
-owed (*Record: 1.23.1*, *Record: 1.23.2*). Once the owner has pushed the tags, every release goes through the release
-gate ([../../RELEASE.md](../../RELEASE.md)). For
+owed (*Record: 1.23.1*, *Record: 1.23.2*). 1.23.3, a patch with no policy exception either, waits for the owner's
+tag, in the same push as the owed ones, and goes through the release gate ([../../RELEASE.md](../../RELEASE.md),
+*Record: 1.23.3*); once the owner has pushed the tags, every release does. For
 these versions there is no tag or published zip to check against, and SUDS Server's `upgrade.sh` cannot download them. Verify against the commit instead. Each
 commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
 release zip, which anyone can rebuild with `git archive` and compare. `scripts/release-site-check.js` checks a

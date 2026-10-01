@@ -4,13 +4,24 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
-### Fixed: View in Done, Home on a phone's first sign-in, and supervisors' sign reminders (built for 1.23.3, not yet released)
+## 1.23.3 — 2026-10-01
 
-A patch of 1.23.2 under the *Stabilisation* commitments: no migration, no new or widened permission, no new route.
-What an administrator should know: a to-do whose details end with the *Finish and sign* reminder's line is now
-accepted only from someone who holds *Countersign notes* (`notes:cosign`, as **Remind author** needs), over the web
-app or a device's sync, and only such a reminder is treated as one; a reminder closed because the author's last draft
-was deleted is now *cancelled* (`task.update`, cause `deleted`), not done.
+A patch of 1.23.2 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
+1.23.3*): fixes from the external retest of 1.23.2 and the integration review, tests and documentation, with no
+migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.23.3 --previous
+v1.23.2 --previous-ref a45c716` passes: 182 lines added outside docs, tests and generated files, of the 1,500 a patch
+may add). It passes the release policy with no exception. It adds **View in Done** beside **Undo** when a to-do is
+marked done, lays Home out again when the screen's width crosses 640 px (a phone's first sign-in no longer keeps the
+computer's layout), and gives a *Finish and sign* reminder a way to the drafts it asks about (**Open <client>'s
+notes**). Upgrading needs nothing beyond replacing the files and restarting. What an administrator should know: no new
+audit action; a to-do whose details end with the *Finish and sign* reminder's line is now accepted only from someone
+who holds *Countersign notes* (`notes:cosign`, as **Remind author** needs), over the web app or a device's sync, and
+only such a supervisor's reminder counts as one (Supervision shows it, signing closes it; one made by anyone else,
+before 1.23.3 included, is an ordinary to-do); Home follows the screen's width, but waits while someone is working in
+it; the "Done" message has **View in Done**, which opens the To-dos list showing Done; and a reminder closed because
+the author's last draft was deleted is now *cancelled* (`task.update`, cause `deleted`), not done.
+
+### Fixed: View in Done, Home on a phone's first sign-in, and supervisors' sign reminders
 
 - Fixed: after a to-do was marked done there was no way to the Done list. The "Done" message, on Home, on the To-dos
   list and on its phone rows, now has **View in Done** beside **Undo**: it opens To-dos showing Done, with the to-do in
