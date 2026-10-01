@@ -43,11 +43,13 @@ const AWAITING_OUTCOME = ['contacted', 'scheduled'];
 // client): how the queue knows the worker already has an open reminder for it (as views/supervision.js does for notes).
 const referralReminderRef = (id) => `Reference: supervision reminder for referral ${id}`;
 const REFERRAL_REMINDER = /Reference: supervision reminder for referral ([\w-]{8,})/;
-/** Open reminder to-dos for these referrals, by referral id: { at, task }. Details are decrypted only to find the reference line. */
+/** Open reminder to-dos for these referrals, by referral id: { at, task }. Details are decrypted only to find the reference line.
+ *  A reminder is always someone else's to the worker (1.23.1): a to-do the worker wrote themselves (on a device, say)
+ *  with that line in it is not one, so it cannot keep their supervisor's Remind worker away. */
 function referralReminders(ids) {
   const out = new Map();
   if (!ids.length) return out;
-  for (const t of db.all(`SELECT id, referral_id, description_enc, created_at FROM tasks WHERE referral_id IN (${ids.map(() => '?').join(',')}) AND status IN ('open','in_progress') AND description_enc IS NOT NULL`, ...ids)) {
+  for (const t of db.all(`SELECT id, referral_id, description_enc, created_at FROM tasks WHERE referral_id IN (${ids.map(() => '?').join(',')}) AND status IN ('open','in_progress') AND description_enc IS NOT NULL AND created_by<>assigned_to`, ...ids)) {
     let d = ''; try { d = decrypt(t.description_enc); } catch { continue; }
     const m = REFERRAL_REMINDER.exec(d);
     if (m && m[1] === t.referral_id && !out.has(t.referral_id)) out.set(t.referral_id, { at: t.created_at, task: t.id });

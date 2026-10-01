@@ -64,11 +64,21 @@ module.exports = define({
   // A link to a call or visit the office does not have (refused in this push, or deleted) is dropped, not the to-do;
   // so is a link to someone else's: a follow-up to-do belongs to the worker who made the call or visit, and a device's
   // to-do linked to a colleague's record would stop the office making that colleague's (review of 1.23).
-  beforeStore(row) {
+  // The same for a referral (1.23.1): a to-do a device links to a referral, or re-links to another, keeps the link only
+  // when the referral is the to-do's worker's own, so a crafted link cannot hold back a colleague's follow-up or pass
+  // for a supervisor's reminder about their referral. A link the office made (a secure referral link's to-do, which is
+  // its maker's) is kept as it is when the device sends it back unchanged.
+  beforeStore(row, c) {
     for (const [col, table] of [['call_id', 'calls'], ['intervention_id', 'interventions']]) {
       if (!row[col]) continue;
       const rec = require('../db').one(`SELECT user_id FROM ${table} WHERE id=?`, row[col]);
       if (!rec || rec.user_id !== row.assigned_to) row[col] = null;
+    }
+    const e = c && c.existing;
+    if (row.referral_id && (!e || e.referral_id !== row.referral_id)) {
+      const rec = require('../db').one(`SELECT user_id FROM referrals WHERE id=?`, row.referral_id);
+      const assignee = row.assigned_to !== undefined ? row.assigned_to : e && e.assigned_to;
+      if (!rec || rec.user_id !== assignee) row.referral_id = null;
     }
   },
   othersMayChange(existing, row, changed, c) {
