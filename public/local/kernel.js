@@ -27300,10 +27300,12 @@ var require_calls2 = __commonJS({
           const method = v.method || "phone";
           if (method === "text" && !v.outcome) v.outcome = "sent";
           deriveCrisis(v);
+          deriveFollowUp(v);
           encAll(v);
         },
         beforeUpdate: (ctx, v) => {
           deriveCrisis(v);
+          deriveFollowUp(v);
           encAll(v);
         },
         afterInsert: (ctx, row) => {
@@ -27338,6 +27340,9 @@ var require_calls2 = __commonJS({
       });
       function deriveCrisis(v) {
         if (v.outcome === "crisis_escalated") v.crisis = 1;
+      }
+      function deriveFollowUp(v) {
+        if (v.follow_up_due) v.follow_up_needed = 1;
       }
       function encAll(v) {
         if (v.purpose !== void 0) v._purpose = v.purpose;
@@ -47707,8 +47712,8 @@ var require_supervision = __commonJS({
         }
         if (auth3.hasPerm(ctx.user, "referrals:read")) {
           const cf = auth3.caseloadFilter(ctx.user, "r.client_id");
-          out2.referrals_awaiting_outcome = named(ctx, db3.all(`SELECT r.id, r.client_id, r.referred_at, r.status, res.name AS resource, c.client_code, ${NAME_COLS}
-        FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id
+          out2.referrals_awaiting_outcome = named(ctx, db3.all(`SELECT r.id, r.client_id, r.referred_at, r.status, res.name AS resource, r.user_id AS worker_id, u.display_name AS worker, c.client_code, ${NAME_COLS}
+        FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id LEFT JOIN users u ON u.id=r.user_id
         WHERE r.outcome_recorded_at IS NULL AND r.status IN (${AWAITING_OUTCOME.map(() => "?").join(",")}) AND c.deleted_at IS NULL AND ${cf.sql} ORDER BY r.referred_at LIMIT 100`, ...AWAITING_OUTCOME, ...cf.params));
           out2.referrals_consent_revoked = named(ctx, db3.all(`SELECT r.id, r.client_id, res.name AS resource, c.client_code, ${NAME_COLS} FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE r.consent_revoked=1 AND r.status NOT IN ('closed','declined_by_client','declined_by_provider') AND ${cf.sql} LIMIT 100`, ...cf.params));
         }

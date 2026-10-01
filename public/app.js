@@ -1510,7 +1510,10 @@ export function globalSearch() {
   const what = can('resources:read') ? 'Find a client or resource' : 'Find a client';
   const listId = `gsearch-results-${Math.random().toString(36).slice(2, 7)}`;
   // A de-identified role finds clients by code only (the server matches nothing else for it: 1.15.4).
-  const input = h('input', { type: 'search', placeholder: can('clients:read') ? `${what}: name, code or exact phone…` : 'Find a client by code…', 'aria-label': what, 'aria-controls': listId, 'data-global-search': '1' });
+  // On a phone the box is about 280 px wide: the long hint was cut off mid-word ("…name, c"), hiding what may be
+  // typed (1.22.0). There it says only what to type; the box's name is still "Find a client or resource".
+  const narrow = typeof matchMedia === 'function' && matchMedia('(max-width: 600px)').matches;
+  const input = h('input', { type: 'search', placeholder: can('clients:read') ? (narrow ? 'Name, code or exact phone…' : `${what}: name, code or exact phone…`) : 'Find a client by code…', 'aria-label': what, 'aria-controls': listId, 'data-global-search': '1' });
   const list = h('div', { class: 'card tight hidden search-results', id: listId, role: 'region', 'aria-label': 'Search results' });
   // What was found is said out loud (WCAG 4.1.3, 1.16.0): "3 clients and 1 resource found" or "No match", in a
   // polite live region, and Down arrow moves into the results (Up and Down move through them, Escape returns).
