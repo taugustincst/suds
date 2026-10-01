@@ -224,3 +224,51 @@ test('sync push: a deleted call, visit or referral cancels its untouched follow-
   assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, kept.id).status, 'open', 'the worker\'s own to-do stays');
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='task.update' AND entity_id=? AND ip='device' AND details LIKE '%"cause":"deleted"%'`, callTask));
 });
+
+// Review of 1.23.1 (R5): a push that changed a record's follow-up date and deleted it, in one batch, left the to-do
+// open with its link cleared: the delete looked for a to-do due on the new date, which the office had not moved it to
+// yet. 1.23.2: the to-do is found by its link and the date it had before the push, and cancelled.
+test('sync push: a record whose date changed and which was deleted in the same push has its to-do cancelled (1.23.2)', async () => {
+  const login = await H.client().post('/api/auth/login', { username: 'funav', password: PW }, { 'X-Sync-Client': '1' });
+  const B = { Authorization: 'Bearer ' + login.data.token, Cookie: '' };
+  const push = async (body) => { const r = await H.client().post('/api/sync/push', body, B); assert.equal(r.status, 200, JSON.stringify(r.data)); assert.equal((r.data.rejected || []).length, 0, JSON.stringify(r.data.rejected)); return r.data; };
+  const later = (ms = 1000) => new Date(Date.now() + ms).toISOString();
+  const table = (K) => K.path.slice(5);
+  const rows = {};
+  for (const [name, K] of Object.entries(KINDS)) rows[name] = H.db.one(`SELECT * FROM ${table(K)} WHERE id=?`, ok(await nav.post(K.path, K.create(inDays(4)))).id);
+  const task = Object.fromEntries(Object.entries(KINDS).map(([name, K]) => [name, openOf(K.col, rows[name].id)[0].id]));
+  // As a device sends a record: plaintext where the office stores ciphertext; no blind indexes.
+  const sent = (r) => Object.fromEntries(Object.entries(r).filter(([k]) => !k.endsWith('_idx')).map(([k, v]) => [k, k.endsWith('_enc') && v ? decrypt(v) : v]));
+  await push({
+    tables: {
+      calls: [{ ...sent(rows.call), follow_up_due: inDays(8), updated_at: later() }],
+      interventions: [{ ...sent(rows.visit), follow_up_due: inDays(8), updated_at: later() }],
+      referrals: [{ ...sent(rows.referral), follow_up_due: inDays(8), updated_at: later() }],
+    },
+    tombstones: Object.entries(KINDS).map(([name, K]) => ({ table_name: table(K), id: rows[name].id, deleted_at: later(3000) })),
+  });
+  for (const [name, K] of Object.entries(KINDS)) {
+    assert.equal(H.db.one(`SELECT 1 FROM ${table(K)} WHERE id=?`, rows[name].id), undefined, `the ${name} is deleted`);
+    assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, task[name]).status, 'cancelled', `the ${name}'s to-do is cancelled, not left open without its link`);
+    assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='task.update' AND entity_id=? AND details LIKE '%"cause":"deleted"%'`, task[name]), `${name}: audited with the cause`);
+  }
+});
+
+// Evaluation of 1.23.1 (N2): a call with no Purpose gave a to-do titled "Call back: client", the stored value. 1.23.2:
+// the words the call form uses, and nothing for the client (the to-do names them already). A to-do 1.23.1 made with
+// the old title is still SUDS's own: changing the date moves it.
+test('a call or text with no purpose: "Call back" or "Text back: Family", never a stored value; the 1.23.1 title still moves (1.23.2)', async () => {
+  const base = { client_id: clientId, direction: 'outbound', started_at: minutesAgo(4), follow_up_needed: true, follow_up_due: inDays(3) };
+  const title = async (body) => { const id = ok(await nav.post('/api/calls', body)).id; return [id, decrypt(openOf('call_id', id)[0].title_enc)]; };
+  const [callId, t1] = await title({ ...base });
+  assert.equal(t1, 'Call back');
+  assert.equal((await title({ ...base, method: 'text', contact_type: 'family' }))[1], 'Text back: Family');
+  const [, t3] = await title({ ...base, contact_type: 'law_enforcement' });
+  assert.ok(/^Call back: \S/.test(t3) && !t3.includes('_'), `a label, not the stored value: ${t3}`);
+  // As 1.23.1 left it.
+  const [t] = openOf('call_id', callId);
+  H.db.run(`UPDATE tasks SET title_enc=? WHERE id=?`, require('../server/crypto').encrypt('Call back: client'), t.id);
+  ok(await nav.put(`/api/calls/${callId}`, { follow_up_due: inDays(6) }), 200);
+  assert.equal(H.db.one(`SELECT due_at FROM tasks WHERE id=?`, t.id).due_at, inDays(6), 'the old title is still recognised as SUDS\'s');
+  assert.equal(openOf('call_id', callId).length, 1);
+});

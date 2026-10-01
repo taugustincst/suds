@@ -46,19 +46,10 @@ const AWAITING_OUTCOME = ['contacted', 'scheduled'];
 // ended with a line naming the referral's record id, which the worker read as noise; the to-do now opens the
 // referral's Record outcome form itself (public/views/tasks.js).
 const REMINDER_TITLE = 'Record what happened with your referral to ';
-/** Open reminder to-dos for these referrals, by referral id: { at, task }. Reads no PHI: the to-dos' links and the
- *  reminders' audit entries (found by client, which is indexed) only. */
+/** Open reminder to-dos for these referrals, by referral id: { at, task } (server/rules/follow-ups.js reminderTasks). */
 function referralReminders(ids) {
   const out = new Map();
-  if (!ids.length) return out;
-  const open = db.all(`SELECT id, referral_id, client_id, created_at FROM tasks WHERE referral_id IN (${ids.map(() => '?').join(',')}) AND status IN ('open','in_progress') AND created_by<>assigned_to ORDER BY created_at`, ...ids);
-  const clients = [...new Set(open.map(t => t.client_id).filter(Boolean))];
-  if (!clients.length) return out;
-  const made = new Set();
-  for (const a of db.all(`SELECT entity_id, details FROM audit_log WHERE client_id IN (${clients.map(() => '?').join(',')}) AND action='referral.remind'`, ...clients)) {
-    try { const d = JSON.parse(a.details); if (d && d.task) made.add(`${a.entity_id} ${d.task}`); } catch { /* not a reminder's entry */ }
-  }
-  for (const t of open) if (made.has(`${t.referral_id} ${t.id}`) && !out.has(t.referral_id)) out.set(t.referral_id, { at: t.created_at, task: t.id });
+  for (const t of require('../rules/follow-ups').reminderTasks(ids)) if (!out.has(t.referral_id)) out.set(t.referral_id, { at: t.created_at, task: t.id });
   return out;
 }
 /** May this user send the maker of a referral a reminder? A supervisor (or a manager of assignments) who may write

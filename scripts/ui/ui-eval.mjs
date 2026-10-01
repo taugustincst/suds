@@ -57,8 +57,11 @@ const sidebar = (page) => page.evaluate(() => {
 });
 const visibleTabs = (page) => page.$$eval('.main nav.tabs > button[data-tab]', bs => bs.filter(b => !b.hidden && b.offsetParent !== null).map(b => b.dataset.tab));
 const closeModals = async (page) => { for (let i = 0; i < 4 && await page.$('.modal-bg'); i++) { await page.keyboard.press('Escape'); await settle(page); } };
-const REF = /Reference: supervision reminder for note ([\w-]{8,})/;
-const openReminders = async (s) => ((await s.api('GET', '/api/tasks?status=open&limit=1000')).data.rows || []).map(t => (REF.exec(t.description || '') || [])[1]).filter(Boolean);
+// A "finish and sign" reminder is one per author and client, known by its last line (1.23.2: no record id in it).
+const MARK = 'This reminder closes itself once your draft notes on this client\'s record are signed.';
+const pair = (d) => `${d.client_id} ${d.author_id}`;
+const isReminder = (t) => (t.description || '').includes(MARK);
+const openReminders = async (s) => ((await s.api('GET', '/api/tasks?status=open&limit=1000')).data.rows || []).filter(isReminder).map(t => `${t.client_id} ${t.assigned_to}`);
 
 try {
   const sup = await session('jwalker');
@@ -87,36 +90,38 @@ try {
     // Remind author: one row.
     const one = overdue[0];
     const before = await openReminders(sup);
-    ok(!before.includes(one.id), 'no reminder is open for that note yet');
+    ok(!before.includes(pair(one)), 'no reminder is open for that note yet');
     await sup.page.click(`[data-remind-author="${one.id}"]`);
     ok(await until(() => sup.page.$(`[data-reminded="${one.id}"]`), { timeout: 8000 }), 'after "Remind author" the row says a reminder was sent');
     ok(!(await sup.page.$(`[data-remind-author="${one.id}"]`)), 'and offers no second reminder');
-    const task = ((await sup.api('GET', '/api/tasks?status=open&limit=1000')).data.rows || []).find(t => (REF.exec(t.description || '') || [])[1] === one.id);
-    ok(task, 'a to-do with the note\'s reference exists');
+    const task = ((await sup.api('GET', '/api/tasks?status=open&limit=1000')).data.rows || []).find(t => isReminder(t) && `${t.client_id} ${t.assigned_to}` === pair(one));
+    ok(task, 'a reminder to-do exists');
+    ok(task && !task.description.includes(one.id) && !/Reference:/.test(task.description), 'its details carry no record id (1.23.2)', task && task.description);
     eq(task && task.assigned_to, one.author_id, 'assigned to the note\'s author');
     eq(task && task.client_id, one.client_id, 'on the note\'s client');
     ok(task && /^Finish and sign your .* note from /.test(task.title), 'titled without the note\'s content', task && task.title);
 
     // Remind all overdue authors: confirmation, de-duplicated, one per note.
-    const expected = overdue.filter(x => x.id !== one.id).length;
-    eq(await sup.page.$eval('[data-remind-all]', b => b.dataset.remindAll), String(expected), 'the bulk action counts the overdue notes with no open reminder');
+    const expected = new Set(overdue.filter(x => pair(x) !== pair(one)).map(pair)).size;
+    const skipped = overdue.filter(x => pair(x) === pair(one)).length;
+    eq(await sup.page.$eval('[data-remind-all]', b => b.dataset.remindAll), String(expected), 'the bulk action counts one reminder per author and client with no open reminder');
     await sup.page.click('[data-remind-all]');
     await sup.page.waitForSelector('.modal-bg .modal', { timeout: 5000 });
     const msg = await sup.page.textContent('.modal-bg:last-child .modal');
     ok(new RegExp(`Send ${expected} reminder`).test(msg), 'the confirmation says how many reminders it sends', msg);
-    ok(/1 note already has an open reminder/.test(msg), 'and that the note already reminded is skipped', msg);
+    ok(new RegExp(`${skipped} notes? already ha(s|ve) an open reminder`).test(msg), 'and that the note already reminded is skipped', msg);
     await sup.page.locator('.modal-bg').nth(-1).locator('button', { hasText: /^Send \d+ reminder/ }).click();
     await until(async () => (await sup.page.$eval('[data-remind-all]', b => b.dataset.remindAll).catch(() => null)) === '0', { timeout: 15000 });
     eq(await sup.page.$eval('[data-remind-all]', b => b.dataset.remindAll), '0', 'afterwards every overdue note has its reminder');
     const after = await openReminders(sup);
-    for (const d of overdue) eq(after.filter(x => x === d.id).length, 1, `exactly one open reminder for overdue note ${d.id.slice(0, 8)}`);
+    for (const d of overdue) eq(after.filter(x => x === pair(d)).length, 1, `exactly one open reminder for overdue note ${d.id.slice(0, 8)}'s author and client`);
     // Pressing it again sends nothing.
     await sup.page.click('[data-remind-all]'); await settle(sup.page);
     ok(!(await sup.page.$('.modal-bg')), 'a second press asks nothing: there is nobody left to remind');
     eq((await openReminders(sup)).length, after.length, 'and sends no further to-do');
     // The author sees the reminder among their own to-dos.
     const theirs = (await nav.api('GET', '/api/tasks?mine=1&status=open&limit=500')).data.rows || [];
-    const navDrafts = overdue.filter(d => theirs.some(t => (REF.exec(t.description || '') || [])[1] === d.id));
+    const navDrafts = overdue.filter(d => theirs.some(t => isReminder(t) && `${t.client_id} ${t.assigned_to}` === pair(d)));
     if (overdue.some(d => d.author === 'Maria Rivera')) ok(navDrafts.length > 0, 'the navigator has the reminders for her drafts');
     await axe(sup.page, 'supervision queue with reminders');
   }

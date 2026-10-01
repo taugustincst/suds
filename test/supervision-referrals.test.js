@@ -195,3 +195,28 @@ test('a to-do renamed to the reminder\'s title is not a reminder', async () => {
   ok(await sup.post(`/api/supervision/referrals/${id}/remind`, {}), 200);
   assert.ok((await queue()).find(x => x.id === id).reminded_at, 'the real reminder is');
 });
+
+// Review of 1.23.1 (R6): a supervisor's reminder to record a referral's outcome was left open when the referral was
+// deleted. 1.23.2: deleting the referral cancels it, at both doors, audited as task.update with cause 'deleted'.
+test('deleting a referral cancels the supervisor\'s open reminder for it, over REST and from a device (1.23.2)', async () => {
+  require('../server/config').localModeEnabled = true;
+  const id = await refer(nav, 'contacted', 6);
+  const r = ok(await sup.post(`/api/supervision/referrals/${id}/remind`, {}), 200);
+  ok(await nav.del(`/api/referrals/${id}`), 200);
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r.task).status, 'cancelled', 'the reminder goes with the referral');
+  const a = H.db.one(`SELECT details FROM audit_log WHERE action='task.update' AND entity_id=? ORDER BY id DESC LIMIT 1`, r.task);
+  assert.ok(a, 'audited'); const d = JSON.parse(a.details);
+  assert.equal(d.cause, 'deleted'); assert.equal(d.status, 'cancelled'); assert.equal(d.referral_id, id);
+  // A to-do someone else gave the worker about the referral, not a reminder, is the worker's to close.
+  const id2 = await refer(nav, 'contacted', 5);
+  const r2 = ok(await sup.post(`/api/supervision/referrals/${id2}/remind`, {}), 200);
+  const other = ok(await sup.post('/api/tasks', { client_id: clientId, assigned_to: navUser.id, title: 'Ask the clinic about transport', referral_id: id2, due_at: new Date().toISOString().slice(0, 10) })).id;
+  const login = await H.client().post('/api/auth/login', { username: 'srnav', password: PW }, { 'X-Sync-Client': '1' });
+  const B = { Authorization: 'Bearer ' + login.data.token, Cookie: '' };
+  const push = await H.client().post('/api/sync/push', { tables: {}, tombstones: [{ table_name: 'referrals', id: id2, deleted_at: new Date(Date.now() + 2000).toISOString() }] }, B);
+  assert.equal(push.status, 200, JSON.stringify(push.data)); assert.equal((push.data.rejected || []).length, 0, JSON.stringify(push.data.rejected));
+  assert.equal(H.db.one(`SELECT 1 FROM referrals WHERE id=?`, id2), undefined, 'the referral is deleted');
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r2.task).status, 'cancelled', 'a device\'s deletion cancels the reminder too');
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='task.update' AND entity_id=? AND ip='device' AND details LIKE '%"cause":"deleted"%'`, r2.task));
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, other).status, 'open', 'a to-do that is not a reminder is left');
+});

@@ -24,15 +24,21 @@ const SIGNED_KEEPS = ['kind', 'format', 'title_enc', 'content_enc', 'structured_
   'status', 'signed_by', 'signed_at', 'signature_hash', 'source', 'source_ref', 'import_item_id', 'deleted_at', 'ai_assisted'];
 
 /**
- * A supervisor's "Finish and sign your note" reminder (public/views/supervision.js puts a reference line naming
- * the note in the to-do's details) has done its job once the note is signed: it is closed rather than left open
- * for the author to tick off (1.16.0). Only the author's own open to-dos for this client are read. Returns the ids.
+ * A supervisor's "Finish and sign your note" reminder (public/views/supervision.js) has done its job once the note is
+ * signed: it is closed rather than left open for the author to tick off (1.16.0). Only the author's own open to-dos
+ * for this client, given them by someone else, are read. Returns the ids.
+ * Which reminder (1.23.2): its details end with SIGN_REMINDER, no record id, and it asks the author to sign their
+ * drafts on that client's record, so it closes once the last of them is signed. Until 1.23.2 its last line named the
+ * note's record id ("Reference: supervision reminder for note <id>"), which the worker read as noise; a reminder made
+ * with that line still closes when that note is signed.
  */
+const SIGN_REMINDER = 'This reminder closes itself once your draft notes on this client\'s record are signed.';
 function closeSignReminders(authorId, noteId, clientId) {
   const { decrypt } = require('../crypto');
   const ref = `Reference: supervision reminder for note ${noteId}`;
-  const done = db.all(`SELECT id, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS ? AND description_enc IS NOT NULL`, authorId, clientId)
-    .filter(t => { try { return decrypt(t.description_enc).includes(ref); } catch { return false; } });
+  const draftsLeft = db.one(`SELECT COUNT(*) n FROM notes WHERE author_id=? AND client_id IS ? AND status='draft' AND deleted_at IS NULL AND id<>?`, authorId, clientId, noteId).n;
+  const done = db.all(`SELECT id, created_by, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS ? AND description_enc IS NOT NULL`, authorId, clientId)
+    .filter(t => { let text; try { text = decrypt(t.description_enc); } catch { return false; } return text.includes(ref) || (!draftsLeft && t.created_by !== authorId && text.includes(SIGN_REMINDER)); });
   const now = db.now();
   for (const t of done) db.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now, now, t.id);
   return done.map(t => t.id);
@@ -219,6 +225,7 @@ module.exports = define({
   },
 });
 module.exports.closeSignReminders = closeSignReminders;
+module.exports.SIGN_REMINDER = SIGN_REMINDER;
 module.exports.reissueAddenda = reissueAddenda;
 Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts, aiReviewed, keepAiAssisted, strongSigningRequired });
 

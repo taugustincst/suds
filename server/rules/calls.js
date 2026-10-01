@@ -39,5 +39,5 @@ module.exports = define({
   afterApply(row, o, c) { FU.track('calls', row, c); },
   finish(s) { FU.finish('calls', s); },
   // A deleted call's untouched follow-up to-do is cancelled before the row goes (server/rules/follow-ups.js).
-  beforeDelete(row, s) { FU.cancelForDeleted('calls', row, { user: s.user, ip: 'device' }); },
+  beforeDelete(row, s) { FU.pushDeleted('calls', row, s); },
 });

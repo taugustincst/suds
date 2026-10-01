@@ -63,7 +63,7 @@ module.exports = define({
   normalise(row, c) { if (!c.existing) FU.defaultReferralDue(row); return null; },
   finish(s) { FU.finish('referrals', s); },
   // A deleted referral's untouched follow-up to-do is cancelled before the row goes (server/rules/follow-ups.js).
-  beforeDelete(row, s) { FU.cancelForDeleted('referrals', row, { user: s.user, ip: 'device' }); },
+  beforeDelete(row, s) { FU.pushDeleted('referrals', row, s); },
   afterApply(row, o, c) {
     FU.track('referrals', row, c);
     const gate = c.referralDisclosure;

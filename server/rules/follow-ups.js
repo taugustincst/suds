@@ -36,7 +36,11 @@ const SPECS = {
   calls: {
     link: 'call_id', from: 'call',
     due: (r) => (truthy(r.follow_up_needed) && r.follow_up_due ? day(r.follow_up_due) : null),
-    title: (r) => { const what = plain(r.purpose_enc) || r.contact_type; return `${r.method === 'text' ? 'Text back' : 'Call back'}${what ? `: ${what}` : ''}`; },
+    // "Call back: <purpose>"; with no purpose, who it is for in the words the call form uses ("Text back: Family"),
+    // and nothing more for the client, whom the to-do names already (1.23.2: it read "Call back: client").
+    title: (r) => { const what = plain(r.purpose_enc) || (r.contact_type && r.contact_type !== 'client' ? require('../options').labelOf('CALL_CONTACT_TYPES', r.contact_type) : null); return `${r.method === 'text' ? 'Text back' : 'Call back'}${what ? `: ${what}` : ''}`; },
+    // What 1.23.0 and 1.23.1 wrote with no purpose (the stored value, "Call back: client"): still SUDS's own title.
+    oldTitle: (r) => (!plain(r.purpose_enc) && r.contact_type ? `${r.method === 'text' ? 'Text back' : 'Call back'}: ${r.contact_type}` : null),
     priority: (r) => (truthy(r.crisis) ? 'urgent' : 'normal'),
     mayCreate: () => true,
     ours: () => true,
@@ -68,7 +72,7 @@ const SPECS = {
  * as it was before (null for a new one), both in stored form (encrypted columns encrypted). `user` and `ip` are who
  * caused it, for the audit trail. Returns what was done ('created', 'moved', 'cancelled'), or null.
  */
-function reconcile(table, row, prev, { user, ip }, extra = {}) {
+function reconcile(table, row, prev, { user, ip }, extra = {}, earlier = null) {
   const S = SPECS[table];
   if (!S || !row || !row.id) return null;
   const log = (action, id, details) => audit.log({ user, action, entity: 'task', entityId: id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, ...extra, ...details } });
@@ -87,16 +91,20 @@ function reconcile(table, row, prev, { user, ip }, extra = {}) {
   const want = S.due(row); const was = prev ? S.due(prev) : null;
   if (prev && want === was) return null;
   if (!want && !was) return null;
-  const titles = new Set([S.title(row), prev ? S.title(prev) : null].filter(Boolean).map(norm));
-  const workers = new Set([row.user_id, prev && prev.user_id].filter(Boolean));
+  // `earlier`: the record before a sync push that changed it and then deleted it (cancelForDeleted): its to-do may
+  // still carry the title, worker and date it had then, the office not having moved it yet.
+  const rows = [row, prev, earlier].filter(Boolean);
+  const titles = new Set(rows.flatMap(r => [S.title(r), S.oldTitle ? S.oldTitle(r) : null]).filter(Boolean).map(norm));
+  const workers = new Set(rows.map(r => r.user_id).filter(Boolean));
+  const dates = new Set([was, earlier ? S.due(earlier) : null].filter(Boolean));
   let linked = db.all(`SELECT * FROM tasks WHERE ${S.link}=?`, row.id).map(t => ({ ...t, _title: plain(t.title_enc) })).filter(t => S.ours(t, t._title));
   if (!linked.length) {
     // A to-do from before the link (or from an older kernel): SUDS's title and date on this client's, for this worker.
-    const lookFor = was || want;
+    const lookFor = new Set(dates.size ? dates : [want]);
     const cand = db.all(`SELECT * FROM tasks WHERE ${S.link} IS NULL AND ${row.client_id ? 'client_id=?' : 'client_id IS NULL'} AND assigned_to IN (${[...workers].map(() => '?').join(',')})`,
       ...(row.client_id ? [row.client_id] : []), ...workers)
       .map(t => ({ ...t, _title: plain(t.title_enc) }))
-      .filter(t => titles.has(norm(t._title)) && day(t.due_at) === lookFor && OPEN.includes(t.status) && S.ours(t, t._title));
+      .filter(t => titles.has(norm(t._title)) && lookFor.has(day(t.due_at)) && OPEN.includes(t.status) && S.ours(t, t._title));
     if (cand.length) {
       const t = cand[0];
       db.run(`UPDATE tasks SET ${S.link}=?, updated_at=? WHERE id=?`, row.id, db.now(), t.id);
@@ -105,7 +113,7 @@ function reconcile(table, row, prev, { user, ip }, extra = {}) {
   }
   const open = linked.filter(t => OPEN.includes(t.status));
   // As SUDS made it: open, the record's worker's, SUDS's title, and still due on the record's previous date.
-  const untouched = open.filter(t => t.status === 'open' && workers.has(t.assigned_to) && titles.has(norm(t._title)) && was && day(t.due_at) === was);
+  const untouched = open.filter(t => t.status === 'open' && workers.has(t.assigned_to) && titles.has(norm(t._title)) && dates.has(day(t.due_at)));
 
   if (want) {
     if (open.length) {
@@ -137,12 +145,48 @@ function reconcile(table, row, prev, { user, ip }, extra = {}) {
  * A call or text, a visit or a referral about to be deleted (1.23.1): its follow-up to-do goes as if the date had been
  * cleared -- cancelled while it is still as SUDS made it (the rule above), left for the worker to close when they have
  * changed it. Both doors call this BEFORE the row is deleted (the link is ON DELETE SET NULL): the REST routes'
- * beforeDelete (crud.js) and sync push's tombstone (the tables' beforeDelete, push.js). Audited as task.update with
- * cause 'deleted'.
+ * beforeDelete (crud.js) and sync push's tombstone (the tables' beforeDelete, push.js, through pushDeleted). Audited as
+ * task.update with cause 'deleted'.
+ * The to-do is found by its link (1.23.2): a push that changed the record's follow-up date and then deleted it reaches
+ * here before the office has moved the to-do (that happens once the batch has landed, `finish`), so `earlier`, the
+ * record as it was before that push, gives the date the to-do still has. A supervisor's reminder to record a deleted
+ * referral's outcome (routes/supervision.js) is cancelled too: there is no outcome left to record.
  */
-function cancelForDeleted(table, row, ctx) {
+function cancelForDeleted(table, row, ctx, earlier = null) {
   if (!SPECS[table] || !row || !row.id) return null;
-  return reconcile(table, { ...row, follow_up_due: null, follow_up_needed: 0 }, row, ctx, { cause: 'deleted' });
+  const done = reconcile(table, { ...row, follow_up_due: null, follow_up_needed: 0 }, row, ctx, { cause: 'deleted' }, earlier);
+  if (table !== 'referrals') return done;
+  let gone = null;
+  for (const t of reminderTasks([row.id])) {
+    db.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, db.now(), t.id);
+    audit.log({ user: ctx.user, action: 'task.update', entity: 'task', entityId: t.id, clientId: row.client_id || null, ip: ctx.ip, details: { from: 'referral', referral_id: row.id, automatic: true, cause: 'deleted', status: 'cancelled' } });
+    gone = 'cancelled';
+  }
+  return done || gone;
+}
+/** Sync push's tombstone for a call, visit or referral (the tables' beforeDelete): cancelForDeleted, with the record
+ *  as it stood before this push if the push changed it first. */
+function pushDeleted(table, row, s) {
+  const x = s && s.state && s.state.followUps && s.state.followUps.get(`${table}:${row.id}`);
+  return cancelForDeleted(table, row, { user: s.user, ip: 'device' }, x ? x.prev : null);
+}
+
+/**
+ * A supervisor's reminders to record these referrals' outcomes that are still open, oldest first: { id, referral_id,
+ * client_id, created_at }. A reminder is the referral's to-do (tasks.referral_id) that its `referral.remind` audit entry
+ * names (details.task; POST /api/supervision/referrals/:id/remind), never one recognised by its title or details, which
+ * are the worker's to edit. Reads no PHI: the to-dos' links and the reminders' audit entries (found by client, indexed).
+ */
+function reminderTasks(ids) {
+  if (!ids.length) return [];
+  const open = db.all(`SELECT id, referral_id, client_id, created_at FROM tasks WHERE referral_id IN (${ids.map(() => '?').join(',')}) AND status IN ('open','in_progress') AND created_by<>assigned_to ORDER BY created_at`, ...ids);
+  const clients = [...new Set(open.map(t => t.client_id).filter(Boolean))];
+  if (!clients.length) return [];
+  const made = new Set();
+  for (const a of db.all(`SELECT entity_id, details FROM audit_log WHERE client_id IN (${clients.map(() => '?').join(',')}) AND action='referral.remind'`, ...clients)) {
+    try { const d = JSON.parse(a.details); if (d && d.task) made.add(`${a.entity_id} ${d.task}`); } catch { /* not a reminder's entry */ }
+  }
+  return open.filter(t => made.has(`${t.referral_id} ${t.id}`));
 }
 
 // ---- sync push: the tables' rules record each record a push writes (afterApply), and reconcile them all once every
@@ -183,4 +227,4 @@ function defaultReferralDue(v) {
   v.follow_up_due = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
 }
 
-module.exports = { reconcile, cancelForDeleted, track, finish, deriveCallFollowUp, defaultReferralDue, SPECS };
+module.exports = { reconcile, cancelForDeleted, pushDeleted, reminderTasks, track, finish, deriveCallFollowUp, defaultReferralDue, SPECS };

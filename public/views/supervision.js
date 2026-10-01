@@ -7,10 +7,13 @@ import { openOutcomeForm } from './referrals.js';
 import { approvalProof } from '../passkey.js';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
-// The line in a reminder to-do's details that says which draft it is about (a record id, nothing about the
-// client): how the queue knows a note's author already has an open reminder for it.
-const reminderRef = (noteId) => `Reference: supervision reminder for note ${noteId}`;
-const REMINDER_REF = /Reference: supervision reminder for note ([\w-]{8,})/;
+// The last line of a "Finish and sign" reminder's details (1.23.2; the same words as server/rules/notes.js
+// SIGN_REMINDER): what the worker is told, and how the queue knows that author already has an open reminder for their
+// drafts on that client's record. Until 1.23.2 the line named the note's record id, which the worker read as noise; a
+// reminder made with it still counts, for its note.
+const SIGN_REMINDER = 'This reminder closes itself once your draft notes on this client\'s record are signed.';
+const OLD_REMINDER_REF = /Reference: supervision reminder for note ([\w-]{8,})/;
+const pairOf = (clientId, authorId) => `${clientId} ${authorId}`;
 const hoursOf = (m) => fmt.mins(m);
 // Who the row is about: the client's name for a role that may open the client (the server leaves
 // client_name null for everyone else), with the code beside it; the code alone otherwise.
@@ -133,8 +136,9 @@ route('supervision', async (r) => {
   // ---- unsigned drafts across the team ----
   // Each draft opens in place (Open note), and its author can be sent a reminder: a to-do assigned to them on
   // the client's record, through the ordinary to-do route (POST /api/tasks: encrypted title and details,
-  // audited). One reminder per note: a note whose author already has an open reminder for it is not reminded
-  // again, whoever sent the first. The note is recognised by a reference line in the to-do's details.
+  // audited). One open reminder per author and client: it asks for that draft and closes once the author has no
+  // draft left on the client's record (server/rules/notes.js closeSignReminders), so a draft whose author already
+  // has one there is not reminded again, whoever sent it. Recognised by its last line, SIGN_REMINDER.
   const drafts = q.unsigned_notes || [];
   const overdue = drafts.filter(d => d.overdue).length;
   const mayRemind = can('tasks:write');
@@ -142,14 +146,20 @@ route('supervision', async (r) => {
   if (mayRemind && drafts.length) {
     try {
       const open = (await get('/api/tasks?status=open&limit=1000', { quiet: true })).rows || [];
-      for (const t of open) { const m = REMINDER_REF.exec(t.description || ''); if (m) reminded.set(m[1], t); }
+      const byPair = new Map();
+      for (const t of open) {
+        const m = OLD_REMINDER_REF.exec(t.description || '');
+        if (m) reminded.set(m[1], t);
+        else if ((t.description || '').includes(SIGN_REMINDER) && t.created_by !== t.assigned_to && !byPair.has(pairOf(t.client_id, t.assigned_to))) byPair.set(pairOf(t.client_id, t.assigned_to), t);
+      }
+      for (const d of drafts) if (!reminded.has(d.id) && byPair.has(pairOf(d.client_id, d.author_id))) reminded.set(d.id, byPair.get(pairOf(d.client_id, d.author_id)));
     } catch { /* no reminders known: every row still offers one, and the server audits each */ }
   }
   const remindable = (r) => mayRemind && r.author_id && r.author_id !== state.user.id;
   const remind = (r) => post('/api/tasks', {
     client_id: r.client_id, assigned_to: r.author_id,
     title: `Finish and sign your ${fmt.label(r.kind).toLowerCase()} note from ${fmt.date(r.created_at)}`,
-    description: `${state.user.display_name} asked you to finish and sign this draft note${r.overdue ? ', which is overdue' : ''}. Open it from the client's Notes tab.\n${reminderRef(r.id)}`,
+    description: `${state.user.display_name} asked you to finish and sign this draft note${r.overdue ? ', which is overdue' : ''}. Open it from the client's Notes tab.\n${SIGN_REMINDER}`,
     due_at: fmt.today(), priority: r.overdue ? 'high' : 'normal',
   });
   const remindOne = async (r, btn) => {
@@ -157,14 +167,16 @@ route('supervision', async (r) => {
     try { await remind(r); toast(`Reminder sent to ${r.author}`, 'ok'); refresh(); }
     catch (e) { if (btn) btn.disabled = false; toast(e.message, 'error'); }
   };
+  // The drafts to send a reminder for: none already reminded, and one per author and client.
+  const toRemind = (rows) => { const seen = new Set(); return rows.filter(r => !reminded.has(r.id) && !seen.has(pairOf(r.client_id, r.author_id)) && seen.add(pairOf(r.client_id, r.author_id))); };
   const remindAll = async () => {
     const due = drafts.filter(r => r.overdue && remindable(r));
-    const fresh = due.filter(r => !reminded.has(r.id));
-    const skip = due.length - fresh.length;
+    const fresh = toRemind(due);
+    const skip = due.filter(r => reminded.has(r.id)).length;
     if (!fresh.length) { toast(skip ? 'Every overdue note already has an open reminder' : 'No overdue notes to remind anyone about'); return; }
     const authors = new Set(fresh.map(r => r.author_id)).size;
     const ok = await confirmDialog('Remind all overdue authors',
-      `Send ${plural(fresh.length, 'reminder', 'reminders')} — one to-do per overdue note, to its author (${plural(authors, 'person', 'people')}), due today.${skip ? ` ${plural(skip, 'note already has', 'notes already have')} an open reminder and ${skip === 1 ? 'is' : 'are'} not reminded again.` : ''}`,
+      `Send ${plural(fresh.length, 'reminder', 'reminders')} — one to-do for each author and client with an overdue note (${plural(authors, 'person', 'people')}), due today.${skip ? ` ${plural(skip, 'note already has', 'notes already have')} an open reminder and ${skip === 1 ? 'is' : 'are'} not reminded again.` : ''}`,
       { okText: `Send ${plural(fresh.length, 'reminder', 'reminders')}` });
     if (!ok) return;
     let sent = 0; let failed = null;
@@ -173,7 +185,8 @@ route('supervision', async (r) => {
     if (failed) toast(`Not every reminder was sent: ${failed}`, 'warn');
     refresh();
   };
-  const overdueToRemind = drafts.filter(r => r.overdue && remindable(r) && !reminded.has(r.id)).length;
+  const overdueToRemind = toRemind(drafts.filter(r => r.overdue && remindable(r))).length;
+  const overdueUnreminded = drafts.filter(r => r.overdue && remindable(r) && !reminded.has(r.id)).length;
   if (can('notes:cosign')) page.append(h('section', { class: 'card', 'data-section': 'unsigned' },
     h('div', { class: 'card-head' }, h('h2', {}, 'Unsigned notes across your team'),
       badge(overdue ? `${overdue} overdue` : String(drafts.length), overdue ? 'danger' : drafts.length ? 'warn' : 'ok')),
@@ -189,7 +202,7 @@ route('supervision', async (r) => {
     ], drafts),
     mayRemind && overdue ? h('div', { class: 'btn-row' },
       h('button', { class: 'btn', 'data-remind-all': String(overdueToRemind), onClick: remindAll }, 'Remind all overdue authors'),
-      h('span', { class: 'small muted' }, overdueToRemind ? `${plural(overdueToRemind, 'overdue note has', 'overdue notes have')} no open reminder yet.` : 'Every overdue note has an open reminder.')) : null)
+      h('span', { class: 'small muted' }, overdueUnreminded ? `${plural(overdueUnreminded, 'overdue note has', 'overdue notes have')} no open reminder yet.` : 'Every overdue note has an open reminder.')) : null)
       : emptyState('Everything is signed', 'Draft notes left by your team would show here.')));
 
   // ---- staff time ----

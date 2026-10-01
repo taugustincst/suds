@@ -270,3 +270,28 @@ test('the global API rate limit is a setting (API_RATE_LIMIT) for an office behi
   const config = require('../server/config');
   assert.ok(Number.isFinite(config.apiRateLimit) && config.apiRateLimit > 0);
 });
+
+// Evaluation of 1.23.1 (R7): the reminder's details ended "Reference: supervision reminder for note <record id>". 1.23.2:
+// no record id; its last line says what closes it (SIGN_REMINDER), and it closes once the author has signed their
+// drafts on that client's record, at the office or on a device. A 1.23.1 reminder (the id line) still closes with its note.
+test('a "finish and sign" reminder carries no record id and closes once the author\'s drafts on that client are signed (1.23.2)', async () => {
+  const { SIGN_REMINDER } = require('../server/rules/notes');
+  const c = await clin.post('/api/clients', { first_name: 'Rem', last_name: 'Indertwo', status: 'active', confirm_duplicate: true });
+  const n1 = (await clin.post('/api/notes', { client_id: c.data.id, kind: 'admin', content: 'Draft one.', occurred_at: iso() })).data.id;
+  const n2 = (await clin.post('/api/notes', { client_id: c.data.id, kind: 'admin', content: 'Draft two.', occurred_at: iso() })).data.id;
+  // As public/views/supervision.js sends it.
+  const r = await sup.post('/api/tasks', { client_id: c.data.id, assigned_to: U.clin, title: 'Finish and sign your administrative note from Oct 1, 2026', description: `Sup asked you to finish and sign this draft note. Open it from the client's Notes tab.\n${SIGN_REMINDER}`, due_at: today });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  const seen = (await clin.get('/api/tasks?mine=1&status=open&limit=1000')).data.rows.find(t => t.id === r.data.id);
+  assert.ok(!seen.description.includes(n1) && !seen.description.includes(n2) && !/Reference:/.test(seen.description), 'no record id in what the worker reads');
+  // The worker's own to-do with the same words is not a reminder.
+  const own = await clin.post('/api/tasks', { client_id: c.data.id, title: 'Mine', description: SIGN_REMINDER, due_at: today });
+  assert.equal((await clin.post(`/api/notes/${n1}/sign`, { password: PW })).status, 200);
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r.data.id).status, 'open', 'another draft on this client is still unsigned');
+  // The last draft, signed on a device and pushed: the office closes the reminder.
+  const row = H.db.one(`SELECT * FROM notes WHERE id=?`, n2);
+  const push = await clin.post('/api/sync/push', { device_now: iso(), tables: { notes: [{ ...row, content_enc: 'Draft two.', title_enc: null, structured_enc: null, status: 'signed', signed_by: U.clin, signed_at: iso(), signature_hash: 'x'.repeat(64), updated_at: iso(Date.now() + 5000) }] } });
+  assert.equal(push.status, 200, JSON.stringify(push.data));
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r.data.id).status, 'done', 'closed once the author has no draft left there');
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, own.data.id).status, 'open', 'the worker\'s own to-do is left alone');
+});

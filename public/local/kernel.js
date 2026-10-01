@@ -11814,10 +11814,14 @@ var require_follow_ups = __commonJS({
         link: "call_id",
         from: "call",
         due: (r) => truthy(r.follow_up_needed) && r.follow_up_due ? day(r.follow_up_due) : null,
+        // "Call back: <purpose>"; with no purpose, who it is for in the words the call form uses ("Text back: Family"),
+        // and nothing more for the client, whom the to-do names already (1.23.2: it read "Call back: client").
         title: (r) => {
-          const what = plain(r.purpose_enc) || r.contact_type;
+          const what = plain(r.purpose_enc) || (r.contact_type && r.contact_type !== "client" ? require_options().labelOf("CALL_CONTACT_TYPES", r.contact_type) : null);
           return `${r.method === "text" ? "Text back" : "Call back"}${what ? `: ${what}` : ""}`;
         },
+        // What 1.23.0 and 1.23.1 wrote with no purpose (the stored value, "Call back: client"): still SUDS's own title.
+        oldTitle: (r) => !plain(r.purpose_enc) && r.contact_type ? `${r.method === "text" ? "Text back" : "Call back"}: ${r.contact_type}` : null,
         priority: (r) => truthy(r.crisis) ? "urgent" : "normal",
         mayCreate: () => true,
         ours: () => true
@@ -11845,7 +11849,7 @@ var require_follow_ups = __commonJS({
         ours: (t, title) => title !== null && title.startsWith("Follow up on referral to ")
       }
     };
-    function reconcile(table, row, prev, { user, ip }, extra = {}) {
+    function reconcile(table, row, prev, { user, ip }, extra = {}, earlier = null) {
       const S = SPECS[table];
       if (!S || !row || !row.id) return null;
       const log = (action, id, details) => audit3.log({ user, action, entity: "task", entityId: id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, ...extra, ...details } });
@@ -11863,16 +11867,18 @@ var require_follow_ups = __commonJS({
       const was = prev ? S.due(prev) : null;
       if (prev && want === was) return null;
       if (!want && !was) return null;
-      const titles = new Set([S.title(row), prev ? S.title(prev) : null].filter(Boolean).map(norm));
-      const workers = new Set([row.user_id, prev && prev.user_id].filter(Boolean));
+      const rows = [row, prev, earlier].filter(Boolean);
+      const titles = new Set(rows.flatMap((r) => [S.title(r), S.oldTitle ? S.oldTitle(r) : null]).filter(Boolean).map(norm));
+      const workers = new Set(rows.map((r) => r.user_id).filter(Boolean));
+      const dates = new Set([was, earlier ? S.due(earlier) : null].filter(Boolean));
       let linked = db3.all(`SELECT * FROM tasks WHERE ${S.link}=?`, row.id).map((t) => ({ ...t, _title: plain(t.title_enc) })).filter((t) => S.ours(t, t._title));
       if (!linked.length) {
-        const lookFor = was || want;
+        const lookFor = new Set(dates.size ? dates : [want]);
         const cand = db3.all(
           `SELECT * FROM tasks WHERE ${S.link} IS NULL AND ${row.client_id ? "client_id=?" : "client_id IS NULL"} AND assigned_to IN (${[...workers].map(() => "?").join(",")})`,
           ...row.client_id ? [row.client_id] : [],
           ...workers
-        ).map((t) => ({ ...t, _title: plain(t.title_enc) })).filter((t) => titles.has(norm(t._title)) && day(t.due_at) === lookFor && OPEN.includes(t.status) && S.ours(t, t._title));
+        ).map((t) => ({ ...t, _title: plain(t.title_enc) })).filter((t) => titles.has(norm(t._title)) && lookFor.has(day(t.due_at)) && OPEN.includes(t.status) && S.ours(t, t._title));
         if (cand.length) {
           const t = cand[0];
           db3.run(`UPDATE tasks SET ${S.link}=?, updated_at=? WHERE id=?`, row.id, db3.now(), t.id);
@@ -11880,7 +11886,7 @@ var require_follow_ups = __commonJS({
         }
       }
       const open3 = linked.filter((t) => OPEN.includes(t.status));
-      const untouched2 = open3.filter((t) => t.status === "open" && workers.has(t.assigned_to) && titles.has(norm(t._title)) && was && day(t.due_at) === was);
+      const untouched2 = open3.filter((t) => t.status === "open" && workers.has(t.assigned_to) && titles.has(norm(t._title)) && dates.has(day(t.due_at)));
       if (want) {
         if (open3.length) {
           if (!was || !untouched2.length) return null;
@@ -11914,9 +11920,36 @@ var require_follow_ups = __commonJS({
       }
       return done;
     }
-    function cancelForDeleted(table, row, ctx) {
+    function cancelForDeleted(table, row, ctx, earlier = null) {
       if (!SPECS[table] || !row || !row.id) return null;
-      return reconcile(table, { ...row, follow_up_due: null, follow_up_needed: 0 }, row, ctx, { cause: "deleted" });
+      const done = reconcile(table, { ...row, follow_up_due: null, follow_up_needed: 0 }, row, ctx, { cause: "deleted" }, earlier);
+      if (table !== "referrals") return done;
+      let gone = null;
+      for (const t of reminderTasks([row.id])) {
+        db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, db3.now(), t.id);
+        audit3.log({ user: ctx.user, action: "task.update", entity: "task", entityId: t.id, clientId: row.client_id || null, ip: ctx.ip, details: { from: "referral", referral_id: row.id, automatic: true, cause: "deleted", status: "cancelled" } });
+        gone = "cancelled";
+      }
+      return done || gone;
+    }
+    function pushDeleted(table, row, s) {
+      const x = s && s.state && s.state.followUps && s.state.followUps.get(`${table}:${row.id}`);
+      return cancelForDeleted(table, row, { user: s.user, ip: "device" }, x ? x.prev : null);
+    }
+    function reminderTasks(ids) {
+      if (!ids.length) return [];
+      const open3 = db3.all(`SELECT id, referral_id, client_id, created_at FROM tasks WHERE referral_id IN (${ids.map(() => "?").join(",")}) AND status IN ('open','in_progress') AND created_by<>assigned_to ORDER BY created_at`, ...ids);
+      const clients = [...new Set(open3.map((t) => t.client_id).filter(Boolean))];
+      if (!clients.length) return [];
+      const made = /* @__PURE__ */ new Set();
+      for (const a of db3.all(`SELECT entity_id, details FROM audit_log WHERE client_id IN (${clients.map(() => "?").join(",")}) AND action='referral.remind'`, ...clients)) {
+        try {
+          const d = JSON.parse(a.details);
+          if (d && d.task) made.add(`${a.entity_id} ${d.task}`);
+        } catch {
+        }
+      }
+      return open3.filter((t) => made.has(`${t.referral_id} ${t.id}`));
     }
     function tracked(s) {
       return s.state.followUps || (s.state.followUps = /* @__PURE__ */ new Map());
@@ -11952,7 +11985,7 @@ var require_follow_ups = __commonJS({
       const days = v.urgency === "emergent" ? 1 : v.urgency === "urgent" ? 3 : 14;
       v.follow_up_due = new Date(Date.now() + days * 864e5).toISOString().slice(0, 10);
     }
-    module.exports = { reconcile, cancelForDeleted, track, finish, deriveCallFollowUp, defaultReferralDue, SPECS };
+    module.exports = { reconcile, cancelForDeleted, pushDeleted, reminderTasks, track, finish, deriveCallFollowUp, defaultReferralDue, SPECS };
   }
 });
 
@@ -12594,7 +12627,7 @@ var require_interventions = __commonJS({
       },
       // A deleted visit's untouched follow-up to-do is cancelled before the row goes (server/rules/follow-ups.js).
       beforeDelete(row, s) {
-        FU.cancelForDeleted("interventions", row, { user: s.user, ip: "device" });
+        FU.pushDeleted("interventions", row, s);
       },
       // A deleted visit puts back what it drew.
       afterDelete(row, s) {
@@ -13631,15 +13664,19 @@ var require_notes = __commonJS({
       "deleted_at",
       "ai_assisted"
     ];
+    var SIGN_REMINDER = "This reminder closes itself once your draft notes on this client's record are signed.";
     function closeSignReminders(authorId, noteId, clientId) {
       const { decrypt: decrypt3 } = require_crypto();
       const ref = `Reference: supervision reminder for note ${noteId}`;
-      const done = db3.all(`SELECT id, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS ? AND description_enc IS NOT NULL`, authorId, clientId).filter((t) => {
+      const draftsLeft = db3.one(`SELECT COUNT(*) n FROM notes WHERE author_id=? AND client_id IS ? AND status='draft' AND deleted_at IS NULL AND id<>?`, authorId, clientId, noteId).n;
+      const done = db3.all(`SELECT id, created_by, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS ? AND description_enc IS NOT NULL`, authorId, clientId).filter((t) => {
+        let text;
         try {
-          return decrypt3(t.description_enc).includes(ref);
+          text = decrypt3(t.description_enc);
         } catch {
           return false;
         }
+        return text.includes(ref) || !draftsLeft && t.created_by !== authorId && text.includes(SIGN_REMINDER);
       });
       const now2 = db3.now();
       for (const t of done) db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now2, now2, t.id);
@@ -13816,6 +13853,7 @@ var require_notes = __commonJS({
       }
     });
     module.exports.closeSignReminders = closeSignReminders;
+    module.exports.SIGN_REMINDER = SIGN_REMINDER;
     module.exports.reissueAddenda = reissueAddenda;
     Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts, aiReviewed, keepAiAssisted, strongSigningRequired });
     var readsCounseling = (user) => auth3.hasPerm(user, "notes:clinical:write");
@@ -16287,7 +16325,7 @@ var require_calls = __commonJS({
       },
       // A deleted call's untouched follow-up to-do is cancelled before the row goes (server/rules/follow-ups.js).
       beforeDelete(row, s) {
-        FU.cancelForDeleted("calls", row, { user: s.user, ip: "device" });
+        FU.pushDeleted("calls", row, s);
       }
     });
   }
@@ -16814,7 +16852,7 @@ var require_referrals2 = __commonJS({
       },
       // A deleted referral's untouched follow-up to-do is cancelled before the row goes (server/rules/follow-ups.js).
       beforeDelete(row, s) {
-        FU.cancelForDeleted("referrals", row, { user: s.user, ip: "device" });
+        FU.pushDeleted("referrals", row, s);
       },
       afterApply(row, o, c) {
         FU.track("referrals", row, c);
@@ -48482,19 +48520,7 @@ var require_supervision = __commonJS({
     var REMINDER_TITLE = "Record what happened with your referral to ";
     function referralReminders(ids) {
       const out2 = /* @__PURE__ */ new Map();
-      if (!ids.length) return out2;
-      const open3 = db3.all(`SELECT id, referral_id, client_id, created_at FROM tasks WHERE referral_id IN (${ids.map(() => "?").join(",")}) AND status IN ('open','in_progress') AND created_by<>assigned_to ORDER BY created_at`, ...ids);
-      const clients = [...new Set(open3.map((t) => t.client_id).filter(Boolean))];
-      if (!clients.length) return out2;
-      const made = /* @__PURE__ */ new Set();
-      for (const a of db3.all(`SELECT entity_id, details FROM audit_log WHERE client_id IN (${clients.map(() => "?").join(",")}) AND action='referral.remind'`, ...clients)) {
-        try {
-          const d = JSON.parse(a.details);
-          if (d && d.task) made.add(`${a.entity_id} ${d.task}`);
-        } catch {
-        }
-      }
-      for (const t of open3) if (made.has(`${t.referral_id} ${t.id}`) && !out2.has(t.referral_id)) out2.set(t.referral_id, { at: t.created_at, task: t.id });
+      for (const t of require_follow_ups().reminderTasks(ids)) if (!out2.has(t.referral_id)) out2.set(t.referral_id, { at: t.created_at, task: t.id });
       return out2;
     }
     function mayRemindWorker(user, workerId) {
