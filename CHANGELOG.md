@@ -8,7 +8,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 A stabilisation patch of 1.23.0: fixes, tests, documentation and evidence, with no migration, no new or widened
 permission and no new route (`node scripts/release-policy.js --version 1.23.1 --previous v1.23.0 --previous-ref 9877d07`
-passes: 475 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It is the first release
+passes: 498 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It is the first release
 under the new *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record: 1.23.1*) and
 passes the release policy with no exception: a feature freeze until 2026-10-29, no policy exception except a security
 fix, 1.23.x as the supported line, every release tagged by the owner and published by `release.yml`, and CI checking
@@ -151,6 +151,21 @@ Evidence and tests only; no change to what SUDS does. One finding for the owner,
   notes, which tells the provider nothing new, no longer asks for a disclosure basis, over REST or by sync; any change
   that does (status, provider, warm hand-off, appointment, urgency, what is shared) still passes the consent gate
   (`test/disclosure-gates.test.js`).
+
+### Fixed in the review of the 1.23.1 integration
+
+- Fixed: a to-do someone else gave a worker, renamed by the worker to the reminder's title, passed for a supervisor's
+  reminder and kept **Remind worker** away. A reminder is now the to-do its `referral.remind` audit entry names
+  (every reminder 1.23.0 made has one), whatever its title or details say (`server/routes/supervision.js`).
+- Fixed: a tab reloaded with no signal, restored from its own copy of who was signed in, could send the phone's
+  waiting contacts as soon as the signal came back, before the office had said who the cookie belonged to; on a
+  shared phone where someone else had since signed in in another tab they would have been recorded as theirs.
+  Nothing waiting is sent until the office has answered (`public/app.js`, `public/outreach-queue.js`).
+- Fixed: moving only the follow-up date of a referral that has a barrier or an outcome from a device was still
+  refused for want of a consent: the device's free text was compared with the office's ciphertext
+  (`server/routes/referrals.js`).
+- Fixed: the release-state check did not read a patch's hand-off row, whose stamp cannot name its own hash
+  (`scripts/release-state.js`).
 
 ## 1.23.0 — 2026-10-01
 

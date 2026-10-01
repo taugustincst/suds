@@ -69,7 +69,7 @@ a stabilisation release, 1.23.1, and these commitments, which hold until this se
    run, and the release gate refuses a commit whose CI run failed.
 
 **Record: 1.23.1 ships without a policy exception.** 1.23.1 is a patch of 1.23.0 under the patch rules, the first
-release under *Stabilisation*: no migration, no new or widened permission, no new route, and 475 lines added outside
+release under *Stabilisation*: no migration, no new or widened permission, no new route, and 498 lines added outside
 docs, tests and generated files, within the 1,500-line limit (`node scripts/release-policy.js --version 1.23.1
 --previous v1.23.0 --previous-ref 9877d07` passes). It carries fixes (the open
 items 1.23.0 left, a device's to-do linked to a colleague's referral, the outreach waiting list, the office app's
