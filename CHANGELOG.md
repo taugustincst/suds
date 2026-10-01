@@ -37,7 +37,7 @@ Built for 1.23.0, not yet released. No migration, no new permission or route (th
   navigator, a clinician and a supervisor in each profile at 390 px, Street outreach opening from the peer's menu,
   "To-dos for today" in the top 700 px on a first sign-in, the welcome's ×, the folded state after a reload, the
   desktop order, and axe on the phone Home and the open phone menu. `programme.mjs` and `r7.mjs` follow the new
-  menu and the folded tiles.
+  menu and the folded tiles. With `menu-home.mjs` the suite is now 58 scripts.
 
 ## 1.22.0 — 2026-10-01
 
