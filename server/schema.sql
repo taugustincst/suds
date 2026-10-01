@@ -101,9 +101,26 @@ CREATE TABLE IF NOT EXISTS devices (
   -- When the office first answered this device's pull under the field scope: from then on its pushes are held to
   -- that scope and its field-shaped rows (blanked columns) never overwrite the office's values. NULL while a change
   -- to 'field' has not reached the device yet, and again once a full-scope pull has completed after it.
-  field_applied_at TEXT
+  field_applied_at TEXT,
+  -- Who last decided sync_scope (1.22.0; migration 64): 'default' (first seen, under field_device_default),
+  -- 'enrolment' (its user narrowed it), 'account' (the office narrowed it because its user's account is held to the
+  -- field scope, field_accounts), 'admin'. Only 'full' set by 'admin' keeps a device whole for an account held to
+  -- the field scope; it is cleared when the device signs in as someone else. NULL: decided before 1.22.0.
+  scope_set_by TEXT CHECK (scope_set_by IN ('default','enrolment','account','admin'))
 );
 CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id);
+
+-- Accounts whose syncs are held to the field scope whatever device they come from (1.22.0; server/devices.js,
+-- docs/PLATFORM.md "Field devices"; migration 64). A row is added the first time any device of the account becomes
+-- a field device (an administrator, its user enrolling it, the programme's default) and is never removed by the
+-- account's own user or its devices: a new device id, a re-enrolment or a missing one cannot leave the field scope.
+-- With field_device_default on, every account is held to it. An administrator keeps one device whole by marking it
+-- "Hold everything" (devices.scope_set_by 'admin'). Office server only; no PHI.
+CREATE TABLE IF NOT EXISTS field_accounts (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  bound_at TEXT NOT NULL,
+  bound_via TEXT NOT NULL CHECK (bound_via IN ('default','enrolment','account','admin','device','migration'))
+);
 
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,               -- sha256 of the bearer token

@@ -152,6 +152,8 @@ function createHandler() {
       if (!rateLimit(`api:${ctx.ip}`, config.apiRateLimit, 60_000)) throw new HttpError(429, 'Too many requests');
 
       ctx.user = auth.resolveSession(ctx);
+      // A field device's sync session reaches the sync routes and signing in and out, nothing else (auth.js, 1.22.0).
+      if (ctx.user) auth.assertSyncSessionReach(ctx);
 
       // CSRF: cookie-authenticated state-changing requests must carry the custom header (cannot be sent cross-site without CORS preflight)
       if (ctx.user && ctx.cookies[auth.COOKIE] && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && req.headers['x-requested-with'] !== 'suds') {

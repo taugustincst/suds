@@ -331,8 +331,13 @@ module.exports = (r) => {
 
   // Local-mode devices (server/devices.js): list, revoke, remote-wipe-on-next-sync, and un-revoke a
   // recovered device. See server/schema.sql's devices table comment for what "wipe" can and cannot reach.
-  r.get('/api/admin/devices', auth.requireAuth, auth.requirePerm('users:manage'), () =>
-    ({ devices: db.all(`SELECT d.*, u.display_name, u.username FROM devices d JOIN users u ON u.id=d.user_id ORDER BY d.last_seen_at DESC`) }));
+  // account_field (1.22.0): whether the device's account is held to the field scope (server/devices.js
+  // accountFieldBound), so a whole device not marked by an administrator becomes a field device at its next sync.
+  r.get('/api/admin/devices', auth.requireAuth, auth.requirePerm('users:manage'), () => {
+    const DEV = require('../devices');
+    const rows = db.all(`SELECT d.*, u.display_name, u.username FROM devices d JOIN users u ON u.id=d.user_id ORDER BY d.last_seen_at DESC`);
+    return { devices: rows.map(d => ({ ...d, account_field: DEV.accountFieldBound(d.user_id) })), field_device_default: db.getSetting('field_device_default', '0') === '1' };
+  });
   function findDevice(ctx) { const d = db.one(`SELECT * FROM devices WHERE id=?`, ctx.params.id); if (!d) throw notFound(); return d; }
   r.post('/api/admin/devices/:id/revoke', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
     const d = findDevice(ctx);

@@ -560,15 +560,36 @@ function resolveSession(ctx) {
   return user;
 }
 
+// ---- what a field device's sync session reaches (1.21.0; narrowed under /api/auth/ in 1.22.0) ----
+// A device's sync session (sync_client) in the field scope (server/devices.js effectiveField: the device is a field
+// device, or its account is held to the field scope and an administrator has not marked the device "Hold everything")
+// reaches the sync routes and, of /api/auth/, only what a device's sync uses (local/sync.js): signing in, the second
+// step, signing out. The scope is what the device may hold, and the rest of the API would hand it everything its user
+// may read; account management (password, two-step verification, passkeys, sessions) is for the person in a browser,
+// not for a phone's sync token. Checked for every request with a session (server/app.js), whether or not the route
+// calls requireAuth, and again by requireAuth.
+const FIELD_SESSION_AUTH_PATHS = new Set(['/api/auth/login', '/api/auth/mfa/verify', '/api/auth/logout']);
+const FIELD_SESSION_ACCOUNT_MESSAGE = 'This is a field device\'s sync sign-in: it can only sync. Change your password, two-step verification, fingerprint sign-in or sessions in a web browser signed in to the office SUDS.';
+function fieldSyncSession(ctx) {
+  const s = ctx.session;
+  if (!s || !s.sync_client) return false;
+  const devices = require('./devices');
+  const device = s.device_id ? db.one(`SELECT * FROM devices WHERE id=?`, s.device_id) : null;
+  return devices.effectiveField(s.user_id, device);
+}
+function assertSyncSessionReach(ctx) {
+  if (!ctx.session || !ctx.session.sync_client || ctx.path.startsWith('/api/sync/') || FIELD_SESSION_AUTH_PATHS.has(ctx.path)) return;
+  if (!fieldSyncSession(ctx)) return;
+  if (ctx.path.startsWith('/api/auth/')) throw new HttpError(403, FIELD_SESSION_ACCOUNT_MESSAGE, { fieldDevice: true, useBrowser: true });
+  throw new HttpError(403, 'A field device\'s sync session can only sync', { fieldDevice: true });
+}
+
 function requireAuth(ctx) {
   if (!ctx.user) throw unauthorized();
   if (ctx.session?.mfa_pending) throw new HttpError(401, 'MFA verification required', { mfaRequired: true });
   // A field device's sync session (1.21.0, server/field-scope.js) reaches the sync routes and nothing else: the scope
   // is what the device may hold, and the rest of the API would hand it everything its user may read.
-  if (ctx.session?.device_id && !ctx.path.startsWith('/api/sync/') && !ctx.path.startsWith('/api/auth/')) {
-    const dev = db.one(`SELECT sync_scope FROM devices WHERE id=?`, ctx.session.device_id);
-    if (dev && dev.sync_scope === 'field') throw new HttpError(403, 'A field device\'s sync session can only sync', { fieldDevice: true });
-  }
+  assertSyncSessionReach(ctx);
   if (!ctx.path.startsWith('/api/auth/')) {
     // Roles the county marks as requiring two-step verification cannot reach anything once their grace
     // period has run out. This used to be advisory — the login response said so and nothing stopped the
@@ -713,9 +734,18 @@ async function login({ username, password, ctx }) {
   // cleared by the second factor (verifyMfa), so a password-holding attacker cannot reset the lockout by
   // signing in again between guesses at the code.
   db.run(`UPDATE users SET failed_attempts=CASE WHEN mfa_enabled=1 THEN failed_attempts ELSE 0 END, locked_until=NULL, last_login_at=? WHERE id=?`, db.now(), user.id);
+  // A device's sync sign-in that names no device, for an account held to the field scope (1.22.0, server/devices.js
+  // accountFieldBound): refused rather than given a session the office cannot tie to a device it can narrow, revoke
+  // or wipe. SUDS on a device always sends its id (local/sync.js); only something else signing in as a device does
+  // not. Checked once the password is right, so the answer says nothing about the account to someone guessing.
+  if (ctx.headers['x-sync-client'] && !deviceId && devices.accountFieldBound(user.id)) {
+    audit.log({ user, action: 'auth.login.device_unidentified', ip: ctx.ip, success: false });
+    throw new HttpError(403, 'Your account syncs as a field device, and this sync did not say which device it is from. Sync from SUDS on the device (This device › Sync), or update it.', { deviceIdRequired: true });
+  }
   // Only a device that has just proven who holds it is recorded (or reattributed) as that person's. The
   // flags are read again from the row touch() returns: an administrator acting between the check above
-  // and this point still gets the device stopped on this very login.
+  // and this point still gets the device stopped on this very login. touch() also binds the device to its account's
+  // scope (devices.js bind): a new or re-enrolled device of an account held to the field scope starts as a field device.
   if (deviceId) {
     const device = devices.touch(user, deviceId, ctx);
     if (device.revoked_at) {
@@ -810,5 +840,5 @@ function passwordPolicy(pw) {
   return errors;
 }
 
-module.exports = { auditUsername, policy, PERMS, WIDENED_1_16, asBefore1_16, hasPerm, rolePerms, effectivePerms, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
+module.exports = { assertSyncSessionReach, auditUsername, policy, PERMS, WIDENED_1_16, asBefore1_16, hasPerm, rolePerms, effectivePerms, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
   createSession, passkeyStepOwed, markReauth, noteSsoProof, takeSsoProof, reauthStatus, verifySigner, verifyApprover, passkeyCount, mfaMethods, hasLocalPassword, clearReauth, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

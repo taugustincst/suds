@@ -495,19 +495,32 @@ function fieldContext(user, device) {
   return FS.context(user.id, FS.windowDays(db.getSetting));
 }
 /**
+ * The device a sync request's session signed in from, bound to its account's scope (server/devices.js bind, 1.22.0),
+ * and whether the request is in the field scope. The scope follows the account as well as the device: a session that
+ * names no device (a browser's, or an older sign-in) is in the field scope when its account is held to it
+ * (devices.js accountFieldBound); a device in the field scope unless an administrator marked it "Hold everything".
+ * Never the request's word.
+ */
+function syncScope(ctx) {
+  const device = DEVICES.bind(ctx.user, DEVICES.ofSession(ctx), { ip: ctx.ip });
+  const field = device ? device.sync_scope === 'field' : DEVICES.accountFieldBound(ctx.user.id);
+  return { device, field };
+}
+/**
  * What a push from this device is held to: { scope, blank }. `scope` (the field context) once the office has answered
  * the device under the field scope (field_applied_at): before that the device has not heard, and what it sends was
  * recorded under the old scope. `blank` whenever the device holds field-shaped rows, including just after it stopped
  * being a field device: a column it was sent blank is never written back blank over the office's value.
  */
-function pushField(user, device) {
-  if (!device || !device.field_applied_at) return null;
+function pushField(user, device, field = !!device && device.sync_scope === 'field') {
+  // A session with no device, for an account held to the field scope (1.22.0): it was only ever sent the field scope.
+  if (!device) return field ? { scope: FS.context(user.id, FS.windowDays(db.getSetting)), blank: true } : null;
+  if (!device.field_applied_at) return null;
   return { scope: device.sync_scope === 'field' ? FS.context(user.id, FS.windowDays(db.getSetting)) : null, blank: true };
 }
 /** An attachment of a table a field device is never sent is not fetched or uploaded by one either. */
 function assertFieldTable(ctx, t) {
-  const device = DEVICES.ofSession(ctx);
-  if (device && device.sync_scope === 'field' && FS.excluded(t.name)) throw forbidden('This is outside what a field device holds');
+  if (syncScope(ctx).field && FS.excluded(t.name)) throw forbidden('This is outside what a field device holds');
 }
 
 module.exports = (r) => {
@@ -516,8 +529,8 @@ module.exports = (r) => {
     const since = ctx.query.get('since') || NEVER;
     const limit = Math.min(Number(ctx.query.get('limit')) || PULL_LIMIT, PULL_LIMIT);
     // The device's scope is the office's record of the device this session signed in from, never the request's word.
-    const device = DEVICES.ofSession(ctx);
-    const field = fieldContext(ctx.user, device);
+    const s = syncScope(ctx); const device = s.device;
+    const field = s.field ? FS.context(ctx.user.id, FS.windowDays(db.getSetting)) : null;
     const out = pull(ctx.user, since, { limit, scope: ctx.query.get('scope'), field });
     // From the first field-scope answer on, the device's pushes are held to the field scope (server/rules/push.js);
     // once a full-scope pull has completed after it, its rows are whole again and nothing of it is blanked on the way in.
@@ -534,9 +547,10 @@ module.exports = (r) => {
   r.post('/api/sync/push', requireLocalMode, auth.requireAuth, (ctx) => {
     if (!auth.hasPerm(ctx.user, 'clients:write')) throw forbidden('Your role cannot sync client data');
     if (!ctx.body || typeof ctx.body !== 'object') throw badRequest('JSON body required');
-    const device = DEVICES.ofSession(ctx);
-    const res = push(ctx.user, ctx.body, pushField(ctx.user, device));
-    audit.log({ user: ctx.user, action: 'sync.push', ip: ctx.ip, details: { applied: res.applied, rejected: res.rejected.length, field: device && device.field_applied_at ? true : undefined } });
+    const { device, field: inField } = syncScope(ctx);
+    const pf = pushField(ctx.user, device, inField);
+    const res = push(ctx.user, ctx.body, pf);
+    audit.log({ user: ctx.user, action: 'sync.push', ip: ctx.ip, details: { applied: res.applied, rejected: res.rejected.length, field: pf ? true : undefined } });
     return res;
   });
 

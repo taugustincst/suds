@@ -291,16 +291,151 @@ test('an administrator makes it a full device again: the rest is sent, and blank
 });
 
 test('its user may make a device a field device as they enrol it; the programme may make every new device one', async () => {
+  const enrol = H.makeUser('fdenrol', 'navigator', PW); const plainUser = H.makeUser('fdplain', 'navigator', PW);
   const mine = uuid();
-  const { login } = await deviceSession(nav, mine, { field_device: true });
+  const { login } = await deviceSession(enrol, mine, { field_device: true });
   assert.deepEqual(login.device, { scope: 'field' });
   const a = H.db.one(`SELECT details FROM audit_log WHERE action='device.scope' AND entity_id=? ORDER BY id DESC LIMIT 1`, mine);
   assert.equal(JSON.parse(a.details).via, 'enrolment');
+  // Enrolling it as a field device holds the account to the field scope (1.22.0): its next device is one too.
+  assert.equal(H.db.one(`SELECT bound_via FROM field_accounts WHERE user_id=?`, enrol.id).bound_via, 'enrolment');
+  assert.deepEqual((await deviceSession(enrol, uuid())).login.device, { scope: 'field' });
   assert.equal((await admin.put('/api/admin/settings', { field_device_default: 'maybe' })).status, 400);
   ok(await admin.put('/api/admin/settings', { field_device_default: '1' }), 200, 'default on');
-  const next = await deviceSession(nav, uuid());
+  const next = await deviceSession(plainUser, uuid());
   assert.deepEqual(next.login.device, { scope: 'field' });
   ok(await admin.put('/api/admin/settings', { field_device_default: '0' }), 200, 'default off');
-  const plain = await deviceSession(nav, uuid());
-  assert.deepEqual(plain.login.device, { scope: 'full' });
+  // An account none of whose devices was ever a field device is not held to it; one whose device was, still is.
+  const other2 = H.makeUser('fdplain2', 'navigator', PW);
+  assert.deepEqual((await deviceSession(other2, uuid())).login.device, { scope: 'full' });
+  assert.deepEqual((await deviceSession(plainUser, uuid())).login.device, { scope: 'field' });
+});
+
+// ---- the scope follows the account (built for 1.22.0; server/devices.js accountFieldBound) ----
+
+/** A sync sign-in with X-Sync-Client but no X-Device-Id. */
+async function anonymousDeviceLogin(u) {
+  const c = H.client(); c.setHeader('X-Sync-Client', '1');
+  return { c, r: await c.post('/api/auth/login', { username: u.username, password: PW }) };
+}
+
+test('a sync sign-in that names no device is refused for an account held to the field scope, and with the programme default on', async () => {
+  const w = H.makeUser('fdnohdr', 'navigator', PW);
+  // Not held to it (default off, no field device): an older client without the header still syncs as before.
+  const before = await anonymousDeviceLogin(w);
+  assert.equal(before.r.status, 200);
+  ok(await admin.put('/api/admin/settings', { field_device_default: '1' }), 200, 'default on');
+  try {
+    const { r } = await anonymousDeviceLogin(w);
+    assert.equal(r.status, 403);
+    assert.equal(r.data.deviceIdRequired, true);
+    assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='auth.login.device_unidentified' AND user_id=?`, w.id));
+    // A wrong password gets the ordinary answer: nothing about the account is said to someone guessing.
+    const c = H.client(); c.setHeader('X-Sync-Client', '1');
+    const bad = await c.post('/api/auth/login', { username: w.username, password: 'wrong-password-1' });
+    assert.equal(bad.status, 401);
+    // A browser session of the same account (no device) that calls the sync routes is sent the field scope only.
+    const b = H.client(); await b.login(w.username, PW);
+    const nv = H.client(); await nv.login(nav.username, PW);
+    const p = await pullAll(nv);
+    assert.equal(p.last.device_scope, 'field');
+    assert.ok(!idsOf(p.tables.clients).includes(ids.theirs), 'not another worker\'s client');
+    assert.ok(!(p.tables.notes || []).length, 'no notes');
+    // ...and its pushes are held to it.
+    const res = ok(await nv.post('/api/sync/push', { device_now: new Date().toISOString(), tables: { notes: [{ id: uuid(), client_id: ids.recent, kind: 'admin', format: 'narrative', title: 'x', content_enc: 'x', occurred_at: new Date().toISOString(), author_id: nav.id, updated_at: new Date().toISOString() }] } }), 200, 'push');
+    assert.equal(res.rejected.length, 1, JSON.stringify(res)); assert.match(res.rejected[0].reason, /outside this field device/);
+  } finally { ok(await admin.put('/api/admin/settings', { field_device_default: '0' }), 200, 'default off'); }
+});
+
+test('a new or rotated device id of an account with a field device is a field device; a missing one is refused', async () => {
+  const w = H.makeUser('fdrotate', 'navigator', PW);
+  const phone = uuid();
+  ok(await (await deviceSession(w, phone)).c.post('/api/auth/logout', {}), 200, 'logout');
+  ok(await admin.post(`/api/admin/devices/${phone}/scope`, { scope: 'field' }), 200, 'make field');
+  assert.equal(H.db.one(`SELECT bound_via FROM field_accounts WHERE user_id=?`, w.id).bound_via, 'admin');
+  // The worker clears the app (a new id), or sends someone else's made-up id: still a field device.
+  const fresh = uuid();
+  const { c, login } = await deviceSession(w, fresh, { field_device: false });
+  assert.deepEqual(login.device, { scope: 'field' });
+  const row = H.db.one(`SELECT sync_scope, scope_set_by FROM devices WHERE id=?`, fresh);
+  assert.deepEqual({ ...row }, { sync_scope: 'field', scope_set_by: 'account' });
+  const p = await pullAll(c);
+  assert.equal(p.last.device_scope, 'field');
+  // No id at all: refused.
+  assert.equal((await anonymousDeviceLogin(w)).r.status, 403);
+  // Revoking (or wiping) the field device does not release the account: a password reset wipes every device.
+  ok(await admin.post(`/api/admin/devices/${phone}/revoke`, {}), 200, 'revoke');
+  ok(await admin.post(`/api/admin/devices/${fresh}/revoke`, {}), 200, 'revoke');
+  assert.deepEqual((await deviceSession(w, uuid())).login.device, { scope: 'field' });
+});
+
+test('an administrator\'s "Hold everything" keeps one device whole; its user cannot widen another, and it does not travel to another account', async () => {
+  const s = H.makeUser('fdsuper', 'supervisor', PW);
+  const tablet = uuid();
+  await deviceSession(s, tablet, { field_device: true }); // they ticked the box: held to the field scope
+  // Its user cannot make it whole again, by asking or by re-enrolling.
+  const again = await deviceSession(s, tablet, { field_device: false, sync_scope: 'full' });
+  assert.deepEqual(again.login.device, { scope: 'field' });
+  assert.equal((await again.c.post(`/api/admin/devices/${tablet}/scope`, { scope: 'full' })).status, 403);
+  // An administrator marks this one device "Hold everything".
+  ok(await admin.post(`/api/admin/devices/${tablet}/scope`, { scope: 'full' }), 200, 'hold everything');
+  const whole = await deviceSession(s, tablet);
+  assert.deepEqual(whole.login.device, { scope: 'full' });
+  const p = await pullAll(whole.c);
+  assert.equal(p.last.device_scope, 'full');
+  assert.ok(idsOf(p.tables.notes).includes(ids.note), 'the whole scope');
+  // A whole session reaches account management as before.
+  assert.equal((await whole.c.get('/api/auth/sessions')).status, 200);
+  // A second device of the same account is still a field device.
+  assert.deepEqual((await deviceSession(s, uuid())).login.device, { scope: 'field' });
+  // The listing says so.
+  const listed = ok(await admin.get('/api/admin/devices'), 200, 'list').devices.find(d => d.id === tablet);
+  assert.equal(listed.scope_set_by, 'admin'); assert.equal(listed.account_field, true);
+  // Signed in as another account held to the field scope, the administrator's decision no longer stands.
+  const w = H.makeUser('fdborrow', 'navigator', PW);
+  H.db.run(`INSERT INTO field_accounts(user_id,bound_at,bound_via) VALUES(?,?,'admin')`, w.id, new Date().toISOString());
+  assert.deepEqual((await deviceSession(w, tablet)).login.device, { scope: 'field' });
+  assert.equal(H.db.one(`SELECT scope_set_by FROM devices WHERE id=?`, tablet).scope_set_by, 'account');
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='device.scope' AND entity_id=? AND details LIKE '%reattributed%'`, tablet));
+});
+
+test('an administrator may confirm a whole device for an account held to the field scope before it next syncs', async () => {
+  const s = H.makeUser('fdconfirm', 'supervisor', PW);
+  const laptop = uuid();
+  await deviceSession(s, laptop);
+  assert.equal(H.db.one(`SELECT sync_scope FROM devices WHERE id=?`, laptop).sync_scope, 'full');
+  ok(await admin.put('/api/admin/settings', { field_device_default: '1' }), 200, 'default on');
+  try {
+    let listed = ok(await admin.get('/api/admin/devices'), 200, 'list').devices.find(d => d.id === laptop);
+    assert.equal(listed.account_field, true); assert.equal(listed.scope_set_by, 'default');
+    const r = ok(await admin.post(`/api/admin/devices/${laptop}/scope`, { scope: 'full' }), 200, 'confirm');
+    assert.equal(r.changed, true);
+    listed = ok(await admin.get('/api/admin/devices'), 200, 'list').devices.find(d => d.id === laptop);
+    assert.equal(listed.scope_set_by, 'admin');
+    assert.deepEqual((await deviceSession(s, laptop)).login.device, { scope: 'full' });
+  } finally { ok(await admin.put('/api/admin/settings', { field_device_default: '0' }), 200, 'default off'); }
+});
+
+test('a field device\'s sync session reaches signing in and out under /api/auth/, not account management', async () => {
+  const w = H.makeUser('fdauth', 'navigator', PW);
+  const { c } = await deviceSession(w, uuid(), { field_device: true });
+  for (const [m, path, body] of [['get', '/api/auth/me'], ['get', '/api/auth/sessions'], ['post', '/api/auth/sessions/revoke-others', {}],
+    ['post', '/api/auth/password', { current_password: PW, new_password: 'AnotherPassw0rd!x' }], ['post', '/api/auth/mfa/setup', {}], ['post', '/api/auth/mfa/enable', { code: '000000' }],
+    ['post', '/api/auth/mfa/disable', { password: PW }], ['get', '/api/auth/passkeys'], ['post', '/api/auth/passkeys/register/options', {}], ['get', '/api/auth/reauth'], ['get', '/api/me/prefs']]) {
+    const r = await c[m](path, body);
+    assert.equal(r.status, 403, `${m} ${path}: ${JSON.stringify(r.data)}`);
+    assert.equal(r.data.fieldDevice, true, path);
+  }
+  const r = await c.post('/api/auth/password', { current_password: PW, new_password: 'AnotherPassw0rd!x' });
+  assert.match(r.data.error, /web browser/);
+  assert.equal(r.data.useBrowser, true);
+  // The password was not changed.
+  assert.equal((await deviceSession(w, uuid())).login.device.scope, 'field');
+  // What a device's sync uses still works: pull, push, the second step, sign out.
+  ok(await c.get(`/api/sync/pull?since=${encodeURIComponent(NEVER)}`), 200, 'pull');
+  assert.notEqual((await c.post('/api/auth/mfa/verify', { code: '000000' })).status, 403);
+  ok(await c.post('/api/auth/logout', {}), 200, 'logout');
+  // The same account in a browser manages itself as before.
+  const b = H.client(); await b.login(w.username, PW);
+  assert.equal((await b.get('/api/auth/sessions')).status, 200);
 });

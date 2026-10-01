@@ -22,33 +22,90 @@ function touch(user, deviceId, ctx) {
   const existing = db.one(`SELECT * FROM devices WHERE id=?`, deviceId);
   const label = labelFrom(ctx.headers['user-agent']);
   const now = db.now();
-  if (existing) db.run(`UPDATE devices SET user_id=?, last_seen_at=?, last_ip=?, sync_count=sync_count+1, label=COALESCE(label, ?) WHERE id=?`, user.id, now, ctx.ip, label, deviceId);
-  else {
-    // A new device starts in the programme's default scope (field_device_default, off unless an administrator
-    // turned it on): a programme that wants every phone to be a field device does not have to catch each one.
+  if (existing) {
+    db.run(`UPDATE devices SET user_id=?, last_seen_at=?, last_ip=?, sync_count=sync_count+1, label=COALESCE(label, ?) WHERE id=?`, user.id, now, ctx.ip, label, deviceId);
+    // An administrator's "Hold everything" was a decision about this device in its user's hands (1.22.0). Signed in
+    // as someone else, it no longer stands: the device is judged again for the person who holds it now (bind).
+    if (existing.user_id !== user.id && adminFull(existing)) {
+      db.run(`UPDATE devices SET scope_set_by=NULL WHERE id=?`, deviceId);
+      require('./audit').log({ user, action: 'device.scope', entity: 'device', entityId: deviceId, ip: ctx.ip, details: { from: 'full', to: 'full', via: 'reattributed', admin_decision_cleared: true, previous_user: existing.user_id, device_user: user.id } });
+    }
+  } else {
+    // A new device starts in the field scope when the programme's default says so (field_device_default, off unless
+    // an administrator turned it on), or when its user's account is held to the field scope (bind, below; 1.22.0).
     const scope = db.getSetting('field_device_default', '0') === '1' ? 'field' : 'full';
-    db.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count,sync_scope,scope_changed_at) VALUES(?,?,?,?,?,?,1,?,?)`, deviceId, user.id, label, now, now, ctx.ip, scope, scope === 'field' ? now : null);
+    db.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count,sync_scope,scope_changed_at,scope_set_by) VALUES(?,?,?,?,?,?,1,?,?,'default')`, deviceId, user.id, label, now, now, ctx.ip, scope, scope === 'field' ? now : null);
   }
-  return db.one(`SELECT * FROM devices WHERE id=?`, deviceId);
+  return bind(user, db.one(`SELECT * FROM devices WHERE id=?`, deviceId), { ip: ctx.ip });
 }
 
 // ---- sync scope (released in 1.21.0; server/field-scope.js) ----
 const SCOPES = ['full', 'field'];
+
+// ---- the account's scope (built for 1.22.0, not yet released) ----
+// The field scope follows the account as well as the device. A device id is the device's own word (local/sync.js
+// makes one up once and sends it), so a scope kept only on the device's row could be left by sending another id, or
+// none, or by enrolling again. So: once any device of an account has been a field device, or while the programme's
+// default (field_device_default) is on, every sync of that account is in the field scope (field_accounts): on a new
+// device id, on a device the office has never seen, and on a session that names no device at all (a device's sync
+// sign-in without one is refused, server/auth.js login). The only way back to everything is an administrator marking
+// one specific device "Hold everything" (scope_set_by 'admin'), and that decision is cleared if the device signs in as
+// someone else. Neither the device nor its user can widen it. Revoking or wiping a device does not release its
+// account: an administrator's password reset wipes every device, and the next enrolment must not come back whole.
+/** Whether this account's syncs are held to the field scope (the programme's default, or field_accounts). */
+function accountFieldBound(userId) {
+  if (db.getSetting('field_device_default', '0') === '1') return true;
+  return !!db.one(`SELECT 1 FROM field_accounts WHERE user_id=?`, userId);
+}
+/** Hold an account to the field scope from now on (idempotent; audited the first time). */
+function bindAccount(userId, via, { actor, ip } = {}) {
+  const r = db.run(`INSERT OR IGNORE INTO field_accounts(user_id, bound_at, bound_via) VALUES(?,?,?)`, userId, db.now(), via);
+  if (r && r.changes) require('./audit').log({ user: actor || { id: userId }, action: 'device.account_field', entity: 'user', entityId: userId, ip, details: { via } });
+}
+/** An administrator decided this device holds everything (and it has not changed hands since). */
+function adminFull(d) { return !!d && d.sync_scope === 'full' && d.scope_set_by === 'admin'; }
+/** Whether a sync of `userId` from `device` (a devices row, or null for a session that names none) is in the field scope. */
+function effectiveField(userId, device) {
+  if (device && device.sync_scope === 'field') return true;
+  if (adminFull(device)) return false;
+  return accountFieldBound(userId);
+}
 /**
- * Change what a device's sync carries. `via`: 'admin' (Settings -> Synced devices) or 'enrolment' (its own user,
- * who may only narrow it to 'field': widening what a phone holds is an administrator's decision). A change to
- * 'field' reaches the device at its next sync: it sends what it has not sent yet, then removes what is out of scope
- * (local/sync.js). Until the office has answered a pull under the field scope, field_applied_at stays empty and the
- * device's pushes are judged as before, so nothing recorded under the old scope is refused on the way in. Audited
- * by the caller's action. Returns the device row, or null when nothing changed.
+ * Bring a device's recorded scope into line with its account: a field device holds its account to the field scope,
+ * and a device of such an account that an administrator has not marked "Hold everything" becomes a field device
+ * (setScope via 'account', audited; it sends what it has first and then narrows, local/sync.js). Called as the
+ * device signs in and on every sync request. Returns the device row as it now is.
+ */
+function bind(user, device, { ip } = {}) {
+  if (!device || device.revoked_at) return device;
+  if (device.sync_scope === 'field') { bindAccount(user.id, 'device', { actor: user, ip }); return device; }
+  if (effectiveField(user.id, device)) return setScope(device.id, 'field', { actor: user, ip, via: 'account' }) || device;
+  return device;
+}
+
+/**
+ * Change what a device's sync carries. `via`: 'admin' (Settings -> Synced devices), 'enrolment' (its own user, who
+ * may only narrow it to 'field': widening what a phone holds is an administrator's decision) or 'account' (the
+ * office, because the device's account is held to the field scope; bind). A device made 'field' holds its account to
+ * the field scope (field_accounts, 1.22.0). An administrator's 'full' is recorded as theirs (scope_set_by 'admin'),
+ * which is what keeps one device whole for such an account; asked of a device already 'full' only by default, it
+ * records just that decision. A change to 'field' reaches the device at its next sync: it sends what it has not sent
+ * yet, then removes what is out of scope (local/sync.js). Until the office has answered a pull under the field
+ * scope, field_applied_at stays empty and the device's pushes are judged as before, so nothing recorded under the old
+ * scope is refused on the way in. Audited. Returns the device row, or null when nothing changed.
  */
 function setScope(deviceId, scope, { actor, ip, via = 'admin' } = {}) {
   if (!SCOPES.includes(scope)) throw new Error(`setScope: unknown scope ${scope}`);
+  if (!['admin', 'enrolment', 'account'].includes(via)) throw new Error(`setScope: unknown route ${via}`);
   const d = db.one(`SELECT * FROM devices WHERE id=?`, deviceId);
-  if (!d || d.sync_scope === scope) return null;
+  if (!d) return null;
   if (via !== 'admin' && scope !== 'field') throw new Error('Only an administrator can widen what a device holds');
-  db.run(`UPDATE devices SET sync_scope=?, scope_changed_at=? WHERE id=?`, scope, db.now(), deviceId);
+  if (d.sync_scope === scope) {
+    if (!(via === 'admin' && scope === 'full' && d.scope_set_by !== 'admin')) return null;
+    db.run(`UPDATE devices SET scope_set_by='admin' WHERE id=?`, deviceId);
+  } else db.run(`UPDATE devices SET sync_scope=?, scope_changed_at=?, scope_set_by=? WHERE id=?`, scope, db.now(), via, deviceId);
   require('./audit').log({ user: actor, action: 'device.scope', entity: 'device', entityId: deviceId, ip, details: { from: d.sync_scope, to: scope, via, device_user: d.user_id } });
+  if (scope === 'field') bindAccount(d.user_id, via, { actor, ip });
   return db.one(`SELECT * FROM devices WHERE id=?`, deviceId);
 }
 /** The device a request's session was signed in from (sessions.device_id), or null for a browser's session. */
@@ -112,4 +169,4 @@ function requestWipeForUser(userId, { actor, ip, reason } = {}) {
   return rows.map(d => d.id);
 }
 
-module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe, setScope, ofSession, SCOPES };
+module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe, setScope, ofSession, SCOPES, accountFieldBound, bindAccount, adminFull, effectiveField, bind };

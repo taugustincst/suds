@@ -800,6 +800,17 @@ const migrations = [
     addColumn(d, 'passkeys', 'attestation', 'TEXT');
     createTablesFromSchema(d, safeSchema(), ['authenticator_metadata'], 63);
   },
+  // 64: field scope follows the account (built for 1.22.0; server/devices.js, docs/PLATFORM.md "Field devices").
+  //     field_accounts, the accounts held to the field scope on every device, starting with the users of every
+  //     existing field device; devices.scope_set_by, with 'admin' for a device already made whole again by an
+  //     administrator (only an administrator could set 'full' after first sight, so a full device with
+  //     scope_changed_at was one), so that decision stands. Self-contained and idempotent, so it can be renumbered.
+  (d) => {
+    addColumn(d, 'devices', 'scope_set_by', "TEXT CHECK (scope_set_by IN ('default','enrolment','account','admin'))");
+    createTablesFromSchema(d, safeSchema(), ['field_accounts'], 64);
+    d.exec(`UPDATE devices SET scope_set_by='admin' WHERE scope_set_by IS NULL AND sync_scope='full' AND scope_changed_at IS NOT NULL`);
+    d.exec(`INSERT OR IGNORE INTO field_accounts(user_id, bound_at, bound_via) SELECT user_id, MIN(COALESCE(scope_changed_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))), 'migration' FROM devices WHERE sync_scope='field' GROUP BY user_id`);
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];
