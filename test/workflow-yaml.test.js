@@ -136,6 +136,19 @@ test('ci.yml: every job the release gate requires exists and is not advisory; on
   assert.ok(!REQUIRED_JOBS.includes('release-state'));
 });
 
+test('ci.yml: release-policy runs the policy on every push, from the tags or the hand-off commit, and is not advisory', () => {
+  const job = wf('ci.yml').jobs['release-policy'];
+  assert.ok(job, 'ci.yml has a release-policy job');
+  assert.ok(!job['continue-on-error'], 'a red policy fails the run, so the release gate refuses the commit');
+  assert.equal(job.permissions, undefined, 'the top-level read-only token');
+  const run = job.steps.map((s) => s.run || '').join('\n');
+  assert.match(run, /git fetch --quiet --depth 1 origin '\+refs\/tags\/v\*:refs\/tags\/v\*'/, 'the release tags are fetched');
+  assert.match(run, /node scripts\/release-policy-ci\.js --fetch\s*$/m, 'the script fetches the hand-off commit it compares with');
+  assert.doesNotMatch(run, /npm (ci|install)/, 'Node built-ins and git only');
+  assert.doesNotMatch(run, /RELEASE_POLICY_EXCEPTION|ALLOW_PATCH_CHANGES/, 'no exception on a push');
+  assert.ok(job.steps.some((s) => /sha256sum -c/.test(s.run || '')), 'the pinned Node 22, checked');
+});
+
 test('release.yml: gate, then verify, then the release job, which alone waits for approval', () => {
   const { jobs } = wf('release.yml');
   assert.deepEqual(Object.keys(jobs), ['gate', 'verify', 'release']);
