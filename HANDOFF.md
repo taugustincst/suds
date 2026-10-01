@@ -78,9 +78,10 @@ _(Append replies here, newest first.)_
     list stop at their next use (not deleted); with the metadata file out of date, no passkey can be added but those
     already proven keep working.
 - **Found by the integration review and not fixed (for the owner to decide):**
-  - A field device's sync session is refused by every route but `/api/sync/` **and `/api/auth/`** (`server/auth.js`
-    `requireAuth`): it can reach its own account's routes (password, second factor, passkeys, sessions) for the
-    length of a sync run. Narrowing it to sync and sign-out would need the kernel's sync flow checked.
+  - ~~A field device's sync session is refused by every route but `/api/sync/` and `/api/auth/`~~ — fixed for
+    1.22.0 (built, not yet released): under `/api/auth/` it reaches only sign-in, the second step and sign-out
+    (`server/auth.js` `assertSyncSessionReach`, every request); the field scope follows the account, so another
+    device id, none, or re-enrolling no longer leaves it (`server/devices.js`; docs/PLATFORM.md, *Field devices*).
   - The field scope is **not a boundary against the device's own user**: the same account in a browser reads what
     its role allows (THREAT-MODEL residual risk 20). A programme that wants less narrows the role too.
   - A CalOMS record for a client known only by a participant code gets the fatal `name_missing` issue and stays

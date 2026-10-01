@@ -4,6 +4,37 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Field devices: the scope follows the account (built for 1.22.0, not yet released)
+
+- **The field scope can no longer be left through the device id.** The id a device sends is its own word, and
+  before this a sync sign-in with no id, or a new one, got the whole scope. Now, once any device of an account has
+  been a field device (an administrator, its user enrolling it, the programme default), or while **New devices start
+  as field devices** is on, the account is held to the field scope on every device (migration **64**,
+  `field_accounts`): a new, reinstalled or unknown device id is registered as a field device at its first sign-in
+  (nothing for the worker to do); a whole device of that account becomes a field device at its next sync (it sends
+  what it recorded first, as any change to the field scope does); a session with no device that calls the sync
+  routes is sent, and held to, the field scope. Revoking or wiping a device does not release the account.
+- **A device's sync sign-in that names no device is refused** for such an account (*this sync did not say which
+  device it is from*; audited `auth.login.device_unidentified`), rather than registered: there is nothing stable to
+  register, narrow, revoke or wipe. SUDS on a device always sends its id. Owner decision, conservative default.
+- **Full scope is an administrator's decision about one device.** *Hold everything* under **Settings › Synced
+  devices**, or the new *Keep everything* on a whole device of an account held to the field scope, records
+  `devices.scope_set_by = 'admin'` (migration 64), and only that keeps a device whole for such an account (for
+  example a supervisor's office computer). It is per device, not a per-person flag, so a new or reinstalled device
+  starts in the field scope until an administrator marks it; it is cleared if the device signs in as someone else.
+  Upgrading: a device an administrator had already made whole again keeps that decision; any other whole device of
+  an account held to the field scope (including, with the programme default on, a device first seen before it was
+  turned on) becomes a field device at its next sync. Owner decision, conservative default.
+- **A field device's sync session reaches less of `/api/auth/`:** signing in, the second step and signing out, which
+  is all SUDS on a device uses. Changing the password, two-step verification, fingerprint sign-in or sessions from it
+  is refused with a message to use a web browser (`server/auth.js` `assertSyncSessionReach`, checked for every
+  request, not only routes that call `requireAuth`).
+- Docs say exactly what is enforced: docs/PLATFORM.md *Field devices*, THREAT-MODEL (field rows and residual risk 20:
+  the scope bounds the device's offline copy, not what the account may reach in a browser), DATA-INVENTORY
+  (migration 64), LOGGING-AND-AUDIT (`device.account_field`, `auth.login.device_unidentified`, the `device.scope`
+  routes). Tests: `test/field-device.test.js` (a missing id with the default on, a rotated id, an administrator's
+  whole device, a user who cannot widen, the `/api/auth/` narrowing); `scripts/ui/field-device.mjs`.
+
 ## 1.21.0 — 2026-09-30
 
 A feature release (migrations 61, 62 and 63; the county publication, field-device, authenticator allow-list and

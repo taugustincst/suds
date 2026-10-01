@@ -14,7 +14,8 @@
 //
 // The office enforces it: server/routes/sync.js pull filters by it, server/rules/push.js refuses a field device's
 // writes outside it and never lets a blanked column overwrite the office's value, and a field device's sync session
-// reaches nothing but the sync routes (server/auth.js requireAuth). The device only tidies what it already holds
+// reaches nothing but the sync routes and signing in and out (server/auth.js assertSyncSessionReach). Which syncs are in
+// the field scope is the office's record of the device and of its account (server/devices.js effectiveField, 1.22.0). The device only tidies what it already holds
 // (local/sync.js); it is never trusted to filter. Pure data and SQL builders: the browser kernel bundles it too.
 
 const WINDOW_DEFAULT = 90;

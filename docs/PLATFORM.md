@@ -162,9 +162,34 @@ assessments, SUPRT-A records, spending, disclosure agreements, prevention events
 it is not sent, a stored row it does not hold (another worker's to-do, a client off its set, a contact older than
 the window) or a new row about a client outside its set (a client created in the same push is in it). A column it
 was sent blank and sends back blank never clears the office's value (`server/rules/push.js`). Its sync session
-reaches the sync routes and nothing else (`server/auth.js` requireAuth), and it fetches no attachment of a table it
+reaches the sync routes and, under `/api/auth/`, only signing in, the second step and signing out (`server/auth.js`
+`assertSyncSessionReach`, checked for every request): changing the password, two-step verification, fingerprint
+sign-in or sessions from it is refused with a message to use a web browser. It fetches no attachment of a table it
 is not sent. A client leaves the device when it leaves the set (its assignment ends, a caseload transfer, no
 contact in the window, a merge into a record outside the set).
+
+**The scope follows the account (built for 1.22.0, not yet released).** A device id is the device's own word, so
+the office does not rely on it alone. Once **any** device of an account has been a field device (made one by an
+administrator, by its user as they enrolled it, or by the programme default), or while **New devices start as field
+devices** is on, the account is held to the field scope (`field_accounts`, `server/devices.js`
+`accountFieldBound`), and every sync of that account is in the field scope:
+
+- a new device id (the app cleared or reinstalled, another phone, an id made up) is registered as a field device
+  at its first sign-in, so a worker re-enrolling keeps syncing without asking anyone;
+- a device's sync sign-in that names no device at all is **refused** (*this sync did not say which device it is
+  from*; audited `auth.login.device_unidentified`) rather than given a session the office could not narrow, revoke or
+  wipe. SUDS on a device always sends its id, so only something else signing in as a device meets this;
+- a whole device of that account that an administrator has not marked becomes a field device at its next sync
+  (audited `device.scope`, route `account`), sending what it recorded first as above;
+- a session with no device at all (a browser's) that calls the sync routes is sent the field scope and held to it.
+
+Revoking or wiping a field device does not release the account (an administrator's password reset wipes every
+device, and the next enrolment must not come back whole). **Full scope is an administrator's decision about one
+device**: *Hold everything* (or *Keep everything*, on a whole device of such an account before its next sync) under
+**Settings › Synced devices** records `devices.scope_set_by = 'admin'`, and only that keeps a device whole for an
+account held to the field scope — for example a supervisor's office computer. It is per device, not per person, so a
+supervisor's new or reinstalled device starts in the field scope until an administrator marks it; and the decision is
+cleared if that device signs in as someone else. Neither the device nor its user can widen any of this.
 
 **Changing scope.** An administrator changes it under **Settings › Synced devices** (*Make field device* / *Hold
 everything*); a device's user may make it a field device as they enrol it (*Keep only what I need in the field*
@@ -178,8 +203,12 @@ receives the rest; nothing is deleted at the office either way. This device show
 **Owner decisions, conservative defaults (1.21.0).** Field devices and the participant-code default are **off**
 everywhere unless an administrator turns them on; the setup wizard offers the participant-code default only to a
 harm-reduction programme, answered *No* unless changed. The window is 90 days. A device's user may only narrow its
-scope; widening is an administrator's. The scope limits what a device **holds**, not what its account may reach:
-the same account in a browser at the office sees what its role allows.
+scope; widening is an administrator's, per device. **(1.22.0, built, not yet released.)** The field scope is bound
+to the account as well as the device (above); a device sync sign-in without a device id is refused for such an
+account rather than registered (there is nothing stable to register, revoke or wipe); full scope for a supervisor is
+a per-device administrator decision, not a per-person flag, so no new or reinstalled device of theirs is whole until
+an administrator says so. The scope limits what a device **holds**, not what its account may reach: the same account
+in a browser at the office sees what its role allows.
 
 ## Lost or stolen devices, and offboarding
 
