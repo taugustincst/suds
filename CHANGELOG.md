@@ -232,6 +232,10 @@ Evidence and tests only; no change to what SUDS does. Two findings for the owner
 
 Built for 1.22.0, not yet released. No migration, permission or route.
 
+- **A brand-new device of an account held to the field scope is held from its first push.** Before, a new device id
+  became a field device at sign-in but its pushes were judged by the full scope until its first pull; a device first
+  seen has nothing recorded under another scope, so it is now held at once (`server/devices.js` `touch`,
+  `test/field-device.test.js`).
 - **Fixed: a device revoked, or told to erase itself, kept syncing on a session it already had open.** Revoking and
   wiping were checked only when a device signed in, so a sync session open at that moment went on pulling and pushing
   until it expired, and a whole device's session reached the rest of the API; a revoked device's session was not even

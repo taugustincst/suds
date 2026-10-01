@@ -36,7 +36,14 @@ function touch(user, deviceId, ctx) {
     const scope = db.getSetting('field_device_default', '0') === '1' ? 'field' : 'full';
     db.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count,sync_scope,scope_changed_at,scope_set_by) VALUES(?,?,?,?,?,?,1,?,?,'default')`, deviceId, user.id, label, now, now, ctx.ip, scope, scope === 'field' ? now : null);
   }
-  return bind(user, db.one(`SELECT * FROM devices WHERE id=?`, deviceId), { ip: ctx.ip });
+  const out = bind(user, db.one(`SELECT * FROM devices WHERE id=?`, deviceId), { ip: ctx.ip });
+  // A device first seen now has recorded nothing under another scope, so a field device is held to the field scope
+  // from its first push, not only after its first pull (field_applied_at; 1.22.0 integration review).
+  if (!existing && out && out.sync_scope === 'field' && !out.field_applied_at) {
+    db.run(`UPDATE devices SET field_applied_at=? WHERE id=?`, now, deviceId);
+    return db.one(`SELECT * FROM devices WHERE id=?`, deviceId);
+  }
+  return out;
 }
 
 // ---- sync scope (released in 1.21.0; server/field-scope.js) ----

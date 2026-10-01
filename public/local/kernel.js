@@ -24121,7 +24121,12 @@ var require_devices = __commonJS({
         const scope = db3.getSetting("field_device_default", "0") === "1" ? "field" : "full";
         db3.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count,sync_scope,scope_changed_at,scope_set_by) VALUES(?,?,?,?,?,?,1,?,?,'default')`, deviceId2, user.id, label, now2, now2, ctx.ip, scope, scope === "field" ? now2 : null);
       }
-      return bind(user, db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2), { ip: ctx.ip });
+      const out2 = bind(user, db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2), { ip: ctx.ip });
+      if (!existing && out2 && out2.sync_scope === "field" && !out2.field_applied_at) {
+        db3.run(`UPDATE devices SET field_applied_at=? WHERE id=?`, now2, deviceId2);
+        return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+      }
+      return out2;
     }
     var SCOPES = ["full", "field"];
     function accountFieldBound(userId) {

@@ -359,6 +359,10 @@ test('a new or rotated device id of an account with a field device is a field de
   assert.deepEqual(login.device, { scope: 'field' });
   const row = H.db.one(`SELECT sync_scope, scope_set_by FROM devices WHERE id=?`, fresh);
   assert.deepEqual({ ...row }, { sync_scope: 'field', scope_set_by: 'account' });
+  // Held from its first push, before any pull: a contact for a client outside the worker's set is refused.
+  const nowIso = new Date().toISOString();
+  const early = ok(await c.post('/api/sync/push', { device_now: nowIso, tables: { interventions: [{ id: uuid(), client_id: ids.theirs, user_id: w.id, type: 'outreach', occurred_at: nowIso, duration_minutes: 5, created_at: nowIso, updated_at: nowIso }] } }), 200, 'early push');
+  assert.equal(early.rejected.length, 1, 'a new field device\'s first push is held to the field scope');
   const p = await pullAll(c);
   assert.equal(p.last.device_scope, 'field');
   // No id at all: refused.
