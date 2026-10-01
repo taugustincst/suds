@@ -34,6 +34,9 @@ const SIGNED_KEEPS = ['kind', 'format', 'title_enc', 'content_enc', 'structured_
  */
 const SIGN_REMINDER = 'This reminder closes itself once your draft notes on this client\'s record are signed.';
 const OLD_REMINDER_REF = /Reference: supervision reminder for note ([\w-]+)/;
+// Either line, as written now or before 1.23.2: the write check (rules/tasks.js) and recognition both use this, so the
+// old line cannot be pasted into a to-do to pass for a reminder (review of 1.23.3).
+const hasReminderLine = (text) => !!text && (String(text).includes(SIGN_REMINDER) || OLD_REMINDER_REF.test(String(text)));
 // Who may send one: whoever sees the drafts it is about and has Remind, that is holds notes:cosign (the supervision
 // queue's unsigned notes are theirs; public/views/supervision.js). Checked against the maker's account as it is now.
 const maySendSignReminder = (user) => auth.hasPerm(user, 'notes:cosign');
@@ -47,7 +50,7 @@ const makerMaySend = (userId) => { const u = userId && db.one(`SELECT id, role F
  */
 function isSignReminder(t, text) {
   if (!t || !text || !t.created_by || t.created_by === t.assigned_to) return false;
-  if (!text.includes(SIGN_REMINDER) && !OLD_REMINDER_REF.test(text)) return false;
+  if (!hasReminderLine(text)) return false;
   return makerMaySend(t.created_by);
 }
 // `cause: 'deleted'`: the last draft was deleted, not signed, so the reminder is cancelled rather than done (1.23.3).
@@ -253,6 +256,7 @@ module.exports = define({
 });
 module.exports.closeSignReminders = closeSignReminders;
 module.exports.SIGN_REMINDER = SIGN_REMINDER;
+module.exports.hasReminderLine = hasReminderLine;
 Object.assign(module.exports, { isSignReminder, maySendSignReminder });
 module.exports.reissueAddenda = reissueAddenda;
 Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts, aiReviewed, keepAiAssisted, strongSigningRequired });

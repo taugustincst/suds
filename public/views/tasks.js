@@ -67,8 +67,9 @@ export async function deleteNotice(col, rec) {
   if (!rec || !rec.id || !rec.client_id || !can('tasks:read')) return '';
   let rows; try { rows = (await get(`/api/tasks?client_id=${encodeURIComponent(rec.client_id)}&status=open&limit=500`, { quiet: true })).rows || []; } catch { return ''; }
   const linked = rows.filter(t => t[col] === rec.id);
-  const reminder = col === 'referral_id' && linked.some(t => REMINDER.test(t.title || ''));
-  const followUp = linked.some(t => !(col === 'referral_id' && REMINDER.test(t.title || '')));
+  const isReminder = (t) => col === 'referral_id' && REMINDER.test(t.title || '') && t.created_by && t.created_by !== t.assigned_to;
+  const reminder = linked.some(isReminder);
+  const followUp = linked.some(t => !isReminder(t));
   if (!followUp && !reminder) return '';
   const what = [followUp ? 'its open follow-up to-do' : null, reminder ? 'the supervisor\'s reminder to record its outcome' : null].filter(Boolean).join(' and ');
   return ` ${what[0].toUpperCase()}${what.slice(1)} ${followUp && reminder ? 'are' : 'is'} cancelled too${followUp ? ' (a follow-up to-do someone has edited is left open)' : ''}.`;

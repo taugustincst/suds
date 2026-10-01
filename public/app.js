@@ -347,9 +347,9 @@ export function undoToast(msg, onUndo, { ms = 10000, action = null, focus = true
   t.addEventListener('focusin', hold); t.addEventListener('focusout', (e) => { if (t.isConnected && !t.contains(e.relatedTarget) && !t.matches(':hover')) arm(); });
   t.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); gone(); back(); } });
   btn.addEventListener('click', async () => {
-    btn.disabled = true;
+    btn.disabled = true; if (second) second.disabled = true;
     try { await onUndo(); gone(); if (!action) { back(); toast('Undone', 'ok'); } }
-    catch (e) { btn.disabled = false; toast((e && e.message) || (action ? 'That did not work.' : 'It could not be undone.'), 'error'); }
+    catch (e) { btn.disabled = false; if (second) second.disabled = false; toast((e && e.message) || (action ? 'That did not work.' : 'It could not be undone.'), 'error'); }
   });
   if (second) second.addEventListener('click', () => { gone(); also.onClick(); });
   host.append(t);

@@ -43,10 +43,10 @@ const deviceNotice = (row, c) => row.assigned_to !== c.user.id && /^Changed: [^\
 function addsSignReminder(row, existing) {
   const next = row.description !== undefined ? row.description : row.description_enc;
   if (next === undefined || next === null) return false;
-  const { SIGN_REMINDER } = require('./notes');
-  if (!String(next).includes(SIGN_REMINDER)) return false;
+  const { hasReminderLine } = require('./notes');
+  if (!hasReminderLine(next)) return false;
   let before = ''; try { before = existing && existing.description_enc ? require('../crypto').decrypt(existing.description_enc) : ''; } catch { before = ''; }
-  return !before.includes(SIGN_REMINDER);
+  return !hasReminderLine(before);
 }
 const SIGN_REMINDER_REFUSED = 'Only a supervisor who countersigns notes can send a reminder to sign them';
 

@@ -13667,6 +13667,7 @@ var require_notes = __commonJS({
     ];
     var SIGN_REMINDER = "This reminder closes itself once your draft notes on this client's record are signed.";
     var OLD_REMINDER_REF = /Reference: supervision reminder for note ([\w-]+)/;
+    var hasReminderLine = (text) => !!text && (String(text).includes(SIGN_REMINDER) || OLD_REMINDER_REF.test(String(text)));
     var maySendSignReminder = (user) => auth3.hasPerm(user, "notes:cosign");
     var makerMaySend = (userId) => {
       const u = userId && db3.one(`SELECT id, role FROM users WHERE id=?`, userId);
@@ -13674,7 +13675,7 @@ var require_notes = __commonJS({
     };
     function isSignReminder(t, text) {
       if (!t || !text || !t.created_by || t.created_by === t.assigned_to) return false;
-      if (!text.includes(SIGN_REMINDER) && !OLD_REMINDER_REF.test(text)) return false;
+      if (!hasReminderLine(text)) return false;
       return makerMaySend(t.created_by);
     }
     function closeSignReminders(authorId, noteId, clientId, { cause = "signed" } = {}) {
@@ -13874,6 +13875,7 @@ var require_notes = __commonJS({
     });
     module.exports.closeSignReminders = closeSignReminders;
     module.exports.SIGN_REMINDER = SIGN_REMINDER;
+    module.exports.hasReminderLine = hasReminderLine;
     Object.assign(module.exports, { isSignReminder, maySendSignReminder });
     module.exports.reissueAddenda = reissueAddenda;
     Object.assign(module.exports, { AI_DRAFT_MINUTES, copilotDrafted, draftPending, pendingDrafts, aiReviewed, keepAiAssisted, strongSigningRequired });
@@ -13919,15 +13921,15 @@ var require_tasks = __commonJS({
     function addsSignReminder(row, existing) {
       const next = row.description !== void 0 ? row.description : row.description_enc;
       if (next === void 0 || next === null) return false;
-      const { SIGN_REMINDER } = require_notes();
-      if (!String(next).includes(SIGN_REMINDER)) return false;
+      const { hasReminderLine } = require_notes();
+      if (!hasReminderLine(next)) return false;
       let before = "";
       try {
         before = existing && existing.description_enc ? require_crypto().decrypt(existing.description_enc) : "";
       } catch {
         before = "";
       }
-      return !before.includes(SIGN_REMINDER);
+      return !hasReminderLine(before);
     }
     var SIGN_REMINDER_REFUSED = "Only a supervisor who countersigns notes can send a reminder to sign them";
     module.exports = define2({

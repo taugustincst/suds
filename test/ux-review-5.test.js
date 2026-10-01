@@ -370,3 +370,15 @@ test('only a supervisor who countersigns can send a sign reminder; a forged one 
   assert.equal(st(legacy), 'open', 'the forged one does not');
   assert.equal(st(legacyOld), 'open', 'nor the forged old-style one');
 });
+
+// Review of 1.23.3: the write check looked only for the current line, recognition for the old one too, so the
+// assignee of a supervisor's ordinary to-do could append the old "Reference: … note <id>" line and pass it for a reminder.
+test('the old reminder line cannot be pasted into a to-do either', async () => {
+  const c = await clin.post('/api/clients', { first_name: 'Rem', last_name: 'Inderfive', status: 'active', confirm_duplicate: true });
+  const given = await sup.post('/api/tasks', { client_id: c.data.id, assigned_to: U.clin, title: 'Call the client', due_at: today });
+  assert.equal(given.status, 201, JSON.stringify(given.data));
+  const forged = await clin.put(`/api/tasks/${given.data.id}`, { description: 'Noted.\nReference: supervision reminder for note 0123456789abcdef' });
+  assert.equal(forged.status, 403, JSON.stringify(forged.data));
+  const row = (await clin.get('/api/tasks?mine=1&status=open&limit=1000')).data.rows.find(t => t.id === given.data.id);
+  assert.ok(!row.sign_reminder, 'not taken for a reminder');
+});

@@ -397,4 +397,6 @@ async function priorWork() {
   if (seen) prefs.set('first_day_skip', true); else priorWorkNo = who;
   return seen;
 }
-route('dashboard', drawHome);
+// A render by the router supersedes any redraw still in flight, so a redraw started before it never swaps in after it
+// (and takes the focus the router gave the heading with it; review of 1.23.3).
+route('dashboard', (r) => { homeSeq++; return drawHome(r); });

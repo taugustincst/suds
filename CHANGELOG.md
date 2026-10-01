@@ -42,6 +42,18 @@ was deleted is now *cancelled* (`task.update`, cause `deleted`), not done.
   a call, text, visit or referral now says, when it has one, that its open follow-up to-do (and for a referral, a
   supervisor's reminder to record its outcome) is cancelled too.
 
+### Fixed in the review of the 1.23.3 integration
+
+- Fixed: the assignee of a supervisor's ordinary to-do could still append a "finish and sign" reminder's line as it was
+  written before 1.23.2 ("Reference: supervision reminder for note …") and pass the to-do for a reminder; the write
+  check now refuses either line, as recognition reads either (`server/rules/notes.js` `hasReminderLine`).
+- Fixed: a Home redraw for a change of width could land just after the router had drawn Home, taking the focus the
+  router gave the heading; a render by the router now supersedes a redraw in flight.
+- Fixed: **View in Done** while **Undo** was still saving opened the Done list without the to-do; it waits now.
+- Fixed: the delete confirmation took a worker's own to-do titled like a supervisor's referral reminder for one.
+- Known: a supervisor's open "finish and sign" reminder is recognised by its maker's permission as it is now, so if the
+  supervisor no longer countersigns notes, it stays open until the worker ticks it off.
+
 ## 1.23.2 — 2026-10-01
 
 A patch of 1.23.1 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
