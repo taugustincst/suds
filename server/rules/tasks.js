@@ -38,6 +38,17 @@ const NOTICE = 'This notice tells the client\'s primary worker about a change to
 // A notice a device raised for an edit made on it (its text as notifyPrimary writes it, for someone else).
 const deviceNotice = (row, c) => row.assigned_to !== c.user.id && /^Changed: [^\n]*\n(?:[^\n]*\n)*Reference: client record change notice$/.test(String(row.description_enc || ''));
 
+/** Does this edit put the sign reminder's line into details that did not have it? (REST sends `description`, a device
+ *  `description_enc` as written; the stored row holds ciphertext.) */
+function addsSignReminder(row, existing) {
+  const next = row.description !== undefined ? row.description : row.description_enc;
+  if (next === undefined || next === null) return false;
+  const { SIGN_REMINDER } = require('./notes');
+  if (!String(next).includes(SIGN_REMINDER)) return false;
+  let before = ''; try { before = existing.description_enc ? require('../crypto').decrypt(existing.description_enc) : ''; } catch { before = ''; }
+  return !before.includes(SIGN_REMINDER);
+}
+
 module.exports = define({
   table: 'tasks',
   // The record whose follow-up this to-do is (server/rules/follow-ups.js): a device's to-do carries its call's or
@@ -51,7 +62,12 @@ module.exports = define({
   editableBy: (user, row) => (row.assigned_to === user.id || row.created_by === user.id || auth.hasPerm(user, 'records:manage-others') ? null : notPermitted('You cannot edit this record')),
   authorise(row, c) {
     // A change notice is changed (marked seen) only by the worker it was sent to; anyone else may at most delete it.
-    if (c.existing) return c.existing.assigned_to !== c.user.id && isNotice(c.existing) ? notPermitted(NOTICE) : null;
+    if (c.existing && c.existing.assigned_to !== c.user.id && isNotice(c.existing)) return notPermitted(NOTICE);
+    // A supervisor's "finish and sign" reminder is recognised by its last line (rules/notes.js SIGN_REMINDER); only the
+    // to-do's maker may write that line into one, so a worker cannot turn a to-do someone gave them into a reminder that
+    // keeps Remind away and closes when they sign (review of 1.23.2).
+    if (c.existing && c.existing.created_by !== c.user.id && addsSignReminder(row, c.existing)) return notPermitted('Only whoever made this to-do can make it a reminder to sign notes');
+    if (c.existing) return null;
     // A notice a device raised for an edit made on it is that device's copy: the office raises its own when the edit
     // lands (clients.js afterApply), linked in its audit trail, so the device's is not taken (it would arrive as the
     // editor's ordinary to-do reading like a notice). Any other to-do with the notice line in it is an ordinary one.

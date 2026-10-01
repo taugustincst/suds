@@ -252,11 +252,14 @@ async function drawHome(r) {
   // marked it done. The title opens the to-do, or the call, visit or referral it came from (tasks.js openTodo), and
   // "Done" offers Undo, which reopens it.
   const refreshHome = () => nav('dashboard?_=' + Date.now());
+  // Undo after the worker has moved on reopens the to-do where they are, not by taking them back to Home.
+  const refreshIfHome = () => { if (/^#\/dashboard\b/.test(location.hash) || location.hash === '' || location.hash === '#/') refreshHome(); };
   const done = async (t, box) => {
     if (box) box.disabled = true;
     try {
       await put(`/api/tasks/${t.id}`, { status: 'done' });
-      undoToast(`Done: ${t.title}`, async () => { await put(`/api/tasks/${t.id}`, { status: 'open' }); refreshHome(); });
+      // Reopened as it was: an in-progress to-do stays in progress (review of 1.23.2).
+      undoToast(`Done: ${t.title}`, async () => { await put(`/api/tasks/${t.id}`, { status: t.status === 'in_progress' ? 'in_progress' : 'open' }); refreshIfHome(); });
       refreshHome();
     } catch (err) { if (box) { box.checked = false; box.disabled = false; } toast(err.message || 'Could not mark that done. Check your connection and try again.', 'error'); }
   };

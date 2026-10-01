@@ -11808,6 +11808,7 @@ var require_follow_ups = __commonJS({
       }
     };
     var norm = (t) => t === null || t === void 0 ? null : String(t).trim().toLowerCase();
+    var GENERIC = /* @__PURE__ */ new Set(["call back", "text back"]);
     var truthy = (v) => v === true || v === 1 || v === "1" || v === "true";
     var SPECS = {
       calls: {
@@ -11878,7 +11879,7 @@ var require_follow_ups = __commonJS({
           `SELECT * FROM tasks WHERE ${S.link} IS NULL AND ${row.client_id ? "client_id=?" : "client_id IS NULL"} AND assigned_to IN (${[...workers].map(() => "?").join(",")})`,
           ...row.client_id ? [row.client_id] : [],
           ...workers
-        ).map((t) => ({ ...t, _title: plain(t.title_enc) })).filter((t) => titles.has(norm(t._title)) && lookFor.has(day(t.due_at)) && OPEN.includes(t.status) && S.ours(t, t._title));
+        ).map((t) => ({ ...t, _title: plain(t.title_enc) })).filter((t) => titles.has(norm(t._title)) && !GENERIC.has(norm(t._title)) && lookFor.has(day(t.due_at)) && OPEN.includes(t.status) && S.ours(t, t._title));
         if (cand.length) {
           const t = cand[0];
           db3.run(`UPDATE tasks SET ${S.link}=?, updated_at=? WHERE id=?`, row.id, db3.now(), t.id);
@@ -13844,6 +13845,11 @@ var require_notes = __commonJS({
         if (c.existing) reissueAddenda(row.id, c.existing.counseling_note, o.counseling_note ?? c.existing.counseling_note);
         if (c.signRefused) require_audit().log({ user: c.user, action: "note.sign.failed", entity: "note", entityId: row.id, clientId: c.existing ? c.existing.client_id : row.client_id, ip: "device", success: false, details: { via: "sync", reason: "fingerprint or authenticator code required", kept: "draft" } });
         if (c.existing && c.existing.status !== "draft") return;
+        if (c.existing && !c.existing.deleted_at && row.deleted_at) {
+          const reminders2 = closeSignReminders(c.existing.author_id, c.existing.id, c.existing.client_id);
+          for (const id of reminders2) require_audit().log({ user: c.user, action: "task.update", entity: "task", entityId: id, clientId: c.existing.client_id, ip: "device", details: { via: "sync", status: "done", cause: "deleted", note: c.existing.id } });
+          return;
+        }
         const n = db3.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required, ai_assisted FROM notes WHERE id=?`, row.id);
         if (!n || n.status === "draft") return;
         const hash2 = require_note_signature().signatureHash(n, n.signed_by);
@@ -13895,6 +13901,19 @@ var require_tasks = __commonJS({
     var noticeBy = (row) => (noticeEntry(row) || {}).user_id || row && noticeIds.get(row.id) || null;
     var NOTICE = "This notice tells the client's primary worker about a change to their client's record; only they can mark it seen (a supervisor can delete it)";
     var deviceNotice = (row, c) => row.assigned_to !== c.user.id && /^Changed: [^\n]*\n(?:[^\n]*\n)*Reference: client record change notice$/.test(String(row.description_enc || ""));
+    function addsSignReminder(row, existing) {
+      const next = row.description !== void 0 ? row.description : row.description_enc;
+      if (next === void 0 || next === null) return false;
+      const { SIGN_REMINDER } = require_notes();
+      if (!String(next).includes(SIGN_REMINDER)) return false;
+      let before = "";
+      try {
+        before = existing.description_enc ? require_crypto().decrypt(existing.description_enc) : "";
+      } catch {
+        before = "";
+      }
+      return !before.includes(SIGN_REMINDER);
+    }
     module.exports = define2({
       table: "tasks",
       // The record whose follow-up this to-do is (server/rules/follow-ups.js): a device's to-do carries its call's or
@@ -13914,7 +13933,9 @@ var require_tasks = __commonJS({
       },
       editableBy: (user, row) => row.assigned_to === user.id || row.created_by === user.id || auth3.hasPerm(user, "records:manage-others") ? null : notPermitted("You cannot edit this record"),
       authorise(row, c) {
-        if (c.existing) return c.existing.assigned_to !== c.user.id && isNotice(c.existing) ? notPermitted(NOTICE) : null;
+        if (c.existing && c.existing.assigned_to !== c.user.id && isNotice(c.existing)) return notPermitted(NOTICE);
+        if (c.existing && c.existing.created_by !== c.user.id && addsSignReminder(row, c.existing)) return notPermitted("Only whoever made this to-do can make it a reminder to sign notes");
+        if (c.existing) return null;
         return c.via === "sync" && deviceNotice(row, c) ? { reason: null, quiet: true } : null;
       },
       // Finishing someone's work closes theirs: a discharge on a device cancels the client's open to-dos, when the
@@ -42649,7 +42670,8 @@ var require_notes2 = __commonJS({
         if (n.status !== "draft") throw badRequest("Signed notes are part of the legal record and cannot be deleted");
         if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden();
         db3.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), n.id);
-        audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip });
+        const reminders = require_notes().closeSignReminders(n.author_id, n.id, n.client_id);
+        audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reminders.length ? { reminders_closed: reminders } : void 0 });
         return { ok: true };
       });
       r.get("/api/notes/:id/verify", auth3.requireAuth, (ctx) => {
@@ -43210,7 +43232,7 @@ var require_me = __commonJS({
       WHERE n.author_id=? AND n.status='draft' AND n.deleted_at IS NULL AND c.deleted_at IS NULL AND ${nf.sql} ORDER BY n.updated_at DESC LIMIT 8`, uid, ...nf.params).map((n) => withClientName(ctx, n)).map((n) => ({ ...n, title: n.title_enc ? require_crypto().decrypt(n.title_enc) : null, title_enc: void 0, client_name: n.client_name || n.client_code }));
         const staged = db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL)`, uid).n;
         const tf = cf("t.client_id");
-        const dueToday = db3.all(`SELECT t.id, t.title_enc, t.due_at, t.priority, t.client_id, c.client_code, ${NAME_COLS} FROM tasks t LEFT JOIN clients c ON c.id=t.client_id
+        const dueToday = db3.all(`SELECT t.id, t.title_enc, t.due_at, t.priority, t.status, t.client_id, c.client_code, ${NAME_COLS} FROM tasks t LEFT JOIN clients c ON c.id=t.client_id
       WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND substr(t.due_at,1,10) <= date('now','localtime') AND (t.client_id IS NULL OR ${tf.sql}) ORDER BY t.due_at LIMIT 10`, uid, ...tf.params).map((t) => withClientName(ctx, t)).map(require_tasks2().presentTask).map((t) => t.client_id ? { ...t, client_name: t.client_name || t.client_code } : t);
         const lastSeenElsewhere = db3.one(`SELECT last_seen_at, user_agent FROM sessions WHERE user_id=? AND revoked_at IS NULL AND id<>? ORDER BY last_seen_at DESC LIMIT 1`, uid, ctx.session.id);
         require_audit().log({ user: ctx.user, action: "me.continue", ip: ctx.ip, details: { recent: recent.length, drafts: drafts.length, due_today: dueToday.length } });

@@ -45,6 +45,18 @@ replacing the files and restarting.
   describes Home's to-dos and the new note type; docs/market/EVALUATION-RESPONSE.md and STRATEGY.md state 1.23.1 as
   the latest release.
 
+### Fixed in the review of the 1.23.2 integration
+
+- Fixed: a worker could paste a "finish and sign" reminder's last line into any to-do someone else gave them on a
+  client, which then passed for a supervisor's reminder (keeping **Remind** away) and closed when they signed. Only the
+  to-do's maker can now put that line into it, at the office and from a device (`server/rules/tasks.js`).
+- Fixed: a "finish and sign" reminder whose last draft was deleted rather than signed stayed open; deleting the
+  author's last draft on that record now closes it, audited as `task.update` from a device (`note.delete` lists it).
+- Fixed: **Undo** on Home's "Done" reopened an in-progress to-do as open, and took the worker back to Home if they had
+  moved on; it now reopens it as it was, where they are.
+- Fixed: a worker's own to-do titled just "Call back" or "Text back" could be taken for a call's follow-up and moved
+  or cancelled with it; only a to-do linked to the call, or with a purpose in its title, is.
+
 ## 1.23.1 — 2026-10-01
 
 A stabilisation patch of 1.23.0: fixes, tests, documentation and evidence, with no migration, no new or widened

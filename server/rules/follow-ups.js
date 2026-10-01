@@ -30,6 +30,9 @@ const day = (v) => (v ? String(v).slice(0, 10) : null);
 const plain = (v) => { if (!v) return null; try { return decrypt(v); } catch { return null; } };
 // Titles compare without case or surrounding space: an older SUDS wrote some labels in another case.
 const norm = (t) => (t === null || t === undefined ? null : String(t).trim().toLowerCase());
+// A call's title with no purpose (1.23.2) is too plain to recognise a to-do by: a worker's own "Call back" is not taken
+// for a follow-up unless it is linked to the call (review of 1.23.2).
+const GENERIC = new Set(['call back', 'text back']);
 const truthy = (v) => v === true || v === 1 || v === '1' || v === 'true';
 
 const SPECS = {
@@ -104,7 +107,7 @@ function reconcile(table, row, prev, { user, ip }, extra = {}, earlier = null) {
     const cand = db.all(`SELECT * FROM tasks WHERE ${S.link} IS NULL AND ${row.client_id ? 'client_id=?' : 'client_id IS NULL'} AND assigned_to IN (${[...workers].map(() => '?').join(',')})`,
       ...(row.client_id ? [row.client_id] : []), ...workers)
       .map(t => ({ ...t, _title: plain(t.title_enc) }))
-      .filter(t => titles.has(norm(t._title)) && lookFor.has(day(t.due_at)) && OPEN.includes(t.status) && S.ours(t, t._title));
+      .filter(t => titles.has(norm(t._title)) && !GENERIC.has(norm(t._title)) && lookFor.has(day(t.due_at)) && OPEN.includes(t.status) && S.ours(t, t._title));
     if (cand.length) {
       const t = cand[0];
       db.run(`UPDATE tasks SET ${S.link}=?, updated_at=? WHERE id=?`, row.id, db.now(), t.id);

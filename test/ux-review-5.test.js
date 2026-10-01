@@ -295,3 +295,21 @@ test('a "finish and sign" reminder carries no record id and closes once the auth
   assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r.data.id).status, 'done', 'closed once the author has no draft left there');
   assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, own.data.id).status, 'open', 'the worker\'s own to-do is left alone');
 });
+
+// Review of 1.23.2: the reminder is recognised by its last line, which a worker could paste into any to-do someone else
+// gave them; and one whose last draft was deleted rather than signed stayed open.
+test('only a to-do\'s maker can make it a sign reminder; deleting the last draft closes the reminder', async () => {
+  const { SIGN_REMINDER } = require('../server/rules/notes');
+  const c = await clin.post('/api/clients', { first_name: 'Rem', last_name: 'Inderthree', status: 'active', confirm_duplicate: true });
+  const given = await sup.post('/api/tasks', { client_id: c.data.id, assigned_to: U.clin, title: 'Call the clinic', due_at: today });
+  assert.equal(given.status, 201, JSON.stringify(given.data));
+  const forged = await clin.put(`/api/tasks/${given.data.id}`, { description: `Noted.\n${SIGN_REMINDER}` });
+  assert.equal(forged.status, 403, JSON.stringify(forged.data));
+  assert.equal((await clin.put(`/api/tasks/${given.data.id}`, { description: 'Left a message.' })).status, 200, 'other edits stand');
+  const n1 = (await clin.post('/api/notes', { client_id: c.data.id, kind: 'admin', content: 'Draft.', occurred_at: iso() })).data.id;
+  const r = await sup.post('/api/tasks', { client_id: c.data.id, assigned_to: U.clin, title: 'Finish and sign your administrative note', description: `Sup asked you to finish and sign this draft note.\n${SIGN_REMINDER}`, due_at: today });
+  assert.equal((await clin.put(`/api/tasks/${r.data.id}`, { due_at: today })).status, 200, 'the worker can still edit a real reminder');
+  assert.equal((await clin.del(`/api/notes/${n1}`)).status, 200);
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r.data.id).status, 'done', 'no draft left to sign: the reminder closes');
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, given.data.id).status, 'open', 'the ordinary to-do is left alone');
+});

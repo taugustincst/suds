@@ -216,6 +216,12 @@ module.exports = define({
     if (c.existing) reissueAddenda(row.id, c.existing.counseling_note, o.counseling_note ?? c.existing.counseling_note);
     if (c.signRefused) require('../audit').log({ user: c.user, action: 'note.sign.failed', entity: 'note', entityId: row.id, clientId: c.existing ? c.existing.client_id : row.client_id, ip: 'device', success: false, details: { via: 'sync', reason: 'fingerprint or authenticator code required', kept: 'draft' } });
     if (c.existing && c.existing.status !== 'draft') return;
+    // A draft deleted on a device: as over REST, a reminder to sign that author's drafts on this record closes once none is left.
+    if (c.existing && !c.existing.deleted_at && row.deleted_at) {
+      const reminders = closeSignReminders(c.existing.author_id, c.existing.id, c.existing.client_id);
+      for (const id of reminders) require('../audit').log({ user: c.user, action: 'task.update', entity: 'task', entityId: id, clientId: c.existing.client_id, ip: 'device', details: { via: 'sync', status: 'done', cause: 'deleted', note: c.existing.id } });
+      return;
+    }
     const n = db.one(`SELECT id, author_id, client_id, status, signed_by, content_enc, structured_enc, cosign_required, ai_assisted FROM notes WHERE id=?`, row.id);
     if (!n || n.status === 'draft') return;
     const hash = require('../note-signature').signatureHash(n, n.signed_by);
