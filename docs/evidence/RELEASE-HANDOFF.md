@@ -1,5 +1,23 @@
 # Release hand-off: tags v1.16.3 to v1.23.0
 
+> **The one owner action: run step 1, then step 2's tag commands and its one `git push`.** It is what unblocks:
+>
+> * **Self-hosting.** SUDS Server's installer and `upgrade.sh` download `suds-vX.Y.Z.zip` from a GitHub Release
+>   (`deploy/linux/lib.sh` `stage_release`). No release after 1.16.2 has one until its tag is pushed and its
+>   `release.yml` run is approved, so a county server can only be installed from a copied tree or zip today.
+> * **The release gate.** No release after 1.16.2 has been through it. A tag starts `release.yml` (gate, verify,
+>   approval), and from then on every release does (docs/RELEASE.md, *Stabilisation (from 1.23.1)*); once the tags
+>   exist, the maintaining assistant does not push `gh-pages` directly again.
+> * **Everything that measures from "the previous release"** (the release policy, `scripts/migration-order.js`,
+>   *Backports*), which measures from `v1.16.2` until then. CI's `release-policy` job measures from the commits in
+>   the table below meanwhile, and from the tags once they exist.
+>
+> **If 1.23.1 is stamped before the push**, its tag goes in the same push: the integrator adds a `v1.23.1` row to the
+> table, its `git tag -a v1.23.1 ...` line to step 2 and `v1.23.1` to the end of the `git push` line, and the counts
+> ("ten") become eleven. `v1.23.1` is then the newest tag, so its run is the one that is Latest and republishes the
+> site; 1.23.1 ships without a policy exception, so its gate needs no `policy_exception` (*Run workflow* is not
+> needed for it).
+
 Ten versions are on `main` and released (1.23.0 is what GitHub Pages serves) but **none is tagged**: 1.16.3 and
 1.16.4 went out with 1.17.0, and 1.16.4 to 1.23.0 were published to GitHub Pages by a direct push to `gh-pages` at
 the owner's request, with no tag, no GitHub Release and no approval in the `release` environment
@@ -94,9 +112,15 @@ git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 
 would put the 1.16 site over 1.23.0; the 1.16 kernel refuses the databases 1.17.0 and later migrated, and everyone
 using SUDS on this device would be locked out. With all ten in one push, `v1.23.0` is the newest tag from the start.
 
-**Before 1.23.1.** Push the tags while `main`'s `package.json` still says 1.23.0. If 1.23.1 or 1.24.0 is stamped
-first, add its tag to the same push: `v1.23.0` is then no longer the newest release, and the newer one's run is the
-one that is Latest and republishes the site.
+**Before 1.23.1.** Push the tags while `main`'s `package.json` still says 1.23.0. If 1.23.1 is stamped first, add
+its tag to the same push: `v1.23.0` is then no longer the newest release, and `v1.23.1`'s run is the one that is
+Latest and republishes the site. The integrator prepares that at the 1.23.1 stamp, in the same places as each earlier
+row: the table row (the commit after `Release 1.23.1` that adds its SBOM, its CHANGELOG date, its zip's SHA-256 by a
+later commit), an `R1231=$(git log -1 --format=%H --grep='^SBOM of the 1.23.1 stamp' origin/main)` line and
+`$R1231` in both check loops, `git tag -a v1.23.1 "$R1231" -m "SUDS 1.23.1"`, `v1.23.1` at the end of the push, and
+in step 3 a `v1.23.1` row (its gate **passes**: a patch with no exception; approve the release job and its `Web app`
+run) with `v1.23.0`'s row changed to "Not Latest; no `Web app` run". (1.24.0 cannot be stamped first: the feature
+freeze holds it until 2026-10-29, docs/RELEASE.md, *Stabilisation (from 1.23.1)*.)
 
 ## 3. What each tag's runs do, and what to approve
 

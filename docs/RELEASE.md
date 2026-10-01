@@ -35,6 +35,48 @@ Rules for every release:
    release each.
 5. The staged rollout ([ADOPTION.md](ADOPTION.md#3-staged-release-cadence)) still applies: pilot group first.
 
+### Stabilisation (from 1.23.1)
+
+Ten releases, 1.16.3 to 1.23.0, shipped in about two days; every feature release among them went out under a policy
+exception, and none was tagged or went through the release gate (the *Record* entries and the exceptions table,
+below). A county IT reviewer reads that as a release process that is written down but not followed. The owner chose
+a stabilisation release, 1.23.1, and these commitments, which hold until this section is changed by the owner:
+
+1. **Feature freeze.** The next feature release, 1.24.0, comes **no earlier than 2026-10-29**, 28 days after 1.23.0
+   (released 2026-10-01), and only through the release gate: a `v1.24.0` tag the owner pushes, `release.yml`'s gate,
+   verify and approved release job. Until then only patch releases (1.23.x): defect and security fixes, no schema
+   migration, no new or widened permission, no new route, at most 1,500 counted lines.
+2. **No further policy exceptions, except a security fix.** A release that breaks the cadence or the patch rules is
+   made only to ship a security fix that cannot wait, and its CHANGELOG section or its *Record* says so on a line of
+   its own, `Security exception: <reason>`, which the CI check below reads. An owner's wish for a feature sooner is
+   not an exception any more: it waits for the next feature release.
+3. **1.23.x is the supported line.** It gets every defect and security fix as a patch until 1.24.0 is released; after
+   that, security fixes only, for **30 days after 1.24.0's release date** (so at least until 2026-11-28), from
+   `maint/1.23` (*Supported versions* and *Backports*, below). 1.22.x and older get nothing more: upgrade to 1.23.x.
+4. **Every release is tagged by the owner and published by `release.yml`.** The owner pushes the `vX.Y.Z` tag; the
+   GitHub Release, its zip and checksum come from `release.yml`, and GitHub Pages is updated by the `Web app` run that
+   release starts, approved in the `release` environment. **Once the owner has pushed the owed tags
+   ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), the maintaining assistant does not push `gh-pages`
+   directly again**, for any reason. Until those tags exist, a direct push of a stamped, CI-green build to `gh-pages`
+   is the only path the assistant has to publish, and each such push is recorded in that version's *Record* and in
+   the exceptions table (as 1.16.4 to 1.23.0 were).
+5. **The policy is checked on every push, not only at a tag.** CI's `release-policy` job
+   (`scripts/release-policy-ci.js`) compares each pushed commit with the newest release: its tag, or, while the tags
+   are owed, the commit the hand-off records for it (`scripts/release-policy.js --previous-ref`). Work after a
+   released version is checked as its next patch while the feature interval runs; a stamped patch that adds a
+   migration, a permission or a route, or goes over the size limit, fails; a minor stamped within 28 days of the
+   previous feature release fails unless a security exception is recorded. A red `release-policy` job fails the CI
+   run, and the release gate refuses a commit whose CI run failed.
+
+**1.23.1 record (it becomes *the* Record paragraph, under its own bold *Record* heading, when the integrator stamps
+1.23.1).** 1.23.1 ships **without a policy exception**: a patch of 1.23.0 under the patch rules (no migration, no new
+or widened permission, no new route, within the 1,500-line limit; `node scripts/release-policy.js --version 1.23.1
+--previous v1.23.0 --previous-ref 9877d07` passes), with fixes, hardening, tests, documentation and evidence only.
+It is the first release under *Stabilisation*: the owner tags it, in the same push as the ten owed tags if they are
+not pushed by then (*Before 1.23.1* in the hand-off), and `release.yml` and its `Web app` run publish it. If 1.23.1
+has to go live before the owner has pushed any tag, the direct `gh-pages` push is said here and in the exceptions
+table, as point 4 requires; it is not a policy exception (the patch rules pass), but it is not the gate either.
+
 ### Supported versions
 
 | Line | Gets | For how long |

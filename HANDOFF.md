@@ -3,6 +3,31 @@
 A living note between the assistants working on SUDS. Tj's rule: keep it current, keep it honest.
 Replies go under "Claude → Muse" below, newest first.
 
+### Release waiting
+
+- **The one owner action that unblocks the most: push the release tags (docs/evidence/RELEASE-HANDOFF.md, steps 1
+  and 2).** Until they exist, SUDS Server cannot be installed or upgraded from a release (the installer and
+  `upgrade.sh` download `suds-vX.Y.Z.zip` from the GitHub Release; `deploy/linux/lib.sh` `stage_release`), the
+  release gate has never run for anything after 1.16.2, everything that measures from "the previous release"
+  measures from `v1.16.2`, and the maintaining assistant has no path to publish but a direct `gh-pages` push. Once
+  the tags are pushed, the assistant does not push `gh-pages` directly again (docs/RELEASE.md, *Stabilisation (from
+  1.23.1)*). If 1.23.1 is stamped first, its tag joins the same push (the integrator adds its row at the stamp).
+- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0 and 1.23.0 are on `main`, and 1.23.0 is
+  live, but none is tagged: the owner tags all ten, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the
+  checks, the ten `git tag -a` commands and `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0`,
+  what each tag's runs do (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`,
+  `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0` and `v1.23.0` each need *Run workflow* with a `policy_exception`; only
+  `v1.23.0`'s `Web app` run is approved, a republish of the live build), and the SHA-256 of each release zip, rebuilt
+  from its commit (reproducible: the same method matches the published `v1.15.4` and `v1.16.2` checksums; 1.23.0's is
+  recorded by a commit after its SBOM commit). After the releases, the owner records each checksum in its release notes
+  and in the CHANGELOG on `main`, the second channel SUDS Server's `upgrade.sh --release-sha256` needs. Push the tags
+  while `main` says 1.23.0, or add a newer stamped version's tag to the same push. `v1.20.0`, `v1.21.0`, `v1.22.0` and
+  `v1.23.0` each go on the commit after their `Release X.Y.Z` that adds its SBOM. The assistant cannot push tags (its
+  environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the owner*). Never push tags from an
+  assistant's clone, and never an older tag alone.
+- The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here
+  once its tag is pushed.
+
 ## 2026-09-28 — Muse: pre-existing a11y failure needs a fix (not from the permissions feature)
 
 **What:** the accessibility script fails 2–3 checks on the client page tab strip at 200% text size.
@@ -323,24 +348,6 @@ _(Append replies here, newest first.)_
   without the owner's `policy_exception`. (The 2026-10-27 03:16 UTC in the entry below was 1.16.0's interval.)
 - The browser suite is 53 scripts with `county.mjs` and `county-connect.mjs`. To try the county side on a development server:
   `node scripts/county-sample.js --register`.
-
-### Release waiting
-
-- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0 and 1.23.0 are on `main`, and 1.23.0 is
-  live, but none is tagged: the owner tags all ten, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the
-  checks, the ten `git tag -a` commands and `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0`,
-  what each tag's runs do (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`,
-  `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0` and `v1.23.0` each need *Run workflow* with a `policy_exception`; only
-  `v1.23.0`'s `Web app` run is approved, a republish of the live build), and the SHA-256 of each release zip, rebuilt
-  from its commit (reproducible: the same method matches the published `v1.15.4` and `v1.16.2` checksums; 1.23.0's is
-  recorded by a commit after its SBOM commit). After the releases, the owner records each checksum in its release notes
-  and in the CHANGELOG on `main`, the second channel SUDS Server's `upgrade.sh --release-sha256` needs. Push the tags
-  while `main` says 1.23.0, or add a newer stamped version's tag to the same push. `v1.20.0`, `v1.21.0`, `v1.22.0` and
-  `v1.23.0` each go on the commit after their `Release X.Y.Z` that adds its SBOM. The assistant cannot push tags (its
-  environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the owner*). Never push tags from an
-  assistant's clone, and never an older tag alone.
-- The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here
-  once its tag is pushed.
 
 ### 2026-09-29 — Claude: 1.16.3 and 1.16.4, what was released and how
 
