@@ -65,7 +65,14 @@ async function signInWithPassword(page, user, pw) {
   await api(page, 'PUT', '/api/me/prefs', { tour_done: true, first_day_skip: true, mfa_banner_collapsed: true }); await settle(page);
   await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
 }
-async function signOut(page) { await page.evaluate(async () => (await import('./app.js')).logout()); await page.waitForSelector('input[name=username]'); await settle(page); }
+// `passkeyReturns`: the virtual authenticator answers the username field's passkey suggestion (conditional UI) at once,
+// so the sign-in page can be gone before it is ever seen (a CI run waited 30 s for it): then the caller checks the
+// sign-in that follows instead of the sign-in page.
+async function signOut(page, { passkeyReturns = false } = {}) {
+  await page.evaluate(async () => (await import('./app.js')).logout());
+  if (!passkeyReturns) await page.waitForSelector('input[name=username]');
+  await settle(page);
+}
 async function axe(page, where) {
   if (!axeSource) { fail(`${where}: axe-core is not installed (npm i --no-save playwright axe-core)`); return; }
   await page.evaluate(axeSource + ';0').catch(() => {});
@@ -164,8 +171,10 @@ try {
   // ---------------- 3. sign in with the fingerprint; refused without user verification; refused once removed ----------------
   // Signed out, the username field's suggestions (conditional UI) offer the passkey; Chromium's virtual authenticator
   // picks it at once, as a person tapping the suggestion would.
-  await signOut(P);
-  ok(await P.waitForSelector('.layout', { timeout: 15000 }).catch(() => null), 'signed out, the passkey suggested in the username field (conditional UI) signs straight back in');
+  await signOut(P, { passkeyReturns: true });
+  // Signed back in when the office says so (not when a page drawn before the sign-out is still showing).
+  const back = await until(async () => { const r = await api(P, 'GET', '/api/auth/me').catch(() => null); return r && r.status === 200 && r.data && r.data.user ? r.data.user : null; }, { timeout: 15000 });
+  ok(back && await P.waitForSelector('.layout', { timeout: 15000 }).catch(() => null), 'signed out, the passkey suggested in the username field (conditional UI) signs straight back in');
   eq((await api(P, 'GET', '/api/auth/me')).data.user.username, 'mrivera', 'as the passkey\'s owner');
   // The button, in a browser without those suggestions.
   await nav.ctx.addInitScript(() => { if (window.PublicKeyCredential) window.PublicKeyCredential.isConditionalMediationAvailable = async () => false; });

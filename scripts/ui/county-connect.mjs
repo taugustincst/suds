@@ -33,7 +33,16 @@ try { axeSource = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8'
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 const STRUCTURE = ['landmark-one-main', 'landmark-no-duplicate-main', 'landmark-unique', 'page-has-heading-one', 'heading-order', 'empty-heading', 'aria-dialog-name', 'empty-table-header'];
 
-const today = new Date().toISOString().slice(0, 10);
+// The office server's date is the machine's local one (ORG_TIMEZONE unset): take the same, and never start within three
+// minutes of midnight, when the period this script sends and the county's own list of periods could fall on either
+// side of the day's change (a CI run that crossed midnight on 30 September saw the quarter move under it).
+const localDay = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+{
+  const now = new Date(); const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const left = midnight - now;
+  if (left < 180000) { const start = localDay(); await until(() => localDay() !== start, { timeout: left + 10000, every: 1000 }); }
+}
+const today = localDay();
 const lastDay = (y, m) => new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
 const lq = (() => { let y = Number(today.slice(0, 4)); let q = Math.floor((Number(today.slice(5, 7)) - 1) / 3) - 1; if (q < 0) { q = 3; y--; } const m1 = q * 3 + 1; return { from: `${y}-${String(m1).padStart(2, '0')}-01`, to: lastDay(y, m1 + 2) }; })();
 
