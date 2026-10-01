@@ -8,7 +8,7 @@ must exist before the vendor can host anything, and what it costs.
 **Current status: SUDS is not offered as a hosted service** (true of every release so far). It is self-hosted by
 the programme, its IT partner or its county (since 1.18.0 optionally with SUDS Server, the hardened Linux installer
 and its weekly signed compliance check: [../SELF-HOSTING.md](../SELF-HOSTING.md); run for real in a systemd
-container on Ubuntu 24.04, most recently on 1.21.0, with 1.20.0 and 1.22.0 fixing what the runs found, but not yet
+container on Ubuntu 24.04, most recently on 1.23.0, with 1.20.0 and 1.22.0 fixing what earlier runs found, but not yet
 on a real VM or on RHEL 9 by the project). The vendor is one person, offering business-hours help. Nothing on this page should
 be read as a hosted offer until the checklist in *Before the vendor-hosted tier can be offered* is complete and
 this line is changed.

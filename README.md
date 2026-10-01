@@ -132,7 +132,7 @@ and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How
 * **SUDS Server**: a one-command hardened install on an Ubuntu 24.04 or RHEL 9 VM, with a weekly compliance check
   whose signed report shows what it observed against the HIPAA Security Rule and 42 CFR §2.16, and lists what it
   cannot see. Evidence, not a certification; the installer has been run for real on Ubuntu 24.04 in a systemd
-  container, most recently on 1.21.0 (1.20.0 and 1.22.0 fix what the runs found), but not yet on a real VM or on RHEL 9 by the project, so try it on a
+  container, most recently on 1.23.0 (1.20.0 and 1.22.0 fix what earlier runs found), but not yet on a real VM or on RHEL 9 by the project, so try it on a
   staging VM first
   ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)).
 
