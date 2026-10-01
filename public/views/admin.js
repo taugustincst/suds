@@ -649,7 +649,7 @@ route('admin', async (r) => {
       const act = async (id, action) => { await post(`/api/admin/devices/${id}/${action}`, {}); refresh(); };
       return h('div', {},
         h('div', { class: 'banner small mb' }, 'One row per device (a browser running the offline copy, local mode) that has synced with this server. "Revoke" blocks it from syncing again until cleared. "Wipe" additionally erases its local database, the next time it tries to sync — it cannot reach a device that is never opened again; that limitation is inherent to working offline, not a bug in this feature.'),
-        h('p', { class: 'small mb', 'data-field-device-help': '1' }, 'Holds: "Everything" is all its user may see. A "Field device" holds only what a field worker needs: their own caseload assigned or seen recently (name, participant code and safety flags only), their contacts, their to-dos, supplies and lists; no notes, documents, consents or intake details. The change reaches the device at its next sync: it sends its changes first, then removes the rest. Set the window under ', h('a', { href: '#/admin?tab=settings&section=minimal' }, 'Program › Minimal personal information'), '.'),
+        h('p', { class: 'small mb', 'data-field-device-help': '1' }, 'Holds: "Everything" is all its user may see. A "Field device" holds only what a field worker needs: their own caseload assigned or seen recently (name, participant code and safety flags only), their contacts, their to-dos, supplies and lists; no notes, documents, consents or intake details. The change reaches the device at its next sync: it sends its changes first, then removes the rest. Once one of a person\'s devices is a field device (or while new devices start as field devices), every device they sync from is one, a new or reinstalled one too, unless you choose "Hold everything" for that device. Account settings (password, two-step verification, fingerprint sign-in) are changed in a browser, not from a field device. Set the window under ', h('a', { href: '#/admin?tab=settings&section=minimal' }, 'Program › Minimal personal information'), '.'),
         table([
           { label: 'Device', render: d => h('div', {}, h('b', {}, d.label || 'Device'), h('div', { class: 'small mono muted' }, d.id.slice(0, 8))) },
           { label: 'Belongs to', render: d => h('div', {}, d.display_name, h('div', { class: 'small muted' }, d.username)) },
@@ -657,7 +657,12 @@ route('admin', async (r) => {
           { label: 'Last synced', render: d => fmt.dt(d.last_seen_at) },
           { label: 'Syncs', key: 'sync_count' },
           // What its sync carries (1.21.0, server/field-scope.js), and whether a change has reached it yet.
-          { label: 'Holds', render: d => h('span', { 'data-device-scope': d.sync_scope || 'full' }, d.sync_scope === 'field' ? badge('Field device', 'info') : badge('Everything'), d.sync_scope === 'field' && !d.field_applied_at ? h('div', { class: 'small muted' }, 'from its next sync') : null) },
+          // 1.22.0: a whole device of an account held to the field scope becomes a field device at its next sync, unless
+          // an administrator chose "Hold everything" for it (scope_set_by 'admin'; server/devices.js).
+          { label: 'Holds', render: d => h('span', { 'data-device-scope': d.sync_scope || 'full', 'data-device-account-field': d.account_field ? '1' : '0' }, d.sync_scope === 'field' ? badge('Field device', 'info') : badge('Everything'),
+            d.sync_scope === 'field' && !d.field_applied_at ? h('div', { class: 'small muted' }, 'from its next sync') : null,
+            d.sync_scope !== 'field' && d.account_field && d.scope_set_by === 'admin' ? h('div', { class: 'small muted' }, 'kept whole by an administrator') : null,
+            d.sync_scope !== 'field' && d.account_field && d.scope_set_by !== 'admin' && !d.revoked_at ? h('div', { class: 'small muted' }, 'a field device from its next sync: this person\'s devices are field devices') : null) },
           { label: 'Status', render: d => d.revoked_at ? badge(d.wipe_requested_at ? 'Wiped' : 'Revoked', 'danger') : d.wipe_requested_at ? badge('Wipe pending', 'warn') : badge('Active', 'ok') },
           { label: '', render: d => h('div', { class: 'row' },
             !d.revoked_at && !d.wipe_requested_at ? h('button', { class: 'btn sm', onClick: async () => { if (await confirmDialog('Revoke this device', `"${d.label || 'This device'}" (${d.display_name}) will be blocked from syncing until you clear it. Its local copy is kept; use Wipe to erase it.`, { danger: true, okText: 'Revoke' })) act(d.id, 'revoke'); } }, 'Revoke') : null,
@@ -672,7 +677,14 @@ route('admin', async (r) => {
               if (!ok) return;
               await post(`/api/admin/devices/${d.id}/scope`, { scope: toField ? 'field' : 'full' });
               toast(toField ? 'It becomes a field device at its next sync' : 'It holds everything again from its next sync', 'ok'); refresh();
-            } }, d.sync_scope === 'field' ? 'Hold everything' : 'Make field device') : null) },
+            } }, d.sync_scope === 'field' ? 'Hold everything' : 'Make field device') : null,
+            // A whole device of a person held to the field scope that is whole only by default: keep it whole (1.22.0).
+            !d.revoked_at && d.sync_scope !== 'field' && d.account_field && d.scope_set_by !== 'admin' ? h('button', { class: 'btn sm', 'data-device-keep-whole': d.id, 'aria-label': `Keep everything on ${d.label || 'device'} of ${d.display_name}`, onClick: async () => {
+              const ok = await confirmDialog('Keep everything on this device', `"${d.label || 'This device'}" (${d.display_name}) keeps everything ${d.display_name} may see, although their other devices are field devices. Do this only for a device that stays in a safe place, such as a supervisor's office computer.`, { okText: 'Keep everything' });
+              if (!ok) return;
+              await post(`/api/admin/devices/${d.id}/scope`, { scope: 'full' });
+              toast('It keeps everything', 'ok'); refresh();
+            } }, 'Keep everything') : null) },
         ], devices, { empty: 'No devices have synced yet.' }));
     },
   };

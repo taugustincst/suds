@@ -133,6 +133,23 @@ try {
   ok(await dev.$eval('[data-field-device-status]', e => /^Field device: holds only/.test(e.textContent)), 'with "Field device: holds only …"');
   ok(!(await dev.$('input[name=field_device]')), 'and no longer offers the choice');
   await axe(dev, 'This device, a field device');
+
+  // ---- 5. the scope follows the account (built for 1.22.0) ----
+  await admin.go('admin?tab=devices');
+  eq(await admin.page.$eval('[data-device-scope="field"]', e => e.dataset.deviceAccountField), '1', 'Synced devices knows the navigator\'s account is now held to the field scope');
+  ok(await admin.page.$eval('[data-field-device-help]', e => /every device they sync from is one/.test(e.textContent)), 'and says every device of theirs is a field device unless one is marked "Hold everything"');
+  // A field device's sync session cannot change the account: the office refuses it and points to the browser.
+  const refused = await dev.evaluate(async (base) => {
+    const h = { 'Content-Type': 'application/json', 'X-Sync-Client': '1', 'X-Requested-With': 'suds', 'X-Device-Id': 'ui-field-device-check' };
+    const login = await fetch(base + '/api/auth/login', { method: 'POST', credentials: 'omit', headers: h, body: JSON.stringify({ username: 'mrivera', password: 'Navigator2026!!' }) }).then(r => r.json());
+    const r = await fetch(base + '/api/auth/sessions', { credentials: 'omit', headers: { ...h, Authorization: 'Bearer ' + login.token } });
+    const body = await r.json();
+    await fetch(base + '/api/auth/logout', { method: 'POST', credentials: 'omit', headers: { ...h, Authorization: 'Bearer ' + login.token }, body: '{}' });
+    return { scope: login.device && login.device.scope, status: r.status, error: body.error };
+  }, base);
+  eq(refused.scope, 'field', 'a new device id of the same account signs in as a field device');
+  eq(refused.status, 403, 'and its sync session cannot reach account management');
+  ok(/web browser/.test(refused.error || ''), 'the refusal says to use a web browser', refused.error);
 } catch (e) {
   fail('threw: ' + (e && e.stack || e));
 }
