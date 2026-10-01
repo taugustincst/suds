@@ -11,6 +11,11 @@
 //   2. axe (WCAG 2.1 A/AA) on the Publish tab with what would be published, and on the release's dialog, at 1280
 //      and 390 px; nothing sideways at 390 and 320 px.
 //   3. Finance sees the releases (county:view) but prepares, publishes and withdraws nothing; read-only is refused.
+// Publication governance (built for 1.22.0): before 1, the small program has no consent to publication, so Check the
+// figures is refused as an alert that names it and offers to leave it out (which then says it was left out); on
+// Programs its consent is "No consent recorded", the Publication consent dialog (axe) records the date and the
+// agreement's reference with the keyboard, and it then reads "Agreed in writing". After the withdrawal in 1, the same
+// quarter is offered again as a corrected release, which says what it corrects. Finance sees the consent, never the button.
 // The programmes are made through the API as programs not on SUDS with figures the county entered, in a year no
 // release on this server covers yet (releases are append-only, so a second run uses an earlier year).
 import { chromium } from 'playwright';
@@ -72,7 +77,35 @@ try {
     const p = await api(adm, 'POST', '/api/county/programmes', { name, not_on_suds: true });
     eq(p.status, 201, `a program not on SUDS for the release (${name})`);
     for (const period of [q, q2]) eq((await api(adm, 'POST', `/api/county/programmes/${p.data.id}/entries`, { ...period, source_ref: 'Quarterly report (fictional)', funds: [fund(n)] })).status, 201, `with its figures for ${period.from} to ${period.to}`);
+    // The big program agreed to publication in writing; the small one has not yet (recorded in the browser below).
+    if (n === 200) eq((await api(adm, 'POST', `/api/county/programmes/${p.data.id}/publication-consent`, { agreed_on: `${year - 1}-12-01`, reference: 'Data contribution agreement (fictional)' })).status, 201, `${name} agreed to publication`);
   }
+
+  // ---------------- 1a. publication consent (built for 1.22.0) ----------------
+  await go(adm, 'county?tab=publish');
+  await adm.fill('#cpub-from', q.from); await adm.fill('#cpub-to', q.to);
+  await adm.click('[data-pub-prepare]');
+  ok(await until(() => adm.$('[data-pub-result][data-pub-outcome="refused"] [data-pub-no-consent="1"]')), 'a release naming a program with no consent to publication is refused');
+  ok((await adm.textContent('[data-pub-result]')).includes(`Tiny Mobile Unit ${year}`), 'naming the program');
+  eq(await adm.getAttribute('[data-pub-result]', 'role'), 'alert', 'as an alert');
+  ok(await focused(adm, '[data-pub-result]'), 'which takes the focus');
+  await adm.click('[data-pub-leave-out-retry]');
+  ok(await until(() => adm.$('[data-pub-result][data-pub-outcome="prepared"] [data-pub-consent-left-out]')), 'Leave it out and check again: prepared without it');
+  ok((await adm.textContent('[data-pub-consent-left-out]')).includes(`Tiny Mobile Unit ${year}`), 'and the release says it was left out for lack of consent');
+  ok(await adm.isChecked('#cpub-leave-out'), 'the choice is ticked on the form');
+  await go(adm, 'county?tab=programmes');
+  const tinyRow = `[data-cp-list] tr:has-text("Tiny Mobile Unit ${year}")`;
+  ok(/No consent recorded/.test(await adm.textContent(`${tinyRow} [data-cp-consent]`)), 'Programs: the small program shows no consent recorded, in words');
+  ok(/Agreed in writing/.test(await adm.textContent(`[data-cp-list] tr:has-text("Harbor Outreach ${year}") [data-cp-consent]`)), 'the big one shows it agreed in writing');
+  await adm.locator(`${tinyRow} [data-cp-consent-open]`).first().focus(); await adm.keyboard.press('Enter');
+  await adm.waitForSelector('.modal [data-cp-consent-dialog]');
+  await axe(adm, 'the Publication consent dialog (1280)');
+  await adm.fill('.modal input[name=agreed_on]', `${year - 1}-11-15`);
+  await adm.fill('.modal input[name=reference]', 'Letter of agreement LA-7 (fictional)');
+  await adm.focus('.modal input[name=reference]'); await adm.keyboard.press('Enter');
+  ok(await toast(adm, /consent to publication recorded/), 'recording the consent says so');
+  ok(await until(async () => /Agreed in writing/.test(await adm.textContent(`${tinyRow} [data-cp-consent]`))), 'and Programs shows it agreed in writing');
+  await axe(adm, 'Programs with publication consent (1280)');
 
   await go(adm, 'county?tab=publish');
   ok(await adm.$('[data-pub-intro]') && /small-cell method/.test(await adm.textContent('[data-pub-intro]')), 'Publish says what a publication release is');
@@ -127,6 +160,10 @@ try {
   ok(await until(async () => /Withdrawn/.test(await adm.textContent(`[data-pub-rows] tr:has-text("${year}")`))), 'it is listed withdrawn');
   ok(await until(() => focused(adm, '#cpub-list-h')), 'and the focus goes to the list\'s heading');
   ok(!(await adm.$(`[data-pub-rows] tr:has-text("${year}") [data-pub-withdraw]`)), 'a withdrawn release offers no Withdraw');
+  // The same quarter again, now that its release is withdrawn: a corrected release (built for 1.22.0).
+  await adm.click('[data-pub-prepare]');
+  ok(await until(() => adm.$('[data-pub-result][data-pub-outcome="prepared"] [data-pub-corrects="1"]')), 'the same quarter can now be prepared as a corrected release');
+  ok(/A corrected release: it replaces the release of this period withdrawn on/.test(await adm.textContent('[data-pub-corrects]')), 'which says what it corrects and that it was screened against it');
 
   // ---------------- 2. narrow screens ----------------
   for (const width of [390, 320]) {
@@ -150,6 +187,8 @@ try {
   await go(fin, 'county?tab=publish');
   ok(await until(() => fin.$(`[data-pub-rows] tr:has-text("${year}")`)), 'finance sees the releases');
   ok(!(await fin.$('[data-pub-preparer]')) && !(await fin.$('[data-pub-withdraw]')), 'but prepares and withdraws nothing');
+  await go(fin, 'county?tab=programmes');
+  ok(await until(() => fin.$('[data-cp-consent]')) && !(await fin.$('[data-cp-consent-open]')), 'finance sees each program\'s consent to publication, but records none');
   eq((await api(fin, 'POST', '/api/county/publications/prepare', { from: `${year}-07-01`, to: `${year}-09-30` })).status, 403, 'and the server refuses finance a release');
   await finCtx.close();
   const { ctx: roCtx, page: ro } = await signIn('rreader', PW);

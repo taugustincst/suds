@@ -217,6 +217,8 @@ function releaseBody(c) {
     h('ul', { 'data-pub-programmes': '1' }, c.programmes.map(p => h('li', {}, p.name, p.coverage === 'part' ? ' (part of the period)' : '',
       p.source === 'county_entered' || p.source === 'mixed' ? h('span', { class: 'small', 'data-pub-entered': '1' }, p.source === 'mixed' ? ` — some figures ${ENTERED_WORDS}` : ` — ${ENTERED_WORDS}`) : null))),
     !entered.counted ? h('p', { class: 'small', 'data-pub-entered-left-out': '1' }, `Figures entered by the county are left out${entered.left_out.length ? ` (${entered.left_out.join(', ')})` : ''}.`) : null,
+    c.left_out_without_consent ? h('p', { class: 'small', 'data-pub-consent-left-out': '1' }, `Left out for lack of consent to publication: ${c.left_out_without_consent.join(', ')}. Their figures are not in these totals.`) : null,
+    c.corrects ? h('p', { class: 'small', 'data-pub-corrects': String(c.corrects.length) }, `A corrected release: it replaces ${c.corrects.length === 1 ? 'the release' : `${c.corrects.length} releases`} of this period withdrawn on ${c.corrects.map(x => fmt.date(x.withdrawn)).join(', ')}, and was screened against everything ${c.corrects.length === 1 ? 'that release' : 'those releases'} printed.`) : null,
     sections.map(([g, rows]) => h('div', { 'data-pub-group': g }, h('h3', {}, PUB_GROUPS[g]),
       table([{ label: 'Measure', render: x => x.label }, { label: 'County total', cardLabel: 'Total', num: true, render: x => h('span', { 'data-pub-value': x.key }, shownValue(x)) },
         { label: 'Screened', render: x => (x.suppressed ? h('span', { 'data-pub-suppressed': x.key }, badge(SCREEN_NOTE[x.suppressed], 'warn')) : x.screened ? 'Shown' : 'Exact') }], rows))),
@@ -253,7 +255,7 @@ async function publishTab() {
     rows, { empty: 'No release published yet.' }));
   };
   const withdrawRelease = async (x) => {
-    const reason = await confirmDialog('Withdraw this release?', `The release for ${pubPeriod(x)} will be marked withdrawn wherever it is listed and in its files. It is kept as it was published (it was seen), and it still stops any overlapping period from being published.`,
+    const reason = await confirmDialog('Withdraw this release?', `The release for ${pubPeriod(x)} will be marked withdrawn wherever it is listed and in its files. It is kept as it was published (it was seen), and it still stops any overlapping period from being published. Exactly the same period can then be published again as a corrected release, screened against everything this one printed.`,
       { danger: true, okText: 'Withdraw', requireReason: true, minLength: 3, maxLength: 500, reasonLabel: 'Why is it withdrawn?' });
     if (!reason) return;
     try {
@@ -274,6 +276,7 @@ function prepareCard(refresh, listHeading) {
   const preset = h('select', { id: 'cpub-preset' }, h('option', { value: '' }, 'Choose a period…'), P.map(p => h('option', { value: p.key, selected: p.from === lq.from && p.to === lq.to }, p.label)));
   preset.addEventListener('change', () => { const p = P.find(x => x.key === preset.value); if (p) { fromI.value = p.from; toI.value = p.to; } });
   const enteredI = h('input', { type: 'checkbox', id: 'cpub-entered', name: 'entered', 'data-pub-exclude-entered': '1', 'aria-describedby': 'cpub-entered-help' });
+  const leaveOutI = h('input', { type: 'checkbox', id: 'cpub-leave-out', name: 'without_consent', 'data-pub-leave-out': '1', 'aria-describedby': 'cpub-leave-out-help' });
   const thresholdI = h('input', { type: 'number', id: 'cpub-threshold', name: 'threshold', min: '3', max: '50', step: '1', inputmode: 'numeric', 'aria-describedby': 'cpub-threshold-help' });
   const err = h('div', { class: 'err', id: 'cpub-err', role: 'alert', style: { flexBasis: '100%' } });
   // What would be published, or why not, said where the person is: the focus moves to it.
@@ -310,20 +313,28 @@ function prepareCard(refresh, listHeading) {
     err.textContent = ''; for (const i of [fromI, toI]) i.removeAttribute('aria-invalid');
     const problem = !fromI.value || !toI.value ? 'Choose a start and an end date.' : fromI.value > toI.value ? `The start date (${fmt.date(fromI.value)}) is after the end date (${fmt.date(toI.value)}).` : '';
     if (problem) { err.textContent = problem; fromI.setAttribute('aria-invalid', 'true'); toI.setAttribute('aria-invalid', 'true'); fromI.focus(); return; }
-    const c = { from: fromI.value, to: toI.value, entered: enteredI.checked ? 'exclude' : 'include', ...(thresholdI.value ? { threshold: Number(thresholdI.value) } : {}) };
+    const c = { from: fromI.value, to: toI.value, entered: enteredI.checked ? 'exclude' : 'include', ...(leaveOutI.checked ? { without_consent: 'leave_out' } : {}), ...(thresholdI.value ? { threshold: Number(thresholdI.value) } : {}) };
     checkBtn.disabled = true;
     try { show(reviewPanel(await post('/api/county/publications/prepare', c, { quiet: true }), c), true); }
-    catch (ex) { show(h('p', {}, h('b', {}, 'Not published. '), ex.message), false); }
+    catch (ex) {
+      // Programs with no consent to publication: named, with the choice to leave them out (the release then says so).
+      const lacking = ex.data && ex.data.reason === 'no_consent' && Array.isArray(ex.data.programmes) ? ex.data.programmes : null;
+      show(h('div', { 'data-pub-no-consent': lacking ? String(lacking.length) : null }, h('p', {}, h('b', {}, 'Not published. '), ex.message),
+        lacking ? h('ul', {}, lacking.map(x => h('li', {}, x.name))) : null,
+        lacking ? h('div', { class: 'btn-row' }, h('button', { class: 'btn', type: 'button', 'data-pub-leave-out-retry': '1', onClick: () => { leaveOutI.checked = true; f.requestSubmit(); } }, `Leave ${lacking.length === 1 ? 'it' : 'them'} out and check again`),
+          h('a', { class: 'btn ghost', href: '#/county?tab=programmes' }, 'Record consent on Programs')) : null), false);
+    }
     finally { checkBtn.disabled = false; }
   } },
   h('div', { class: 'field' }, h('label', { for: 'cpub-preset' }, 'Period'), preset),
   h('div', { class: 'field' }, h('label', { for: 'cpub-from' }, 'From'), fromI), h('div', { class: 'field' }, h('label', { for: 'cpub-to' }, 'To'), toI),
   h('div', { class: 'field' }, h('label', { for: 'cpub-threshold' }, 'Threshold (optional)'), thresholdI, h('div', { class: 'help', id: 'cpub-threshold-help' }, 'Empty: the county\'s own. It can be raised, never lowered.')),
   h('div', { class: 'field' }, h('label', { class: 'check', for: 'cpub-entered' }, enteredI, 'Leave out figures entered by the county'), h('div', { class: 'help', id: 'cpub-entered-help' }, 'Publishes only files the programs signed.')),
+  h('div', { class: 'field' }, h('label', { class: 'check', for: 'cpub-leave-out' }, leaveOutI, 'Leave out programs with no consent to publication'), h('div', { class: 'help', id: 'cpub-leave-out-help' }, 'Otherwise a release that would name one is refused. The release says which were left out.')),
   checkBtn, err);
   return h('section', { class: 'card mb', 'aria-labelledby': 'cpub-prep-h', 'data-pub-preparer': '1' },
     h('div', { class: 'card-head' }, h('h2', { id: 'cpub-prep-h' }, 'Prepare a publication release')),
-    h('p', { class: 'small' }, 'Choose a period that has ended. SUDS screens its combined figures and shows what would be published; you then confirm and publish. A period that overlaps a release already published cannot be published: the two could be subtracted.'),
+    h('p', { class: 'small' }, 'Choose a period that has ended. SUDS screens its combined figures and shows what would be published; you then confirm and publish. Each program named needs its written consent to publication (Programs). A period that overlaps a release already published cannot be published: the two could be subtracted. The one exception is a corrected release of exactly the period of a withdrawn one, screened against everything the withdrawn one printed.'),
     f, result);
 }
 
@@ -430,17 +441,55 @@ async function programmesTab() {
       table([{ label: 'Program', render: p => p.name }, { label: 'Key fingerprint', render: p => (p.on_suds === false ? h('span', { class: 'small', 'data-cp-not-on-suds': p.id }, 'Not on SUDS: figures entered by the county') : h('code', { class: 'small' }, p.fingerprint_display)) },
         { label: 'Status', render: p => badge(p.active ? 'Active' : p.keep_files ? 'Inactive: files still counted' : 'Inactive: files not counted', p.active ? 'ok' : '') }, { label: 'Files counting', num: true, render: p => num(p.current_submissions) },
         { label: 'Last file received', render: p => (p.last_received ? fmt.date(p.last_received) : '—') },
+        { label: 'Publication consent', render: consentCell },
         manage ? { label: '', srLabel: 'Actions', render: p => h('div', { class: 'row' }, h('button', { class: 'btn sm', 'data-cp-edit': p.id, 'aria-label': `Edit ${p.name}`, onClick: () => programmeForm(p) }, 'Edit'),
+          h('button', { class: 'btn sm ghost', 'data-cp-consent-open': p.id, 'aria-label': `Publication consent of ${p.name}`, onClick: () => consentDialog(p) }, 'Publication consent'),
           p.on_suds === false ? [
             h('button', { class: 'btn sm', 'data-cp-enter': p.id, 'aria-label': `Enter figures for ${p.name}`, disabled: !p.active, onClick: () => enterFiguresDialog(p) }, 'Enter figures'),
             h('button', { class: 'btn sm', 'data-cp-import': p.id, 'aria-label': `Import a CSV of ${p.name}'s figures`, disabled: !p.active, onClick: () => importCsvDialog(p) }, 'Import a CSV'),
             h('button', { class: 'btn sm ghost', 'data-cp-join': p.id, 'aria-label': `Add its key: ${p.name} now runs SUDS`, onClick: () => keysDialog(p) }, 'Add its key')]
             : h('button', { class: 'btn sm', 'data-cp-keys': p.id, 'aria-label': `Keys of ${p.name}`, onClick: () => keysDialog(p) }, 'Keys')) } : null].filter(Boolean),
-      rows, { empty: 'No programs registered yet.' })),
+      rows, { empty: 'No programs registered yet.' }),
+      h('p', { class: 'small muted', 'data-cp-consent-note': '1' }, CONSENT_HELP)),
     // County connection hook (views/countyconnect.js): each program's connection token, for county:manage. A program
     // not on SUDS has no key and nothing to send over a connection, so it is not offered one.
     await programmeConnections(rows.filter(p => p.on_suds !== false)));
 }
+// ---- publication consent, per program (built for 1.22.0; server/county-publication.js) ----
+const CONSENT_HELP = 'Publication consent: a publication release (Publish) names the programs whose figures it counts, so the county publishes figures that name a program only with its written agreement. Record the date and the agreement\'s reference here; a release that would name a program with none is refused, or leaves the program out.';
+/** A program's consent to publication, in words (never colour alone). */
+function consentCell(p) {
+  const c = p.publication_consent;
+  return c ? h('span', { 'data-cp-consent': 'agreed' }, badge('Agreed in writing', 'ok'), h('span', { class: 'small' }, ` ${fmt.date(c.agreed_on)}`))
+    : h('span', { 'data-cp-consent': 'none' }, badge('No consent recorded', 'warn'));
+}
+/** Record a program's written agreement to publication, see its history, or withdraw it (county:manage). */
+async function consentDialog(p) {
+  const d = await get(`/api/county/programmes/${p.id}/publication-consent`);
+  const done = (msg) => { m.close(); toast(msg, 'ok'); nav('county?tab=programmes&t=' + Date.now()); };
+  const history = d.rows.length ? h('div', {}, h('h3', {}, 'Recorded'), table([{ label: 'Agreed on', render: x => fmt.date(x.agreed_on) }, { label: 'Reference', render: x => x.reference || '—' },
+    { label: 'Recorded', render: x => `${fmt.date(x.recorded_at)}${x.recorded_by ? ` by ${x.recorded_by}` : ''}` },
+    { label: 'Status', render: x => (x.withdrawn_at ? h('span', {}, badge('Withdrawn', ''), h('span', { class: 'small' }, ` ${fmt.date(x.withdrawn_at)}${x.withdrawn_by ? ` by ${x.withdrawn_by}` : ''}`)) : badge('Current', 'ok')) }], d.rows)) : null;
+  let body;
+  if (d.current) {
+    body = h('div', { class: 'btn-row' }, h('button', { class: 'btn danger', type: 'button', 'data-cp-consent-withdraw': p.id, onClick: async () => {
+      if (!(await confirmDialog('Withdraw the consent to publication?', `Releases from now on cannot name ${p.name}: one that would is refused, or leaves it out. Releases already published stay as they are. The record of the consent is kept, marked withdrawn.`, { danger: true, okText: 'Withdraw consent' }))) return;
+      try { await post(`/api/county/programmes/${p.id}/publication-consent/withdraw`, {}); done(`${p.name}'s consent to publication withdrawn.`); } catch (e) { toast(e.message, 'error'); }
+    } }, 'Withdraw consent'));
+  } else {
+    body = form([
+      { name: 'agreed_on', label: 'Date the program agreed in writing', type: 'date', required: true },
+      { name: 'reference', label: 'The agreement\'s reference', required: true, span: true, help: 'Its title, number or where the signed copy is filed, so that it can be found (for example, "Data contribution agreement DCA-2026-07, contracts file").' },
+    ], { submitText: 'Record the consent', onCancel: () => m.close(), onSubmit: async (v) => {
+      await post(`/api/county/programmes/${p.id}/publication-consent`, { agreed_on: v.agreed_on, reference: v.reference });
+      done(`${p.name}'s consent to publication recorded.`);
+    } });
+  }
+  const m = modal(`Publication consent: ${p.name}`, h('div', { 'data-cp-consent-dialog': p.id },
+    h('p', { class: 'small' }, d.current ? `${p.name} agreed in writing on ${fmt.date(d.current.agreed_on)}: a publication release may name it and count its figures.` : `No consent to publication is recorded for ${p.name}. Record it once the program has agreed in writing (the data contribution agreement, or a letter): a release that would name a program without it is refused, or leaves the program out.`),
+    history, d.current ? null : h('h3', {}, 'Record the agreement'), body), { wide: true });
+}
+
 /** The fingerprint of the key being pasted, worked out as it is typed (debounced), to compare with the one read out (U6). */
 function fingerprintPreview(keyInput) {
   const shown = h('div', { class: 'help', 'data-cp-computed': '1', role: 'status' }, 'The key\'s fingerprint shows here once you paste it.');
