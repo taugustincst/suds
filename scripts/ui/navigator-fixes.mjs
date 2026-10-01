@@ -264,7 +264,9 @@ const nav = await session('mrivera', 'Navigator2026!!');
   eq(await page.$eval('.modal input[name=title]', i => i.value), 'Typed while the signal dropped', 'with what was typed still in it');
   const bannerEl = await page.$('#banners [data-banner="offline"]');
   ok(bannerEl, 'a persistent offline banner appears at the top');
-  ok(bannerEl && /on this device/.test(await bannerEl.textContent()) && await bannerEl.$('a[href="get-app.html"]'), 'pointing at the use-on-this-device page');
+  // 1.23.0: it says what happens to a contact in hand, and points at setting this phone up for the field, not at
+  // SUDS on this device (get-app.html, a different SUDS that cannot send the contact to the office).
+  ok(bannerEl && /kept on this phone/.test(await bannerEl.textContent()) && await bannerEl.$('a[href="#/field-phone"]') && !(await bannerEl.$('a[href="get-app.html"]')), 'saying what is kept, and pointing at setting this phone up for the field');
   await ctx.setOffline(false);
   await page.click('.modal button[type=submit]');
   ok(await until(async () => !(await page.$('#banners [data-banner="offline"]'))), 'the banner goes away once a request gets through');

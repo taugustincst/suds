@@ -1,4 +1,5 @@
-import { h, route, get, post, del, state, toast, undoToast, can, pageHead, prefs, fmt, listEntries, emptyState, stat, clear, announce } from '../app.js';
+import { h, route, get, post, del, state, toast, undoToast, can, pageHead, prefs, fmt, listEntries, emptyState, stat, clear, announce, newIdempotencyKey, confirmDialog } from '../app.js';
+import * as Q from '../outreach-queue.js';
 
 // Street outreach (1.17.0; server/outreach.js, docs/USER_GUIDE.md "Street outreach"). One screen, big targets,
 // one hand at 390 px: what kind of contact, what was handed out (− count + for each usual item, any other item
@@ -163,36 +164,86 @@ route('outreach', async () => {
   // and a second press is ignored. After a save the focus goes back to the top of the form (Contact), ready for
   // the next one; after a failure, to what went wrong.
   let saving = false;
+  // The submission's Idempotency-Key (1.23.0): one per contact, kept while the form holds the same contact, so the
+  // screen's attempt and any later one (Save again, or the waiting list's) are one contact at the office
+  // (server/crud.js keyedId). Its time is kept with it: the same contact, sent again, is the same request.
+  let pending = null;
+  // What the counts were before a save, so the form can be cleared and "Same as last contact" set as a save does.
+  const afterSave = (p) => {
+    const handed = Object.fromEntries(counters.filter(c => c.value() > 0).map(c => [c.kind === 'item' ? c.item.id : c.col, c.value()]));
+    const prevGiven = (prefs.get(LAST, null) || {}).given || null;
+    // A contact with nothing handed out keeps the last bundle for "Same as last contact".
+    const keep = Object.keys(handed).length ? handed : prevGiven;
+    prefs.set(LAST, { type: p.type, location: p.location, site: p.supply_site_id || null, given: keep });
+    for (const c of counters) c.reset();
+    notes.value = ''; participant.reset();
+    drawSame();
+    pending = null;
+    return prevGiven;
+  };
+  const typeLabel = (t) => fmt.label(t, 'INTERVENTION_TYPES');
+  // No signal: a contact that names nobody waits on the phone (public/outreach-queue.js); one with a participant code
+  // or notes is not kept there (no PHI in the office app's browser storage), and the worker may keep it without them.
+  async function keepWaiting(p, what) {
+    await Q.keep({ key: pending.key, payload: p, what, typeLabel: typeLabel(p.type) });
+    afterSave(p);
+    const n = (await Q.waiting()).length;
+    toast(`No signal: the contact (${what}) is kept on this phone and will be sent when you're back online. ${n} waiting.`, 'ok');
+    announce(`No signal. The contact is kept on this phone and will be sent when you are back online. ${n} contact${n === 1 ? '' : 's'} waiting to send.`);
+    await drawWaiting();
+  }
   const formEl = h('form', { class: 'card outreach-form', 'data-outreach-form': '1', novalidate: true, onSubmit: async (e) => {
     e.preventDefault();
     if (saving) return;
-    errorBox.classList.add('hidden'); errorBox.textContent = '';
+    errorBox.classList.add('hidden'); errorBox.replaceChildren();
     const p = payload(); const what = given(p);
+    const sig = JSON.stringify({ ...p, occurred_at: null });
+    if (pending && pending.sig === sig) p.occurred_at = pending.occurred_at;
+    else pending = { key: `outreach-${newIdempotencyKey()}`, sig, occurred_at: p.occurred_at };
     saving = true; saveBtn.setAttribute('aria-disabled', 'true'); saveBtn.textContent = 'Saving…';
     let saved = false;
     try {
-      const r = await post('/api/interventions', p);
-      const handed = Object.fromEntries(counters.filter(c => c.value() > 0).map(c => [c.kind === 'item' ? c.item.id : c.col, c.value()]));
-      // A contact with nothing handed out keeps the last bundle for "Same as last contact".
-      const keep = Object.keys(handed).length ? handed : ((prefs.get(LAST, null) || {}).given || null);
-      prefs.set(LAST, { type: p.type, location: p.location, site: p.supply_site_id || null, given: keep });
-      for (const c of counters) c.reset();
-      notes.value = ''; participant.reset();
-      drawSame();
+      const r = await post('/api/interventions', p, { idempotencyKey: pending.key });
+      const prevGiven = afterSave(p);
       const missed = (r && r.supplies_untracked) || [];
       const msg = `Contact saved: ${what}.${missed.length ? ' Not taken off any stock (no item kept for it).' : ''}`;
       // Undo for 10 seconds (1.22.0): a contact saved twice, or with the wrong count, is taken back here instead of
       // being hunted for under Visits. Deleting their own visit is what its worker may already do (the supplies go
       // back on the stock, server/rules/interventions.js afterDelete; the deletion is audited). The keyboard focus
-      // stays on the form, ready for the next contact.
-      if (r && r.id) undoToast(msg, async () => { await del(`/api/interventions/${r.id}`); await drawShift(); announce('The contact was taken back: it is not counted, and its supplies are back on the stock.'); }, { focus: false });
+      // stays on the form, ready for the next contact. Undo also puts "Same as last contact" back to the bundle
+      // before this one (1.23.0), or hides it when there was none: the undone contact's bundle is not offered.
+      if (r && r.id) undoToast(msg, async () => {
+        await del(`/api/interventions/${r.id}`);
+        prefs.set(LAST, { ...(prefs.get(LAST, null) || {}), given: prevGiven });
+        drawSame();
+        await drawShift(); announce('The contact was taken back: it is not counted, and its supplies are back on the stock.');
+      }, { focus: false });
       else toast(msg, 'ok');
       saved = true;
       await drawShift();
     } catch (err) {
+      if (err && err.offline && !state.local && await Q.available()) {
+        if (!Q.identifies(p)) {
+          try { await keepWaiting(p, what); saved = true; } catch { /* storage refused: say so below */ }
+        } else {
+          // The contact stays in the form; it may be kept without what identifies someone.
+          errorBox.append(h('p', {}, h('b', {}, 'No signal. '), 'This contact has a participant code or notes, which SUDS does not keep on a phone. It is still in the form: save it again when you have signal, or keep it on this phone without the code and notes.'),
+            h('button', { type: 'button', class: 'btn', 'data-outreach-keep-bare': '1', onClick: async () => {
+              notes.value = ''; participant.reset();
+              const bare = { ...p }; for (const k of Q.NOT_KEPT) delete bare[k];
+              pending = { key: `outreach-${newIdempotencyKey()}`, sig: JSON.stringify({ ...bare, occurred_at: null }), occurred_at: bare.occurred_at };
+              errorBox.classList.add('hidden'); errorBox.replaceChildren();
+              try { await keepWaiting(bare, what); (typeGroup.querySelector('input:checked') || saveBtn).focus(); }
+              catch { errorBox.textContent = err.message; errorBox.classList.remove('hidden'); }
+            } }, 'Keep it without the code and notes'));
+          errorBox.classList.remove('hidden');
+        }
+      }
       // An offline failure already says that the entry was kept and to try again (app.js OFFLINE_MESSAGE).
-      errorBox.textContent = err && err.offline ? err.message : `Not saved: ${(err && err.message) || 'something went wrong'}. Nothing was lost: try again.`;
-      errorBox.classList.remove('hidden');
+      if (!saved && errorBox.classList.contains('hidden')) {
+        errorBox.textContent = err && err.offline ? err.message : `Not saved: ${(err && err.message) || 'something went wrong'}. Nothing was lost: try again.`;
+        errorBox.classList.remove('hidden');
+      }
     } finally { saving = false; saveBtn.removeAttribute('aria-disabled'); saveBtn.textContent = 'Save contact'; }
     if (saved) {
       window.scrollTo({ top: 0, behavior: 'auto' });
@@ -202,6 +253,39 @@ route('outreach', async () => {
     }
   } },
   ...(codeFirst ? [typeGroup, participant.field, whereBox] : [typeGroup, whereBox, participant.field]), suppliesBox, notesBox, errorBox, h('div', { class: 'outreach-savebar', 'data-outreach-savebar': '1' }, saveBtn));
+
+  // ---- waiting to send (1.23.0, public/outreach-queue.js) ----
+  // The contacts kept on this phone while there was no signal: when, what, and Discard for one entered by mistake
+  // (it is then never sent). Send now tries them all again, including any the office did not accept.
+  const waitCard = h('section', { class: 'card outreach-waiting', 'aria-labelledby': 'outreach-wait-h', 'data-outreach-waiting': '0', hidden: true });
+  async function drawWaiting() {
+    if (state.local) return;
+    const w = await Q.waiting();
+    waitCard.hidden = !w.length; waitCard.dataset.outreachWaiting = String(w.length);
+    if (!w.length) { waitCard.replaceChildren(); return; }
+    const sendBtn = h('button', { type: 'button', class: 'btn', 'data-outreach-send-now': '1', onClick: async () => {
+      sendBtn.setAttribute('aria-disabled', 'true'); sendBtn.textContent = 'Sending…';
+      const r = await Q.flush({ all: true });
+      await drawShift();
+      if (r.left && !r.sent && !r.failed) toast('Still no signal: they stay on this phone and go when you are back online.', 'error');
+      (waitCard.isConnected && !waitCard.hidden ? waitCard.querySelector('h2') : typeGroup.querySelector('input:checked'))?.focus?.();
+    } }, 'Send now');
+    waitCard.replaceChildren(
+      h('div', { class: 'card-head' }, h('h2', { id: 'outreach-wait-h', tabindex: '-1' }, `Waiting to send (${w.length})`), sendBtn),
+      h('p', { class: 'small muted' }, 'Kept on this phone because there was no signal. They are sent by themselves when you are back online, or the next time you sign in, and counted once. They name nobody: no participant code or notes are kept.'),
+      h('ul', { class: 'outreach-list', 'data-outreach-waiting-list': '1' }, w.map(x => h('li', { 'data-waiting-key': x.key },
+        h('span', { class: 'nowrap' }, fmt.dt(x.payload.occurred_at)), ` · ${x.type_label || typeLabel(x.payload.type)} · ${x.what || 'no supplies'}`,
+        x.error ? h('div', { class: 'small', 'data-waiting-error': '1' }, h('b', {}, 'Not accepted: '), x.error) : null,
+        h('button', { type: 'button', class: 'btn sm', 'data-outreach-discard': x.key, 'aria-label': `Discard the contact of ${fmt.dt(x.payload.occurred_at)}: ${x.what || 'no supplies'}`, onClick: async () => {
+          if (!await confirmDialog('Discard this contact?', `The contact of ${fmt.dt(x.payload.occurred_at)} (${x.what || 'no supplies'}) is removed from this phone and never sent. Its supplies are not taken off the stock.`, { danger: true, okText: 'Discard' })) return;
+          await Q.discard(x.key);
+          announce('The contact was discarded.');
+          (waitCard.hidden ? typeGroup.querySelector('input:checked') : waitCard.querySelector('h2'))?.focus?.();
+        } }, 'Discard')))));
+  }
+  const offWaiting = Q.onChange(() => { if (!waitCard.isConnected && waitCard.dataset.drawn) { offWaiting(); return; } waitCard.dataset.drawn = '1'; drawWaiting(); drawShift(); });
+  await drawWaiting();
+  waitCard.dataset.drawn = '1';
 
   // ---- my shift ----
   const shiftSince = () => { const s = prefs.get(SHIFT, null); const t = s ? Date.parse(s) : NaN; return Number.isFinite(t) && Date.now() - t < SHIFT_MS && t <= Date.now() ? s : null; };
@@ -233,6 +317,62 @@ route('outreach', async () => {
   return h('div', { class: 'outreach', 'data-outreach': '1' },
     pageHead('Street outreach'),
     h('p', { class: 'small muted outreach-intro' }, codeFirst ? 'No names: ask for the person\'s participant code instead. Each contact is saved as an anonymous visit, and its supplies come off the stock.' : 'Anonymous: no names or client records. Each contact is saved as an anonymous visit, and its supplies come off the stock.',
-      state.local ? (window.SUDS_STATIC_HOST ? ' Works with no connection.' : ' Works with no connection: the office gets it at the next sync.') : ''),
-    formEl, shiftCard, h('div', { class: 'outreach-foot' }, startBox, h('a', { href: '#/interventions?type=outreach' }, 'All outreach visits')));
+      state.local ? (window.SUDS_STATIC_HOST ? ' Works with no connection.' : ' Works with no connection: the office gets it at the next sync.') : ' With no signal, a contact with no participant code or notes is kept on this phone and sent when you are back online.'),
+    formEl, waitCard, shiftCard, h('div', { class: 'outreach-foot' }, startBox, h('a', { href: '#/interventions?type=outreach' }, 'All outreach visits'),
+      state.local ? null : h('a', { href: '#/field-phone', 'data-field-phone-link': '1' }, 'Set up this phone for the field')));
+});
+
+// ---- Set up this phone for the field (1.23.0; server/field-request.js, docs/USER_GUIDE.md "Street outreach") ----
+// For a worker on the office app who needs to work with no signal: what Street outreach already keeps with no
+// signal, what a field device is, who decides (a worker may narrow what a phone holds; only an administrator widens
+// it), how to set the phone up themselves where the office allows offline copies (the existing enrolment option,
+// "Keep only what I need in the field" on This device › Sync), and "Ask my administrator", which gives every
+// administrator a to-do to approve it (Settings › Synced devices).
+const SCOPE_WORDS = { field: 'Field device: keeps only what you need in the field', full: 'Keeps everything your account may see' };
+route('field-phone', async () => {
+  if (state.local) {
+    return h('div', { 'data-field-phone': 'device' }, pageHead('Set up this phone for the field'),
+      h('p', {}, 'This is already an offline copy of SUDS on this phone. What it keeps, and whether it is a field device, is under ', h('a', { href: '#/sync' }, 'This device'), '.'));
+  }
+  const box = h('div', { 'data-field-phone': '1' });
+  async function draw() {
+    const st = await get('/api/me/field-device');
+    const req = st.request;
+    const status = h('div', { role: 'status', 'data-field-request-status': req ? req.status : 'none' },
+      req && req.status === 'open' ? h('p', {}, h('b', {}, 'Asked. '), `You asked on ${fmt.dt(req.requested_at)}. Your administrators have a to-do to approve it.`)
+        : req && req.status === 'approved' ? h('p', {}, h('b', {}, 'Approved. '), `An administrator approved it on ${fmt.dt(req.decided_at)}: every phone you sync is a field device.`)
+          : req && req.status === 'declined' ? h('p', {}, h('b', {}, 'Not approved. '), `An administrator declined it on ${fmt.dt(req.decided_at)}. Ask them why, or ask again.`) : null);
+    const askBtn = h('button', { type: 'button', class: 'btn primary', 'data-field-request': '1', onClick: async () => {
+      askBtn.setAttribute('aria-disabled', 'true');
+      try {
+        const r = await post('/api/me/field-device/request', {});
+        toast(r.already ? 'You have already asked: your administrators have it on their to-dos.' : 'Asked: your administrators have a to-do to approve it.', 'ok');
+        await draw();
+        box.querySelector('[data-field-request-status]')?.setAttribute('tabindex', '-1');
+        box.querySelector('[data-field-request-status]')?.focus();
+      } catch (e) { askBtn.removeAttribute('aria-disabled'); toast(e.message, 'error'); }
+    } }, req && req.status === 'declined' ? 'Ask again' : 'Ask my administrator');
+    const askable = !req || req.status === 'declined';
+    clear(box).append(
+      h('section', { class: 'card', 'aria-labelledby': 'fp-now-h' }, h('h2', { id: 'fp-now-h' }, 'With no signal, already'),
+        h('p', {}, 'On ', h('a', { href: '#/outreach' }, 'Street outreach'), ', a contact with no participant code or notes is kept on this phone and sent to the office when you are back online, or the next time you sign in. The top of every page says how many are waiting.')),
+      h('section', { class: 'card', 'aria-labelledby': 'fp-what-h' }, h('h2', { id: 'fp-what-h' }, 'A field device, for everything else'),
+        h('p', {}, 'For your clients, to-dos and every kind of contact with no signal, this phone needs an offline copy of SUDS that keeps only what a field worker needs: your own clients assigned or seen recently (their name, participant code and safety flags), your contacts, your to-dos, supplies and lists. Notes, documents, consents and intake details stay at the office.'),
+        h('p', {}, 'Who decides: making a phone a field device narrows what it holds, so you may do it yourself as you set the phone up. Only an administrator can widen a phone back to everything.')),
+      st.local_mode
+        ? h('section', { class: 'card', 'aria-labelledby': 'fp-self-h', 'data-field-self': '1' }, h('h2', { id: 'fp-self-h' }, 'Set it up yourself'),
+          h('ol', {},
+            h('li', {}, h('a', { href: `${location.pathname}?local=1`, 'data-field-open-copy': '1' }, 'Open the offline copy of SUDS'), ' on this phone, and set it up with a password for this phone.'),
+            h('li', {}, 'On ', h('b', {}, 'This device'), ', tick ', h('b', {}, 'Keep only what I need in the field'), ', enter your office username and password, and press ', h('b', {}, 'Sync now'), '.'),
+            h('li', {}, 'Sync whenever you have signal; the top of every page says what is still to send.')),
+          h('p', { class: 'small muted' }, 'Your administrator sees the phone under Settings › Synced devices. You may also ask them to approve it: then every phone you sync is a field device.'))
+        : h('section', { class: 'card', 'aria-labelledby': 'fp-ask-h', 'data-field-ask-only': '1' }, h('h2', { id: 'fp-ask-h' }, 'Ask your administrator'),
+          h('p', {}, 'Your office has not allowed offline copies on phones, so an administrator decides first. Asking gives every administrator a to-do; you see the answer here.')),
+      h('section', { class: 'card', 'aria-labelledby': 'fp-req-h' }, h('h2', { id: 'fp-req-h' }, 'Your request'), status,
+        askable ? askBtn : null,
+        st.devices.length ? h('div', {}, h('h3', { class: 'eyebrow' }, 'Your synced phones and tablets'),
+          h('ul', { class: 'outreach-list', 'data-field-devices': '1' }, st.devices.map(d => h('li', {}, `${d.label || 'Device'} · ${d.revoked ? 'Revoked' : SCOPE_WORDS[d.scope] || d.scope}${d.last_seen_at ? ` · last synced ${fmt.dt(d.last_seen_at)}` : ''}`)))) : null));
+  }
+  await draw();
+  return h('div', {}, pageHead('Set up this phone for the field'), box);
 });
