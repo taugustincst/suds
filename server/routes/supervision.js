@@ -33,8 +33,39 @@ function named(ctx, rows) {
   });
 }
 // A referral whose status is itself the outcome (admitted, completed, declined, no-show, closed) has closed
-// the loop; "no outcome recorded yet" is the ones still waiting to hear (contacted through scheduled).
-const AWAITING_OUTCOME = ['contacted', 'accepted', 'waitlisted', 'scheduled'];
+// the loop. "Waiting to hear what happened" (1.23.0) is only the two statuses where nobody yet knows: the
+// provider was told about the client and has not answered (contacted), or the client has an appointment and
+// nobody has recorded whether it happened (scheduled). Accepted and waitlisted are the provider's answer: the
+// referral is still open, and its maker's follow-up to-do still stands, but there is no missing outcome for a
+// supervisor to chase (docs/USER_GUIDE.md, Supervision). Until 1.23.0 they were listed here too.
+const AWAITING_OUTCOME = ['contacted', 'scheduled'];
+// The line in a reminder to-do's details that says which referral it is about (a record id, nothing about the
+// client): how the queue knows the worker already has an open reminder for it (as views/supervision.js does for notes).
+const referralReminderRef = (id) => `Reference: supervision reminder for referral ${id}`;
+const REFERRAL_REMINDER = /Reference: supervision reminder for referral ([\w-]{8,})/;
+/** Open reminder to-dos for these referrals, by referral id: { at, task }. Details are decrypted only to find the reference line. */
+function referralReminders(ids) {
+  const out = new Map();
+  if (!ids.length) return out;
+  for (const t of db.all(`SELECT id, referral_id, description_enc, created_at FROM tasks WHERE referral_id IN (${ids.map(() => '?').join(',')}) AND status IN ('open','in_progress') AND description_enc IS NOT NULL`, ...ids)) {
+    let d = ''; try { d = decrypt(t.description_enc); } catch { continue; }
+    const m = REFERRAL_REMINDER.exec(d);
+    if (m && m[1] === t.referral_id && !out.has(t.referral_id)) out.set(t.referral_id, { at: t.created_at, task: t.id });
+  }
+  return out;
+}
+/** May this user send the maker of a referral a reminder? A supervisor (or a manager of assignments) who may write
+ *  to-dos, of that worker's team by the same scoping as the rest of the queue, never to themselves. */
+function mayRemindWorker(user, workerId) {
+  if (!workerId || workerId === user.id) return false;
+  if (!auth.hasPerm(user, 'tasks:write') || !auth.hasPerm(user, 'referrals:read')) return false;
+  if (!auth.hasPerm(user, 'notes:cosign') && !auth.hasPerm(user, 'assignments:manage')) return false;
+  const ids = supervisedIds(user);
+  return ids === null || ids.includes(workerId);
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const day = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : d; };
 
 module.exports = (r) => {
   // One place that answers "what is waiting on me?" for a supervisor.
@@ -74,14 +105,44 @@ module.exports = (r) => {
     if (auth.hasPerm(ctx.user, 'referrals:read')) {
       const cf = auth.caseloadFilter(ctx.user, 'r.client_id');
       // worker: who made the referral, so a supervisor knows whom to ask about it (1.22.0).
-      out.referrals_awaiting_outcome = named(ctx, db.all(`SELECT r.id, r.client_id, r.referred_at, r.status, res.name AS resource, r.user_id AS worker_id, u.display_name AS worker, c.client_code, ${NAME_COLS}
+      // may_remind and reminded_at (1.23.0): whether this user may send the worker a reminder, and when the open one was sent.
+      const awaiting = named(ctx, db.all(`SELECT r.id, r.client_id, r.referred_at, r.status, r.appointment_at, res.name AS resource, r.user_id AS worker_id, u.display_name AS worker, u.is_active AS worker_active, c.client_code, ${NAME_COLS}
         FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id LEFT JOIN users u ON u.id=r.user_id
-        WHERE r.outcome_recorded_at IS NULL AND r.status IN (${AWAITING_OUTCOME.map(() => '?').join(',')}) AND c.deleted_at IS NULL AND ${cf.sql} ORDER BY r.referred_at LIMIT 100`, ...AWAITING_OUTCOME, ...cf.params));
+        WHERE r.outcome_recorded_at IS NULL AND r.status IN (${AWAITING_OUTCOME.map(() => '?').join(',')}) AND c.deleted_at IS NULL AND ${cf.sql} ORDER BY r.referred_at, r.id LIMIT 100`, ...AWAITING_OUTCOME, ...cf.params));
+      const reminders = referralReminders(awaiting.map(x => x.id));
+      out.referrals_awaiting_outcome = awaiting.map(({ worker_active, ...x }) => ({ ...x, may_remind: !!worker_active && mayRemindWorker(ctx.user, x.worker_id), reminded_at: reminders.get(x.id)?.at || null }));
       out.referrals_consent_revoked = named(ctx, db.all(`SELECT r.id, r.client_id, res.name AS resource, c.client_code, ${NAME_COLS} FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE r.consent_revoked=1 AND r.status NOT IN ('closed','declined_by_client','declined_by_provider') AND ${cf.sql} LIMIT 100`, ...cf.params));
     }
     if (auth.hasPerm(ctx.user, 'audit:read')) out.breakglass_unacknowledged = db.one(`SELECT COUNT(*) n FROM breakglass_events WHERE acknowledged_at IS NULL`).n;
     audit.log({ user: ctx.user, action: 'supervision.queue', ip: ctx.ip, details: { cosign: out.awaiting_cosignature?.length || 0, time: out.time_awaiting_approval?.length || 0 } });
     return out;
+  });
+
+  // ---- remind a worker to record a referral's outcome (1.23.0) ----
+  // A to-do for the worker who made the referral, on the client's record and linked to the referral, so recording
+  // the outcome closes it (POST /api/referrals/:id/outcome closes the referral's to-dos). It carries what that
+  // referral's own follow-up to-do already does (the provider's name) and nothing from the referral's notes or
+  // outcome; title and details are encrypted like every to-do's, and the audit entry names only the records.
+  // One open reminder per referral, whoever sent it.
+  r.post('/api/supervision/referrals/:id/remind', auth.requireAuth, auth.requirePerm('notes:cosign', 'assignments:manage'), auth.requirePerm('referrals:read'), auth.requirePerm('tasks:write'), (ctx) => {
+    const ref = db.one(`SELECT r.*, res.name AS resource FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE r.id=?`, ctx.params.id);
+    if (!ref) throw notFound('Referral not found');
+    auth.assertClientAccess(ctx, ref.client_id);
+    if (!ref.user_id) throw badRequest('Nobody is recorded as making this referral, so there is nobody to remind');
+    if (ref.user_id === ctx.user.id) throw badRequest('This is your own referral: record its outcome yourself');
+    if (!mayRemindWorker(ctx.user, ref.user_id)) throw forbidden('You can remind only staff you supervise');
+    const worker = db.one(`SELECT id, display_name, is_active FROM users WHERE id=?`, ref.user_id);
+    if (!worker || !worker.is_active) throw badRequest('The worker who made this referral no longer has an active account: record the outcome yourself or ask an administrator to reassign it');
+    if (ref.outcome_recorded_at || !AWAITING_OUTCOME.includes(ref.status)) throw badRequest('This referral already has an outcome');
+    const open = referralReminders([ref.id]).get(ref.id);
+    if (open) throw badRequest('The worker already has an open reminder for this referral');
+    const id = require('../crypto').uuid();
+    const title = `Record what happened with your referral to ${ref.resource}`;
+    const desc = `${ctx.user.display_name || 'Your supervisor'} asked you to record the outcome of this referral (sent ${day(ref.referred_at)}). Open it from the client's Referrals tab and press Record outcome.\n${referralReminderRef(ref.id)}`;
+    db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?,?)`,
+      id, ref.client_id, ref.user_id, ctx.user.id, encrypt(title), encrypt(desc), require('./budget').localDate(), 'normal', ref.id);
+    audit.log({ user: ctx.user, action: 'referral.remind', entity: 'referral', entityId: ref.id, clientId: ref.client_id, ip: ctx.ip, details: { worker: ref.user_id, task: id } });
+    return { ok: true, task: id, worker: worker.display_name };
   });
 
   // ---- break-glass review ----
@@ -125,8 +186,6 @@ module.exports = (r) => {
   // Returned or reopened time is the worker's to correct, and they are told (1.16.0): a to-do on their list,
   // due now so the bell shows it, saying which day and how long, who returned it and why. The reason can name a
   // client, so it is encrypted like every to-do's text; the audit entry says only that a to-do was raised.
-  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const day = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : d; };
   const mins = (n) => { const h = Math.floor((n || 0) / 60), m = (n || 0) % 60; return h ? `${h}h${m ? ` ${m}m` : ''}` : `${m}m`; };
   function tellWorker(ctx, workerId, entries, note, reopened) {
     if (!workerId || !entries.length) return null;

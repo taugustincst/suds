@@ -275,12 +275,30 @@ route('supervision', async (r) => {
   }
 
   // ---- referrals that never closed the loop ----
-  // A row opens that referral's outcome form (what closes the loop); without write access, the client's
-  // referrals list.
-  const openReferral = async (r) => {
-    if (!can('referrals:write')) { nav(`referrals?client_id=${r.client_id}`); return; }
+  // "Waiting to hear what happened" (1.23.0): only referrals with no outcome at all — the provider was told and has
+  // not answered, or the client had an appointment and nobody has said whether it happened (the server leaves out
+  // accepted and waitlisted, which are the provider's answer). Each row has the same kind of actions as an unsigned
+  // note: open the referral (the client's Referrals tab), remind the worker who made it (a to-do for them, linked to
+  // the referral so recording the outcome closes it: POST /api/supervision/referrals/:id/remind), and record the
+  // outcome, for a role that may. A row itself opens the outcome form (without write access, the referral).
+  const mayRecord = can('referrals:write');
+  const recordOutcome = async (r) => {
     try { const row = (await get(`/api/referrals/${r.id}`)).row; openOutcomeForm(row, refresh); } catch (e) { toast(e.message, 'error'); }
   };
+  const openReferral = (r) => nav(r.client_name ? `client/${r.client_id}/referrals` : `referrals?client_id=${r.client_id}`);
+  const onReferralRow = (r) => (mayRecord ? recordOutcome(r) : openReferral(r));
+  const remindWorker = async (r, btn) => {
+    if (btn) btn.disabled = true;
+    try { const res = await post(`/api/supervision/referrals/${r.id}/remind`, {}); toast(`Reminder sent to ${res.worker || r.worker}`, 'ok'); refresh(); }
+    catch (e) { if (btn) btn.disabled = false; toast(e.message, 'error'); }
+  };
+  // How long it has waited, in words: "today", "1 day", "12 days".
+  const waited = (s) => { const d = Math.floor((Date.now() - new Date(s).getTime()) / 86400000); return d < 1 ? 'today' : d === 1 ? '1 day' : `${d} days`; };
+  // Plain words for where it stands, instead of the status names.
+  const whereItStands = (r) => (r.status === 'scheduled'
+    ? h('div', { 'data-referral-stands': 'appointment' }, badge('Appointment set', 'info'), h('div', { class: 'small' }, r.appointment_at ? `${fmt.dt(r.appointment_at)} — did it happen?` : 'Did it happen?'))
+    : h('div', { 'data-referral-stands': 'no-answer' }, badge('No answer yet', 'warn'), h('div', { class: 'small' }, 'The provider has not replied.')));
+  const rowName = (r) => `${r.resource}, ${who(r)}`;
   const open = q.referrals_awaiting_outcome || [];
   const revoked = q.referrals_consent_revoked || [];
   if (open.length || revoked.length) {
@@ -290,16 +308,21 @@ route('supervision', async (r) => {
         `${plural(revoked.length, 'referral', 'referrals')} relied on a consent that has since been revoked. Stop sharing information and close them out.`) : null,
       revoked.length ? table([
         { label: 'Client', render: clientCell }, { label: 'Referred to', key: 'resource' },
-      ], revoked, { onRow: openReferral }) : null,
-      open.length ? h('div', { 'data-awaiting-outcome': String(open.length) }, h('h2', { class: 'mt' }, 'No outcome recorded yet'),
-        h('p', { class: 'small muted' }, 'Referrals the provider has been told about (contacted through scheduled) where nobody has recorded what happened.'),
+      ], revoked, { onRow: onReferralRow }) : null,
+      open.length ? h('div', { 'data-awaiting-outcome': String(open.length) }, h('h3', { class: 'mt' }, 'Waiting to hear what happened'),
+        h('p', { class: 'small muted' }, 'Referrals where nobody has recorded what happened: the provider has not answered, or the client had an appointment and nobody has said whether it happened. Oldest first. A referral the provider accepted or put on its waiting list is not listed here.'),
         table([
           { label: 'Client', render: clientCell }, { label: 'Referred to', key: 'resource' },
           // How long it has waited, and who made it (1.22.0): whom to ask, and which to chase first (oldest first).
-          { label: 'Sent', render: r => h('span', {}, fmt.date(r.referred_at), h('span', { class: 'muted small', 'data-referral-waiting': '1' }, ` · ${fmt.ago(r.referred_at)}`)) },
+          { label: 'Waiting', render: r => h('div', {}, h('span', { 'data-referral-waiting': '1' }, waited(r.referred_at)), h('div', { class: 'small muted' }, `sent ${fmt.date(r.referred_at)}`)) },
           { label: 'Made by', render: r => r.worker || '—' },
-          { label: 'Status', render: r => badge(fmt.label(r.status, 'REFERRAL_STATUSES')) },
-        ], open, { onRow: openReferral })) : null));
+          { label: 'Where it stands', render: whereItStands },
+          { label: 'Reminder', render: r => (r.reminded_at ? h('span', { 'data-referral-reminded': r.id }, badge(`Sent ${fmt.date(r.reminded_at)}`, 'info')) : h('span', { class: 'small muted' }, '—')) },
+          { label: '', render: r => h('div', { class: 'row' },
+            r.client_name ? h('button', { class: 'btn sm', 'data-open-referral': r.id, 'aria-label': `Open referral — ${rowName(r)}`, onClick: (e) => { e.stopPropagation(); openReferral(r); } }, 'Open referral') : null,
+            r.may_remind && !r.reminded_at ? h('button', { class: 'btn sm', 'data-remind-worker': r.id, 'aria-label': `Remind worker — ${r.worker}, ${rowName(r)}`, onClick: (e) => { e.stopPropagation(); remindWorker(r, e.currentTarget); } }, 'Remind worker') : null,
+            mayRecord ? h('button', { class: 'btn sm primary', 'data-record-outcome': r.id, 'aria-label': `Record outcome — ${rowName(r)}`, onClick: (e) => { e.stopPropagation(); recordOutcome(r); } }, 'Record outcome') : null) },
+        ], open, { onRow: onReferralRow })) : null));
   }
 
   return h('div', {},

@@ -48041,7 +48041,36 @@ var require_supervision = __commonJS({
         return out2;
       });
     }
-    var AWAITING_OUTCOME = ["contacted", "accepted", "waitlisted", "scheduled"];
+    var AWAITING_OUTCOME = ["contacted", "scheduled"];
+    var referralReminderRef = (id) => `Reference: supervision reminder for referral ${id}`;
+    var REFERRAL_REMINDER = /Reference: supervision reminder for referral ([\w-]{8,})/;
+    function referralReminders(ids) {
+      const out2 = /* @__PURE__ */ new Map();
+      if (!ids.length) return out2;
+      for (const t of db3.all(`SELECT id, referral_id, description_enc, created_at FROM tasks WHERE referral_id IN (${ids.map(() => "?").join(",")}) AND status IN ('open','in_progress') AND description_enc IS NOT NULL`, ...ids)) {
+        let d = "";
+        try {
+          d = decrypt3(t.description_enc);
+        } catch {
+          continue;
+        }
+        const m = REFERRAL_REMINDER.exec(d);
+        if (m && m[1] === t.referral_id && !out2.has(t.referral_id)) out2.set(t.referral_id, { at: t.created_at, task: t.id });
+      }
+      return out2;
+    }
+    function mayRemindWorker(user, workerId) {
+      if (!workerId || workerId === user.id) return false;
+      if (!auth3.hasPerm(user, "tasks:write") || !auth3.hasPerm(user, "referrals:read")) return false;
+      if (!auth3.hasPerm(user, "notes:cosign") && !auth3.hasPerm(user, "assignments:manage")) return false;
+      const ids = supervisedIds(user);
+      return ids === null || ids.includes(workerId);
+    }
+    var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    var day = (d) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || "");
+      return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : d;
+    };
     module.exports = (r) => {
       r.get("/api/supervision/queue", auth3.requireAuth, auth3.requirePerm("notes:cosign", "time:approve", "assignments:manage"), (ctx) => {
         const sf = staffFilter(ctx.user, "n.author_id");
@@ -48068,14 +48097,47 @@ var require_supervision = __commonJS({
         }
         if (auth3.hasPerm(ctx.user, "referrals:read")) {
           const cf = auth3.caseloadFilter(ctx.user, "r.client_id");
-          out2.referrals_awaiting_outcome = named(ctx, db3.all(`SELECT r.id, r.client_id, r.referred_at, r.status, res.name AS resource, r.user_id AS worker_id, u.display_name AS worker, c.client_code, ${NAME_COLS}
+          const awaiting = named(ctx, db3.all(`SELECT r.id, r.client_id, r.referred_at, r.status, r.appointment_at, res.name AS resource, r.user_id AS worker_id, u.display_name AS worker, u.is_active AS worker_active, c.client_code, ${NAME_COLS}
         FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id LEFT JOIN users u ON u.id=r.user_id
-        WHERE r.outcome_recorded_at IS NULL AND r.status IN (${AWAITING_OUTCOME.map(() => "?").join(",")}) AND c.deleted_at IS NULL AND ${cf.sql} ORDER BY r.referred_at LIMIT 100`, ...AWAITING_OUTCOME, ...cf.params));
+        WHERE r.outcome_recorded_at IS NULL AND r.status IN (${AWAITING_OUTCOME.map(() => "?").join(",")}) AND c.deleted_at IS NULL AND ${cf.sql} ORDER BY r.referred_at, r.id LIMIT 100`, ...AWAITING_OUTCOME, ...cf.params));
+          const reminders = referralReminders(awaiting.map((x) => x.id));
+          out2.referrals_awaiting_outcome = awaiting.map(({ worker_active, ...x }) => ({ ...x, may_remind: !!worker_active && mayRemindWorker(ctx.user, x.worker_id), reminded_at: reminders.get(x.id)?.at || null }));
           out2.referrals_consent_revoked = named(ctx, db3.all(`SELECT r.id, r.client_id, res.name AS resource, c.client_code, ${NAME_COLS} FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE r.consent_revoked=1 AND r.status NOT IN ('closed','declined_by_client','declined_by_provider') AND ${cf.sql} LIMIT 100`, ...cf.params));
         }
         if (auth3.hasPerm(ctx.user, "audit:read")) out2.breakglass_unacknowledged = db3.one(`SELECT COUNT(*) n FROM breakglass_events WHERE acknowledged_at IS NULL`).n;
         audit3.log({ user: ctx.user, action: "supervision.queue", ip: ctx.ip, details: { cosign: out2.awaiting_cosignature?.length || 0, time: out2.time_awaiting_approval?.length || 0 } });
         return out2;
+      });
+      r.post("/api/supervision/referrals/:id/remind", auth3.requireAuth, auth3.requirePerm("notes:cosign", "assignments:manage"), auth3.requirePerm("referrals:read"), auth3.requirePerm("tasks:write"), (ctx) => {
+        const ref = db3.one(`SELECT r.*, res.name AS resource FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE r.id=?`, ctx.params.id);
+        if (!ref) throw notFound("Referral not found");
+        auth3.assertClientAccess(ctx, ref.client_id);
+        if (!ref.user_id) throw badRequest("Nobody is recorded as making this referral, so there is nobody to remind");
+        if (ref.user_id === ctx.user.id) throw badRequest("This is your own referral: record its outcome yourself");
+        if (!mayRemindWorker(ctx.user, ref.user_id)) throw forbidden("You can remind only staff you supervise");
+        const worker = db3.one(`SELECT id, display_name, is_active FROM users WHERE id=?`, ref.user_id);
+        if (!worker || !worker.is_active) throw badRequest("The worker who made this referral no longer has an active account: record the outcome yourself or ask an administrator to reassign it");
+        if (ref.outcome_recorded_at || !AWAITING_OUTCOME.includes(ref.status)) throw badRequest("This referral already has an outcome");
+        const open3 = referralReminders([ref.id]).get(ref.id);
+        if (open3) throw badRequest("The worker already has an open reminder for this referral");
+        const id = require_crypto().uuid();
+        const title = `Record what happened with your referral to ${ref.resource}`;
+        const desc = `${ctx.user.display_name || "Your supervisor"} asked you to record the outcome of this referral (sent ${day(ref.referred_at)}). Open it from the client's Referrals tab and press Record outcome.
+${referralReminderRef(ref.id)}`;
+        db3.run(
+          `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?,?)`,
+          id,
+          ref.client_id,
+          ref.user_id,
+          ctx.user.id,
+          encrypt3(title),
+          encrypt3(desc),
+          require_budget().localDate(),
+          "normal",
+          ref.id
+        );
+        audit3.log({ user: ctx.user, action: "referral.remind", entity: "referral", entityId: ref.id, clientId: ref.client_id, ip: ctx.ip, details: { worker: ref.user_id, task: id } });
+        return { ok: true, task: id, worker: worker.display_name };
       });
       r.get("/api/supervision/breakglass", auth3.requireAuth, auth3.requirePerm("audit:read"), (ctx) => {
         const all = ctx.query.get("all") === "1";
@@ -48112,11 +48174,6 @@ var require_supervision = __commonJS({
         if (!t) throw notFound("Time entry not found");
         return t;
       }
-      const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-      const day = (d) => {
-        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || "");
-        return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : d;
-      };
       const mins = (n) => {
         const h = Math.floor((n || 0) / 60), m = (n || 0) % 60;
         return h ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
