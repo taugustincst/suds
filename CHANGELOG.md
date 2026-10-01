@@ -4,6 +4,35 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Fixed: to-dos left open after their reason went, the outreach waiting list, and device links to a colleague's referral
+
+No migration, no new route and no new permission; one new audit action, `device.field_request.close`.
+
+- **Fixed: a field-device request left open when the worker's account is deactivated** dropped off Settings › Synced
+  devices but left every administrator's to-do open. Deactivating the account (Users & permissions, SCIM, or SSO
+  deprovisioning) now closes the request and cancels those to-dos, with a line in each saying why, audited as
+  `device.field_request.close` (and `task.update` per to-do); a request left open this way before 1.23.1 is closed
+  the next time an administrator opens the list. Approve and Decline also add a line to each administrator's to-do
+  saying who answered and how. The list of requests no longer reads `_` in `field_request:` as a wildcard
+  (`server/field-request.js`).
+- **Fixed: deleting a call or text, a visit or a referral left its follow-up to-do open** with only the link cleared.
+  It is now cancelled by the follow-up rule (`server/rules/follow-ups.js` `cancelForDeleted`) when still as SUDS made
+  it, at both doors (the REST delete and a device's sync deletion, through a new push-only `beforeDelete` hook in
+  the tables' rules), audited as `task.update` with `cause: deleted`; a to-do the worker has changed or added details
+  to is left for them to close.
+- **Fixed: the outreach waiting list counted a contact the worker had undone as "sent".** A contact the office had
+  received (its answer lost with the signal) and that was deleted since is not recorded again; the waiting list now
+  says *1 waiting contact was not recorded: it had been undone since it was first saved*. Within 24 hours the office
+  used to answer the waiting list's send from the first attempt's stored Idempotency-Key answer ("made"); a send from
+  the waiting list (`X-Suds-Queued`) is now answered by the route's own durable rule, which knows the contact was
+  deleted (`server/idempotency.js`, `public/outreach-queue.js`).
+- **Fixed: a to-do from a device could link to a colleague's referral** (`tasks.referral_id`), the same crafted link
+  1.23.0 closed for calls and visits: it could keep the colleague's follow-up to-do from being made, or, with the
+  reminder's reference line in its details, pass for a supervisor's reminder in *Waiting to hear what happened*. A
+  link a device sets or changes now stands only when the referral is the to-do's worker's own (a link the office made,
+  sent back unchanged, is kept), and the queue counts as a reminder only a to-do someone else gave the worker
+  (`server/rules/tasks.js`, `server/routes/supervision.js`).
+
 ## 1.23.0 — 2026-10-01
 
 A feature release (migration 67; new routes `POST /api/supervision/referrals/:id/remind`, `GET /api/me/field-device`,
