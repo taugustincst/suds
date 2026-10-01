@@ -32,7 +32,7 @@ it.
 | `v1.20.0` | `8f365b4276feca70297debec423dde40e1056aea` ("SBOM of the 1.20.0 stamp", after the stamp `66a616b`) | 2026-09-30 | `048e928499fa3569dfcfc59af86633ad4f8176d3bba1c0dd2fe61b62c35fb9ff` |
 | `v1.21.0` | `8dc7aa1848c35e057d3f953dd0f987764d92b572` ("SBOM of the 1.21.0 stamp", after the stamp `f58128c`) | 2026-09-30 | `d1ff00523b89d5bf15a28ed4b2be2f4fc80b5978a214152a28aaf3fde9e5c7de` |
 | `v1.22.0` | `8b136dfc7f9b8628bb64e5491fdaae76895b7148` ("SBOM of the 1.22.0 stamp", after the stamp `74852e5`) | 2026-10-01 | `0798dc42106c95139ff4ed7f72fb3d6b95f32b8ce9cb197e6f01a1970168f1c3` |
-| `v1.23.0` | the commit after `Release 1.23.0`, which adds its SBOM (`git log -1 --format=%H --grep='^SBOM of the 1.23.0 stamp' origin/main`) | 2026-10-01 | recorded in a later commit on `main`; rebuild it with the command below |
+| `v1.23.0` | `9877d07791880c9ea9a4ddd27b4a4707c7a0ca81` ("SBOM of the 1.23.0 stamp", after the stamp `48cc586`) | 2026-10-01 | `aa785678b0fe28967732fdf4826c5a89a25337c7fcae03512ca7105e45795a81` |
 
 **How the checksums were made, and why they can be trusted before the release exists.** The release job builds
 the zip with `git archive --format=zip --prefix="suds-vX.Y.Z/" -o suds-vX.Y.Z.zip <commit>` and hashes it with
