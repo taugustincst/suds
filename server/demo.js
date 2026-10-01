@@ -200,11 +200,11 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
       // Referrals — and the agencies they went to, which the client's consent below names: a consent covers
       // only the recipients it names (server/disclosure.js), and the sample records should be ones SUDS accepts.
       const nr = c.cstatus === 'waitlist' ? 1 : 2 + Math.floor(rand() * 2);
-      const referredTo = [];
+      const referredTo = []; const refs = [];
       for (let k = 0; k < nr; k++) {
         const rid = rids[(i * 3 + k * 5) % rids.length];
         { const rn = RESOURCES[rids.indexOf(rid)][0]; if (!referredTo.includes(rn)) referredTo.push(rn); } const st = k === 0 ? pick(['admitted', 'scheduled', 'accepted', 'completed']) : pick(C.REFERRAL_STATUSES); const off = 10 + Math.floor(rand() * 100);
-        db.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status,urgency,appointment_at,admitted_at,closed_at,outcome_enc,barrier_enc,warm_handoff,follow_up_due,notes_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track('referrals', uuid()), c.id, rid, c.worker, d(off), st, c.risk === 'critical' ? 'urgent' : 'routine', ['scheduled', 'admitted', 'completed'].includes(st) ? d(off - 3) : null, ['admitted', 'completed'].includes(st) ? d(off - 5) : null, ['completed', 'closed', 'declined_by_client', 'declined_by_provider'].includes(st) ? d(off - 12) : null, st === 'completed' ? encrypt('Completed program') : null, ['waitlisted', 'declined_by_provider'].includes(st) ? encrypt(pick(['no beds', 'insurance', 'transportation'])) : null, rand() < 0.5 ? 1 : 0, ['pending', 'contacted', 'waitlisted'].includes(st) ? day(-2) : null, null);
+        refs.push([track('referrals', uuid()), c.id, rid, c.worker, d(off), st, c.risk === 'critical' ? 'urgent' : 'routine', ['scheduled', 'admitted', 'completed'].includes(st) ? d(off - 3) : null, ['admitted', 'completed'].includes(st) ? d(off - 5) : null, ['completed', 'closed', 'declined_by_client', 'declined_by_provider'].includes(st) ? d(off - 12) : null, st === 'completed' ? encrypt('Completed program') : null, ['waitlisted', 'declined_by_provider'].includes(st) ? encrypt(pick(['no beds', 'insurance', 'transportation'])) : null, rand() < 0.5 ? 1 : 0, ['pending', 'contacted', 'waitlisted'].includes(st) ? day(-2) : null, null]);
       }
       // Tasks
       const TASKS = [['Call about detox bed', 'urgent', -1], ['Bring ID paperwork to DMV', 'high', 1], ['Confirm OTP intake time', 'high', 0], ['Housing application follow-up', 'normal', 4], ['Send ROI to Valley Behavioral', 'normal', 2], ['Monthly check-in call', 'low', 12], ['Naloxone refill', 'normal', -3]];
@@ -227,7 +227,16 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
       const consentId = track('consents', uuid());
       // The 2024 single TPO consent, naming each agency this client was referred to (§2.31(a)(4)(iii)).
       const consentRecipient = `${referredTo.join(', ')} and my other treating providers`;
-      db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref_enc,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, 'part2_tpo', encrypt(consentRecipient), encrypt('Treatment, payment and health care operations'), encrypt('Referral summary, diagnosis, MAT status'), day(60 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), encrypt('Consent binder, tab ' + (i + 1)), c.worker);
+      db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref_enc,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, 'part2_tpo', encrypt(consentRecipient), encrypt('Treatment, payment and health care operations'), encrypt('Referral summary, diagnosis, MAT status'), day(115 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), encrypt('Consent binder, tab ' + (i + 1)), c.worker);
+      // The referrals rest on it (1.23.1): each one that told the agency who the client is cites the consent and has
+      // its accounting row, as one made in SUDS does (server/routes/referrals.js recordDisclosure). Without them,
+      // editing an open sample referral asked for a consent. Signed before the oldest referral (110 days back).
+      for (const r of refs) {
+        const shared = r[5] !== 'pending' || r[12] === 1;
+        db.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status,urgency,appointment_at,admitted_at,closed_at,outcome_enc,barrier_enc,warm_handoff,follow_up_due,notes_enc,consent_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, ...r, shared ? consentId : null);
+        if (shared) db.run(`INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,source,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?,'referral',?)`, track('disclosures', uuid()), c.id, consentId,
+          encrypt(RESOURCES[rids.indexOf(r[2])][0]), encrypt('Referral for services'), encrypt('Referral information (name, contact details and presenting need)'), r[12] === 1 ? 'warm handoff' : 'referral', r[4], c.worker, 'consent', r[0]);
+      }
       // The §2.22 notice was given to most sample clients; a few are left without one so the reminder shows.
       if (i % 4 !== 1) db.run(`INSERT INTO part2_notices(id,client_id,given_at,method,notice_version,acknowledged,given_by) VALUES(?,?,?,?,?,?,?)`, track('part2_notices', uuid()), c.id, day(60 + i), 'in_person_paper', '1', 1, c.worker);
       if (i % 3 === 0) db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)`, track('consents', uuid()), c.id, 'roi', encrypt('Family member (mother)'), encrypt('Care coordination with family'), encrypt('Appointment dates and general progress'), day(50 + i), day(-315), c.worker);

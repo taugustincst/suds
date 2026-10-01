@@ -237,7 +237,44 @@ export function setOffline(on) {
   }
 }
 window.addEventListener('offline', () => setOffline(true));
-window.addEventListener('online', () => setOffline(false));
+window.addEventListener('online', () => {
+  setOffline(false);
+  // Started with no signal from this tab's copy of the session (restoreTabSession): ask the office who is signed in.
+  if (state.signedInOffline) { state.signedInOffline = false; loadSession().then(render, () => {}); }
+});
+
+// Who is signed in (the account and what it may do, never anything about a client) and the programme's lists, kept
+// for this tab only (sessionStorage), so that a reload with no signal still knows: Street outreach can then keep a
+// contact that names nobody, and every other page says plainly that it needs signal (offlinePage) instead of the
+// sign-in form, which cannot work offline (evaluation of 1.23.0). Gone as soon as nobody is signed in (render), with
+// the tab, and checked with the office again as soon as there is signal. Not on a device's offline copy.
+const TAB_SESSION = 'suds.tab-session';
+function keepTabSession(me) { if (state.local) return; try { sessionStorage.setItem(TAB_SESSION, JSON.stringify({ me, constants: state.constants })); } catch { /* a reload offline then shows the sign-in page */ } }
+function forgetTabSession() { try { sessionStorage.removeItem(TAB_SESSION); } catch { /* nothing kept */ } }
+async function restoreTabSession() {
+  if (state.local) return false;
+  let kept = null; try { kept = JSON.parse(sessionStorage.getItem(TAB_SESSION) || 'null'); } catch { kept = null; }
+  const me = kept && kept.me;
+  if (!me || !me.user) return false;
+  state.user = me.user; state.org = me.org_name; state.mfaPending = me.mfaPending; state.idleMinutes = me.idle_minutes || 15;
+  state.programme = me.programme || null; state.defaultFundId = me.default_fund_id || null;
+  state.constants = state.constants || kept.constants || {};
+  state.signedInOffline = true;
+  await prefs.load();
+  return true;
+}
+/** A failure that is the network's (no signal), not the page's: an API call that could not reach the office, or a
+ *  page's module that could not be fetched while the browser is offline. */
+export const networkFailure = (e) => !!e && (!!e.offline || (e instanceof TypeError && (state.offline || navigator.onLine === false)));
+/** What a page that needs the office shows with no signal, instead of the browser's own words for a failed fetch. */
+export function offlinePage() {
+  return h('div', { class: 'offline-page', 'data-offline-page': '1' },
+    h('h1', {}, 'You\'re offline'),
+    h('p', {}, 'This page needs the office server, and SUDS can\'t reach it with no signal. Nothing about clients is kept on this phone, so the page opens again when you\'re back online.'),
+    !state.local && can('interventions:write') ? h('p', {}, h('a', { href: '#/outreach', class: 'btn primary', 'data-offline-outreach': '1' }, 'Open Street outreach'),
+      ' works with no signal: a contact that names nobody is kept on this phone and sent when you\'re back online.') : null,
+    h('p', {}, h('button', { type: 'button', class: 'btn', 'data-offline-retry': '1', onClick: () => render() }, 'Try again')));
+}
 
 // ---------- tap-to-call / text / map ----------
 // A phone number on a screen is something a navigator standing on a sidewalk wants to tap, not copy.
@@ -1832,7 +1869,7 @@ export function route(name, loader) { routes[name] = loader; }
 /**
  * Pages whose module is loaded the first time one of them is opened (main.js). Until then each name has a
  * stand-in that imports the module, whose own route() call replaces the stand-in, and then shows the page.
- * A module that cannot be fetched (offline, before the service worker has it) is shown as the page's error.
+ * A module that cannot be fetched is shown as the page's error; with no signal, as the plain offline page (offlinePage).
  */
 export function lazyRoute(names, load) {
   for (const name of names) {
@@ -1967,7 +2004,7 @@ async function renderPage() {
   // A device with no account yet opens the sign-in page on Sign up, which is its first-run set-up.
   if (state.localSetupNeeded) { if (r.name !== 'localsetup' && r.name !== 'login') { nav('login?mode=signup'); return; } return show(routes.login(r)); }
   if (state.setupNeeded) { if (r.name !== 'setup') { nav('setup'); return; } return show(routes.setup(r)); }
-  if (!state.user) return show(routes.login(r));
+  if (!state.user) { forgetTabSession(); return show(routes.login(r)); }
   if (state.mfaPending && r.name !== 'mfa') { nav('mfa'); return; }
   if (r.name === 'mfa' || r.name === 'login') return show(routes[r.name === 'mfa' ? 'mfa' : 'dashboard'](r));
   if (state.user.must_change_password && r.name !== 'profile') { nav('profile?force=1'); return; }
@@ -1995,7 +2032,12 @@ async function renderPage() {
   if (!current || current.name !== r.name || current.id !== r.id) window.scrollTo(0, 0);
   const lost = () => !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
   try { const view = await loader(r); clear(main).append(view); if (state.local && r.name === 'sync') main.append(deviceErrorsCard()); }
-  catch (e) { clear(main).append(h('h1', {}, 'This page could not be shown'), h('div', { class: 'banner danger', role: 'alert' }, e.message)); }
+  catch (e) {
+    // No signal: a plain page that says so (the browser's "Failed to fetch dynamically imported module …" told
+    // nobody anything); any other failure keeps its own message.
+    if (networkFailure(e)) clear(main).append(offlinePage());
+    else clear(main).append(h('h1', {}, 'This page could not be shown'), h('div', { class: 'banner danger', role: 'alert' }, e.message));
+  }
   if (seq !== renderSeq) return;
   setPageTitle(r, navItem);
   // Moving to another page left focus on nothing (the link that was pressed is gone with the old page), so
@@ -2175,6 +2217,7 @@ export async function loadSession() {
     // The fund a new visit is pre-filled with (the worker's own default, else the programme's).
     state.defaultFundId = me.default_fund_id || null;
     await Promise.all([loadRefData(), prefs.load()]);
+    keepTabSession(me); state.signedInOffline = false;
     // Drafts typed by someone else in this tab are not theirs to see; this person's own kept drafts come back.
     claimDrafts();
     if (!state.mfaPending && !state.user.must_change_password) offerKeptDrafts();
@@ -2213,7 +2256,11 @@ export async function loadSession() {
       const el = banner(passkeyGraceText(g), 'warn', { id: 'passkey-grace', short: `Your passkey stops working on ${fmt.date(g.until)}.` });
       if (el) el.insertBefore(h('a', { href: '#/profile', class: 'btn sm', 'data-passkey-grace-link': '1' }, 'My profile'), el.lastChild);
     }
-  } catch { state.user = null; }
+  } catch (e) {
+    // No signal at all (a reload in the street): who was signed in in this tab, if anyone (keepTabSession).
+    if (e && e.offline && await restoreTabSession()) return;
+    state.user = null;
+  }
 }
 /** Re-read the signed-in user's permission snapshot without signing out (an administrator may have
  *  changed it mid-session). On failure the stale snapshot stays; the server enforces regardless. */

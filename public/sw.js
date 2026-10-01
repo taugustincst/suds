@@ -12,12 +12,21 @@ const SHELL = ['./', 'index.html', 'styles.css', 'main.js', 'app.js', 'nav.js', 
 // `cache: 'reload'` fills the shell from the network, never from the browser's HTTP cache: a static host
 // (GitHub Pages sends max-age=600) can otherwise hand a *new* worker the *previous* build's app.js, and the
 // device then runs the old code from the new cache until the next release.
-// Safari's engine has been seen to fill nothing this way (an empty shell cache after an upgrade), so a file
-// that the reload-mode add() cannot store is fetched plainly (revalidated, not taken from the HTTP cache on
-// trust) and put in by hand.
-const precache = (c, u) => c.add(new Request(u, { cache: 'reload' }))
-  .catch(() => fetch(u, { cache: 'no-cache' }).then(r => (r.ok ? c.put(u, r) : undefined)))
-  .catch(() => {});
+// Safari's engine has been seen to fill nothing with a reload-mode Cache.add() (an empty shell cache after an
+// upgrade), so the worker fetches each file itself and puts it in by hand; a file that cannot be stored that
+// way is fetched once more plainly (revalidated, not taken from the HTTP cache on trust).
+// A file the server does not have (404) is not stored, and its answer is read to the end (cancelled): an
+// unread response body keeps its HTTP/1.1 connection busy for as long as the worker lives. An office server
+// with local mode off answers 404 for the three local/* files; Cache.add() left each of those answers unread,
+// and so did the plain retry, which held all six of the browser's connections to the server — the install
+// stopped at 19 of 62 files and every later fetch from the worker, /api/health included, waited for ever
+// (evaluation of 1.23.0; scripts/ui/offline-office.mjs).
+const take = (c, u, init) => fetch(new Request(u, init)).then((r) => {
+  if (r.ok) return c.put(u, r);
+  if (r.body) r.body.cancel().catch(() => {});
+  return undefined;
+});
+const precache = (c, u) => take(c, u, { cache: 'reload' }).catch(() => take(c, u, { cache: 'no-cache' })).catch(() => {});
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then(c => Promise.all(SHELL.map(u => precache(c, u)))).then(() => self.skipWaiting())); });
 // Cache Storage belongs to the whole origin, and on a shared host (<owner>.github.io/<repo>/, where every
 // Pages site of that owner is one origin) other sites' caches sit beside this one. So this worker reads only

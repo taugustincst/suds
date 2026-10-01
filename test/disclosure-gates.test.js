@@ -416,3 +416,52 @@ test('a pushed referral that shares information passes the same gate, is account
   const acc = acctFor(offline.id);
   assert.equal(acc.length, 1, 'one accounting row'); assert.equal(acc[0].id, devDisc.id, 'under the device\'s id');
 });
+
+// Evaluation of 1.23.0: an open referral that already shares information but has no accounting row (one recorded
+// before SUDS kept them, an import, the sample data before 1.23.1) could not have even its follow-up date changed
+// without a consent. An edit that tells the agency nothing new (the follow-up date, the notes) now needs no basis
+// and writes no accounting row; every change that does tell it something still passes the gate.
+test('an edit of only the follow-up date or notes of a shared referral needs no basis; any change that discloses still does', async () => {
+  const c = await newClient();
+  const agency = await resource(`Quiet ${randomUUID().slice(0, 6)}`); const other = await resource(`Other ${randomUUID().slice(0, 6)}`);
+  const name = H.db.one(`SELECT name FROM resources WHERE id=?`, agency).name;
+  const id = randomUUID(); const now = new Date().toISOString();
+  // As the sample data and older records are: contacted (the agency was told), no consent cited, nothing accounted.
+  H.db.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status,urgency,warm_handoff,follow_up_due,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    id, c, agency, navId, '2026-09-03T09:00:00.000Z', 'contacted', 'routine', 0, '2026-10-05', now, now);
+  const stored = async () => (await nav.get(`/api/referrals/${id}`)).data.row;
+  // The whole form, as the edit dialog sends it back, with only what `over` says changed.
+  const form = async (over) => { const r = await stored(); return { client_id: c, resource_id: r.resource_id, referred_at: '2026-09-03T09:00:00.000Z', status: r.status, urgency: r.urgency, warm_handoff: !!r.warm_handoff, appointment_at: null, admitted_at: null, consent_id: null, barrier: null, outcome: null, notes: r.notes || null, follow_up_due: r.follow_up_due, if_updated_at: r.updated_at, ...over }; };
+  const dated = await nav.put(`/api/referrals/${id}`, await form({ follow_up_due: '2026-10-09', notes: 'Left a message with intake.' }));
+  assert.equal(dated.status, 200, JSON.stringify(dated.data));
+  const after = await stored();
+  assert.equal(after.follow_up_due, '2026-10-09'); assert.equal(after.notes, 'Left a message with intake.');
+  assert.equal(acctFor(id).length, 0, 'nothing was disclosed, so nothing is accounted');
+  // Anything that tells the agency something still needs a basis: the status, the agency, a warm hand-off, the
+  // appointment, the urgency, what is shared.
+  for (const [what, over] of [['the status', { status: 'scheduled' }], ['the agency', { resource_id: other }], ['a warm hand-off', { warm_handoff: true }],
+    ['the appointment', { appointment_at: '2026-10-12T10:00:00.000Z' }], ['the urgency', { urgency: 'urgent' }], ['what is shared', { _disclosure_what: 'Discharge summary' }]]) {
+    const r = await nav.put(`/api/referrals/${id}`, await form(over));
+    assert.ok([400, 409].includes(r.status), `changing ${what} without a basis is refused (${r.status} ${JSON.stringify(r.data)})`);
+  }
+  assert.equal((await stored()).status, 'contacted', 'nothing was changed');
+  // With a consent that names the agency, the change goes through and is accounted.
+  const k = await addConsent(c, consent(name));
+  const sent = await nav.put(`/api/referrals/${id}`, await form({ status: 'scheduled', consent_id: k }));
+  assert.equal(sent.status, 200, JSON.stringify(sent.data));
+  assert.equal(acctFor(id).length, 1, 'accounted once');
+  // By sync, the same: a device's edit of the date alone lands; one that also changes the status is gated.
+  const id2 = randomUUID();
+  H.db.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status,urgency,warm_handoff,follow_up_due,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    id2, c, other, navId, '2026-09-03T09:00:00.000Z', 'contacted', 'routine', 0, '2026-10-05', now, now);
+  const base = H.db.one(`SELECT * FROM referrals WHERE id=?`, id2);
+  const later = iso(Date.now() + 5000);
+  const p1 = await nav.post('/api/sync/push', { device_now: later, tables: { referrals: [{ ...base, follow_up_due: '2026-10-10', updated_at: later }] } });
+  assert.equal(p1.data.applied.referrals, 1, JSON.stringify(p1.data));
+  assert.equal(H.db.one(`SELECT follow_up_due FROM referrals WHERE id=?`, id2).follow_up_due, '2026-10-10');
+  assert.equal(acctFor(id2).length, 0);
+  const later2 = iso(Date.now() + 10000);
+  const p2 = await nav.post('/api/sync/push', { device_now: later2, tables: { referrals: [{ ...base, follow_up_due: '2026-10-11', status: 'scheduled', updated_at: later2 }] } });
+  assert.ok(p2.data.rejected.find(x => x.id === id2), JSON.stringify(p2.data));
+  assert.equal(H.db.one(`SELECT status FROM referrals WHERE id=?`, id2).status, 'contacted');
+});

@@ -109,3 +109,30 @@ test('a new version deletes only older SUDS shell caches, not other sites\' cach
   await w.activate();
   assert.deepEqual(w.deleted, ['suds-shell-1.0.0']);
 });
+
+// Evaluation of 1.23.0: an office server with local mode off answers 404 for local/*. Cache.add() and the plain
+// retry left those answers unread, each holding one of the browser's six HTTP/1.1 connections to the server, so
+// the install stopped at 19 of 62 files and every later fetch from the worker hung. The install now cancels the
+// body of every answer it does not store, stores every file the server has, and finishes.
+test('the install stores what the server has and cancels every answer it does not store', async () => {
+  const listeners = {}; const stored = []; const cancelled = []; const asked = [];
+  const self = { addEventListener: (t, fn) => { listeners[t] = fn; }, skipWaiting: () => {}, clients: { claim: () => {} }, location: { origin: ORIGIN } };
+  const cache = { put: async (u, r) => { stored.push(u); await r.text(); }, add: async () => { throw new Error('the install must not use Cache.add'); } };
+  const caches = { open: async () => cache, keys: async () => [] };
+  const fetchImpl = async (req) => {
+    const u = typeof req === 'string' ? req : req.url;
+    asked.push(u);
+    const body = new ReadableStream({ start: (c) => { c.enqueue(new TextEncoder().encode('{"error":"Not found"}')); c.close(); }, cancel: () => { cancelled.push(u); } });
+    return new Response(body, { status: /local\//.test(u) ? 404 : 200 });
+  };
+  // A worker resolves a relative address against its own; Node's Request needs it absolute.
+  const Req = class extends Request { constructor(u, init) { super(typeof u === 'string' ? new URL(u, `${ORIGIN}/`).href : u, init); } };
+  vm.runInNewContext(SRC, { self, caches, fetch: fetchImpl, Request: Req, Response, Headers, URL, Promise, location: self.location });
+  let done; listeners.install({ waitUntil: (p) => { done = p; } });
+  await done;
+  const missing = asked.filter(u => /local\//.test(u));
+  assert.equal(missing.length, 3, 'the three local/* files were asked for once each (a 404 is not asked for again)');
+  assert.deepEqual(cancelled.sort(), missing.sort(), 'each 404 answer was cancelled, not left unread');
+  assert.equal(stored.length, asked.length - 3, 'every other file was stored');
+  assert.ok(stored.some(u => /views\/clients\.js$/.test(u)) && stored.length > 50, 'the whole shell, the views included');
+});
