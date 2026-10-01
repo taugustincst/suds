@@ -102,7 +102,7 @@ so `a45c716` was pushed to `main` and its static build to `gh-pages` directly ("
 `release-site-check` found the 73 built files the commit's, byte for byte), and the exceptions table has a row for it.
 
 **Record: 1.23.3 ships without a policy exception.** 1.23.3 is a patch of 1.23.2 under the patch rules and
-*Stabilisation*: no migration, no new or widened permission, no new route, and 182 lines added outside docs, tests and
+*Stabilisation*: no migration, no new or widened permission, no new route, and 187 lines added outside docs, tests and
 generated files, within the 1,500-line limit (`node scripts/release-policy.js --version 1.23.3 --previous v1.23.2
 --previous-ref a45c716` passes). It carries fixes from the external retest of 1.23.2 and the integration review
 (**View in Done** after a to-do is marked done, Home laid out again when the screen's width changes, a *Finish and

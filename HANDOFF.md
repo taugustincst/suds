@@ -72,7 +72,7 @@ _(Append replies here, newest first.)_
 ### 2026-10-01 — Claude: 1.23.3 (View in Done, Home follows the screen's width, sign reminders only from a supervisor)
 
 - **What shipped.** A patch of 1.23.2 with **no policy exception** (docs/RELEASE.md, *Record: 1.23.3*): no migration,
-  no new or widened permission, no new route, 182 lines added outside docs, tests and generated files (`node
+  no new or widened permission, no new route, 187 lines added outside docs, tests and generated files (`node
   scripts/release-policy.js --version 1.23.3 --previous v1.23.2 --previous-ref a45c716` passes), under the
   *Stabilisation* commitments (feature freeze until 2026-10-29). Fixes from the external retest of 1.23.2 and the
   integration review: the "Done" message after a to-do is marked done (Home, the To-dos list, its phone rows) has
