@@ -55394,7 +55394,11 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
     phase: () => phase,
     saveStats: () => sqlite_default.saveStats(),
     lock: () => lockDevice(),
-    rekeyPending: () => !!(theVault && theVault.rekey)
+    rekeyPending: () => !!(theVault && theVault.rekey),
+    // The folder scheduled backups are written to (1.24.0): a File System Access directory handle, kept with the
+    // device's other stored values so that erasing the device forgets it too. No record and no key: the files
+    // written there are encrypted backups (local/backup.js).
+    backupFolder: { get: () => sqlite_default.getMeta("backup_folder"), set: (handle2) => sqlite_default.putMeta({ backup_folder: handle2 || null }) }
   };
   return window.SUDS_LOCAL;
 }

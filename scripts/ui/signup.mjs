@@ -5,6 +5,9 @@
 //    the storage confirmation; a second person signs up on the same device and sees only their own
 //    clients; the device administrator turns sign-ups off; backup -> erase -> restore brings the records
 //    back, a wrong passphrase and a tampered file are refused; Home's backup reminder.
+//  * scheduled backups (built for 1.24.0, not yet released): written to a folder by themselves (File System Access,
+//    keeping the newest N), one click when the browser must be asked again, one download button where there is no
+//    folder API; the restore drill; the audit.
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -297,6 +300,157 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
   await logout(); await login('second');
   eq((await clientNames()).join(','), 'Beta Second', 'and so is the second person\'s');
   await ctx.close();
+}
+
+// ================= scheduled backups on the on-device app (built for 1.24.0, not yet released) =================
+// Three browsers: one that writes to a folder by itself (Chromium's File System Access API, the folder picker
+// answered with a folder in the origin-private file system, which is a real directory handle), one where the
+// browser must be asked again for the folder, and one with no folder API at all (Safari, Firefox, iPhone), where
+// a due backup is one download button on Home.
+{
+  const BPASS = 'scheduled backup passphrase';
+  const backupMod = await import('data:text/javascript;base64,' + fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '../../local/backup.js')).toString('base64'));
+  const OPFS_PICKER = () => { window.showDirectoryPicker = async () => (await navigator.storage.getDirectory()).getDirectoryHandle('SUDS backups', { create: true }); };
+  const ASK_AGAIN = () => { let allowed = false; const P = FileSystemHandle.prototype; P.queryPermission = async function () { return allowed ? 'granted' : 'prompt'; }; P.requestPermission = async function () { allowed = true; return 'granted'; }; };
+  const NO_FOLDER_API = () => { try { delete window.showDirectoryPicker; } catch {} try { delete Window.prototype.showDirectoryPicker; } catch {} if (typeof window.showDirectoryPicker === 'function') window.showDirectoryPicker = undefined; };
+  const freshDevice = async (label, inits) => {
+    const c = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true });
+    for (const s of inits) await c.addInitScript(s);
+    const pg = await c.newPage(); watch(pg, label);
+    await pg.goto(device + '/'); await pg.waitForSelector('input[name=display_name]', { timeout: 15000 }); await settle(pg);
+    await pg.fill('input[name=display_name]', 'Fran Folder'); await pg.fill('input[name=username]', 'fran');
+    await pg.fill('input[name=password]', PW); await pg.fill('input[name=confirm]', PW); await pg.check('input[name=storage_ack]');
+    if (await pg.$('select[name=role] option[value=admin]')) await pg.selectOption('select[name=role]', 'admin');
+    await pg.click('button[type=submit]'); await pg.waitForSelector('.layout', { timeout: 15000 }); await passRecoveryCode(pg); await dismissTour(pg);
+    const k = (method, p, body) => pg.evaluate(async ({ method, p, body }) => { const r = await window.SUDS_LOCAL.handle(method, p, body, { 'X-Requested-With': 'suds' }); return { status: r.status, data: r.json }; }, { method, p, body });
+    eq((await k('POST', '/api/clients', { first_name: 'Gamma', last_name: 'Folder', status: 'active' })).status, 201, `${label}: a client on the device`);
+    return { c, pg, k };
+  };
+  const inFolder = (pg) => pg.evaluate(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('SUDS backups', { create: true }); const out = []; for await (const [n, e] of d.entries()) if (e.kind === 'file') out.push(n); return out.sort(); });
+  const readFromFolder = async (pg, name) => Buffer.from(await pg.evaluate(async (name) => {
+    const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('SUDS backups');
+    const f = await (await d.getFileHandle(name)).getFile();
+    return new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(',')[1]); fr.readAsDataURL(f); });
+  }, name), 'base64');
+  const TIMED = /^suds-device-backup-\d{4}-\d{2}-\d{2}-\d{6}\.sudsbackup$/;
+
+  // ---- 1. a browser that saves to a folder by itself ----
+  {
+    const { c, pg, k } = await freshDevice('device folder', [OPFS_PICKER]);
+    await pg.goto(device + '/#/dashboard?_=b1'); await settle(pg);
+    ok(await until(() => pg.$('[data-backup-reminder] [data-backup-schedule-link]'), { timeout: 5000 }), 'folder: with no schedule, Home\'s reminder offers to set up scheduled backups');
+    await pg.goto(device + '/#/sync'); await settle(pg);
+    eq(await pg.getAttribute('[data-backup-schedule]', 'data-backup-schedule'), 'off', 'folder: scheduled backups start off');
+    eq(await pg.getAttribute('[data-backup-where]', 'data-backup-where'), 'download', 'folder: until a folder is chosen, backups are downloads');
+    await pg.click('[data-backup-schedule-setup]'); await pg.waitForSelector('.modal input[name=passphrase]');
+    await pg.fill('.modal input[name=passphrase]', BPASS); await pg.fill('.modal input[name=confirm]', BPASS + 'x');
+    await pg.click('.modal button[type=submit]'); await settle(pg);
+    ok(/do not match/.test(await pg.textContent('.modal')), 'folder: the passphrase is typed twice and a mismatch is caught');
+    await pg.fill('.modal input[name=confirm]', BPASS); await pg.selectOption('.modal select[name=every_days]', '1');
+    await pg.click('.modal button[type=submit]');
+    ok(await until(async () => (await pg.getAttribute('[data-backup-schedule]', 'data-backup-schedule').catch(() => null)) === 'on', { timeout: 20000 }), 'folder: setting the passphrase turns scheduled backups on');
+    const dev1 = (await k('GET', '/api/local/device')).data.backup;
+    ok(dev1.passphrase_kept && dev1.every_days === 1 && dev1.due, 'folder: daily, with the passphrase\'s key kept, and due now (never backed up)', dev1);
+    await pg.click('[data-backup-folder-choose]');
+    ok(await until(async () => (await pg.getAttribute('[data-backup-where]', 'data-backup-where').catch(() => null)) === 'folder', { timeout: 8000 }), 'folder: a folder is chosen');
+    ok(/SUDS backups/.test(await pg.textContent('[data-backup-where]')), 'folder: and named on the page');
+    // Earlier backups in the folder, and a file that is not SUDS's.
+    await pg.evaluate(async () => { const d = await (await navigator.storage.getDirectory()).getDirectoryHandle('SUDS backups', { create: true });
+      for (const n of ['suds-device-backup-2026-01-01-000000.sudsbackup', 'suds-device-backup-2026-01-02.sudsbackup', 'suds-device-backup-2026-01-03-000000.sudsbackup', 'notes.txt']) { const w = await (await d.getFileHandle(n, { create: true })).createWritable(); await w.write('old'); await w.close(); } });
+    await pg.selectOption('[data-backup-keep]', '3');
+    ok(await until(async () => (await k('GET', '/api/local/device')).data.backup.keep === 3, { timeout: 5000 }), 'folder: keep the newest 3');
+    // Home after a sign-in: the due backup is written to the folder there and then, with no prompt.
+    await pg.goto(device + '/#/dashboard?_=b2'); await settle(pg);
+    const written = await until(() => pg.getAttribute('[data-backup-written]', 'data-backup-written').catch(() => null), { timeout: 20000 });
+    ok(written && TIMED.test(written), 'folder: Home writes the due backup to the folder by itself, and says so', written);
+    ok(!(await pg.$('[data-backup-reminder]')), 'folder: with no reminder');
+    const files = await inFolder(pg);
+    ok(files.includes(written) && files.includes('notes.txt'), 'folder: the new backup is in the folder, and the file that is not SUDS\'s is untouched', files);
+    ok(!files.includes('suds-device-backup-2026-01-01-000000.sudsbackup') && files.includes('suds-device-backup-2026-01-02.sudsbackup'), 'folder: the oldest backup beyond the three kept is removed', files);
+    eq(files.filter(n => n.endsWith('.sudsbackup')).length, 3, 'folder: three backups left');
+    const bytes = await readFromFolder(pg, written);
+    ok(!bytes.includes(Buffer.from('SQLite format 3')) && !bytes.includes(Buffer.from('Gamma')), 'folder: the file is encrypted: no database or name readable in it');
+    const opened = await backupMod.open(Uint8Array.from(bytes), BPASS);
+    eq(opened.meta.clients, 1, 'folder: it opens with the passphrase and holds the device\'s client');
+    let wrongRefused = false; try { await backupMod.open(Uint8Array.from(bytes), 'not the passphrase'); } catch (e) { wrongRefused = e.code === 'passphrase'; }
+    ok(wrongRefused, 'folder: and not with another passphrase');
+    await pg.goto(device + '/#/sync'); await settle(pg);
+    eq(await pg.textContent('[data-last-backup]'), 'today', 'folder: This device says "Last backup: today"');
+    ok(/to the folder “SUDS backups”/.test(await pg.textContent('[data-last-backup-to]')), 'folder: and where it went', await pg.textContent('[data-last-backup-to]').catch(() => ''));
+    ok((await pg.getAttribute('[data-backup-next]', 'data-backup-next')) !== 'due', 'folder: the next one is not due yet');
+    await pg.goto(device + '/#/dashboard?_=b3'); await settle(pg);
+    ok(!(await pg.$('[data-backup-reminder]')) && !(await pg.$('[data-backup-written]')), 'folder: Home is quiet once today\'s backup is written');
+    // The restore drill, on the newest backup in the folder.
+    await pg.goto(device + '/#/sync'); await settle(pg);
+    eq(await pg.getAttribute('[data-backup-check]', 'data-backup-check'), 'never', 'folder: no restore check run yet');
+    await pg.click('[data-backup-check-open]'); await pg.waitForSelector('.modal #check-passphrase');
+    await pg.fill('.modal #check-passphrase', 'not the passphrase'); await pg.click('.modal [data-backup-check-go]');
+    eq(await until(() => pg.getAttribute('.modal [data-backup-check-result]', 'data-backup-check-result').catch(() => null), { timeout: 30000 }), 'passphrase', 'folder: the check with a wrong passphrase says the passphrase does not open it');
+    await pg.fill('.modal #check-passphrase', BPASS); await pg.click('.modal [data-backup-check-go]');
+    eq(await until(async () => { const v = await pg.getAttribute('.modal [data-backup-check-result]', 'data-backup-check-result').catch(() => null); return v === 'ok' ? v : null; }, { timeout: 30000 }), 'ok', 'folder: with the right one, the newest backup checks out');
+    ok(/1 client/.test(await pg.textContent('.modal [data-backup-check-result]')) && (await pg.textContent('.modal [data-backup-check-result]')).includes(written), 'folder: naming the file and what it holds');
+    await pg.click('.modal button:has-text("Close")');
+    ok(await until(async () => (await pg.getAttribute('[data-backup-check]', 'data-backup-check').catch(() => null)) === 'ok', { timeout: 8000 }), 'folder: This device shows the check passed');
+    // Back up now, by hand: one more file, and the oldest of ours goes.
+    await pg.click('[data-backup-now]');
+    // Done once the kernel has recorded it (the page tells it after the file is closed and the old one removed).
+    ok(await until(async () => ((await k('GET', '/api/admin/audit?limit=500')).data.rows || []).filter(x => x.action === 'device.backup.created' && x.details.to === 'folder').length === 2, { timeout: 20000 }), 'folder: "Back up now" writes another backup to the folder');
+    eq((await inFolder(pg)).filter(n => TIMED.test(n) && !n.includes('-2026-01-0')).length, 2, 'folder: the two backups made today are in it');
+    const after = await inFolder(pg);
+    ok(!after.includes('suds-device-backup-2026-01-02.sudsbackup') && after.includes('notes.txt') && after.filter(n => n.endsWith('.sudsbackup')).length === 3, 'folder: still three kept, the oldest removed', after);
+    const log = (await k('GET', '/api/admin/audit?limit=500')).data.rows || [];
+    const made = log.filter(x => x.action === 'device.backup.created' && x.details.to === 'folder');
+    eq(made.length, 2, 'folder: each backup written is in the audit log');
+    ok(made.some(x => x.details.trigger === 'schedule' && x.details.old_files_removed === 1) && made.some(x => x.details.trigger === 'now'), 'folder: with what made it and how many old files went', made.map(x => x.details));
+    ok(log.some(x => x.action === 'device.backup.checked' && x.details.ok === true), 'folder: and the restore check');
+    ok(!JSON.stringify(log.filter(x => /^device\.backup/.test(x.action))).match(/Gamma|SUDS backups|sudsbackup|scheduled backup passphrase/), 'folder: with no name, folder, file name or passphrase in it');
+    await pg.click('[data-backup-schedule-off]');
+    ok(await until(async () => (await pg.getAttribute('[data-backup-schedule]', 'data-backup-schedule').catch(() => null)) === 'off', { timeout: 8000 }), 'folder: scheduled backups can be turned off');
+    eq((await k('POST', '/api/local/backup/run', { to: 'folder' })).status, 409, 'folder: and then no backup is made with the forgotten key');
+    await c.close();
+  }
+
+  // ---- 2. the browser must be asked for the folder again (after it restarts) ----
+  {
+    const { c, pg, k } = await freshDevice('device folder ask', [OPFS_PICKER, ASK_AGAIN]);
+    eq((await k('POST', '/api/local/backup/schedule', { passphrase: BPASS, every_days: 3 })).status, 200, 'ask: scheduled backups on, every 3 days');
+    await pg.evaluate(async () => { await window.SUDS_LOCAL.backupFolder.set(await window.showDirectoryPicker()); });
+    await pg.goto(device + '/#/dashboard?_=b4'); await settle(pg);
+    ok(await until(() => pg.$('[data-backup-reminder] [data-backup-folder-now]'), { timeout: 8000 }), 'ask: Home asks for one click to save the due backup to the folder');
+    ok(/needs your permission again to save it to “SUDS backups”/.test(await pg.textContent('[data-backup-reminder]')), 'ask: saying why', await pg.textContent('[data-backup-reminder]').catch(() => ''));
+    eq((await inFolder(pg)).length, 0, 'ask: nothing written before the click');
+    await pg.click('[data-backup-folder-now]');
+    ok(await until(async () => !(await pg.$('[data-backup-reminder]')), { timeout: 20000 }), 'ask: after the click the reminder goes');
+    const files = await inFolder(pg);
+    ok(files.length === 1 && TIMED.test(files[0]), 'ask: and the backup is in the folder', files);
+    const b = (await k('GET', '/api/local/device')).data.backup;
+    ok(b.last_to === 'folder' && !b.due && b.every_days === 3, 'ask: recorded as the last backup, to a folder', b);
+    await c.close();
+  }
+
+  // ---- 3. no folder API (Safari, Firefox, iPhone): one download button on Home ----
+  {
+    const { c, pg, k } = await freshDevice('device download', [NO_FOLDER_API]);
+    await pg.goto(device + '/#/sync'); await settle(pg);
+    ok(!(await pg.$('[data-backup-folder-choose]')), 'download: no folder to choose where the browser cannot write to one');
+    ok(/cannot save to a folder by itself/.test(await pg.textContent('[data-backup-schedule]')), 'download: and the page says so', await pg.textContent('[data-backup-schedule]').catch(() => ''));
+    await pg.click('[data-backup-schedule-setup]'); await pg.waitForSelector('.modal input[name=passphrase]');
+    ok(/Home shows one button that downloads it/.test(await pg.textContent('.modal')), 'download: the set-up dialog says how a due backup will be made here');
+    await pg.fill('.modal input[name=passphrase]', BPASS); await pg.fill('.modal input[name=confirm]', BPASS);
+    await pg.click('.modal button[type=submit]');
+    ok(await until(async () => (await pg.getAttribute('[data-backup-schedule]', 'data-backup-schedule').catch(() => null)) === 'on', { timeout: 20000 }), 'download: scheduled backups on');
+    await pg.goto(device + '/#/dashboard?_=b5'); await settle(pg);
+    ok(await until(() => pg.$('[data-backup-reminder] [data-backup-download-now]'), { timeout: 8000 }), 'download: the due backup is one "Download the backup" button on Home');
+    ok(/cannot save backups to a folder by itself/.test(await pg.textContent('[data-backup-reminder]')), 'download: which says honestly why', await pg.textContent('[data-backup-reminder]').catch(() => ''));
+    const [dl] = await Promise.all([pg.waitForEvent('download', { timeout: 30000 }), pg.click('[data-backup-download-now]')]);
+    ok(TIMED.test(dl.suggestedFilename()), 'download: a dated and timed .sudsbackup file', dl.suggestedFilename());
+    const f = path.join(tmp, dl.suggestedFilename()); await dl.saveAs(f);
+    eq((await backupMod.open(Uint8Array.from(fs.readFileSync(f)), BPASS)).meta.clients, 1, 'download: it opens with the passphrase, no passphrase typed to make it');
+    ok(await until(async () => !(await pg.$('[data-backup-reminder]')), { timeout: 8000 }), 'download: and the reminder goes');
+    await pg.goto(device + '/#/sync'); await settle(pg);
+    eq(await pg.getAttribute('[data-last-backup-to]', 'data-last-backup-to'), 'download', 'download: This device says the last backup was downloaded');
+    await c.close();
+  }
 }
 
 finish(errors);

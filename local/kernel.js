@@ -919,7 +919,11 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
   window.SUDS_LOCAL = { handle, flush: (opts) => sqlite.flush(opts), isDirty: () => sqlite.isDirty(), epoch: () => sqlite.epoch(), wipe: wipeDevice, sync: (opts) => sync.run(opts), isWiped: () => sqlite.isWiped(), isFrozen: () => sqlite.isFrozen(),
     // Diagnostics only: whether the database is open, and the sizes and timings of the last save (no contents);
     // whether a restored device still runs under the key its backup carried (no key material).
-    phase: () => phase, saveStats: () => sqlite.saveStats(), lock: () => lockDevice(), rekeyPending: () => !!(theVault && theVault.rekey) };
+    phase: () => phase, saveStats: () => sqlite.saveStats(), lock: () => lockDevice(), rekeyPending: () => !!(theVault && theVault.rekey),
+    // The folder scheduled backups are written to (1.24.0): a File System Access directory handle, kept with the
+    // device's other stored values so that erasing the device forgets it too. No record and no key: the files
+    // written there are encrypted backups (local/backup.js).
+    backupFolder: { get: () => sqlite.getMeta('backup_folder'), set: (handle) => sqlite.putMeta({ backup_folder: handle || null }) } };
   return window.SUDS_LOCAL;
 }
 
