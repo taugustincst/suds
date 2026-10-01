@@ -214,7 +214,8 @@ test('Send to the county: the key is made on first use, its private half encrypt
   const pem = crypto.createPublicKey(require('../server/signing').privateKeyFrom(seed)).export({ type: 'spki', format: 'pem' });
   assert.equal(pem, row.public_key, 'the stored public key is the private key\'s');
   assert.equal(ownF.signature.key_fingerprint, row.fingerprint);
-  assert.equal(ownF.format, 'suds-county-submission'); assert.equal(ownF.schema_version, 2); assert.equal(ownF.payload.schema_version, 2);
+  // Nobody has said which SUDS the county runs (1.22.0): version 1, which every county reads (county-award.test.js).
+  assert.equal(ownF.format, 'suds-county-submission'); assert.equal(ownF.schema_version, 1); assert.equal(ownF.payload.schema_version, 1);
   const k = (await fin.get('/api/county-submission/key')).data.key;
   assert.equal(k.fingerprint, row.fingerprint); assert.match(k.public_key, /BEGIN PUBLIC KEY/);
   assert.ok(!('private_key_enc' in k));
@@ -236,7 +237,7 @@ test('Send to the county: the key is made on first use, its private half encrypt
   assert.ok(!ownText.includes('Zebedee') && !ownText.includes(code));
   // Audited as leaving the programme, with what identifies the file and not its figures.
   const a = lastAudit('county_submission.export');
-  assert.deepEqual(Object.keys(a.details).sort(), ['content', 'county_code', 'fingerprint', 'from', 'funds', 'leaves_programme', 'schema_version', 'sha256', 'to']);
+  assert.deepEqual(Object.keys(a.details).sort(), ['content', 'county_code', 'fingerprint', 'from', 'funds', 'leaves_programme', 'schema_version', 'sha256', 'to', 'version_source']);
   assert.equal(a.details.sha256, crypto.createHash('sha256').update(K.canonical(p)).digest('hex'));
   assert.equal(a.details.fingerprint, row.fingerprint);
   assert.ok(lastAudit('county_submission.key.create'));

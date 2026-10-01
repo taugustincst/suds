@@ -69,7 +69,8 @@ test('schema version 2 is frozen: version 1 with each fund\'s award, null or exa
 });
 
 test('the programme makes version 2: each fund\'s award from its record (none for a fund without an amount); version 1 on request; audited with the version', async () => {
-  const r = await fin.get(fileUrl(Q2, [fundA, fundZero]));
+  // The county runs SUDS 1.21 or later, as the programme answers on the card (1.22.0): remembered for this county code.
+  const r = await fin.get(fileUrl(Q2, [fundA, fundZero], '&county_suds=1.21%2B'));
   const f = ok(r, 200);
   assert.equal(f.schema_version, 2); assert.equal(f.payload.schema_version, 2);
   const byName = Object.fromEntries(f.payload.funds.map(x => [x.name, x]));
@@ -85,6 +86,68 @@ test('the programme makes version 2: each fund\'s award from its record (none fo
   for (const bad of ['3', '0', 'two', '1.5']) assert.equal((await fin.get(fileUrl(Q2, [fundA], `&schema_version=${bad}`))).status, 400, bad);
   // Who may make it is unchanged.
   for (const c of [nav, ro]) assert.equal((await c.get(fileUrl(Q2, [fundA]))).status, 403);
+});
+
+// ---------------------------------------------------------------- which version a file is made in (1.22.0)
+test('the version chosen: version 2 only when the county is known to read it (its connection, or the programme\'s answer); otherwise version 1', () => {
+  const v = (o) => { const c = K.chooseVersion(o); return [c.version, c.source, c.award]; };
+  assert.deepEqual(K.COUNTY_SUDS, ['1.21+', '1.20-', 'unknown']);
+  assert.deepEqual(v({}), [1, 'unknown', false], 'nothing known: version 1, which every county reads');
+  assert.deepEqual(v({ answer: 'unknown' }), [1, 'unknown', false], '"don\'t know": version 1');
+  assert.deepEqual(v({ answer: '1.20-' }), [1, 'answer', false]);
+  assert.deepEqual(v({ answer: '1.21+' }), [2, 'answer', true]);
+  assert.deepEqual(v({ countyReads: [1, 2] }), [2, 'connection', true], 'the connection says the county reads version 2');
+  assert.deepEqual(v({ countyReads: [1], answer: '1.21+' }), [1, 'connection', false], 'the county\'s own /status wins over an answer');
+  assert.deepEqual(v({ countyReads: [1, 2], answer: '1.20-' }), [2, 'connection', true]);
+  assert.deepEqual(v({ countyReads: [] }), [1, 'unknown', false], 'an empty list says nothing');
+  assert.deepEqual(v({ asked: 1, answer: '1.21+' }), [1, 'asked', false], 'a version asked for by name wins');
+  assert.deepEqual(v({ asked: 2, answer: 'unknown' }), [2, 'asked', true]);
+  assert.deepEqual(v({ asked: 7 }), [1, 'unknown', false], 'a version SUDS does not make is not asked for');
+});
+
+test('by hand: a county not known to read version 2 gets version 1; the programme\'s answer is remembered per county code; audited with why', async () => {
+  const other = { county_code: 'NEWC-2345', county_name: 'New County' };
+  const url = (extra = '', c = other) => `/api/county-submission/file?from=${Q2.from}&to=${Q2.to}&county_code=${c.county_code}&county_name=${encodeURIComponent(c.county_name)}&funds=${fundA}${extra}`;
+  const first = await fin.get(url());
+  assert.equal(ok(first, 200).schema_version, 1, 'never asked: version 1');
+  assert.ok(!JSON.stringify(first.data).includes('award'), 'without the award');
+  assert.equal(first.headers.get('x-suds-county-file-version'), '1');
+  assert.equal(lastAudit('county_submission.export').details.version_source, 'unknown');
+  let opt = ok(await fin.get('/api/county-submission/options'), 200);
+  let c = opt.counties.find(x => x.code === 'NEWC2345');
+  assert.deepEqual([c.county_suds, c.version, c.version_source], [null, 1, 'unknown']);
+  assert.deepEqual(opt.county_suds_choices, K.COUNTY_SUDS);
+  assert.equal((await fin.get(url('&county_suds=1.19'))).status, 400, 'an answer SUDS does not know');
+  // Answered "1.21 or later": version 2, and remembered.
+  assert.equal(ok(await fin.get(url('&county_suds=1.21%2B')), 200).schema_version, 2);
+  assert.equal(lastAudit('county_submission.export').details.version_source, 'answer');
+  assert.equal(ok(await fin.get(url()), 200).schema_version, 2, 'asked once: the next file is version 2 without asking');
+  opt = ok(await fin.get('/api/county-submission/options'), 200);
+  c = opt.counties.find(x => x.code === 'NEWC2345');
+  assert.deepEqual([c.county_suds, c.version, c.version_source], ['1.21+', 2, 'answer']);
+  // "Don't know" and "1.20 or earlier": version 1, remembered too; the name and funds are kept with it.
+  assert.equal(ok(await fin.get(url('&county_suds=unknown')), 200).schema_version, 1);
+  assert.equal(ok(await fin.get(url()), 200).schema_version, 1);
+  assert.equal(ok(await fin.get(url('&county_suds=1.20-')), 200).schema_version, 1);
+  const rec = JSON.parse(H.db.getSetting('county_submission_recipients')).NEWC2345;
+  assert.deepEqual([rec.county_suds, rec.name, rec.fund_ids], ['1.20-', 'New County', [fundA]]);
+  // A version asked for by name still wins.
+  assert.equal(ok(await fin.get(url('&schema_version=2')), 200).schema_version, 2);
+  assert.equal(lastAudit('county_submission.export').details.version_source, 'asked');
+  // The county connection, for this county code: what its /status says it reads decides.
+  H.db.run(`INSERT OR REPLACE INTO county_connection(id, base_url, token_enc, county_code, county_name) VALUES('county', 'https://county.example', 'x', 'NEWC2345', 'New County')`);
+  try {
+    H.db.setSetting('county_connect_last_status', JSON.stringify({ county_code: 'NEWC2345', accepts_schema_versions: [1, 2], at: new Date().toISOString() }));
+    assert.equal(ok(await fin.get(url()), 200).schema_version, 2, 'the connection says it reads version 2, over the answer "1.20 or earlier"');
+    assert.equal(lastAudit('county_submission.export').details.version_source, 'connection');
+    c = ok(await fin.get('/api/county-submission/options'), 200).counties.find(x => x.code === 'NEWC2345');
+    assert.deepEqual([c.version, c.version_source], [2, 'connection']);
+    H.db.setSetting('county_connect_last_status', JSON.stringify({ county_code: 'NEWC2345', at: new Date().toISOString() }));
+    assert.equal(ok(await fin.get(url('&county_suds=1.21%2B')), 200).schema_version, 1, 'a /status without accepts_schema_versions is a county on 1.20 or earlier');
+    assert.equal(ok(await fin.get(url('', { county_code: COUNTY.county_code, county_name: COUNTY.county_name })), 200).schema_version, 2, 'another county code: its own answer');
+  } finally {
+    H.db.run(`DELETE FROM county_connection`); H.db.run(`DELETE FROM settings WHERE key='county_connect_last_status'`);
+  }
 });
 
 // ---------------------------------------------------------------- the county reads both versions

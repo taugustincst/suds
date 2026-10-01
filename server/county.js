@@ -35,8 +35,8 @@ const { encrypt, decrypt, uuid } = require('./crypto');
 
 const FORMAT = 'suds-county-submission';
 /**
- * The version a file is made in (always the latest: released in 1.21.0), and every version this SUDS
- * reads. Version 2 adds each fund's award (its award or contract amount and the award period, from the programme's
+ * The latest version a file can be made in (released in 1.21.0; which one a file is made in: chooseVersion, 1.22.0),
+ * and every version this SUDS reads. Version 2 adds each fund's award (its award or contract amount and the award period, from the programme's
  * fund record: funding_sources.total_amount, fiscal_year_start and fiscal_year_end), signed like the rest; version 1
  * files are read as before and shown as "award not in file". A county on SUDS 1.20 or earlier reads version 1 only:
  * the county upgrades first (docs/COUNTY-VIEW.md, "Award amounts").
@@ -819,11 +819,34 @@ const CAVEATS = [
   'Exact figures, including small numbers, as each program sends them under its funding contract. For authorised county staff only: not for publication or sharing.',
   'Each figure is what the program recorded in SUDS for the work charged to the opioid settlement funds it chose to report to the county, from its own Settlement outcomes page. Money is exact; a cost per outcome is not calculated across programs.',
 ];
+/**
+ * Which SUDS the county runs, as the programme answered on the Send to the county card (built for 1.22.0, not yet
+ * released; docs/COUNTY-VIEW.md "Award amounts"), remembered per county code: '1.21+' (reads version 2, with the
+ * award), '1.20-' (SUDS 1.20 or earlier: version 1 only) or 'unknown' (don't know).
+ */
+const COUNTY_SUDS = ['1.21+', '1.20-', 'unknown'];
+/**
+ * The version a county file is made in (the owner's decision, conservative: a file the county cannot read is worse
+ * than one without the award). `asked`: a version the request names (1 or 2), which wins. `countyReads`: the versions
+ * the connected county's /status said it reads, when the file is for that county (a /status without them is a county
+ * on 1.20 or earlier: [1]). `answer`: the programme's answer for this county code (COUNTY_SUDS). Version 2 only when
+ * the county is known to read it — its connection says so, or the programme said it runs 1.21 or later; otherwise
+ * version 1, which every county reads. Returns { version, source: 'asked' | 'connection' | 'answer' | 'unknown',
+ * award: whether the file carries the award }.
+ */
+function chooseVersion({ asked = null, countyReads = null, answer = null } = {}) {
+  const out = (version, source) => ({ version, source, award: version >= 2 });
+  if (asked !== null && asked !== undefined && SCHEMA_VERSIONS.includes(Number(asked))) return out(Number(asked), 'asked');
+  if (Array.isArray(countyReads) && countyReads.length) return out(countyReads.includes(SCHEMA_VERSION) ? SCHEMA_VERSION : 1, 'connection');
+  if (answer === '1.21+') return out(SCHEMA_VERSION, 'answer');
+  if (answer === '1.20-') return out(1, 'answer');
+  return out(1, 'unknown');
+}
 const PERIOD_RULE = 'A program\'s submission counts when its whole period lies inside the period chosen here; nothing is pro-rated. Where two of one program\'s submissions overlap (a quarter and a month inside it), the longer one counts, except that a signed file always counts over figures the county entered. A program whose submissions cover only part of the period is marked "part of the period". An inactive program\'s files count only if the county chose to keep counting them.';
 const PUBLICATION_NOTE = 'To publish combined figures, use Publish: it screens the totals of a period with SUDS\'s small-cell method, checked against each program\'s own published figures, and records what was published. Nothing on the combined view or in its files is for publication.';
 
 module.exports = {
-  FORMAT, SCHEMA_VERSION, SCHEMA_VERSIONS, ALGORITHM, MAX_FILE_BYTES, MAX_QUARTERS, VALUE_KEYS, PAYLOAD, PAYLOAD_V2, PAYLOADS, AWARD_NOT_IN_FILE, AWARD_NONE, awardFrom, awardNote, TEXT_MAX, CAVEATS, CAVEAT_SUMMARY, PERIOD_RULE, PUBLICATION_NOTE, SubmissionError,
+  FORMAT, SCHEMA_VERSION, SCHEMA_VERSIONS, COUNTY_SUDS, chooseVersion, ALGORITHM, MAX_FILE_BYTES, MAX_QUARTERS, VALUE_KEYS, PAYLOAD, PAYLOAD_V2, PAYLOADS, AWARD_NOT_IN_FILE, AWARD_NONE, awardFrom, awardNote, TEXT_MAX, CAVEATS, CAVEAT_SUMMARY, PERIOD_RULE, PUBLICATION_NOTE, SubmissionError,
   ENTERED, ENTERED_LABEL, ENTERED_NOTE, LEFT_OUT, USE_CODES, HIAA_CODES, CURRENT, subById, sha256Hex, isEntered, sourceOf, hasEntered,
   SUBS, canonical, textOf, cleanText, fingerprintOf, formatFingerprint, normaliseFingerprint, parsePublicKey, normaliseCode, formatCode, countyCode,
   currentKey, retiredKeys, ensureKey, rotateKey, payloadFrom, signFile, signWithSeed, checkPayload, parseFile, importParsed, withdraw, reinstate, resettle, resettleProgramme,
