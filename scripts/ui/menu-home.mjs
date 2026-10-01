@@ -124,6 +124,34 @@ try {
   }
   await setProfile('harm_reduction');
 
+  // ------------------------------------------------- 2a. a first sign-in, cold, five times (1.23.3, external retest)
+  // "To-dos for today" was on the first screen on some first sign-ins at 390 × 844 and about 940 px down on others:
+  // Home chose its layout once, from the width when its figures came back, and a phone browser whose window was still
+  // at another width at that moment kept the computer's layout. Home now follows the width. Each load here is a new
+  // browser on a first sign-in; the odd ones are sized to the phone only once the sign-in has been sent, the even ones
+  // only after Home has been drawn (the two moments the retest's loads differed by).
+  for (let n = 0; n < 5; n++) {
+    const who = n % 2 ? 'dchen' : 'mrivera';
+    const ctx = await browser.newContext({ viewport: n === 0 ? PHONE : { width: 1280, height: 900 } });
+    const page = await ctx.newPage();
+    page.on('pageerror', e => errors.push(`${who} cold load ${n} PAGEERROR ${e.message}`));
+    page.on('console', m => { if (m.type() === 'error' && !/40[134]/.test(m.text())) errors.push(`${who} cold load ${n} CONSOLE ${m.text().slice(0, 200)}`); });
+    await page.goto(base + '/#/login'); await settle(page);
+    await page.fill('input[name=username]', who); await page.fill('input[name=password]', PW); await page.click('button[type=submit]');
+    if (n % 2) await page.setViewportSize(PHONE);
+    await page.waitForSelector('.layout', { timeout: 15000 }); await settle(page);
+    if (n && !(n % 2)) { await page.setViewportSize(PHONE); await settle(page); }
+    await until(() => page.$('[data-home-layout="phone"]'), { timeout: 5000 }); await settle(page);
+    const cold = await home(page);
+    const layout = await page.evaluate(() => document.querySelector('[data-home-layout]')?.dataset.homeLayout);
+    measure(`cold first sign-in ${n + 1} (${who}): "To-dos for today" top (px)`, cold.todosTop);
+    eq(layout, 'phone', `cold first sign-in ${n + 1} (${who}): Home is laid out for the phone`);
+    ok(cold.todosTop !== null && cold.todosTop < 700, `cold first sign-in ${n + 1} (${who}): "To-dos for today" is in the top 700 px (${cold.todosTop})`, cold);
+    // The next load is a first sign-in again.
+    await page.evaluate(async () => { await fetch('/api/me/prefs', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ tour_done: false, home_folded: null, first_day_skip: null }) }); });
+    await ctx.close();
+  }
+
   // --------------------------------------------------------------------------------------- 2. the phone Home
   for (const [who, label] of [['mrivera', 'navigator'], ['dchen', 'peer navigator']]) {
     // A first sign-in: the welcome card is showing.
@@ -174,6 +202,22 @@ try {
       ok(await until(async () => (await status()) === 'open'), 'N1: Undo reopens it');
       ok(await until(() => s.page.$(`[data-today-task="${first.id}"]`)), 'N1: and it is back on Home');
       await axe(s.page, 'the phone Home after Undo');
+      // 1.23.3: "Done" offers "View in Done" beside Undo, which opens To-dos showing Done, with the to-do in it.
+      await s.page.check(`[data-today-task="${first.id}"] input[type=checkbox]`);
+      ok(await until(async () => (await status()) === 'done'), 'View in Done: the box marks it done again');
+      const btns = await until(() => s.page.evaluate(() => { const t = document.querySelector('.undo-toast'); return t && t.querySelector('[data-toast-also]') ? [...t.querySelectorAll('button')].map(b => ({ text: b.textContent, name: b.getAttribute('aria-label') })) : null; }));
+      eq(btns && btns.map(b => b.text).join(' | '), 'Undo | View in Done', 'View in Done: the "Done" message offers Undo and View in Done');
+      eq(btns && btns[1].name, `View in Done: Done: ${first.title}`, 'View in Done: the button is named with what was done');
+      await s.page.focus('.undo-toast [data-undo]'); await s.page.keyboard.press('Tab');
+      ok(await s.page.evaluate(() => !!document.activeElement?.closest('.undo-toast [data-toast-also]')), 'View in Done: Tab moves from Undo to View in Done');
+      await axe(s.page, 'the "Done" message with Undo and View in Done (390 px)');
+      ok(await s.page.$('.undo-toast [data-toast-also]'), 'View in Done: the message is still there while its buttons have focus');
+      await s.page.keyboard.press('Enter');
+      ok(await until(() => s.page.evaluate(() => /^#\/tasks\?status=done&mine=1(&|$)/.test(location.hash))), 'View in Done from Home: opens To-dos showing Done, assigned to me', await s.page.evaluate(() => location.hash));
+      await settle(s.page);
+      eq(await s.page.$eval('.main .filters select', e => e.value), 'done', 'View in Done from Home: the Status filter reads Done');
+      ok(await until(() => s.page.evaluate((title) => [...document.querySelectorAll('.main .compact-row, .main tbody tr')].some(r => r.offsetParent && r.textContent.includes(title)), first.title)), `View in Done from Home: "${first.title}" is in the list`);
+      ok(!(await s.page.$('.undo-toast')), 'View in Done: the message is put away');
       // N4: at the end of every page with the + Log button, nothing is left under it (the program-wide cards open).
       for (const page of ['dashboard', 'tasks', 'clients', 'calls', 'interventions', 'referrals']) {
         await s.go(page);
@@ -246,6 +290,27 @@ try {
     await s.api('PUT', '/api/me/prefs', { tour_done: true });
     await s.page.reload(); await settle(s.page);
     measure('navigator Home at 1280 px without the welcome: height (px)', (await home(s.page)).height);
+    // 1.23.3: Home follows the width both ways: narrowed to a phone it takes the phone's order, widened again the computer's.
+    await s.page.setViewportSize(PHONE);
+    ok(await until(() => s.page.$('[data-home-layout="phone"]')), 'desktop Home narrowed to 390 px is laid out for the phone'); await settle(s.page);
+    ok((await home(s.page)).todosTop < 700, 'and "To-dos for today" is on its first screen');
+    await s.page.setViewportSize({ width: 1280, height: 900 });
+    ok(await until(() => s.page.$('[data-home-layout="computer"]')), 'widened again, it is the computer\'s layout'); await settle(s.page);
+    // 1.23.3: the To-dos list's own box (a computer's table), on everyone's to-dos: View in Done keeps "everyone's".
+    await s.go('tasks?status=open&mine=0');
+    const title = await s.page.evaluate(() => { const box = [...document.querySelectorAll('.main tbody input[type=checkbox]')].find(i => /^Mark ".*" done$/.test(i.getAttribute('aria-label') || '')); return box ? box.getAttribute('aria-label').replace(/^Mark "(.*)" done$/, '$1') : null; });
+    ok(title, 'the To-dos list (everyone\'s, open) has a to-do to mark done');
+    if (title) {
+      await s.page.check(`.main tbody input[type=checkbox][aria-label=${JSON.stringify(`Mark "${title}" done`)}]`);
+      ok(await until(() => s.page.$('.undo-toast [data-toast-also]')), 'the list\'s "Done" message offers View in Done');
+      eq(await s.page.$$eval('.undo-toast button', b => b.map(x => x.textContent).join(' | ')), 'Undo | View in Done', 'with Undo beside it');
+      await axe(s.page, 'the "Done" message with Undo and View in Done (1280 px)');
+      await s.page.click('.undo-toast [data-toast-also]');
+      ok(await until(() => s.page.evaluate(() => /^#\/tasks\?status=done&mine=0(&|$)/.test(location.hash))), 'View in Done from the list: opens Done and keeps "everyone\'s"', await s.page.evaluate(() => location.hash));
+      await settle(s.page);
+      eq(await s.page.$eval('.main .filters select', e => e.value), 'done', 'View in Done from the list: the Status filter reads Done');
+      ok(await s.page.evaluate((t) => [...document.querySelectorAll('.main tbody tr')].some(r => r.textContent.includes(t)), title), `View in Done from the list: "${title}" is in the list`);
+    }
     await s.ctx.close();
   }
   await admin.ctx.close();

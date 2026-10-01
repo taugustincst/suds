@@ -1,8 +1,42 @@
 import { backupReminderCard, recoveryPromptCard } from './local.js';
-import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, undoToast, greetingName, prefs, welcomeCard } from '../app.js';
+import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, greetingName, prefs, welcomeCard } from '../app.js';
 
 // One refresh timer for Home, however often it is drawn (each draw used to start another, and they piled up).
 let homeTimer = null;
+const onHome = () => location.hash.replace(/^#\/?/, '').split('?')[0] === 'dashboard' || location.hash === '' || location.hash === '#/';
+// Home is never redrawn under someone working in it (focus on a control in the page, or a dialog open): a redraw
+// takes the keyboard focus away.
+const idle = () => { const a = document.activeElement; const main = document.getElementById('main');
+  return !(a && a !== document.body && a !== main && a.tagName !== 'H1' && main && main.contains(a)) && !document.querySelector('.modal-bg'); };
+// A redraw builds the new Home first and swaps it in whole, so the page never blanks to "Loading…" (it used to redraw
+// the whole page every 90 seconds, empty until the figures came back). Only the latest redraw lands.
+let homeRoute = null, homeSeq = 0;
+async function redrawHome() {
+  const seq = ++homeSeq;
+  let view; try { view = await drawHome(homeRoute); } catch { return; }
+  const main = document.getElementById('main');
+  if (seq === homeSeq && main && onHome() && idle()) main.replaceChildren(view);
+}
+// Home is laid out for the width it is drawn at: a phone's order (today's to-dos first) up to 640 px, a computer's
+// above. It was chosen once, when the figures came back, and never again: a screen whose width settled after that
+// moment (a phone browser still sizing its window on a first sign-in, a phone turned, a window resized) kept the other
+// layout, and "To-dos for today" sat below the first screen on some loads and not others (external retest of 1.23.2).
+// Now Home follows the width: when it crosses 640 px, Home is laid out again for the new width (1.23.3).
+const PHONE_HOME = '(max-width: 640px)';
+let widthWatch = null;
+function followWidth() {
+  if (widthWatch || typeof matchMedia !== 'function') return;
+  widthWatch = matchMedia(PHONE_HOME);
+  const changed = () => {
+    const shown = document.querySelector('#main [data-home-layout]');
+    // Not drawn yet: the draw under way reads the width when it lays the page out.
+    if (!onHome() || !shown || (shown.dataset.homeLayout === 'phone') === widthWatch.matches) return;
+    // Someone working in the page keeps it until they leave the control or close the dialog.
+    if (!idle()) { document.addEventListener('focusout', () => setTimeout(changed, 0), { once: true }); return; }
+    redrawHome();
+  };
+  widthWatch.addEventListener('change', changed);
+}
 async function drawHome(r) {
   clearInterval(homeTimer);
   // Everything else Home asks the server for is asked for now, alongside the figures below, and waited for
@@ -43,17 +77,10 @@ async function drawHome(r) {
   // (WCAG 2.2.2: moving content has a way to stop it), and it never redraws the page under someone working in
   // it — focus on a control in the page, or a dialog open — because a redraw takes the keyboard focus away.
   const autoOn = () => prefs.get('home_autorefresh', true) !== false;
-  const onHome = () => location.hash.replace(/^#\/?/, '').split('?')[0] === 'dashboard' || location.hash === '' || location.hash === '#/';
-  const idle = () => { const a = document.activeElement; const main = document.getElementById('main');
-    return !(a && a !== document.body && a !== main && a.tagName !== 'H1' && main && main.contains(a)) && !document.querySelector('.modal-bg'); };
-  // The refresh builds the new Home first and swaps it in whole, so the page never blanks to "Loading…"
-  // (it used to redraw the whole page every 90 seconds, empty until the figures came back).
-  homeTimer = setInterval(async () => {
+  homeRoute = r; followWidth();
+  homeTimer = setInterval(() => {
     if (!onHome()) { clearInterval(homeTimer); return; }
-    if (!autoOn() || !idle()) return;
-    let view; try { view = await drawHome(r); } catch { return; }
-    const main = document.getElementById('main');
-    if (main && onHome() && idle()) main.replaceChildren(view);
+    if (autoOn() && idle()) redrawHome();
   }, 90_000);
   const autoToggle = h('label', { class: 'check small', style: { marginTop: 0 }, 'data-home-autorefresh': '1' }, h('input', { type: 'checkbox', checked: autoOn(), onChange: (e) => prefs.set('home_autorefresh', e.target.checked) }), 'Update this page every 90 seconds');
   const who = greetingName(state.user.display_name, state.user.username);
@@ -252,14 +279,15 @@ async function drawHome(r) {
   // marked it done. The title opens the to-do, or the call, visit or referral it came from (tasks.js openTodo), and
   // "Done" offers Undo, which reopens it.
   const refreshHome = () => nav('dashboard?_=' + Date.now());
-  // Undo after the worker has moved on reopens the to-do where they are, not by taking them back to Home.
-  const refreshIfHome = () => { if (/^#\/dashboard\b/.test(location.hash) || location.hash === '' || location.hash === '#/') refreshHome(); };
   const done = async (t, box) => {
     if (box) box.disabled = true;
     try {
+      const { doneToast } = await import('./tasks.js');
       await put(`/api/tasks/${t.id}`, { status: 'done' });
-      // Reopened as it was: an in-progress to-do stays in progress (review of 1.23.2).
-      undoToast(`Done: ${t.title}`, async () => { await put(`/api/tasks/${t.id}`, { status: t.status === 'in_progress' ? 'in_progress' : 'open' }); refreshIfHome(); });
+      // Reopened as it was: an in-progress to-do stays in progress (review of 1.23.2); Undo after the worker has moved
+      // on reopens it where they are, without taking them back to Home. "View in Done" (1.23.3) opens the To-dos list
+      // showing Done; Home's to-dos are the person's own, so it is the "Assigned to me" one.
+      doneToast(t, { mine: true, onUndone: refreshHome });
       refreshHome();
     } catch (err) { if (box) { box.checked = false; box.disabled = false; } toast(err.message || 'Could not mark that done. Check your connection and try again.', 'error'); }
   };
@@ -269,7 +297,7 @@ async function drawHome(r) {
   // left off — and the rest below: the welcome, the program-wide figures folded, the auto-refresh switch at the foot.
   // A first sign-in used to show the welcome card, the switch and the status links before "To-dos for today", which
   // sat below the first screen. A computer keeps its layout.
-  const phone = typeof matchMedia === 'function' && matchMedia('(max-width: 640px)').matches;
+  const phone = typeof matchMedia === 'function' && matchMedia(PHONE_HOME).matches;
   // The program-wide cards fold away, each remembered for this person on every device (prefs home_folded: { key:
   // true } folded, false open). Not chosen yet: folded on a phone, open on a computer.
   const foldedNow = () => prefs.get('home_folded', null) || {};
@@ -334,7 +362,7 @@ async function drawHome(r) {
       ...rest,
       h('div', { class: 'home-foot', 'data-home-foot': '1' }, autoToggle));
   }
-  return h('div', {},
+  return h('div', { 'data-home-layout': 'computer' },
     pageHead(`${greet}, ${who}`, autoToggle),
     welcome,
     recoveryPrompt,

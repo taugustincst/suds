@@ -175,7 +175,7 @@ if (box) {
   const edge = await page.evaluate(() => { const l = [...document.querySelectorAll('.compact-row .tap-target')].find(x => x.offsetParent); const r = l.getBoundingClientRect(); const i = l.querySelector('input').getBoundingClientRect(); return { x: r.left + 3, y: r.top + r.height / 2, inside: r.left + 3 >= i.left }; });
   ok(!edge.inside, 'the edge of the target is outside the box itself');
   await page.touchscreen.tap(edge.x, edge.y);
-  ok(await until(async () => (await page.textContent('#toasts')).includes('Marked done'), { timeout: 4000 }), 'M5: a tap near (not on) the box marks the to-do done');
+  ok(await until(async () => (await page.textContent('#toasts')).includes('Done: '), { timeout: 4000 }), 'M5: a tap near (not on) the box marks the to-do done');
   ok(!(await page.$('.modal-bg')), 'and does not open the to-do instead');
 }
 await go(page, 'dashboard');

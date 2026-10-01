@@ -111,6 +111,7 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .
 /* The one toast with a control (Undo): it takes taps and clicks, on its own area only. */
 .toast.undo-toast { pointer-events: auto; display: flex; align-items: center; gap: .75rem; justify-content: space-between; }
 .toast.undo-toast .btn { background: var(--bg); color: var(--text); border-color: var(--bg); flex: none; }
+.toast.undo-toast .undo-toast-actions { display: flex; flex-wrap: wrap; gap: .5rem; flex: none; justify-content: flex-end; }
 
 /* Login */
 .login-wrap { min-height: 100vh; display: grid; place-items: center; padding: 1rem; background: linear-gradient(160deg, var(--primary-soft), var(--bg) 60%); }

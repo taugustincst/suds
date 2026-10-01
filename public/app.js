@@ -325,28 +325,35 @@ export function toast(msg, kind = '', { ms } = {}) {
  */
 // `focus: false`: the keyboard focus stays where the page put it (Street outreach keeps it on the form for the next
 // contact); the toast's button is still reachable by Tab and is announced.
-export function undoToast(msg, onUndo, { ms = 10000, action = null, focus = true } = {}) {
+// `also: { text, key, onClick }` (1.23.3): a second button beside Undo, for where the thing just done went ("View in
+// Done" after a to-do is marked done). Pressing it puts the toast away and does `onClick`; nothing is undone. The
+// toast holds while either button has focus or the pointer is over it, and Tab moves between the two.
+export function undoToast(msg, onUndo, { ms = 10000, action = null, focus = true, also = null } = {}) {
   const host = document.getElementById('toasts'); if (!host) return null;
   const back = () => { const h1 = document.querySelector('.main h1'); if (h1) { if (!h1.hasAttribute('tabindex')) h1.setAttribute('tabindex', '-1'); try { h1.focus({ preventScroll: true }); } catch { /* ignore */ } } };
   // `action: { text, key }`: the same toast offering the next step instead of an Undo (the button says `text`, and
   // pressing it does `onUndo` and puts the toast away; nothing is undone and no "Undone" follows).
   const label = action ? action.text : 'Undo';
   const btn = h('button', { class: 'btn sm', type: 'button', 'data-undo': action ? null : '1', 'data-toast-action': action ? (action.key || '1') : null, 'aria-label': `${label}: ${msg}` }, label);
-  const t = h('div', { class: 'toast undo-toast', 'data-undo-toast': '1' }, h('span', {}, msg), btn);
+  const second = also ? h('button', { class: 'btn sm', type: 'button', 'data-toast-also': also.key || '1', 'aria-label': `${also.text}: ${msg}` }, also.text) : null;
+  const t = h('div', { class: 'toast undo-toast', 'data-undo-toast': '1' }, h('span', {}, msg), second ? h('span', { class: 'undo-toast-actions' }, btn, second) : btn);
   let left = ms, started = 0, timer = null;
   const gone = () => { clearTimeout(timer); t.remove(); };
   const arm = () => { clearTimeout(timer); started = Date.now(); timer = setTimeout(() => { const had = t.contains(document.activeElement); gone(); if (had) back(); }, left); };
   const hold = () => { if (!timer) return; clearTimeout(timer); timer = null; left = Math.max(3000, left - (Date.now() - started)); };
-  t.addEventListener('mouseenter', hold); t.addEventListener('mouseleave', arm);
-  btn.addEventListener('focus', hold); btn.addEventListener('blur', () => { if (t.isConnected) arm(); });
+  // Held while the pointer is over it or focus is in it; it runs again only once both have left (focus moving from
+  // Undo to the button beside it does not restart it).
+  t.addEventListener('mouseenter', hold); t.addEventListener('mouseleave', () => { if (!t.contains(document.activeElement)) arm(); });
+  t.addEventListener('focusin', hold); t.addEventListener('focusout', (e) => { if (t.isConnected && !t.contains(e.relatedTarget) && !t.matches(':hover')) arm(); });
   t.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); gone(); back(); } });
   btn.addEventListener('click', async () => {
     btn.disabled = true;
     try { await onUndo(); gone(); if (!action) { back(); toast('Undone', 'ok'); } }
     catch (e) { btn.disabled = false; toast((e && e.message) || (action ? 'That did not work.' : 'It could not be undone.'), 'error'); }
   });
+  if (second) second.addEventListener('click', () => { gone(); also.onClick(); });
   host.append(t);
-  announce(`${msg} ${label} is available for ${Math.round(ms / 1000)} seconds.`);
+  announce(`${msg} ${label}${also ? ` or ${also.text}` : ''} is available for ${Math.round(ms / 1000)} seconds.`);
   arm();
   if (focus) setTimeout(() => { if (t.isConnected) btn.focus({ preventScroll: true }); }, 0);
   return t;

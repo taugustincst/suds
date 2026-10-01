@@ -1,4 +1,19 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv, mayChange, ownedNotice, viewOnly } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv, mayChange, ownedNotice, viewOnly, undoToast } from '../app.js';
+
+// Where a to-do just marked done went (1.23.3): the To-dos list showing Done. `mine` keeps the list's own "Assigned to
+// me" choice where there is one; elsewhere (Home, a client's to-dos) it is "mine" when the to-do is assigned to this
+// person, so the list shown has it in it.
+export const doneListHash = (t, mine) => `tasks?status=done&mine=${(mine ?? t.assigned_to === state.user.id) ? 1 : 0}`;
+// The "Done" message after a to-do is ticked off: Undo puts it back as it was (an in-progress to-do stays in progress,
+// 1.23.2), and "View in Done" opens the Done list with it. `onUndone` redraws the page it was done on, and only while
+// the person is still on that page (Undo after moving on reopens it where they are).
+export function doneToast(t, { mine, onUndone } = {}) {
+  const page = location.hash.replace(/^#\/?/, '').split('?')[0] || 'dashboard';
+  return undoToast(`Done: ${t.title}`, async () => {
+    await put(`/api/tasks/${t.id}`, { status: t.status === 'in_progress' ? 'in_progress' : 'open' });
+    if (onUndone && (location.hash.replace(/^#\/?/, '').split('?')[0] || 'dashboard') === page) onUndone();
+  }, { also: { text: 'View in Done', key: 'view-done', onClick: () => nav(`${doneListHash(t, mine)}&_=${Date.now()}`) } });
+}
 
 export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
   const isNew = !values;
@@ -113,7 +128,14 @@ export async function openChangeNotice(t, { onDone } = {}) {
       open && can('tasks:write') && mine ? h('button', { type: 'button', class: 'btn primary', 'data-notice-seen': '1', onClick: seen }, 'Mark as seen') : null)));
   return m;
 }
-export function taskTable(rows, { showClient = true, onChange, bulk = false } = {}) {
+// `mine`: the list's "Assigned to me" choice, kept by "View in Done" (doneToast).
+export function taskTable(rows, { showClient = true, onChange, bulk = false, mine } = {}) {
+  // Ticked off: "Done" with Undo and View in Done; unticked: reopened.
+  const tick = async (t, wanted) => {
+    await put(`/api/tasks/${t.id}`, { status: wanted ? 'done' : 'open' });
+    if (wanted) doneToast(t, { mine, onUndone: onChange }); else toast('Reopened', 'ok');
+    onChange && onChange();
+  };
   const overdue = t => t.due_at && ['open', 'in_progress'].includes(t.status) && fmt.isPast(t.due_at) && !changeNotice(t);
   const canBulk = bulk && can('tasks:write');
   // A change notice is marked seen only by the person it was sent to (r9 M2): nobody else gets its box.
@@ -154,11 +176,7 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false } = 
       onChange: async (e) => {
         const wanted = e.target.checked;
         e.target.disabled = true;
-        try {
-          await put(`/api/tasks/${t.id}`, { status: wanted ? 'done' : 'open' });
-          toast(wanted ? 'Marked done' : 'Reopened', 'ok');
-          onChange && onChange();
-        } catch (err) {
+        try { await tick(t, wanted); } catch (err) {
           // Silently reverting used to leave the worker believing a to-do was ticked off when it was not.
           e.target.checked = !wanted;
           toast(err.message || 'Could not update this to-do. Check your connection and try again.', 'error');
@@ -178,7 +196,7 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false } = 
       // (the row) instead of ticking it off.
       tickable(t) ? h('label', { class: 'tap-target', onClick: (e) => e.stopPropagation() }, h('input', { type: 'checkbox', checked: t.status === 'done', 'aria-label': `Mark "${t.title}" ${t.status === 'done' ? 'not done' : 'done'}`, onClick: (e) => e.stopPropagation(), onChange: async (e) => {
         const wanted = e.target.checked; e.target.disabled = true;
-        try { await put(`/api/tasks/${t.id}`, { status: wanted ? 'done' : 'open' }); toast(wanted ? 'Marked done' : 'Reopened', 'ok'); onChange && onChange(); }
+        try { await tick(t, wanted); }
         catch (err) { e.target.checked = !wanted; toast(err.message || 'Could not update this to-do. Check your connection and try again.', 'error'); }
         finally { e.target.disabled = false; }
       } })) : null, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title)), badge(fmt.label(t.priority), statusKind(t.priority))],
@@ -201,5 +219,5 @@ route('tasks', async (r) => {
     pageHead('To-dos', can('tasks:write') ? h('button', { class: 'btn primary', onClick: () => openTaskForm(null, { onDone: refresh }) }, '+ Add a to-do') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(`tasks?status=${status}&mine=${mine ? 0 : 1}`) }, 'Assigned to me'), h('button', { class: `btn sm ${overdue ? 'primary' : ''}`, onClick: () => nav(`tasks?status=open&mine=${mine ? 1 : 0}${overdue ? '' : '&overdue=1'}`) }, 'Overdue')),
     suprtDue,
-    taskTable(data.rows, { onChange: refresh, bulk: true }));
+    taskTable(data.rows, { onChange: refresh, bulk: true, mine }));
 });

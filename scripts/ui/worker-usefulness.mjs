@@ -149,6 +149,26 @@ try {
   await nav.page.keyboard.press('Escape'); await settle(nav.page);
   await axe(nav.page, 'To-dos on a phone (390 px)');
 
+  // ---- 1.23.3: ticked off on the phone row, "Done" offers Undo (back as it was, in progress) and View in Done ----
+  const cb = after.find(t => t.title === 'Call back: Bed callback');
+  eq((await nav.api('PUT', `/api/tasks/${cb.id}`, { status: 'in_progress' })).status, 200, 'the call-back to-do is put in progress');
+  const cbStatus = async () => (await nav.api('GET', `/api/tasks/${cb.id}`)).data.row.status;
+  const tickRow = async () => { await nav.go('tasks?status=all'); await nav.page.locator('.compact-list .compact-row', { hasText: 'Call back: Bed callback' }).first().locator('input[type=checkbox]').tap(); };
+  await tickRow();
+  ok(await until(async () => (await cbStatus()) === 'done'), 'the phone row\'s box marks it done');
+  ok(await until(() => nav.page.$('.undo-toast [data-toast-also]')), 'the "Done" message offers View in Done');
+  eq(await nav.page.$$eval('.undo-toast button', b => b.map(x => x.textContent).join(' | ')), 'Undo | View in Done', 'beside Undo');
+  await nav.page.tap('.undo-toast [data-undo]');
+  ok(await until(async () => (await cbStatus()) === 'in_progress'), 'Undo puts it back in progress, as it was');
+  await settle(nav.page);
+  await tickRow();
+  ok(await until(async () => (await cbStatus()) === 'done'), 'marked done again');
+  ok(await until(() => nav.page.$('.undo-toast [data-toast-also]')), 'the "Done" message offers View in Done again');
+  await nav.page.tap('.undo-toast [data-toast-also]');
+  ok(await until(() => nav.page.evaluate(() => /^#\/tasks\?status=done&mine=1(&|$)/.test(location.hash))), 'View in Done from the phone list: To-dos showing Done, assigned to me as the list was', await nav.page.evaluate(() => location.hash));
+  await settle(nav.page);
+  ok(await nav.page.evaluate(() => [...document.querySelectorAll('.compact-list .compact-row')].some(r => r.textContent.includes('Call back: Bed callback'))), 'and the to-do is in it');
+
   // ---- + Log a visit: the follow-up date has the same quick choices ----
   await nav.go(`client/${cid}`);
   await addOnPhone(nav.page, 'Log a visit');
