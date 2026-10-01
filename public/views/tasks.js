@@ -103,7 +103,8 @@ export function sourceButton(t, close, onDone) {
   return h('button', { type: 'button', class: 'btn sm', 'data-task-source': s.noun, onClick: () => { if (close) close(); openSource(t, onDone); } }, s.label || `Open the ${s.noun}`);
 }
 // A to-do is changed by whoever it is assigned to or made it, or someone who manages others' records
-// (server/rules/tasks.js editableBy); anyone who can write to-dos may still mark it done.
+// (server/rules/tasks.js editableBy), and that includes marking it done: the server refuses anyone else (1.23.4; the
+// list used to offer them its box, and say they could tick it).
 const mayChangeTask = (t) => mayChange(t.assigned_to, t.created_by);
 /**
  * Open a to-do from a list that shows only its title (Home's "To-dos for today", 1.23.2): the call, visit or referral
@@ -123,7 +124,7 @@ function openTaskView(t) {
   const m = modal('To-do', h('div', { 'data-task-view': t.id }, can('tasks:write') ? ownedNotice(t.assignee, { verb: 'Assigned to' }) : null, src ? h('p', { class: 'btn-row' }, src) : null,
     kv([['To-do', t.title], ['Client', t.client_name || t.client_code || null], ['Due', t.due_at ? fmt.dt(t.due_at) : null], ['Priority', fmt.label(t.priority)], ['Status', fmt.label(t.status)],
       ['Assigned to', t.assignee], ['Details', t.description ? h('div', { style: { whiteSpace: 'pre-wrap' } }, t.description) : null]]),
-    can('tasks:write') ? h('p', { class: 'small muted' }, 'You can still mark it done with its box in the list.') : null));
+    null));
 }
 // ---- Client-change notices (1.16.1) ----
 // When someone off a client's care team changes the client's record, the primary worker gets a to-do saying who
@@ -178,7 +179,7 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false, min
   const overdue = t => t.due_at && ['open', 'in_progress'].includes(t.status) && fmt.isPast(t.due_at) && !changeNotice(t);
   const canBulk = bulk && can('tasks:write');
   // A change notice is marked seen only by the person it was sent to (r9 M2): nobody else gets its box.
-  const tickable = t => can('tasks:write') && !(changeNotice(t) && t.assigned_to !== state.user.id);
+  const tickable = t => can('tasks:write') && mayChangeTask(t) && !(changeNotice(t) && t.assigned_to !== state.user.id);
   // Closing out a list of to-dos one checkbox at a time is the common case; select several and clear
   // them in one request each instead of one round trip per box.
   const bulkable = rows.filter(t => t.status !== 'done' && tickable(t));
@@ -227,7 +228,7 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false, min
     showClient ? { label: 'Client', render: t => t.client_id ? h('a', { href: `#/client/${t.client_id}` }, t.client_name || t.client_code, t.client_name ? h('div', { class: 'muted small mono' }, t.client_code) : null) : '—' } : null,
     { label: 'Due', render: t => h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? fmt.dt(t.due_at) : '—', overdue(t) ? ' — overdue' : '') },
     { label: 'Priority', render: t => badge(fmt.label(t.priority), statusKind(t.priority)) }, { label: 'Status', render: t => badge(fmt.label(t.status), statusKind(t.status)) }, { label: 'Assignee', key: 'assignee' },
-    { label: '', render: t => changeNotice(t) ? h('button', { class: 'btn sm', 'data-open-notice': t.id, onClick: () => openChangeNotice(t, { onDone: onChange }) }, 'View change') : !can('tasks:write') ? sourceButton(t, null, onChange) : !mayChangeTask(t) ? h('div', {}, sourceButton(t, null, onChange), viewOnly(t.assignee, { verb: 'Assigned to', more: '; you can mark it done' })) : h('div', { class: 'row nowrap' }, sourceButton(t, null, onChange), h('button', { class: 'btn sm', onClick: () => openTaskForm(t, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this to-do', onClick: async () => { if (await confirmDialog('Delete to-do', 'Delete this to-do?', { danger: true, okText: 'Delete' })) { await del(`/api/tasks/${t.id}`); onChange && onChange(); } } }, '✕')) },
+    { label: '', render: t => changeNotice(t) ? h('button', { class: 'btn sm', 'data-open-notice': t.id, onClick: () => openChangeNotice(t, { onDone: onChange }) }, 'View change') : !can('tasks:write') ? sourceButton(t, null, onChange) : !mayChangeTask(t) ? h('div', {}, sourceButton(t, null, onChange), viewOnly(t.assignee, { verb: 'Assigned to' })) : h('div', { class: 'row nowrap' }, sourceButton(t, null, onChange), h('button', { class: 'btn sm', onClick: () => openTaskForm(t, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this to-do', onClick: async () => { if (await confirmDialog('Delete to-do', 'Delete this to-do?', { danger: true, okText: 'Delete' })) { await del(`/api/tasks/${t.id}`); onChange && onChange(); } } }, '✕')) },
   ].filter(Boolean), rows, { empty: 'Nothing here. To-dos you add, and follow-ups from visits and calls, will show up in this list.',
     rowLabel: t => t.title,
     // The done box stays on the phone row: a to-do list you cannot tick off one-handed is not a to-do list.

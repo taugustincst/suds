@@ -155,7 +155,10 @@ try {
   ok(heads.includes('Done') && heads.includes('Select'), 'the to-do checkbox columns are named Done and Select', heads.join(' | '));
   row = await rowWith(page, `Task${tag}`);
   const tcell = row && await row.$('[data-view-only]');
-  ok(tcell && /Assigned to David Chen — view only; you can mark it done/.test(await tcell.textContent()), 'David\'s to-do says whose it is, and that Maria can mark it done');
+  // 1.23.4: only whoever it is assigned to or made it (or a manager of others' records) may mark it done; the server
+  // refuses anyone else, so the list no longer offers Maria its box or says she can tick it.
+  ok(tcell && /Assigned to David Chen — view only/.test(await tcell.textContent()) && !/mark it done/.test(await tcell.textContent()), 'David\'s to-do says whose it is, and no longer that Maria can mark it done', tcell && await tcell.textContent());
+  eq(row ? await row.$$eval('input[type=checkbox]', x => x.length) : -1, 0, 'and offers Maria no box to tick on it');
   await axe(page, 'to-dos');
 
   // M1: a colleague's draft note.

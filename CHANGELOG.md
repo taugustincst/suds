@@ -43,6 +43,12 @@ web app as well as from a device, as the 1.23.3 notes already said.
   save itself always finished before the button appeared). The to-do just done is now listed first in Done, marked
   *Just done*, and is read on its own if the list does not have it.
 
+### Fixed in the integration of 1.23.4
+
+- Fixed: the To-dos list offered a tick box on a colleague's to-do and said "you can mark it done", but the office
+  refuses that (only whoever it is assigned to or made it, or someone who manages others' records, may change it,
+  marking it done included); the box and the promise are gone where it would be refused (`public/views/tasks.js`).
+
 ## 1.23.3 — 2026-10-01
 
 A patch of 1.23.2 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
