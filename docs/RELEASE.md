@@ -374,7 +374,9 @@ sections; [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)'s table (ea
 agree; whether each tag is pushed; a new minor's row, whose commit is the SBOM commit its stamp cannot name, reads
 "the commit after `Release X.Y.Z`" and is checked for everything but that commit) and HANDOFF.md's *Release waiting* entry; every "live on GitHub Pages" against the
 `version.json` `gh-pages` serves; a stamped version newer than the newest pushed tag that the hand-off does not list;
-and, inside each dated CHANGELOG section `## X.Y.Z — date`, a line calling another minor "the latest minor" or "the
+while any released version is untagged (the hand-off's owed tags, or a stamped version newer than origin's newest
+tag), that the questionnaire's #36 and #39 and the RFI template's *Release integrity* answer say the releases were
+"published without a tag" and name the first and last of them (built for 1.22.0, not yet released); and, inside each dated CHANGELOG section `## X.Y.Z — date`, a line calling another minor "the latest minor" or "the
 previous", or saying "checked against", "describe(s)", "not yet released" or "fix release" of another version (the few
 legitimate historical lines are in `CHANGELOG_ALLOW` in the script, each with its reason). Each finding is printed as
 `file:line` with a fix, and the exit status is 1 while there is one. Run it **before handing a stamp to the owner**,

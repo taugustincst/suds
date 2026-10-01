@@ -21,7 +21,19 @@ function world(o = {}) {
       '## 1.2.0 — 2026-09-01', '', '- Documents describe 1.2.0.', '',
       '## 1.1.0 — 2026-08-01', '', '- First.', '',
     ].join('\n'),
-    questionnaire: o.questionnaire || '# Q\n\n**Checked against:** 1.3.0 (live on GitHub Pages; its tag is pending the owner).\n',
+    questionnaire: o.questionnaire || [
+      '# Q', '', '**Checked against:** 1.3.0 (live on GitHub Pages; its tag is pending the owner).', '',
+      '| # | Question | Answer |', '| --- | --- | --- |',
+      '| 36 | CI? | Yes. The gate refuses a commit unless CI passed, but **1.2.0 and 1.3.0 were published without a tag** and without the gate. |',
+      '| 39 | Release integrity? | See below. |', '',
+      '**#39, release integrity, in detail.**', '', '**Releases 1.2.0 to 1.3.0 were published', 'without a tag.** Verify against the commit.', '',
+      '**#45, offline, in detail:**', '', 'Text.', '',
+    ].join('\n'),
+    rfi: o.rfi !== undefined ? o.rfi : [
+      '# RFI', '', '## Supply chain', '', '**Q. Dependencies?** None.', '',
+      '**Q. Release integrity: how?** **Releases 1.2.0 to 1.3.0 were published without a tag**; verify the commit.', '',
+      '**Q. Penetration testing?** None.', '',
+    ].join('\n'),
     evidence: o.evidence || '# E\n\n**Version.** It describes 1.3.0; the owner has not tagged it yet.\n',
     release: o.release || [
       '# Releasing', '',
@@ -162,6 +174,57 @@ test('tags: a pushed tag the documents call pending, a tag at another commit, a 
   const unlisted = RS.evaluate({ docs, remote: { tags: { 'v1.1.0': SHA('1') } }, mainPkg: { version: '1.4.0', stamped: [{ version: '1.4.0', date: '2026-11-01', line: 5 }] } });
   assert.deepEqual(codes(unlisted), ['untagged-unlisted']);
   assert.match(unlisted.problems[0].message, /1\.4\.0 is stamped/);
+});
+
+test('untagged releases: QUESTIONNAIRE #36, #39 and the RFI answer say "published without a tag" and name the range', () => {
+  assert.equal(RS.UNTAGGED_MARKER, 'published without a tag');
+  // Each place without the marker is a problem, at its own line.
+  const drop = (t) => t.replace(/published\s+without a tag/g, 'released');
+  const r = RS.evaluate({ docs: world({ patch: { questionnaire: drop, rfi: drop } }) });
+  assert.deepEqual(codes(r), ['untagged-undisclosed', 'untagged-undisclosed', 'untagged-undisclosed']);
+  assert.deepEqual(r.problems.map((p) => `${p.file}:${p.line}`).sort(), ['docs/market/templates/COUNTY-RFI-ANSWERS.md:7', 'docs/security/QUESTIONNAIRE.md:10', 'docs/security/QUESTIONNAIRE.md:7']);
+  assert.match(r.problems[0].message + r.problems[1].message, /1\.2\.0 to 1\.3\.0/);
+  // #39's row alone, without its detail section, is enough when it says it; a missing #36 row or RFI answer is not.
+  const q39row = (t) => t.replace('| 39 | Release integrity? | See below. |', '| 39 | Release integrity? | 1.2.0 to 1.3.0 were published without a tag. |').replace(/\*\*#39,[\s\S]*?(?=\*\*#45)/, '');
+  assert.deepEqual(codes(RS.evaluate({ docs: world({ patch: { questionnaire: q39row } }) })), []);
+  const no36 = RS.evaluate({ docs: world({ patch: { questionnaire: (t) => t.replace(/^\| 36 .*$/m, ''), rfi: (t) => t.replace(/\*\*Q\. Release integrity[^\n]*\n/, '') } }) });
+  assert.deepEqual(codes(no36), ['untagged-undisclosed', 'untagged-undisclosed']);
+  // The marker, but a range that stops short of the newest untagged release.
+  const short = RS.evaluate({ docs: world({ patch: { rfi: (t) => t.replace('1.2.0 to 1.3.0', '1.2.0 and 1.2.1') } }) });
+  assert.deepEqual(codes(short), ['untagged-range']);
+  assert.match(short.problems[0].message, /does not name 1\.3\.0/);
+  assert.deepEqual(codes(RS.evaluate({ docs: world({ patch: { rfi: (t) => t.replace('1.2.0 to 1.3.0', '1.2.0 to 1.3.01') } }) })), ['untagged-range'], 'a longer version is not a match');
+  // Origin's tags: once every owed tag is pushed nothing is owed, and the disclosure is no longer required.
+  const allPushed = { tags: { 'v1.2.0': SHA('a'), 'v1.3.0': SHA('c') } };
+  const done = RS.evaluate({ docs: world({ patch: { questionnaire: drop, rfi: drop } }), remote: allPushed });
+  assert.ok(!codes(done).some((c) => c.startsWith('untagged-')), 'nothing untagged, nothing to disclose');
+  // ls-remote alone: a stamped version newer than the newest pushed tag counts, even with no hand-off row.
+  const noHandoff = world({ handoff: '# Release hand-off\n', notes: '# Handoff\n', patch: { questionnaire: drop } });
+  const viaRemote = RS.evaluate({ docs: noHandoff, remote: { tags: { 'v1.1.0': SHA('1') } } });
+  // (1.2.0 and 1.3.0 are each also "untagged-unlisted": stamped, unpushed and in no hand-off; the RFI answer says it.)
+  assert.deepEqual(codes(viaRemote).filter((c) => c.startsWith('untagged-')), ['untagged-undisclosed', 'untagged-undisclosed', 'untagged-unlisted', 'untagged-unlisted']);
+  assert.match(viaRemote.problems.find((p) => p.code === 'untagged-undisclosed').message, /1\.2\.0 to 1\.3\.0/);
+  // No RFI file: said, not a problem.
+  const noRfi = RS.evaluate({ docs: world({ rfi: null }) });
+  assert.deepEqual(noRfi.problems, []);
+  assert.ok(noRfi.notChecked.some((n) => /RFI/.test(n)));
+});
+
+test('untagged releases: the repository\'s own answers carry the disclosure, and the check bites on them', () => {
+  const root = path.join(__dirname, '..');
+  const docs = RS.run(root, { mode: 'docs-only' });
+  assert.ok(!docs.problems.some((p) => p.code.startsWith('untagged-')), 'QUESTIONNAIRE #36, #39 and the RFI answer disclose the untagged releases');
+  const fs = require('node:fs');
+  const real = {};
+  for (const [k, f] of Object.entries(RS.FILES)) real[k] = fs.existsSync(path.join(root, f)) ? fs.readFileSync(path.join(root, f), 'utf8') : null;
+  const h = RS.parseHandoff(real.handoff);
+  if (h.rows.length + h.pending.length === 0) return; // every tag pushed: nothing to disclose
+  const secs = RS.disclosureSections(real.questionnaire, real.rfi);
+  assert.equal(secs.length, 3, '#36, #39 and the RFI answer are found');
+  assert.ok(secs.every((s) => s.text && s.text.length > 40), 'each with its text');
+  const stripped = { ...real, questionnaire: real.questionnaire.replace(/published\s+without\s+a\s+tag/gi, 'released'), rfi: real.rfi.replace(/published\s+without\s+a\s+tag/gi, 'released') };
+  const r = RS.evaluate({ docs: stripped });
+  assert.equal(r.problems.filter((p) => p.code === 'untagged-undisclosed').length, 3, 'without the marker, each of the three places is a finding');
 });
 
 test('the CHANGELOG lint: another version called current inside a dated section', () => {
