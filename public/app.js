@@ -1589,7 +1589,9 @@ export function syncChip() {
     const when = st && st.last_sync_at ? `Synced ${fmt.ago(st.last_sync_at)}` : 'Not synced yet';
     a.dataset.syncChip = n ? 'pending' : st && st.last_sync_at ? 'synced' : 'never';
     a.classList.toggle('pending', n > 0);
-    a.replaceChildren(h('span', { 'aria-hidden': 'true' }, '⇅ '), n ? `${n} to send` : when,
+    // On a phone the short form ("⇅ 3", "⇅ ✓") leaves the search box its width; the words are still read out.
+    a.replaceChildren(h('span', { 'aria-hidden': 'true' }, '⇅ '), h('span', { class: 'sync-long' }, n ? `${n} to send` : when),
+      h('span', { class: 'sync-short', 'aria-hidden': 'true' }, n ? String(n) : st && st.last_sync_at ? '✓' : 'Sync'),
       h('span', { class: 'sr-only' }, n ? ` — ${n} change${n === 1 ? '' : 's'} on this device not sent to the office yet. ${when}. Open This device to sync` : ' — open This device to sync'));
   }, () => { a.remove(); });
   return a;

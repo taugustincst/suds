@@ -208,6 +208,8 @@ try {
   eq(await dev.getAttribute('[data-sync-chip]', 'data-sync-chip'), 'pending', 'a contact not yet sent shows as waiting');
   ok(/1 to send/.test(await dev.textContent('[data-sync-chip]')), 'in words: "1 to send"', await dev.textContent('[data-sync-chip]'));
   eq(await dev.getAttribute('[data-sync-chip]', 'href'), '#/sync', 'and it opens This device');
+  ok(await dev.isVisible('[data-sync-chip] .sync-short'), 'at 390 px it shows the short form ("⇅ 1"), leaving the search box its width');
+  ok(/1 change on this device not sent/.test(await dev.evaluate(() => document.querySelector('[data-sync-chip] .sr-only').textContent)), 'and a screen reader hears it in full');
   await axe(dev, 'device copy header with the sync state (390 px)');
   await dctx.close();
 } catch (e) { fail(`the script stopped: ${e.message}`); console.error(e); }
