@@ -49,8 +49,11 @@ try { axeSource = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8'
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 const STRUCTURE = ['landmark-one-main', 'landmark-no-duplicate-main', 'landmark-unique', 'page-has-heading-one', 'heading-order', 'empty-heading', 'aria-dialog-name', 'empty-table-header'];
 
-const localToday = (() => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; })();
-const [lq] = lastQuarters(localToday, 1);
+// The date is the server's (its programme's time zone), read when it is used, never this machine's clock at the start:
+// the sample files, the views' periods and the defaults asserted must name the quarter the server means, even when
+// the run crosses midnight at a quarter's end or the machine's zone is another. `lq` is the quarter of the sample files.
+const serverToday = async (page) => { const r = await api(page, 'GET', '/api/county-submission/options'); if (!r.data || !r.data.today) throw new Error(`the server's date: ${r.status}`); return r.data.today; };
+let lq = null; let filesToday = null;
 
 const browser = await chromium.launch();
 const errors = [];
@@ -90,8 +93,9 @@ try {
   // The county code this server gives out (it plays the county below too).
   const code = await api(fin, 'GET', '/api/county/code');
   eq(code.status, 200, 'the county code is there for whoever sees the county view');
+  filesToday = await serverToday(fin); [lq] = lastQuarters(filesToday, 1);
   // The sample programs' files, made for this county by the sample script in a process of its own.
-  execFileSync(process.execPath, ['--no-warnings', path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'county-sample.js'), tmp, '--county-code', code.data.code_display], { stdio: 'ignore' });
+  execFileSync(process.execPath, ['--no-warnings', path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'county-sample.js'), tmp, '--county-code', code.data.code_display, '--today', filesToday], { stdio: 'ignore' });
   const programmes = JSON.parse(fs.readFileSync(path.join(tmp, 'programmes.json'), 'utf8'));
   const filesOf = (slug) => fs.readdirSync(tmp).filter(f => f.startsWith(`${slug}-`)).sort().map(f => path.join(tmp, f));
   const [riverbend, eastside, hillview] = programmes;
@@ -111,7 +115,8 @@ try {
   ok(await toast(fin, /Fingerprint copied|Could not copy/), 'Copy says what happened');
   // U3: the period, the last complete quarter by default, shown beside the button.
   eq(await fin.$eval('[data-so-county-period-select]', s => s.selectedIndex), 0, 'the period defaults to the last complete quarter');
-  ok((await fin.$eval('[data-so-county-period-select]', s => s.options[0].text)).includes(String(lq.to.slice(0, 4))), 'which is the quarter before this one');
+  const [lqNow] = lastQuarters(await serverToday(fin), 1);
+  ok((await fin.$eval('[data-so-county-period-select]', s => s.options[0].text)).includes(String(lqNow.to.slice(0, 4))), 'which is the quarter before this one');
   const shownPeriod = (await fin.textContent('[data-so-county-period]')).trim();
   ok(shownPeriod.length > 8 && /Make the county file for/.test(await fin.textContent('[data-so-county-file]')), 'the period is shown beside the button, and the button names it', shownPeriod);
   ok(/calendar Q\d \d{4} · FY \d{4}-\d{2} Q\d/.test(await fin.$eval('[data-so-county-period-select]', s => s.options[0].text)), 'each quarter is said as its California fiscal quarter too');
@@ -373,7 +378,7 @@ try {
   ok(/Enter figures for Canyon Mobile Outreach/.test(await adm.textContent('.modal h2')), 'the toast\'s Enter figures opens the dialog for the program just added');
   ok(/\*/.test(await adm.textContent('.modal [data-field="funds.0.naloxone_kits"] label')), 'every figure is marked required (*), as every form marks one');
   ok((await adm.$$eval('.modal [name="funds.0.category"] option', os => os.map(o => o.textContent))).some(t => /^Core strategy /.test(t)) && (await adm.$$eval('.modal [name="funds.0.category"] option', os => os.map(o => o.textContent))).some(t => /^Approved use /.test(t)), 'Exhibit E\'s uses say their schedule, as the fund form does');
-  eq(await adm.inputValue('.modal [name=from]'), lq.from, 'Enter figures defaults to the last complete quarter');
+  eq(await adm.inputValue('.modal [name=from]'), lastQuarters(await serverToday(adm), 1)[0].from, 'Enter figures defaults to the last complete quarter');
   await axe(adm, 'Enter figures dialog (1280)');
   await adm.fill('.modal [name=source_ref]', 'Q report emailed by the program (fictional)');
   await adm.fill('.modal [name="funds.0.name"]', 'County settlement share');
@@ -521,7 +526,7 @@ try {
   // ---------------- 6. award amounts and reporting reminders (released in 1.21.0) ----------------
   // The county reads version 1 and version 2 files side by side: Eastside's quarter again, as a SUDS before 1.21 made it.
   const tmpV1 = path.join(tmp, 'v1'); fs.mkdirSync(tmpV1);
-  execFileSync(process.execPath, ['--no-warnings', path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'county-sample.js'), tmpV1, '--county-code', code.data.code_display, '--schema-version', '1'], { stdio: 'ignore' });
+  execFileSync(process.execPath, ['--no-warnings', path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'county-sample.js'), tmpV1, '--county-code', code.data.code_display, '--schema-version', '1', '--today', filesToday], { stdio: 'ignore' });
   const esV1 = fs.readdirSync(tmpV1).filter(f => f.startsWith('eastside-') && f.includes(`${lq.from}_${lq.to}`)).map(f => path.join(tmpV1, f))[0];
   eq(JSON.parse(fs.readFileSync(esV1, 'utf8')).schema_version, 1, 'a version 1 file');
   eq((await api(adm, 'POST', '/api/county/submissions', { text: fs.readFileSync(esV1, 'utf8') })).status, 201, 'a version 1 file still imports');

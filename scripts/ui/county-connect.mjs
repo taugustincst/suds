@@ -33,9 +33,14 @@ try { axeSource = fs.readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8'
 const TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'];
 const STRUCTURE = ['landmark-one-main', 'landmark-no-duplicate-main', 'landmark-unique', 'page-has-heading-one', 'heading-order', 'empty-heading', 'aria-dialog-name', 'empty-table-header'];
 
-const today = new Date().toISOString().slice(0, 10);
 const lastDay = (y, m) => new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
-const lq = (() => { let y = Number(today.slice(0, 4)); let q = Math.floor((Number(today.slice(5, 7)) - 1) / 3) - 1; if (q < 0) { q = 3; y--; } const m1 = q * 3 + 1; return { from: `${y}-${String(m1).padStart(2, '0')}-01`, to: lastDay(y, m1 + 2) }; })();
+/** The last calendar quarter that ended before `today`, with the key the Send to the county card gives it (q<year><1-4>). */
+const quarterBefore = (today) => { let y = Number(today.slice(0, 4)); let q = Math.floor((Number(today.slice(5, 7)) - 1) / 3) - 1; if (q < 0) { q = 3; y--; } const m1 = q * 3 + 1; return { from: `${y}-${String(m1).padStart(2, '0')}-01`, to: lastDay(y, m1 + 2), key: `q${y}${q + 1}` }; };
+// The quarter is the server's, read when it is used (its own date, in the programme's time zone), never this machine's
+// clock at the start: a run that crossed midnight on a quarter's last day sent one quarter and looked for another
+// ("the quarter just sent is done … got null"). The quarter sent is then chosen on the card by name, not by default.
+const serverQuarter = async (page) => { const r = await api(page, 'GET', '/api/county-submission/options'); if (!r.data || !r.data.today) throw new Error(`the server's date: ${r.status}`); return quarterBefore(r.data.today); };
+let lq = null;
 
 const browser = await chromium.launch();
 const errors = [];
@@ -69,6 +74,7 @@ const active = (page) => page.evaluate(() => { const a = document.activeElement;
 
 try {
   const { ctx: admCtx, page: adm } = await signIn('admin', 'AdminPassw0rd!x');
+  lq = await serverQuarter(adm);
   // This server's own county key, registered as a program (as county.mjs does), so it can send to itself; the
   // fingerprint typed, as the county view's register route requires (or "compared").
   const key = (await api(adm, 'POST', '/api/county-submission/key', {})).data.key;
@@ -124,6 +130,9 @@ try {
 
   // ---------------- 3. the programme's side ----------------
   const { ctx: finCtx, page: fin } = await signIn('afinance', PW);
+  // The quarter this section sends and then looks for, as the server dates it now (before the county's status is read
+  // by Test connection below, so the status lists it whatever the clock does next).
+  lq = await serverQuarter(adm);
   await go(fin, `settlement?from=${lq.from}&to=${lq.to}`);
   await until(() => fin.$('[data-cc-connection] p'));
   ok(await fin.$('[data-cc-send-card]'), 'Settlement outcomes has Send to the county over the connection for finance');
@@ -148,7 +157,7 @@ try {
   ok(/Connected/.test(tested.text) && /Outstanding|Nothing outstanding/.test(tested.text), 'and says what the county expects', tested.text);
   eq(tested.role, 'status', 'as a status message');
   await until(() => adm.$('[data-so-county-period-select]'));
-  const lqLabel = await adm.$eval('[data-so-county-period-select]', s => s.options[0].text);
+  const lqLabel = await adm.$eval('[data-so-county-period-select]', (s, k) => (s.querySelector(`option[value="${k}"]`) || s.options[0]).text, lq.key);
   ok(!/Outstanding/.test(tested.text) || tested.text.includes(lqLabel), 'the outstanding periods are named as the Send to the county card names them', [lqLabel, tested.text]);
   eq(await active(adm), 'data-cc-result', 'which takes the focus');
   await axe(adm, 'settlement, connected (1280)');
@@ -163,6 +172,9 @@ try {
   eq(finConn.data && finConn.data.can_send, true, 'finance may send', JSON.stringify(finConn.data).slice(0, 300));
   await fin.waitForSelector('[data-cc-send]');
   await until(() => fin.$('[data-so-county-form]'));
+  // The quarter read from the server above, chosen by name: the card's default is the last quarter by the date it was
+  // drawn on, which a run across midnight at a quarter's end would move on.
+  await fin.selectOption('[data-so-county-period-select]', lq.key);
   const sendLabel = (await fin.textContent('[data-cc-send]')).trim();
   const makeLabel = (await fin.textContent('[data-so-county-file]')).trim();
   eq(sendLabel.replace(/^Send (.*) to the county now$/, '$1'), makeLabel.replace(/^Make the county file for /, ''), 'Send names the period chosen on the Send to the county card', [sendLabel, makeLabel]);
