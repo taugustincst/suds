@@ -386,7 +386,9 @@ function addAddendum(n, done) {
  * when it names this note), as server/rules/notes.js closeSignReminders does (market evaluation of 1.23.3, N6).
  */
 async function draftDeleteNotice(n) {
-  if (!n.client_id || !n.author_id || !can('tasks:read')) return '';
+  // Only the author sees every one of their drafts (a manager may not see their SUD counseling notes), so only for the
+  // author can "your last draft" be said for certain (review of 1.23.4).
+  if (!n.client_id || !n.author_id || n.author_id !== state.user.id || !can('tasks:read')) return '';
   const q = (p) => get(p, { quiet: true }).then(d => d.rows || []);
   let tasks, drafts;
   try {
@@ -395,7 +397,7 @@ async function draftDeleteNotice(n) {
   } catch { return ''; }
   const last = !drafts.some(d => d.id !== n.id);
   const closes = tasks.some(t => t.sign_reminder && t.assigned_to === n.author_id && ((t.description || '').includes(`supervision reminder for note ${n.id}`) || last));
-  return closes ? ` ${n.author_id === state.user.id ? 'It is your last draft on this record, so the supervisor\'s reminder to finish and sign your draft notes here' : 'It is the author\'s last draft on this record, so the supervisor\'s reminder to finish and sign them'} is cancelled too.` : '';
+  return closes ? ' It is your last draft on this record, so the supervisor\'s reminder to finish and sign your draft notes here is cancelled too.' : '';
 }
 /** For someone who reads clinical notes but does not write them: SUD counseling notes are not listed (server/routes/notes.js). */
 export const counselingHidden = () => (can('notes:clinical:read') && !can('notes:clinical:write') ? h('div', { class: 'banner small phone-line', 'data-counseling-hidden': '1' }, h('span', { class: 'wide-only' }, 'SUD counseling notes are visible only to their author, the co-signer and clinical staff, so they are not listed here.'), h('span', { class: 'phone-only' }, 'Counseling notes (§2.11) are not listed.')) : null);

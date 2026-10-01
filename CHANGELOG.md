@@ -59,6 +59,14 @@ last draft was deleted now writes one more audit entry of its own (`task.update`
 - Fixed: the To-dos list offered a tick box on a colleague's to-do and said "you can mark it done", but the office
   refuses that (only whoever it is assigned to or made it, or someone who manages others' records, may change it,
   marking it done included); the box and the promise are gone where it would be refused (`public/views/tasks.js`).
+- Fixed: moving a worker's caseload (Supervision › Transfer caseload) handed their supervisor's "finish and sign"
+  reminders to the receiving worker, where they passed for reminders about the receiver's drafts. They are cancelled
+  instead, since the drafts stay the departing author's, audited as `task.update` with `cause: transferred`.
+- Fixed: a delete confirmation could say a follow-up to-do was cancelled when the office kept it (one retitled since),
+  and called another to-do linked to the record a follow-up; it now says the follow-up is cancelled "unless it has been
+  changed since it was made", and leaves other linked to-dos out.
+- Fixed: deleting someone else's draft could say their supervisor's reminder was cancelled when the office, counting
+  drafts the deleter cannot see, kept it; that sentence is now shown only to the draft's author.
 
 ## 1.23.3 — 2026-10-01
 

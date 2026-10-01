@@ -255,6 +255,18 @@ module.exports = (r) => {
       if (v.reassign_open_tasks !== 0) {
         // Every client the departing worker held now sits with the receiving one (moved, or already theirs).
         const ids = [...new Set(open.map(a => a.client_id))];
+        // A supervisor's "finish and sign" reminder is about the departing worker's own drafts, which stay theirs: it is
+        // cancelled, not handed on, or it would pass for a reminder about the receiving worker's drafts and keep their
+        // supervisor's Remind away (review of 1.23.4; a reminder's recipient may not move it either, rules/tasks.js).
+        if (ids.length) {
+          const { isSignReminder } = require('../rules/notes');
+          for (const t of db.all(`SELECT id, client_id, created_by, assigned_to, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND description_enc IS NOT NULL AND client_id IN (${ids.map(() => '?').join(',')})`, from.id, ...ids)) {
+            let text = ''; try { text = decrypt(t.description_enc); } catch { continue; }
+            if (!isSignReminder(t, text)) continue;
+            db.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, db.now(), t.id);
+            audit.log({ user: ctx.user, action: 'task.update', entity: 'task', entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { status: 'cancelled', cause: 'transferred' } });
+          }
+        }
         if (ids.length) tasks = db.run(`UPDATE tasks SET assigned_to=?, updated_at=? WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IN (${ids.map(() => '?').join(',')})`, to.id, db.now(), from.id, ...ids).changes;
         // Moving the whole caseload (the usual case: someone leaving) takes their to-dos that name no client
         // too, or those stay with an account nobody signs in to. A chosen few clients leaves them alone.

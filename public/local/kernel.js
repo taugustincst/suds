@@ -39337,6 +39337,20 @@ var require_episodes2 = __commonJS({
           }
           if (v.reassign_open_tasks !== 0) {
             const ids = [...new Set(open3.map((a) => a.client_id))];
+            if (ids.length) {
+              const { isSignReminder } = require_notes();
+              for (const t of db3.all(`SELECT id, client_id, created_by, assigned_to, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND description_enc IS NOT NULL AND client_id IN (${ids.map(() => "?").join(",")})`, from.id, ...ids)) {
+                let text = "";
+                try {
+                  text = decrypt3(t.description_enc);
+                } catch {
+                  continue;
+                }
+                if (!isSignReminder(t, text)) continue;
+                db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, db3.now(), t.id);
+                audit3.log({ user: ctx.user, action: "task.update", entity: "task", entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { status: "cancelled", cause: "transferred" } });
+              }
+            }
             if (ids.length) tasks = db3.run(`UPDATE tasks SET assigned_to=?, updated_at=? WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IN (${ids.map(() => "?").join(",")})`, to.id, db3.now(), from.id, ...ids).changes;
             if (!v.client_ids || !v.client_ids.length) tasks += db3.run(`UPDATE tasks SET assigned_to=?, updated_at=? WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS NULL`, to.id, db3.now(), from.id).changes;
           }

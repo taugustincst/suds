@@ -416,3 +416,21 @@ test('the assignee of a sign reminder cannot move it to a colleague or another c
   assert.equal((await sup.put(`/api/tasks/${r.data.id}`, { assigned_to: U.nav, client_id: other.data.id })).status, 200, 'the maker moves it');
   assert.deepEqual({ ...H.db.one(`SELECT assigned_to, client_id FROM tasks WHERE id=?`, r.data.id) }, { assigned_to: U.nav, client_id: other.data.id });
 });
+
+// Review of 1.23.4: a caseload transfer moved the departing worker's sign reminders to the receiving worker, where they
+// passed for reminders about the receiver's drafts. They are cancelled instead (the drafts stay the departing author's).
+test('a caseload transfer cancels the departing worker\'s sign reminders rather than handing them on', async () => {
+  const { SIGN_REMINDER } = require('../server/rules/notes');
+  const c = await clin.post('/api/clients', { first_name: 'Rem', last_name: 'Indersix', status: 'active', confirm_duplicate: true });
+  const r = await sup.post('/api/tasks', { client_id: c.data.id, assigned_to: U.clin, title: 'Finish and sign your draft notes', description: `Please.\n${SIGN_REMINDER}`, due_at: today });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  const other = await sup.post('/api/tasks', { client_id: c.data.id, assigned_to: U.clin, title: 'Call the clinic', due_at: today });
+  const to = H.makeUser(`rcv${Date.now() % 100000}`, 'clinician');
+  if (!H.db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND end_date IS NULL`, c.data.id, U.clin)) {
+    assert.equal((await sup.post(`/api/clients/${c.data.id}/assignments`, { user_id: U.clin, role_on_case: 'primary' })).status, 201);
+  }
+  const t = await sup.post('/api/caseload/transfer', { from_user_id: U.clin, to_user_id: to.id, client_ids: [c.data.id] });
+  assert.equal(t.status, 200, JSON.stringify(t.data));
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r.data.id).status, 'cancelled', 'the reminder is cancelled');
+  assert.equal(H.db.one(`SELECT assigned_to FROM tasks WHERE id=?`, other.data.id).assigned_to, to.id, 'an ordinary to-do moves as before');
+});

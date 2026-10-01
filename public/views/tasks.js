@@ -69,14 +69,18 @@ export async function deleteNotice(col, rec) {
   const linked = rows.filter(t => t[col] === rec.id);
   const isReminder = (t) => col === 'referral_id' && REMINDER.test(t.title || '') && t.created_by && t.created_by !== t.assigned_to;
   const reminder = linked.some(isReminder);
-  const followUps = linked.filter(t => !isReminder(t));
+  // Only the record's follow-up to-dos: another to-do linked to it (a secure referral link's, say) is not one, and the
+  // office leaves it be (review of 1.23.4).
+  const followUps = linked.filter(t => !isReminder(t) && (!FOLLOW_UP_TITLE[col] || FOLLOW_UP_TITLE[col].test(t.title || '')));
   const followUp = followUps.some(t => untouched(col, rec, t));
   const edited = followUps.some(t => !untouched(col, rec, t));
   if (!followUp && !reminder && !edited) return '';
   const what = [followUp ? 'its open follow-up to-do' : null, reminder ? 'the supervisor\'s reminder to record its outcome' : null].filter(Boolean).join(' and ');
   // Said only when a follow-up has been changed (it read "(a follow-up to-do someone has edited is left open)" on every
   // call; market evaluation of 1.23.3, N4).
-  return `${what ? ` ${what[0].toUpperCase()}${what.slice(1)} ${followUp && reminder ? 'are' : 'is'} cancelled too.` : ''}${edited ? ` ${followUp ? 'A follow-up to-do someone has changed' : 'Its follow-up to-do has been changed since it was made, so it'} is left open.` : ''}`;
+  // The office also matches the follow-up's title exactly, which this cannot rebuild for every record, so a follow-up
+  // that looks untouched is said to be cancelled "unless it has been changed" (review of 1.23.4: a retitled one is kept).
+  return `${what ? ` ${what[0].toUpperCase()}${what.slice(1)} ${followUp && reminder ? 'are' : 'is'} cancelled too${followUp ? ', unless it has been changed since it was made' : ''}.` : ''}${edited ? ` ${followUp ? 'A follow-up to-do someone has changed' : 'Its follow-up to-do has been changed since it was made, so it'} is left open.` : ''}`;
 }
 // Whether a follow-up to-do is still as SUDS made it, so deleting its record cancels it: the office's rule
 // (server/rules/follow-ups.js, "untouched"): open, not started; its record's worker's; SUDS's title; due on the record's
