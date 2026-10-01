@@ -122,3 +122,31 @@ test('an outcome recorded by editing the referral closes its to-dos too: the rem
   ok(await nav.put(`/api/referrals/${id2}`, { status: 'accepted' }), 200);
   assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r2.task).status, 'open');
 });
+
+// Evaluation of 1.23.0: the reminder's details showed the referral's record id ("Reference: supervision reminder for
+// referral 60c0…") and the date as "19 Jun 2026", and sent the worker to find the Referrals tab by hand. 1.23.1: no
+// record id, the app's date format, and the to-do opens the referral itself (public/views/tasks.js). A reminder made
+// by 1.23.0, with the old reference line, is still recognised as the open one.
+test('the reminder\'s details carry no record id, use the app\'s date format, and point at the to-do\'s own link', async () => {
+  const id = ok(await nav.post('/api/referrals', { client_id: clientId, resource_id: res, referred_at: '2026-06-19T15:00:00Z', status: 'contacted', consent_id: consent })).id;
+  const r = ok(await sup.post(`/api/supervision/referrals/${id}/remind`, {}), 200);
+  const mine = ok(await nav.get('/api/tasks?status=open&limit=1000'), 200).rows.find(x => x.id === r.task);
+  assert.ok(!mine.description.includes(id), 'the referral\'s record id is not in the details');
+  assert.ok(!/Reference:/.test(mine.description), 'no reference line');
+  assert.match(mine.description, /\(sent Jun 19, 2026\)/, 'the date as the app shows dates');
+  assert.match(mine.description, /Open the referral from this to-do/);
+  assert.equal(mine.referral_id, id, 'the to-do carries the referral it opens');
+  assert.ok((await queue()).find(x => x.id === id).reminded_at, 'it is recognised as the open reminder');
+  assert.equal((await sup.post(`/api/supervision/referrals/${id}/remind`, {})).status, 400, 'one at a time');
+  // A 1.23.0 reminder (its own words, the reference line) still counts as the open one.
+  const old = await refer(nav, 'contacted', 5);
+  const crypto = require('../server/crypto');
+  H.db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?,?)`,
+    crypto.uuid(), clientId, navUser.id, navUser.id, crypto.encrypt('Something else'), crypto.encrypt(`Please.\nReference: supervision reminder for referral ${old}`), '2026-10-01', 'normal', old);
+  assert.ok((await queue()).find(x => x.id === old).reminded_at, 'a reminder with the old reference line is still recognised');
+  // The referral's own follow-up to-do is not a reminder.
+  const plain = await refer(nav, 'contacted', 4);
+  H.db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?,?)`,
+    crypto.uuid(), clientId, navUser.id, navUser.id, crypto.encrypt('Follow up: referral to Remind Detox'), null, '2026-10-01', 'normal', plain);
+  assert.equal((await queue()).find(x => x.id === plain).reminded_at, null, 'a referral\'s follow-up to-do is not a reminder');
+});

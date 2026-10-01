@@ -39,18 +39,21 @@ function named(ctx, rows) {
 // referral is still open, and its maker's follow-up to-do still stands, but there is no missing outcome for a
 // supervisor to chase (docs/USER_GUIDE.md, Supervision). Until 1.23.0 they were listed here too.
 const AWAITING_OUTCOME = ['contacted', 'scheduled'];
-// The line in a reminder to-do's details that says which referral it is about (a record id, nothing about the
-// client): how the queue knows the worker already has an open reminder for it (as views/supervision.js does for notes).
-const referralReminderRef = (id) => `Reference: supervision reminder for referral ${id}`;
+// A reminder to-do is the referral's to-do (tasks.referral_id) whose title is the reminder's: how the queue knows the
+// worker already has an open reminder for it. Until 1.23.1 its details ended with a line naming the referral's record
+// id ("Reference: supervision reminder for referral 60c0…"), which the worker read as noise; a reminder made then is
+// still recognised by that line. The to-do opens the referral's Record outcome form itself (public/views/tasks.js).
+const REMINDER_TITLE = 'Record what happened with your referral to ';
 const REFERRAL_REMINDER = /Reference: supervision reminder for referral ([\w-]{8,})/;
-/** Open reminder to-dos for these referrals, by referral id: { at, task }. Details are decrypted only to find the reference line. */
+/** Open reminder to-dos for these referrals, by referral id: { at, task }. Title and details are decrypted only to recognise one. */
 function referralReminders(ids) {
   const out = new Map();
   if (!ids.length) return out;
-  for (const t of db.all(`SELECT id, referral_id, description_enc, created_at FROM tasks WHERE referral_id IN (${ids.map(() => '?').join(',')}) AND status IN ('open','in_progress') AND description_enc IS NOT NULL`, ...ids)) {
-    let d = ''; try { d = decrypt(t.description_enc); } catch { continue; }
+  for (const t of db.all(`SELECT id, referral_id, title_enc, description_enc, created_at FROM tasks WHERE referral_id IN (${ids.map(() => '?').join(',')}) AND status IN ('open','in_progress') ORDER BY created_at`, ...ids)) {
+    let title = ''; let d = '';
+    try { title = t.title_enc ? decrypt(t.title_enc) : ''; d = t.description_enc ? decrypt(t.description_enc) : ''; } catch { continue; }
     const m = REFERRAL_REMINDER.exec(d);
-    if (m && m[1] === t.referral_id && !out.has(t.referral_id)) out.set(t.referral_id, { at: t.created_at, task: t.id });
+    if ((title.startsWith(REMINDER_TITLE) || (m && m[1] === t.referral_id)) && !out.has(t.referral_id)) out.set(t.referral_id, { at: t.created_at, task: t.id });
   }
   return out;
 }
@@ -66,6 +69,8 @@ function mayRemindWorker(user, workerId) {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const day = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : d; };
+// A date as the app shows one (public/app.js fmt.date, in the office's US English: "Jun 19, 2026").
+const appDay = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}` : d; };
 
 module.exports = (r) => {
   // One place that answers "what is waiting on me?" for a supervisor.
@@ -137,8 +142,8 @@ module.exports = (r) => {
     const open = referralReminders([ref.id]).get(ref.id);
     if (open) throw badRequest('The worker already has an open reminder for this referral');
     const id = require('../crypto').uuid();
-    const title = `Record what happened with your referral to ${ref.resource}`;
-    const desc = `${ctx.user.display_name || 'Your supervisor'} asked you to record the outcome of this referral (sent ${day(ref.referred_at)}). Open it from the client's Referrals tab and press Record outcome.\n${referralReminderRef(ref.id)}`;
+    const title = `${REMINDER_TITLE}${ref.resource}`;
+    const desc = `${ctx.user.display_name || 'Your supervisor'} asked you to record the outcome of this referral (sent ${appDay(ref.referred_at)}). Open the referral from this to-do to record it.`;
     db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?,?)`,
       id, ref.client_id, ref.user_id, ctx.user.id, encrypt(title), encrypt(desc), require('./budget').localDate(), 'normal', ref.id);
     audit.log({ user: ctx.user, action: 'referral.remind', entity: 'referral', entityId: ref.id, clientId: ref.client_id, ip: ctx.ip, details: { worker: ref.user_id, task: id } });

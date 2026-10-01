@@ -13,14 +13,42 @@ export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
     if (isNew) await post('/api/tasks', d); else await put(`/api/tasks/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast('To-do saved', 'ok'); m.close(); onDone && onDone();
   } });
-  const m = modal(isNew ? 'New to-do' : 'Edit to-do', f);
+  const src = isNew ? null : sourceButton(values, () => m.close(), onDone);
+  const m = modal(isNew ? 'New to-do' : 'Edit to-do', src ? h('div', {}, h('p', { class: 'btn-row' }, src), f) : f);
+}
+// ---- the record a to-do came from (1.23.1) ----
+// A follow-up from a call or a visit, a referral's to-do and a supervisor's reminder to record a referral's outcome
+// carry that record's id (tasks.call_id, intervention_id, referral_id), so the to-do opens it: a call or a visit as
+// the call's or visit's own card (with Edit), a referral on the client's Referrals tab, and a supervisor's reminder
+// (server/routes/supervision.js) straight in the referral's Record outcome form, which is what it asks for.
+const REMINDER = /^Record what happened with your referral to /;
+const SOURCES = [['referral_id', 'referral', 'referrals:read', '/api/referrals/'], ['intervention_id', 'visit', 'interventions:read', '/api/interventions/'], ['call_id', 'call', 'calls:read', '/api/calls/']];
+function sourceOf(t) {
+  for (const [col, noun, perm, url] of SOURCES) if (t && t[col] && can(perm)) return { id: t[col], noun, url };
+  return null;
+}
+async function openSource(t, onDone) {
+  const s = sourceOf(t);
+  let row;
+  try { row = (await get(s.url + encodeURIComponent(s.id))).row; } catch (e) { toast(e && e.status === 404 ? `That ${s.noun} is no longer there.` : (e && e.message) || `The ${s.noun} could not be opened.`, 'error'); return; }
+  if (s.noun === 'call') (await import('./calls.js')).openCallView(row, { onChange: onDone });
+  else if (s.noun === 'visit') (await import('./interventions.js')).openVisitView(row, { onChange: onDone });
+  else if (REMINDER.test(t.title || '') && !row.outcome_recorded_at && can('referrals:write')) (await import('./referrals.js')).openOutcomeForm(row, onDone);
+  else nav(`client/${row.client_id}/referrals`);
+}
+/** "Open the call", "Open the visit" or "Open the referral" for a to-do that came from one, else null. */
+export function sourceButton(t, close, onDone) {
+  const s = sourceOf(t);
+  if (!s) return null;
+  return h('button', { type: 'button', class: 'btn sm', 'data-task-source': s.noun, onClick: () => { if (close) close(); openSource(t, onDone); } }, `Open the ${s.noun}`);
 }
 // A to-do is changed by whoever it is assigned to or made it, or someone who manages others' records
 // (server/rules/tasks.js editableBy); anyone who can write to-dos may still mark it done.
 const mayChangeTask = (t) => mayChange(t.assigned_to, t.created_by);
 /** Someone else's to-do on a phone, to read: it used to open as a form whose Save was then refused. */
 function openTaskView(t) {
-  modal('To-do', h('div', { 'data-task-view': t.id }, can('tasks:write') ? ownedNotice(t.assignee, { verb: 'Assigned to' }) : null,
+  const src = sourceButton(t, () => m.close());
+  const m = modal('To-do', h('div', { 'data-task-view': t.id }, can('tasks:write') ? ownedNotice(t.assignee, { verb: 'Assigned to' }) : null, src ? h('p', { class: 'btn-row' }, src) : null,
     kv([['To-do', t.title], ['Client', t.client_name || t.client_code || null], ['Due', t.due_at ? fmt.dt(t.due_at) : null], ['Priority', fmt.label(t.priority)], ['Status', fmt.label(t.status)],
       ['Assigned to', t.assignee], ['Details', t.description ? h('div', { style: { whiteSpace: 'pre-wrap' } }, t.description) : null]]),
     can('tasks:write') ? h('p', { class: 'small muted' }, 'You can still mark it done with its box in the list.') : null));
@@ -122,7 +150,7 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false } = 
     showClient ? { label: 'Client', render: t => t.client_id ? h('a', { href: `#/client/${t.client_id}` }, t.client_name || t.client_code, t.client_name ? h('div', { class: 'muted small mono' }, t.client_code) : null) : '—' } : null,
     { label: 'Due', render: t => h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? fmt.dt(t.due_at) : '—', overdue(t) ? ' — overdue' : '') },
     { label: 'Priority', render: t => badge(fmt.label(t.priority), statusKind(t.priority)) }, { label: 'Status', render: t => badge(fmt.label(t.status), statusKind(t.status)) }, { label: 'Assignee', key: 'assignee' },
-    { label: '', render: t => changeNotice(t) ? h('button', { class: 'btn sm', 'data-open-notice': t.id, onClick: () => openChangeNotice(t, { onDone: onChange }) }, 'View change') : !can('tasks:write') ? null : !mayChangeTask(t) ? viewOnly(t.assignee, { verb: 'Assigned to', more: '; you can mark it done' }) : h('div', { class: 'row nowrap' }, h('button', { class: 'btn sm', onClick: () => openTaskForm(t, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this to-do', onClick: async () => { if (await confirmDialog('Delete to-do', 'Delete this to-do?', { danger: true, okText: 'Delete' })) { await del(`/api/tasks/${t.id}`); onChange && onChange(); } } }, '✕')) },
+    { label: '', render: t => changeNotice(t) ? h('button', { class: 'btn sm', 'data-open-notice': t.id, onClick: () => openChangeNotice(t, { onDone: onChange }) }, 'View change') : !can('tasks:write') ? sourceButton(t, null, onChange) : !mayChangeTask(t) ? h('div', {}, sourceButton(t, null, onChange), viewOnly(t.assignee, { verb: 'Assigned to', more: '; you can mark it done' })) : h('div', { class: 'row nowrap' }, sourceButton(t, null, onChange), h('button', { class: 'btn sm', onClick: () => openTaskForm(t, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this to-do', onClick: async () => { if (await confirmDialog('Delete to-do', 'Delete this to-do?', { danger: true, okText: 'Delete' })) { await del(`/api/tasks/${t.id}`); onChange && onChange(); } } }, '✕')) },
   ].filter(Boolean), rows, { empty: 'Nothing here. To-dos you add, and follow-ups from visits and calls, will show up in this list.',
     rowLabel: t => t.title,
     // The done box stays on the phone row: a to-do list you cannot tick off one-handed is not a to-do list.

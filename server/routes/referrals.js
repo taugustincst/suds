@@ -26,6 +26,30 @@ function sharesInformation(v, row = {}) {
   return !!warm || SHARED_STATUSES.includes(status);
 }
 
+/**
+ * Does this edit tell the receiving agency nothing new? Only its follow-up date and the worker's notes (kept here,
+ * never sent) change; every other field it carries is as stored. Such an edit to a referral that already shares
+ * information but has no accounting row (one recorded before SUDS kept them, an import) needs no disclosure basis:
+ * nothing leaves (evaluation of 1.23.0: changing only the follow-up date was refused for want of a consent). Any
+ * other change (the status, the agency, a warm hand-off, the urgency, the appointment, the outcome, what is shared)
+ * still passes the gate. `row` is in the same form as `next`: the stored row with its free text decrypted for an
+ * edit over REST, the stored row as it is for a row arriving by sync.
+ */
+const NOT_SENT = new Set(['follow_up_due', 'notes', 'notes_enc', 'id', 'created_at', 'updated_at', 'if_updated_at']);
+function sameValue(a, b) {
+  const blank = (x) => x === undefined || x === null || x === '';
+  if (blank(a) || blank(b)) return blank(a) && blank(b);
+  if (typeof a === 'boolean' || typeof b === 'boolean') return Number(a === true || a === 1 || a === '1') === Number(b === true || b === 1 || b === '1');
+  if (String(a) === String(b)) return true;
+  // A date and time as the form sends it back (to the minute) and as stored (to the millisecond) are the same moment.
+  const when = (x) => (/^\d{4}-\d{2}-\d{2}T/.test(String(x)) ? Math.floor(Date.parse(x) / 60000) : NaN);
+  return !Number.isNaN(when(a)) && when(a) === when(b);
+}
+function changesNothingSent(next, row) {
+  if (!row || next._disclosure_what) return false;
+  return Object.keys(next).every(k => next[k] === undefined || k.startsWith('_') || NOT_SENT.has(k) || sameValue(next[k], row[k]));
+}
+
 /** The referral's own disclosure row, if one has already been written. */
 function existingDisclosure(referralId) {
   return db.one(`SELECT id FROM disclosures WHERE source='referral' AND source_ref=?`, referralId);
@@ -104,6 +128,8 @@ function pushDisclosure(user, raw, existing, deviceRows = []) {
   if (!sharesInformation(raw, existing || {})) return null;
   const recipientChanged = !!existing && !!raw.resource_id && raw.resource_id !== existing.resource_id;
   if (existing && !recipientChanged && existingDisclosure(raw.id)) return null;
+  // A device's edit of the follow-up date or its notes only (and no accounting row of its own): nothing leaves.
+  if (existing && !deviceRows.length && changesNothingSent(raw, existing)) return null;
   const dev = deviceRows.length ? deviceRows[deviceRows.length - 1] : null;
   const just = dev && dev.justification_enc ? String(dev.justification_enc) : '';
   const resourceId = raw.resource_id || existing?.resource_id;
@@ -168,7 +194,8 @@ module.exports = (r) => {
       // basis is checked against the new recipient (as creating the referral there would be) and the new
       // disclosure is accounted — the old row still stands for the agency that was told first.
       const recipientChanged = !!v.resource_id && v.resource_id !== row.resource_id;
-      if (sharesInformation(v, row) && (recipientChanged || !existingDisclosure(row.id))) recordDisclosure(ctx, row, v);
+      // An edit of only the follow-up date or the notes tells the agency nothing new (changesNothingSent).
+      if (sharesInformation(v, row) && (recipientChanged || !existingDisclosure(row.id)) && !changesNothingSent(v, present(row))) recordDisclosure(ctx, row, v);
       if (v.status && CLOSED_STATUSES.includes(v.status) && !v.closed_at && !row.closed_at) v.closed_at = db.now();
       if (v.status === 'admitted' && !v.admitted_at && !row.admitted_at) v.admitted_at = db.now();
       // An outcome is what makes the referral answerable in a funder report.

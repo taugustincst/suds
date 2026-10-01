@@ -37,7 +37,21 @@ test('sample data: admin loads it, staff see it, it is removed cleanly with tomb
     for (const ref of db.all(`SELECT res.name FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE r.client_id=?`, c.id)) {
       assert.ok(D.consentNamesRecipient({ type: k.type, recipient: require('../server/crypto').decrypt(k.recipient_enc) }, [ref.name]), `the consent names ${ref.name}`);
     }
+    // 1.23.1: every referral that told its agency who the client is cites that consent and has its accounting row,
+    // as one made in SUDS does (evaluation of 1.23.0: none had, and editing an open one asked for a consent).
+    for (const ref of db.all(`SELECT * FROM referrals WHERE client_id=? AND (status<>'pending' OR warm_handoff=1)`, c.id)) {
+      assert.equal(ref.consent_id, k.id, 'a shared sample referral cites the client\'s consent');
+      const acc = db.all(`SELECT * FROM disclosures WHERE source='referral' AND source_ref=?`, ref.id);
+      assert.equal(acc.length, 1, 'and has one accounting row'); assert.equal(acc[0].consent_id, k.id); assert.equal(acc[0].basis, 'consent');
+      assert.ok(acc[0].disclosed_at === ref.referred_at && k.signed_at <= ref.referred_at.slice(0, 10), 'disclosed when referred, after the consent was signed');
+    }
   }
+  // An open sample referral can be edited as the worker would: a new follow-up date, and its status moved on.
+  const open = db.one(`SELECT r.* FROM referrals r JOIN clients c ON c.id=r.client_id WHERE r.status IN ('contacted','scheduled','waitlisted','accepted') ORDER BY r.referred_at LIMIT 1`);
+  assert.ok(open, 'the sample data has an open referral');
+  const cur = (await sup.get(`/api/referrals/${open.id}`)).data.row;
+  const moved = await sup.put(`/api/referrals/${open.id}`, { follow_up_due: '2099-01-15', status: open.status === 'scheduled' ? 'admitted' : 'scheduled', if_updated_at: cur.updated_at });
+  assert.equal(moved.status, 200, JSON.stringify(moved.data));
   // Every sample client is found as any client is: its blind indexes are the ones clients-model computes (the
   // preferred name's was not written until 1.14.0; the 1.13.0 upgrade fixture found it).
   const M = require('../server/clients-model'); const { decrypt } = require('../server/crypto');

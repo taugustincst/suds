@@ -16452,6 +16452,19 @@ var require_referrals = __commonJS({
       const warm = v.warm_handoff !== void 0 ? v.warm_handoff : row.warm_handoff;
       return !!warm || SHARED_STATUSES.includes(status);
     }
+    var NOT_SENT = /* @__PURE__ */ new Set(["follow_up_due", "notes", "notes_enc", "id", "created_at", "updated_at", "if_updated_at"]);
+    function sameValue(a, b) {
+      const blank = (x) => x === void 0 || x === null || x === "";
+      if (blank(a) || blank(b)) return blank(a) && blank(b);
+      if (typeof a === "boolean" || typeof b === "boolean") return Number(a === true || a === 1 || a === "1") === Number(b === true || b === 1 || b === "1");
+      if (String(a) === String(b)) return true;
+      const when = (x) => /^\d{4}-\d{2}-\d{2}T/.test(String(x)) ? Math.floor(Date.parse(x) / 6e4) : NaN;
+      return !Number.isNaN(when(a)) && when(a) === when(b);
+    }
+    function changesNothingSent(next, row) {
+      if (!row || next._disclosure_what) return false;
+      return Object.keys(next).every((k) => next[k] === void 0 || k.startsWith("_") || NOT_SENT.has(k) || sameValue(next[k], row[k]));
+    }
     function existingDisclosure(referralId) {
       return db3.one(`SELECT id FROM disclosures WHERE source='referral' AND source_ref=?`, referralId);
     }
@@ -16525,6 +16538,7 @@ var require_referrals = __commonJS({
       if (!sharesInformation(raw, existing || {})) return null;
       const recipientChanged = !!existing && !!raw.resource_id && raw.resource_id !== existing.resource_id;
       if (existing && !recipientChanged && existingDisclosure(raw.id)) return null;
+      if (existing && !deviceRows.length && changesNothingSent(raw, existing)) return null;
       const dev = deviceRows.length ? deviceRows[deviceRows.length - 1] : null;
       const just = dev && dev.justification_enc ? String(dev.justification_enc) : "";
       const resourceId = raw.resource_id || existing?.resource_id;
@@ -16613,7 +16627,7 @@ var require_referrals = __commonJS({
         },
         beforeUpdate: (ctx, v, row) => {
           const recipientChanged = !!v.resource_id && v.resource_id !== row.resource_id;
-          if (sharesInformation(v, row) && (recipientChanged || !existingDisclosure(row.id))) recordDisclosure(ctx, row, v);
+          if (sharesInformation(v, row) && (recipientChanged || !existingDisclosure(row.id)) && !changesNothingSent(v, present(row))) recordDisclosure(ctx, row, v);
           if (v.status && CLOSED_STATUSES.includes(v.status) && !v.closed_at && !row.closed_at) v.closed_at = db3.now();
           if (v.status === "admitted" && !v.admitted_at && !row.admitted_at) v.admitted_at = db3.now();
           if ((v.outcome !== void 0 || v.status === "admitted" || v.status && CLOSED_STATUSES.includes(v.status)) && !row.outcome_recorded_at) v.outcome_recorded_at = db3.now();
@@ -23962,6 +23976,7 @@ var require_demo = __commonJS({
           }
           const nr = c.cstatus === "waitlist" ? 1 : 2 + Math.floor(rand2() * 2);
           const referredTo = [];
+          const refs = [];
           for (let k = 0; k < nr; k++) {
             const rid = rids[(i * 3 + k * 5) % rids.length];
             {
@@ -23970,7 +23985,7 @@ var require_demo = __commonJS({
             }
             const st = k === 0 ? pick(["admitted", "scheduled", "accepted", "completed"]) : pick(C.REFERRAL_STATUSES);
             const off = 10 + Math.floor(rand2() * 100);
-            db3.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status,urgency,appointment_at,admitted_at,closed_at,outcome_enc,barrier_enc,warm_handoff,follow_up_due,notes_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, track("referrals", uuid2()), c.id, rid, c.worker, d(off), st, c.risk === "critical" ? "urgent" : "routine", ["scheduled", "admitted", "completed"].includes(st) ? d(off - 3) : null, ["admitted", "completed"].includes(st) ? d(off - 5) : null, ["completed", "closed", "declined_by_client", "declined_by_provider"].includes(st) ? d(off - 12) : null, st === "completed" ? encrypt3("Completed program") : null, ["waitlisted", "declined_by_provider"].includes(st) ? encrypt3(pick(["no beds", "insurance", "transportation"])) : null, rand2() < 0.5 ? 1 : 0, ["pending", "contacted", "waitlisted"].includes(st) ? day(-2) : null, null);
+            refs.push([track("referrals", uuid2()), c.id, rid, c.worker, d(off), st, c.risk === "critical" ? "urgent" : "routine", ["scheduled", "admitted", "completed"].includes(st) ? d(off - 3) : null, ["admitted", "completed"].includes(st) ? d(off - 5) : null, ["completed", "closed", "declined_by_client", "declined_by_provider"].includes(st) ? d(off - 12) : null, st === "completed" ? encrypt3("Completed program") : null, ["waitlisted", "declined_by_provider"].includes(st) ? encrypt3(pick(["no beds", "insurance", "transportation"])) : null, rand2() < 0.5 ? 1 : 0, ["pending", "contacted", "waitlisted"].includes(st) ? day(-2) : null, null]);
           }
           const TASKS = [["Call about detox bed", "urgent", -1], ["Bring ID paperwork to DMV", "high", 1], ["Confirm OTP intake time", "high", 0], ["Housing application follow-up", "normal", 4], ["Send ROI to Valley Behavioral", "normal", 2], ["Monthly check-in call", "low", 12], ["Naloxone refill", "normal", -3]];
           const nt = c.cstatus === "closed" ? 1 : 2 + Math.floor(rand2() * 2);
@@ -24007,7 +24022,25 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
           }
           const consentId = track("consents", uuid2());
           const consentRecipient = `${referredTo.join(", ")} and my other treating providers`;
-          db3.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref_enc,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, "part2_tpo", encrypt3(consentRecipient), encrypt3("Treatment, payment and health care operations"), encrypt3("Referral summary, diagnosis, MAT status"), day(60 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), encrypt3("Consent binder, tab " + (i + 1)), c.worker);
+          db3.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref_enc,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, "part2_tpo", encrypt3(consentRecipient), encrypt3("Treatment, payment and health care operations"), encrypt3("Referral summary, diagnosis, MAT status"), day(115 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), encrypt3("Consent binder, tab " + (i + 1)), c.worker);
+          for (const r of refs) {
+            const shared = r[5] !== "pending" || r[12] === 1;
+            db3.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status,urgency,appointment_at,admitted_at,closed_at,outcome_enc,barrier_enc,warm_handoff,follow_up_due,notes_enc,consent_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, ...r, shared ? consentId : null);
+            if (shared) db3.run(
+              `INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,source,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?,'referral',?)`,
+              track("disclosures", uuid2()),
+              c.id,
+              consentId,
+              encrypt3(RESOURCES[rids.indexOf(r[2])][0]),
+              encrypt3("Referral for services"),
+              encrypt3("Referral information (name, contact details and presenting need)"),
+              r[12] === 1 ? "warm handoff" : "referral",
+              r[4],
+              c.worker,
+              "consent",
+              r[0]
+            );
+          }
           if (i % 4 !== 1) db3.run(`INSERT INTO part2_notices(id,client_id,given_at,method,notice_version,acknowledged,given_by) VALUES(?,?,?,?,?,?,?)`, track("part2_notices", uuid2()), c.id, day(60 + i), "in_person_paper", "1", 1, c.worker);
           if (i % 3 === 0) db3.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,created_by) VALUES(?,?,?,?,?,?,?,?,?)`, track("consents", uuid2()), c.id, "roi", encrypt3("Family member (mother)"), encrypt3("Care coordination with family"), encrypt3("Appointment dates and general progress"), day(50 + i), day(-315), c.worker);
           if (i % 2 === 0) db3.run(`INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,source) VALUES(?,?,?,?,?,?,?,?,?,?,'manual')`, track("disclosures", uuid2()), c.id, consentId, encrypt3(referredTo[0]), encrypt3("Referral for treatment intake"), encrypt3("Referral summary and MAT status"), "fax", d(40 + i), c.worker, "consent");
@@ -48364,20 +48397,22 @@ var require_supervision = __commonJS({
       });
     }
     var AWAITING_OUTCOME = ["contacted", "scheduled"];
-    var referralReminderRef = (id) => `Reference: supervision reminder for referral ${id}`;
+    var REMINDER_TITLE = "Record what happened with your referral to ";
     var REFERRAL_REMINDER = /Reference: supervision reminder for referral ([\w-]{8,})/;
     function referralReminders(ids) {
       const out2 = /* @__PURE__ */ new Map();
       if (!ids.length) return out2;
-      for (const t of db3.all(`SELECT id, referral_id, description_enc, created_at FROM tasks WHERE referral_id IN (${ids.map(() => "?").join(",")}) AND status IN ('open','in_progress') AND description_enc IS NOT NULL`, ...ids)) {
+      for (const t of db3.all(`SELECT id, referral_id, title_enc, description_enc, created_at FROM tasks WHERE referral_id IN (${ids.map(() => "?").join(",")}) AND status IN ('open','in_progress') ORDER BY created_at`, ...ids)) {
+        let title = "";
         let d = "";
         try {
-          d = decrypt3(t.description_enc);
+          title = t.title_enc ? decrypt3(t.title_enc) : "";
+          d = t.description_enc ? decrypt3(t.description_enc) : "";
         } catch {
           continue;
         }
         const m = REFERRAL_REMINDER.exec(d);
-        if (m && m[1] === t.referral_id && !out2.has(t.referral_id)) out2.set(t.referral_id, { at: t.created_at, task: t.id });
+        if ((title.startsWith(REMINDER_TITLE) || m && m[1] === t.referral_id) && !out2.has(t.referral_id)) out2.set(t.referral_id, { at: t.created_at, task: t.id });
       }
       return out2;
     }
@@ -48392,6 +48427,10 @@ var require_supervision = __commonJS({
     var day = (d) => {
       const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || "");
       return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : d;
+    };
+    var appDay = (d) => {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || "");
+      return m ? `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}` : d;
     };
     module.exports = (r) => {
       r.get("/api/supervision/queue", auth3.requireAuth, auth3.requirePerm("notes:cosign", "time:approve", "assignments:manage"), (ctx) => {
@@ -48443,9 +48482,8 @@ var require_supervision = __commonJS({
         const open3 = referralReminders([ref.id]).get(ref.id);
         if (open3) throw badRequest("The worker already has an open reminder for this referral");
         const id = require_crypto().uuid();
-        const title = `Record what happened with your referral to ${ref.resource}`;
-        const desc = `${ctx.user.display_name || "Your supervisor"} asked you to record the outcome of this referral (sent ${day(ref.referred_at)}). Open it from the client's Referrals tab and press Record outcome.
-${referralReminderRef(ref.id)}`;
+        const title = `${REMINDER_TITLE}${ref.resource}`;
+        const desc = `${ctx.user.display_name || "Your supervisor"} asked you to record the outcome of this referral (sent ${appDay(ref.referred_at)}). Open the referral from this to-do to record it.`;
         db3.run(
           `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?,?)`,
           id,
