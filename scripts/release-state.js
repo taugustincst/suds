@@ -129,6 +129,10 @@ function parseHandoff(text) {
   const pending = [];
   const pre = /^\|\s*`(v(\d+\.\d+\.\d+))`\s*\|\s*the commit after `Release (\d+\.\d+\.\d+)`[^|]*\|\s*(\d{4}-\d{2}-\d{2})\s*\|/gm;
   for (let m; (m = pre.exec(text));) if (m[2] === m[3]) pending.push({ tag: m[1], version: m[2], commit: null, date: m[4], zip: null, afterStamp: null, pending: true, line: lineAt(text, m.index) });
+  // A patch has no SBOM commit: its tag goes on the stamp itself, which cannot name its own hash either. The row holds
+  // the placeholder `<X.Y.Z release commit>` until a later commit on main fills it.
+  const prePatch = /^\|\s*`(v(\d+\.\d+\.\d+))`\s*\|\s*`<(\d+\.\d+\.\d+) release commit>`[^|]*\|\s*(\d{4}-\d{2}-\d{2})\s*\|/gm;
+  for (let m; (m = prePatch.exec(text));) if (m[2] === m[3]) pending.push({ tag: m[1], version: m[2], commit: null, date: m[4], zip: null, afterStamp: null, pending: true, stamp: true, line: lineAt(text, m.index) });
   const tagCommands = [...text.matchAll(/^git tag -a (v\d+\.\d+\.\d+) (\S+) -m "SUDS (\d+\.\d+\.\d+)"/gm)]
     .map((m) => ({ tag: m[1], commit: m[2].replace(/^"|"$/g, ''), message: m[3], line: lineAt(text, m.index) }));
   const pushM = /^git push origin((?: v\d+\.\d+\.\d+)+)\s*$/m.exec(text);
@@ -413,7 +417,7 @@ function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = nul
   }
 
   // 5. The hand-off's commits, when git can answer. A pending row names no commit yet: say so, never a problem.
-  for (const r of (h && h.pending) || []) notChecked.push(`${r.tag}'s commit (the hand-off names it as the commit after "Release ${r.version}"; a later commit on main records it)`);
+  for (const r of (h && h.pending) || []) notChecked.push(r.stamp ? `${r.tag}'s commit (the hand-off names it as "Release ${r.version}" by its subject; a later commit on main records it)` : `${r.tag}'s commit (the hand-off names it as the commit after "Release ${r.version}"; a later commit on main records it)`);
   if (h && h.rows.length) {
     if (!git) notChecked.push('the hand-off\'s commits (no git: --docs-only)');
     else {

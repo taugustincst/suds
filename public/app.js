@@ -240,7 +240,9 @@ window.addEventListener('offline', () => setOffline(true));
 window.addEventListener('online', () => {
   setOffline(false);
   // Started with no signal from this tab's copy of the session (restoreTabSession): ask the office who is signed in.
-  if (state.signedInOffline) { state.signedInOffline = false; loadSession().then(render, () => {}); }
+  // Nothing waiting is sent until the office has said who that is (outreach-queue.js): the tab's copy may be someone
+  // who has since signed out in another tab, and the cookie someone else's (review of 1.23.1).
+  if (state.signedInOffline) loadSession().then(() => { render(); autoFlush(); }, () => {});
 });
 
 // Who is signed in (the account and what it may do, never anything about a client) and the programme's lists, kept
@@ -2259,7 +2261,7 @@ export async function loadSession() {
   } catch (e) {
     // No signal at all (a reload in the street): who was signed in in this tab, if anyone (keepTabSession).
     if (e && e.offline && await restoreTabSession()) return;
-    state.user = null;
+    state.user = null; state.signedInOffline = false;
   }
 }
 /** Re-read the signed-in user's permission snapshot without signing out (an administrator may have

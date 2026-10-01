@@ -39,24 +39,26 @@ function named(ctx, rows) {
 // referral is still open, and its maker's follow-up to-do still stands, but there is no missing outcome for a
 // supervisor to chase (docs/USER_GUIDE.md, Supervision). Until 1.23.0 they were listed here too.
 const AWAITING_OUTCOME = ['contacted', 'scheduled'];
-// A reminder to-do is the referral's to-do (tasks.referral_id) whose title is the reminder's: how the queue knows the
-// worker already has an open reminder for it. Until 1.23.1 its details ended with a line naming the referral's record
-// id ("Reference: supervision reminder for referral 60c0…"), which the worker read as noise; a reminder made then is
-// still recognised by that line. The to-do opens the referral's Record outcome form itself (public/views/tasks.js).
+// A reminder to-do is one Remind worker made: the referral's to-do (tasks.referral_id) named in that reminder's
+// `referral.remind` audit entry (details.task), how the queue knows the worker already has an open reminder for it.
+// Its title and details are the worker's to edit, so neither can make a to-do pass for one (1.23.1; 1.23.0 matched
+// a reference line in the details, and every reminder 1.23.0 made has the same audit entry). Until 1.23.1 its details
+// ended with a line naming the referral's record id, which the worker read as noise; the to-do now opens the
+// referral's Record outcome form itself (public/views/tasks.js).
 const REMINDER_TITLE = 'Record what happened with your referral to ';
-const REFERRAL_REMINDER = /Reference: supervision reminder for referral ([\w-]{8,})/;
-/** Open reminder to-dos for these referrals, by referral id: { at, task }. Title and details are decrypted only to recognise one.
- *  A reminder is always someone else's to the worker (1.23.1): a to-do the worker wrote themselves (on a device, say)
- *  with the reminder's title or reference line is not one, so it cannot keep their supervisor's Remind worker away. */
+/** Open reminder to-dos for these referrals, by referral id: { at, task }. Reads no PHI: the to-dos' links and the
+ *  reminders' audit entries (found by client, which is indexed) only. */
 function referralReminders(ids) {
   const out = new Map();
   if (!ids.length) return out;
-  for (const t of db.all(`SELECT id, referral_id, title_enc, description_enc, created_at FROM tasks WHERE referral_id IN (${ids.map(() => '?').join(',')}) AND status IN ('open','in_progress') AND created_by<>assigned_to ORDER BY created_at`, ...ids)) {
-    let title = ''; let d = '';
-    try { title = t.title_enc ? decrypt(t.title_enc) : ''; d = t.description_enc ? decrypt(t.description_enc) : ''; } catch { continue; }
-    const m = REFERRAL_REMINDER.exec(d);
-    if ((title.startsWith(REMINDER_TITLE) || (m && m[1] === t.referral_id)) && !out.has(t.referral_id)) out.set(t.referral_id, { at: t.created_at, task: t.id });
+  const open = db.all(`SELECT id, referral_id, client_id, created_at FROM tasks WHERE referral_id IN (${ids.map(() => '?').join(',')}) AND status IN ('open','in_progress') AND created_by<>assigned_to ORDER BY created_at`, ...ids);
+  const clients = [...new Set(open.map(t => t.client_id).filter(Boolean))];
+  if (!clients.length) return out;
+  const made = new Set();
+  for (const a of db.all(`SELECT entity_id, details FROM audit_log WHERE client_id IN (${clients.map(() => '?').join(',')}) AND action='referral.remind'`, ...clients)) {
+    try { const d = JSON.parse(a.details); if (d && d.task) made.add(`${a.entity_id} ${d.task}`); } catch { /* not a reminder's entry */ }
   }
+  for (const t of open) if (made.has(`${t.referral_id} ${t.id}`) && !out.has(t.referral_id)) out.set(t.referral_id, { at: t.created_at, task: t.id });
   return out;
 }
 /** May this user send the maker of a referral a reminder? A supervisor (or a manager of assignments) who may write

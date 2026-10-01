@@ -171,12 +171,27 @@ test('the reminder\'s details carry no record id, use the app\'s date format, an
   // A 1.23.0 reminder (its own words, the reference line) still counts as the open one.
   const old = await refer(nav, 'contacted', 5);
   const crypto = require('../server/crypto');
+  const supUser = H.db.one(`SELECT id, username FROM users WHERE username='srsup'`);
+  const oldTask = crypto.uuid();
   H.db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?,?)`,
-    crypto.uuid(), clientId, navUser.id, H.db.one(`SELECT id FROM users WHERE username='srsup'`).id, crypto.encrypt('Something else'), crypto.encrypt(`Please.\nReference: supervision reminder for referral ${old}`), '2026-10-01', 'normal', old);
-  assert.ok((await queue()).find(x => x.id === old).reminded_at, 'a reminder with the old reference line is still recognised');
+    oldTask, clientId, navUser.id, supUser.id, crypto.encrypt('Something else'), crypto.encrypt(`Please.\nReference: supervision reminder for referral ${old}`), '2026-10-01', 'normal', old);
+  assert.equal((await queue()).find(x => x.id === old).reminded_at, null, 'a to-do is not a reminder for its words alone');
+  require('../server/audit').log({ user: supUser, action: 'referral.remind', entity: 'referral', entityId: old, clientId, details: { worker: navUser.id, task: oldTask } });
+  assert.ok((await queue()).find(x => x.id === old).reminded_at, 'a reminder 1.23.0 made (its audit entry names the to-do) is still recognised');
   // The referral's own follow-up to-do is not a reminder.
   const plain = await refer(nav, 'contacted', 4);
   H.db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?,?)`,
     crypto.uuid(), clientId, navUser.id, navUser.id, crypto.encrypt('Follow up: referral to Remind Detox'), null, '2026-10-01', 'normal', plain);
   assert.equal((await queue()).find(x => x.id === plain).reminded_at, null, 'a referral\'s follow-up to-do is not a reminder');
+});
+
+// Review of 1.23.1: a to-do someone else gave the worker, renamed by the worker to the reminder's title, passed for
+// a reminder and kept Remind worker away. A reminder is now the to-do its referral.remind audit entry names.
+test('a to-do renamed to the reminder\'s title is not a reminder', async () => {
+  const id = await refer(nav, 'contacted', 8);
+  const t = ok(await sup.post('/api/tasks', { client_id: clientId, assigned_to: navUser.id, title: 'Check in with the clinic', referral_id: id, due_at: new Date().toISOString().slice(0, 10) }));
+  ok(await nav.put(`/api/tasks/${t.id}`, { title: 'Record what happened with your referral to Remind Detox' }), 200);
+  assert.equal((await queue()).find(x => x.id === id).reminded_at, null, 'the renamed to-do is not taken for a reminder');
+  ok(await sup.post(`/api/supervision/referrals/${id}/remind`, {}), 200);
+  assert.ok((await queue()).find(x => x.id === id).reminded_at, 'the real reminder is');
 });
