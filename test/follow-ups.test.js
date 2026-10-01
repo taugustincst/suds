@@ -163,6 +163,9 @@ test('sync push: the office runs the same rule on a device\'s calls, visits and 
   assert.equal(tasksOf('call_id', callId)[0].status, 'cancelled');
   await push({ referrals: [{ id: refId, client_id: clientId, resource_id: resourceId, user_id: navId, referred_at: minutesAgo(2), status: 'pending', urgency: 'urgent', follow_up_due: inDays(3), notes_enc: 'Edited', updated_at: later() }] });
   assert.equal(tasksOf('referral_id', refId).length, 1, 'an unrelated edit makes no second to-do');
+  // An outcome recorded on the device (an older kernel that leaves the to-do open) closes it at the office.
+  await push({ referrals: [{ id: refId, client_id: clientId, resource_id: resourceId, user_id: navId, referred_at: minutesAgo(2), status: 'declined_by_client', urgency: 'urgent', follow_up_due: inDays(3), outcome_recorded_at: now(), closed_at: now(), updated_at: later() }] });
+  assert.deepEqual(tasksOf('referral_id', refId).map(t => t.status), ['done'], 'recording the outcome closes the referral\'s to-do (review of 1.23)');
   // A to-do naming a call the office does not have keeps its place on the list, without the link.
   const orphan = rid();
   await push({ tasks: [{ id: orphan, client_id: clientId, assigned_to: navId, created_by: navId, title_enc: 'Call back: lost', due_at: inDays(2), priority: 'normal', status: 'open', call_id: rid(), created_at: now(), updated_at: now() }] });

@@ -124,6 +124,14 @@ Built for 1.23.0, not yet released. No migration, no new permission or route (th
   desktop order, and axe on the phone Home and the open phone menu. `programme.mjs` and `r7.mjs` follow the new
   menu and the folded tiles. With `menu-home.mjs` and `offline-outreach.mjs` the suite is now 59 scripts.
 
+### Fixed in the review of the 1.23.0 integration
+
+* **An outcome recorded by editing a referral closes its to-dos.** Setting a referral's status to admitted,
+  completed, declined or closed from its edit form (or on a device) records its outcome, but left its follow-up to-do
+  and a supervisor's *Remind worker* to-do open, although the referral had left *Waiting to hear what happened*; only
+  **Record outcome** closed them. Both doors now close them the same way (`server/rules/follow-ups.js`, audited as
+  `task.update`). Tests: `test/supervision-referrals.test.js`, `test/follow-ups.test.js`.
+
 ## 1.22.0 — 2026-10-01
 
 A feature release (migrations 64, 65 and 66; the county publication consent routes; no new permission), released

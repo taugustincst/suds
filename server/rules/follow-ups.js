@@ -71,6 +71,18 @@ const SPECS = {
 function reconcile(table, row, prev, { user, ip }) {
   const S = SPECS[table];
   if (!S || !row || !row.id) return null;
+  // A referral whose outcome this write recorded (its status set to admitted, completed, declined or closed by
+  // editing it, at the office or on a device) has served its to-dos, as POST /api/referrals/:id/outcome closes them:
+  // its follow-up and a supervisor's reminder to record the outcome (routes/supervision.js). Review of 1.23.0.
+  if (table === 'referrals' && prev && !prev.outcome_recorded_at && row.outcome_recorded_at) {
+    const now = db.now(); let done = null;
+    for (const t of db.all(`SELECT id FROM tasks WHERE referral_id=? AND status IN ('open','in_progress')`, row.id)) {
+      db.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now, now, t.id);
+      audit.log({ user, action: 'task.update', entity: 'task', entityId: t.id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, status: 'done' } });
+      done = 'closed';
+    }
+    return done;
+  }
   const want = S.due(row); const was = prev ? S.due(prev) : null;
   if (prev && want === was) return null;
   if (!want && !was) return null;

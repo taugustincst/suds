@@ -104,3 +104,21 @@ test('a supervisor is not offered a reminder to themselves, and an unknown refer
   assert.equal((await queue()).find(x => x.id === gone).may_remind, false);
   assert.equal((await sup.post(`/api/supervision/referrals/${gone}/remind`, {})).status, 400);
 });
+
+test('an outcome recorded by editing the referral closes its to-dos too: the reminder and the follow-up (review of 1.23)', async () => {
+  const id = await refer(nav, 'contacted', 8);
+  const r = ok(await sup.post(`/api/supervision/referrals/${id}/remind`, {}), 200);
+  const followUp = H.db.one(`SELECT id, status FROM tasks WHERE referral_id=? AND id<>?`, id, r.task);
+  assert.equal(followUp.status, 'open', 'the referral has its own follow-up to-do');
+  // The worker edits the referral (the referral form's Status) rather than pressing Record outcome.
+  ok(await nav.put(`/api/referrals/${id}`, { status: 'admitted' }), 200);
+  assert.ok(H.db.one(`SELECT outcome_recorded_at FROM referrals WHERE id=?`, id).outcome_recorded_at, 'the edit records the outcome');
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r.task).status, 'done', 'the supervisor\'s reminder is closed');
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, followUp.id).status, 'done', 'and the follow-up to-do');
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='task.update' AND entity_id=?`, r.task), 'the closing is audited');
+  // An edit that records no outcome (the provider's answer) leaves them alone.
+  const id2 = await refer(nav, 'contacted', 7);
+  const r2 = ok(await sup.post(`/api/supervision/referrals/${id2}/remind`, {}), 200);
+  ok(await nav.put(`/api/referrals/${id2}`, { status: 'accepted' }), 200);
+  assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r2.task).status, 'open');
+});
