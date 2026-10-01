@@ -115,7 +115,8 @@ export function autoFlush() {
   lastAuto = Date.now();
   waiting().then((w) => { if (w.some(x => !x.error)) flush(); }, () => {});
 }
-window.addEventListener('online', () => { lastAuto = 0; autoFlush(); });
+// After app.js has heard the same event (its setOffline(false) runs after this module's listeners are added).
+window.addEventListener('online', () => { lastAuto = 0; setTimeout(autoFlush, 0); });
 
 /**
  * The header's "N contacts waiting to send" (office app only), shown only while there are some. It opens Street

@@ -266,6 +266,8 @@ async function pagesFor(page) {
       out.push('county-connect');
     }
     if (a.state.local) out.push('sync');
+    // Set up this phone for the field (1.23.0): the office app's page for a worker who records contacts.
+    if (!a.state.local && a.can('interventions:write')) out.push('field-phone');
     // State reporting (CalOMS Tx and the county EHR hand-off) is reached from Reports, not the navigation.
     if (a.can('episodes:read') || a.can('episodes:write') || a.can('export:identified')) out.push('caloms');
     return out;
