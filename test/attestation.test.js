@@ -463,7 +463,7 @@ test('turning it on, or a metadata file that refuses a model, ends the sessions 
   assert.equal((await setList({ enabled: false, models, acknowledge_affected: n2 })).status, 200);
 });
 
-// ---------------------------------------------------------------- the grace period (built for 1.22.0)
+// ---------------------------------------------------------------- the grace period (released in 1.22.0)
 const withInterAttest = (ad, cdh, x) => { const m = packedFull(makerCa)(ad, cdh, x); m.attStmt.set('x5c', [...m.attStmt.get('x5c'), makerCa.der]); return m; };
 async function signInWith(a) {
   const app = require('../server/app'); for (const k of ['passkey-options:127.0.0.1', 'login:127.0.0.1']) app.rateLimitReset(k);

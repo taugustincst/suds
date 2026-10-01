@@ -4,9 +4,30 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+## 1.22.0 — 2026-10-01
+
+A feature release (migrations 64, 65 and 66; the county publication consent routes; no new permission), released
+under a policy exception inside 1.21.0's 28 days (docs/RELEASE.md, *Record: 1.22.0*). It makes the day of the people
+who use SUDS most easier: a call-back date that always makes its to-do, quick dates, where a client stands at the top
+of the Overview, Undo and *Same as last contact* in street outreach, notes that start in the author's last format, and
+the sync state in the header of a device that syncs with the office. It binds the field scope to the account rather
+than to a device id, records each programme's consent before the county publishes figures that name it, lets a
+withdrawn release be corrected, pro-rates awards to the period, gives the authenticator allow-list a grace period and
+makes a county file version 2 only when the county is known to read it. It also scopes the penetration test from the
+threat model, says plainly that 1.16.3 to 1.21.0 were published without a tag, fills out the county packet, revises
+the accessibility conformance report, re-runs the evidence on 1.21.0 and fixes the SUDS Server listener under its
+sandbox. Upgrading runs migrations 64 to 66 on start. What an administrator should know: **the field scope now follows
+the account**, so a whole device of an account held to the field scope (one of its devices was ever a field device,
+or **New devices start as field devices** is on) becomes a field device at its next sync, after sending what it
+recorded, unless an administrator marks it **Keep everything** first (docs/PLATFORM.md, *Field devices*); **a county
+file made by hand is version 1** unless the county's connection says it reads version 2 or the programme answers that
+the county runs SUDS 1.21 or later (docs/COUNTY-VIEW.md, *Which version a file is made in*); and **the authenticator
+allow-list's grace period is 14 days by default** (0 stops a refused passkey at once, as under 1.21.0;
+docs/FINGERPRINT.md, *Grace period*).
+
 ### Fixed: SUDS Server problems the installer run on 1.21.0 found
 
-Built for 1.22.0, not yet released. No migration.
+Released in 1.22.0. No migration.
 
 - **The listener no longer fails to start under SUDS Server's sandbox.** `deploy/linux/suds.service` restricts the
   address families to IPv4, IPv6 and Unix sockets, so `os.networkInterfaces()` throws there; `server/listener.js`
@@ -19,7 +40,7 @@ Built for 1.22.0, not yet released. No migration.
 - **The release zip's checksum note names the operator's checksum** ("matches the checksum given with
   --release-sha256"), not "the pinned checksum", which is Node.js's and Caddy's.
 
-### Field devices: the scope follows the account (built for 1.22.0, not yet released)
+### Field devices: the scope follows the account (released in 1.22.0)
 
 - **The field scope can no longer be left through the device id.** The id a device sends is its own word, and
   before this a sync sign-in with no id, or a new one, got the whole scope. Now, once any device of an account has
@@ -52,7 +73,7 @@ Built for 1.22.0, not yet released. No migration.
 
 ### Security documents: the pen-test scope from the threat model, honest release integrity, a fuller county packet (no migration, permission or route)
 
-Built for 1.22.0, not yet released. These fix findings of the market evaluation of 1.21.0.
+Released in 1.22.0. These fix findings of the market evaluation of 1.21.0.
 
 - **Penetration-test scope** (`docs/security/PEN-TEST-SCOPE.md`). A merge had duplicated four county rows; those
   are gone. QUESTIONNAIRE #38 claimed rows that did not exist, and they are now added:
@@ -100,7 +121,7 @@ Built for 1.22.0, not yet released. These fix findings of the market evaluation 
 
 ### Safer defaults: the authenticator allow-list's grace period and the county file version
 
-Built for 1.22.0, not yet released. Migration 66 (`passkeys.allowlist_grace_until`).
+Released in 1.22.0. Migration 66 (`passkeys.allowlist_grace_until`).
 
 - **A grace period before the authenticator allow-list stops a passkey.** Under 1.21.0, turning the allow-list on (or
   taking a model off it) stopped every passkey it refused at once, which could lock out an account whose only second
@@ -128,7 +149,7 @@ Built for 1.22.0, not yet released. Migration 66 (`passkeys.allowlist_grace_unti
 
 ### County publication governance and award pro-rating
 
-Built for 1.22.0, not yet released. Migration 65 (`county_publication_consents`, `county_publication_inputs`; office
+Released in 1.22.0. Migration 65 (`county_publication_consents`, `county_publication_inputs`; office
 server only). No new permission: everything here is `county:manage`, and reading is `county:view`.
 
 - **Each programme's consent to publication, recorded and enforced.** County view › Programs shows, per programme,
@@ -162,7 +183,7 @@ server only). No new permission: everything here is `county:manage`, and reading
 
 With `worker-usefulness.mjs` the suite is now 57 scripts.
 
-Built for 1.22.0, not yet released. No migration, permission or new route; one response gains fields (the supervision
+Released in 1.22.0. No migration, permission or new route; one response gains fields (the supervision
 queue's referrals say who made them) and the call routes derive one flag. From a walk-through of a navigator's,
 an outreach worker's, a peer's, a counselor's and a supervisor's day at 390 px and on a desktop
 (docs/USER_GUIDE.md has each change where workers read about it).
@@ -230,7 +251,7 @@ Evidence and tests only; no change to what SUDS does. Two findings for the owner
 
 ### Integration review of the 1.22.0 streams
 
-Built for 1.22.0, not yet released. No migration, permission or route.
+Released in 1.22.0. No migration, permission or route.
 
 - **A brand-new device of an account held to the field scope is held from its first push.** Before, a new device id
   became a field device at sign-in but its pushes were judged by the full scope until its first pull; a device first

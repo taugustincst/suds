@@ -194,7 +194,7 @@ test('every buyer document names a version on the stamped minor line', () => {
   assert.deepEqual(silent, [], `these never mention ${minor(version)}: say what ${minor(version)} changed for their reader (or that it changed nothing)`);
 });
 
-// ---- 5. Released features are not called unbuilt or planned (built for 1.22.0) ----
+// ---- 5. Released features are not called unbuilt or planned (released in 1.22.0) ----
 // The market review of 1.21.0 found documents a buyer reads still calling released features unbuilt: COUNTY-KIT
 // "until the publication screen … exists", DATA-NETWORK "Not built: the publication screen", DEMO-SCRIPT naming the
 // field device scope as planned, and the data contribution agreement saying SUDS has no publication function. This
@@ -254,7 +254,7 @@ test('no buyer, market or security document calls a released feature "not built"
   assert.deepEqual(stale, [], 'say what was released (and what is still not built) instead');
 });
 
-// ---- 6. The authenticator allow-list's grace period (built for 1.22.0) ----
+// ---- 6. The authenticator allow-list's grace period (released in 1.22.0) ----
 // The integration review of 1.22.0 found QUESTIONNAIRE #19a and the RFI template (written in the same release) saying
 // turning the allow-list on "ends unproven passkeys with no grace period", which the grace period built beside them
 // made false. A buyer-facing sentence about the allow-list that says "no grace period" must say it of 1.21.0 or of a

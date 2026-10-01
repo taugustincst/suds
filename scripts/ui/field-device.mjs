@@ -134,7 +134,7 @@ try {
   ok(!(await dev.$('input[name=field_device]')), 'and no longer offers the choice');
   await axe(dev, 'This device, a field device');
 
-  // ---- 5. the scope follows the account (built for 1.22.0) ----
+  // ---- 5. the scope follows the account (released in 1.22.0) ----
   await admin.go('admin?tab=devices');
   eq(await admin.page.$eval('[data-device-scope="field"]', e => e.dataset.deviceAccountField), '1', 'Synced devices knows the navigator\'s account is now held to the field scope');
   ok(await admin.page.$eval('[data-field-device-help]', e => /every device they sync from is one/.test(e.textContent)), 'and says every device of theirs is a field device unless one is marked "Hold everything"');

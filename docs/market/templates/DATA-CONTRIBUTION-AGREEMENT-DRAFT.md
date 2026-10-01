@@ -72,7 +72,7 @@ publication release made as follows:
   withdrawal the same day, and releases made after it do not name the Programme or count its figures. A release
   already published before the withdrawal stands.
 - (b) **The method.** Only through SUDS's publication screen (County view › Publish; released in 1.21.0, the
-  consent record built for 1.22.0): the combined figures of a whole period that has ended, money and counts that are
+  consent record released in 1.22.0): the combined figures of a whole period that has ended, money and counts that are
   not of people exact, and the totals of people and of events screened by SUDS's small-cell method, audited over the
   combined release and every programme's own release it could be compared against
   ([../DATA-NETWORK.md](../DATA-NETWORK.md), *The basis*), with a threshold of at least `[11]`. Never a programme's

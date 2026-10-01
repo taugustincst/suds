@@ -22,7 +22,7 @@
 //      passkeys would stop working, must confirm that, and saves with the password again; the supervisor's older
 //      passkey is marked not accepted on My profile and refused at sign-in with the reason; a passkey the virtual
 //      authenticator makes cannot prove a listed model and is refused with the reason; axe and no sideways scroll.
-//   8. The allow-list's grace period (built for 1.22.0): the card says synced passkeys cannot be added while it is on
+//   8. The allow-list's grace period (released in 1.22.0): the card says synced passkeys cannot be added while it is on
 //      and offers a grace period of 14 days; the preview says when each passkey stops and lists apart the accounts
 //      whose only second factor stops; saved, the supervisor's passkey keeps working, the supervisor is told the date
 //      on every page and on My profile; saved again with 0 days, it stops at once (7's checks).

@@ -104,7 +104,7 @@ CBO's records.
 
 **What the county must not do with the figures** (for the data contribution agreement): publish them, except as a
 screened release from County view › Publish (released in 1.21.0) that names only CBOs whose written consent to
-publication the county has recorded (built for 1.22.0: SUDS refuses a release that would name a CBO without it, or
+publication the county has recorded (released in 1.22.0: SUDS refuses a release that would name a CBO without it, or
 leaves that CBO out and says so; the agreement draft's section 4.2); try to re-identify anyone; or share them beyond
 the staff the agreement names. Small numbers are exact by design.
 

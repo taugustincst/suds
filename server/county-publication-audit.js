@@ -68,7 +68,7 @@ function buildModel({ programmes, earlier = [] }, T, measures = SCREENED) {
     if (parts.length) cons.push({ terms: [...parts.map(j => [j, 1]), [X, -1]], op: '=', rhs: 0 });
   }
   programmes.forEach((p, i) => { for (const [a, b] of within) cons.push({ terms: [[h.x[i][a], 1], [h.x[i][b], -1]], op: '<=', rhs: 0, soft: true }); });
-  // A corrected release (built for 1.22.0; county-publication.js earlierReleases): each withdrawn release of the same
+  // A corrected release (released in 1.22.0; county-publication.js earlierReleases): each withdrawn release of the same
   // period was seen, so the reader holds what it printed. Each of its programmes' figures then is a cell its own
   // release could print (fixed, as now; the same cell as now when the programme's figure did not change, since a
   // reader may know it did not), and each county total it printed as a number or "<T" is a fixed cell too, tied to

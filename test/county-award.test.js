@@ -200,7 +200,7 @@ test('an award is counted once however many files carry it: two quarters of one 
   assert.deepEqual(qa.by_quarter, [80000, 80000]); assert.deepEqual(qa.by_quarter_over, [1, 1]); assert.match(q.award_note, /each quarter/);
 });
 
-test('the award pro-rated to the period (built for 1.22.0): award × days of the period inside the award period ÷ award-period days, beside the whole award; in the view, by quarter, the exports and the read API', async () => {
+test('the award pro-rated to the period (released in 1.22.0): award × days of the period inside the award period ÷ award-period days, beside the whole award; in the view, by quarter, the exports and the read API', async () => {
   freshCounty();
   const [rb, , hv] = await registerSamples(3);
   ok(await importText(text(sampleFile(0, Q1, 2).file)));

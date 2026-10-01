@@ -185,7 +185,7 @@ CREATE TABLE IF NOT EXISTS passkeys (
   -- was off (attestation 'none': its AAGUID is only what the device said), which the list, once on, does not accept.
   -- The attestation certificate itself is not kept (migration 63).
   attestation TEXT,
-  -- The authenticator allow-list's grace period (built for 1.22.0, migration 66): when an administrator turned the list
+  -- The authenticator allow-list's grace period (released in 1.22.0, migration 66): when an administrator turned the list
   -- on or narrowed it, a passkey it would refuse that was working until then keeps working until this time (UTC ISO),
   -- unless its model is reported compromised or revoked. NULL: no grace (accepted, or refused already).
   allowlist_grace_until TEXT
@@ -1773,7 +1773,7 @@ CREATE TRIGGER IF NOT EXISTS county_publications_no_update BEFORE UPDATE OF id, 
 CREATE TRIGGER IF NOT EXISTS county_publications_no_delete BEFORE DELETE ON county_publications
   BEGIN SELECT RAISE(ABORT, 'county_publications is append-only: a published release is never deleted'); END;
 
--- Publication governance (migration 65; built for 1.22.0; docs/COUNTY-VIEW.md "Publication"). Office server only,
+-- Publication governance (migration 65; released in 1.22.0; docs/COUNTY-VIEW.md "Publication"). Office server only,
 -- never synchronised. county_publication_consents: per registered programme, that it agreed in writing to the county
 -- publishing figures that name it (the date of the agreement, its reference: typed text, encrypted; who recorded it
 -- and when), and the withdrawal of that consent (when and by whom; the row stays). A programme's current consent is

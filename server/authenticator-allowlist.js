@@ -11,7 +11,7 @@
 // second step and signing at its next use, with a message saying why and the audit entry auth.passkey.not_allowed.
 // The administrator sees which accounts that affects before saving (preview), and must confirm the number.
 //
-// The grace period (built for 1.22.0, not yet released; docs/FINGERPRINT.md "Grace period"): when the list is turned on
+// The grace period (released in 1.22.0; docs/FINGERPRINT.md "Grace period"): when the list is turned on
 // or narrowed, a passkey it would refuse that was working until then keeps working for a grace period the
 // administrator sets (0 to 90 days, 14 by default; 0 = refused at once, as in 1.21.0), its owner told on every page
 // and on My profile when it stops. The end is a date stored on the passkey (passkeys.allowlist_grace_until), so it is

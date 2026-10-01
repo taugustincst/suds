@@ -150,7 +150,7 @@ module.exports = {
     'county_signing_keys', 'county_programmes', 'county_programme_keys', 'county_submissions',
     // county_publications (released in 1.21.0): the county's published releases and their withdrawals.
     'county_publications',
-    // county_publication_consents and county_publication_inputs (built for 1.22.0): each programme's written consent
+    // county_publication_consents and county_publication_inputs (released in 1.22.0): each programme's written consent
     // to publication, and what each release was screened from. On the county's server only.
     'county_publication_consents', 'county_publication_inputs',
     // county_connect_* and county_connection (the county connection, docs/COUNTY-VIEW.md "Connecting"): the machine

@@ -95,7 +95,7 @@ and signing notes and approvals with the device's own authenticator. No biometri
 fingerprint or face stays on the device, which only returns a signed assertion. An authenticator allow-list
 (released in 1.21.0, off by default) limits passkeys to the authenticator models an administrator lists, each proven
 by attestation. **With it on, synced passkeys (iCloud Keychain, Google Password Manager: attestation `none` or
-`apple`) cannot be added.** Turning it on also stops existing unproven passkeys: at once under 1.21.0; with the grace period (built for 1.22.0, not yet released)
+`apple`) cannot be added.** Turning it on also stops existing unproven passkeys: at once under 1.21.0; with the grace period (released in 1.22.0)
 only after a grace period the administrator sets (0 to 90 days, 14 by default), never for a model reported compromised
 or revoked. Evidence:
 [../../FINGERPRINT.md](../../FINGERPRINT.md); `server/webauthn.js`, `server/passkeys.js`, `server/attestation.js`.
@@ -147,11 +147,11 @@ Zero runtime dependencies: the server uses only Node.js built-ins; a production 
 Build-time tooling is listed separately. A CycloneDX SBOM per release, reproducible from the commit. Dependabot
 for build tooling, the container base and CI actions. Evidence:
 [../../security/VULNERABILITY-MANAGEMENT.md](../../security/VULNERABILITY-MANAGEMENT.md);
-[../../evidence/sbom-1.21.0.cdx.json](../../evidence/sbom-1.21.0.cdx.json) (`node scripts/sbom.js`,
+[../../evidence/sbom-1.22.0.cdx.json](../../evidence/sbom-1.22.0.cdx.json) (`node scripts/sbom.js`,
 `test/sbom.test.js`).
 
 **Q. Release integrity: how does the county know the build it runs is the released code?** **Releases 1.16.3 to
-1.21.0 were published without a tag**, without a GitHub Release and without the release gate's approval. The owner
+1.22.0 were published without a tag**, without a GitHub Release and without the release gate's approval. The owner
 had each put on GitHub Pages by a direct push to `gh-pages`, and each is recorded as a policy exception
 ([../../RELEASE.md](../../RELEASE.md), *The exceptions in one place*). For these versions there is no tag or published
 zip to check against, and SUDS Server's `upgrade.sh` cannot download them. Verify against the commit instead. Each
@@ -164,9 +164,9 @@ complete]: push the owed tags, then turn on the release protections (RELEASE.md,
 **Q. Penetration testing?** **None has been done. [owner to complete]: an independent penetration test and its
 remediation.** A scope for a county-commissioned test is in
 [../../security/PEN-TEST-SCOPE.md](../../security/PEN-TEST-SCOPE.md). It covers the county view's import, read API
-and push endpoint, and the areas 1.21.0 added: county publication (differencing), field devices and participant
-codes, the authenticator allow-list and metadata upload, the version 2 county file (award amounts) and the SUDS
-Server upgrade hand-over. The project's own reviews
+and push endpoint, and the areas 1.21.0 added and 1.22.0 changed: county publication (differencing, consent and corrected releases),
+field devices and participant codes (the scope bound to the account), the authenticator allow-list and metadata upload
+(with its grace period), the version 2 county file (award amounts) and the SUDS Server upgrade hand-over. The project's own reviews
 and the attack classes fixed are in [../../security/THREAT-MODEL.md](../../security/THREAT-MODEL.md).
 
 **Q. How are vulnerabilities reported and fixed?** Privately through GitHub's private vulnerability reporting on

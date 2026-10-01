@@ -26,7 +26,7 @@ const T = 11;
 function freshCounty() {
   for (const t of ['county_connect_tokens', 'county_publication_consents', 'county_submissions', 'county_programme_keys', 'county_programmes']) H.db.run(`DELETE FROM ${t}`);
 }
-/** Record a programme's written agreement to publication (built for 1.22.0): a release names only programmes that agreed. */
+/** Record a programme's written agreement to publication (released in 1.22.0): a release names only programmes that agreed. */
 const agree = async (id, body = { agreed_on: '2020-06-01', reference: 'Data contribution agreement, signed copy in the contracts file' }) => ok(await admin.post(`/api/county/programmes/${id}/publication-consent`, body));
 /** One fund of figures as the Enter figures form sends them; `people` sets every screened measure (a count of people or events). */
 function fund(people, extra = {}) {
@@ -345,7 +345,7 @@ test('the releases table is declared office-only with its encrypted reason, and 
   assert.ok(!LOCAL_ROUTE_MODULES.includes('county') && !LOCAL_ROUTE_MODULES.includes('county-connect'));
 });
 
-// ---------------------------------------------------------------- publication governance (built for 1.22.0)
+// ---------------------------------------------------------------- publication governance (released in 1.22.0)
 test('publication consent: county:manage records and withdraws a programme\'s written agreement; county:view reads it without the reference; audited without it', async () => {
   const p = await programme('Harbor Outreach', [], { consent: false });
   const url = `/api/county/programmes/${p.id}/publication-consent`;
@@ -515,7 +515,7 @@ test('a corrected release is refused when the withdrawn release kept no record o
   H.db.run(`INSERT INTO county_publications(id,kind,period_from,period_to,threshold,entered,method,content,sha256) VALUES(?,?,?,?,?,?,?,?,?)`, id, 'release', q.from, q.to, T, 'include', '{}', content, K.sha256Hex(content));
   H.db.run(`INSERT INTO county_publications(id,kind,release_id,period_from,period_to,threshold,entered,method,sha256,reason_enc) VALUES(?,?,?,?,?,?,?,?,?,?)`, C.uuid(), 'withdrawal', id, q.from, q.to, T, 'include', '{}', K.sha256Hex(content), C.encrypt('old'));
   const harbor = await programme('Harbor Outreach', [[q, 200]]);
-  const r = await prepare(q); assert.equal(r.status, 409); assert.equal(r.data.reason, 'overlap'); assert.match(r.data.error, /before SUDS 1\.22/);
+  const r = await prepare(q); assert.equal(r.status, 409); assert.equal(r.data.reason, 'overlap'); assert.match(r.data.error, /before SUDS kept what a release was screened from/);
   // A threshold of its own: the correction uses the withdrawn release's when none is given, and another is refused.
   const q2 = Q(2018, 2);
   ok(await admin.post(`/api/county/programmes/${harbor.id}/entries`, { ...q2, source_ref: 'Quarterly report', funds: [fund(200)] }));

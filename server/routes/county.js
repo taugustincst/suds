@@ -54,7 +54,7 @@
 //     GET  /api/county/publications/:id    one, as published (county:view; the withdrawal's reason for county:manage)
 //     GET  /api/county/publications/:id/export  as CSV, Excel (with a Notes sheet) or JSON (county:view, export:read)
 //     POST /api/county/publications/:id/withdraw  withdraw one, with a reason: a record of its own (county:manage)
-//   Publication governance (built for 1.22.0): prepare and publish take without_consent (refuse, the default, or
+//   Publication governance (released in 1.22.0): prepare and publish take without_consent (refuse, the default, or
 //   leave_out); a corrected release of exactly the period of a withdrawn one is allowed (county-publication.js).
 //     GET  /api/county/programmes/:id/publication-consent           its consents, current and withdrawn (county:view;
 //                                          the agreement's reference for county:manage only)
@@ -256,7 +256,7 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: 'county.view', ip: ctx.ip, details: { what: 'programmes', count: rows.length } });
     // The outcomes a submission carries, for the Enter figures form (one programme's own count: never "unduplicated" here).
     const measures = K.VALUE_KEYS.map(k => ({ key: k, label: MAP.INDICATORS[k].label.replace(/\s*\(unduplicated\)/, '').replace(/unduplicated /, '') }));
-    // Each programme's current consent to publication (built for 1.22.0): its date and who recorded it; the
+    // Each programme's current consent to publication (released in 1.22.0): its date and who recorded it; the
     // agreement's reference (typed text) is read on the programme's own consent route, by county:manage.
     const consent = require('../county-publication').consents();
     return { rows: rows.map(p => ({ ...K.programmeOut(p), current_submissions: p.current_submissions, last_received: p.last_received, publication_consent: consent.get(p.id) || null })), county_code: K.formatCode(code(ctx)), measures };
@@ -350,7 +350,7 @@ module.exports = (r) => {
     return K.programmeOut(programme(p.id));
   });
 
-  // ---- publication consent, per programme (built for 1.22.0; server/county-publication.js) ----
+  // ---- publication consent, per programme (released in 1.22.0; server/county-publication.js) ----
   const consentErr = (e) => { if (e instanceof require('../county-publication').PublicationError) return new HttpError(e.status, e.message, { reason: e.code, ...(e.code === 'agreed_on' || e.code === 'reference' ? { fields: { [e.code]: e.message } } : {}) }); return e; };
   r.get('/api/county/programmes/:id/publication-consent', ...view, (ctx) => {
     const p = programme(ctx.params.id);
@@ -594,7 +594,7 @@ module.exports = (r) => {
   const pubChoices = (body) => {
     const v = validate(body || {}, { from: { type: 'string', required: true, maxLen: 10 }, to: { type: 'string', required: true, maxLen: 10 }, entered: { type: 'string', maxLen: 10 }, threshold: { type: 'number', integer: true }, without_consent: { type: 'string', maxLen: 10 } });
     if (v.entered !== undefined && v.entered !== null && v.entered !== '' && !['include', 'exclude'].includes(v.entered)) throw badRequest('entered must be include or exclude.', { fields: { entered: 'must be include or exclude' } });
-    // A programme with no consent to publication: refuse the release (the default), or leave it out (built for 1.22.0).
+    // A programme with no consent to publication: refuse the release (the default), or leave it out (released in 1.22.0).
     if (v.without_consent !== undefined && v.without_consent !== null && v.without_consent !== '' && !PUB.WITHOUT_CONSENT.includes(v.without_consent)) throw badRequest('without_consent must be refuse or leave_out.', { fields: { without_consent: 'must be refuse or leave_out' } });
     return { from: v.from, to: v.to, entered: v.entered !== 'exclude', threshold: v.threshold === undefined || v.threshold === null ? null : v.threshold, withoutConsent: v.without_consent === 'leave_out' ? 'leave_out' : 'refuse' };
   };

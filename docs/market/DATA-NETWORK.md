@@ -107,7 +107,7 @@ no client-level data. From 1.20.0 the county can also **enter** the figures of a
 grantee's own report, stored unsigned, marked *entered by the county — not signed by the program* everywhere and
 always outranked by a signed file; the data contribution agreement draft's section 8 says what a county may enter.
 **Released in 1.21.0:** the publication screen over the combined release (COUNTY-VIEW *Publication*: screened
-releases of the combined figures, audited as *The basis* below requires); built for 1.22.0, each programme's written
+releases of the combined figures, audited as *The basis* below requires); released in 1.22.0, each programme's written
 consent to publication is recorded and enforced (a release that would name a programme without it is refused, or
 leaves the programme out and says so), and a withdrawn release can be corrected for exactly its period.
 **Not built:** the county's own template. (Key replacement, and marking an old key compromised, were built in

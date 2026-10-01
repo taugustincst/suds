@@ -455,7 +455,7 @@ async function programmesTab() {
     // not on SUDS has no key and nothing to send over a connection, so it is not offered one.
     await programmeConnections(rows.filter(p => p.on_suds !== false)));
 }
-// ---- publication consent, per program (built for 1.22.0; server/county-publication.js) ----
+// ---- publication consent, per program (released in 1.22.0; server/county-publication.js) ----
 const CONSENT_HELP = 'Publication consent: a publication release (Publish) names the programs whose figures it counts, so the county publishes figures that name a program only with its written agreement. Record the date and the agreement\'s reference here; a release that would name a program with none is refused, or leaves the program out.';
 /** A program's consent to publication, in words (never colour alone). */
 function consentCell(p) {

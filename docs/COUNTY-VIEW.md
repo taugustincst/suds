@@ -568,7 +568,7 @@ never 0. That is **schema version 2** (`server/county.js` `PAYLOAD_V2`: version 
 exactly `{ amount, from, to }`).
 
 - **The programme's side** makes version 2, with `award: null` where there is none, **when the county is known to
-  read it** (built for 1.22.0, not yet released; below, *Which version a file is made in*); otherwise version 1.
+  read it** (released in 1.22.0; below, *Which version a file is made in*); otherwise version 1.
   Over the county connection SUDS decides by itself (below).
 - **The county's side reads both.** A version 1 file is imported as before; its programme shows **"award not in
   file"** in the award rows, in words, never 0. A version 2 file whose funds have no award shows **"no award
@@ -600,7 +600,7 @@ exactly `{ amount, from, to }`).
   exist so a programme is never stuck while its county upgrades. The award is the fund record's total amount for its fiscal year: a fund
   whose record holds a different figure from the contract (an amendment not yet entered) shows that figure. The
   percentage is the period's spending over the whole award; the pro-rated share is beside it (below).
-- **Pro-rated to the period** (*built for 1.22.0, not yet released*). A quarter's spending set against a whole year's
+- **Pro-rated to the period** (*released in 1.22.0*). A quarter's spending set against a whole year's
   award reads as under-spending, so the combined view, the by-quarter view, the CSV and Excel and the read API add,
   after the whole-award rows (which stay as they are): **"Award pro-rated to the period"**, each award times the days
   of the period that fall inside its award period divided by the days in its award period (`county.js` `prorate`;
@@ -612,7 +612,7 @@ exactly `{ amount, from, to }`).
 
 ### Which version a file is made in
 
-*Built for 1.22.0, not yet released.* Under 1.21.0 a programme exchanging files **by hand** made version 2 unless
+*Released in 1.22.0.* Under 1.21.0 a programme exchanging files **by hand** made version 2 unless
 someone ticked a box, so a county still on SUDS 1.20 refused the file. Now the version is chosen
 (`server/county.js` `chooseVersion`, which the card mirrors), in this order:
 
@@ -720,7 +720,7 @@ release** of the combined figures for a period, records it, and never changes it
 - **Overlapping periods are refused.** Two releases whose periods overlap could be subtracted from each other (a year
   beside its quarters), so a period that overlaps any release already published is refused (`409`, `overlap`), a
   withdrawn one included: it was seen.
-- **A corrected release** (*built for 1.22.0, not yet released*). The one exception: once every release of a period
+- **A corrected release** (*released in 1.22.0*). The one exception: once every release of a period
   is withdrawn, **exactly the same period** may be published again. Its audit treats every total the withdrawn
   releases printed as known to the reader: each is an `sdc.js` `fixed` cell (its number, or `<T`; a total it hid is a
   count printed nowhere), tied by the sum to the figures that release was screened from, which are `fixed` cells too
@@ -737,7 +737,7 @@ release** of the combined figures for a period, records it, and never changes it
   Tested by brute force: every split of the small figures before and after that prints what both releases print
   leaves each small figure free (`test/county-publication.test.js`, "a corrected release …" and "corrected releases
   across many shapes"), and the same figures audited without the withdrawn release print 218 and leak.
-- **Each programme's consent to publication** (*built for 1.22.0, not yet released*). A release names the programmes
+- **Each programme's consent to publication** (*released in 1.22.0*). A release names the programmes
   whose figures it counts; the data contribution agreement
   ([market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](market/templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md),
   section 4.2) lets the county publish figures that name a programme only with its written agreement. On **Programs**,
@@ -762,8 +762,7 @@ release** of the combined figures for a period, records it, and never changes it
 - **Permissions.** `county:manage` prepares, publishes and withdraws; `county:view` lists and reads releases; the
   files need `export:read`. No new permission.
 
-**Owner decisions** (conservative defaults; 1 to 7 released in 1.21.0, 3 and 7 changed and 8 added in 1.22.0, which
-is built for 1.22.0, not yet released; each can be relaxed later):
+**Owner decisions** (conservative defaults; 1 to 7 released in 1.21.0, 3 and 7 changed and 8 added in 1.22.0; each can be relaxed later):
 
 1. *The reader holds the most any program's own release could say*: every program figure of 0 or at least T is
    assumed published exactly. A county with one small program beside published big ones gets that measure's total
@@ -781,11 +780,11 @@ is built for 1.22.0, not yet released; each can be relaxed later):
 6. *Publishing needs the review ticked and the hash reviewed*; the withdrawal's reason is kept encrypted with it, not in
    the audit log, and shown to `county:manage` only.
 7. *Independent of the program's Modules › publication switch*: a county-only install publishes with `county:manage`.
-   What the program agreed to is recorded on the county's side instead (built for 1.22.0): **a release that would
+   What the program agreed to is recorded on the county's side instead (released in 1.22.0): **a release that would
    name a program without a current written consent is refused** by default, naming the programs; the preparer may
    choose to leave them out, and the release says so. The county records consent in SUDS: SUDS cannot see the signed
    agreement, so the record is the county manager's word, audited, with the agreement's reference.
-8. *Consent is the program's agreement as of its date, until withdrawn* (built for 1.22.0): one current consent per
+8. *Consent is the program's agreement as of its date, until withdrawn* (released in 1.22.0): one current consent per
    program; withdrawing it stops later releases naming the program but does not withdraw releases already published
    (they were seen); a new agreement is a new record.
 
@@ -800,7 +799,7 @@ office-only too (`county-connect` in `LOCAL_ROUTE_MODULES`'s exclusions; `test/c
 
 - ~~Publication~~: released in 1.21.0 ([Publication](#publication), above): **the publication screen over the
   combined release**, the small-cell method audited over the county total *and* every programme's own releases it
-  could be differenced against (DATA-NETWORK, *The basis*). Built for 1.22.0: each programme's consent to
+  could be differenced against (DATA-NETWORK, *The basis*). Released in 1.22.0: each programme's consent to
   publication, and a corrected release of exactly a withdrawn release's period. Still deferred: a release by quarter,
   program columns in a release, and a corrected release of a period published before 1.22.0.
 - ~~Award and contract amounts per fund~~: released in 1.21.0 ([Award amounts](#award-amounts-schema-version-2)).
@@ -847,7 +846,7 @@ routes in `server/routes/county.js` and `/v1/publications` in `server/routes/cou
 and the attacker sweep `test/county-publication-sdc.test.js`; the browser script `scripts/ui/county-publication.mjs`,
 and the Publish tab and its dialogs in `scripts/ui/accessibility.mjs`.
 
-Publication governance (built for 1.22.0, not yet released): consent (`consents`, `recordConsent`,
+Publication governance (released in 1.22.0): consent (`consents`, `recordConsent`,
 `withdrawConsent`) and corrected releases (`earlierReleases`, `inputsOf`) in `server/county-publication.js`, the
 `earlier` releases in `server/county-publication-audit.js` `buildModel`, the consent routes in
 `server/routes/county.js`, the Publication consent dialog and the Publish tab's choice in `public/views/county.js`;

@@ -1,7 +1,7 @@
 # Fingerprint sign-in, authorization and signing (passkeys)
 
 Released in 1.19.0. Office server only. The **authenticator allow-list** (below) is released in 1.21.0; its **grace
-period** is built for 1.22.0, not yet released.
+period** is released in 1.22.0.
 
 Staff can sign in to SUDS, finish two-step verification, sign and countersign notes, approve time and spending, and
 download the key backup with their **fingerprint** — or with whatever else their device uses to unlock (Face ID, a
@@ -228,7 +228,7 @@ people have no authenticator app).
 
 ### Grace period
 
-Built for 1.22.0, not yet released. In 1.21.0 turning the list on stopped every unproven passkey at once, which could
+Released in 1.22.0. In 1.21.0 turning the list on stopped every unproven passkey at once, which could
 lock out an account whose only second factor was its passkey. Now, when the list is **turned on or narrowed** (a model
 taken off it), a passkey the new setting refuses that **was working until then** keeps working for a **grace period**,
 then stops as above. Decisions (the owner's, conservative; migration 66):
@@ -514,7 +514,7 @@ fingerprint is accepted there because each confirmation is a fresh, single-use c
 | **Allow fingerprint sign-in** (`passkey_signin`) | On | Sign in with a passkey, and count it as two-step verification |
 | **Allow fingerprint to confirm signatures and approvals** (`passkey_signing`) | On | "Confirm with fingerprint" in the signature and approval dialogs |
 | **Authenticator allow-list** (Settings → Authenticator allow-list; `authn_allowlist`, `authn_allowlist_models`; released in 1.21.0) | Off | Only the listed authenticator models may hold a passkey, each proven by its attestation against the loaded FIDO Metadata Service file; passkeys it does not accept stop working at their next use once their grace period is over (above). Changed only on its own card, with the password again |
-| **Grace period before refused passkeys stop** (the same card; `authn_allowlist_grace_days`; built for 1.22.0, not yet released) | 14 days | 0 to 90 days; 0 stops them at once. Never for a model reported compromised or revoked |
+| **Grace period before refused passkeys stop** (the same card; `authn_allowlist_grace_days`; released in 1.22.0) | 14 days | 0 to 90 days; 0 stops them at once. Never for a model reported compromised or revoked |
 | **Require fingerprint or authenticator for signing** (`sign_strong_required`) | Off | Signing, countersigning, approving time or spending **and downloading the key backup** need a fingerprint or an authenticator code; the password alone is refused. A note signed on a device and synced lands as a draft. Staff with neither must set one up (the dialogs link to My profile). |
 
 Changing any of them is audited on its own line (`security.passkey_policy`). **Settings → Security status** shows

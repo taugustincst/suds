@@ -17,13 +17,13 @@
 //
 // Two releases whose periods overlap could be subtracted from each other (a year beside its quarters), so a period
 // that overlaps any release already published, withdrawn or not (a withdrawn release was still seen), is refused. The
-// one exception (built for 1.22.0): a CORRECTED release of exactly the same period, once every release of that period
+// one exception (released in 1.22.0): a CORRECTED release of exactly the same period, once every release of that period
 // is withdrawn. Its audit treats every total the withdrawn releases printed as known to the reader (sdc.js `fixed`
 // cells, beside the programmes' own figures then and now: county-publication-audit.js `earlier`), so nothing new can
 // be worked out by subtracting one from the other. A release published before 1.22.0 kept no record of what it was
 // screened from (county_publication_inputs), so its period still cannot be published again.
 //
-// Publication consent (built for 1.22.0): a release names the programmes whose figures it counts, and the data
+// Publication consent (released in 1.22.0): a release names the programmes whose figures it counts, and the data
 // contribution agreement says the county publishes figures that name a programme only with its written agreement.
 // The county records, per programme, that it agreed in writing (the date, the agreement's reference, who recorded it)
 // and withdraws that record when it is withdrawn. A release that would name a programme without a current consent is
@@ -84,7 +84,7 @@ function earlierReleases(from, to, T) {
   const live = over.find(o => !o.withdrawn_at);
   if (live) refuse('overlap', `A release for ${K.humanPeriod(from, to)} was already published (${K.humanDay(live.created_at)}) and is not withdrawn. To publish a corrected release of this period, withdraw that one first (say why); the corrected release is then checked against everything the withdrawn one printed.`, 409);
   const old = over.find(o => !inputsOf(o.id));
-  if (old) refuse('overlap', `The withdrawn release for ${K.humanPeriod(from, to)} (${K.humanDay(old.created_at)}) was published before SUDS 1.22, which did not keep what a release was screened from. A corrected release could not be checked against it, so this period cannot be published again.`, 409);
+  if (old) refuse('overlap', `The withdrawn release for ${K.humanPeriod(from, to)} (${K.humanDay(old.created_at)}) was published before SUDS kept what a release was screened from. A corrected release could not be checked against it, so this period cannot be published again.`, 409);
   const otherT = over.find(o => o.threshold !== T);
   if (otherT) refuse('threshold', `A corrected release must use the threshold of the withdrawn release it corrects (${otherT.threshold}), so that what that release printed is read the same way. Leave the threshold empty, or set it to ${otherT.threshold}.`, 400);
   return over.map(o => {
@@ -94,7 +94,7 @@ function earlierReleases(from, to, T) {
   });
 }
 
-// ---- publication consent (built for 1.22.0) ----
+// ---- publication consent (released in 1.22.0) ----
 const userName = (id) => { if (!id) return null; const u = db.one(`SELECT display_name, username FROM users WHERE id=?`, id); return u ? (u.display_name || u.username) : null; };
 function consentOut(r, reference) {
   return { id: r.id, agreed_on: r.agreed_on, recorded_at: r.recorded_at, recorded_by: userName(r.recorded_by), withdrawn_at: r.withdrawn_at || null, withdrawn_by: userName(r.withdrawn_by),

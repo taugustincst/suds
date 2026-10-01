@@ -37,7 +37,13 @@ off until your administrator turns them on. For your finance lead, the county fi
 amount, so the county sees spending against the award, and Home reminds whoever makes the county file when it is
 due. For your county, a screened **publication release** of the combined figures: your programme's own small counts
 are protected against anyone who holds your own publication release and subtracts
-([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md), *Publication*). A referral network partner organisations join (beyond the
+([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md), *Publication*). 1.22.0 is about your workers' day: a call-back date on a call or text always makes its to-do (before, it
+could silently make none), quick dates (*Tomorrow*, *In a week*) on to-dos and follow-ups, **Where things stand** at the
+top of each client's Overview, **Undo** and **Same as last contact** in street outreach, notes that start in each
+writer's usual format, and, on a phone that syncs with the office, whether anything is still waiting to be sent
+([docs/USER_GUIDE.md](../USER_GUIDE.md)). Once one of a worker's devices is a field device, all of them are; your
+administrator can keep a supervisor's office computer whole. Your county records your written consent before it
+publishes figures that name your programme. A referral network partner organisations join (beyond the
 1.17.0 one-time secure links) is planned and not scheduled ([STRATEGY.md](STRATEGY.md)). Choose SUDS for what it does
 today.
 

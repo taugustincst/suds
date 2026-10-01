@@ -41,12 +41,77 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
-### 2026-10-01 — Claude: 1.22.0 in integration (built, not yet released)
+### 2026-10-01 — Claude: 1.22.0 (day to day for workers, field scope by account, publication consent, grace period)
 
-- Six streams from the 1.21.0 evaluation: field scope bound to the account, county publication consent and corrected
-  releases, honest security documents and the pen-test scope, a grace period for the authenticator allow-list and a
-  safer county file version, day-to-day fixes for workers, and evidence on 1.21.0. The browser suite is **57 scripts**
-  with `worker-usefulness.mjs`. The full entry is written at the stamp.
+- **What shipped.** One feature release under a recorded policy exception (docs/RELEASE.md, *Record: 1.22.0*), on
+  the instruction "Implement all recommendations to make this as useful as possible for suds workers, loop until
+  complete": the day-to-day fixes for frontline workers (a call-back date always makes its to-do, quick dates, *Where
+  things stand* at the top of a client's Overview, outreach Undo and *Same as last contact* with *Save contact* kept in
+  reach, a note's usual format and labelled structured sections, who made each referral in the supervision queue, the
+  sync state in the header of a device that syncs with the office, a search hint that fits a phone); the field scope
+  bound to the account (migration **64**, `field_accounts`, `devices.scope_set_by`); county publication consent,
+  corrected releases and the award pro-rated to the period (migration **65**, `county_publication_consents`,
+  `county_publication_inputs`); the authenticator allow-list's grace period (migration **66**,
+  `passkeys.allowlist_grace_until`) and the county file version choice; the penetration-test scope drawn from the
+  threat model, release integrity said plainly in QUESTIONNAIRE #36/#39 and the RFI, the fuller county packet and the
+  ACR revised for 1.21.0's screens; the SUDS Server listener fix under the sandbox and the dry-run and hand-over
+  wording; the evidence re-run on 1.21.0. New routes: the three county publication consent routes. No new
+  permission. Six streams and an evidence stream, each reviewed, then an integration review whose findings were fixed
+  before the stamp (CHANGELOG 1.22.0, *Integration review of the 1.22.0 streams*). The browser suite is **57 scripts**
+  with `worker-usefulness.mjs`. Two-commit stamp: "Release 1.22.0", then its SBOM
+  (`docs/evidence/sbom-1.22.0.cdx.json`); `v1.22.0` goes on the second, in the one push of nine tags (*Release
+  waiting*, below). The authorship figures (760 of 779, QUESTIONNAIRE #36a) were counted at `81fe440`, the last merge
+  before the documentation pass and the stamp.
+- **Upgrade notes.** Migrations 64 to 66 run on start. **The field scope now follows the account:** a whole device of
+  an account held to the field scope (one of its devices was ever a field device, or **New devices start as field
+  devices** is on) becomes a field device at its next sync, after sending what it recorded, unless an administrator
+  marks it **Keep everything** under Settings › Synced devices first (a device an administrator had already made whole
+  keeps that). A device's sync that names no device is refused for such an account; SUDS on a device always sends its
+  id. **A county file made by hand is version 1** until the programme answers, once per county code on the Send to the
+  county card, that the county runs SUDS 1.21 or later (or the county's connection says it reads version 2). **The
+  authenticator allow-list's grace period is 14 days by default**; set 0 for 1.21.0's behaviour. A publication release
+  of a period published before 1.22.0 cannot be corrected (it kept no inputs).
+- **Owner decisions to confirm or change** (each taken with a conservative default and implemented that way):
+  - *Field devices* (docs/PLATFORM.md, *Field devices*): the scope is bound to the account once any of its devices was
+    a field device, or while the programme default is on; revoking or wiping a device does not release the account; a
+    device sync sign-in without a device id is refused for such an account rather than registered; full scope is a
+    per-device administrator decision (*Hold everything* / *Keep everything*), not a per-person flag, so a supervisor's
+    new or reinstalled device starts in the field scope; a field device's sync session reaches only sign-in, the second
+    step and sign-out of `/api/auth/`.
+  - *Publication* (docs/COUNTY-VIEW.md, *Publication*, decisions 3, 7 and 8): a corrected release only of exactly a
+    withdrawn release's period (any other overlap still refused; periods published before 1.22.0 stay closed; the
+    correction uses the withdrawn release's threshold); a release that would name a programme without a current
+    written consent is refused by default, the preparer may leave such programmes out and the release says so; the
+    consent record is the county manager's word with the agreement's reference, one current consent per programme,
+    and withdrawing it does not withdraw releases already published.
+  - *County file version* (COUNTY-VIEW, *Which version a file is made in*): version 2 only when the county is known to
+    read it (the connection's `/status`, else the programme's answer per county code); "Don't know" and no answer make
+    version 1; making a file for a new county code stops at the question; the connection's word wins over the answer.
+  - *Grace period* (docs/FINGERPRINT.md, *Grace period*): 14 days by default, 0 to 90; a date per passkey; saving
+    again never lengthens a grace period already running, a shorter one shortens it; never for a model reported
+    compromised or revoked; a session opened in a grace period expires when it ends.
+  - *Worker defaults* (docs/USER_GUIDE.md): choosing a call-back date ticks *Follow-up needed*; Undo lasts 10 seconds
+    and is the worker's own delete (supplies return to stock, audited); *Same as last contact* remembers only item ids
+    and counts in the worker's own preferences; a new note starts in its author's last format for that type; a new
+    to-do's form has no Status.
+- **Open items (not fixed; for the owner):**
+  - **Device-id reuse of an administrator-whole device** (THREAT-MODEL residual risk 20): the device id is the
+    device's word, so the same account can reuse the id of its own *Hold everything* device and sync whole from
+    another device; and the field scope bounds the offline copy, not what the account reads in a browser. A programme
+    that wants less narrows the role too.
+  - **1.21.0 publication releases cannot be corrected:** they kept nothing to audit a correction against, so their
+    periods stay closed (COUNTY-VIEW decision 3).
+  - **The installer on real VMs and on RHEL 9** is still owner-pending (docs/evidence/INSTALLER-VM-RUN.md); the 1.21.0
+    run was in a container on Ubuntu 24.04.
+  - **Screen-reader testing** of the product, including the screens 1.21.0 and 1.22.0 added, is still pending
+    (docs/accessibility/ACR-WCAG21.md); the automated axe audits cover them.
+  - Carried from 1.21.0: a CalOMS record for a client known only by a participant code can still be saved; servers on
+    1.19.0 or 1.20.0 cannot hand over to the new `upgrade.sh`.
+- **Owner-only:** push the nine tags in one push and approve only `v1.22.0`'s `Web app` run
+  (docs/evidence/RELEASE-HANDOFF.md); record 1.22.0's zip SHA-256 on `main` once its release job has run (1.21.0's is
+  in the hand-off); the repository settings (docs/RELEASE.md, *Owner: repository settings*); an independent
+  statistical review now covers corrected publication releases too. The next feature release waits 28 days from
+  1.22.0.
 
 ### 2026-09-30 — Claude: 1.21.0 (publication releases, field devices, allow-list, award amounts and reminders)
 
@@ -85,8 +150,8 @@ _(Append replies here, newest first.)_
     list stop at their next use (not deleted); with the metadata file out of date, no passkey can be added but those
     already proven keep working.
 - **Found by the integration review and not fixed (for the owner to decide):**
-  - ~~A field device's sync session is refused by every route but `/api/sync/` and `/api/auth/`~~ — fixed for
-    1.22.0 (built, not yet released): under `/api/auth/` it reaches only sign-in, the second step and sign-out
+  - ~~A field device's sync session is refused by every route but `/api/sync/` and `/api/auth/`~~ — fixed in
+    1.22.0: under `/api/auth/` it reaches only sign-in, the second step and sign-out
     (`server/auth.js` `assertSyncSessionReach`, every request); the field scope follows the account, so another
     device id, none, or re-enrolling no longer leaves it (`server/devices.js`; docs/PLATFORM.md, *Field devices*).
   - The field scope is **not a boundary against the device's own user**: the same account in a browser reads what
@@ -193,19 +258,19 @@ _(Append replies here, newest first.)_
 
 ### Release waiting
 
-- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0 and 1.21.0 are on `main`, and 1.21.0 is live, but none is
-  tagged: the owner tags all eight, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the checks,
-  the eight `git tag -a` commands and `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0`,
+- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0 and 1.22.0 are on `main`, and 1.22.0 is live, but
+  none is tagged: the owner tags all nine, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the
+  checks, the nine `git tag -a` commands and `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0`,
   what each tag's runs do (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`,
-  `v1.18.0`, `v1.19.0`, `v1.20.0` and `v1.21.0` each need *Run workflow* with a `policy_exception`; only `v1.21.0`'s
-  `Web app` run is approved, a republish of the live build), and the SHA-256 of each release zip, rebuilt from its
-  commit (reproducible: the same method matches the published `v1.15.4` and `v1.16.2` checksums; 1.21.0's is recorded
-  by a commit after its SBOM commit). After the releases, the owner records each checksum in its release notes and in
-  the CHANGELOG on `main`, the second channel SUDS Server's `upgrade.sh --release-sha256` needs. Push the tags while
-  `main` says 1.21.0, or add a newer stamped version's tag to the same push. `v1.20.0` and `v1.21.0` each go on the
-  commit after their `Release X.Y.Z` that adds its SBOM. The assistant cannot push tags (its environment's proxy
-  refuses them; docs/RELEASE.md, *Handing a release to the owner*). Never push tags from an assistant's clone, and
-  never an older tag alone.
+  `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0` and `v1.22.0` each need *Run workflow* with a `policy_exception`; only
+  `v1.22.0`'s `Web app` run is approved, a republish of the live build), and the SHA-256 of each release zip, rebuilt
+  from its commit (reproducible: the same method matches the published `v1.15.4` and `v1.16.2` checksums; 1.22.0's is
+  recorded by a commit after its SBOM commit). After the releases, the owner records each checksum in its release notes
+  and in the CHANGELOG on `main`, the second channel SUDS Server's `upgrade.sh --release-sha256` needs. Push the tags
+  while `main` says 1.22.0, or add a newer stamped version's tag to the same push. `v1.20.0`, `v1.21.0` and `v1.22.0`
+  each go on the commit after their `Release X.Y.Z` that adds its SBOM. The assistant cannot push tags (its
+  environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the owner*). Never push tags from an
+  assistant's clone, and never an older tag alone.
 - The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here
   once its tag is pushed.
 

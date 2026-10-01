@@ -342,7 +342,7 @@ async function prepareOffice() {
   // A county publication release of the earliest quarter the sample files cover (released in 1.21.0;
   // docs/COUNTY-VIEW.md "Publication"), so the Publish tab is audited with a release in its list, and its View and
   // Withdraw dialogs open. Releases are append-only: on a server that already has it, the overlap refusal is fine.
-  // Each signed sample programme agreed in writing to publication (built for 1.22.0), so the release can name it; the
+  // Each signed sample programme agreed in writing to publication (released in 1.22.0), so the release can name it; the
   // programme not on SUDS has none, so Programs shows both states and the Publication consent dialog both forms.
   for (const p of ccProgs.filter(x => x.on_suds !== false)) {
     const c = await api(page, 'POST', `/api/county/programmes/${p.id}/publication-consent`, { agreed_on: '2025-06-30', reference: 'Data contribution agreement (fictional)' });
@@ -532,7 +532,7 @@ const BUTTON_DIALOGS = [
   ['county?tab=programmes', 'Issue token'], ['county-connect', 'Issue a read token'], ['settlement', 'Connect to the county'],
   // Publication releases (released in 1.21.0): one release, as published, and withdrawing it (cancelled).
   ['county?tab=publish', 'View release'], ['county?tab=publish', 'Withdraw'],
-  // Publication consent (built for 1.22.0): a programme's written agreement, recorded or not.
+  // Publication consent (released in 1.22.0): a programme's written agreement, recorded or not.
   ['county?tab=programmes', 'Publication consent'],
   // The supervision queue: countersigning one note (the note's text, a comment, the signature step).
   ['supervision', 'Countersign'],

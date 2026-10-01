@@ -27,7 +27,30 @@ partner, or its county) runs; it is not a hosted service. Positioning, buyer gui
 and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:
 [docs/architecture/README.md](docs/architecture/README.md).
 
-## What's new in 1.18.0 to 1.21.0
+## What's new in 1.18.0 to 1.22.0
+
+**1.22.0**
+
+* **Easier days for frontline workers** ([docs/USER_GUIDE.md](docs/USER_GUIDE.md)): a call-back date on a call or text
+  now always makes its to-do (before, a date with *Follow-up needed* left unticked made none); *Today*, *Tomorrow*,
+  *In a week* and other quick dates on to-dos and follow-ups; **Where things stand** at the top of a client's Overview
+  (the last contact, the next to-do, open referrals); in street outreach *Save contact* stays in reach, **Undo** for
+  10 seconds and **Same as last contact**; a new note starts in your usual format; supervisors see who made each
+  referral still awaiting an outcome; a device that syncs with the office shows in the header whether changes are
+  waiting to be sent.
+* **The field scope follows the account**: once a worker's device is a field device, every device of that account is
+  held to the field scope, whatever device id it sends; only an administrator can keep one device whole (*Keep
+  everything*). **On upgrade, a whole device of such an account becomes a field device at its next sync** unless an
+  administrator marks it first ([docs/PLATFORM.md](docs/PLATFORM.md#field-devices)).
+* **County publication consent and corrections**: a release names only programmes whose written consent the county
+  has recorded; a withdrawn release's period can be published again as an audited correction; awards are also
+  pro-rated to the period ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#publication)).
+* **Safer defaults**: the authenticator allow-list stops a passkey it newly refuses only after a grace period (14 days
+  by default; [docs/FINGERPRINT.md](docs/FINGERPRINT.md#grace-period)), and a county file made by hand is version 1
+  unless the county is known to read version 2.
+* The penetration-test scope drawn from the threat model, release integrity stated plainly (1.16.3 to 1.22.0 were
+  published without a tag), the SUDS Server listener fixed under its sandbox, and the evidence re-run on 1.21.0.
+  Upgrading runs migrations 64 to 66 on start.
 
 **1.21.0**
 

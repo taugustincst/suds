@@ -684,7 +684,7 @@ function combined(from, to, { entered = true, leaveOut = null } = {}) {
   // The award (schema version 2): each fund's award counted once per programme however many of its files in the
   // period carry it (the same fund, grant number and award period), and what the period's files spent (approved or
   // reimbursed) under the funds that carry one. Version 1 files carry no award ("award not in file").
-  // Each award is also pro-rated to the period (built for 1.22.0): its amount times the days of [from, to] inside the
+  // Each award is also pro-rated to the period (released in 1.22.0): its amount times the days of [from, to] inside the
   // award period over the award period's days, so a quarter is set against a quarter's share of a year's award.
   const awardAgg = () => ({ awards: new Map(), spent: 0, v1: 0, v2: 0, without: 0 });
   const addAward = (a, pl) => {
@@ -759,7 +759,7 @@ function combined(from, to, { entered = true, leaveOut = null } = {}) {
     rows.push(awardRow('award_amount', 'Award or contract amount (each fund\'s award counted once)', a => a.amount, withAward.length ? sumOf(withAward, 'amount') : null, sumOf(enteredAward, 'amount')));
     rows.push(awardRow('award_spent', 'Spent in this period under the funds with an award (approved or reimbursed)', a => a.spent, withAward.length ? sumOf(withAward, 'spent') : null, sumOf(enteredAward, 'spent')));
     rows.push(awardRow('award_spent_pct', 'Spent against the award (%)', a => a.pct, pctOf(withAward), enteredAward.length ? pctOf(enteredAward) : 0, { money: false, percent: true }));
-    // Pro-rated (built for 1.22.0): the whole award stays above; these set the period's spending against the share of
+    // Pro-rated (released in 1.22.0): the whole award stays above; these set the period's spending against the share of
     // each award that falls in the period (award × days of the period inside the award period ÷ the award period's days).
     rows.push(awardRow('award_prorated', AWARD_PRORATED_LABEL, a => a.prorated, withAward.length ? sumOf(withAward, 'prorated') : null, sumOf(enteredAward, 'prorated')));
     rows.push(awardRow('award_spent_prorated_pct', AWARD_PRORATED_PCT_LABEL, a => a.prorated_pct, pctOf(withAward, 'prorated'), enteredAward.length ? pctOf(enteredAward, 'prorated') : 0, { money: false, percent: true }));
@@ -847,8 +847,8 @@ const CAVEATS = [
   'Each figure is what the program recorded in SUDS for the work charged to the opioid settlement funds it chose to report to the county, from its own Settlement outcomes page. Money is exact; a cost per outcome is not calculated across programs.',
 ];
 /**
- * Which SUDS the county runs, as the programme answered on the Send to the county card (built for 1.22.0, not yet
- * released; docs/COUNTY-VIEW.md "Award amounts"), remembered per county code: '1.21+' (reads version 2, with the
+ * Which SUDS the county runs, as the programme answered on the Send to the county card (released in
+ * 1.22.0; docs/COUNTY-VIEW.md "Award amounts"), remembered per county code: '1.21+' (reads version 2, with the
  * award), '1.20-' (SUDS 1.20 or earlier: version 1 only) or 'unknown' (don't know).
  */
 const COUNTY_SUDS = ['1.21+', '1.20-', 'unknown'];

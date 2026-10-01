@@ -6952,7 +6952,7 @@ CREATE TABLE IF NOT EXISTS passkeys (
   -- was off (attestation 'none': its AAGUID is only what the device said), which the list, once on, does not accept.
   -- The attestation certificate itself is not kept (migration 63).
   attestation TEXT,
-  -- The authenticator allow-list's grace period (built for 1.22.0, migration 66): when an administrator turned the list
+  -- The authenticator allow-list's grace period (released in 1.22.0, migration 66): when an administrator turned the list
   -- on or narrowed it, a passkey it would refuse that was working until then keeps working until this time (UTC ISO),
   -- unless its model is reported compromised or revoked. NULL: no grace (accepted, or refused already).
   allowlist_grace_until TEXT
@@ -8540,7 +8540,7 @@ CREATE TRIGGER IF NOT EXISTS county_publications_no_update BEFORE UPDATE OF id, 
 CREATE TRIGGER IF NOT EXISTS county_publications_no_delete BEFORE DELETE ON county_publications
   BEGIN SELECT RAISE(ABORT, 'county_publications is append-only: a published release is never deleted'); END;
 
--- Publication governance (migration 65; built for 1.22.0; docs/COUNTY-VIEW.md "Publication"). Office server only,
+-- Publication governance (migration 65; released in 1.22.0; docs/COUNTY-VIEW.md "Publication"). Office server only,
 -- never synchronised. county_publication_consents: per registered programme, that it agreed in writing to the county
 -- publishing figures that name it (the date of the agreement, its reference: typed text, encrypted; who recorded it
 -- and when), and the withdrawal of that consent (when and by whom; the row stays). A programme's current consent is
@@ -12628,7 +12628,7 @@ var require_sync_tables = __commonJS({
         "county_submissions",
         // county_publications (released in 1.21.0): the county's published releases and their withdrawals.
         "county_publications",
-        // county_publication_consents and county_publication_inputs (built for 1.22.0): each programme's written consent
+        // county_publication_consents and county_publication_inputs (released in 1.22.0): each programme's written consent
         // to publication, and what each release was screened from. On the county's server only.
         "county_publication_consents",
         "county_publication_inputs",
@@ -35834,7 +35834,7 @@ var require_county_publication = __commonJS({
       const live = over.find((o) => !o.withdrawn_at);
       if (live) refuse("overlap", `A release for ${K.humanPeriod(from, to)} was already published (${K.humanDay(live.created_at)}) and is not withdrawn. To publish a corrected release of this period, withdraw that one first (say why); the corrected release is then checked against everything the withdrawn one printed.`, 409);
       const old = over.find((o) => !inputsOf(o.id));
-      if (old) refuse("overlap", `The withdrawn release for ${K.humanPeriod(from, to)} (${K.humanDay(old.created_at)}) was published before SUDS 1.22, which did not keep what a release was screened from. A corrected release could not be checked against it, so this period cannot be published again.`, 409);
+      if (old) refuse("overlap", `The withdrawn release for ${K.humanPeriod(from, to)} (${K.humanDay(old.created_at)}) was published before SUDS kept what a release was screened from. A corrected release could not be checked against it, so this period cannot be published again.`, 409);
       const otherT = over.find((o) => o.threshold !== T);
       if (otherT) refuse("threshold", `A corrected release must use the threshold of the withdrawn release it corrects (${otherT.threshold}), so that what that release printed is read the same way. Leave the threshold empty, or set it to ${otherT.threshold}.`, 400);
       return over.map((o) => {
@@ -52130,7 +52130,7 @@ var require_db = __commonJS({
         addColumn(d, "passkeys", "attestation", "TEXT");
         createTablesFromSchema(d, safeSchema(), ["authenticator_metadata"], 63);
       },
-      // 64: field scope follows the account (built for 1.22.0; server/devices.js, docs/PLATFORM.md "Field devices").
+      // 64: field scope follows the account (released in 1.22.0; server/devices.js, docs/PLATFORM.md "Field devices").
       //     field_accounts, the accounts held to the field scope on every device, starting with the users of every
       //     existing field device; devices.scope_set_by, with 'admin' for a device already made whole again by an
       //     administrator (only an administrator could set 'full' after first sight, so a full device with
@@ -52141,7 +52141,7 @@ var require_db = __commonJS({
         d.exec(`UPDATE devices SET scope_set_by='admin' WHERE scope_set_by IS NULL AND sync_scope='full' AND scope_changed_at IS NOT NULL`);
         d.exec(`INSERT OR IGNORE INTO field_accounts(user_id, bound_at, bound_via) SELECT user_id, MIN(COALESCE(scope_changed_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))), 'migration' FROM devices WHERE sync_scope='field' GROUP BY user_id`);
       },
-      // 65: county publication governance (built for 1.22.0; docs/COUNTY-VIEW.md "Publication"):
+      // 65: county publication governance (released in 1.22.0; docs/COUNTY-VIEW.md "Publication"):
       //     county_publication_consents (each registered programme's written agreement to publication, and its
       //     withdrawal) and county_publication_inputs (what each release from now on was screened from, encrypted, for a
       //     corrected release of the same period), the latter append-only (its triggers, as schema.sql declares them).
@@ -52152,7 +52152,7 @@ var require_db = __commonJS({
         createTablesFromSchema(d, text, ["county_publication_consents", "county_publication_inputs"], 65);
         for (const m of text.matchAll(/CREATE TRIGGER IF NOT EXISTS county_publication_inputs_\w+ [\s\S]*?END;/g)) d.exec(m[0]);
       },
-      // 66: the authenticator allow-list's grace period (built for 1.22.0, not yet released; docs/FINGERPRINT.md
+      // 66: the authenticator allow-list's grace period (released in 1.22.0; docs/FINGERPRINT.md
       //     "Grace period"): passkeys.allowlist_grace_until, NULL for every existing passkey (none is in a grace period:
       //     a list turned on under 1.21.0 refused at once). Office server only. Self-contained and idempotent, so it can be
       //     renumbered.

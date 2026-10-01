@@ -168,7 +168,7 @@ sign-in or sessions from it is refused with a message to use a web browser. It f
 is not sent. A client leaves the device when it leaves the set (its assignment ends, a caseload transfer, no
 contact in the window, a merge into a record outside the set).
 
-**The scope follows the account (built for 1.22.0, not yet released).** A device id is the device's own word, so
+**The scope follows the account (released in 1.22.0).** A device id is the device's own word, so
 the office does not rely on it alone. Once **any** device of an account has been a field device (made one by an
 administrator, by its user as they enrolled it, or by the programme default), or while **New devices start as field
 devices** is on, the account is held to the field scope (`field_accounts`, `server/devices.js`
@@ -207,7 +207,7 @@ receives the rest; nothing is deleted at the office either way. This device show
 **Owner decisions, conservative defaults (1.21.0).** Field devices and the participant-code default are **off**
 everywhere unless an administrator turns them on; the setup wizard offers the participant-code default only to a
 harm-reduction programme, answered *No* unless changed. The window is 90 days. A device's user may only narrow its
-scope; widening is an administrator's, per device. **(1.22.0, built, not yet released.)** The field scope is bound
+scope; widening is an administrator's, per device. **(Released in 1.22.0.)** The field scope is bound
 to the account as well as the device (above); a device sync sign-in without a device id is refused for such an
 account rather than registered (there is nothing stable to register, revoke or wipe); full scope for a supervisor is
 a per-device administrator decision, not a per-person flag, so no new or reinstalled device of theirs is whole until

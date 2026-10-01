@@ -49,7 +49,7 @@ function touch(user, deviceId, ctx) {
 // ---- sync scope (released in 1.21.0; server/field-scope.js) ----
 const SCOPES = ['full', 'field'];
 
-// ---- the account's scope (built for 1.22.0, not yet released) ----
+// ---- the account's scope (released in 1.22.0) ----
 // The field scope follows the account as well as the device. A device id is the device's own word (local/sync.js
 // makes one up once and sends it), so a scope kept only on the device's row could be left by sending another id, or
 // none, or by enrolling again. So: once any device of an account has been a field device, or while the programme's

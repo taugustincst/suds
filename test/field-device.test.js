@@ -311,7 +311,7 @@ test('its user may make a device a field device as they enrol it; the programme 
   assert.deepEqual((await deviceSession(plainUser, uuid())).login.device, { scope: 'field' });
 });
 
-// ---- the scope follows the account (built for 1.22.0; server/devices.js accountFieldBound) ----
+// ---- the scope follows the account (released in 1.22.0; server/devices.js accountFieldBound) ----
 
 /** A sync sign-in with X-Sync-Client but no X-Device-Id. */
 async function anonymousDeviceLogin(u) {

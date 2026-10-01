@@ -11,7 +11,7 @@
 //   2. axe (WCAG 2.1 A/AA) on the Publish tab with what would be published, and on the release's dialog, at 1280
 //      and 390 px; nothing sideways at 390 and 320 px.
 //   3. Finance sees the releases (county:view) but prepares, publishes and withdraws nothing; read-only is refused.
-// Publication governance (built for 1.22.0): before 1, the small program has no consent to publication, so Check the
+// Publication governance (released in 1.22.0): before 1, the small program has no consent to publication, so Check the
 // figures is refused as an alert that names it and offers to leave it out (which then says it was left out); on
 // Programs its consent is "No consent recorded", the Publication consent dialog (axe) records the date and the
 // agreement's reference with the keyboard, and it then reads "Agreed in writing". After the withdrawal in 1, the same
@@ -81,7 +81,7 @@ try {
     if (n === 200) eq((await api(adm, 'POST', `/api/county/programmes/${p.data.id}/publication-consent`, { agreed_on: `${year - 1}-12-01`, reference: 'Data contribution agreement (fictional)' })).status, 201, `${name} agreed to publication`);
   }
 
-  // ---------------- 1a. publication consent (built for 1.22.0) ----------------
+  // ---------------- 1a. publication consent (released in 1.22.0) ----------------
   await go(adm, 'county?tab=publish');
   await adm.fill('#cpub-from', q.from); await adm.fill('#cpub-to', q.to);
   await adm.click('[data-pub-prepare]');
@@ -160,7 +160,7 @@ try {
   ok(await until(async () => /Withdrawn/.test(await adm.textContent(`[data-pub-rows] tr:has-text("${year}")`))), 'it is listed withdrawn');
   ok(await until(() => focused(adm, '#cpub-list-h')), 'and the focus goes to the list\'s heading');
   ok(!(await adm.$(`[data-pub-rows] tr:has-text("${year}") [data-pub-withdraw]`)), 'a withdrawn release offers no Withdraw');
-  // The same quarter again, now that its release is withdrawn: a corrected release (built for 1.22.0).
+  // The same quarter again, now that its release is withdrawn: a corrected release (released in 1.22.0).
   await adm.click('[data-pub-prepare]');
   ok(await until(() => adm.$('[data-pub-result][data-pub-outcome="prepared"] [data-pub-corrects="1"]')), 'the same quarter can now be prepared as a corrected release');
   ok(/A corrected release: it replaces the release of this period withdrawn on/.test(await adm.textContent('[data-pub-corrects]')), 'which says what it corrects and that it was screened against it');
