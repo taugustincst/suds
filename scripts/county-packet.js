@@ -29,7 +29,11 @@ const PACKET_FILES = [
   { path: 'docs/market/templates/DPA-DRAFT.md', what: 'Data processing addendum (DRAFT for counsel; not reviewed)' },
   { path: 'docs/market/templates/BAA-QSOA-DRAFT.md', what: 'Business associate agreement and 42 CFR Part 2 QSOA (DRAFT for counsel; not reviewed)' },
   { path: 'docs/security/PEN-TEST-SCOPE.md', what: 'Penetration test scope for a county-commissioned test (no test has been done)' },
-  { path: 'docs/accessibility/ACR-WCAG21.md', what: 'Accessibility conformance report, WCAG 2.1 (a self-assessment, not a third-party review)', describes: (t) => { const m = /Name of Product\/Version[\s\S]*?SUDS (\d+\.\d+\.\d+)/.exec(t); return m ? `SUDS ${m[1]} (its *Name of Product/Version*; what was evaluated when, and what has not been done, is in its notes and revisions)` : null; } },
+  // Its Name of Product/Version is the release it was last revised for; its conformance levels are those established on
+  // an earlier release ("established on SUDS X"), which is what the README compares.
+  { path: 'docs/accessibility/ACR-WCAG21.md', what: 'Accessibility conformance report, WCAG 2.1 (a self-assessment, not a third-party review)',
+    describes: (t) => { const m = /Name of Product\/Version[\s\S]*?SUDS (\d+\.\d+\.\d+)/.exec(t); const e = /conformance levels in the tables were established on SUDS (\d+\.\d+\.\d+)/.exec(unwrap(t)); return m ? `SUDS ${m[1]} (its *Name of Product/Version*)${e && e[1] !== m[1] ? `; its conformance levels were established on SUDS ${e[1]}, and later screens are covered by automated checks only (its *Revisions*)` : ''}` : null; },
+    stated: (t) => { const e = /conformance levels in the tables were established on SUDS (\d+\.\d+\.\d+)/.exec(unwrap(t)); const m = /Name of Product\/Version[\s\S]*?SUDS (\d+\.\d+\.\d+)/.exec(t); return e ? e[1] : m ? m[1] : null; } },
   // Added in 1.22.0: the documents a county's security and privacy review asks for next (the review of 1.21.0).
   { path: 'docs/security/THREAT-MODEL.md', what: 'Threat model: assets, attackers, threats and mitigations by area with their code and tests, residual risks', describes: (t) => { const m = /^\*\*Version\.\*\*\s*It describes (\d+\.\d+\.\d+)/m.exec(t); return m ? `SUDS ${m[1]} (its *Version.* line)` : null; } },
   { path: 'docs/security/DATA-INVENTORY.md', what: 'Data inventory and data flows: what SUDS holds, where and how, every way it leaves, how long it is kept' },
@@ -40,6 +44,7 @@ const PACKET_FILES = [
   { path: 'SECURITY.md', what: 'Security policy: supported versions and how to report a vulnerability' },
   { path: 'LICENSE', what: 'The licence (MIT)' },
 ];
+const unwrap = (t) => t.replace(/[*_]/g, '').replace(/\s+/g, ' ');
 const minorOf = (v) => v.split('.').slice(0, 2).map(Number);
 /** The newest version a "describes" text names (the release a document or an evidence folder states), or null. */
 function statedVersion(describes) {
@@ -93,7 +98,7 @@ function buildPacket(root, ref = 'HEAD') {
   const entries = []; // one row of the README each: { what, paths, describes, kind }
   for (const f of PACKET_FILES) {
     const text = blob(f.path).toString('utf8');
-    entries.push({ kind: 'file', what: f.what, paths: [f.path], describes: (f.describes && f.describes(text)) || null });
+    entries.push({ kind: 'file', what: f.what, paths: [f.path], describes: (f.describes && f.describes(text)) || null, stated: (f.stated && f.stated(text)) || null });
   }
   for (const n of PACKET_NEWEST) {
     const found = new Map();
@@ -136,7 +141,8 @@ function readmeText({ commit, date, version }, entries, files) {
   L.push('exercises**, not production drills; the accessibility report is a **self-assessment**. The owner-pending items are');
   L.push('listed in `docs/market/COUNTY-KIT.md`, *Owner-pending items*.', '');
   const where = (e) => (e.root && e.paths.length > 1 ? `\`${e.root}/\` (${e.paths.length} files)` : `\`${e.paths[0]}\``);
-  const older = entries.filter((e) => olderThan(statedVersion(e.describes), version));
+  const stated = (e) => e.stated || statedVersion(e.describes);
+  const older = entries.filter((e) => olderThan(stated(e), version));
   if (older.length) {
     L.push(`**Older than this release.** ${older.length === 1 ? 'One file states' : `${older.length} files state`} an earlier release than this packet's ${version}.`);
     L.push(`${older.length === 1 ? 'It has' : 'They have'} not been redone or revised for what changed since. Read each as evidence about the release it names,`);
@@ -147,7 +153,7 @@ function readmeText({ commit, date, version }, entries, files) {
   L.push('## What is in it', '');
   L.push('| File | What it is | What it describes |', '| --- | --- | --- |');
   for (const e of entries) {
-    const flag = older.includes(e) ? ` **Older than this release** (${statedVersion(e.describes)}; this packet is ${version}).` : '';
+    const flag = older.includes(e) ? ` **Older than this release** (${stated(e)}; this packet is ${version}).` : '';
     L.push(`| ${where(e)} | ${e.what} | ${e.describes || `no version line of its own: the document as at \`${short}\` (${version})`}${flag} |`);
   }
   L.push('| `README.md` | This page | — |', '| `MANIFEST.sha256` | SHA-256 of every file above, this page included | — |', '');

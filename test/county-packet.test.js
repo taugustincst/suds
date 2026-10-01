@@ -107,10 +107,19 @@ test('the README flags every file whose stated release is older than the packet\
   const p = CP.buildPacket(ROOT, HEAD);
   const readme = p.files.find((f) => f.path === 'README.md').data.toString('utf8');
   for (const e of p.entries) {
-    const stated = CP.statedVersion(e.describes);
+    const stated = e.stated || CP.statedVersion(e.describes);
     const line = readme.split('\n').find((l) => l.startsWith(`| \`${e.root && e.paths.length > 1 ? `${e.root}/` : e.paths[0]}\``));
     assert.equal(/Older than this release/.test(line), CP.olderThan(stated, p.version), `${e.paths[0]}: states ${stated}, packet ${p.version}`);
   }
+  // The accessibility report: revised for a release, its conformance levels established on an earlier one. The README
+  // compares the latter, and says both.
+  const acr = CP.PACKET_FILES.find((f) => f.path === 'docs/accessibility/ACR-WCAG21.md');
+  const revised = '## Name of Product/Version\n\nSUDS — x, SUDS 1.21.0 (this revision).\n\n**The conformance levels in the tables were established on SUDS 1.11.0** (y).\n';
+  assert.equal(acr.stated(revised), '1.11.0');
+  assert.match(acr.describes(revised), /^SUDS 1\.21\.0 \(its \*Name of Product\/Version\*\); its conformance levels were established on SUDS 1\.11\.0/);
+  assert.equal(acr.stated('## Name of Product/Version\n\nSUDS 1.21.0, all of it evaluated.\n'), '1.21.0', 'a report evaluated on the release it names');
+  const acrEntry = p.entries.find((e) => e.paths[0] === acr.path);
+  assert.ok(acrEntry.stated, 'the repository\'s report states a version');
 });
 
 test('the zip: stored entries under one folder, readable by its own central directory', () => {
