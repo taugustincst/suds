@@ -200,7 +200,7 @@ function countyForm(k, o, today, pageFrom, pageTo, choice, rem = null) {
     h('legend', {}, 'Which SUDS does this county run?'),
     olderNote, asked,
     SUDS_CHOICES.map(([value, label], i) => h('label', { class: 'check', for: radios[i].id }, radios[i], label)),
-    h('div', { class: 'help', id: 'so-county-suds-help' }, 'The county\'s SUDS reads the file. SUDS 1.21 or later reads version 2, which carries each fund\'s award or contract amount and award period (from Funding & spending), so the county can see spending against the award. SUDS 1.20 or earlier refuses version 2, so unless you know the county runs 1.21 or later the file is version 1, without the award. The county\'s County view shows its version (Help › About).'),
+    h('div', { class: 'help', id: 'so-county-suds-help' }, 'The county\'s SUDS reads the file. SUDS 1.21 or later reads version 2, which carries each fund\'s award or contract amount and award period (from Funding & spending), so the county can see spending against the award. SUDS 1.20 or earlier refuses version 2, so unless you know the county runs 1.21 or later the file is version 1, without the award. Ask the county which version it runs if you are not sure.'),
     outcome);
   showVersion(true);
   const err = h('div', { class: 'err', role: 'alert', 'data-so-county-error': '1' });
