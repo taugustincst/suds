@@ -547,6 +547,8 @@ const EXPANDED = [
   ['county', '[data-cv-caveats-full] > summary', 'the county caveats in full open'],
   // Settings › Programme is folded into sections (views/admin.js): every one of them opened.
   ['admin?tab=settings', 'details.section[data-section] > summary', 'every programme settings section open', { all: true }],
+  // Home's program-wide cards fold (1.23.0; folded on a phone until opened): every one of them opened.
+  ['dashboard', 'details[data-home-fold] > summary', 'every program-wide card open', { all: true }],
 ];
 // [page, the list's container, name]: the first row's own button opens the record in a dialog.
 const ROW_DIALOGS = [

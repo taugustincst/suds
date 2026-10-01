@@ -4,6 +4,41 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Worker-first menu and phone Home
+
+Built for 1.23.0, not yet released. No migration, no new permission or route (the folded cards are a preference,
+`home_folded`, in the existing `/api/me/prefs`).
+
+* **The menu by role and programme profile, from one table** (`public/nav.js`, new: the pages and where each goes;
+  `public/app.js` builds the menu from it). **Street outreach is in the main menu** of navigators and clinicians
+  (a peer navigator uses the navigator role) in the harm-reduction and treatment-adjacent profiles; it was under More
+  for every front-line role. The **Waitlist** moves under More in a harm-reduction programme, and **Notes** under More
+  on a phone (the ☰ menu, up to 900 px wide), where Home's *Continue where you left off* and its unsigned-notes link
+  lead to them. **Funding & spending** and **Policies & contracts**, which a navigator may open (a navigator records
+  spending) but which were in no menu, are under their More. Reports, the funder report, State reporting, SUPRT-A
+  and Import stay under More. Supervisors, finance, read-only and administrators keep their menus. Permissions are
+  unchanged. Phone menu, top-level entries with More as one (before → after): navigator, peer navigator and
+  clinician 12 → 12 (treatment-adjacent, Street outreach now among them), 12 → 11 (harm reduction), 11 → 10 (Part 2
+  layer); supervisor 11 (unchanged). The menu crosses the phone width on its own when the window does.
+  `test/nav-menu.test.js` checks every role × profile × module switches × phone or computer: every page a role may
+  open is in its menu (main list or More) and none it may not; a front-line phone menu has at most 12 top-level
+  entries; Street outreach leads in the street profiles.
+* **Phone Home is triage.** At 390 px Home opens on **To-dos for today**, then the status links in one compact row
+  (unsigned notes, clients to contact, Part 2 notices), then *Continue where you left off*; the welcome card, the
+  check-in list and the program-wide figures come after, and the **Update this page every 90 seconds** switch moves
+  to the foot. The program-wide cards (*at a glance*, the visits chart, the team's hand-offs, consents expiring)
+  **fold**, folded on a phone and open on a computer until the person chooses, and the choice is remembered per user
+  (prefs `home_folded`). The welcome card has a **×** besides *Got it*; either puts it away for that user on every
+  device. A computer keeps its layout. Measured on the seed at 390 × 844, first sign-in with the welcome showing:
+  "To-dos for today" at 799 px → 235 px from the top (on the first screen); Home 3,308 → 2,603 px tall for a
+  navigator, 3,685 → 2,980 px for a peer navigator (2,352 and 2,730 px once the welcome is dismissed). At 1,280 px
+  the navigator's Home is 1,644 → 1,682 px (the fold headings).
+* Browser checks: `scripts/ui/menu-home.mjs` (new, in the suite) — the menu as drawn for a navigator, a peer
+  navigator, a clinician and a supervisor in each profile at 390 px, Street outreach opening from the peer's menu,
+  "To-dos for today" in the top 700 px on a first sign-in, the welcome's ×, the folded state after a reload, the
+  desktop order, and axe on the phone Home and the open phone menu. `programme.mjs` and `r7.mjs` follow the new
+  menu and the folded tiles.
+
 ## 1.22.0 — 2026-10-01
 
 A feature release (migrations 64, 65 and 66; the county publication consent routes; no new permission), released
