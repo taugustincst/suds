@@ -4,6 +4,18 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Built for 1.24.0, not yet released
+
+Feature work for 1.24.0, on its own branch; it goes through the release gate after the stabilisation period (not before 2026-10-29).
+
+#### Added: possible duplicate time
+
+* **Time already logged is noticed before it is saved.** Saving a time entry (or an edit that changes its date, start time, minutes or description) that matches another of the same worker's entries on the same day — **overlapping times**, or **the same minutes and the same description** — is not saved straight away. The time form asks, inside the form, *This may be time already logged*, naming the entry already there (its times, category, client and description) and why it matched, with **Merge**, **Save anyway** and **Cancel**. Cancel saves nothing and leaves the form open; Save anyway saves it and records that the warning was overridden (`time_entry.duplicate.override`). Descriptions are compared decrypted, ignoring case and spacing, and never written to the audit trail or a log; a blank description matches nothing. Only entries you may read are shown: a match you may not read (a client no longer on your caseload) never blocks the save, and the entry is marked for review instead.
+* **Merge** keeps the entry already there and folds the new one into it (`POST /api/time/:id/merge`): its description is added on a new line (once, when they say the same thing); when both have a start time and the ranges overlap, the kept entry covers both (09:00–10:00 and 09:30–10:30 become 09:00–10:30, 90 minutes, never the 120 of the two added), or keeps its own times if you choose; a client, fund or visit link it lacked is taken from the other. The time counts once on the time list, the approval queue, the funder report's staff hours and the summaries. Approved time is never merged into (or merged away): a supervisor reopens it first. Audited as `time_entry.merge`, naming ids and field names only.
+* **Start time.** A time entry may say when it started (*Start time (optional)*, HH:MM); the time list shows the range under the date. Without one, only the same minutes and description can match.
+* **A device's entry is never refused for this.** A device cannot answer the question, so its pushed entry lands and is marked **Possible duplicate** of the earlier one (`time_entries.duplicate_of`, set by the office only); the device is told (a flagged warning, audited as `sync.conflict` flagged `duplicate`). The mark shows on the time list and, for an entry waiting for approval, on the Supervision page's staff-time queue with the other entry's hours, where **Merge** combines the pair and **Not a duplicate** clears the mark (`POST /api/time/:id/not-duplicate`, also for an approver without `time:write`).
+* Schema: migration 68 adds `time_entries.start_time` and `time_entries.duplicate_of` (no data about people). API: `docs/API.md` *Possible duplicate time*. Audit actions `time_entry.duplicate.warn`, `.override`, `.dismiss` and `time_entry.merge` are catalogued in `docs/security/LOGGING-AND-AUDIT.md`. Tests: `test/time-duplicates.test.js`; the browser script `ux13` asks, cancels, saves anyway, merges, checks the approved lock and merges a device's duplicate from the queue, with axe on the question, the time list and the queue.
+
 ## 1.23.2 — 2026-10-01
 
 A patch of 1.23.1 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
