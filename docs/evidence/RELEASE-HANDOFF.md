@@ -32,10 +32,10 @@ download against a channel other than the download (`upgrade.sh --release-sha256
 clone of their own.
 
 Prepared on branch `docs/1191-stamp-pass` from `3dc20dc`, 30 September 2026, and carried into 1.20.0, 1.21.0, 1.22.0,
-1.23.0 and 1.23.1. The 1.23.1 row is filled in by a commit after its stamp, as 1.23.0's was after its SBOM commit
+1.23.0 and 1.23.1. The 1.23.1 row was filled in by a commit after its stamp, as 1.23.0's was after its SBOM commit
 (`fd042a9`): a commit cannot hold its own hash, nor the checksum of a zip built from it. 1.23.1 is a patch, so it has
-no SBOM commit (it keeps `sbom-1.23.0`) and its tag goes on the stamp, "Release 1.23.1", itself. Until then the row
-holds placeholders, and step 1 finds the commit by its subject.
+no SBOM commit (it keeps `sbom-1.23.0`) and its tag goes on the stamp, "Release 1.23.1" (`3bff36f`), itself; step 1
+still finds it by its subject.
 
 ## The eleven releases
 
@@ -51,7 +51,7 @@ holds placeholders, and step 1 finds the commit by its subject.
 | `v1.21.0` | `8dc7aa1848c35e057d3f953dd0f987764d92b572` ("SBOM of the 1.21.0 stamp", after the stamp `f58128c`) | 2026-09-30 | `d1ff00523b89d5bf15a28ed4b2be2f4fc80b5978a214152a28aaf3fde9e5c7de` |
 | `v1.22.0` | `8b136dfc7f9b8628bb64e5491fdaae76895b7148` ("SBOM of the 1.22.0 stamp", after the stamp `74852e5`) | 2026-10-01 | `0798dc42106c95139ff4ed7f72fb3d6b95f32b8ce9cb197e6f01a1970168f1c3` |
 | `v1.23.0` | `9877d07791880c9ea9a4ddd27b4a4707c7a0ca81` ("SBOM of the 1.23.0 stamp", after the stamp `48cc586`) | 2026-10-01 | `aa785678b0fe28967732fdf4826c5a89a25337c7fcae03512ca7105e45795a81` |
-| `v1.23.1` | `<1.23.1 release commit>` ("Release 1.23.1": `git log -1 --format=%H --grep='^Release 1.23.1$' origin/main`) | 2026-10-01 | `<filled after the release>`; rebuild it with the command below |
+| `v1.23.1` | `3bff36f83a0bc39499fba82a96c874b0ef968396` ("Release 1.23.1": `git log -1 --format=%H --grep='^Release 1.23.1$' origin/main`) | 2026-10-01 | `38b1895c168d786b461b298181358b1b362eef24a66bb64f656e3a31b024124e` |
 
 **How the checksums were made, and why they can be trusted before the release exists.** The release job builds
 the zip with `git archive --format=zip --prefix="suds-vX.Y.Z/" -o suds-vX.Y.Z.zip <commit>` and hashes it with
