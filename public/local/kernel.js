@@ -11848,12 +11848,13 @@ var require_follow_ups = __commonJS({
     function reconcile(table, row, prev, { user, ip }) {
       const S = SPECS[table];
       if (!S || !row || !row.id) return null;
+      const log = (action, id, details) => audit3.log({ user, action, entity: "task", entityId: id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, ...details } });
       if (table === "referrals" && prev && !prev.outcome_recorded_at && row.outcome_recorded_at) {
         const now2 = db3.now();
         let done2 = null;
         for (const t of db3.all(`SELECT id FROM tasks WHERE referral_id=? AND status IN ('open','in_progress')`, row.id)) {
           db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now2, now2, t.id);
-          audit3.log({ user, action: "task.update", entity: "task", entityId: t.id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, status: "done" } });
+          log("task.update", t.id, { status: "done" });
           done2 = "closed";
         }
         return done2;
@@ -11880,7 +11881,6 @@ var require_follow_ups = __commonJS({
       }
       const open3 = linked.filter((t) => OPEN.includes(t.status));
       const untouched2 = open3.filter((t) => t.status === "open" && workers.has(t.assigned_to) && titles.has(norm(t._title)) && was && day(t.due_at) === was);
-      const log = (action, id, details) => audit3.log({ user, action, entity: "task", entityId: id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, ...details } });
       if (want) {
         if (open3.length) {
           if (!was || !untouched2.length) return null;

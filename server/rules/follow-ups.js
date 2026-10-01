@@ -71,6 +71,7 @@ const SPECS = {
 function reconcile(table, row, prev, { user, ip }) {
   const S = SPECS[table];
   if (!S || !row || !row.id) return null;
+  const log = (action, id, details) => audit.log({ user, action, entity: 'task', entityId: id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, ...details } });
   // A referral whose outcome this write recorded (its status set to admitted, completed, declined or closed by
   // editing it, at the office or on a device) has served its to-dos, as POST /api/referrals/:id/outcome closes them:
   // its follow-up and a supervisor's reminder to record the outcome (routes/supervision.js). Review of 1.23.0.
@@ -78,7 +79,7 @@ function reconcile(table, row, prev, { user, ip }) {
     const now = db.now(); let done = null;
     for (const t of db.all(`SELECT id FROM tasks WHERE referral_id=? AND status IN ('open','in_progress')`, row.id)) {
       db.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now, now, t.id);
-      audit.log({ user, action: 'task.update', entity: 'task', entityId: t.id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, status: 'done' } });
+      log('task.update', t.id, { status: 'done' });
       done = 'closed';
     }
     return done;
@@ -105,7 +106,6 @@ function reconcile(table, row, prev, { user, ip }) {
   const open = linked.filter(t => OPEN.includes(t.status));
   // As SUDS made it: open, the record's worker's, SUDS's title, and still due on the record's previous date.
   const untouched = open.filter(t => t.status === 'open' && workers.has(t.assigned_to) && titles.has(norm(t._title)) && was && day(t.due_at) === was);
-  const log = (action, id, details) => audit.log({ user, action, entity: 'task', entityId: id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, ...details } });
 
   if (want) {
     if (open.length) {
