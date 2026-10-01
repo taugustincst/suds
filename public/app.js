@@ -226,8 +226,11 @@ export function setOffline(on) {
     // signal, how to have this phone set up for the field (views/outreach.js field-phone). It no longer offers
     // get-app.html, SUDS on this device: a different SUDS, with none of the office's records, that cannot send the
     // contact in hand to the office.
-    offlineBanner = banner('Offline — SUDS can\'t reach the office server. On Street outreach, a contact that names nobody is kept on this phone and sent when you\'re back online; anything else stays in its form until you reconnect.', 'error', { id: 'offline' });
-    if (offlineBanner && state.user) offlineBanner.firstChild.append(' ', h('a', { href: '#/field-phone', class: 'small', 'data-field-phone-link': '1' }, 'Set up this phone for the field'));
+    // 1.23.1: one short line and the link (it was five lines on a 390 px phone, under the 2-step banner); the whole
+    // explanation is said once, and the field-phone page holds it.
+    offlineBanner = banner('Offline: a contact that names nobody is kept on this phone.', 'error', { id: 'offline', compact: true,
+      announceText: 'Offline — SUDS can\'t reach the office server. On Street outreach, a contact that names nobody is kept on this phone and sent when you\'re back online; anything else stays in its form until you reconnect.' });
+    if (offlineBanner && state.user) offlineBanner.firstChild.append(' ', h('a', { href: '#/field-phone', 'data-field-phone-link': '1' }, 'Working offline'));
   } else {
     document.querySelectorAll('#banners [data-banner="offline"]').forEach(b => b.remove());
     if (offlineBanner) { toast('Back online', 'ok'); offlineBanner = null; autoFlush(); }
@@ -1237,7 +1240,11 @@ export function table(columns, rows, { onRow, empty = 'No records', wrap = true,
       // A row that holds a control of its own (a to-do's done box) cannot also be a button — a control inside
       // a control (WCAG 4.1.2). The row still opens on a tap; the keyboard gets its own "Open" button.
       if (primary.querySelector(FOCUSABLE) || (secondary && secondary.querySelector(FOCUSABLE))) {
-        primary.append(h('button', { type: 'button', class: 'btn ghost sm compact-open', onClick: (e) => { e.stopPropagation(); tap(r); } }, h('span', { class: 'sr-only' }, `Open ${primary.textContent.trim()}`), h('span', { 'aria-hidden': 'true' }, '›')));
+        // Its name keeps the row's parts apart: "Open: Call about detox bed (Urgent)", not the title and the
+        // priority badge run together ("Open Call about detox bedUrgent", 1.23.1).
+        const [first, ...rest] = [...primary.childNodes].map(n => n.textContent.trim()).filter(Boolean);
+        const name = `Open: ${first || ''}${rest.length ? ` (${rest.join(', ')})` : ''}`;
+        primary.append(h('button', { type: 'button', class: 'btn ghost sm compact-open', onClick: (e) => { e.stopPropagation(); tap(r); } }, h('span', { class: 'sr-only' }, name), h('span', { 'aria-hidden': 'true' }, '›')));
         return h('div', { class: 'compact-row click', onClick: () => tap(r) }, primary, secondary);
       }
       return h('div', { class: 'compact-row click', tabindex: '0', role: 'button', onClick: () => tap(r), onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tap(r); } } }, primary, secondary);

@@ -61,7 +61,10 @@ test('a front-line worker\'s phone menu has at most 12 top-level entries; Street
     else assert.ok(m.main.includes('outreach'), `${label(x)}: Street outreach is in the main menu`);
     for (const p of ['reports', 'funder', 'caloms', 'suprt', 'imports', 'settlement', 'budget', 'documents']) assert.ok(!m.main.includes(p), `${label(x)}: ${p} is not in the main list`);
     assert.equal(m.main.includes('waitlist'), x.c.profile !== 'harm_reduction', `${label(x)}: Waitlist in the main list except in a harm-reduction programme`);
-    assert.equal(m.main.includes('notes'), !x.c.phone, `${label(x)}: Notes in the main list on a computer, under More on a phone`);
+    // 1.23.1: a clinician's day is notes, so Notes stays in their phone menu (and Supplies, where shown, folds instead).
+    const clinician = x.c.can('notes:clinical:write');
+    assert.equal(m.main.includes('notes'), !x.c.phone || clinician, `${label(x)}: Notes in the main list on a computer${clinician ? ' and on a clinician\'s phone' : ', under More on a navigator\'s phone'}`);
+    if (x.c.phone && clinician && x.c.profile !== 'part2_layer') assert.ok(m.more.includes('supplies') && !m.main.includes('supplies'), `${label(x)}: Supplies under More on a clinician's phone`);
     assert.equal(m.main[0], 'dashboard', 'Home first');
   }
 });

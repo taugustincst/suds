@@ -7,11 +7,13 @@
 //   front            — for a front-line worker (isFrontline() below: navigator, clinician) the placement: 'main' (the
 //                      everyday list) or 'more' (a closed "More" group at the end of the menu). A string, or an
 //                      object keyed by programme profile and 'phone' (the menu as the phone drawer, where a short
-//                      list matters most), with '*' for the rest; the most specific key wins (placementFor()).
+//                      list matters most), 'clinician_phone' (the phone drawer of someone who writes clinical
+//                      notes, notes:clinical:write), with '*' for the rest; the most specific key wins (placementFor()).
 //                      Absent: 'main'. Street outreach is in the everyday list wherever the profile shows it (1.23.0:
 //                      it was under More); the Waitlist folds into More in a harm-reduction programme, which keeps
 //                      no treatment waitlist to speak of, and Notes does on a phone, where Home's "Continue where you
-//                      left off" and the unsigned-notes count lead to them. Every page a front-line worker may open
+//                      left off" and the unsigned-notes count lead to them — except for a clinician, whose day is
+//                      notes (1.23.1): Notes stays in their phone menu and Supplies folds into More instead. Every page a front-line worker may open
 //                      is in their menu, the programme's own pages (money, contracts, settings) under More.
 //   programme: true  — the programme's own pages (money, contracts, imports, the funder report, settings), in the
 //                      "Program" section for the roles that run the programme.
@@ -38,8 +40,8 @@ export const NAV = [
   { sec: 'Record work' },
   { name: 'interventions', team: true, label: 'Visits', ico: '✚', perm: 'interventions:read', help: 'Every visit: the face-to-face or phone services you provide — outreach, screenings, warm handoffs, naloxone, transport and more.' },
   { name: 'calls', team: true, label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
-  { name: 'notes', team: true, front: { phone: 'more' }, label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
-  { name: 'supplies', hideIn: ['part2_layer'], label: 'Supplies', ico: '📦', perm: 'supplies:read', help: 'Naloxone, test strips, syringes and other harm-reduction supplies on hand at each site, by lot and expiry, with every delivery, move and count. A visit takes what it hands out off the stock automatically, the batch that expires soonest first.' },
+  { name: 'notes', team: true, front: { phone: 'more', clinician_phone: 'main' }, label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
+  { name: 'supplies', hideIn: ['part2_layer'], front: { clinician_phone: 'more' }, label: 'Supplies', ico: '📦', perm: 'supplies:read', help: 'Naloxone, test strips, syringes and other harm-reduction supplies on hand at each site, by lot and expiry, with every delivery, move and count. A visit takes what it hands out off the stock automatically, the batch that expires soonest first.' },
   // Street outreach (1.17.0): the one-screen, phone-first logger for anonymous field contacts; also on + Log, and a
   // worker's start page if they choose (My profile, or the box on the screen).
   { name: 'outreach', hideIn: ['part2_layer'], label: 'Street outreach', ico: '🚶', perm: 'interventions:write', front: 'main', help: 'Log a field contact in a few taps: what kind, what you handed out, and roughly where. Anonymous, works with no connection on a device, and the supplies come off the stock.' },
@@ -90,10 +92,10 @@ export const isFrontline = (c) => c.can('interventions:write') && !c.can('budget
  */
 export const isSupervising = (c) => c.can('notes:cosign') && c.can('assignments:manage') && !c.can('users:manage') && !c.can('settings:manage');
 /** An entry's front-line placement for this profile and screen (see `front` above). */
-export function placementFor(front, { profile = null, phone = false } = {}) {
+export function placementFor(front, { profile = null, phone = false, clinician = false } = {}) {
   if (!front) return 'main';
   if (typeof front === 'string') return front;
-  return (phone && front.phone) || front[profile] || front['*'] || 'main';
+  return (phone && clinician && front.clinician_phone) || (phone && front.phone) || front[profile] || front['*'] || 'main';
 }
 /** Where a NAV entry goes in this person's menu: 'main', 'more' (folded away), or null (not shown). */
 export function placement(n, c) {
@@ -103,7 +105,7 @@ export function placement(n, c) {
   if (n.name === 'compliance' && c.profile === 'part2_layer') return 'main';
   if (isSupervising(c)) return n.team ? 'main' : 'more';
   if (!isFrontline(c)) return 'main';
-  return placementFor(n.front, c);
+  return placementFor(n.front, { profile: c.profile, phone: c.phone, clinician: c.can('notes:clinical:write') });
 }
 /**
  * The menu as lists of names: { main, more, top } — `top` counts the entries a person scans before opening

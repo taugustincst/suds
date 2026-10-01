@@ -346,7 +346,10 @@ route('field-phone', async () => {
     const req = st.request;
     const status = h('div', { role: 'status', 'data-field-request-status': req ? req.status : 'none' },
       req && req.status === 'open' ? h('p', {}, h('b', {}, 'Asked. '), `You asked on ${fmt.dt(req.requested_at)}. Your administrators have a to-do to approve it.`)
-        : req && req.status === 'approved' ? h('p', {}, h('b', {}, 'Approved. '), `An administrator approved it on ${fmt.dt(req.decided_at)}: every phone you sync is a field device.`)
+        : req && req.status === 'approved' ? (st.local_mode
+          ? h('p', {}, h('b', {}, 'Approved. '), `An administrator approved it on ${fmt.dt(req.decided_at)}: every phone you sync is a field device.`)
+          // 1.23.1: approved while offline copies are off on the server: nothing works offline yet; say who to ask.
+          : h('p', { 'data-field-approved-off': '1' }, h('b', {}, 'Approved, but not ready yet. '), `On ${fmt.dt(req.decided_at)} an administrator set your account as a field account, but your office has not turned on offline copies yet, so this phone cannot keep one. Ask your SUDS administrator (whoever manages Settings › Synced devices) to turn on offline copies on the office server. Until then, Street outreach still keeps contacts that name nobody when you have no signal.`))
           : req && req.status === 'declined' ? h('p', {}, h('b', {}, 'Not approved. '), `An administrator declined it on ${fmt.dt(req.decided_at)}. Ask them why, or ask again.`) : null);
     const askBtn = h('button', { type: 'button', class: 'btn primary', 'data-field-request': '1', onClick: async () => {
       askBtn.setAttribute('aria-disabled', 'true');
@@ -373,7 +376,8 @@ route('field-phone', async () => {
             h('li', {}, 'Sync whenever you have signal; the top of every page says what is still to send.')),
           h('p', { class: 'small muted' }, 'Your administrator sees the phone under Settings › Synced devices. You may also ask them to approve it: then every phone you sync is a field device.'))
         : h('section', { class: 'card', 'aria-labelledby': 'fp-ask-h', 'data-field-ask-only': '1' }, h('h2', { id: 'fp-ask-h' }, 'Ask your administrator'),
-          h('p', {}, 'Your office has not allowed offline copies on phones, so an administrator decides first. Asking gives every administrator a to-do; you see the answer here.')),
+          h('p', {}, req && req.status === 'approved' ? 'Your office has not turned on offline copies on phones yet. Only your SUDS administrator can turn them on.'
+            : 'Your office has not allowed offline copies on phones, so an administrator decides first. Asking gives every administrator a to-do; you see the answer here.')),
       h('section', { class: 'card', 'aria-labelledby': 'fp-req-h' }, h('h2', { id: 'fp-req-h' }, 'Your request'), status,
         askable ? askBtn : null,
         st.devices.length ? h('div', {}, h('h3', { class: 'eyebrow' }, 'Your synced phones and tablets'),
