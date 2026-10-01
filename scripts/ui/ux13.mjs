@@ -410,7 +410,8 @@ try {
     const call = (await api('POST', '/api/calls', { client_id: c, direction: 'outbound', started_at: new Date().toISOString(), duration_minutes: 2, contact_type: 'client', outcome: 'reached' })).data.id;
     await go(`client/${c}/calls`);
     const del = await page.$('button[aria-label="Delete this call"]');
-    if (del) { await del.click(); await settle(page); ok(/Delete call/.test(await dialogTitle(page) || ''), 'deleting a call still asks first (it cannot be undone)'); await closeModals(page); }
+    // 1.23.3: the confirmation first asks which to-dos the delete cancels, so it opens a moment after the click.
+    if (del) { await del.click(); ok(await until(async () => /Delete call/.test(await dialogTitle(page) || '')), 'deleting a call still asks first (it cannot be undone)', await dialogTitle(page)); await closeModals(page); }
     else ok(call, 'the call exists (its delete button is on the Calls tab)');
   }
 
