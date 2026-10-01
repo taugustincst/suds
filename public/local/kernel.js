@@ -27028,7 +27028,8 @@ var require_time = __commonJS({
         crud.assertFresh(ctx, kept, "time_entry");
         const times = body.times === void 0 ? "union" : body.times;
         if (!["union", "keep"].includes(times)) throw badRequest('times must be "union" or "keep"');
-        if (!!body.from_id === !!body.entry) throw badRequest("Send either from_id (a stored entry) or entry (a new one)");
+        if (!body.from_id && !body.entry) throw badRequest("Send from_id (a stored entry), entry (a new one), or both (a stored entry as it is being edited)");
+        if (body.entry !== void 0 && (!body.entry || typeof body.entry !== "object")) throw badRequest("entry must be an object");
         let other;
         let fromId = null;
         if (body.from_id) {
@@ -27039,8 +27040,16 @@ var require_time = __commonJS({
           R.assertEditable("time_entries", ctx, stored, { deleting: true });
           other = { ...stored, description: presentTime({ description_enc: stored.description_enc }).description };
           fromId = stored.id;
+          if (body.entry) {
+            const v = validate(body.entry, TE.partialShape(), { partial: true, existing: stored });
+            if (!auth3.hasPerm(ctx.user, "time:all")) delete v.user_id;
+            if (v.client_id && v.client_id !== stored.client_id) {
+              if (!crud.clientExists(v.client_id)) throw notFound("Client not found");
+              auth3.assertClientAccess(ctx, v.client_id, { deidentified: true });
+            }
+            for (const [k, x] of Object.entries(v)) if (x !== void 0) other[k] = x;
+          }
         } else {
-          if (typeof body.entry !== "object") throw badRequest("entry must be an object");
           const v = validate(body.entry, TE.shape());
           if (v.client_id) {
             if (!crud.clientExists(v.client_id)) throw notFound("Client not found");

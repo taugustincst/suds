@@ -172,7 +172,8 @@ module.exports = (r) => {
     crud.assertFresh(ctx, kept, 'time_entry');
     const times = body.times === undefined ? 'union' : body.times;
     if (!['union', 'keep'].includes(times)) throw badRequest('times must be "union" or "keep"');
-    if (!!body.from_id === !!body.entry) throw badRequest('Send either from_id (a stored entry) or entry (a new one)');
+    if (!body.from_id && !body.entry) throw badRequest('Send from_id (a stored entry), entry (a new one), or both (a stored entry as it is being edited)');
+    if (body.entry !== undefined && (!body.entry || typeof body.entry !== 'object')) throw badRequest('entry must be an object');
     let other; let fromId = null;
     if (body.from_id) {
       if (body.from_id === kept.id) throw badRequest('An entry cannot be merged into itself');
@@ -182,8 +183,14 @@ module.exports = (r) => {
       R.assertEditable('time_entries', ctx, stored, { deleting: true });
       other = { ...stored, description: presentTime({ description_enc: stored.description_enc }).description };
       fromId = stored.id;
+      // The stored entry as its form has it now (an edit that was asked about): its values, checked as an update is.
+      if (body.entry) {
+        const v = validate(body.entry, TE.partialShape(), { partial: true, existing: stored });
+        if (!auth.hasPerm(ctx.user, 'time:all')) delete v.user_id;
+        if (v.client_id && v.client_id !== stored.client_id) { if (!crud.clientExists(v.client_id)) throw notFound('Client not found'); auth.assertClientAccess(ctx, v.client_id, { deidentified: true }); }
+        for (const [k, x] of Object.entries(v)) if (x !== undefined) other[k] = x;
+      }
     } else {
-      if (typeof body.entry !== 'object') throw badRequest('entry must be an object');
       const v = validate(body.entry, TE.shape());
       if (v.client_id) { if (!crud.clientExists(v.client_id)) throw notFound('Client not found'); auth.assertClientAccess(ctx, v.client_id, { deidentified: true }); }
       R.assertWrite('time_entries', R.toColumns('time_entries', v), ctx);

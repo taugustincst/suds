@@ -172,6 +172,21 @@ test('an edit is asked about only when it changes the day, times, minutes or des
   assert.equal((await C.nav.put(`/api/time/${b}`, { start_time: 'noon' })).status, 400, 'a start time is HH:MM');
 });
 
+test('an edit that was asked about can be merged as edited: the edited entry goes, the existing one keeps both', async () => {
+  const day = nextDay();
+  const a = await logged(C.nav, { work_date: day, start_time: '07:00', minutes: 60, description: 'Early shift' });
+  const b = await logged(C.nav, { work_date: day, start_time: '09:00', minutes: 30, description: 'Debrief' });
+  const edit = { start_time: '07:30', minutes: 60, description: 'Debrief' };
+  assert.equal((await C.nav.put(`/api/time/${b}`, edit)).status, 409);
+  const m = await C.nav.post(`/api/time/${a}/merge`, { from_id: b, entry: edit });
+  assert.equal(m.status, 200, JSON.stringify(m.data));
+  assert.equal(row(b), null);
+  const t = (await C.nav.get(`/api/time/${a}`)).data.row;
+  assert.equal(t.start_time, '07:00'); assert.equal(t.minutes, 90, 'the edited range (07:30-08:30), not the stored one');
+  assert.equal(t.description, 'Early shift\nDebrief');
+  assert.equal((await C.nav.post(`/api/time/${a}/merge`, { from_id: a })).status, 400, 'not into itself');
+});
+
 test('permissions: another worker cannot merge or clear your time; finance clears a mark but cannot merge', async () => {
   const day = nextDay();
   const a = await logged(C.nav, { work_date: day, start_time: '15:00', minutes: 30, description: 'Mine' });
