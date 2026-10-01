@@ -303,8 +303,11 @@ test('migration 46: a preferred name with no search index gets one; a written in
 // 3dc20dc, the released commit) is the release before 1.20.0: migration 60 rebuilds county_submissions while it holds
 // the signed rows --rich made there, and adds county_programmes.on_suds to programmes that exist. 1.20.0 (schema 60,
 // --rich, made from 8f365b4, the released commit) is the release before 1.21.0: migrations 61 to 63 run on a database
-// whose county_submissions holds signed rows and a county-entered one that 1.20.0 wrote through its own API.
-for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql', 'release-v1.15.3.sql', 'release-v1.16.4.sql', 'release-v1.18.0.sql', 'release-v1.19.0.sql', 'release-v1.20.0.sql']) {
+// whose county_submissions holds signed rows and a county-entered one that 1.20.0 wrote through its own API. 1.22.0
+// (schema 66, --rich, made from 8b136df, the commit after its stamp that adds its SBOM) is the release before 1.23.0:
+// migration 67 runs on a database whose county publication tables hold releases, a withdrawal, consents and inputs that
+// 1.22.0 wrote through its own API.
+for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.13.0.sql', 'release-v1.15.3.sql', 'release-v1.16.4.sql', 'release-v1.18.0.sql', 'release-v1.19.0.sql', 'release-v1.20.0.sql', 'release-v1.22.0.sql']) {
   const sql = fs.readFileSync(path.join(__dirname, 'fixtures', fixture), 'utf8');
   const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
   test(`a SUDS ${expect.version} database (schema ${expect.schema_version}) upgrades to the current schema with its records intact`, () => {
@@ -700,6 +703,119 @@ test('SUDS 1.21.0\'s first start on a 1.20.0 database: county rows (a county-ent
     const chain = require('../server/audit').verifyChain();
     assert.equal(chain.ok, true, 'the audit chain verifies');
     assert.ok(chain.checked >= auditBefore, `every audit entry 1.20.0 wrote is checked (${chain.checked} >= ${auditBefore})`);
+  } finally {
+    require('../server/db').close();
+    require('../server/db').open(dbPath);
+    fs.rmSync(fdir, { recursive: true, force: true });
+  }
+});
+
+// SUDS 1.23.0's first start on a 1.22.0 database (upgrade drill of 1.23.0, docs/evidence/upgrade-drill-2026-10-01-v1.23.0):
+// the database 1.22.0 wrote itself (release-v1.22.0.sql), whose county tables hold signed files, a county-entered
+// quarter, each programme's consent to publication (one withdrawn and recorded again), and releases with what they were
+// screened from (one withdrawn, its corrected release, and another period), with what 1.22.0 held besides: a field
+// device and its account held to the field scope, a whole device, an attested passkey and one in the allow-list's grace
+// period, their sessions, a call and a visit with follow-up dates and the to-dos 1.22.0 made for them, and a
+// supervisor's reminder to sign a draft. Migration 67 adds tasks.call_id and tasks.intervention_id only: every row is
+// compared by the columns 1.22.0 had, the new columns are NULL, an old to-do is linked the first time its call is
+// edited (by title and date), the reminder still closes, and the audit chain still verifies.
+test('SUDS 1.23.0\'s first start on a 1.22.0 database: county consents, releases and inputs, field device, passkeys, follow-up to-dos and a reminder survive', () => {
+  const { sha256, encrypt, decrypt, uuid } = require('../server/crypto');
+  const sql = fs.readFileSync(path.join(__dirname, 'fixtures', 'release-v1.22.0.sql'), 'utf8');
+  const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
+  assert.equal(expect.version, '1.22.0'); assert.equal(expect.schema_version, 66);
+  const fdir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-first-start-1.22.0-'));
+  const fpath = path.join(fdir, 'suds.db');
+  const d = new DatabaseSync(fpath);
+  d.exec(sql);
+  const colsIn = (t) => d.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+  for (const c of ['call_id', 'intervention_id']) assert.ok(!colsIn('tasks').includes(c), `1.22.0 had no tasks.${c}`);
+  assert.ok(colsIn('passkeys').includes('allowlist_grace_until') && colsIn('devices').includes('scope_set_by'), '1.22.0 had migrations 64 and 66');
+  // The county publication tables as 1.22.0 wrote them through its own API.
+  const pubs = d.prepare(`SELECT kind, release_id IS NOT NULL withdraws FROM county_publications ORDER BY created_at`).all().map((r) => `${r.kind}${r.withdraws ? ' of a release' : ''}`);
+  assert.deepEqual(pubs, ['release', 'withdrawal of a release', 'release', 'release'], 'a release, its withdrawal, its corrected release and another period');
+  assert.equal(d.prepare(`SELECT COUNT(*) n FROM county_publication_inputs`).get().n, 3, 'what each of the three releases was screened from');
+  const consentsIn = d.prepare(`SELECT COUNT(*) n, SUM(withdrawn_at IS NOT NULL) withdrawn FROM county_publication_consents`).get();
+  assert.ok(consentsIn.n >= 3 && consentsIn.withdrawn === 1, 'consents, one withdrawn');
+  // What 1.22.0 held for its people and devices, written as 1.22.0 wrote them.
+  const user = d.prepare(`SELECT id FROM users WHERE is_active=1 AND role='navigator' ORDER BY rowid LIMIT 1`).get();
+  const sup = d.prepare(`SELECT id FROM users WHERE is_active=1 AND role='supervisor' ORDER BY rowid LIMIT 1`).get();
+  const client = d.prepare(`SELECT id FROM clients ORDER BY rowid LIMIT 1`).get();
+  const now = new Date(); const later = new Date(now.getTime() + 8 * 3600_000); const iso = (t) => new Date(t).toISOString();
+  const graceUntil = iso(now.getTime() + 14 * 86400_000);
+  const pk = d.prepare(`INSERT INTO passkeys(id,user_id,credential_id,public_key,alg,sign_count,rp_id,name,aaguid,attestation,allowlist_grace_until) VALUES(?,?,?,?,?,?,?,?,?,?,?)`);
+  pk.run('fixture-attested', user.id, 'Y3JlZC1hdHRlc3RlZA', 'MFkwEwYHKoZIzj0CAQ', -7, 3, 'suds.example.org', 'Listed key', 'd1a11d1a-0000-4000-8000-0000000c0123', JSON.stringify({ verified: true, fmt: 'packed', type: 'basic', aaguid: 'd1a11d1a-0000-4000-8000-0000000c0123', mds_no: 4000, verified_at: iso(now) }), null);
+  pk.run('fixture-grace', sup.id, 'Y3JlZC1ncmFjZQ', 'MFkwEwYHKoZIzj0CAQ', -7, 1, 'suds.example.org', 'Phone from before the list', null, null, graceUntil);
+  d.prepare(`INSERT INTO devices(id,user_id,label,last_ip,sync_count,sync_scope,scope_changed_at,field_applied_at,scope_set_by) VALUES(?,?,?,?,?,?,?,?,?)`).run('fixture-field', user.id, 'Android phone', '10.0.0.8', 5, 'field', iso(now), iso(now), 'admin');
+  d.prepare(`INSERT INTO devices(id,user_id,label,last_ip,sync_count,sync_scope,scope_set_by) VALUES(?,?,?,?,?,?,?)`).run('fixture-whole', sup.id, 'Office tablet', '10.0.0.9', 9, 'full', 'default');
+  d.prepare(`INSERT INTO field_accounts(user_id,bound_at,bound_via) VALUES(?,?,?)`).run(user.id, iso(now), 'admin');
+  const tokens = { passkey: 'fixture-1.22-passkey', grace: 'fixture-1.22-grace', field: 'fixture-1.22-field-device' };
+  const ins = d.prepare(`INSERT INTO sessions(id,user_id,created_at,last_seen_at,expires_at,mfa_pending,ip,user_agent,reauth_at,reauth_method,passkey_id,sync_client,device_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  ins.run(sha256(tokens.passkey), user.id, iso(now), iso(now), iso(later), 0, '127.0.0.1', 'fixture', iso(now), 'passkey', 'fixture-attested', 0, null);
+  ins.run(sha256(tokens.grace), sup.id, iso(now), iso(now), iso(later), 0, '127.0.0.1', 'fixture', iso(now), 'passkey', 'fixture-grace', 0, null);
+  ins.run(sha256(tokens.field), user.id, iso(now), iso(now), iso(later), 0, '10.0.0.8', 'fixture device', iso(now), 'password', null, 1, 'fixture-field');
+  // A call and a visit with follow-up dates, and the to-dos 1.22.0 made for them (routes/calls.js, interventions.js).
+  const call = { id: uuid(), client_id: client.id, user_id: user.id, direction: 'outbound', method: 'phone', started_at: iso(now), purpose_enc: encrypt('MAT intake'), follow_up_needed: 1, follow_up_due: '2026-10-20' };
+  d.prepare(`INSERT INTO calls(${Object.keys(call)}) VALUES(${Object.keys(call).map(() => '?')})`).run(...Object.values(call));
+  const visit = { id: uuid(), client_id: client.id, user_id: user.id, type: 'case_management', occurred_at: iso(now), follow_up_due: '2026-10-21' };
+  d.prepare(`INSERT INTO interventions(${Object.keys(visit)}) VALUES(${Object.keys(visit).map(() => '?')})`).run(...Object.values(visit));
+  const task = d.prepare(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority) VALUES(?,?,?,?,?,?,?,?)`);
+  const ids = { callTask: uuid(), visitTask: uuid(), reminder: uuid(), draft: uuid() };
+  task.run(ids.callTask, client.id, user.id, user.id, encrypt('Call back: MAT intake'), null, '2026-10-20', 'normal');
+  task.run(ids.visitTask, client.id, user.id, user.id, encrypt('Follow up: Case Management'), null, '2026-10-21', 'normal');
+  // A supervisor's "Finish and sign your note" reminder for a draft (public/views/supervision.js).
+  d.prepare(`INSERT INTO notes(id,client_id,author_id,kind,title_enc,content_enc,occurred_at) VALUES(?,?,?,?,?,?,?)`).run(ids.draft, client.id, user.id, 'admin', encrypt('Draft'), encrypt('Not signed yet'), iso(now));
+  task.run(ids.reminder, client.id, user.id, sup.id, encrypt('Finish and sign your administrative note'), encrypt(`Asked to finish and sign this draft note.\nReference: supervision reminder for note ${ids.draft}`), '2026-10-01', 'normal');
+  // Every row of these tables, by the columns 1.22.0 had.
+  const KEEP = ['county_publications', 'county_publication_consents', 'county_publication_inputs', 'county_submissions', 'county_programmes', 'field_accounts', 'devices', 'passkeys', 'tasks'];
+  const cols = Object.fromEntries(KEEP.map((t) => [t, colsIn(t)]));
+  const rowsOf = (all, t) => all(`SELECT ${cols[t].map((c) => `"${c}"`).join(',')} FROM "${t}" ORDER BY rowid`).map((r) => ({ ...r }));
+  const before = Object.fromEntries(KEEP.map((t) => [t, rowsOf((q) => d.prepare(q).all(), t)]));
+  const plain = (t, c) => Object.fromEntries(before[t].filter((r) => r[c]).map((r) => [r.id, decrypt(r[c])]));
+  const encBefore = { inputs: plain('county_publication_inputs', 'inputs_enc'), reasons: plain('county_publications', 'reason_enc'), references: plain('county_publication_consents', 'reference_enc') };
+  const sessBefore = d.prepare(`SELECT id, user_id, mfa_pending, reauth_method, passkey_id, sync_client, device_id, revoked_at, expires_at FROM sessions ORDER BY id`).all().map((r) => ({ ...r }));
+  const auditBefore = d.prepare(`SELECT COUNT(*) n FROM audit_log`).get().n;
+  d.close();
+  require('../server/db').close();
+  try {
+    require('../server/db').open(fpath);
+    assert.equal(db().getSetting('schema_version'), String(require('../server/db').LATEST_SCHEMA_VERSION));
+    assertSameShape(schemaShape(db().get()), freshShape(), '1.22.0 (first start)');
+    assert.deepEqual(db().all('PRAGMA foreign_key_check'), []);
+    for (const t of KEEP) assert.deepEqual(rowsOf((q) => db().all(q), t), before[t], `every ${t} row 1.22.0 wrote, unchanged`);
+    assert.deepEqual(db().all(`SELECT id, user_id, mfa_pending, reauth_method, passkey_id, sync_client, device_id, revoked_at, expires_at FROM sessions ORDER BY id`).map((r) => ({ ...r })), sessBefore, 'every session unchanged');
+    const again = { inputs: Object.fromEntries(db().all(`SELECT id, inputs_enc v FROM county_publication_inputs`).map((r) => [r.id, decrypt(r.v)])),
+      reasons: Object.fromEntries(db().all(`SELECT id, reason_enc v FROM county_publications WHERE reason_enc IS NOT NULL`).map((r) => [r.id, decrypt(r.v)])),
+      references: Object.fromEntries(db().all(`SELECT id, reference_enc v FROM county_publication_consents WHERE reference_enc IS NOT NULL`).map((r) => [r.id, decrypt(r.v)])) };
+    assert.deepEqual(again, encBefore, 'what each release was screened from, why one was withdrawn and each agreement\'s reference still decrypt to what they were');
+    // Migration 67: the new columns, NULL on every to-do 1.22.0 made, and their indexes.
+    assert.equal(db().one(`SELECT COUNT(*) n FROM tasks WHERE call_id IS NOT NULL OR intervention_id IS NOT NULL`).n, 0, 'no to-do linked yet');
+    for (const i of ['idx_tasks_call', 'idx_tasks_intervention']) assert.ok(db().one(`SELECT 1 x FROM sqlite_master WHERE type='index' AND name=?`, i), i);
+    // The field scope still follows the account; the whole device stays whole.
+    const DEV = require('../server/devices');
+    assert.equal(DEV.accountFieldBound(user.id), true, 'the field device\'s account is still held to the field scope');
+    assert.equal(DEV.effectiveField(user.id, db().one(`SELECT * FROM devices WHERE id='fixture-field'`)), true);
+    assert.equal(DEV.effectiveField(sup.id, db().one(`SELECT * FROM devices WHERE id='fixture-whole'`)), false);
+    // The sessions still sign their holders in (the passkey ones; a field device's is held to syncing).
+    const auth = require('../server/auth');
+    for (const [t, who] of [['passkey', user.id], ['grace', sup.id]]) assert.equal((auth.resolveSession({ cookies: { suds_session: tokens[t] }, headers: {} }) || {}).id, who, `the ${t} session still signs its holder in`);
+    // Editing the call's follow-up date (1.23.0's rule): the to-do 1.22.0 made is found by title and date, linked and
+    // moved, not duplicated; the visit's likewise.
+    const FU = require('../server/rules/follow-ups');
+    const c0 = db().one(`SELECT * FROM calls WHERE id=?`, call.id);
+    db().run(`UPDATE calls SET follow_up_due='2026-10-27' WHERE id=?`, call.id);
+    assert.equal(FU.reconcile('calls', db().one(`SELECT * FROM calls WHERE id=?`, call.id), c0, { user: { id: user.id, username: 'fixture' } }), 'moved');
+    const v0 = db().one(`SELECT * FROM interventions WHERE id=?`, visit.id);
+    db().run(`UPDATE interventions SET follow_up_due='2026-10-28' WHERE id=?`, visit.id);
+    assert.equal(FU.reconcile('interventions', db().one(`SELECT * FROM interventions WHERE id=?`, visit.id), v0, { user: { id: user.id, username: 'fixture' } }), 'moved');
+    assert.deepEqual({ ...db().one(`SELECT call_id, due_at, status FROM tasks WHERE id=?`, ids.callTask) }, { call_id: call.id, due_at: '2026-10-27', status: 'open' }, 'the call\'s to-do, linked and moved');
+    assert.deepEqual({ ...db().one(`SELECT intervention_id, due_at, status FROM tasks WHERE id=?`, ids.visitTask) }, { intervention_id: visit.id, due_at: '2026-10-28', status: 'open' }, 'the visit\'s to-do, linked and moved');
+    assert.equal(db().one(`SELECT COUNT(*) n FROM tasks`).n, before.tasks.length, 'no second to-do');
+    // Signing the draft closes the supervisor's reminder (server/rules/notes.js).
+    assert.deepEqual(require('../server/rules/notes').closeSignReminders(user.id, ids.draft, client.id), [ids.reminder], 'the reminder 1.22.0 held closes');
+    const chain = require('../server/audit').verifyChain();
+    assert.equal(chain.ok, true, 'the audit chain verifies');
+    assert.ok(chain.checked >= auditBefore, `every audit entry 1.22.0 wrote is checked (${chain.checked} >= ${auditBefore})`);
   } finally {
     require('../server/db').close();
     require('../server/db').open(dbPath);

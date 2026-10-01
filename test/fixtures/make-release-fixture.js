@@ -11,7 +11,9 @@
 // release-v1.18.0.sql: `git archive 39e397e` (the "Release 1.18.0" commit; not tagged), --rich; release-v1.19.0.sql:
 // `git archive 3dc20dc server package.json` ("Release 1.19.0"), --rich (its county_submissions rows are signed ones);
 // release-v1.20.0.sql: `git archive 8f365b4 server package.json` (the v1.20.0 commit), --rich (its county rows made
-// through its own API: signed files it imported, one superseded, and a quarter the county entered). A table whose key is
+// through its own API: signed files it imported, one superseded, and a quarter the county entered); release-v1.22.0.sql:
+// `git archive 8b136df` (the commit after the 1.22.0 stamp that adds its SBOM), --rich (its county rows as 1.20.0's, and
+// its county publication releases, a withdrawal, consents and inputs through its own API too). A table whose key is
 // CHECKed to one value (county_connection) gets its one row, and is listed in the expectation's `rich.singletons`.
 //
 // --rich (release-v1.11.0.sql and release-v1.13.0.sql): a database with realistic rows in every table that has
@@ -124,6 +126,27 @@ async function enrich(db, call) {
     await call('POST', `/api/county/programmes/${other.id}/entries`, { from: '2026-01-01', to: '2026-03-31', source_ref: 'Q1 report emailed 3 April 2026 — “Zoë”', funds: [{ name: 'County settlement share', grant_number: 'OSF-FX-1', category: 'core_h', hiaa: 'hiaa_4',
       spend_own_category: '1000.50', spend_other_categories: '0', spend_pending: '25', contacts: '120', naloxone_kits: '80', fentanyl_strips: '300', syringes: '900', reversals: '3', treatment_admissions: '2',
       education_contacts: '5', staff_training_hours: '12.5', referrals_made: '14', people_served: '70', people_linked: '6', moud_linked: '2', people_trained: '9' }] });
+    // A release with county publication releases (1.21.0 on): the releases through its own API too, as
+    // docs/evidence/upgrade-drill-2026-10-01-v1.23.0 makes them, since a release row is CHECKed to its content and a
+    // withdrawal to the release it withdraws, which rows made up below cannot satisfy. Where the release has consents
+    // (1.22.0 on), each programme's first; January-March published and withdrawn (with its reason); where the release
+    // keeps what a release was screened from (1.22.0 on), a corrected release of that period; April-June published;
+    // and then one programme's consent withdrawn and recorded again, so a withdrawn consent is among the rows.
+    if (d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='county_publications'`).get()) {
+      const has = (t) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(t);
+      const progs = (await call('GET', '/api/county/programmes')).rows;
+      if (has('county_publication_consents')) for (const p of progs) await call('POST', `/api/county/programmes/${p.id}/publication-consent`, { agreed_on: '2026-04-01', reference: `Signed agreement — ${p.name}, “Zoë” ✓` });
+      const publish = async (q) => { const prep = await call('POST', '/api/county/publications/prepare', q); return call('POST', '/api/county/publications', { ...q, sha256: prep.sha256, reviewed: true }); };
+      const q1 = { from: '2026-01-01', to: '2026-03-31' };
+      const first = await publish(q1);
+      await call('POST', `/api/county/publications/${first.id}/withdraw`, { reason: 'A programme corrected its figures — “Zoë” ✓' });
+      if (has('county_publication_inputs')) await publish(q1);
+      await publish({ from: '2026-04-01', to: '2026-06-30' });
+      if (has('county_publication_consents')) {
+        await call('POST', `/api/county/programmes/${other.id}/publication-consent/withdraw`, {});
+        await call('POST', `/api/county/programmes/${other.id}/publication-consent`, { agreed_on: '2026-07-01', reference: 'Renewed agreement 李明' });
+      }
+    }
   }
   // Every table with an encrypted column: top it up to RICH_ROWS rows, and give every such column a value.
   const tables = d.prepare(`SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all();
