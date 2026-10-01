@@ -128,6 +128,18 @@ try {
   ok(/Tick the settlement funds/.test(await fin.textContent('[data-so-county-error]')), 'no fund ticked: said at the card');
   ok(await fin.evaluate(() => document.activeElement && document.activeElement.hasAttribute('data-so-county-fund')), 'and the focus goes to the funds');
   await fin.check('[data-so-county-fund]');
+  // Which SUDS the county runs (1.22.0): asked once for a new county code; until answered, the file would be version 1.
+  ok(await fin.isVisible('[data-so-county-suds-ask]'), 'a new county code: the card asks which SUDS the county runs, once');
+  eq(await fin.getAttribute('[data-so-county-version-made]', 'data-so-county-version-made'), '1', 'not known yet: the card says the file will be version 1');
+  ok(/award amounts need the county on SUDS 1\.21 or later/.test(await fin.textContent('[data-so-county-version-made]')), 'and why: award amounts need the county on 1.21 or later');
+  await fin.click('[data-so-county-file]');
+  ok(/Choose which SUDS the county runs/.test(await until(async () => (await fin.textContent('[data-so-county-error]')) || null) || ''), 'unanswered, Make the county file asks for the answer at the card');
+  ok(await fin.evaluate(() => document.activeElement && document.activeElement.hasAttribute('data-so-county-suds')), 'and the focus goes to the question');
+  await fin.check('[data-so-county-suds="unknown"]');
+  ok(/version 1, without award amounts/.test(await fin.textContent('[data-so-county-version-made]')), '"Don\'t know": version 1, without award amounts');
+  await fin.check('[data-so-county-suds="1.21+"]');
+  eq(await fin.getAttribute('[data-so-county-version-made]', 'data-so-county-version-made'), '2', '"SUDS 1.21 or later": version 2');
+  await axe(fin, 'Send to the county, asking which SUDS the county runs (1280)');
   const [dl] = await Promise.all([fin.waitForEvent('download'), fin.click('[data-so-county-file]')]);
   ok(/^suds-county-submission-[a-z0-9-]+-\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}\.json$/.test(dl.suggestedFilename()) && dl.suggestedFilename().includes(`${lq.from}_${lq.to}`), 'Make the county file downloads the quarter\'s file, named after the program', dl.suggestedFilename());
   const ownPath = path.join(tmp, 'own.json'); await dl.saveAs(ownPath);
@@ -535,11 +547,14 @@ try {
   await adm.keyboard.press('Escape'); await until(async () => !(await adm.$('.modal-bg')));
   // The program's side: a version 1 file for a county still on SUDS 1.20.
   await go(fin, 'settlement'); await until(() => fin.$('[data-so-county-form]'));
-  ok(!(await fin.isChecked('[data-so-county-v1]')), 'the card makes version 2 unless asked');
-  await fin.check('[data-so-county-v1]');
+  ok(await fin.isChecked('[data-so-county-suds="1.21+"]'), 'the answer for this county code is remembered: SUDS 1.21 or later');
+  ok(await fin.isHidden('[data-so-county-suds-ask]'), 'and not asked again');
+  eq(await fin.getAttribute('[data-so-county-version-made]', 'data-so-county-version-made'), '2', 'so the card makes version 2');
+  await fin.check('[data-so-county-suds="1.20-"]');
+  eq(await fin.getAttribute('[data-so-county-version-made]', 'data-so-county-version-made'), '1', 'a county on SUDS 1.20 or earlier: version 1');
   const [dlv1] = await Promise.all([fin.waitForEvent('download'), fin.click('[data-so-county-file]')]);
   const v1Own = JSON.parse(fs.readFileSync(await dlv1.path(), 'utf8'));
-  eq(v1Own.schema_version, 1, 'ticked, the file is version 1'); ok(!JSON.stringify(v1Own).includes('award'), 'with no award in it');
+  eq(v1Own.schema_version, 1, 'the file is version 1'); ok(!JSON.stringify(v1Own).includes('award'), 'with no award in it');
   ok(await toast(fin, /version 1, without the award/), 'and the message says so');
   // The reporting schedule: recorded for this county from the quarter before the last, so that quarter is due.
   const sched = await until(() => fin.$('[data-so-schedule-form]'));

@@ -347,7 +347,7 @@ async function buildFile({ from, to, user, recipient, fundIds, remember = true, 
   const { file, sha256, fingerprint } = K.signFile(payload);
   // Remembered for this county, as the file route does: the card offers the same name and funds next time. Only a
   // person's send remembers: an automatic one uses what a person chose and never rewrites it.
-  if (remember) { const rec = recipients(); rec[payload.recipient.county_code] = { name: payload.recipient.county_name, fund_ids: fundIds, used_at: db.now() }; db.setSetting('county_submission_recipients', JSON.stringify(rec)); }
+  if (remember) { const rec = recipients(); rec[payload.recipient.county_code] = { ...(rec[payload.recipient.county_code] || {}), name: payload.recipient.county_name, fund_ids: fundIds, used_at: db.now() }; db.setSetting('county_submission_recipients', JSON.stringify(rec)); }
   return { file, sha256, fingerprint, payload, keyCreated: created ? key : null };
 }
 

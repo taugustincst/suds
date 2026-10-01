@@ -162,17 +162,47 @@ function countyForm(k, o, today, pageFrom, pageTo, choice, rem = null) {
     h('legend', {}, 'Settlement funds this county pays for'),
     o.funds.length ? fundBoxes : h('p', { class: 'small muted' }, 'No funding source is marked as opioid settlement money.'),
     h('div', { class: 'help', id: 'so-county-funds-help' }, 'Only the funds you tick go into the file, and every total in it is over them alone: a fund another funder pays for stays out. Nothing is ticked until you choose; SUDS remembers your choice for this county.'));
-  // The file's version (released in 1.21.0): version 2, with each fund's award, unless the county still
-  // runs SUDS 1.20 or earlier, which refuses it. Ticked for the person when the connected county says it reads only
-  // version 1 and its code is the one typed.
+  // The file's version (1.22.0; server/county.js chooseVersion, which this mirrors): version 2, with each fund's award,
+  // only when the county is known to read it — the county connection says so for this county code, or the program
+  // answered that the county runs SUDS 1.21 or later. Otherwise version 1, which a county on SUDS 1.20 or earlier reads
+  // too (it refuses version 2). Asked once for each county code, and remembered with it.
   const conn = (rem && rem.connection) || { connected: false };
-  const olderHere = () => !!(conn.connected && conn.county_older && conn.county_code_display && codeI.value.trim().toUpperCase().replace(/[\s-]/g, '') === conn.county_code_display.replace('-', ''));
-  const v1I = h('input', { type: 'checkbox', id: 'so-county-v1', name: 'schema_version_1', checked: olderHere(), 'aria-describedby': 'so-county-v1-help', 'data-so-county-v1': '1' });
-  const olderNote = h('div', { class: 'banner warn small', role: 'status', 'data-so-county-older': '1', hidden: !olderHere() }, conn.county_older_note || '');
-  codeI.addEventListener('change', () => { const o2 = olderHere(); olderNote.hidden = !o2; if (o2) v1I.checked = true; });
-  const version = h('div', { class: 'field span', 'data-so-county-version': '1' }, olderNote,
-    h('label', { class: 'check', for: 'so-county-v1' }, v1I, 'The county runs SUDS 1.20 or earlier: make a version 1 file'),
-    h('div', { class: 'help', id: 'so-county-v1-help' }, 'The file carries each fund\'s award or contract amount and award period (from Funding & spending), so the county can see spending against the award. A county on SUDS 1.20 or earlier cannot read that version: tick this for it, and the file leaves the award out. Ask the county to upgrade.'));
+  const SCHEMA_V = o.schema_version || 2;
+  const norm = (v) => String(v || '').trim().toUpperCase().replace(/[\s-]/g, '');
+  const known = () => o.counties.find(c => c.code === norm(codeI.value)) || null;
+  const connReads = () => (conn.connected && conn.county_code && norm(conn.county_code) === norm(codeI.value) && Array.isArray(conn.county_reads) && conn.county_reads.length ? conn.county_reads : null);
+  const olderHere = () => { const r = connReads(); return !!(r && !r.includes(SCHEMA_V)); };
+  const SUDS_CHOICES = [['1.21+', 'SUDS 1.21 or later'], ['1.20-', 'SUDS 1.20 or earlier'], ['unknown', 'Don\'t know']];
+  const radios = SUDS_CHOICES.map(([value]) => h('input', { type: 'radio', name: 'so-county-suds', id: `so-county-suds-${value.replace(/\W/g, '')}`, value, 'data-so-county-suds': value }));
+  const answer = () => (radios.find(r => r.checked) || {}).value || null;
+  const versionNow = () => {
+    const r = connReads();
+    if (r) return { version: r.includes(SCHEMA_V) ? SCHEMA_V : 1, source: 'connection' };
+    const a = answer();
+    return a === '1.21+' ? { version: SCHEMA_V, source: 'answer' } : { version: 1, source: a ? 'answer' : 'unknown' };
+  };
+  const olderNote = h('div', { class: 'banner warn small', 'data-so-county-older': '1', hidden: !olderHere() }, conn.county_older_note || '');
+  const asked = h('p', { class: 'small', 'data-so-county-suds-ask': '1' }, 'SUDS asks this once for each county code and remembers your answer.');
+  const outcome = h('p', { class: 'small', role: 'status', 'aria-live': 'polite', 'data-so-county-version-made': '' });
+  const showVersion = (fromCode) => {
+    if (fromCode) { const k = known(); for (const r of radios) r.checked = !!(k && k.county_suds === r.value); }
+    olderNote.hidden = !olderHere();
+    asked.hidden = !!(known() && known().county_suds) || !!connReads();
+    const v = versionNow();
+    outcome.setAttribute('data-so-county-version-made', String(v.version));
+    outcome.textContent = v.version >= 2
+      ? `This file will be version ${v.version}, with each fund's award or contract amount and award period${v.source === 'connection' ? ' (the county connection says this county\'s SUDS reads it)' : ''}.`
+      : `This file will be version 1, without award amounts: award amounts need the county on SUDS 1.21 or later${v.source === 'connection' ? ', and the county connection says this county\'s SUDS reads version 1 only' : answer() === '1.20-' ? '' : ' (choose "SUDS 1.21 or later" once you know it is)'}. Ask the county to upgrade if it has not.`;
+  };
+  codeI.addEventListener('change', () => showVersion(true));
+  for (const r of radios) r.addEventListener('change', () => showVersion(false));
+  const version = h('fieldset', { class: 'field span', 'data-so-county-version': '1', 'aria-describedby': 'so-county-suds-help' },
+    h('legend', {}, 'Which SUDS does this county run?'),
+    olderNote, asked,
+    SUDS_CHOICES.map(([value, label], i) => h('label', { class: 'check', for: radios[i].id }, radios[i], label)),
+    h('div', { class: 'help', id: 'so-county-suds-help' }, 'The county\'s SUDS reads the file. SUDS 1.21 or later reads version 2, which carries each fund\'s award or contract amount and award period (from Funding & spending), so the county can see spending against the award. SUDS 1.20 or earlier refuses version 2, so unless you know the county runs 1.21 or later the file is version 1, without the award. Ask the county which version it runs if you are not sure.'),
+    outcome);
+  showVersion(true);
   const err = h('div', { class: 'err', role: 'alert', 'data-so-county-error': '1' });
   const keyBox = h('div', { 'data-so-county-key': '1' });
   const showKey = (key, retired, fresh) => keyBox.replaceChildren(key
@@ -216,10 +246,18 @@ function countyForm(k, o, today, pageFrom, pageTo, choice, rem = null) {
   const f = h('form', { noValidate: true, 'data-so-county-form': '1', onSubmit: (e) => {
     e.preventDefault();
     const c = checked(); if (!c) return;
+    // Asked once per county code: which SUDS the county runs ("Don't know" is an answer), unless its connection says.
+    // Only for a file made here: the connection's Send makes what the county's /status says it reads.
+    if (!connReads() && !answer()) { err.textContent = 'Choose which SUDS the county runs — "Don\'t know" is fine: the file is then version 1, which every county reads.'; radios[0].focus(); return; }
     const ids = c.funds; const p = chosen();
+    const a = answer(); const v = versionNow();
     makeBtn.disabled = true;
-    fetchDownload(`/api/county-submission/file?from=${p.from}&to=${p.to}&county_code=${encodeURIComponent(codeI.value.trim())}&county_name=${encodeURIComponent(nameI.value.trim())}&funds=${ids.map(encodeURIComponent).join(',')}${v1I.checked ? '&schema_version=1' : ''}`)
-      .then(async () => { toast(`County file for ${monthsLabel(p.from, p.to)} made and downloaded${v1I.checked ? ' (version 1, without the award)' : ''}. Send it to the county as your contract says; it holds exact counts and is not for publication.`, 'ok'); if (choice.onMade) choice.onMade(); try { const x = await get('/api/county-submission/key', { quiet: true }); showKey(x.key, x.retired); } catch { /* the file is made */ } })
+    fetchDownload(`/api/county-submission/file?from=${p.from}&to=${p.to}&county_code=${encodeURIComponent(codeI.value.trim())}&county_name=${encodeURIComponent(nameI.value.trim())}&funds=${ids.map(encodeURIComponent).join(',')}${a ? `&county_suds=${encodeURIComponent(a)}` : ''}`)
+      .then(async () => {
+        // Remembered for this county code (the server keeps it with the county's name and funds).
+        const k = known(); if (k) k.county_suds = a || k.county_suds; else o.counties.unshift({ code: norm(codeI.value), county_suds: a });
+        showVersion(false);
+        toast(`County file for ${monthsLabel(p.from, p.to)} made and downloaded${v.version < 2 ? ' (version 1, without the award)' : ''}. Send it to the county as your contract says; it holds exact counts and is not for publication.`, 'ok'); if (choice.onMade) choice.onMade(); try { const x = await get('/api/county-submission/key', { quiet: true }); showKey(x.key, x.retired); } catch { /* the file is made */ } })
       .catch(e2 => { err.textContent = e2.message; })
       .finally(() => { makeBtn.disabled = false; });
   } },

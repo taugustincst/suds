@@ -6951,7 +6951,11 @@ CREATE TABLE IF NOT EXISTS passkeys (
   -- allow-list"): JSON { verified, fmt, type, aaguid, mds_no, verified_at }. NULL for a passkey added while the list
   -- was off (attestation 'none': its AAGUID is only what the device said), which the list, once on, does not accept.
   -- The attestation certificate itself is not kept (migration 63).
-  attestation TEXT
+  attestation TEXT,
+  -- The authenticator allow-list's grace period (built for 1.22.0, migration 66): when an administrator turned the list
+  -- on or narrowed it, a passkey it would refuse that was working until then keeps working until this time (UTC ISO),
+  -- unless its model is reported compromised or revoked. NULL: no grace (accepted, or refused already).
+  allowlist_grace_until TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
 
@@ -30114,12 +30118,23 @@ var require_county = __commonJS({
       "Exact figures, including small numbers, as each program sends them under its funding contract. For authorised county staff only: not for publication or sharing.",
       "Each figure is what the program recorded in SUDS for the work charged to the opioid settlement funds it chose to report to the county, from its own Settlement outcomes page. Money is exact; a cost per outcome is not calculated across programs."
     ];
+    var COUNTY_SUDS = ["1.21+", "1.20-", "unknown"];
+    function chooseVersion({ asked = null, countyReads = null, answer = null } = {}) {
+      const out2 = (version, source) => ({ version, source, award: version >= 2 });
+      if (asked !== null && asked !== void 0 && SCHEMA_VERSIONS.includes(Number(asked))) return out2(Number(asked), "asked");
+      if (Array.isArray(countyReads) && countyReads.length) return out2(countyReads.includes(SCHEMA_VERSION) ? SCHEMA_VERSION : 1, "connection");
+      if (answer === "1.21+") return out2(SCHEMA_VERSION, "answer");
+      if (answer === "1.20-") return out2(1, "answer");
+      return out2(1, "unknown");
+    }
     var PERIOD_RULE = `A program's submission counts when its whole period lies inside the period chosen here; nothing is pro-rated. Where two of one program's submissions overlap (a quarter and a month inside it), the longer one counts, except that a signed file always counts over figures the county entered. A program whose submissions cover only part of the period is marked "part of the period". An inactive program's files count only if the county chose to keep counting them.`;
     var PUBLICATION_NOTE = "To publish combined figures, use Publish: it screens the totals of a period with SUDS's small-cell method, checked against each program's own published figures, and records what was published. Nothing on the combined view or in its files is for publication.";
     module.exports = {
       FORMAT: FORMAT2,
       SCHEMA_VERSION,
       SCHEMA_VERSIONS,
+      COUNTY_SUDS,
+      chooseVersion,
       ALGORITHM,
       MAX_FILE_BYTES,
       MAX_QUARTERS,
@@ -35480,7 +35495,7 @@ var require_county_connect_client = __commonJS({
       const { file, sha256: sha2562, fingerprint } = K.signFile(payload);
       if (remember) {
         const rec = recipients();
-        rec[payload.recipient.county_code] = { name: payload.recipient.county_name, fund_ids: fundIds, used_at: db3.now() };
+        rec[payload.recipient.county_code] = { ...rec[payload.recipient.county_code] || {}, name: payload.recipient.county_name, fund_ids: fundIds, used_at: db3.now() };
         db3.setSetting("county_submission_recipients", JSON.stringify(rec));
       }
       return { file, sha256: sha2562, fingerprint, payload, keyCreated: created ? key : null };
@@ -36740,6 +36755,13 @@ var require_county2 = __commonJS({
       }
       return () => rateLimit(key, REFUSALS_PER_10_MIN, WINDOW_MS);
     }
+    function connectedReads(code) {
+      const CC = require_county_connect_client();
+      const c = db3.one(`SELECT county_code FROM county_connection WHERE id='county'`);
+      const st = CC.lastStatus();
+      if (!c || !st || !code || K.normaliseCode(c.county_code) !== code) return null;
+      return Array.isArray(st.accepts_schema_versions) && st.accepts_schema_versions.length ? st.accepts_schema_versions : [1];
+    }
     function recipients() {
       try {
         const o = JSON.parse(db3.getSetting("county_submission_recipients", "{}"));
@@ -36766,8 +36788,21 @@ var require_county2 = __commonJS({
       });
       r.get("/api/county-submission/options", ...cboPerms, () => {
         const funds = db3.all(`SELECT id, name, grant_number, is_active FROM funding_sources WHERE ${IS_FUND} ORDER BY is_active DESC, name COLLATE NOCASE, id`);
-        const counties = Object.entries(recipients()).map(([code2, x]) => ({ code: code2, code_display: K.formatCode(code2), name: x.name || "", fund_ids: Array.isArray(x.fund_ids) ? x.fund_ids.filter((id) => funds.some((f) => f.id === id)) : [], used_at: x.used_at || null })).sort((a, b) => String(b.used_at || "").localeCompare(String(a.used_at || "")));
-        return { funds: funds.map((f) => ({ ...f, is_active: !!f.is_active })), counties, today: today() };
+        const counties = Object.entries(recipients()).map(([code2, x]) => {
+          const answer = K.COUNTY_SUDS.includes(x.county_suds) ? x.county_suds : null;
+          const ch = K.chooseVersion({ countyReads: connectedReads(code2), answer });
+          return {
+            code: code2,
+            code_display: K.formatCode(code2),
+            name: x.name || "",
+            fund_ids: Array.isArray(x.fund_ids) ? x.fund_ids.filter((id) => funds.some((f) => f.id === id)) : [],
+            used_at: x.used_at || null,
+            county_suds: answer,
+            version: ch.version,
+            version_source: ch.source
+          };
+        }).sort((a, b) => String(b.used_at || "").localeCompare(String(a.used_at || "")));
+        return { funds: funds.map((f) => ({ ...f, is_active: !!f.is_active })), counties, today: today(), county_suds_choices: K.COUNTY_SUDS, schema_version: K.SCHEMA_VERSION };
       });
       r.get("/api/county-submission/file", ...cboPerms, auth3.requirePerm("export:read"), async (ctx) => {
         const { from, to } = periodOf(ctx);
@@ -36784,7 +36819,12 @@ var require_county2 = __commonJS({
         if (unknown.length) throw badRequest("One of the funds chosen is not an opioid settlement fund here. Reload the page and choose again.", { fields: { funds: "not a settlement fund" } });
         const sv = ctx.query.get("schema_version");
         if (sv !== null && sv !== "" && !K.SCHEMA_VERSIONS.map(String).includes(sv)) throw badRequest(`schema_version must be ${K.SCHEMA_VERSIONS.join(" or ")}.`, { fields: { schema_version: "not a version SUDS makes" } });
-        const schemaVersion = sv ? Number(sv) : K.SCHEMA_VERSION;
+        const said = ctx.query.get("county_suds");
+        if (said !== null && said !== "" && !K.COUNTY_SUDS.includes(said)) throw badRequest(`county_suds must be ${K.COUNTY_SUDS.join(", ")}.`, { fields: { county_suds: "not an answer SUDS knows" } });
+        const before = recipients()[code2] || {};
+        const answer = said || (K.COUNTY_SUDS.includes(before.county_suds) ? before.county_suds : null);
+        const choice = K.chooseVersion({ asked: sv ? Number(sv) : null, countyReads: connectedReads(code2), answer });
+        const schemaVersion = choice.version;
         const range = require_reports().range(ctx);
         const raw = await db3.readSnapshot(async () => SO.figures(range, { fundIds: [...known] }));
         let payload;
@@ -36798,12 +36838,13 @@ var require_county2 = __commonJS({
         if (created) keyCreated(ctx, key);
         const { file, sha256: sha2562, fingerprint } = K.signFile(payload);
         const rec = recipients();
-        rec[code2] = { name: countyName, fund_ids: [...known], used_at: db3.now() };
+        rec[code2] = { ...rec[code2] || {}, name: countyName, fund_ids: [...known], used_at: db3.now(), ...answer ? { county_suds: answer } : {} };
         db3.setSetting("county_submission_recipients", JSON.stringify(rec));
         require_county_schedule().recordMade({ county_code: code2, from, to, sha256: sha2562, schema_version: payload.schema_version, via: "download" });
-        audit3.log({ user: ctx.user, action: "county_submission.export", ip: ctx.ip, details: { from, to, county_code: code2, fingerprint, sha256: sha2562, schema_version: payload.schema_version, funds: payload.funds.length, leaves_programme: true, content: "aggregate counts and money; no client-level data" } });
+        audit3.log({ user: ctx.user, action: "county_submission.export", ip: ctx.ip, details: { from, to, county_code: code2, fingerprint, sha256: sha2562, schema_version: payload.schema_version, version_source: choice.source, funds: payload.funds.length, leaves_programme: true, content: "aggregate counts and money; no client-level data" } });
         ctx.res.writeHead(200, {
           "Content-Type": "application/json; charset=utf-8",
+          "X-SUDS-County-File-Version": String(payload.schema_version),
           "Content-Disposition": `attachment; filename="suds-county-submission-${K.slug(payload.programme)}-${from}_${to}.json"`,
           "X-SUDS-Export": "County submission: exact aggregate figures for the county under the funding contract; not for publication. No client-level data."
         });
@@ -49667,6 +49708,14 @@ var require_auth2 = __commonJS({
       if (config2.local) return { passkeySignin: false, passkeySigning: false, signStrongRequired: false };
       return { passkeySignin: db3.getSetting("passkey_signin", "1") !== "0", passkeySigning: db3.getSetting("passkey_signing", "1") !== "0", signStrongRequired: db3.getSetting("sign_strong_required", "0") === "1" };
     }
+    function passkeyGrace(userId) {
+      if (config2.local || !userId) return null;
+      try {
+        return require_passkeys().graceNotice(userId);
+      } catch {
+        return null;
+      }
+    }
     function passkeyCount(userId) {
       if (config2.local || !userId) return 0;
       try {
@@ -50406,7 +50455,9 @@ var require_auth2 = __commonJS({
         // How many passkeys (fingerprint sign-in, docs/FINGERPRINT.md) the account has; 0 on a device. passkey_mfa: whether
         // they count as its two-step verification, which they do only while fingerprint sign-in is allowed (mfaDeadline).
         passkeys: passkeyCount(u.id),
-        passkey_mfa: policy().passkeySignin && passkeyCount(u.id) > 0
+        passkey_mfa: policy().passkeySignin && passkeyCount(u.id) > 0,
+        // Passkeys in the authenticator allow-list's grace period (1.22.0): when they stop, for the notice on every page.
+        passkey_grace: passkeyGrace(u.id)
       };
     }
     function passwordPolicy(pw) {
@@ -51819,6 +51870,16 @@ var require_db = __commonJS({
         createTablesFromSchema(d, safeSchema(), ["field_accounts"], 64);
         d.exec(`UPDATE devices SET scope_set_by='admin' WHERE scope_set_by IS NULL AND sync_scope='full' AND scope_changed_at IS NOT NULL`);
         d.exec(`INSERT OR IGNORE INTO field_accounts(user_id, bound_at, bound_via) SELECT user_id, MIN(COALESCE(scope_changed_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))), 'migration' FROM devices WHERE sync_scope='field' GROUP BY user_id`);
+      },
+      // 65: likewise held for another 1.22.0 stream's migration; a documented no-op on this branch.
+      () => {
+      },
+      // 66: the authenticator allow-list's grace period (built for 1.22.0, not yet released; docs/FINGERPRINT.md
+      //     "Grace period"): passkeys.allowlist_grace_until, NULL for every existing passkey (none is in a grace period:
+      //     a list turned on under 1.21.0 refused at once). Office server only. Self-contained and idempotent, so it can be
+      //     renumbered.
+      (d) => {
+        addColumn(d, "passkeys", "allowlist_grace_until", "TEXT");
       }
     ];
     var PERF_INDEXES_47 = [

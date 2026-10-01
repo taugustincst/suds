@@ -234,9 +234,12 @@ try {
     await go(adm, `settlement?from=${lq.from}&to=${lq.to}`);
     const older = await until(() => adm.$('[data-cc-county-older]'));
     ok(older && /version 1 only \(SUDS 1\.20 or earlier\)/.test(await older.textContent()), 'the connection card warns that the county reads version 1 only', older && await older.textContent());
-    await until(() => adm.$('[data-so-county-v1]'));
+    await until(() => adm.$('[data-so-county-version-made]'));
     await adm.fill('[data-so-county-code]', 'fake-2345'); await adm.dispatchEvent('[data-so-county-code]', 'change');
-    ok(await adm.isChecked('[data-so-county-v1]'), 'typing that county\'s code on the card ticks "make a version 1 file"');
+    eq(await adm.getAttribute('[data-so-county-version-made]', 'data-so-county-version-made'), '1', 'typing that county\'s code on the card: the file will be version 1');
+    await adm.check('[data-so-county-suds="1.21+"]');
+    eq(await adm.getAttribute('[data-so-county-version-made]', 'data-so-county-version-made'), '1', 'even answered "SUDS 1.21 or later": the county\'s own connection says it reads version 1 only (1.22.0)');
+    ok(/county connection says this county's SUDS reads version 1 only/.test(await adm.textContent('[data-so-county-version-made]')), 'and the card says so');
     ok(await adm.isVisible('[data-so-county-older]'), 'and says why there');
     await axe(adm, 'settlement, a county on SUDS 1.20 (1280)');
     fakeCode = 'ZZZZ-2345';

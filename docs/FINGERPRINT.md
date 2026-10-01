@@ -1,6 +1,7 @@
 # Fingerprint sign-in, authorization and signing (passkeys)
 
-Released in 1.19.0. Office server only. The **authenticator allow-list** (below) is released in 1.21.0.
+Released in 1.19.0. Office server only. The **authenticator allow-list** (below) is released in 1.21.0; its **grace
+period** is built for 1.22.0, not yet released.
 
 Staff can sign in to SUDS, finish two-step verification, sign and countersign notes, approve time and spending, and
 download the key backup with their **fingerprint** — or with whatever else their device uses to unlock (Face ID, a
@@ -195,7 +196,8 @@ which SUDS honours only with `SUDS_ENV` `test` or `development`, never in produc
 **Statuses refused.** A model whose status reports include `REVOKED`, `USER_VERIFICATION_BYPASS`,
 `ATTESTATION_KEY_COMPROMISE`, `USER_KEY_REMOTE_COMPROMISE` or `USER_KEY_PHYSICAL_COMPROMISE` **anywhere in its history**
 is refused, even after a later `UPDATE_AVAILABLE` (the devices already made are not fixed by it): no new passkey on it,
-and its passkeys stop at their next use (the owner's decision, conservative).
+and its passkeys stop at their next use (the owner's decision, conservative). No grace period covers such a passkey
+(below).
 
 **Turning it on.** The list needs a current metadata file and at least one model, and every listed model must be in
 the file and not refused (otherwise no passkey could ever be checked for it). Before saving, **Check who would be
@@ -209,8 +211,9 @@ accounts), a wrong password as `security.authenticator_allowlist.failed`. The ge
 
 **Passkeys already there when it is turned on (the owner's decision, conservative).** A passkey counts under the list
 only if its attestation was **verified at enrolment** for a listed model (`passkeys.attestation`). Every passkey added
-while the list was off was not (its AAGUID is only what the device said), so it **stops working for sign-in, the second
-sign-in step and signing at its next use**: refused (`403`, `passkeyError: "not_allowed"`) with a message that says why
+while the list was off was not (its AAGUID is only what the device said), so — once its **grace period** (below) is
+over, or at once with a grace period of 0 days — it **stops working for sign-in, the second sign-in step and signing
+at its next use**: refused (`403`, `passkeyError: "not_allowed"`) with a message that says why
 and what to do (sign in with the password, remove it, add one on an accepted authenticator), audited as
 `auth.passkey.not_allowed` (with the reason: `unattested`, `not listed`, `status`, `not in metadata`) beside the usual
 `auth.login.failed`. It is checked after the signature verifies, so only the passkey's holder learns why, and it does
@@ -222,6 +225,43 @@ saved (or when a metadata file is loaded that refuses its model), as a removed p
 and adding it again with attestation, brings it back. A person whose role requires two-step verification and whose
 only second factor was such a passkey is treated as not enrolled and is asked to set one up (the preview says which
 people have no authenticator app).
+
+### Grace period
+
+Built for 1.22.0, not yet released. In 1.21.0 turning the list on stopped every unproven passkey at once, which could
+lock out an account whose only second factor was its passkey. Now, when the list is **turned on or narrowed** (a model
+taken off it), a passkey the new setting refuses that **was working until then** keeps working for a **grace period**,
+then stops as above. Decisions (the owner's, conservative; migration 66):
+
+- **How long.** The administrator sets it on the card, **0 to 90 days, 14 by default**; 0 stops them at once, as in
+  1.21.0. It is kept (`authn_allowlist_grace_days`) for the next change, and the save carries it (`grace_days`).
+- **A date per passkey.** Each passkey in a grace period has its end stored (`passkeys.allowlist_grace_until`), so it
+  is deterministic: accepted until that instant, refused from it (`passkeyAllowed`; `test/attestation.test.js` checks
+  it with a fake clock). Saving again never **lengthens** a grace period already running (a re-save would otherwise
+  push the date out forever); a shorter one **shortens** it. A passkey already refused is not brought back by a later
+  change with a grace period. Turning the list off clears every date.
+- **Never for a model reported compromised or revoked.** A passkey whose model the loaded Metadata Service file
+  reports compromised or revoked (its attested model, or, for one never attested, the AAGUID its device reported) gets
+  no grace period, and one already in a grace period stops at once when such a file is loaded, its sessions ended with
+  it.
+- **Sessions.** A session a passkey in its grace period opens (or had opened) **expires when the grace period ends**:
+  no session outlives it. The hourly housekeeping (`expireGrace`) then ends any session still open on a passkey whose
+  grace period is over, clears the date, and audits it once as `security.authenticator_allowlist.grace_ended`
+  (`passkeys`, `passkey_ids`, `users`, `sessions_ended`; no user: the server did it).
+- **The owner is told.** From sign-in on, every page shows a banner (dismissable; it comes back as one line) naming the
+  passkey, the date it stops, and the two ways to keep signing in: add a passkey on an accepted authenticator under My
+  profile, or sign in with the password and the authenticator-app code (or set one up). My profile shows the same
+  notice and marks the passkey "Stops working on <date>". `GET /api/auth/me` (`user.passkey_grace`) and
+  `GET /api/auth/passkeys` (`grace`, and each passkey's `stops_at`, `stop_reason`) carry it. Until the date the passkey
+  still counts as the account's second factor. A sign-in with it is audited as usual, `auth.login` with
+  `allowlist_grace_until`.
+- **The administrator sees it before saving.** The preview says when each passkey stops (`stops_at`: the date, or at
+  once), and lists **apart, first, the accounts whose only second factor stops** (no authenticator app and no passkey
+  the list keeps), warning that they will need their password and an authenticator-app code, or a new passkey on an
+  accepted authenticator, before the date. The confirmed number is still every affected passkey. The save is audited
+  as before, with `grace_days`, `grace_passkeys`, `grace_until`, `stops_now` and `only_factor_users`.
+- **Synced passkeys.** The card says plainly that passkeys kept in iCloud Keychain, Google Password Manager or another
+  password manager cannot be added while the list is on (they give no attestation).
 
 **When the metadata file is out of date** (past its `nextUpdate`): no passkey can be **added** (the registration
 options are refused, with the reason), and Settings → Security status shows the allow-list line in red; passkeys
@@ -473,7 +513,8 @@ fingerprint is accepted there because each confirmation is a fresh, single-use c
 | --- | --- | --- |
 | **Allow fingerprint sign-in** (`passkey_signin`) | On | Sign in with a passkey, and count it as two-step verification |
 | **Allow fingerprint to confirm signatures and approvals** (`passkey_signing`) | On | "Confirm with fingerprint" in the signature and approval dialogs |
-| **Authenticator allow-list** (Settings → Authenticator allow-list; `authn_allowlist`, `authn_allowlist_models`; released in 1.21.0) | Off | Only the listed authenticator models may hold a passkey, each proven by its attestation against the loaded FIDO Metadata Service file; passkeys it does not accept stop working at their next use (above). Changed only on its own card, with the password again |
+| **Authenticator allow-list** (Settings → Authenticator allow-list; `authn_allowlist`, `authn_allowlist_models`; released in 1.21.0) | Off | Only the listed authenticator models may hold a passkey, each proven by its attestation against the loaded FIDO Metadata Service file; passkeys it does not accept stop working at their next use once their grace period is over (above). Changed only on its own card, with the password again |
+| **Grace period before refused passkeys stop** (the same card; `authn_allowlist_grace_days`; built for 1.22.0, not yet released) | 14 days | 0 to 90 days; 0 stops them at once. Never for a model reported compromised or revoked |
 | **Require fingerprint or authenticator for signing** (`sign_strong_required`) | Off | Signing, countersigning, approving time or spending **and downloading the key backup** need a fingerprint or an authenticator code; the password alone is refused. A note signed on a device and synced lands as a draft. Staff with neither must set one up (the dialogs link to My profile). |
 
 Changing any of them is audited on its own line (`security.passkey_policy`). **Settings → Security status** shows

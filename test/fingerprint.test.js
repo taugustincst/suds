@@ -114,7 +114,7 @@ test('enrolment: the password again, then the device\'s new key; only the public
   assert.equal(row.aaguid, 'abababab-abab-abab-abab-abababababab');
   assert.deepEqual(JSON.parse(row.transports), ['internal']);
   assert.ok(crypto.createPublicKey({ key: Buffer.from(row.public_key, 'base64'), format: 'der', type: 'spki' }), 'a public key, SPKI');
-  assert.deepEqual(Object.keys(row).sort(), ['aaguid', 'alg', 'backed_up', 'backup_eligible', 'created_at', 'credential_id', 'flag_reason', 'flagged_at', 'id', 'last_used_at', 'name', 'public_key', 'rp_id', 'sign_count', 'transports', 'user_id', 'attestation'].sort(), 'no column could hold a fingerprint');
+  assert.deepEqual(Object.keys(row).sort(), ['aaguid', 'alg', 'backed_up', 'backup_eligible', 'created_at', 'credential_id', 'flag_reason', 'flagged_at', 'id', 'last_used_at', 'name', 'public_key', 'rp_id', 'sign_count', 'transports', 'user_id', 'attestation', 'allowlist_grace_until'].sort(), 'no column could hold a fingerprint');
   assert.equal(H.db.one(`SELECT failed_attempts FROM users WHERE id=?`, u.id).failed_attempts, 0, 'the right password clears the count');
   const au = H.db.one(`SELECT details FROM audit_log WHERE action='auth.passkey.enrolled' AND user_id=?`, u.id);
   assert.ok(au, 'enrolment is audited');

@@ -52,6 +52,11 @@ function passkeyPolicy() {
   if (config.local) return { passkeySignin: false, passkeySigning: false, signStrongRequired: false };
   return { passkeySignin: db.getSetting('passkey_signin', '1') !== '0', passkeySigning: db.getSetting('passkey_signing', '1') !== '0', signStrongRequired: db.getSetting('sign_strong_required', '0') === '1' };
 }
+/** This user's passkeys in the authenticator allow-list's grace period (server/passkeys.js graceNotice). null on a device. */
+function passkeyGrace(userId) {
+  if (config.local || !userId) return null;
+  try { return require('./passkeys').graceNotice(userId); } catch { return null; }
+}
 /** How many passkeys this user has that can still be used (not flagged as a possible copy). 0 on a device. */
 function passkeyCount(userId) {
   if (config.local || !userId) return 0;
@@ -828,7 +833,9 @@ function publicUser(u) {
     mfa_required: policy().mfaRequiredRoles.includes(u.role), mfa_setup_deadline: mfaDeadline(u), caseload_restricted: caseloadRestricted(u),
     // How many passkeys (fingerprint sign-in, docs/FINGERPRINT.md) the account has; 0 on a device. passkey_mfa: whether
     // they count as its two-step verification, which they do only while fingerprint sign-in is allowed (mfaDeadline).
-    passkeys: passkeyCount(u.id), passkey_mfa: policy().passkeySignin && passkeyCount(u.id) > 0 };
+    passkeys: passkeyCount(u.id), passkey_mfa: policy().passkeySignin && passkeyCount(u.id) > 0,
+    // Passkeys in the authenticator allow-list's grace period (1.22.0): when they stop, for the notice on every page.
+    passkey_grace: passkeyGrace(u.id) };
 }
 
 function passwordPolicy(pw) {

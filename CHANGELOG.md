@@ -82,6 +82,34 @@ Built for 1.22.0, not yet released. These fix findings of the market evaluation 
   nor any screen-reader testing was done, and screen-reader testing of the product is still pending (an owner item).
   No conformance level changed.
 
+### Safer defaults: the authenticator allow-list's grace period and the county file version
+
+Built for 1.22.0, not yet released. Migration 66 (`passkeys.allowlist_grace_until`).
+
+- **A grace period before the authenticator allow-list stops a passkey.** Under 1.21.0, turning the allow-list on (or
+  taking a model off it) stopped every passkey it refused at once, which could lock out an account whose only second
+  factor was its passkey. Now a passkey the new setting refuses that was working until then keeps working for a grace
+  period the administrator sets on the card: **14 days by default, 0 to 90; 0 stops it at once** as before. The end is
+  a date stored on each passkey, so it is exact and tested with a fake clock; saving again never lengthens a grace
+  period already running, a shorter one shortens it, and turning the list off clears them. **Never for a model the
+  FIDO Metadata Service reports compromised or revoked**: such a passkey is refused at once, grace period or not, and
+  its sessions end. A session a passkey in its grace period opens expires when the grace period ends, and the hourly
+  housekeeping ends any left, audited as `security.authenticator_allowlist.grace_ended`.
+- **Everyone is told.** The person whose passkey is in a grace period sees, on every page from sign-in on and on My
+  profile, which passkey stops, on what date, and how to keep signing in (add a passkey on an accepted authenticator,
+  or sign in with the password and an authenticator-app code). The administrator's preview says when each passkey
+  stops, and lists first, apart, the accounts whose only second factor stops, warning that they will need their
+  password and an authenticator-app code or a new accepted passkey. The card states that synced passkeys (iCloud
+  Keychain, Google Password Manager) cannot be added while the list is on. Docs: FINGERPRINT.md, *Grace period*.
+- **The county file is version 2 only when the county is known to read it.** Under 1.21.0 a programme exchanging files
+  by hand made version 2 unless someone ticked a box, and a county still on SUDS 1.20 refused it. The Send to the
+  county card now asks, **once for each county code**, which SUDS the county runs (1.21 or later, 1.20 or earlier, or
+  don't know) and remembers it. The file is version 2 when the county connection's `/status` says that county reads it
+  or the programme answered "1.21 or later"; otherwise version 1, and the card says that award amounts need the county
+  on SUDS 1.21 or later. A version asked for by name still wins; the connection's own answer wins over the
+  programme's. The export audit records why (`version_source`). Docs: COUNTY-VIEW.md, *Which version a file is made
+  in*.
+
 ## 1.21.0 — 2026-09-30
 
 A feature release (migrations 61, 62 and 63; the county publication, field-device, authenticator allow-list and

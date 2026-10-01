@@ -108,6 +108,14 @@ function throttle(ctx, bucket, action, message) {
   return () => rateLimit(key, REFUSALS_PER_10_MIN, WINDOW_MS);
 }
 /** The counties this server made files for: { CODE: { name, fund_ids, used_at } } (settings, not PHI). */
+/** The versions the connected county reads, when `code` is that county's and its /status has been read; else null. */
+function connectedReads(code) {
+  const CC = require('../county-connect-client');
+  const c = db.one(`SELECT county_code FROM county_connection WHERE id='county'`);
+  const st = CC.lastStatus();
+  if (!c || !st || !code || K.normaliseCode(c.county_code) !== code) return null;
+  return Array.isArray(st.accepts_schema_versions) && st.accepts_schema_versions.length ? st.accepts_schema_versions : [1];
+}
 function recipients() { try { const o = JSON.parse(db.getSetting('county_submission_recipients', '{}')); return o && typeof o === 'object' ? o : {}; } catch { return {}; } }
 
 module.exports = (r) => {
@@ -130,9 +138,15 @@ module.exports = (r) => {
   });
   r.get('/api/county-submission/options', ...cboPerms, () => {
     const funds = db.all(`SELECT id, name, grant_number, is_active FROM funding_sources WHERE ${IS_FUND} ORDER BY is_active DESC, name COLLATE NOCASE, id`);
-    const counties = Object.entries(recipients()).map(([code, x]) => ({ code, code_display: K.formatCode(code), name: x.name || '', fund_ids: Array.isArray(x.fund_ids) ? x.fund_ids.filter(id => funds.some(f => f.id === id)) : [], used_at: x.used_at || null }))
-      .sort((a, b) => String(b.used_at || '').localeCompare(String(a.used_at || '')));
-    return { funds: funds.map(f => ({ ...f, is_active: !!f.is_active })), counties, today: today() };
+    // county_suds: what the programme answered about the county's SUDS (1.22.0); version: the file version the card
+    // makes for it unless asked otherwise (K.chooseVersion, with what the county connection says of that county).
+    const counties = Object.entries(recipients()).map(([code, x]) => {
+      const answer = K.COUNTY_SUDS.includes(x.county_suds) ? x.county_suds : null;
+      const ch = K.chooseVersion({ countyReads: connectedReads(code), answer });
+      return { code, code_display: K.formatCode(code), name: x.name || '', fund_ids: Array.isArray(x.fund_ids) ? x.fund_ids.filter(id => funds.some(f => f.id === id)) : [], used_at: x.used_at || null,
+        county_suds: answer, version: ch.version, version_source: ch.source };
+    }).sort((a, b) => String(b.used_at || '').localeCompare(String(a.used_at || '')));
+    return { funds: funds.map(f => ({ ...f, is_active: !!f.is_active })), counties, today: today(), county_suds_choices: K.COUNTY_SUDS, schema_version: K.SCHEMA_VERSION };
   });
   r.get('/api/county-submission/file', ...cboPerms, auth.requirePerm('export:read'), async (ctx) => {
     const { from, to } = periodOf(ctx);
@@ -147,11 +161,18 @@ module.exports = (r) => {
     const known = new Set(db.all(`SELECT id FROM funding_sources WHERE ${IS_FUND} AND id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)).map(x => x.id));
     const unknown = ids.filter(id => !known.has(id));
     if (unknown.length) throw badRequest('One of the funds chosen is not an opioid settlement fund here. Reload the page and choose again.', { fields: { funds: 'not a settlement fund' } });
-    // The file's version: the latest (each fund's award in it) unless the person asks for version 1, which a county
-    // still on SUDS 1.20 or earlier reads (it refuses version 2).
+    // The file's version (1.22.0, K.chooseVersion): version 2, with each fund's award, only when the county is known to
+    // read it — the county connection says so for this county, or the programme answered that it runs SUDS 1.21 or
+    // later; otherwise version 1, which a county on SUDS 1.20 or earlier reads too (it refuses version 2). A version
+    // asked for by name wins. county_suds: the programme's answer, remembered for this county code.
     const sv = ctx.query.get('schema_version');
     if (sv !== null && sv !== '' && !K.SCHEMA_VERSIONS.map(String).includes(sv)) throw badRequest(`schema_version must be ${K.SCHEMA_VERSIONS.join(' or ')}.`, { fields: { schema_version: 'not a version SUDS makes' } });
-    const schemaVersion = sv ? Number(sv) : K.SCHEMA_VERSION;
+    const said = ctx.query.get('county_suds');
+    if (said !== null && said !== '' && !K.COUNTY_SUDS.includes(said)) throw badRequest(`county_suds must be ${K.COUNTY_SUDS.join(', ')}.`, { fields: { county_suds: 'not an answer SUDS knows' } });
+    const before = recipients()[code] || {};
+    const answer = said || (K.COUNTY_SUDS.includes(before.county_suds) ? before.county_suds : null);
+    const choice = K.chooseVersion({ asked: sv ? Number(sv) : null, countyReads: connectedReads(code), answer });
+    const schemaVersion = choice.version;
     const range = require('./reports').range(ctx);
     const raw = await db.readSnapshot(async () => SO.figures(range, { fundIds: [...known] }));
     // The allow-list is checked here too: a figure it does not expect is said, never sent.
@@ -162,14 +183,14 @@ module.exports = (r) => {
     if (created) keyCreated(ctx, key);
     const { file, sha256, fingerprint } = K.signFile(payload);
     // Remembered for next time, for this county: its name and the funds chosen (the card offers them again).
-    const rec = recipients(); rec[code] = { name: countyName, fund_ids: [...known], used_at: db.now() };
+    const rec = recipients(); rec[code] = { ...(rec[code] || {}), name: countyName, fund_ids: [...known], used_at: db.now(), ...(answer ? { county_suds: answer } : {}) };
     db.setSetting('county_submission_recipients', JSON.stringify(rec));
     // Made: the reminders count the period done for this county (county-schedule.js).
     require('../county-schedule').recordMade({ county_code: code, from, to, sha256, schema_version: payload.schema_version, via: 'download' });
     // It leaves the programme: aggregate counts and money only, no client-level data, not PHI and not a Part 2
     // disclosure. Recorded with what identifies the file, not its figures.
-    audit.log({ user: ctx.user, action: 'county_submission.export', ip: ctx.ip, details: { from, to, county_code: code, fingerprint, sha256, schema_version: payload.schema_version, funds: payload.funds.length, leaves_programme: true, content: 'aggregate counts and money; no client-level data' } });
-    ctx.res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8',
+    audit.log({ user: ctx.user, action: 'county_submission.export', ip: ctx.ip, details: { from, to, county_code: code, fingerprint, sha256, schema_version: payload.schema_version, version_source: choice.source, funds: payload.funds.length, leaves_programme: true, content: 'aggregate counts and money; no client-level data' } });
+    ctx.res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'X-SUDS-County-File-Version': String(payload.schema_version),
       'Content-Disposition': `attachment; filename="suds-county-submission-${K.slug(payload.programme)}-${from}_${to}.json"`,
       'X-SUDS-Export': 'County submission: exact aggregate figures for the county under the funding contract; not for publication. No client-level data.' });
     ctx.res.end(JSON.stringify(file, null, 2) + '\n');

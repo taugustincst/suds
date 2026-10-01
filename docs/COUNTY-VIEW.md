@@ -567,9 +567,8 @@ rest of the payload. A fund whose record has no amount above 0 (or no real award
 never 0. That is **schema version 2** (`server/county.js` `PAYLOAD_V2`: version 1 with `award` on each fund, null or
 exactly `{ amount, from, to }`).
 
-- **The programme's side** always makes version 2, with `award: null` where there is none. The one exception: a box
-  on the Send to the county card, **"The county runs SUDS 1.20 or earlier: make a version 1 file"**
-  (`GET /api/county-submission/file?…&schema_version=1`), leaves the award out for a county that has not upgraded.
+- **The programme's side** makes version 2, with `award: null` where there is none, **when the county is known to
+  read it** (built for 1.22.0, not yet released; below, *Which version a file is made in*); otherwise version 1.
   Over the county connection SUDS decides by itself (below).
 - **The county's side reads both.** A version 1 file is imported as before; its programme shows **"award not in
   file"** in the award rows, in words, never 0. A version 2 file whose funds have no award shows **"no award
@@ -591,16 +590,43 @@ exactly `{ amount, from, to }`).
   imports and in the per-program template (left empty, the fund has no award). Entered figures are stored as version 2.
 - **An older county.** A county server on SUDS 1.20 or earlier reads version 1 only and refuses a version 2 file
   ("this SUDS reads version 1"). **The county upgrades first.** Until it does: a programme that downloads its file
-  ticks the version 1 box; over the county connection, the county's `/status` now says what it reads
+  answers "SUDS 1.20 or earlier" (or "Don't know") on the card and gets version 1; over the county connection, the county's `/status` now says what it reads
   (`accepts_schema_versions`), and a county that does not say (1.20 or earlier) is sent **version 1** automatically
   (`county-connect-client.js` `versionForCounty`), and the Send to the county cards warn that the county reads
-  version 1 only and that its files leave the award out (and the download box is ticked for that county's code).
-- **Owner decision (conservative default):** the programme always makes version 2 once built (null awards are fine)
-  rather than version 1 when it has no award amounts, so a county sees "no award recorded" rather than "award not in
-  file" for a programme that has upgraded; the version 1 box and the connection's fallback exist only so a programme
-  is never stuck while its county upgrades. The award is the fund record's total amount for its fiscal year: a fund
+  version 1 only and that its files leave the award out (and the card makes version 1 for that county's code).
+- **Owner decision (conservative default):** a version 2 file carries the award even when it is null (null awards are
+  fine) rather than version 1 when it has no award amounts, so a county that reads version 2 sees "no award recorded"
+  rather than "award not in file" for a programme that has upgraded; the version 1 file and the connection's fallback
+  exist so a programme is never stuck while its county upgrades. The award is the fund record's total amount for its fiscal year: a fund
   whose record holds a different figure from the contract (an amendment not yet entered) shows that figure. The
   percentage is the period's spending over the whole award, not a pro-rated share of it.
+
+### Which version a file is made in
+
+*Built for 1.22.0, not yet released.* Under 1.21.0 a programme exchanging files **by hand** made version 2 unless
+someone ticked a box, so a county still on SUDS 1.20 refused the file. Now the version is chosen
+(`server/county.js` `chooseVersion`, which the card mirrors), in this order:
+
+1. A version asked for by name (`GET /api/county-submission/file?…&schema_version=1|2`) is made.
+2. When the file is for the **connected county** (its code is the connection's) and its `/status` has been read, what
+   that county says it reads decides: version 2 if `accepts_schema_versions` includes it, version 1 if it does not or
+   says nothing (SUDS 1.20 or earlier). The county's own word wins over an answer typed on the card.
+3. Otherwise the **programme's answer** for that county code: the Send to the county card asks **"Which SUDS does this
+   county run?"** — **SUDS 1.21 or later**, **SUDS 1.20 or earlier**, or **Don't know** — **once for each county
+   code**, and remembers the answer with the county's name and funds (`county_submission_recipients`, `county_suds`:
+   `1.21+`, `1.20-`, `unknown`; `GET /api/county-submission/file?…&county_suds=…`). It can be changed on the card at
+   any time. "SUDS 1.21 or later" makes version 2.
+4. Otherwise — never asked, "Don't know", or "SUDS 1.20 or earlier" — **version 1**, which every county reads.
+
+**Owner decision (conservative default):** version 2 only when the county is known to read it. A file the county
+cannot read is worse than one without the award: the programme's figures still arrive, and the card says in a live
+line under the question which version the file will be and, for version 1, that **award amounts need the county on
+SUDS 1.21 or later**. Making the file with no answer
+for a new county code is stopped at the question ("Don't know" is an answer). The answer is the programme's word, not
+a check: a county that answered "1.21 or later" but has not upgraded refuses the file, and the programme answers
+again. The export is audited with why the version was chosen (`county_submission.export` `version_source`: `asked`,
+`connection`, `answer` or `unknown`), and the answer goes with the file's response (`X-SUDS-County-File-Version`).
+`GET /api/county-submission/options` lists each remembered county's `county_suds`, `version` and `version_source`.
 
 ## Reminders on the programme's side
 

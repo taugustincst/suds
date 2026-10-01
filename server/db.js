@@ -811,6 +811,13 @@ const migrations = [
     d.exec(`UPDATE devices SET scope_set_by='admin' WHERE scope_set_by IS NULL AND sync_scope='full' AND scope_changed_at IS NOT NULL`);
     d.exec(`INSERT OR IGNORE INTO field_accounts(user_id, bound_at, bound_via) SELECT user_id, MIN(COALESCE(scope_changed_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))), 'migration' FROM devices WHERE sync_scope='field' GROUP BY user_id`);
   },
+  // 65: likewise held for another 1.22.0 stream's migration; a documented no-op on this branch.
+  () => {},
+  // 66: the authenticator allow-list's grace period (built for 1.22.0, not yet released; docs/FINGERPRINT.md
+  //     "Grace period"): passkeys.allowlist_grace_until, NULL for every existing passkey (none is in a grace period:
+  //     a list turned on under 1.21.0 refused at once). Office server only. Self-contained and idempotent, so it can be
+  //     renumbered.
+  (d) => { addColumn(d, 'passkeys', 'allowlist_grace_until', 'TEXT'); },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];
