@@ -132,7 +132,10 @@ thirteen tags owed before it (step 2 of [evidence/RELEASE-HANDOFF.md](evidence/R
 tag, and its `release.yml` run, whose gate passes with no `policy_exception`, is the Latest release and starts the
 `Web app` run that publishes it. If 1.23.4 has to go live before the owner has pushed the tags, the direct `gh-pages`
 push is said here and in the exceptions table, as point 4 requires; it is not a policy exception (the patch rules
-pass), but it is not the gate either.
+pass), but it is not the gate either. It did: the tags were still owed when CI passed on `598d08b` (2026-10-01, every
+job green at the first attempt), so `598d08b` was pushed to `main` and its static build to `gh-pages` directly
+("Deploy 598d08b (SUDS 1.23.4)"; `release-site-check` found the 73 built files the commit's, byte for byte), and the
+exceptions table has a row for it.
 
 ### Supported versions
 
@@ -284,6 +287,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.23.1 | none of the policy (a patch within the patch rules: no migration, permission or route, 501 lines); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner said to deploy to Pages when green; the tags owed since 1.16.3 were not yet pushed, so the gate could not publish it (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.1*, above) |
 | 1.23.2 | none of the policy (a patch within the patch rules: no migration, permission or route, 188 lines); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner said to implement the 1.23.1 evaluation's recommendations; the tags owed since 1.16.3 were not yet pushed, so the gate could not publish it (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.2*, above) |
 | 1.23.3 | none of the policy (a patch within the patch rules: no migration, permission or route, 187 lines); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner's UX backlog ("View in Done", phone Home order) and the 1.23.2 evaluation's defects; the tags owed since 1.16.3 were not yet pushed, so the gate could not publish it (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.3*, above) |
+| 1.23.4 | none of the policy (a patch within the patch rules: no migration, permission or route, 111 lines); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner asked for the 1.23.3 evaluation's defects to be resolved and the release published with a full marketability evaluation; the tags owed since 1.16.3 were not yet pushed, so the gate could not publish it (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.4*, above) |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as

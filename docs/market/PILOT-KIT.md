@@ -128,7 +128,7 @@ vendor may not fill it in.
 ### Measurement worksheet: what SUDS already records
 
 Five figures the pilot can take from SUDS itself, the same way at day 30, 60 and 90, with no new screen or report
-(SUDS 1.23.1 has none for this). Fill one row per period; keep the baseline column from the current process. Where a
+(SUDS 1.23.4 has none for this). Fill one row per period; keep the baseline column from the current process. Where a
 figure comes from the database, the IT partner runs the query on the restored copy from the restore drill (week −1),
 read-only (`sqlite3 -readonly <copy>.db`), with the period set first (`.param set :from '2026-11-01'`,
 `.param set :to '2026-11-30'`, and for W4 `.param set :n 3`). The queries read only dates, statuses and ids, never an encrypted (`_enc`)

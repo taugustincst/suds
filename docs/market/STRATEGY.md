@@ -1,10 +1,11 @@
-# SUDS go-to-market strategy (1.17.0)
+# SUDS go-to-market strategy
 
-**Status: the owner's strategy, written down and assessed, 29 September 2026.** It replaces nothing in the
-rest of this pack until a row below says it is done. Everything described as *planned* is not in a released
-version of SUDS. The 1.17.0 features are **released in 1.17.0** (published to GitHub Pages under an owner-approved policy
-exception; the tag is the owner's). The next feature release waits the policy's 28 days from 1.17.0
-([docs/RELEASE.md](../RELEASE.md)); `test/release-wording.test.js` keeps these lines honest at each stamp.
+**Status: the owner's strategy, written down and assessed, 29 September 2026; its *Built vs planned* table is current to
+1.23.4.** It replaces nothing in the rest of this pack until a row below says it is done. Everything described as
+*planned* is not in a released version of SUDS. It was first written at 1.17.0, whose features are **released in
+1.17.0**. Under *Stabilisation* ([docs/RELEASE.md](../RELEASE.md)) the next feature release, 1.24.0, comes no earlier
+than 2026-10-29 and only through the release gate; `test/release-wording.test.js` keeps these lines honest at each
+stamp.
 
 The strategy has three parts:
 
@@ -310,7 +311,7 @@ vehicle for a consulting practice.
 
 | Step | What | Gate to the next step |
 | --- | --- | --- |
-| **0. Now (freeze to 2026-10-27)** | The organisational items in [README.md](README.md): entity, insurance, counsel review (now including the AI provider BAA/QSOA), repository settings in force, pen test commissioned, official templates requested, one county conversation | Counsel has the templates; repository controls in force |
+| **0. Now (freeze to 2026-10-29)** | The organisational items in [README.md](README.md): entity, insurance, counsel review (now including the AI provider BAA/QSOA), repository settings in force, pen test commissioned, official templates requested, one county conversation | Counsel has the templates; repository controls in force |
 | **1. 1.17.0** | released in 1.17.0: the AI copilot as specified above, with the least-privilege default, the client revision history and publication for most of the refused band; the street-outreach screen, settlement outcomes, the Part 2 layer profile, CalOMS automation and one-time referral links (off by default) | Released and tagged; the copilot's outbound payload reviewed |
 | **2. First pilots with the FDE service** | Two or three CBOs under one county sponsor, delivered as paid implementation ([PILOT-KIT.md](PILOT-KIT.md), *County pilot with the FDE service*) | One accepted funder submission; measured time to a signed note; measured support and implementation hours |
 | **3. County settlement view** | The funder-facing view for the sponsoring county, from the CBOs' exact submissions | County template in hand; counsel's view on the data flow |
