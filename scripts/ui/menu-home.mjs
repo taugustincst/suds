@@ -100,7 +100,7 @@ try {
         await s.page.click('.mobilebar button[aria-controls=sidebar]');
         await until(() => s.page.$eval('.sidebar', e => e.classList.contains('open')));
         // 1.23.1: a banner (here the 2-step one) no longer sits over the open drawer's brand and programme name.
-        await s.page.waitForTimeout(300); // the drawer slides in (.2s)
+        await until(() => s.page.$eval('.sidebar', e => e.getAnimations().every(a => a.playState !== 'running'))); // the drawer has slid in
         const cover = await s.page.evaluate(() => {
           const b = document.querySelector('.sidebar .brand').getBoundingClientRect();
           const pts = [[b.left + 12, b.top + b.height / 2], [b.left + b.width / 2, b.top + b.height / 2]];
