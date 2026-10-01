@@ -1,0 +1,8 @@
+$ install -m 0644 /root/files/pubkey.js /tmp/pubkey.js; umask 077; : > /root/escrowed-keys.env; /root/files/as-suds.sh /tmp/pubkey.js > /root/evidence/suds-signing-key.pem; rm -f /root/escrowed-keys.env /tmp/pubkey.js; cat /root/evidence/suds-signing-key.pem
+Running as unit: suds-ops.service
+Finished with result: success
+Main processes terminated with: code=exited/status=0
+Service runtime: 62ms
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAAN37xsKtfW0fQjFhoBo0PKocgKT4ikNldluDfTft0vQ=
+-----END PUBLIC KEY-----

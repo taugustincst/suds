@@ -1,0 +1,33 @@
+SUDS disaster-recovery drill — PASSED
+Started 2026-10-01T05:01:23.064Z, finished 2026-10-01T05:01:23.660Z (cli, by cli) on bf964417ed3b, SUDS 1.23.0
+
+Backup restored: suds-2026-10-01T05-00-49-588Z.db.enc — the offsite copy in /mnt/suds-offsite (taken 2026-10-01T05:00:49.588Z)
+Keys used: escrow file (escrow)
+RTO (restore to serving): 0.4 s — target 60 min — met
+RPO (age of that backup): 33 s — target 4 h — met
+
+Checks:
+  [PASS] The escrowed key file opens the backup — escrow file escrow; encryption key 132f633a22d9, index key da2b007d8ae8
+  [PASS] The offsite copy was restored — /mnt/suds-offsite
+  [PASS] The restored file passes SQLite integrity_check — ok
+  [PASS] The encryption key in custody opens this backup
+  [PASS] Schema is at this build's version (67) — schema 67
+  [PASS] Every table holds the rows the backup was taken with — 79 tables
+  [PASS] The audit chain verifies end to end — 1 entries
+  [PASS] The restored audit chain matches the anchors written before the backup — 0 matched, 0 written after this backup
+  [PASS] A sample of encrypted fields decrypts — the backup holds no encrypted values yet
+  [PASS] The application serves from the restored copy (/api/health) — healthy
+  [PASS] Password and second-factor sign-in work — login HTTP 200, MFA HTTP 200
+  [PASS] An authenticated read returns the restored records — HTTP 200, 0 clients
+
+Changed in the throwaway copy only: backup_schedule_hours cleared in the drill copy; dr_drill_monthly cleared in the drill copy
+
+Rows the live server holds beyond this backup: clients 0, notes 0, interventions 0, referrals 0, tasks 0, audit_log 4
+
+The backup was restored into a temporary directory, checked by a separate process that was never given the live database's path, and deleted afterwards. The live database received only this result (a settings row and an audit entry).
+Integrity: SHA-256 8fab76ad8eaa93cac3fe588b9a8c11e3862e1efe22e1c9c20f0da6a4622fc00a
+           HMAC-SHA256 e970a63a4eeec052ca37a7483a7a7d57a4fbeca8eff5d8b178868881ce2ce888
+           Ed25519 signature aYHPaxkZgRxnyUes7yqwMaLFlsEQjDUz5M+X840Q4RHbfTaD0glHt6KorQ8769EzpF4M5bKz2gYO8tt8AmPdCQ==
+           signing key 17d2b6febb037ce8 (public key published at GET /api/admin/security/signing-key)
+Verify with the public key only: npm run verify-dr-report -- <the .json report> --public-key <signing-key.pem>
+The JSON report beside this file is the record of the drill; this text is a convenience copy.
