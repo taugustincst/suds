@@ -583,6 +583,17 @@ function fieldSyncSession(ctx) {
   return devices.effectiveField(s.user_id, device);
 }
 function assertSyncSessionReach(ctx) {
+  // A device revoked, or told to erase itself, while one of its sync sessions was open (integration review of 1.22.0):
+  // that session ends here. Revoking and wiping were checked only at sign-in, so an open session kept pulling and
+  // pushing (and, for a whole device, reached the rest of the API) until it expired; and a revoked device's session was
+  // never narrowed to its account's field scope (devices.js bind skips a revoked device). Signing out still works.
+  if (ctx.session && ctx.session.device_id && ctx.path !== '/api/auth/logout') {
+    const d = db.one(`SELECT revoked_at, wipe_requested_at FROM devices WHERE id=?`, ctx.session.device_id);
+    if (d && (d.revoked_at || d.wipe_requested_at)) {
+      db.run(`UPDATE sessions SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, db.now(), ctx.session.id);
+      throw new HttpError(403, 'This device has been revoked or told to erase itself, so it can no longer sync. Sign in again to be told what to do.', { deviceRevoked: !!d.revoked_at, wipeRequested: !!d.wipe_requested_at });
+    }
+  }
   if (!ctx.session || !ctx.session.sync_client || ctx.path.startsWith('/api/sync/') || FIELD_SESSION_AUTH_PATHS.has(ctx.path)) return;
   if (!fieldSyncSession(ctx)) return;
   if (ctx.path.startsWith('/api/auth/')) throw new HttpError(403, FIELD_SESSION_ACCOUNT_MESSAGE, { fieldDevice: true, useBrowser: true });

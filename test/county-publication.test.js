@@ -536,3 +536,20 @@ test('the governance tables are office-only with their encrypted columns', () =>
   const found = require('../scripts/rotate-key').encryptedColumns(H.db).map(t => `${t.table}:${t.cols.join(',')}`);
   for (const t of ['county_publication_consents:reference_enc', 'county_publication_inputs:inputs_enc']) assert.ok(found.includes(t), t);
 });
+
+test('a consent withdrawn while a release is being published: refused where the release is written, and audited (integration review of 1.22.0)', async () => {
+  const q = Q(2017, 2);
+  const bay = await programme('Bayside Outreach', [[q, 200]]); await programme('Cedar Recovery', [[q, 150]]);
+  const p = ok(await prepare(q), 200);
+  const PUB = require('../server/county-publication');
+  const real = PUB.prepare;
+  // The consent is withdrawn after the publish request screened the release and before it is written.
+  PUB.prepare = async (...args) => { const out = await real(...args); PUB.prepare = real; PUB.withdrawConsent(bay.id, null); return out; };
+  let r;
+  try { r = await publish({ ...q, sha256: p.sha256, reviewed: true }); } finally { PUB.prepare = real; }
+  assert.equal(r.status, 409, JSON.stringify(r.data)); assert.equal(r.data.reason, 'no_consent');
+  assert.deepEqual(r.data.programmes, [{ id: bay.id, name: 'Bayside Outreach' }]);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM county_publications WHERE period_from=? AND period_to=?`, q.from, q.to).n, 0, 'nothing was published');
+  const a = lastAudit('county.publication.refuse');
+  assert.equal(a.details.step, 'record'); assert.equal(a.details.reason, 'no_consent'); assert.deepEqual(a.details.without_consent, [bay.id]);
+});

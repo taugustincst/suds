@@ -95,7 +95,9 @@ and signing notes and approvals with the device's own authenticator. No biometri
 fingerprint or face stays on the device, which only returns a signed assertion. An authenticator allow-list
 (released in 1.21.0, off by default) limits passkeys to the authenticator models an administrator lists, each proven
 by attestation. **With it on, synced passkeys (iCloud Keychain, Google Password Manager: attestation `none` or
-`apple`) cannot be added.** Turning it on also ends existing unproven passkeys, with no grace period. Evidence:
+`apple`) cannot be added.** Turning it on also stops existing unproven passkeys: at once under 1.21.0; with the grace period (built for 1.22.0, not yet released)
+only after a grace period the administrator sets (0 to 90 days, 14 by default), never for a model reported compromised
+or revoked. Evidence:
 [../../FINGERPRINT.md](../../FINGERPRINT.md); `server/webauthn.js`, `server/passkeys.js`, `server/attestation.js`.
 
 **Q. Least privilege?** Six roles; the county view has two permissions of its own, `county:view` and the

@@ -240,6 +240,15 @@ function record(prep, { from, to, entered }, user) {
     const checked = new Set((prep.content.corrects || []).map(x => x.sha256));
     const o = now.find(x => !x.withdrawn_at || !checked.has(x.sha256));
     if (o || now.length !== checked.size) refuse('overlap', `A release for ${K.humanPeriod((o || now[0]).period_from, (o || now[0]).period_to)} was published or withdrawn while this one was being prepared: two releases whose periods overlap could be subtracted from each other. Prepare it again.`, 409);
+    // Consent, checked again where it is written (integration review of 1.22.0): a programme's consent withdrawn while
+    // the release was screened (the audit takes a moment) must not let the release name it.
+    const agreed = consents();
+    const lost = (prep.inputs.programmes || []).filter(p => !agreed.has(p.id));
+    if (lost.length) {
+      const e = new PublicationError('no_consent', `The consent to publication of ${lost.map(p => p.name).join('; ')} was withdrawn while this release was being prepared, and the release names ${lost.length === 1 ? 'it' : 'them'}. Prepare it again.`, 409);
+      e.programmes = lost.map(p => ({ id: p.id, name: p.name }));
+      throw e;
+    }
     db.run(`INSERT INTO county_publications(id,kind,period_from,period_to,threshold,entered,method,content,sha256,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)`,
     id, 'release', from, to, prep.T, entered ? 'include' : 'exclude', JSON.stringify(prep.content.method), K.canonical(prep.content), prep.sha256, user ? user.id : null);
     // What it was screened from, for a corrected release of this period later (encrypted: exact programme figures).

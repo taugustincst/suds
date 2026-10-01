@@ -79,7 +79,8 @@ Built for 1.22.0, not yet released. These fix findings of the market evaluation 
   *Release integrity* answer.
 - **The authenticator allow-list and synced passkeys.** QUESTIONNAIRE #19a and the RFI now say that with the
   allow-list on, synced passkeys (iCloud Keychain, Google Password Manager: attestation `none` or `apple`) cannot be
-  added, and that turning it on ends unproven passkeys with no grace period.
+  added, and that turning it on ends unproven passkeys: at once under 1.21.0, and after the grace period below from
+  1.22.0.
 - **`scripts/release-state.js`**: a new check fails while released versions are untagged and QUESTIONNAIRE #36,
   #39 or the RFI's *Release integrity* answer does not say they were "published without a tag" and name the first
   and last of them (`untagged-undisclosed`, `untagged-range`). Untagged versions come from the hand-off's owed tags,
@@ -226,6 +227,31 @@ Evidence and tests only; no change to what SUDS does. Two findings for the owner
   1.19.0 at least); and `upgrade.sh --dry-run` from a zip does not show the hand-over.
 - Citations moved to this evidence: the evidence index, BACKUP-AND-DR, the questionnaire's recovery and installer
   bullets and the county RFI answers.
+
+### Integration review of the 1.22.0 streams
+
+Built for 1.22.0, not yet released. No migration, permission or route.
+
+- **Fixed: a device revoked, or told to erase itself, kept syncing on a session it already had open.** Revoking and
+  wiping were checked only when a device signed in, so a sync session open at that moment went on pulling and pushing
+  until it expired, and a whole device's session reached the rest of the API; a revoked device's session was not even
+  narrowed to its account's field scope. Now the next request on such a session is refused (`403`, `deviceRevoked` or
+  `wipeRequested`) and the session ends; signing out still works, and signing in again delivers the wipe as before
+  (`server/auth.js` `assertSyncSessionReach`; `test/field-device.test.js`).
+- **Fixed: a corrected or new publication release could name a programme whose consent was withdrawn while it was
+  being published.** The consent was checked when the release was screened, not where it is written; publishing now
+  checks again in the same transaction and refuses (`409`, `no_consent`) a release that would name a programme whose
+  consent was withdrawn in between (`server/county-publication.js` `record`; `test/county-publication.test.js`).
+- **The Send to the county card offers periods by the server's date** (the programme's time zone, as the file
+  route and the reminders judge "ended"), not the browser's clock.
+- **Browser suite:** `county-connect.mjs` and `county.mjs` read the quarter from the server when they use it and
+  choose it on the card by name, so a run across midnight on a quarter's last day no longer sends one quarter and
+  looks for another; `scripts/county-sample.js` takes `--today`.
+- **Documents:** QUESTIONNAIRE #19a, the RFI template, the threat model, the market README and BUYER-GUIDE-IT no
+  longer say the allow-list stops unproven passkeys with no grace period (a check in
+  `test/doc-content-currency.test.js` keeps it so); PLATFORM and the threat model say a user can reuse the id of their
+  own *Hold everything* device; COUNTY-VIEW's owner decisions say which are 1.22.0's, and two notes no longer call
+  migration 64 another branch's or unneeded; LOGGING-AND-AUDIT lists the publication consent actions once.
 
 ## 1.21.0 — 2026-09-30
 

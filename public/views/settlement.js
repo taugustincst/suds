@@ -131,7 +131,9 @@ function countyCard(pageFrom, pageTo, choice = {}) {
     h('p', { class: 'small', 'data-so-county-leaves': '1' }, h('b', {}, 'It leaves the program. '), 'It is for the county under your funding contract, not for publication or sharing. Making it is recorded in the audit log. SUDS sends nothing itself: you send the file the way the county asks.'),
     body);
   Promise.all([get('/api/county-submission/key', { quiet: true }), get('/api/county-submission/options', { quiet: true }), get('/api/county-submission/reminders', { quiet: true }).catch(() => null)])
-    .then(([k, o, rem]) => body.replaceChildren(countyForm(k, o, today, pageFrom, pageTo, choice, rem)))
+    // The periods offered are by the server's date (its programme's time zone, as the file route and the reminders
+    // judge "ended"), not this browser's clock, which may be in another zone or past midnight first.
+    .then(([k, o, rem]) => body.replaceChildren(countyForm(k, o, (o && /^\d{4}-\d{2}-\d{2}$/.test(o.today || '') ? o.today : today), pageFrom, pageTo, choice, rem)))
     .catch(e => body.replaceChildren(h('p', { class: 'err', role: 'alert' }, e.message)));
   return card;
 }

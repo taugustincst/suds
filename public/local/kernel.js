@@ -36032,6 +36032,13 @@ var require_county_publication = __commonJS({
         const checked = new Set((prep.content.corrects || []).map((x) => x.sha256));
         const o = now2.find((x) => !x.withdrawn_at || !checked.has(x.sha256));
         if (o || now2.length !== checked.size) refuse("overlap", `A release for ${K.humanPeriod((o || now2[0]).period_from, (o || now2[0]).period_to)} was published or withdrawn while this one was being prepared: two releases whose periods overlap could be subtracted from each other. Prepare it again.`, 409);
+        const agreed = consents();
+        const lost = (prep.inputs.programmes || []).filter((p) => !agreed.has(p.id));
+        if (lost.length) {
+          const e = new PublicationError("no_consent", `The consent to publication of ${lost.map((p) => p.name).join("; ")} was withdrawn while this release was being prepared, and the release names ${lost.length === 1 ? "it" : "them"}. Prepare it again.`, 409);
+          e.programmes = lost.map((p) => ({ id: p.id, name: p.name }));
+          throw e;
+        }
         db3.run(
           `INSERT INTO county_publications(id,kind,period_from,period_to,threshold,entered,method,content,sha256,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)`,
           id,
@@ -37553,8 +37560,9 @@ var require_county2 = __commonJS({
         try {
           rec = PUB.record(p, c, ctx.user);
         } catch (e) {
-          if (e instanceof PUB.PublicationError) throw new HttpError3(e.status, e.message, { reason: e.code });
-          throw e;
+          if (!(e instanceof PUB.PublicationError)) throw e;
+          audit3.log({ user: ctx.user, action: "county.publication.refuse", ip: ctx.ip, success: false, details: { step: "record", from: c.from, to: c.to, reason: e.code, sha256: p.sha256, ...e.programmes ? { without_consent: e.programmes.map((x) => x.id) } : {} } });
+          throw new HttpError3(e.status, e.message, { reason: e.code, ...e.programmes ? { programmes: e.programmes } : {} });
         }
         audit3.log({ user: ctx.user, action: "county.publication.publish", entity: "county_publication", entityId: rec.id, ip: ctx.ip, details: { ...pubDetails(c, p), method: p.content.method.name, confirmation: PUB.REVIEW_CONFIRMATION } });
         ctx.status = 201;
@@ -50530,6 +50538,13 @@ var require_auth2 = __commonJS({
       return devices.effectiveField(s.user_id, device);
     }
     function assertSyncSessionReach(ctx) {
+      if (ctx.session && ctx.session.device_id && ctx.path !== "/api/auth/logout") {
+        const d = db3.one(`SELECT revoked_at, wipe_requested_at FROM devices WHERE id=?`, ctx.session.device_id);
+        if (d && (d.revoked_at || d.wipe_requested_at)) {
+          db3.run(`UPDATE sessions SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, db3.now(), ctx.session.id);
+          throw new HttpError3(403, "This device has been revoked or told to erase itself, so it can no longer sync. Sign in again to be told what to do.", { deviceRevoked: !!d.revoked_at, wipeRequested: !!d.wipe_requested_at });
+        }
+      }
       if (!ctx.session || !ctx.session.sync_client || ctx.path.startsWith("/api/sync/") || FIELD_SESSION_AUTH_PATHS.has(ctx.path)) return;
       if (!fieldSyncSession(ctx)) return;
       if (ctx.path.startsWith("/api/auth/")) throw new HttpError3(403, FIELD_SESSION_ACCOUNT_MESSAGE, { fieldDevice: true, useBrowser: true });

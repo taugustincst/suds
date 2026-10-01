@@ -14,7 +14,8 @@
 //       (the signed files), made for the county whose code is given (County view › Programs shows it). Nothing
 //       here touches a database: the files are what three programs' own SUDS servers would have made. Register
 //       each key and import each file on the county's server (the browser suite does this through the API). Schema
-//       version 2 (each fund's award; released in 1.21.0) unless --schema-version 1.
+//       version 2 (each fund's award; released in 1.21.0) unless --schema-version 1. --today YYYY-MM-DD: the files
+//       are for the two quarters before that day (the browser suite passes the server's own date), not this clock's.
 //
 // `npm run seed` stays a program's data; this is the county's. Written to a directory, it needs no database, keys or
 // data directory of a server (signWithSeed signs with each sample program's own key): it loads SUDS's modules as
@@ -161,11 +162,12 @@ if (require.main === module) {
     const at = args.indexOf('--county-code'); const code = at >= 0 ? args[at + 1] : null;
     // --schema-version 1: files as a SUDS before 1.21 made them (no award), to try a county view that reads both.
     const sv = args.indexOf('--schema-version'); const schemaVersion = sv >= 0 ? Number(args[sv + 1]) : undefined;
-    const dir = args.find((a, i) => !a.startsWith('--') && (at < 0 || i !== at + 1) && (sv < 0 || i !== sv + 1));
+    const td = args.indexOf('--today'); const today = td >= 0 ? args[td + 1] : undefined;
+    const dir = args.find((a, i) => !a.startsWith('--') && (at < 0 || i !== at + 1) && (sv < 0 || i !== sv + 1) && (td < 0 || i !== td + 1));
     const K = county(); const c = K.normaliseCode(code);
-    if (!dir || !c || (schemaVersion !== undefined && !K.SCHEMA_VERSIONS.includes(schemaVersion))) { console.error('usage: node scripts/county-sample.js <output directory> --county-code <the county\'s code, from County view › Programs> [--schema-version 1]\n       node scripts/county-sample.js --register    (development server only)'); process.exit(2); }
+    if (!dir || !c || (schemaVersion !== undefined && !K.SCHEMA_VERSIONS.includes(schemaVersion)) || (today !== undefined && !K.isDay(today))) { console.error('usage: node scripts/county-sample.js <output directory> --county-code <the county\'s code, from County view › Programs> [--schema-version 1] [--today YYYY-MM-DD]\n       node scripts/county-sample.js --register    (development server only)'); process.exit(2); }
     fs.mkdirSync(dir, { recursive: true });
-    const s = sample({ recipient: { county_code: c, county_name: 'Sample County Behavioral Health' }, schemaVersion });
+    const s = sample({ recipient: { county_code: c, county_name: 'Sample County Behavioral Health' }, schemaVersion, ...(today ? { periods: lastQuarters(today) } : {}) });
     fs.writeFileSync(path.join(dir, 'programmes.json'), JSON.stringify(s.map(p => ({ name: p.name, public_key: p.public_key, fingerprint: p.fingerprint_display })), null, 2) + '\n');
     for (const p of s) for (const f of p.files) fs.writeFileSync(path.join(dir, `${p.slug}-${f.period.from}_${f.period.to}.json`), JSON.stringify(f.file, null, 2) + '\n');
     console.log(`Wrote ${s.length} programs and ${s.reduce((n, p) => n + p.files.length, 0)} signed submissions for county ${K.formatCode(c)} to ${dir}`);

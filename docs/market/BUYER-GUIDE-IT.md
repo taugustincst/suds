@@ -68,7 +68,8 @@ process and one SQLite database per programme; a second process is refused
   `fido-u2f`, `tpm` or `android-key`, verified with `node:crypto`) against the roots and statuses in that file;
   synced passkeys (iCloud Keychain, Google Password Manager) give no attestation and are refused. Passkeys added
   before it was on stop at their next use, and the sessions they opened end, after the administrator confirms how
-  many accounts that affects. Keep the file current: once it is past its `nextUpdate`, no passkey can be added
+  many accounts that affects (with the grace period, built for 1.22.0, not yet released: after a grace period of 0 to 90 days, 14 by
+  default, during which their owners are told when they stop). Keep the file current: once it is past its `nextUpdate`, no passkey can be added
   ([docs/FINGERPRINT.md](../FINGERPRINT.md), *Authenticator allow-list*).
 - **Role-based access** (navigator, clinician, supervisor, finance, readonly, admin). **Role defaults since
   1.16.0:** navigators and clinicians see every client, and navigators read clinical notes without writing

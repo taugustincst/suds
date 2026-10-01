@@ -663,8 +663,8 @@ to the **County reporting schedule** card on Settlement outcomes.
   already record them.
 - **Settings only, no migration**: the schedules (`county_submission_schedules`), the files made (the last 200) and
   the county's last status (`county_connect_last_status`) are settings, not synced to devices and holding no figures
-  or PHI. **Owner decision (conservative default):** a settings record rather than a table (migration 64 was not
-  needed), and reminders on Home rather than to-do items (nobody's to-do list fills with items that clear themselves).
+  or PHI. **Owner decision (conservative default):** a settings record rather than a table (no migration was
+  needed; migration 64 is the field scope's `field_accounts`, 1.22.0), and reminders on Home rather than to-do items (nobody's to-do list fills with items that clear themselves).
 - **SUDS on this device** makes no county file (the county route module is office-only), so it has no reminders
   either: Home does not ask for them there.
 
@@ -762,7 +762,8 @@ release** of the combined figures for a period, records it, and never changes it
 - **Permissions.** `county:manage` prepares, publishes and withdraws; `county:view` lists and reads releases; the
   files need `export:read`. No new permission.
 
-**Owner decisions** (conservative defaults, released in 1.21.0; each can be relaxed later):
+**Owner decisions** (conservative defaults; 1 to 7 released in 1.21.0, 3 and 7 changed and 8 added in 1.22.0, which
+is built for 1.22.0, not yet released; each can be relaxed later):
 
 1. *The reader holds the most any program's own release could say*: every program figure of 0 or at least T is
    assumed published exactly. A county with one small program beside published big ones gets that measure's total
@@ -850,7 +851,7 @@ Publication governance (built for 1.22.0, not yet released): consent (`consents`
 `withdrawConsent`) and corrected releases (`earlierReleases`, `inputsOf`) in `server/county-publication.js`, the
 `earlier` releases in `server/county-publication-audit.js` `buildModel`, the consent routes in
 `server/routes/county.js`, the Publication consent dialog and the Publish tab's choice in `public/views/county.js`;
-migration 65 (`county_publication_consents`, `county_publication_inputs`; 64 is another 1.22.0 branch's); tests at the
+migration 65 (`county_publication_consents`, `county_publication_inputs`; 64 is the field scope's `field_accounts`); tests at the
 end of `test/county-publication.test.js`; `scripts/ui/county-publication.mjs` (section 1a and the corrected release)
 and the Publication consent dialog in `scripts/ui/accessibility.mjs`. Award pro-rating: `server/county.js` `prorate`,
 `test/county-award.test.js`.
