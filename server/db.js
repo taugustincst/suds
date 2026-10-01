@@ -827,6 +827,17 @@ const migrations = [
   //     a list turned on under 1.21.0 refused at once). Office server only. Self-contained and idempotent, so it can be
   //     renumbered.
   (d) => { addColumn(d, 'passkeys', 'allowlist_grace_until', 'TEXT'); },
+  // 67: a follow-up to-do remembers the call or visit whose date made it (built for 1.23.0, not yet released;
+  //     server/rules/follow-ups.js), so changing that date moves it and clearing the date cancels it.
+  //     tasks.call_id and tasks.intervention_id, NULL for every existing to-do (an older one is matched by its
+  //     title and date the first time its call or visit is edited). Self-contained and idempotent, so it can be
+  //     renumbered.
+  (d) => {
+    addColumn(d, 'tasks', 'call_id', 'TEXT REFERENCES calls(id) ON DELETE SET NULL');
+    addColumn(d, 'tasks', 'intervention_id', 'TEXT REFERENCES interventions(id) ON DELETE SET NULL');
+    d.exec('CREATE INDEX IF NOT EXISTS idx_tasks_call ON tasks(call_id)');
+    d.exec('CREATE INDEX IF NOT EXISTS idx_tasks_intervention ON tasks(intervention_id)');
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

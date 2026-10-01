@@ -8,7 +8,8 @@ const audit = require('../audit');
 const C = require('../constants');
 const disclosure = require('../disclosure');
 const CN = require('../client-name');
-const { uuid, encrypt, decrypt } = require('../crypto');
+const { encrypt, decrypt } = require('../crypto');
+const FU = require('../rules/follow-ups');
 
 // A referral at these statuses means the agency has been contacted about this person by name.
 const SHARED_STATUSES = ['contacted', 'accepted', 'waitlisted', 'scheduled', 'admitted', 'completed'];
@@ -157,10 +158,8 @@ module.exports = (r) => {
       if (sharesInformation(v)) disclosure.requireBasis(v.client_id, gate(ctx, v));
       // Closing the loop is the point of a referral: every one gets a follow-up date whether or not the
       // worker set one, so "we referred them and never found out" stops being possible.
-      if (!v.follow_up_due) {
-        const days = v.urgency === 'emergent' ? 1 : v.urgency === 'urgent' ? 3 : 14;
-        v.follow_up_due = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
-      }
+      // (server/rules/follow-ups.js, which sync push applies to a device's referrals too.)
+      FU.defaultReferralDue(v);
       encFields(v);
     },
     beforeUpdate: (ctx, v, row) => {
@@ -178,9 +177,10 @@ module.exports = (r) => {
     },
     afterInsert: (ctx, row) => {
       if (sharesInformation(row)) recordDisclosure(ctx, row, row);
-      db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`,
-        uuid(), row.client_id, row.user_id, ctx.user.id, encrypt(`Follow up on referral to ${resourceName(row.resource_id)}`), row.follow_up_due, row.urgency === 'emergent' ? 'urgent' : 'normal', row.id);
+      FU.reconcile('referrals', row, null, ctx);
     },
+    // A follow-up date changed or cleared by editing the referral moves or cancels its to-do (server/rules/follow-ups.js).
+    afterUpdate: (ctx, row, prev) => { FU.reconcile('referrals', row, prev, ctx); },
   });
 
   // Close the loop explicitly: what happened, and was the client admitted?

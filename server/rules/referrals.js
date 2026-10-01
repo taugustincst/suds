@@ -6,6 +6,7 @@
 const db = require('../db');
 const { define, refuse } = require('./core');
 const { ownedBy } = require('./shared');
+const FU = require('./follow-ups');
 
 const OTHERS = ['status', 'outcome_enc', 'barrier_enc', 'admitted_at', 'closed_at', 'outcome_recorded_at', 'consent_id', 'consent_revoked'];
 
@@ -57,7 +58,12 @@ module.exports = define({
     c.referralDisclosure = gate;
     return null;
   },
+  // Every referral has a follow-up date (one by urgency when the worker set none), and its to-do follows the date
+  // once the push has landed (server/rules/follow-ups.js), as over REST (routes/referrals.js).
+  normalise(row, c) { if (!c.existing) FU.defaultReferralDue(row); return null; },
+  finish(s) { FU.finish('referrals', s); },
   afterApply(row, o, c) {
+    FU.track('referrals', row, c);
     const gate = c.referralDisclosure;
     if (!gate) return;
     gate.account('device');

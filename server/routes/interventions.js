@@ -192,8 +192,8 @@ module.exports = (r) => {
       }
       // Community distribution has no client record to update, and no client to follow up with.
       if (row.naloxone_kits > 0 && row.client_id) db.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, serviceDate(row), db.now(), row.client_id);
-      if (row.follow_up_due && row.client_id) db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
-        uuid(), row.client_id, row.user_id, ctx.user.id, require('../crypto').encrypt(`Follow up: ${O.labelOf('INTERVENTION_TYPES', row.type)}`), row.follow_up_due, 'normal');
+      // The follow-up to-do, by the one rule sync push also runs (server/rules/follow-ups.js).
+      require('../rules/follow-ups').reconcile('interventions', row, null, ctx);
       syncExpenditure(ctx, row);
       applySupplies(ctx, row, row._supply_plan);
       // The note written with the visit: in the same transaction, so both are saved or neither is.
@@ -203,6 +203,8 @@ module.exports = (r) => {
       syncExpenditure(ctx, row); syncTimeEntry(ctx, row, prev);
       if (row.client_id !== prev.client_id || row.user_id !== prev.user_id) S.relinkLines(row);
       applySupplies(ctx, row, row._supply_plan);
+      // A follow-up date added, changed or cleared by editing the visit makes, moves or cancels its to-do.
+      require('../rules/follow-ups').reconcile('interventions', row, prev, ctx);
     },
     // Kits or strips handed out with no supply item to take them off (the form tells the worker): a count the
     // programme keeps no item of stays on the visit, with no line and nothing drawn down.

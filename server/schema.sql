@@ -654,10 +654,16 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   -- the referral whose follow-up this is, so recording that referral's outcome closes this to-do and no other
-  referral_id TEXT REFERENCES referrals(id) ON DELETE SET NULL
+  referral_id TEXT REFERENCES referrals(id) ON DELETE SET NULL,
+  -- the call or visit whose follow-up date made this to-do (1.23.0, server/rules/follow-ups.js): changing that date
+  -- moves it and clearing the date cancels it, while it is still as SUDS made it
+  call_id TEXT REFERENCES calls(id) ON DELETE SET NULL,
+  intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assigned_to, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_client ON tasks(client_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_call ON tasks(call_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_intervention ON tasks(intervention_id);
 
 CREATE TABLE IF NOT EXISTS expenditures (
   id TEXT PRIMARY KEY,

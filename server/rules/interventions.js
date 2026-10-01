@@ -9,6 +9,7 @@ const C = require('../constants');
 const { define, refuse, flag } = require('./core');
 const { periodProblem, ownedBy } = require('./shared');
 const PC = require('../participant-code');
+const FU = require('./follow-ups');
 
 // The date a service "happened on", for the grant it is charged to: the calendar date in the organisation's
 // time zone, or the service_date a REST caller gave explicitly.
@@ -102,6 +103,8 @@ module.exports = define({
     const countsPushed = Object.keys(SUP.N.COUNTED).some(col => o[col] !== undefined && (!e || Number(o[col] || 0) !== Number(e[col] || 0)));
     const visits = supplyVisits(c.session);
     touchVisit(c.session, row.id, visits.has(row.id) ? { countsPushed: countsPushed || visits.get(row.id).countsPushed } : { prev: e || null, countsPushed });
+    // Its follow-up to-do, once the whole push has landed (server/rules/follow-ups.js).
+    FU.track('interventions', row, c);
   },
   // A deleted visit puts back what it drew.
   afterDelete(row, s) { touchVisit(s, row.id, { linesPushed: true }); },
@@ -113,6 +116,7 @@ module.exports = define({
     for (const [id, how] of supplyVisits(s)) {
       db.savepoint(() => SUP.settlePushedVisit(s.user, id, how), (err) => s.warnings.push({ table: 'interventions', id, reason: `supplies not drawn down: ${String(err && err.message || err).slice(0, 160)}` }));
     }
+    FU.finish('interventions', s);
   },
 });
 /** The visits whose supplies this push touched: id -> { prev, countsPushed, linesPushed } (settlePushedVisit). */

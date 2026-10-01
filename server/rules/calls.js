@@ -6,6 +6,7 @@ const C = require('../constants');
 const O = require('../options');
 const { define, flag } = require('./core');
 const { ownedBy } = require('./shared');
+const FU = require('./follow-ups');
 
 module.exports = define({
   table: 'calls',
@@ -32,4 +33,9 @@ module.exports = define({
     const what = method === 'text' ? 'text message' : 'phone call';
     return flag(`was accepted, but its outcome is not one the office offers for a ${what}; the office will review it`, { message: `"${row.outcome}" is not an outcome for a ${what}. Choose one of: ${O.visible(list).join(', ')}`, fields: { outcome: 'not an outcome for this kind of contact' }, code: 'list' });
   },
+  // A call-back date is a follow-up, and unticking Follow-up needed turns it off (server/rules/follow-ups.js), the
+  // same on a device's call as on one saved at the office (routes/calls.js); its to-do follows once the push lands.
+  normalise(row, c) { FU.deriveCallFollowUp(row, c.existing); return null; },
+  afterApply(row, o, c) { FU.track('calls', row, c); },
+  finish(s) { FU.finish('calls', s); },
 });

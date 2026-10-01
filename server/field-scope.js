@@ -53,7 +53,7 @@ const TABLES = {
   court_orders: exclude('court orders'),
   part2_notices: exclude('Part 2 notices'),
   referrals: exclude('referrals name the client to another organisation'),
-  tasks: reduce('the worker\'s own to-dos, about their recent clients or no client; a referral link blank', { rows: 'own_tasks', blank: ['referral_id'] }),
+  tasks: reduce('the worker\'s own to-dos, about their recent clients or no client; the referral, call or visit a follow-up came from blank', { rows: 'own_tasks', blank: ['referral_id', 'call_id', 'intervention_id'] }),
   expenditures: exclude('spending'),
   notes: exclude('notes, clinical or not'),
   note_addenda: exclude('addenda to notes'),

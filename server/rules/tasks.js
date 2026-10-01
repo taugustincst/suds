@@ -40,7 +40,9 @@ const deviceNotice = (row, c) => row.assigned_to !== c.user.id && /^Changed: [^\
 
 module.exports = define({
   table: 'tasks',
-  deviceColumns: ['referral_id'], createdBy: ['created_by'],
+  // The record whose follow-up this to-do is (server/rules/follow-ups.js): a device's to-do carries its call's or
+  // visit's id as the office's does, so the office finds it rather than making a second one.
+  deviceColumns: ['referral_id', 'call_id', 'intervention_id'], createdBy: ['created_by'],
   fields: {
     client_id: { type: 'string' }, assigned_to: { type: 'string' }, title: { type: 'string', required: true, maxLen: 200 }, description: { type: 'string', maxLen: 2000 },
     due_at: { type: 'datetime' }, priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'] }, status: { type: 'string', enum: ['open', 'in_progress', 'done', 'cancelled'] },
@@ -59,6 +61,10 @@ module.exports = define({
   // discharge landed in the same push and its maker is on the care team (or a manager), as over REST
   // (routes/episodes.js /close). Never otherwise (security review of 1.16.3, N3), never a to-do with no client, and
   // never a change notice, which is not work but the primary worker's to read (security review of 1.16.2, M1).
+  // A link to a call or visit the office does not have (refused in this push, or deleted) is dropped, not the to-do.
+  beforeStore(row) {
+    for (const [col, table] of [['call_id', 'calls'], ['intervention_id', 'interventions']]) if (row[col] && !require('../db').one(`SELECT 1 FROM ${table} WHERE id=?`, row[col])) row[col] = null;
+  },
   othersMayChange(existing, row, changed, c) {
     if (!['done', 'cancelled'].includes(row.status) || !changed.every(col => col === 'status' || col === 'completed_at') || !existing.client_id || isNotice(existing)) return false;
     const st = c && c.session && c.session.state.assignments; const k = st && st.episodes.get(existing.client_id);
