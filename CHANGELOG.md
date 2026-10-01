@@ -9,7 +9,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 A patch of 1.23.2 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
 1.23.3*): fixes from the external retest of 1.23.2 and the integration review, tests and documentation, with no
 migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.23.3 --previous
-v1.23.2 --previous-ref a45c716` passes: 182 lines added outside docs, tests and generated files, of the 1,500 a patch
+v1.23.2 --previous-ref a45c716` passes: 187 lines added outside docs, tests and generated files, of the 1,500 a patch
 may add). It passes the release policy with no exception. It adds **View in Done** beside **Undo** when a to-do is
 marked done, lays Home out again when the screen's width crosses 640 px (a phone's first sign-in no longer keeps the
 computer's layout), and gives a *Finish and sign* reminder a way to the drafts it asks about (**Open <client>'s
