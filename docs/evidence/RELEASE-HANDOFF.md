@@ -17,13 +17,13 @@
 > ship without a policy exception, so their gates pass with no `policy_exception` (*Run workflow* is not needed for
 > them).
 
-Twelve versions are on `main` and released (1.23.1 is what GitHub Pages serves until `v1.23.2`'s `Web app` run is
-approved) but **none is tagged**: 1.16.3 and 1.16.4 went out with 1.17.0; 1.16.4 to 1.23.1 were published to GitHub
+Twelve versions are on `main` and released (1.23.2 is what GitHub Pages serves) but **none is tagged**: 1.16.3 and
+1.16.4 went out with 1.17.0; 1.16.4 to 1.23.2 were published to GitHub
 Pages by a direct push to `gh-pages` at the owner's request, with no tag, no GitHub Release and no approval in the
 `release` environment ([../RELEASE.md](../RELEASE.md), the *Record* entries and the exceptions table). 1.23.1, the
 first release under *Stabilisation*, passed the patch rules with no exception; only its publication went round the
-gate, because the tags were still owed (*Record: 1.23.1*). 1.23.2 passes the patch rules with no exception too and
-waits for its tag to be published by `release.yml` (*Record: 1.23.2*). Once the tags are pushed, no release goes to
+gate, because the tags were still owed (*Record: 1.23.1*). 1.23.2 passed the patch rules with no exception too, and
+went out the same way for the same reason (*Record: 1.23.2*). Once the tags are pushed, no release goes to
 `gh-pages` directly again.
 Until the tags exist, everything that measures from "the previous release" measures from `v1.16.2`: the release policy, `scripts/migration-order.js`,
 *Backports* step B, and SUDS Server upgrades, which download `suds-vX.Y.Z.zip` from a GitHub Release that does not
@@ -39,8 +39,8 @@ Prepared on branch `docs/1191-stamp-pass` from `3dc20dc`, 30 September 2026, and
 1.23.0, 1.23.1 and 1.23.2. The 1.23.1 row was filled in by a commit after its stamp (`3c36e67`), as 1.23.0's was after
 its SBOM commit (`fd042a9`): a commit cannot hold its own hash, nor the checksum of a zip built from it. 1.23.1 and
 1.23.2 are patches, so they have no SBOM commit (they keep `sbom-1.23.0`) and each tag goes on its stamp, "Release
-1.23.1" (`3bff36f`) and "Release 1.23.2", itself. The 1.23.2 row is filled in the same way, by a commit after its
-stamp; until then it holds placeholders, and step 1 finds the commit by its subject.
+1.23.1" (`3bff36f`) and "Release 1.23.2", itself. The 1.23.2 row was filled in the same way, by a commit after its
+stamp (`a45c716`); step 1 still finds each by its subject.
 
 ## The twelve releases
 
@@ -57,7 +57,7 @@ stamp; until then it holds placeholders, and step 1 finds the commit by its subj
 | `v1.22.0` | `8b136dfc7f9b8628bb64e5491fdaae76895b7148` ("SBOM of the 1.22.0 stamp", after the stamp `74852e5`) | 2026-10-01 | `0798dc42106c95139ff4ed7f72fb3d6b95f32b8ce9cb197e6f01a1970168f1c3` |
 | `v1.23.0` | `9877d07791880c9ea9a4ddd27b4a4707c7a0ca81` ("SBOM of the 1.23.0 stamp", after the stamp `48cc586`) | 2026-10-01 | `aa785678b0fe28967732fdf4826c5a89a25337c7fcae03512ca7105e45795a81` |
 | `v1.23.1` | `3bff36f83a0bc39499fba82a96c874b0ef968396` ("Release 1.23.1": `git log -1 --format=%H --grep='^Release 1.23.1$' origin/main`) | 2026-10-01 | `38b1895c168d786b461b298181358b1b362eef24a66bb64f656e3a31b024124e` |
-| `v1.23.2` | `<1.23.2 release commit>` ("Release 1.23.2": `git log -1 --format=%H --grep='^Release 1.23.2$' origin/main`) | 2026-10-01 | `<filled after the release>`; rebuild it with the command below |
+| `v1.23.2` | `a45c716091a067ac635c384d03014be1be25b868` ("Release 1.23.2": `git log -1 --format=%H --grep='^Release 1.23.2$' origin/main`) | 2026-10-01 | `571d25dd8dae3adbc16ae916a091e8f553e7303713ec1b43e102d2d6bc31c41c` |
 
 **How the checksums were made, and why they can be trusted before the release exists.** The release job builds
 the zip with `git archive --format=zip --prefix="suds-vX.Y.Z/" -o suds-vX.Y.Z.zip <commit>` and hashes it with

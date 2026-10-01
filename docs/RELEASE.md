@@ -97,7 +97,9 @@ push as the eleven tags owed before it (step 2 of [evidence/RELEASE-HANDOFF.md](
 the newest tag, and its `release.yml` run, whose gate passes with no `policy_exception`, is the Latest release and
 starts the `Web app` run that publishes it. If 1.23.2 has to go live before the owner has pushed the tags, the direct
 `gh-pages` push is said here and in the exceptions table, as point 4 requires; it is not a policy exception (the patch
-rules pass), but it is not the gate either.
+rules pass), but it is not the gate either. It did: the tags were still owed when CI passed on `a45c716` (2026-10-01),
+so `a45c716` was pushed to `main` and its static build to `gh-pages` directly ("Deploy a45c716 (SUDS 1.23.2)";
+`release-site-check` found the 73 built files the commit's, byte for byte), and the exceptions table has a row for it.
 
 ### Supported versions
 
@@ -247,6 +249,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.22.0 | monthly limit (a feature release inside 1.21.0's 28 days: migrations 64, 65 and 66; the county publication consent routes; no new permission); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner said to implement all recommendations to make SUDS as useful as possible for SUDS workers ("loop until complete"); six streams, the evidence re-run on 1.21.0, and an integration review whose findings were fixed before the stamp | owner (a request, no workflow record; *Record: 1.22.0*, below) |
 | 1.23.0 | monthly limit (a feature release inside 1.22.0's 28 days: migration 67; the supervisor's referral reminder and the field-device request routes; no new permission); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner said to implement all recommendations to make SUDS as useful as possible for SUDS workers ("loop until complete"); four streams and an integration review whose findings were fixed before the stamp | owner (a request, no workflow record; *Record: 1.23.0*, below) |
 | 1.23.1 | none of the policy (a patch within the patch rules: no migration, permission or route, 501 lines); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner said to deploy to Pages when green; the tags owed since 1.16.3 were not yet pushed, so the gate could not publish it (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.1*, above) |
+| 1.23.2 | none of the policy (a patch within the patch rules: no migration, permission or route, 188 lines); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner said to implement the 1.23.1 evaluation's recommendations; the tags owed since 1.16.3 were not yet pushed, so the gate could not publish it (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.2*, above) |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as
