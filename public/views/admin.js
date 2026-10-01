@@ -671,17 +671,24 @@ route('admin', async (r) => {
       // makes every device the person syncs from a field device (narrowing only); Decline answers no. Either closes
       // the to-do every administrator was given.
       const { requests = [] } = await get('/api/admin/field-requests', { quiet: true }).catch(() => ({ requests: [] }));
+      // 1.23.1: with offline copies off on this server (the default), approving only records the choice: no phone
+      // keeps an offline copy until they are allowed, so say so, and what turns them on, before and after.
+      const offlineOn = requests.length ? (await get('/api/app/info', { quiet: true }).catch(() => ({}))).local_mode !== false : true;
+      const OFFLINE_OFF = 'Offline copies are off on this server, so no phone keeps one yet. To allow them, set LOCAL_MODE_ENABLED=true (or "localModeEnabled": true in data/server.json) and restart SUDS (docs/PLATFORM.md).';
       const answer = async (x, approve) => {
         const ok = await confirmDialog(approve ? 'Approve a field device' : 'Decline the request',
-          approve ? `Every phone or tablet ${x.display_name} syncs from, now or later, becomes a field device at its next sync: it keeps only what a field worker needs. This narrows what their devices hold; you can still let one device hold everything below.`
+          approve ? (offlineOn ? `Every phone or tablet ${x.display_name} syncs from, now or later, becomes a field device at its next sync: it keeps only what a field worker needs. This narrows what their devices hold; you can still let one device hold everything below.`
+            : `${OFFLINE_OFF} Approving records that ${x.display_name}'s account is a field account: once offline copies are allowed, every phone or tablet they sync from keeps only what a field worker needs.`)
             : `${x.display_name} is told their request was not approved. Nothing about their devices changes.`, { okText: approve ? 'Approve' : 'Decline', danger: !approve });
         if (!ok) return;
         await post(`/api/admin/field-requests/${x.user_id}/${approve ? 'approve' : 'decline'}`, {});
-        toast(approve ? `Approved: ${x.display_name}'s devices are field devices from their next sync` : 'Declined', 'ok'); refresh();
+        toast(!approve ? 'Declined' : offlineOn ? `Approved: ${x.display_name}'s devices are field devices from their next sync`
+          : `Approved: ${x.display_name}'s account is a field account. Offline copies are still off on this server, so no phone keeps one until you allow them (LOCAL_MODE_ENABLED).`, 'ok'); refresh();
       };
       const requestsCard = requests.length ? h('section', { class: 'card mb', 'aria-labelledby': 'field-req-h', 'data-field-requests': String(requests.length) },
         h('h2', { id: 'field-req-h' }, `Field-device requests (${requests.length})`),
         h('p', { class: 'small muted' }, 'Workers who asked, from Set up this phone for the field, to work with no signal. Offline copies must also be allowed on this server (the setup wizard\'s answer, or LOCAL_MODE_ENABLED) for a phone to keep one.'),
+        offlineOn ? null : h('p', { class: 'banner warn small', 'data-field-offline-off': '1' }, h('b', {}, 'Offline copies are off. '), OFFLINE_OFF),
         h('ul', { class: 'outreach-list' }, requests.map(x => h('li', { 'data-field-request-user': x.user_id },
           h('b', {}, x.display_name), ` (${x.username}) · asked ${fmt.dt(x.requested_at)}`, x.account_field ? ' · their devices are already field devices' : '', ' ',
           h('button', { type: 'button', class: 'btn sm primary', 'data-field-approve': x.user_id, 'aria-label': `Approve a field device for ${x.display_name}`, onClick: () => answer(x, true) }, 'Approve'), ' ',

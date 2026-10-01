@@ -356,6 +356,9 @@ a.bar.link:hover .lbl { color: var(--primary); text-decoration: underline; } a.b
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 #banners { position: sticky; top: 0; z-index: 60; }
+/* 1.23.1: on a phone the open menu drawer (40) and its shade (35) cover the banners, which sat over the drawer's
+   brand and programme name. */
+@media (max-width: 900px) { body.nav-open #banners { z-index: 30; } }
 .banner {
   display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; justify-content: space-between;
   padding: .6rem 1rem; font-size: .95rem; border-bottom: 1px solid var(--line);
@@ -609,6 +612,9 @@ details.home-fold > summary h2 { margin: 0; }
 details.home-fold[open] > summary { margin-bottom: .6rem; }
 details.home-fold:not(.card) > summary { margin-bottom: .4rem; }
 .home-alerts { gap: .4rem; }
+/* 1.23.1, a 390 px phone: the + Log button (fixed, bottom right) covered the Part 2 notice badge. The alert badges
+   stop short of the button's column, wherever the page is scrolled, and wrap instead. */
+@media (max-width: 900px) { .home-alerts > a.badge { max-width: calc(100% - 7.5rem); } }
 .home-foot { margin-top: 1rem; }
 .welcome-steps { margin: .25rem 0 .75rem; padding-left: 1.1rem; } .welcome-steps li { margin: .3rem 0; }
 /* The phone's top-right shortcut to the client list says what it is (a lone 👤 read as "my account"). */

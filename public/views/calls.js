@@ -30,7 +30,9 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone, 
   // A reminder date is a follow-up (1.22.0): the box is ticked as soon as a date is chosen, as the server also
   // does, so a date with the box left unticked no longer makes no to-do.
   const fuDate = f.inputs.follow_up_due; const fuBox = f.inputs.follow_up_needed;
-  if (fuDate && fuBox) { const tick = () => { if (fuDate.value && !fuBox.checked) fuBox.checked = true; }; fuDate.addEventListener('change', tick); fuDate.addEventListener('input', tick); }
+  if (fuDate && fuBox) { const tick = () => { if (fuDate.value && !fuBox.checked) fuBox.checked = true; }; fuDate.addEventListener('change', tick); fuDate.addEventListener('input', tick);
+    // ...and unticking it clears the date, as the server does on save (1.23.1): a date left showing looked kept.
+    fuBox.addEventListener('change', () => { if (!fuBox.checked && fuDate.value) { fuDate.value = ''; fuDate.dispatchEvent(new Event('input', { bubbles: true })); } }); }
   if (f.inputs.log_time) {
     const help = f.querySelector('[data-field="log_time"] .help');
     const say = () => { const mins = Number(f.inputs.duration_minutes.value) || 0; if (help) help.textContent = f.inputs.log_time.checked ? (mins > 0 ? `Adds ${mins} min to your time (My time), as a draft to submit for approval. Check the ${isText ? 'time spent' : 'duration'} above first.` : `Nothing is logged while the ${isText ? 'time spent' : 'duration'} is 0.`) : 'No time entry is made. Tick this to put the call on your time sheet.'; };

@@ -52,6 +52,29 @@ No migration, no new route and no new permission; one new audit action, `device.
   sent back unchanged, is kept), and the queue counts as a reminder only a to-do someone else gave the worker
   (`server/rules/tasks.js`, `server/routes/supervision.js`).
 
+### Worker polish (stream S5)
+
+* Fixed: approving a field-device request while offline copies are off on the office server (the default) told the
+  administrator the person's "devices are field devices from their next sync" and told the worker "every phone you
+  sync is a field device", though no phone could keep an offline copy. Synced devices now says offline copies are off
+  and what turns them on (`LOCAL_MODE_ENABLED=true`, or `"localModeEnabled": true` in `data/server.json`, then a
+  restart), in the request card, the Approve dialog and the result; the worker's *Set up this phone for the field*
+  says *Approved, but not ready yet* — their account is set as a field account, their office has not turned on
+  offline copies, and to ask their SUDS administrator. Messages only; no route or setting changed.
+* Fixed: on a phone, a to-do row's Open button was heard as "Open Call about detox bedUrgent"; it is now
+  "Open: Call about detox bed (Urgent)" (every phone list whose row has its own control).
+* Fixed: unticking **Follow-up needed** on the call form left the date showing, though the server clears it on save;
+  the form now clears it too.
+* Fixed (phone, 390 px): a banner (the 2-step reminder) sat over the open menu's brand and programme name; the menu
+  now covers the banners. The offline banner is one short line and a **Working offline** link (it was five lines;
+  the full explanation is still said to a screen reader once). The **+ Log** button no longer covers the Part 2
+  notice badge on Home: the alert badges stop short of its column and wrap.
+* Fixed: Home's **To-dos for today** had no cap (nine rows pushed *Continue where you left off* far down a phone); it
+  shows at most five, overdue first, then **N more due to-dos**, which opens To-dos.
+* Fixed: clinicians lost **Notes** from the phone menu in 1.23.0 though their day is notes; anyone who writes
+  clinical notes keeps it in the phone's main menu, and **Supplies** folds into More for them instead (still at most
+  12 top-level entries; navigators unchanged).
+
 ## 1.23.0 — 2026-10-01
 
 A feature release (migration 67; new routes `POST /api/supervision/referrals/:id/remind`, `GET /api/me/field-device`,
