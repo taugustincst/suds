@@ -13875,9 +13875,15 @@ var require_tasks = __commonJS({
       // discharge landed in the same push and its maker is on the care team (or a manager), as over REST
       // (routes/episodes.js /close). Never otherwise (security review of 1.16.3, N3), never a to-do with no client, and
       // never a change notice, which is not work but the primary worker's to read (security review of 1.16.2, M1).
-      // A link to a call or visit the office does not have (refused in this push, or deleted) is dropped, not the to-do.
+      // A link to a call or visit the office does not have (refused in this push, or deleted) is dropped, not the to-do;
+      // so is a link to someone else's: a follow-up to-do belongs to the worker who made the call or visit, and a device's
+      // to-do linked to a colleague's record would stop the office making that colleague's (review of 1.23).
       beforeStore(row) {
-        for (const [col, table] of [["call_id", "calls"], ["intervention_id", "interventions"]]) if (row[col] && !require_db().one(`SELECT 1 FROM ${table} WHERE id=?`, row[col])) row[col] = null;
+        for (const [col, table] of [["call_id", "calls"], ["intervention_id", "interventions"]]) {
+          if (!row[col]) continue;
+          const rec = require_db().one(`SELECT user_id FROM ${table} WHERE id=?`, row[col]);
+          if (!rec || rec.user_id !== row.assigned_to) row[col] = null;
+        }
       },
       othersMayChange(existing, row, changed, c) {
         if (!["done", "cancelled"].includes(row.status) || !changed.every((col) => col === "status" || col === "completed_at") || !existing.client_id || isNotice(existing)) return false;

@@ -170,5 +170,11 @@ test('sync push: the office runs the same rule on a device\'s calls, visits and 
   const orphan = rid();
   await push({ tasks: [{ id: orphan, client_id: clientId, assigned_to: navId, created_by: navId, title_enc: 'Call back: lost', due_at: inDays(2), priority: 'normal', status: 'open', call_id: rid(), created_at: now(), updated_at: now() }] });
   assert.equal(H.db.one(`SELECT call_id FROM tasks WHERE id=?`, orphan).call_id, null);
+  // A to-do linked to a colleague's call keeps its place, without the link, so the office still makes theirs.
+  const supId = H.db.one(`SELECT id FROM users WHERE username='fusup'`).id; const theirCall = rid();
+  H.db.run(`INSERT INTO calls(id,client_id,user_id,direction,method,started_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, theirCall, clientId, supId, 'outbound', 'phone', minutesAgo(1), now(), now());
+  const crafted = rid();
+  await push({ tasks: [{ id: crafted, client_id: clientId, assigned_to: navId, created_by: navId, title_enc: 'Call back: theirs', due_at: inDays(2), priority: 'normal', status: 'open', call_id: theirCall, created_at: now(), updated_at: now() }] });
+  assert.equal(H.db.one(`SELECT call_id FROM tasks WHERE id=?`, crafted).call_id, null, 'a link to someone else\'s call is dropped');
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='task.create' AND ip='device' AND details LIKE ?`, `%${callId}%`), 'the office\'s to-do for a pushed call is audited');
 });

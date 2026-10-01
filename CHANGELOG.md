@@ -168,6 +168,9 @@ docs/FINGERPRINT.md, *Grace period*).
 
 Released in 1.22.0. No migration.
 
+- **A device's to-do can no longer be linked to a colleague's call or visit.** The link is dropped (the to-do is
+  kept), so it cannot stop the office making that colleague's follow-up to-do (`server/rules/tasks.js` `beforeStore`,
+  `test/follow-ups.test.js`).
 - **The listener no longer fails to start under SUDS Server's sandbox.** `deploy/linux/suds.service` restricts the
   address families to IPv4, IPv6 and Unix sockets, so `os.networkInterfaces()` throws there; `server/listener.js`
   read it on every start, which logged an unhandled rejection, never printed "listening on", left the setup wizard's
