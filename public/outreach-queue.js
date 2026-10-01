@@ -86,17 +86,21 @@ let flushing = null;
 /**
  * Send this account's waiting contacts. `all`: also the ones the office refused before (Send now); otherwise those
  * are left for the worker to look at. Stops at the first sign of no signal or an ended session. Returns
- * { sent, failed, left, stopped }: stopped is 'offline', 'signin' (the session has ended), 'office' or null.
+ * { sent, undone, failed, left, stopped }: undone counts the ones the office had made and the worker had since
+ * deleted (Undo, or deleted from the record), which are not made again (1.23.1); stopped is 'offline', 'signin'
+ * (the session has ended), 'office' or null.
  */
 export function flush({ all = false } = {}) {
   if (flushing) return flushing;
   flushing = (async () => {
-    let sent = 0, failed = 0, stopped = null;
+    let sent = 0, undone = 0, failed = 0, stopped = null;
     for (const item of await waiting()) {
       if (item.error && !all) continue;
       try {
-        await post('/api/interventions', item.payload, { idempotencyKey: item.key, headers: { 'X-Suds-Queued': '1' }, quiet: true });
-        await tx('readwrite', (s) => s.delete(item.key)); sent++;
+        const r = await post('/api/interventions', item.payload, { idempotencyKey: item.key, headers: { 'X-Suds-Queued': '1' }, quiet: true });
+        await tx('readwrite', (s) => s.delete(item.key));
+        // The office had it, and it has been undone since: it is not recorded again, and is not "sent".
+        if (r && r.deleted) undone++; else sent++;
       } catch (e) {
         // Why it stopped, for Send now to say: no signal, the session has ended (sign in again), or the office busy.
         if (e && (e.offline || e.status === 401 || e.status === 403 || e.status >= 500 || e.status === 429)) { stopped = e.offline ? 'offline' : e.status === 401 ? 'signin' : 'office'; break; }
@@ -109,8 +113,9 @@ export function flush({ all = false } = {}) {
     if (stopped === 'signin') lastAuto = 0;
     changed();
     if (sent) toast(`${sent} waiting contact${sent === 1 ? '' : 's'} sent to the office${left ? `; ${left} still waiting` : ''}.`, 'ok');
+    if (undone) toast(`${undone} waiting contact${undone === 1 ? ' was' : 's were'} not recorded: ${undone === 1 ? 'it had' : 'they had'} been undone since ${undone === 1 ? 'it was' : 'they were'} first saved.`, '', { ms: 6000 });
     if (failed) toast(`${failed} waiting contact${failed === 1 ? ' was' : 's were'} not accepted by the office: see Street outreach.`, 'error');
-    return { sent, failed, left, stopped };
+    return { sent, undone, failed, left, stopped };
   })().finally(() => { flushing = null; });
   return flushing;
 }

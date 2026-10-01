@@ -65,6 +65,20 @@ test('a contact undone and then sent again from the waiting list is not made aga
   assert.equal(onHand(), start, 'and nothing drawn again');
 });
 
+test('a contact undone the same day and then sent from the waiting list is answered as undone, not as made (1.23.1)', async () => {
+  // Within 24 hours the office still holds the first attempt's answer (server/idempotency.js); the waiting list's
+  // send must not get it back as "made" when the contact has been deleted since.
+  const start = onHand();
+  const a = ok(await nav.post('/api/interventions', body({ occurred_at: '2026-09-24T18:00:00.000Z' }), { 'Idempotency-Key': 'outreach-k6' }));
+  ok(await nav.del(`/api/interventions/${a.id}`), 200);
+  const r = ok(await nav.post('/api/interventions', body({ occurred_at: '2026-09-24T18:00:00.000Z' }), queued('outreach-k6')), 200);
+  assert.equal(r.id, a.id); assert.equal(r.deleted, true, JSON.stringify(r));
+  assert.equal(count(`SELECT COUNT(*) n FROM interventions WHERE id=?`, a.id), 0, 'still gone');
+  assert.equal(onHand(), start, 'nothing drawn again');
+  // The screen's own retry (no X-Suds-Queued) is still answered from the stored answer, as before.
+  assert.equal((await nav.post('/api/interventions', body({ occurred_at: '2026-09-24T18:00:00.000Z' }), { 'Idempotency-Key': 'outreach-k6' })).data.id, a.id);
+});
+
 test('a contact the office already has is answered as such even when it could not be made today (review of 1.23)', async () => {
   // The screen's attempt was made (its answer lost with the signal); since then its supply site was retired. The
   // waiting list's later send must find the contact, not be refused and leave the worker to enter it again.

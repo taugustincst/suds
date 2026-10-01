@@ -34,6 +34,10 @@ let lastPurge = 0;
 function applies(ctx) {
   if (ctx.method !== 'POST' || !ctx.user) return false;
   if (!ctx.headers || ctx.headers['idempotency-key'] === undefined) return false;
+  // A street-outreach contact sent from the phone's waiting list (1.23.1) is answered by the route's own durable rule
+  // (crud.js keyedId: the row's id comes from the key), which knows whether the contact is still there or was undone
+  // since; a stored answer from the first attempt would say "made" for a contact the worker has deleted.
+  if (ctx.headers['x-suds-queued'] === '1' && ctx.path === '/api/interventions') return false;
   return !EXEMPT.some(re => re.test(ctx.path));
 }
 
