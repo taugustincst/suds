@@ -464,4 +464,17 @@ test('an edit of only the follow-up date or notes of a shared referral needs no 
   const p2 = await nav.post('/api/sync/push', { device_now: later2, tables: { referrals: [{ ...base, follow_up_due: '2026-10-11', status: 'scheduled', updated_at: later2 }] } });
   assert.ok(p2.data.rejected.find(x => x.id === id2), JSON.stringify(p2.data));
   assert.equal(H.db.one(`SELECT status FROM referrals WHERE id=?`, id2).status, 'contacted');
+  // A referral with free text stored (a barrier): the device sends it as written, the office keeps it encrypted; the
+  // date-only edit still lands (review of 1.23.1), and a changed barrier is still gated.
+  const id3 = randomUUID();
+  H.db.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status,urgency,warm_handoff,follow_up_due,barrier_enc,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+    id3, c, other, navId, '2026-09-03T09:00:00.000Z', 'contacted', 'routine', 0, '2026-10-05', require('../server/crypto').encrypt('Waitlist'), now, now);
+  const dev = { ...H.db.one(`SELECT * FROM referrals WHERE id=?`, id3), barrier_enc: 'Waitlist' };
+  const later3 = iso(Date.now() + 15000);
+  const p3 = await nav.post('/api/sync/push', { device_now: later3, tables: { referrals: [{ ...dev, follow_up_due: '2026-10-12', updated_at: later3 }] } });
+  assert.equal(p3.data.applied.referrals, 1, JSON.stringify(p3.data));
+  assert.equal(H.db.one(`SELECT follow_up_due FROM referrals WHERE id=?`, id3).follow_up_due, '2026-10-12');
+  const later4 = iso(Date.now() + 20000);
+  const p4 = await nav.post('/api/sync/push', { device_now: later4, tables: { referrals: [{ ...dev, follow_up_due: '2026-10-12', barrier_enc: 'No bed until November', updated_at: later4 }] } });
+  assert.ok(p4.data.rejected.find(x => x.id === id3), JSON.stringify(p4.data));
 });

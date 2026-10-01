@@ -50,6 +50,13 @@ function changesNothingSent(next, row) {
   return Object.keys(next).every(k => next[k] === undefined || k.startsWith('_') || NOT_SENT.has(k) || sameValue(next[k], row[k]));
 }
 
+/** The stored row with its *_enc columns decrypted, in the form a device's row arrives in (a value that cannot be read stays as it is, and so differs). */
+function plainEnc(row) {
+  const out = { ...row };
+  for (const k of Object.keys(out)) if (k.endsWith('_enc') && typeof out[k] === 'string') { try { out[k] = decrypt(out[k]); } catch { /* left as stored */ } }
+  return out;
+}
+
 /** The referral's own disclosure row, if one has already been written. */
 function existingDisclosure(referralId) {
   return db.one(`SELECT id FROM disclosures WHERE source='referral' AND source_ref=?`, referralId);
@@ -129,7 +136,8 @@ function pushDisclosure(user, raw, existing, deviceRows = []) {
   const recipientChanged = !!existing && !!raw.resource_id && raw.resource_id !== existing.resource_id;
   if (existing && !recipientChanged && existingDisclosure(raw.id)) return null;
   // A device's edit of the follow-up date or its notes only (and no accounting row of its own): nothing leaves.
-  if (existing && !deviceRows.length && changesNothingSent(raw, existing)) return null;
+  // A device's row carries its free text as written (rules/push.js), the stored row as ciphertext: compare like with like.
+  if (existing && !deviceRows.length && changesNothingSent(raw, plainEnc(existing))) return null;
   const dev = deviceRows.length ? deviceRows[deviceRows.length - 1] : null;
   const just = dev && dev.justification_enc ? String(dev.justification_enc) : '';
   const resourceId = raw.resource_id || existing?.resource_id;

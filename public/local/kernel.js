@@ -16487,6 +16487,16 @@ var require_referrals = __commonJS({
       if (!row || next._disclosure_what) return false;
       return Object.keys(next).every((k) => next[k] === void 0 || k.startsWith("_") || NOT_SENT.has(k) || sameValue(next[k], row[k]));
     }
+    function plainEnc(row) {
+      const out2 = { ...row };
+      for (const k of Object.keys(out2)) if (k.endsWith("_enc") && typeof out2[k] === "string") {
+        try {
+          out2[k] = decrypt3(out2[k]);
+        } catch {
+        }
+      }
+      return out2;
+    }
     function existingDisclosure(referralId) {
       return db3.one(`SELECT id FROM disclosures WHERE source='referral' AND source_ref=?`, referralId);
     }
@@ -16560,7 +16570,7 @@ var require_referrals = __commonJS({
       if (!sharesInformation(raw, existing || {})) return null;
       const recipientChanged = !!existing && !!raw.resource_id && raw.resource_id !== existing.resource_id;
       if (existing && !recipientChanged && existingDisclosure(raw.id)) return null;
-      if (existing && !deviceRows.length && changesNothingSent(raw, existing)) return null;
+      if (existing && !deviceRows.length && changesNothingSent(raw, plainEnc(existing))) return null;
       const dev = deviceRows.length ? deviceRows[deviceRows.length - 1] : null;
       const just = dev && dev.justification_enc ? String(dev.justification_enc) : "";
       const resourceId = raw.resource_id || existing?.resource_id;
@@ -48470,22 +48480,21 @@ var require_supervision = __commonJS({
     }
     var AWAITING_OUTCOME = ["contacted", "scheduled"];
     var REMINDER_TITLE = "Record what happened with your referral to ";
-    var REFERRAL_REMINDER = /Reference: supervision reminder for referral ([\w-]{8,})/;
     function referralReminders(ids) {
       const out2 = /* @__PURE__ */ new Map();
       if (!ids.length) return out2;
-      for (const t of db3.all(`SELECT id, referral_id, title_enc, description_enc, created_at FROM tasks WHERE referral_id IN (${ids.map(() => "?").join(",")}) AND status IN ('open','in_progress') AND created_by<>assigned_to ORDER BY created_at`, ...ids)) {
-        let title = "";
-        let d = "";
+      const open3 = db3.all(`SELECT id, referral_id, client_id, created_at FROM tasks WHERE referral_id IN (${ids.map(() => "?").join(",")}) AND status IN ('open','in_progress') AND created_by<>assigned_to ORDER BY created_at`, ...ids);
+      const clients = [...new Set(open3.map((t) => t.client_id).filter(Boolean))];
+      if (!clients.length) return out2;
+      const made = /* @__PURE__ */ new Set();
+      for (const a of db3.all(`SELECT entity_id, details FROM audit_log WHERE client_id IN (${clients.map(() => "?").join(",")}) AND action='referral.remind'`, ...clients)) {
         try {
-          title = t.title_enc ? decrypt3(t.title_enc) : "";
-          d = t.description_enc ? decrypt3(t.description_enc) : "";
+          const d = JSON.parse(a.details);
+          if (d && d.task) made.add(`${a.entity_id} ${d.task}`);
         } catch {
-          continue;
         }
-        const m = REFERRAL_REMINDER.exec(d);
-        if ((title.startsWith(REMINDER_TITLE) || m && m[1] === t.referral_id) && !out2.has(t.referral_id)) out2.set(t.referral_id, { at: t.created_at, task: t.id });
       }
+      for (const t of open3) if (made.has(`${t.referral_id} ${t.id}`) && !out2.has(t.referral_id)) out2.set(t.referral_id, { at: t.created_at, task: t.id });
       return out2;
     }
     function mayRemindWorker(user, workerId) {

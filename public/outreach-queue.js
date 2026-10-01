@@ -92,6 +92,9 @@ let flushing = null;
  */
 export function flush({ all = false } = {}) {
   if (flushing) return flushing;
+  // A tab restored with no signal (app.js restoreTabSession) holds who was signed in then; until the office confirms
+  // it, the cookie may be another person's, so nothing is sent under it.
+  if (state.signedInOffline) return waiting().then(w => ({ sent: 0, undone: 0, failed: 0, left: w.length, stopped: 'offline' }));
   flushing = (async () => {
     let sent = 0, undone = 0, failed = 0, stopped = null;
     for (const item of await waiting()) {
@@ -123,7 +126,7 @@ export function flush({ all = false } = {}) {
 let lastAuto = 0;
 /** Send what is waiting, unprompted, at most every 20 seconds (the header asks on every page). */
 export function autoFlush() {
-  if (state.local || !state.user || state.offline || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
+  if (state.local || !state.user || state.signedInOffline || state.offline || (typeof navigator !== 'undefined' && navigator.onLine === false)) return;
   if (Date.now() - lastAuto < 20000) return;
   lastAuto = Date.now();
   waiting().then((w) => { if (w.some(x => !x.error)) flush(); }, () => {});
