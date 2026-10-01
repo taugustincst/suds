@@ -44,7 +44,7 @@ function parseV(v) { const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(String(v || '').tr
 function cmp(a, b) { const x = parseV(a), y = parseV(b); for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; }
 const minorOf = (v) => String(v).split('.').slice(0, 2).join('.');
 const cmpMinor = (a, b) => cmp(`${a}.0`, `${b}.0`);
-const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
 
 /** 1-based line of a character index. */
 function lineAt(text, index) { let n = 1; for (let i = 0; i < index && i < text.length; i++) if (text.charCodeAt(i) === 10) n++; return n; }
@@ -140,7 +140,7 @@ function parseHandoff(text) {
   const loops = [...text.matchAll(/^for c in ([^;]+); do/gm)].map((m) => ({ shas: m[1].trim().split(/\s+/).filter((s) => /^[0-9a-f]{7,40}$/.test(s)), vars: m[1].trim().split(/\s+/).filter((s) => s.startsWith('$')).length, line: lineAt(text, m.index) }));
   const titleM = /^# .*\btags (v\d+\.\d+\.\d+) to (v\d+\.\d+\.\d+)/m.exec(text);
   const title = titleM ? { from: titleM[1], to: titleM[2], line: lineAt(text, titleM.index) } : null;
-  const counts = [...text.matchAll(/\b(?:[Tt]he|all|All) (two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) (?:releases|tags|untagged releases)\b|^(Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve) versions are on/gm)]
+  const counts = [...text.matchAll(/\b(?:[Tt]he|all|All) (two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty) (?:releases|tags|untagged releases)\b|^(Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty) versions are on/gm)]
     .map((m) => ({ word: (m[1] || m[2]).toLowerCase(), line: lineAt(text, m.index) }));
   const noneTagged = /\bnone is tagged\b/.exec(text);
   return { rows, pending, tagCommands, push, loops, title, counts, noneTagged: noneTagged ? { line: lineAt(text, noneTagged.index) } : null };
