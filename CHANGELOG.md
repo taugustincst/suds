@@ -4,6 +4,45 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Fixed: a moved sign reminder, Home's focus, and what a delete does to its to-dos (built for 1.23.4, not yet released)
+
+A patch of 1.23.3 under the *Stabilisation* commitments: no migration, no new or widened permission, no new route.
+Fixes from the market evaluation of 1.23.3. What an administrator should know: a supervisor's *Finish and sign*
+reminder can now be given to someone else, or moved to another client, only by whoever sent it (or someone who holds
+*Countersign notes*), over the web app or a device's sync; and a reminder cancelled because its author's last draft
+was deleted now has its own audit entry (`task.update`, status `cancelled`, cause `deleted`, the note's id) over the
+web app as well as from a device, as the 1.23.3 notes already said.
+
+- Fixed: the worker a *Finish and sign* reminder was given to could reassign it to a colleague, or move it to another
+  client, and it still counted there: Supervision showed the colleague's draft as reminded (**Sent**, with no **Remind
+  author**) and **Remind all** skipped it. Only the supervisor who sent it, or someone who may send one, now changes
+  who or which client it is about; anyone else is refused (403 over the web app; a device's change is not taken). Its
+  assignee can still change its due date, priority, status and details, and an ordinary to-do is passed on as before.
+- Fixed: deleting a draft that closed a supervisor's reminder (the author's last draft on that client's record)
+  wrote only `note.delete` over the web app, with the reminder's id in it; the reminder now has its own `task.update`
+  entry, as on a device's sync.
+- Fixed: when Home was laid out again at the 640 px breakpoint (a window resized, or zoomed past it) with the keyboard
+  focus on its heading, the focus fell to the page itself, and a keyboard or screen-reader user lost their place. It
+  now moves to the new Home's heading.
+- Fixed: a *Finish and sign* reminder named its client twice on Home ("Finish and sign your draft notes for Park,
+  Danielle (DEMO-0007) · Park, Danielle"), and its details named them with their code. A new reminder is titled *Finish
+  and sign your draft notes*, its client shown beside it as for every to-do, and its details say "this client's
+  record". It is still recognised by its last line; reminders already sent keep their words.
+- Fixed: on a client's Notes tab showing your drafts, once the last of them was signed or deleted the page said "You
+  have no draft notes on this record" and then "No notes yet…" for a client with notes. It now says only *No draft
+  notes left to sign on this record.*, with **Show all notes**; and signing or deleting a draft there stays on your
+  drafts rather than going back to every note.
+- Fixed: every call's delete confirmation said "(a follow-up to-do someone has edited is left open)", whether or not
+  the follow-up had been edited. It now says the open follow-up is cancelled when it is as SUDS made it, and that it is
+  left open only when it has been changed (reassigned, started, its date or title changed, or details added): the
+  office's own rule. The same for a visit or a referral.
+- Fixed: deleting a draft note said only "Delete this draft note?", though deleting your last draft on a client's
+  record cancels the supervisor's reminder to sign them. The confirmation now says so when it does.
+- Fixed: **View in Done** opened the Done list in due-date order, oldest first, so on a phone the to-do just ticked off
+  could be below the first screen and look missing (seen once in about seven tries in the evaluation of 1.23.3; the
+  save itself always finished before the button appeared). The to-do just done is now listed first in Done, marked
+  *Just done*, and is read on its own if the list does not have it.
+
 ## 1.23.3 — 2026-10-01
 
 A patch of 1.23.2 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
