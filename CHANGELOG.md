@@ -4,6 +4,44 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Fixed: View in Done, Home on a phone's first sign-in, and supervisors' sign reminders (built for 1.23.3, not yet released)
+
+A patch of 1.23.2 under the *Stabilisation* commitments: no migration, no new or widened permission, no new route.
+What an administrator should know: a to-do whose details end with the *Finish and sign* reminder's line is now
+accepted only from someone who holds *Countersign notes* (`notes:cosign`, as **Remind author** needs), over the web
+app or a device's sync, and only such a reminder is treated as one; a reminder closed because the author's last draft
+was deleted is now *cancelled* (`task.update`, cause `deleted`), not done.
+
+- Fixed: after a to-do was marked done there was no way to the Done list. The "Done" message, on Home, on the To-dos
+  list and on its phone rows, now has **View in Done** beside **Undo**: it opens To-dos showing Done, with the to-do in
+  it, keeping the list's own *Assigned to me* choice (Home's to-dos are your own, so from Home it is yours). The
+  message stays while either button has the keyboard focus or the pointer is over it, and Tab moves between them.
+  **Undo** still puts the to-do back as it was (an in-progress to-do stays in progress), now from the To-dos list too,
+  whose message said only "Marked done".
+- Fixed: on a phone's first sign-in, *To-dos for today* was on the first screen on some loads and about 800 px down on
+  others (an external retest at 390 × 844: 2 of 4 loads). Home chose its phone or computer layout once, from the
+  screen's width when its figures came back, and a phone browser whose window was still at another width at that
+  moment kept the computer's layout. Home now follows the width: when it crosses 640 px (the window settling, a phone
+  turned, a window resized), Home is laid out again, unless someone is working in it, in which case it waits for them
+  to leave the control. Reproduced and checked in a browser: 6 of 10 cold sign-ins in the top 700 px before, 10 of 10
+  after.
+- Fixed: any staff member could make a to-do for a colleague ending with the sign reminder's line; Supervision then
+  showed the colleague's draft as reminded (hiding **Remind author**), and signing closed it. Only someone with
+  *Countersign notes* can now write that line into a to-do, new or edited, over the web app or a sync push, and only
+  their reminders are recognised by Supervision and closed by signing; one made by anyone else, including before
+  1.23.3, is an ordinary to-do.
+- Fixed: a *Finish and sign* reminder had no way to the drafts it asks about: on a phone it opened as Edit to-do. It
+  now offers **Open <client>'s notes**, which opens the client's Notes tab on your own drafts there (**Show all notes**
+  goes back), and tapping it on Home goes straight there.
+- Fixed: the reminder's title named one note ("…note from Aug 26") and its details said "this draft note", but it
+  covers all the author's drafts on that client's record. It is now "Finish and sign your draft notes for <client>",
+  and says it closes once they are all signed. Reminders with the old wording still work.
+- Fixed: Home's to-do checkbox was drawn at 13 px on a phone since 1.23.2 (its label lost the class that sized it).
+  It is 24 px again, inside its 44 px target.
+- Fixed: a reminder closed because the author's last draft was deleted was marked done; it is now cancelled. Deleting
+  a call, text, visit or referral now says, when it has one, that its open follow-up to-do (and for a referral, a
+  supervisor's reminder to record its outcome) is cancelled too.
+
 ## 1.23.2 — 2026-10-01
 
 A patch of 1.23.1 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:

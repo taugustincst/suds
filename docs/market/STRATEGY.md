@@ -326,7 +326,7 @@ until counsel and one pilot have looked at it.
 
 ## Built vs planned, exactly
 
-| Capability | State on 1 October 2026 (1.23.1) |
+| Capability | State on 1 October 2026 (1.23.2) |
 | --- | --- |
 | Outreach, anonymous contacts, supplies, funder reporting, settlement report and DHCS/county layouts | **Built** (layouts not checked against current official templates) |
 | Local mode (offline copy, office sync) | **Built**, off by default; the wizard recommends it for harm reduction |
@@ -349,6 +349,7 @@ until counsel and one pilot have looked at it.
 | Day-to-day fixes for frontline workers (call-back to-dos, quick dates, *Where things stand*, outreach Undo and *Same as last contact*, the note's usual format, the sync state in the header) | **Released in 1.22.0** ([docs/USER_GUIDE.md](../USER_GUIDE.md)) |
 | Follow-up to-dos that follow edits, the worker-first menu and phone Home, street outreach with no signal on the office app (contacts that name nobody, kept in the browser and counted once), *Set up this phone for the field* requests, and the supervisor's *Waiting to hear what happened* with *Remind worker* | **Released in 1.23.0** ([docs/USER_GUIDE.md](../USER_GUIDE.md)); migration 67; no new permission |
 | The release policy checked on every push (CI's `release-policy` job), and the fixes the evaluation of 1.23.0 found | **Released in 1.23.1** ([docs/RELEASE.md](../RELEASE.md), *Stabilisation*); a patch: no migration, no permission, no route |
+| The fixes the evaluation of 1.23.1 found (Home's to-dos on a phone, follow-up to-do titles, a supervisor's sign reminder per author and client) | **Released in 1.23.2** ([CHANGELOG](../../CHANGELOG.md)); a patch: no migration, no permission, no route |
 | One-time secure referral links to organisations not on SUDS, with an invitation | **Released in 1.17.0**; off by default; counsel reviews the design before a programme switches it on |
 | A cross-organisation referral network (organisations that join and accept referrals in SUDS) | **Planned**, not scheduled |
 | Inbound FHIR referrals | **Design placeholder** ([docs/integration/FHIR.md](../integration/FHIR.md)) |
