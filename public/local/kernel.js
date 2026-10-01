@@ -19306,8 +19306,6 @@ var require_crud = __commonJS({
         const v = validate(ctx.body, shape);
         if (clientRequired && !v.client_id) throw require_http().badRequest("client_id is required");
         checkClient(ctx, v.client_id);
-        rules.assertWrite(table, rules.toColumns(table, v), ctx);
-        if (opts.precheck) opts.precheck(ctx, v);
         const key = opts.keyedId && opts.keyedId(ctx, v) ? idempotencyKeyOf(ctx) : null;
         const id = key ? keyedId(table, ctx.user.id, key) : uuid2();
         if (key) {
@@ -19319,6 +19317,8 @@ var require_crud = __commonJS({
             return { id, replayed: true, ...gone ? { deleted: true } : {} };
           }
         }
+        rules.assertWrite(table, rules.toColumns(table, v), ctx);
+        if (opts.precheck) opts.precheck(ctx, v);
         if (opts.beforeInsert) opts.beforeInsert(ctx, v);
         const cols2 = { id, ...v };
         if (ownerCol && (cols2[ownerCol] === void 0 || cols2[ownerCol] === null || restrictOwner && !auth3.hasPerm(ctx.user, ownerAll))) cols2[ownerCol] = ctx.user.id;

@@ -122,13 +122,13 @@ function build(r, opts) {
     const v = validate(ctx.body, shape);
     if (clientRequired && !v.client_id) throw require('./http').badRequest('client_id is required');
     checkClient(ctx, v.client_id);
-    rules.assertWrite(table, rules.toColumns(table, v), ctx);
-    if (opts.precheck) opts.precheck(ctx, v);
     // A durable answer to a retried save (opts.keyedId, 1.23.0): the row's id is derived from the caller and their
     // Idempotency-Key, so a repeat finds the row it made even after server/idempotency.js has forgotten the key
     // (24 hours): a street-outreach contact kept on a phone while offline may be sent again days later
     // (public/outreach-queue.js). Only this caller's key gives this id. The repeat is answered with the row's id and
-    // changes nothing, also when the row has since been deleted (an undone contact is not made again).
+    // changes nothing, also when the row has since been deleted (an undone contact is not made again). It is looked
+    // for before the write rules (review of 1.23.0): a contact already made is answered as made even when it could not
+    // be made today (its supply site retired, its period closed meanwhile), rather than refused and entered again.
     const key = opts.keyedId && opts.keyedId(ctx, v) ? idempotencyKeyOf(ctx) : null;
     const id = key ? keyedId(table, ctx.user.id, key) : uuid();
     if (key) {
@@ -139,6 +139,8 @@ function build(r, opts) {
         ctx.status = 200; return { id, replayed: true, ...(gone ? { deleted: true } : {}) };
       }
     }
+    rules.assertWrite(table, rules.toColumns(table, v), ctx);
+    if (opts.precheck) opts.precheck(ctx, v);
     if (opts.beforeInsert) opts.beforeInsert(ctx, v);
     const cols = { id, ...v };
     // validate() turns a blank field into an explicit null, not undefined — an owner picker left on its

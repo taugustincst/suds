@@ -65,6 +65,20 @@ test('a contact undone and then sent again from the waiting list is not made aga
   assert.equal(onHand(), start, 'and nothing drawn again');
 });
 
+test('a contact the office already has is answered as such even when it could not be made today (review of 1.23)', async () => {
+  // The screen's attempt was made (its answer lost with the signal); since then its supply site was retired. The
+  // waiting list's later send must find the contact, not be refused and leave the worker to enter it again.
+  const site = require('node:crypto').randomUUID();
+  H.db.run(`INSERT INTO supply_sites(id,name,kind,sort_order) VALUES(?,?,?,?)`, site, 'Queue van', 'other', 9);
+  const a = ok(await nav.post('/api/interventions', body({ occurred_at: '2026-09-23T18:00:00.000Z', supply_site_id: site, supplies: [] }), { 'Idempotency-Key': 'outreach-k4' }));
+  H.db.run(`UPDATE supply_sites SET is_active=0 WHERE id=?`, site);
+  forgetKeys();
+  const r = ok(await nav.post('/api/interventions', body({ occurred_at: '2026-09-23T18:00:00.000Z', supply_site_id: site, supplies: [] }), queued('outreach-k4')), 200);
+  assert.equal(r.id, a.id); assert.equal(r.replayed, true);
+  // A new contact at the retired site is still refused.
+  assert.equal((await nav.post('/api/interventions', body({ occurred_at: '2026-09-23T19:00:00.000Z', supply_site_id: site, supplies: [] }), queued('outreach-k5'))).status, 400);
+});
+
 test('keys are per worker: the same key from another worker is another contact', async () => {
   const a = ok(await nav.post('/api/interventions', body({ occurred_at: '2026-09-22T18:00:00.000Z' }), queued('shared-key')));
   const b = ok(await nav2.post('/api/interventions', body({ occurred_at: '2026-09-22T18:00:00.000Z' }), queued('shared-key')));

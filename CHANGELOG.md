@@ -137,6 +137,11 @@ Built for 1.23.0, not yet released. No migration, no new permission or route (th
   and are sent as soon as the worker has signed in again (not up to 20 seconds later). The waiting list no longer
   throws when the session ends while it is being read, and never shows one account's list to the next one signed
   in. `scripts/ui/offline-outreach.mjs` checks it (52 checks).
+* **A waiting contact the office already has is found, not refused.** When the screen's own attempt had reached
+  the office (its answer lost with the signal) and the contact could no longer be made by the time the waiting list
+  sent it again (its supply site retired, or its period closed, a day or more later), the office refused it and the
+  phone marked it *Not accepted*, inviting the worker to enter it a second time. The contact's keyed id is now looked
+  for before the write rules (`server/crud.js`), so it is answered as already made. `test/outreach-queue.test.js`.
 
 ## 1.22.0 — 2026-10-01
 
