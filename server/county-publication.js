@@ -66,7 +66,7 @@ function overlapping(from, to) {
 }
 /** What a release was screened from (county_publication_inputs), or null: a release published before 1.22.0 kept none. */
 function inputsOf(releaseId) {
-  const r = db.one(`SELECT inputs_enc FROM county_publication_inputs WHERE release_id=?`, releaseId);
+  const r = db.one(`SELECT inputs_enc FROM county_publication_inputs WHERE id=?`, releaseId);
   return r ? JSON.parse(decrypt(r.inputs_enc)) : null;
 }
 /**
@@ -243,7 +243,7 @@ function record(prep, { from, to, entered }, user) {
     db.run(`INSERT INTO county_publications(id,kind,period_from,period_to,threshold,entered,method,content,sha256,created_by) VALUES(?,?,?,?,?,?,?,?,?,?)`,
     id, 'release', from, to, prep.T, entered ? 'include' : 'exclude', JSON.stringify(prep.content.method), K.canonical(prep.content), prep.sha256, user ? user.id : null);
     // What it was screened from, for a corrected release of this period later (encrypted: exact programme figures).
-    db.run(`INSERT INTO county_publication_inputs(release_id,inputs_enc) VALUES(?,?)`, id, encrypt(JSON.stringify(prep.inputs)));
+    db.run(`INSERT INTO county_publication_inputs(id,inputs_enc) VALUES(?,?)`, id, encrypt(JSON.stringify(prep.inputs)));
   });
   return get(id);
 }

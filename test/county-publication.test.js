@@ -459,9 +459,9 @@ test('a corrected release of a withdrawn release\'s period: audited against ever
   const first = ok(await prepare(q), 200);
   assert.equal(screenedRow(first.content, 'people_served').value, 212, 'the first release prints its total (the small figures protect each other)');
   const rec = ok(await publish({ ...q, sha256: first.sha256, reviewed: true }));
-  const kept = H.db.one(`SELECT inputs_enc FROM county_publication_inputs WHERE release_id=?`, rec.id);
+  const kept = H.db.one(`SELECT inputs_enc FROM county_publication_inputs WHERE id=?`, rec.id);
   assert.ok(kept && !kept.inputs_enc.includes('Harbor'), 'what it was screened from is kept, encrypted');
-  assert.throws(() => H.db.run(`DELETE FROM county_publication_inputs WHERE release_id=?`, rec.id), /append-only/);
+  assert.throws(() => H.db.run(`DELETE FROM county_publication_inputs WHERE id=?`, rec.id), /append-only/);
   // Not withdrawn: refused, saying to withdraw first.
   const live = await prepare(q); assert.equal(live.status, 409); assert.match(live.data.error, /not withdrawn/);
   ok(await admin.post(`/api/county/publications/${rec.id}/withdraw`, { reason: 'A late file from Estuary Outreach' }), 200);
@@ -532,4 +532,7 @@ test('the governance tables are office-only with their encrypted columns', () =>
   for (const t of ['county_publication_consents', 'county_publication_inputs']) assert.ok(SYNC.server_only.includes(t), t);
   assert.deepEqual(SYNC.unsynced_enc.county_publication_consents, ['reference_enc']);
   assert.deepEqual(SYNC.unsynced_enc.county_publication_inputs, ['inputs_enc']);
+  // Key rotation finds both (it addresses rows by id): the reference and the inputs stay readable after a rotation.
+  const found = require('../scripts/rotate-key').encryptedColumns(H.db).map(t => `${t.table}:${t.cols.join(',')}`);
+  for (const t of ['county_publication_consents:reference_enc', 'county_publication_inputs:inputs_enc']) assert.ok(found.includes(t), t);
 });

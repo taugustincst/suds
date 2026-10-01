@@ -1773,11 +1773,11 @@ CREATE TABLE IF NOT EXISTS county_publication_consents (
 CREATE INDEX IF NOT EXISTS idx_county_publication_consents_programme ON county_publication_consents(programme_id, recorded_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_county_publication_consents_current ON county_publication_consents(programme_id) WHERE withdrawn_at IS NULL;
 CREATE TABLE IF NOT EXISTS county_publication_inputs (
-  release_id TEXT PRIMARY KEY REFERENCES county_publications(id),
+  id TEXT PRIMARY KEY REFERENCES county_publications(id),   -- the release's own id (key rotation finds rows by id)
   inputs_enc TEXT NOT NULL,            -- JSON { programmes: [{ id, name, values: { measure: n } }] }, AES-256-GCM
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
-CREATE TRIGGER IF NOT EXISTS county_publication_inputs_no_update BEFORE UPDATE OF release_id, created_at ON county_publication_inputs
+CREATE TRIGGER IF NOT EXISTS county_publication_inputs_no_update BEFORE UPDATE OF id, created_at ON county_publication_inputs
   BEGIN SELECT RAISE(ABORT, 'county_publication_inputs is append-only: what a release was screened from is never changed'); END;
 CREATE TRIGGER IF NOT EXISTS county_publication_inputs_no_delete BEFORE DELETE ON county_publication_inputs
   BEGIN SELECT RAISE(ABORT, 'county_publication_inputs is append-only: what a release was screened from is never deleted'); END;
