@@ -4,10 +4,12 @@ export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
   const isNew = !values;
   const f = form([
     { name: 'title', label: 'Title', required: true, span: true }, { name: 'client_id', label: 'Client (optional)', type: 'client', value: clientId || values?.client_id, display: clientDisplay },
-    { name: 'assigned_to', label: 'Assigned to', type: 'user', value: values?.assigned_to || state.user.id, exceptRoles: ['finance', 'readonly'] }, { name: 'due_at', label: 'Due', type: 'datetime' },
-    { name: 'priority', label: 'Priority', type: 'select', options: ['low', 'normal', 'high', 'urgent'], value: 'normal', noBlank: true, required: true }, { name: 'status', label: 'Status', type: 'select', options: ['open', 'in_progress', 'done', 'cancelled'], value: 'open', noBlank: true, required: true },
+    { name: 'assigned_to', label: 'Assigned to', type: 'user', value: values?.assigned_to || state.user.id, exceptRoles: ['finance', 'readonly'] }, { name: 'due_at', label: 'Due', type: 'datetime', quick: true },
+    { name: 'priority', label: 'Priority', type: 'select', options: ['low', 'normal', 'high', 'urgent'], value: 'normal', noBlank: true, required: true },
+    // A new to-do is open (1.22.0: the Status choice is on the edit form only; nobody makes a to-do already done).
+    isNew ? null : { name: 'status', label: 'Status', type: 'select', options: ['open', 'in_progress', 'done', 'cancelled'], value: 'open', noBlank: true, required: true },
     { name: 'is_milestone', label: 'Milestone (shows on client timeline)', type: 'checkbox' }, { name: 'description', label: 'Details', type: 'textarea', span: true },
-  ], { values: values || {}, submitText: isNew ? 'Create to-do' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
+  ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Create to-do' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
     if (isNew) await post('/api/tasks', d); else await put(`/api/tasks/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast('To-do saved', 'ok'); m.close(); onDone && onDone();
   } });

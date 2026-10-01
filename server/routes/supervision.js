@@ -73,8 +73,9 @@ module.exports = (r) => {
     }
     if (auth.hasPerm(ctx.user, 'referrals:read')) {
       const cf = auth.caseloadFilter(ctx.user, 'r.client_id');
-      out.referrals_awaiting_outcome = named(ctx, db.all(`SELECT r.id, r.client_id, r.referred_at, r.status, res.name AS resource, c.client_code, ${NAME_COLS}
-        FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id
+      // worker: who made the referral, so a supervisor knows whom to ask about it (1.22.0).
+      out.referrals_awaiting_outcome = named(ctx, db.all(`SELECT r.id, r.client_id, r.referred_at, r.status, res.name AS resource, r.user_id AS worker_id, u.display_name AS worker, c.client_code, ${NAME_COLS}
+        FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id LEFT JOIN users u ON u.id=r.user_id
         WHERE r.outcome_recorded_at IS NULL AND r.status IN (${AWAITING_OUTCOME.map(() => '?').join(',')}) AND c.deleted_at IS NULL AND ${cf.sql} ORDER BY r.referred_at LIMIT 100`, ...AWAITING_OUTCOME, ...cf.params));
       out.referrals_consent_revoked = named(ctx, db.all(`SELECT r.id, r.client_id, res.name AS resource, c.client_code, ${NAME_COLS} FROM referrals r JOIN resources res ON res.id=r.resource_id JOIN clients c ON c.id=r.client_id WHERE r.consent_revoked=1 AND r.status NOT IN ('closed','declined_by_client','declined_by_provider') AND ${cf.sql} LIMIT 100`, ...cf.params));
     }

@@ -20,9 +20,9 @@ module.exports = (r) => {
       const method = v.method || 'phone';
       // The column defaults to 'reached', which is a call's word: a text with no outcome was simply sent.
       if (method === 'text' && !v.outcome) v.outcome = 'sent';
-      deriveCrisis(v); encAll(v);
+      deriveCrisis(v); deriveFollowUp(v); encAll(v);
     },
-    beforeUpdate: (ctx, v) => { deriveCrisis(v); encAll(v); },
+    beforeUpdate: (ctx, v) => { deriveCrisis(v); deriveFollowUp(v); encAll(v); },
     afterInsert: (ctx, row) => {
       const what = row.method === 'text' ? 'text message' : 'call';
       if (row._log_time && row.duration_minutes > 0) {
@@ -40,6 +40,9 @@ module.exports = (r) => {
   // "Crisis escalated" is a crisis whether or not the box was ticked; the crisis flag is what the reports
   // and the follow-up priority read, so it follows from the outcome rather than depending on a second click.
   function deriveCrisis(v) { if (v.outcome === 'crisis_escalated') v.crisis = 1; }
+  // A "remind me to call back on" date is a follow-up whether or not the box was ticked too (1.22.0): a date with
+  // the box left unticked used to make no to-do at all, so the call-back was silently never reminded.
+  function deriveFollowUp(v) { if (v.follow_up_due) v.follow_up_needed = 1; }
   function encAll(v) {
     // The purpose of a call ("detox bed", "MAT intake") names the client's situation, so it is encrypted
     // like the summary; the plaintext is kept only for the follow-up task title built in afterInsert.

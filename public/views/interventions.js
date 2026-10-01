@@ -1,4 +1,4 @@
-import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions, listEntries, prefs, NOT_SAVED, offerResume, render, kv, mayChange, ownedNotice, viewOnly } from '../app.js';
+import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, downloadCsv, nav, listFilterOptions, listEntries, prefs, NOT_SAVED, offerResume, render, kv, mayChange, ownedNotice, viewOnly, QUICK_FOLLOW_UP } from '../app.js';
 import { flattenLines } from './budget.js';
 import { SECTIONS as NOTE_SECTIONS, sectionLabel } from './notes.js';
 
@@ -202,7 +202,7 @@ export async function openInterventionForm(values, { clientId, clientDisplay, on
       help: noteKinds.length ? 'No names or health details here: those go in "Add a note" below.' : 'No names or health details here: put those in a Note.' },
     section('outcome', 'Outcome & follow-up'),
     { name: 'outcome', label: 'Outcome', type: 'select', list: 'OUTCOMES' }, { name: 'stage_of_change', label: 'Stage of change', type: 'select', options: C.STAGES },
-    { name: 'follow_up_due', label: 'Remind me to follow up on', type: 'date' },
+    { name: 'follow_up_due', label: 'Remind me to follow up on', type: 'date', quick: QUICK_FOLLOW_UP },
     ...(ssp ? [section('syringes', 'Syringe services'),
       { name: 'syringes_returned', label: 'Used syringes returned', type: 'number', min: 0, step: 1, help: 'Counted, or estimated from the container below.' },
       { name: 'returns_estimated', label: 'Estimated from the container, not counted', type: 'checkbox' },
