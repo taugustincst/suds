@@ -91,7 +91,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     ...recipientOverrideField('_recipient_override'),
     { name: '_disclosure_justification', label: 'Why sharing without consent is lawful', type: 'textarea', rows: 2, span: true, help: 'Required (at least 20 characters) for a medical emergency, for "other" and for a supervisor override. Kept, encrypted, with the disclosure record.' },
     { name: '_disclosure_what', label: 'What is being shared', placeholder: 'Referral information (name, contact details and presenting need)', span: true },
-    { name: 'follow_up_due', label: 'Follow-up due', type: 'date', quick: QUICK_FOLLOW_UP, help: 'A follow-up to-do is created either way; leave this empty and one is set for you based on urgency.' },
+    { name: 'follow_up_due', label: 'Follow-up due', type: 'date', quick: QUICK_FOLLOW_UP, help: 'A follow-up to-do is created either way; leave this empty and one is set for you based on urgency. Changing the date later moves the to-do; clearing it cancels it.' },
     // What came of it belongs to the outcome (Record outcome); asked here only for a referral that is already
     // over when it is entered, or one that already has an answer.
     { name: 'barrier', label: 'Barrier (if any)', type: 'select', list: 'REFERRAL_BARRIERS' },

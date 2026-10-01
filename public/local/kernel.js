@@ -7421,10 +7421,16 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   -- the referral whose follow-up this is, so recording that referral's outcome closes this to-do and no other
-  referral_id TEXT REFERENCES referrals(id) ON DELETE SET NULL
+  referral_id TEXT REFERENCES referrals(id) ON DELETE SET NULL,
+  -- the call or visit whose follow-up date made this to-do (1.23.0, server/rules/follow-ups.js): changing that date
+  -- moves it and clearing the date cancels it, while it is still as SUDS made it
+  call_id TEXT REFERENCES calls(id) ON DELETE SET NULL,
+  intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assigned_to, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_client ON tasks(client_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_call ON tasks(call_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_intervention ON tasks(intervention_id);
 
 CREATE TABLE IF NOT EXISTS expenditures (
   id TEXT PRIMARY KEY,
@@ -11782,6 +11788,160 @@ var require_shared = __commonJS({
   }
 });
 
+// server/rules/follow-ups.js
+var require_follow_ups = __commonJS({
+  "server/rules/follow-ups.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var CLOSED_REFERRAL = ["completed", "closed", "declined_by_client", "declined_by_provider"];
+    var OPEN = ["open", "in_progress"];
+    var day = (v) => v ? String(v).slice(0, 10) : null;
+    var plain = (v) => {
+      if (!v) return null;
+      try {
+        return decrypt3(v);
+      } catch {
+        return null;
+      }
+    };
+    var norm = (t) => t === null || t === void 0 ? null : String(t).trim().toLowerCase();
+    var truthy = (v) => v === true || v === 1 || v === "1" || v === "true";
+    var SPECS = {
+      calls: {
+        link: "call_id",
+        from: "call",
+        due: (r) => truthy(r.follow_up_needed) && r.follow_up_due ? day(r.follow_up_due) : null,
+        title: (r) => {
+          const what = plain(r.purpose_enc) || r.contact_type;
+          return `${r.method === "text" ? "Text back" : "Call back"}${what ? `: ${what}` : ""}`;
+        },
+        priority: (r) => truthy(r.crisis) ? "urgent" : "normal",
+        mayCreate: () => true,
+        ours: () => true
+      },
+      interventions: {
+        link: "intervention_id",
+        from: "visit",
+        // A visit with no client (community distribution, an anonymous outreach contact) has no one to follow up with.
+        due: (r) => r.client_id && r.follow_up_due ? day(r.follow_up_due) : null,
+        title: (r) => `Follow up: ${require_options().labelOf("INTERVENTION_TYPES", r.type)}`,
+        priority: () => "normal",
+        mayCreate: () => true,
+        ours: () => true
+      },
+      referrals: {
+        link: "referral_id",
+        from: "referral",
+        due: (r) => day(r.follow_up_due),
+        title: (r) => `Follow up on referral to ${(db3.one(`SELECT name FROM resources WHERE id=?`, r.resource_id) || {}).name || "referral recipient"}`,
+        priority: (r) => r.urgency === "emergent" ? "urgent" : "normal",
+        // A closed referral, or one whose outcome is recorded, has nothing left to follow up: its date may still be
+        // corrected, but no new to-do is made.
+        mayCreate: (r) => !CLOSED_REFERRAL.includes(r.status) && !r.outcome_recorded_at,
+        // A secure referral link's to-do carries the referral too (server/referral-links.js); it is not the follow-up.
+        ours: (t, title) => title !== null && title.startsWith("Follow up on referral to ")
+      }
+    };
+    function reconcile(table, row, prev, { user, ip }) {
+      const S = SPECS[table];
+      if (!S || !row || !row.id) return null;
+      const want = S.due(row);
+      const was = prev ? S.due(prev) : null;
+      if (prev && want === was) return null;
+      if (!want && !was) return null;
+      const titles = new Set([S.title(row), prev ? S.title(prev) : null].filter(Boolean).map(norm));
+      const workers = new Set([row.user_id, prev && prev.user_id].filter(Boolean));
+      let linked = db3.all(`SELECT * FROM tasks WHERE ${S.link}=?`, row.id).map((t) => ({ ...t, _title: plain(t.title_enc) })).filter((t) => S.ours(t, t._title));
+      if (!linked.length) {
+        const lookFor = was || want;
+        const cand = db3.all(
+          `SELECT * FROM tasks WHERE ${S.link} IS NULL AND ${row.client_id ? "client_id=?" : "client_id IS NULL"} AND assigned_to IN (${[...workers].map(() => "?").join(",")})`,
+          ...row.client_id ? [row.client_id] : [],
+          ...workers
+        ).map((t) => ({ ...t, _title: plain(t.title_enc) })).filter((t) => titles.has(norm(t._title)) && day(t.due_at) === lookFor && OPEN.includes(t.status) && S.ours(t, t._title));
+        if (cand.length) {
+          const t = cand[0];
+          db3.run(`UPDATE tasks SET ${S.link}=?, updated_at=? WHERE id=?`, row.id, db3.now(), t.id);
+          linked = [{ ...t, [S.link]: row.id }];
+        }
+      }
+      const open3 = linked.filter((t) => OPEN.includes(t.status));
+      const untouched2 = open3.filter((t) => t.status === "open" && workers.has(t.assigned_to) && titles.has(norm(t._title)) && was && day(t.due_at) === was);
+      const log = (action, id, details) => audit3.log({ user, action, entity: "task", entityId: id, clientId: row.client_id || null, ip, details: { from: S.from, [S.link]: row.id, automatic: true, ...details } });
+      if (want) {
+        if (open3.length) {
+          if (!was || !untouched2.length) return null;
+          const t = untouched2[0];
+          db3.run(`UPDATE tasks SET due_at=?, updated_at=? WHERE id=?`, want, db3.now(), t.id);
+          log("task.update", t.id, { fields: ["due_at"] });
+          return "moved";
+        }
+        if (!S.mayCreate(row)) return null;
+        const id = uuid2();
+        db3.run(
+          `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,${S.link}) VALUES(?,?,?,?,?,?,?,?)`,
+          id,
+          row.client_id || null,
+          row.user_id,
+          user.id,
+          encrypt3(S.title(row)),
+          want,
+          S.priority(row),
+          row.id
+        );
+        log("task.create", id, { for: row.user_id !== user.id ? row.user_id : void 0 });
+        return "created";
+      }
+      let done = null;
+      for (const t of untouched2) {
+        if (t.description_enc) continue;
+        db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, db3.now(), t.id);
+        log("task.update", t.id, { status: "cancelled" });
+        done = "cancelled";
+      }
+      return done;
+    }
+    function tracked(s) {
+      return s.state.followUps || (s.state.followUps = /* @__PURE__ */ new Map());
+    }
+    function track(table, row, c) {
+      if (!c || !c.session || typeof row.id !== "string") return;
+      const m = tracked(c.session);
+      const k = `${table}:${row.id}`;
+      if (!m.has(k)) m.set(k, { table, id: row.id, prev: c.existing || null });
+    }
+    function finish(table, s) {
+      for (const x of tracked(s).values()) {
+        if (x.table !== table) continue;
+        const row = db3.one(`SELECT * FROM ${table} WHERE id=?`, x.id);
+        if (!row) continue;
+        db3.savepoint(
+          () => reconcile(table, row, x.prev, { user: s.user, ip: "device" }),
+          (err2) => s.warnings.push({ table, id: x.id, reason: `follow-up to-do not updated: ${String(err2 && err2.message || err2).slice(0, 160)}` })
+        );
+      }
+    }
+    function deriveCallFollowUp(v, existing) {
+      const unticked = v.follow_up_needed !== void 0 && v.follow_up_needed !== null && !truthy(v.follow_up_needed);
+      if (existing && unticked && truthy(existing.follow_up_needed) && (v.follow_up_due === void 0 || day(v.follow_up_due) === day(existing.follow_up_due))) {
+        v.follow_up_due = null;
+        v.follow_up_needed = 0;
+        return;
+      }
+      if (v.follow_up_due) v.follow_up_needed = 1;
+    }
+    function defaultReferralDue(v) {
+      if (v.follow_up_due) return;
+      const days = v.urgency === "emergent" ? 1 : v.urgency === "urgent" ? 3 : 14;
+      v.follow_up_due = new Date(Date.now() + days * 864e5).toISOString().slice(0, 10);
+    }
+    module.exports = { reconcile, track, finish, deriveCallFollowUp, defaultReferralDue, SPECS };
+  }
+});
+
 // server/supply-names.js
 var require_supply_names = __commonJS({
   "server/supply-names.js"(exports, module) {
@@ -12316,6 +12476,7 @@ var require_interventions = __commonJS({
     var { define: define2, refuse, flag } = require_core();
     var { periodProblem, ownedBy } = require_shared();
     var PC = require_participant_code();
+    var FU = require_follow_ups();
     var serviceDate = (row) => row.service_date || require_budget().localDate(row.occurred_at);
     module.exports = define2({
       table: "interventions",
@@ -12415,6 +12576,7 @@ var require_interventions = __commonJS({
         const countsPushed = Object.keys(SUP.N.COUNTED).some((col) => o[col] !== void 0 && (!e || Number(o[col] || 0) !== Number(e[col] || 0)));
         const visits = supplyVisits(c.session);
         touchVisit(c.session, row.id, visits.has(row.id) ? { countsPushed: countsPushed || visits.get(row.id).countsPushed } : { prev: e || null, countsPushed });
+        FU.track("interventions", row, c);
       },
       // A deleted visit puts back what it drew.
       afterDelete(row, s) {
@@ -12428,6 +12590,7 @@ var require_interventions = __commonJS({
         for (const [id, how] of supplyVisits(s)) {
           db3.savepoint(() => SUP.settlePushedVisit(s.user, id, how), (err2) => s.warnings.push({ table: "interventions", id, reason: `supplies not drawn down: ${String(err2 && err2.message || err2).slice(0, 160)}` }));
         }
+        FU.finish("interventions", s);
       }
     });
     function supplyVisits(s) {
@@ -13678,7 +13841,9 @@ var require_tasks = __commonJS({
     var deviceNotice = (row, c) => row.assigned_to !== c.user.id && /^Changed: [^\n]*\n(?:[^\n]*\n)*Reference: client record change notice$/.test(String(row.description_enc || ""));
     module.exports = define2({
       table: "tasks",
-      deviceColumns: ["referral_id"],
+      // The record whose follow-up this to-do is (server/rules/follow-ups.js): a device's to-do carries its call's or
+      // visit's id as the office's does, so the office finds it rather than making a second one.
+      deviceColumns: ["referral_id", "call_id", "intervention_id"],
       createdBy: ["created_by"],
       fields: {
         client_id: { type: "string" },
@@ -13700,6 +13865,10 @@ var require_tasks = __commonJS({
       // discharge landed in the same push and its maker is on the care team (or a manager), as over REST
       // (routes/episodes.js /close). Never otherwise (security review of 1.16.3, N3), never a to-do with no client, and
       // never a change notice, which is not work but the primary worker's to read (security review of 1.16.2, M1).
+      // A link to a call or visit the office does not have (refused in this push, or deleted) is dropped, not the to-do.
+      beforeStore(row) {
+        for (const [col, table] of [["call_id", "calls"], ["intervention_id", "interventions"]]) if (row[col] && !require_db().one(`SELECT 1 FROM ${table} WHERE id=?`, row[col])) row[col] = null;
+      },
       othersMayChange(existing, row, changed, c) {
         if (!["done", "cancelled"].includes(row.status) || !changed.every((col) => col === "status" || col === "completed_at") || !existing.client_id || isNotice(existing)) return false;
         const st = c && c.session && c.session.state.assignments;
@@ -16036,6 +16205,7 @@ var require_calls = __commonJS({
     var O = require_options();
     var { define: define2, flag } = require_core();
     var { ownedBy } = require_shared();
+    var FU = require_follow_ups();
     module.exports = define2({
       table: "calls",
       fields: {
@@ -16068,6 +16238,18 @@ var require_calls = __commonJS({
         if (O.accepts(list, row.outcome, kept)) return null;
         const what = method === "text" ? "text message" : "phone call";
         return flag(`was accepted, but its outcome is not one the office offers for a ${what}; the office will review it`, { message: `"${row.outcome}" is not an outcome for a ${what}. Choose one of: ${O.visible(list).join(", ")}`, fields: { outcome: "not an outcome for this kind of contact" }, code: "list" });
+      },
+      // A call-back date is a follow-up, and unticking Follow-up needed turns it off (server/rules/follow-ups.js), the
+      // same on a device's call as on one saved at the office (routes/calls.js); its to-do follows once the push lands.
+      normalise(row, c) {
+        FU.deriveCallFollowUp(row, c.existing);
+        return null;
+      },
+      afterApply(row, o, c) {
+        FU.track("calls", row, c);
+      },
+      finish(s) {
+        FU.finish("calls", s);
       }
     });
   }
@@ -16243,7 +16425,8 @@ var require_referrals = __commonJS({
     var C = require_constants();
     var disclosure = require_disclosure();
     var CN = require_client_name();
-    var { uuid: uuid2, encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var FU = require_follow_ups();
     var SHARED_STATUSES = ["contacted", "accepted", "waitlisted", "scheduled", "admitted", "completed"];
     var CLOSED_STATUSES = ["completed", "closed", "declined_by_client", "declined_by_provider"];
     var BASES = disclosure.BASES;
@@ -16409,10 +16592,7 @@ var require_referrals = __commonJS({
         afterLoad: (ctx, row) => present(withConsentOnFile(ctx, CN.withClientName(ctx, row))),
         beforeInsert: (ctx, v) => {
           if (sharesInformation(v)) disclosure.requireBasis(v.client_id, gate(ctx, v));
-          if (!v.follow_up_due) {
-            const days = v.urgency === "emergent" ? 1 : v.urgency === "urgent" ? 3 : 14;
-            v.follow_up_due = new Date(Date.now() + days * 864e5).toISOString().slice(0, 10);
-          }
+          FU.defaultReferralDue(v);
           encFields(v);
         },
         beforeUpdate: (ctx, v, row) => {
@@ -16425,17 +16605,11 @@ var require_referrals = __commonJS({
         },
         afterInsert: (ctx, row) => {
           if (sharesInformation(row)) recordDisclosure(ctx, row, row);
-          db3.run(
-            `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`,
-            uuid2(),
-            row.client_id,
-            row.user_id,
-            ctx.user.id,
-            encrypt3(`Follow up on referral to ${resourceName(row.resource_id)}`),
-            row.follow_up_due,
-            row.urgency === "emergent" ? "urgent" : "normal",
-            row.id
-          );
+          FU.reconcile("referrals", row, null, ctx);
+        },
+        // A follow-up date changed or cleared by editing the referral moves or cancels its to-do (server/rules/follow-ups.js).
+        afterUpdate: (ctx, row, prev) => {
+          FU.reconcile("referrals", row, prev, ctx);
         }
       });
       r.post("/api/referrals/:id/outcome", require_auth2().requireAuth, require_auth2().requirePerm("referrals:write"), (ctx) => {
@@ -16503,6 +16677,7 @@ var require_referrals2 = __commonJS({
     var db3 = require_db();
     var { define: define2, refuse } = require_core();
     var { ownedBy } = require_shared();
+    var FU = require_follow_ups();
     var OTHERS = ["status", "outcome_enc", "barrier_enc", "admitted_at", "closed_at", "outcome_recorded_at", "consent_id", "consent_revoked"];
     module.exports = define2({
       table: "referrals",
@@ -16562,7 +16737,17 @@ var require_referrals2 = __commonJS({
         c.referralDisclosure = gate;
         return null;
       },
+      // Every referral has a follow-up date (one by urgency when the worker set none), and its to-do follows the date
+      // once the push has landed (server/rules/follow-ups.js), as over REST (routes/referrals.js).
+      normalise(row, c) {
+        if (!c.existing) FU.defaultReferralDue(row);
+        return null;
+      },
+      finish(s) {
+        FU.finish("referrals", s);
+      },
       afterApply(row, o, c) {
+        FU.track("referrals", row, c);
         const gate = c.referralDisclosure;
         if (!gate) return;
         gate.account("device");
@@ -19595,7 +19780,7 @@ var require_field_scope = __commonJS({
       court_orders: exclude("court orders"),
       part2_notices: exclude("Part 2 notices"),
       referrals: exclude("referrals name the client to another organisation"),
-      tasks: reduce("the worker's own to-dos, about their recent clients or no client; a referral link blank", { rows: "own_tasks", blank: ["referral_id"] }),
+      tasks: reduce("the worker's own to-dos, about their recent clients or no client; the referral, call or visit a follow-up came from blank", { rows: "own_tasks", blank: ["referral_id", "call_id", "intervention_id"] }),
       expenditures: exclude("spending"),
       notes: exclude("notes, clinical or not"),
       note_addenda: exclude("addenda to notes"),
@@ -27381,6 +27566,7 @@ var require_calls2 = __commonJS({
     var C = require_constants();
     var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
     var { withClientName, SELECT: NAME_COLS } = require_client_name();
+    var FU = require_follow_ups();
     module.exports = (r) => {
       crud.build(r, {
         table: "calls",
@@ -27404,12 +27590,12 @@ var require_calls2 = __commonJS({
           const method = v.method || "phone";
           if (method === "text" && !v.outcome) v.outcome = "sent";
           deriveCrisis(v);
-          deriveFollowUp(v);
+          FU.deriveCallFollowUp(v, null);
           encAll(v);
         },
-        beforeUpdate: (ctx, v) => {
+        beforeUpdate: (ctx, v, row) => {
           deriveCrisis(v);
-          deriveFollowUp(v);
+          FU.deriveCallFollowUp(v, row);
           encAll(v);
         },
         afterInsert: (ctx, row) => {
@@ -27429,27 +27615,17 @@ var require_calls2 = __commonJS({
             );
             require_audit().log({ user: ctx.user, action: "time_entry.create", entity: "time_entry", entityId: te2, clientId: row.client_id || null, ip: ctx.ip, details: { call_id: row.id, for: row.user_id !== ctx.user.id ? row.user_id : void 0 } });
           }
-          if (row.follow_up_needed && row.follow_up_due) db3.run(
-            `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
-            uuid2(),
-            row.client_id || null,
-            row.user_id,
-            ctx.user.id,
-            encrypt3(`${row.method === "text" ? "Text back" : "Call back"}: ${row._purpose || row.contact_type}`),
-            row.follow_up_due,
-            row.crisis ? "urgent" : "normal"
-          );
+          FU.reconcile("calls", row, null, ctx);
+        },
+        afterUpdate: (ctx, row, prev) => {
+          FU.reconcile("calls", row, prev, ctx);
         },
         afterLoad: (ctx, x) => ({ ...withClientName(ctx, x), contact_name: x.contact_name_enc ? decrypt3(x.contact_name_enc) : null, phone: x.phone_enc ? decrypt3(x.phone_enc) : null, summary: x.summary_enc ? decrypt3(x.summary_enc) : null, purpose: x.purpose_enc ? decrypt3(x.purpose_enc) : null, contact_name_enc: void 0, phone_enc: void 0, summary_enc: void 0, purpose_enc: void 0 })
       });
       function deriveCrisis(v) {
         if (v.outcome === "crisis_escalated") v.crisis = 1;
       }
-      function deriveFollowUp(v) {
-        if (v.follow_up_due) v.follow_up_needed = 1;
-      }
       function encAll(v) {
-        if (v.purpose !== void 0) v._purpose = v.purpose;
         for (const f of ["contact_name", "phone", "summary", "purpose"]) if (v[f] !== void 0) {
           v[`${f}_enc`] = v[f] === null ? null : encrypt3(v[f]);
           delete v[f];
@@ -42504,16 +42680,7 @@ var require_interventions2 = __commonJS({
             audit3.log({ user: ctx.user, action: "time_entry.create", entity: "time_entry", entityId: te2, clientId: row.client_id ?? null, ip: ctx.ip, details: { intervention_id: row.id, for: row.user_id !== ctx.user.id ? row.user_id : void 0 } });
           }
           if (row.naloxone_kits > 0 && row.client_id) db3.run(`UPDATE clients SET naloxone_provided=1, naloxone_last_date=?, updated_at=? WHERE id=?`, serviceDate(row), db3.now(), row.client_id);
-          if (row.follow_up_due && row.client_id) db3.run(
-            `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority) VALUES(?,?,?,?,?,?,?)`,
-            uuid2(),
-            row.client_id,
-            row.user_id,
-            ctx.user.id,
-            require_crypto().encrypt(`Follow up: ${O.labelOf("INTERVENTION_TYPES", row.type)}`),
-            row.follow_up_due,
-            "normal"
-          );
+          require_follow_ups().reconcile("interventions", row, null, ctx);
           syncExpenditure(ctx, row);
           applySupplies(ctx, row, row._supply_plan);
           if (row._note) row._note.id = notes.insertNote(ctx, { ...row._note, intervention_id: row.id });
@@ -42523,6 +42690,7 @@ var require_interventions2 = __commonJS({
           syncTimeEntry(ctx, row, prev);
           if (row.client_id !== prev.client_id || row.user_id !== prev.user_id) S.relinkLines(row);
           applySupplies(ctx, row, row._supply_plan);
+          require_follow_ups().reconcile("interventions", row, prev, ctx);
         },
         // Kits or strips handed out with no supply item to take them off (the form tells the worker): a count the
         // programme keeps no item of stays on the visit, with no line and nothing drawn down.
@@ -52158,6 +52326,17 @@ var require_db = __commonJS({
       //     renumbered.
       (d) => {
         addColumn(d, "passkeys", "allowlist_grace_until", "TEXT");
+      },
+      // 67: a follow-up to-do remembers the call or visit whose date made it (built for 1.23.0, not yet released;
+      //     server/rules/follow-ups.js), so changing that date moves it and clearing the date cancels it.
+      //     tasks.call_id and tasks.intervention_id, NULL for every existing to-do (an older one is matched by its
+      //     title and date the first time its call or visit is edited). Self-contained and idempotent, so it can be
+      //     renumbered.
+      (d) => {
+        addColumn(d, "tasks", "call_id", "TEXT REFERENCES calls(id) ON DELETE SET NULL");
+        addColumn(d, "tasks", "intervention_id", "TEXT REFERENCES interventions(id) ON DELETE SET NULL");
+        d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_call ON tasks(call_id)");
+        d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_intervention ON tasks(intervention_id)");
       }
     ];
     var PERF_INDEXES_47 = [

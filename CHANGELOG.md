@@ -4,6 +4,22 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Fixed: follow-up to-dos follow the follow-up date
+
+Built for 1.23.0, not yet released. Migration 67 (`tasks.call_id`, `tasks.intervention_id`). A follow-up date added by
+editing a call or text, or a visit, made no to-do, and a changed date left the to-do on the old day; the call form's
+help said "A date puts a to-do on your list". Now one rule (`server/rules/follow-ups.js`) makes, moves and cancels the
+follow-up to-do of a call or text, a visit and a referral, on insert and on update: a date set makes the to-do (when the
+record has no open one), a changed date moves it, a cleared date (or **Follow-up needed** unticked on a call, which now
+also clears the date) cancels it, and saving the same date again does nothing. It changes only a to-do SUDS made that
+is still as SUDS made it (open, the record's worker's, SUDS's title, the record's previous follow-up date; to cancel it,
+no details added), so a worker's own edits to a to-do are never lost. The REST routes and sync push both run it: the
+office reconciles a device's calls, visits and referrals once the whole push has landed, finding the to-do the device
+sent (linked by `call_id`/`intervention_id`, or, from an older kernel or before migration 67, by its title, client,
+worker and date) instead of making a second one. A to-do SUDS makes, moves or cancels this way is audited
+(`task.create`/`task.update`, with `from` and the record's id; no PHI). The call, visit and referral forms' help says
+what a date does. docs/USER_GUIDE.md, *Follow-up dates and your to-dos*.
+
 ## 1.22.0 — 2026-10-01
 
 A feature release (migrations 64, 65 and 66; the county publication consent routes; no new permission), released
