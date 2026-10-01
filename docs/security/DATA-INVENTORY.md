@@ -262,6 +262,7 @@ The database's schema version is the number of the newest migration it has run (
 | Migration 65 | 1.22.0 | County publication governance: `county_publication_consents` (each programme's written agreement to publication: its date, the reference `reference_enc`, who recorded and withdrew it) and `county_publication_inputs` (what each release was screened from, `inputs_enc`, append-only by triggers). No client data. |
 | Migration 66 | 1.22.0 | The authenticator allow-list's grace period: `passkeys.allowlist_grace_until` (when a refused passkey's grace period ends; a date, nothing about the person) |
 | Migration 67 | 1.23.0 | Follow-up to-dos: `tasks.call_id` and `tasks.intervention_id` (the call or visit whose follow-up date made a to-do, so changing the date moves it; ids only, no new data about people) |
+| Migration 69 | built for 1.24.0, not yet released | A sign reminder opens its draft: `tasks.note_id` (the id of the assignee's own draft a supervisor's *Finish and sign* reminder opens; an id only, no new data about people; synced to devices with the to-do). Migration 68 is `feature/1.24-duplicate-time`'s (`time_entries.start_time`, `duplicate_of`); on this branch it is a placeholder |
 
 `test/doc-content-currency.test.js` fails when the newest migration, or one the newest stamped release's CHANGELOG section names, is not in this table.
 

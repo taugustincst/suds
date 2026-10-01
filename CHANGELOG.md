@@ -4,6 +4,48 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Built for 1.24.0, not yet released
+
+Feature work for 1.24.0, on its own branch (`feature/1.24-todo-note-link`); it goes through the release gate after the
+stabilisation period (not before 2026-10-29). Nothing here is in a release yet.
+
+#### Added: a "finish and sign" reminder opens the draft it is about
+
+- Added: a supervisor's *Finish and sign* reminder now names the draft it was sent about (`tasks.note_id`) and offers
+  **Open the draft**, which opens that note as the Notes list does (**Edit draft**, **Sign & lock**), over the page the
+  worker is on: on the to-do itself (beside **Open <client>'s notes**, which stays), on its row on a phone, and when its
+  title is tapped in Home's *To-dos for today*. Until now (1.23.3) it could only take the worker to the client's drafts
+  list. Who may open the note is unchanged: the office checks it as for any note (a SUD counseling note is still only
+  its author's, its co-signer's and holders of *Write clinical notes*).
+- **Remind author** on a draft's row in Supervision links the reminder to that draft. **Remind all overdue authors**,
+  which sends one reminder per author and client, links each to the **oldest overdue** draft of that author on that
+  client (decided: the one most in need of finishing, rather than no link; the reminder still covers all of them).
+- **Closing is unchanged (1.23.3):** the reminder covers all the author's drafts on that client's record and closes by
+  itself when the **last** of them is signed (done) or deleted (cancelled). Signing or deleting the **linked** draft while
+  others are left keeps the reminder open and drops its link, so it offers **Open <client>'s notes** again (the
+  remaining drafts) rather than a note with nothing left to finish; it is not re-pointed at another draft. A reminder
+  sent before has no link and works as before.
+- Who may set the link (server/rules/tasks.js, both doors): only someone who may send a sign reminder (*Countersign
+  notes*, `notes:cosign`), only on a to-do that is a sign reminder, and only to a draft the to-do's assignee wrote on
+  the to-do's client; anything else is refused (403 for a navigator or the reminder's assignee re-pointing it, 400 for
+  another client's or another author's draft or an ordinary to-do). A link to a note that is not a live draft
+  (unknown, deleted or signed) is dropped and the reminder kept; so is a link that no longer fits after the to-do is
+  given to someone else or moved to another client. A device carries the link in sync push under the same rules (a
+  refused link refuses the row, as over the web app; a dead one is dropped). The assignee may still edit the reminder
+  otherwise, and may clear the link.
+- Schema: **migration 69** adds `tasks.note_id` (an id, no data about people; no `REFERENCES`, so a device that does
+  not hold the note still stores the reminder). **Migration 68 is a placeholder** on this branch for
+  `feature/1.24-duplicate-time`'s migration 68 (`time_entries.start_time`, `duplicate_of`): when the branches are
+  merged, that branch's 68 replaces the placeholder, and this branch merges after it. `scripts/migration-order.js`
+  acknowledges the new `tasks` definition (migrations 19 and 24 read it). No new route, permission or audit action:
+  setting the link is a `task.create`/`task.update` (with `note_id` in its `fields`), and dropping it when the linked
+  draft is signed or deleted is part of that `note.sign`/`note.delete`.
+- Tests: `test/todo-note-link.test.js` (a supervisor sets it; a navigator, the assignee and wrong client or author are
+  refused; deleted and unknown notes dropped; signing or deleting the linked draft; sync push), the 1.22.0 first-start
+  fixture in `test/migrations.test.js` (fresh and upgraded identical; `note_id` NULL on every old to-do), and the browser
+  script `ui-eval` (Remind author and Remind all set the link, **Open the draft** on the to-do, Home's title and a phone
+  row, the fallback after the linked draft is deleted, with axe on each).
+
 ## 1.23.3 — 2026-10-01
 
 A patch of 1.23.2 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
