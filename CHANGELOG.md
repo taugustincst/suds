@@ -4,10 +4,24 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
-### Fixes from the evaluation of 1.23.1 and its integration review (built for 1.23.2, not yet released)
+## 1.23.2 — 2026-10-01
 
-A patch under the patch rules: no migration, no new or widened permission, no new route. Upgrading needs nothing beyond
-replacing the files and restarting.
+A patch of 1.23.1 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
+1.23.2*): fixes from the evaluation of 1.23.1 and its integration review, tests and documentation, with no migration,
+no new or widened permission and no new route (`node scripts/release-policy.js --version 1.23.2 --previous v1.23.1
+--previous-ref 3bff36f` passes: 185 lines added outside docs, tests and generated files, of the 1,500 a patch may add).
+It passes the release policy with no exception. It fixes Home's *To-dos for today* on a phone (tapping a title no
+longer marks the to-do done; **Undo** reopens it as it was), the follow-up to-dos of a call with no purpose, a deleted
+referral's reminder and a follow-up left open by a sync push that moved and deleted its record at once, a clinician's
+new note type, and controls hidden under the floating **+ Log** button. Upgrading needs nothing beyond replacing the
+files and restarting. What an administrator should know: no new audit action; a supervisor's *Finish and sign*
+reminder now covers an author's drafts on one client's record, so *Remind all overdue authors* sends one per author
+and client, and it closes when they are all signed or the last is deleted (a reminder made by 1.23.0 or 1.23.1 still
+closes when its note is signed); only the to-do's maker can make a to-do a sign reminder by its last line; and
+deleting a referral, at the office or from a device, cancels its supervisor's reminder (`task.update`, cause
+`deleted`).
+
+### Fixed: Home's to-dos, follow-up titles, reminders and the phone layout
 
 - Fixed: on Home's *To-dos for today*, tapping a to-do's title marked it done, because the title was inside the
   checkbox's label and the box saves at once. Now only the box marks it done (named "Mark done: <title>" for a screen

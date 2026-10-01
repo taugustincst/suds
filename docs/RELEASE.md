@@ -85,6 +85,20 @@ either. It did: the tags were still owed when CI passed on `3bff36f` (all nine j
 pushed to `main` and its static build to `gh-pages` directly ("Deploy 3bff36f (SUDS 1.23.1)"; `release-site-check`
 found the 73 built files the commit's, byte for byte), and the exceptions table has a row for that push.
 
+**Record: 1.23.2 ships without a policy exception.** 1.23.2 is a patch of 1.23.1 under the patch rules and
+*Stabilisation*: no migration, no new or widened permission, no new route, and 185 lines added outside docs, tests and
+generated files, within the 1,500-line limit (`node scripts/release-policy.js --version 1.23.2 --previous v1.23.1
+--previous-ref 3bff36f` passes). It carries fixes from the evaluation of 1.23.1 and its integration review (Home's
+to-dos on a phone, follow-up to-do titles and links, a supervisor's sign reminder per author and client record, a
+deleted referral's reminder, a clinician's new note type, controls under the **+ Log** button), tests and
+documentation; the exceptions table has no row for it. It is released as one commit, "Release 1.23.2" (a patch keeps
+its minor's SBOM, `sbom-1.23.0`), and that commit is the one CI passes and the owner tags: `v1.23.2` goes in the same
+push as the eleven tags owed before it (step 2 of [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), it is
+the newest tag, and its `release.yml` run, whose gate passes with no `policy_exception`, is the Latest release and
+starts the `Web app` run that publishes it. If 1.23.2 has to go live before the owner has pushed the tags, the direct
+`gh-pages` push is said here and in the exceptions table, as point 4 requires; it is not a policy exception (the patch
+rules pass), but it is not the gate either.
+
 ### Supported versions
 
 | Line | Gets | For how long |
@@ -343,14 +357,14 @@ change: 1.16.0 is the previous feature release) and for any 1.16.x patch (whose 
 `v1.16.2`: 1.16.3 and 1.16.4 alone count 1,137 of the 1,500 lines), `scripts/migration-order.js`'s baseline, and
 *Backports* step B, whose `git rev-parse 'v1.16.4^{commit}'` fails without the tag.
 
-**Now eleven tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.23.1). 1.17.1, 1.18.0,
-1.19.0, 1.20.0, 1.21.0, 1.22.0 and 1.23.0 were published the same way, and 1.23.1 was stamped before the owner pushed
-them, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`, `v1.17.1`, `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`,
-`v1.22.0`, `v1.23.0` and `v1.23.1`, pushed together while `main` says 1.23.1. The hand-off has the checks, the tag
-commands, the one push, what each tag's runs do (the 1.16.x gates refuse, the eight from `v1.17.0` to `v1.23.0` need a
-*Run workflow* with `policy_exception`, `v1.23.1`'s gate passes, and only `v1.23.1`'s `Web app` run is approved: it
-publishes 1.23.1), and the SHA-256 each release zip will have, rebuilt from each commit (1.23.1's is recorded by a
-later commit on `main`). The paragraphs below are the reasoning of 1.17.0's time, for three tags;
+**Now twelve tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.23.2). 1.17.1, 1.18.0,
+1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0 and 1.23.1 were published the same way, and 1.23.2 was stamped before the owner
+pushed them, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`, `v1.17.1`, `v1.18.0`, `v1.19.0`, `v1.20.0`,
+`v1.21.0`, `v1.22.0`, `v1.23.0`, `v1.23.1` and `v1.23.2`, pushed together while `main` says 1.23.2. The hand-off has
+the checks, the tag commands, the one push, what each tag's runs do (the 1.16.x gates refuse, the eight from `v1.17.0`
+to `v1.23.0` need a *Run workflow* with `policy_exception`, the gates of `v1.23.1` and `v1.23.2` pass, and only
+`v1.23.2`'s `Web app` run is approved: it publishes 1.23.2), and the SHA-256 each release zip will have, rebuilt from
+each commit (1.23.2's is recorded by a later commit on `main`). The paragraphs below are the reasoning of 1.17.0's time, for three tags;
 the rule they set, never an older tag alone, is unchanged.
 
 **Tag 1.16.3, 1.16.4 and 1.17.0 in one push, never 1.16.x alone** (engineering review of 1.17.0, H1). 1.17.0 is on

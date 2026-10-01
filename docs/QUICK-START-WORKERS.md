@@ -111,5 +111,5 @@ phone (card 2).
 
 ---
 
-*Checked against the app's own labels (public/views and public/app.js) for 1.23.2 (built for 1.23.2, not yet
-released). A label that changes in a later release is changed here in the same release.*
+*Checked against the app's own labels (public/views and public/app.js) as released in 1.23.2. A label that
+changes in a later release is changed here in the same release.*
