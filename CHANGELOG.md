@@ -64,7 +64,8 @@ Built for 1.22.0, not yet released. These fix findings of the market evaluation 
   *Release integrity* answer.
 - **The authenticator allow-list and synced passkeys.** QUESTIONNAIRE #19a and the RFI now say that with the
   allow-list on, synced passkeys (iCloud Keychain, Google Password Manager: attestation `none` or `apple`) cannot be
-  added, and that turning it on ends unproven passkeys with no grace period.
+  added, and that turning it on ends unproven passkeys: at once under 1.21.0, and after the grace period below from
+  1.22.0.
 - **`scripts/release-state.js`**: a new check fails while released versions are untagged and QUESTIONNAIRE #36,
   #39 or the RFI's *Release integrity* answer does not say they were "published without a tag" and name the first
   and last of them (`untagged-undisclosed`, `untagged-range`). Untagged versions come from the hand-off's owed tags,

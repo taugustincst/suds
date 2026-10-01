@@ -189,7 +189,11 @@ device**: *Hold everything* (or *Keep everything*, on a whole device of such an 
 **Settings › Synced devices** records `devices.scope_set_by = 'admin'`, and only that keeps a device whole for an
 account held to the field scope — for example a supervisor's office computer. It is per device, not per person, so a
 supervisor's new or reinstalled device starts in the field scope until an administrator marks it; and the decision is
-cleared if that device signs in as someone else. Neither the device nor its user can widen any of this.
+cleared if that device signs in as someone else. Neither the device nor its user can widen any of this, with one
+exception: the device id is the device's own word, so a user who copies the id of their own *Hold everything* device
+onto another device syncs that one whole too (an administrator who marks a device trusts its user with a whole copy,
+and the same account reads as much in a browser: [security/THREAT-MODEL.md](security/THREAT-MODEL.md), residual
+risk 20).
 
 **Changing scope.** An administrator changes it under **Settings › Synced devices** (*Make field device* / *Hold
 everything*); a device's user may make it a field device as they enrol it (*Keep only what I need in the field*

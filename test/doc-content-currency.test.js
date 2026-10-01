@@ -254,6 +254,22 @@ test('no buyer, market or security document calls a released feature "not built"
   assert.deepEqual(stale, [], 'say what was released (and what is still not built) instead');
 });
 
+// ---- 6. The authenticator allow-list's grace period (built for 1.22.0) ----
+// The integration review of 1.22.0 found QUESTIONNAIRE #19a and the RFI template (written in the same release) saying
+// turning the allow-list on "ends unproven passkeys with no grace period", which the grace period built beside them
+// made false. A buyer-facing sentence about the allow-list that says "no grace period" must say it of 1.21.0 or of a
+// model reported compromised or revoked (which never gets one).
+function graceClaims(text) {
+  return sentences(text).filter(s => /allow-list|unproven passkeys|not proven at enrolment/i.test(s) && /\bno grace period\b/i.test(s) && !/1\.21\.0|compromised|revoked/i.test(s));
+}
+test('no buyer, market or security document says the authenticator allow-list stops passkeys with no grace period', () => {
+  const stale = [];
+  for (const f of buyerFacing()) for (const s of graceClaims(read(f))) stale.push(`${f}: "${s.slice(0, 220)}"`);
+  assert.deepEqual(stale, [], 'the grace period (docs/FINGERPRINT.md, Grace period) keeps such passkeys working for 0 to 90 days');
+  assert.equal(graceClaims('Turning it on also ends existing unproven passkeys, with no grace period.').length, 1);
+  assert.equal(graceClaims('Under 1.21.0 turning the allow-list on ended them with no grace period.').length, 0);
+});
+
 test('the checks find what they are for', () => {
   // Released features called unbuilt: what the review of 1.21.0 found, and what is fine.
   const all = () => true;
