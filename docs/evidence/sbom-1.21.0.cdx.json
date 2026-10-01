@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:48668d04-f1ac-5d89-acb0-a30164df465d",
+  "serialNumber": "urn:uuid:36df53ed-3142-55c5-aaad-33ba6dd34dae",
   "version": 1,
   "metadata": {
     "timestamp": "2026-09-30T00:00:00Z",
@@ -38,11 +38,11 @@
     "properties": [
       {
         "name": "suds:source",
-        "value": "git commit d1efeb7057da791227134a1187e858bf627b40b1"
+        "value": "git commit f58128c3080b464f874832856ff32d18658e3ab4"
       },
       {
         "name": "suds:source-commit",
-        "value": "d1efeb7057da791227134a1187e858bf627b40b1"
+        "value": "f58128c3080b464f874832856ff32d18658e3ab4"
       },
       {
         "name": "suds:timestamp-is",
@@ -212,7 +212,7 @@
         },
         {
           "name": "suds:tree-sha256",
-          "value": "80d8f9ac010c4f2ec48f7de9d416d318fbd66dafb133a29aac2dc38d338335c9"
+          "value": "68b20c0e12050fc06319e6386ac6182498e720e194b5bb1346aacff2952faf97"
         },
         {
           "name": "suds:tree-method",
