@@ -359,7 +359,8 @@ function programmeCard(s, refresh) {
 // and staff reach SUDS on a phone or tablet through get-app.html (not /app, which only an office has).
 // The authenticator allow-list for passkeys (docs/FINGERPRINT.md, "Authenticator allow-list"): office server only,
 // off by default. The administrator loads the FIDO Metadata Service file (SUDS makes no outbound call), lists the
-// accepted models, sees whose passkeys would stop working, and saves with the password (or code) again.
+// accepted models, sees whose passkeys would stop working and when (the grace period, 1.22.0), and saves with the
+// password (or code) again.
 const AAGUID_RE = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
 const REASON_TEXT = { unattested: 'added before the list, model never proven', 'not listed': 'model not on the list', status: 'model reported compromised or revoked', 'not in metadata': 'model not in the metadata file' };
 /** "Name, AAGUID" lines → [{ name, aaguid }]; a line with no AAGUID is reported, not dropped. */
@@ -372,6 +373,8 @@ function parseModelLines(text) {
   }
   return { models: out, bad };
 }
+/** The grace period field's value as a whole number of days (the server checks the range). */
+const graceValue = (v) => (String(v ?? '').trim() === '' ? undefined : Number(v));
 async function allowlistCard(refresh) {
   let s;
   try { s = await get('/api/admin/authenticator-allowlist', { quiet: true }); } catch { return null; }
@@ -406,21 +409,24 @@ async function allowlistCard(refresh) {
       help: `At most ${s.max_models}. An AAGUID names a model (8-4-4-4-12 hexadecimal digits). The all-zero AAGUID accepts FIDO U2F security keys the metadata file lists.` },
     ...(s.catalog.length ? [{ name: 'catalog_pick', label: 'Add a model from the metadata file', type: 'select', span: true, placeholder: '— choose a model —',
       options: s.catalog.map(c => ({ value: c.aaguid, label: `${c.description}${c.refused.length ? ' (reported compromised or revoked)' : ''}`, disabled: !!c.refused.length })) }] : []),
-    { name: 'acknowledge', label: 'I have checked who is affected, and their passkeys will stop working', type: 'checkbox', span: true },
+    { name: 'grace_days', label: 'Grace period before refused passkeys stop (days)', type: 'number', min: 0, max: s.grace_max_days || 90, step: 1, value: String(s.grace_days ?? 14), span: true,
+      help: `0 to ${s.grace_max_days || 90}. A passkey this list would refuse that works today keeps working this many days, and its owner is told the date on every page and on My profile. 0 stops it at once. A passkey whose model the metadata file reports compromised or revoked stops at once whatever this says.` },
+    { name: 'acknowledge', label: 'I have checked who is affected, and when their passkeys stop working', type: 'checkbox', span: true },
   ], { submitText: 'Save the allow-list', onSubmit: async (d) => {
     const { models, bad } = parseModelLines(d.models);
     if (bad.length) throw Object.assign(new Error('Some lines have no AAGUID'), { data: { fields: { models: `no AAGUID on: ${bad.slice(0, 3).join(' | ')}` } } });
     const enabled = d.enabled === '1';
-    const pv = await post('/api/admin/authenticator-allowlist/preview', { enabled, models });
+    const grace_days = graceValue(d.grace_days);
+    const pv = await post('/api/admin/authenticator-allowlist/preview', { enabled, models, grace_days });
     showPreview(pv);
     if (pv.affected.passkey_count && !d.acknowledge) throw Object.assign(new Error(`${pv.affected.passkey_count} passkey${pv.affected.passkey_count === 1 ? '' : 's'} would stop working: check the list below, then tick the box to confirm.`), { data: { fields: { acknowledge: 'confirm that you have checked who is affected' } } });
     await confirmIdentity('Save the allow-list', 'change the authenticator allow-list', async (body) => {
-      await put('/api/admin/authenticator-allowlist', { ...body, enabled, models, acknowledge_affected: pv.affected.passkey_count });
-      toast(enabled ? `Authenticator allow-list on: ${models.length} model${models.length === 1 ? '' : 's'} accepted.` : 'Authenticator allow-list saved (off).', 'ok');
+      await put('/api/admin/authenticator-allowlist', { ...body, enabled, models, grace_days, acknowledge_affected: pv.affected.passkey_count });
+      toast(enabled ? `Authenticator allow-list on: ${models.length} model${models.length === 1 ? '' : 's'} accepted${pv.affected.grace_until ? `; refused passkeys stop on ${fmt.date(pv.affected.grace_until)}` : ''}.` : 'Authenticator allow-list saved (off).', 'ok');
     });
   }, extra: h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn', 'data-allowlist-check': '1', onClick: async () => {
     const { models, bad } = parseModelLines(f.inputs.models.value);
-    try { showPreview(await post('/api/admin/authenticator-allowlist/preview', { enabled: f.inputs.enabled.value === '1', models }), bad); }
+    try { showPreview(await post('/api/admin/authenticator-allowlist/preview', { enabled: f.inputs.enabled.value === '1', models, grace_days: graceValue(f.inputs.grace_days.value) }), bad); }
     catch (e) { result.replaceChildren(h('p', { class: 'err' }, e.message)); }
   } }, 'Check who would be affected')) });
   if (f.inputs.catalog_pick) f.inputs.catalog_pick.addEventListener('change', () => {
@@ -431,21 +437,35 @@ async function allowlistCard(refresh) {
     f.inputs.catalog_pick.value = '';
     announce(`${c.description} added to the list`);
   });
-  function showPreview(pv, bad = []) {
+  // When a passkey stops: the end of its grace period, or at once.
+  const stopsText = (p) => p.stops_at ? `stops on ${fmt.date(p.stops_at)}` : 'stops at once';
+  function showPreview(pv, bad = [], { current = false } = {}) {
     const a = pv.affected;
+    const only = a.only_factor_accounts || [];
+    const graced = a.passkey_count - (a.stops_now_count || 0);
+    const would = current ? '' : ' would';
     // replaceChildren writes a null as the text "null": the parts that may be absent are filtered out.
     result.replaceChildren(...[
-      h('h3', { class: 'eyebrow' }, 'Who would be affected'),
+      h('h3', { class: 'eyebrow' }, current ? 'Whose passkeys stop' : 'Who would be affected'),
       bad.length ? h('p', { class: 'err' }, `No AAGUID on ${bad.length} line${bad.length === 1 ? '' : 's'}: ${bad.slice(0, 3).join(' | ')}`) : null,
-      pv.models.length ? table([{ label: 'Model', render: m => m.name }, { label: 'AAGUID', render: m => h('code', {}, m.aaguid) }, { label: 'Metadata', render: standingBadge }], pv.models) : null,
-      h('p', { 'data-affected-count': String(a.passkey_count) }, a.passkey_count ? `${a.passkey_count} passkey${a.passkey_count === 1 ? '' : 's'} of ${a.account_count} account${a.account_count === 1 ? '' : 's'} would stop working for sign-in and signing at their next use. Their owners sign in with the password (and code) and add a passkey on an accepted authenticator.` : 'No one\'s passkeys would stop working.'),
+      current || !pv.models.length ? null : table([{ label: 'Model', render: m => m.name }, { label: 'AAGUID', render: m => h('code', {}, m.aaguid) }, { label: 'Metadata', render: standingBadge }], pv.models),
+      // The accounts whose only second factor stops, first and apart: they need a password and an authenticator-app
+      // code, or a new passkey on an accepted authenticator, before the date.
+      only.length ? h('div', { class: 'banner warn', 'data-allowlist-only-factor': String(only.length) },
+        h('div', {}, h('b', {}, `${only.length} account${only.length === 1 ? ' has' : 's have'} no other second factor. `),
+          `When ${only.length === 1 ? 'its passkey stops' : 'their passkeys stop'}, ${only.length === 1 ? 'this person' : 'these people'} will need their password and an authenticator-app code, or a new passkey on an accepted authenticator. Tell them before the date:`,
+          h('ul', { class: 'small' }, only.map(x => h('li', {}, h('b', {}, x.display_name), ` (${x.username}) — ${x.stops_at ? `stops on ${fmt.date(x.stops_at)}` : 'stops at once'}`))))) : null,
+      h('p', { 'data-affected-count': String(a.passkey_count), 'data-grace-until': a.grace_until || '' }, a.passkey_count
+        ? `${a.passkey_count} passkey${a.passkey_count === 1 ? '' : 's'} of ${a.account_count} account${a.account_count === 1 ? '' : 's'}${would} stop working for sign-in and signing${graced ? ` — ${graced === a.passkey_count ? 'all' : graced} after a grace period${a.grace_until ? ` ending ${fmt.date(a.grace_until)}` : ''}` : ''}${a.stops_now_count ? `${graced ? '; ' : ' — '}${a.stops_now_count === a.passkey_count ? 'all' : a.stops_now_count} at once (already refused, a model reported compromised or revoked, or a grace period of 0 days)` : ''}. Until then their owners are told the date on every page and on My profile; they sign in with the password (and code) and add a passkey on an accepted authenticator.`
+        : `No one's passkeys${would} stop working.`),
       a.accounts.length ? table([{ label: 'Person', render: x => h('span', {}, h('b', {}, x.display_name), ' ', h('span', { class: 'small muted' }, x.username)) },
-        { label: 'Passkeys that stop', render: x => x.passkeys.map(p => h('div', { class: 'small' }, `${p.name} — ${REASON_TEXT[p.reason] || p.reason}`)) },
-        { label: 'Other second factor', render: x => x.other_factor ? badge('Authenticator app', 'ok') : flag('None', true, 'asked to set one up at their next sign-in if their role requires it', 'warn') }], a.accounts) : null].filter(Boolean));
+        { label: 'Passkeys that stop', render: x => x.passkeys.map(p => h('div', { class: 'small', 'data-stops-at': p.stops_at || 'now' }, `${p.name} — ${REASON_TEXT[p.reason] || p.reason}; ${stopsText(p)}`)) },
+        { label: 'Other second factor', render: x => x.other_factor ? badge('Authenticator app', 'ok') : x.only_factor ? flag('None: this is their only one', true, 'they will need a password and authenticator-app code, or a new accepted passkey', 'danger') : flag('Another passkey', true, 'a passkey the list keeps', 'warn') }], a.accounts) : null].filter(Boolean));
   }
-  if (s.enabled && s.affected && s.affected.passkey_count) showPreview({ models: s.models, affected: s.affected });
+  if (s.enabled && s.affected && s.affected.passkey_count) showPreview({ models: s.models, affected: s.affected }, [], { current: true });
   return h('div', { class: 'card', 'data-allowlist-card': '1' }, h('h2', {}, 'Authenticator allow-list (passkeys)'),
-    h('p', { class: 'small' }, 'Off by default. When it is on, a passkey can be added only on an authenticator model listed here, and the authenticator must prove its model (attestation), checked against the FIDO Metadata Service. Passkeys added before it was turned on stop working at their next use.'),
+    h('p', { class: 'small' }, 'Off by default. When it is on, a passkey can be added only on an authenticator model listed here, and the authenticator must prove its model (attestation), checked against the FIDO Metadata Service. Passkeys it refuses — every one added before it was turned on — keep working for the grace period you set below, then stop.'),
+    h('p', { class: 'small', 'data-allowlist-synced': '1' }, h('b', {}, 'Synced passkeys cannot be added while the list is on. '), 'Passkeys kept in iCloud Keychain, Google Password Manager or another password manager do not prove their model, so SUDS refuses them; staff who use one need a listed security key or device instead.'),
     kv([['Status', s.enabled ? badge('On', 'ok') : badge('Off')],
       ['Metadata file', meta ? h('span', {}, `Number ${meta.no}, ${meta.entries} models, loaded ${fmt.dt(meta.loaded_at)}; next update due ${meta.next_update} `, meta.expired ? flag('Out of date', true, 'no passkey can be added until the current file is loaded') : null, meta.test_root ? ' (signed by a test root: development only)' : '') : 'None loaded yet'],
       ['Trusted root', h('span', { class: 'small' }, `${s.trust_root.subject}; SHA-256 `, h('code', { style: { overflowWrap: 'anywhere' } }, s.trust_root.sha256))],

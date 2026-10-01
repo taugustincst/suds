@@ -406,6 +406,19 @@ window.addEventListener('resize', scrollCheckSoon);
  * A message that stays until it is dismissed, for conditions the user has to act on rather than
  * acknowledge in passing — a device that has stopped saving, a consent that was revoked.
  */
+/**
+ * What a person whose passkey is in the authenticator allow-list's grace period is told: which, when it stops, and the
+ * two ways to keep signing in. `g`: /api/auth/me's passkey_grace ({ until, passkeys, accepted_left, totp }).
+ */
+export function passkeyGraceText(g) {
+  const names = g.passkeys.map(p => `“${p.name}”`).join(', ');
+  const one = g.passkeys.length === 1;
+  return `Your programme now accepts only certain authenticator models, and your passkey${one ? '' : 's'} ${names} ${one ? 'is' : 'are'} not one of them: ${one ? 'it stops' : 'they stop'} working on ${fmt.date(g.until)}. Before then, add a passkey on an accepted authenticator under My profile${g.totp ? ', or sign in with your password and authenticator code' : ', or set up an authenticator app there and sign in with your password and its code'}.`;
+}
+/** The same notice as a block, on My profile. */
+export function passkeyGraceNotice(g) {
+  return h('div', { class: 'banner warn', 'data-passkey-grace-notice': '1' }, h('div', {}, passkeyGraceText(g)));
+}
 export function banner(message, kind = 'warn', { id = message, short = null, compact: always = false, announceText = null, onDismiss = null } = {}) {
   // After the skip link, which stays the first thing a keyboard reaches on every page.
   const host = document.getElementById('banners') || (() => { const b = h('div', { id: 'banners' }); skipLink().after(b); return b; })();
@@ -2194,6 +2207,14 @@ export async function loadSession() {
     }
     // Set up (or no longer owed): the bar and the header link go now, not at the next reload (r9 M3).
     if (!state.mfaDue) document.querySelectorAll('#banners [data-banner="mfa-required"], [data-mfa-link]').forEach(b => b.remove());
+    // A passkey in the authenticator allow-list's grace period (docs/FINGERPRINT.md "Grace period"): on every page
+    // from sign-in on, when it stops and what to do before then. Dismissed, it comes back as one line next time.
+    document.querySelectorAll('#banners [data-banner="passkey-grace"]').forEach(b => b.remove());
+    if (state.user.passkey_grace && !state.mfaPending && !state.local) {
+      const g = state.user.passkey_grace;
+      const el = banner(passkeyGraceText(g), 'warn', { id: 'passkey-grace', short: `Your passkey stops working on ${fmt.date(g.until)}.` });
+      if (el) el.insertBefore(h('a', { href: '#/profile', class: 'btn sm', 'data-passkey-grace-link': '1' }, 'My profile'), el.lastChild);
+    }
   } catch { state.user = null; }
 }
 /** Re-read the signed-in user's permission snapshot without signing out (an administrator may have

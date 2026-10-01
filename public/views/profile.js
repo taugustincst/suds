@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, pageHead, loadSession, nav, render, kv, confirmDialog, prefs, can, refreshPermissions, shortcutsOn, openShortcutsHelp } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, fmt, pageHead, loadSession, nav, render, kv, confirmDialog, prefs, can, refreshPermissions, shortcutsOn, openShortcutsHelp, passkeyGraceNotice } from '../app.js';
 import { qrSvg } from '../qr.js';
 import { passkeysPossible, platformAvailable, createPasskey, passkeyErrorMessage, approveWithFingerprintPref } from '../passkey.js';
 
@@ -69,11 +69,14 @@ async function passkeysCard({ onChange = null } = {}) {
       'Confirm my approvals of time and spending with my fingerprint') : null;
     // replaceChildren writes a null as the text "null": the parts that may be absent are filtered out.
     card.replaceChildren(...[h('h2', {}, 'Fingerprint sign-in'),
+      d.grace ? passkeyGraceNotice(d.grace) : null,
       h('p', { class: 'small' }, 'Sign in, sign notes and approve with your fingerprint (or your device’s screen lock) instead of typing your password. It counts as two-step verification. SUDS never receives or stores your fingerprint: your device checks it, and SUDS keeps only a public key for the device.'),
       rows.length ? table([
         { label: 'Name', render: p => h('span', {}, p.name, here.includes(p.id) ? [' ', h('span', { 'data-passkey-here': '1' }, badge('This device', 'info'))] : null, p.synced ? [' ', badge('Synced', '')] : null, p.flagged ? [' ', badge('Disabled: possible copy', 'danger')] : null,
           // The authenticator allow-list (docs/FINGERPRINT.md): a passkey whose model the programme does not accept.
-          p.accepted === false && !p.flagged ? [' ', h('span', { 'data-passkey-not-accepted': p.id }, badge('Not accepted: model not on your programme\'s list', 'danger'))] : null) },
+          p.accepted === false && !p.flagged ? [' ', h('span', { 'data-passkey-not-accepted': p.id }, badge('Not accepted: model not on your programme\'s list', 'danger'))] : null,
+          // In the list's grace period (1.22.0): works until the date, then stops.
+          p.stops_at && !p.flagged ? [' ', h('span', { 'data-passkey-stops': p.id }, badge(`Stops working on ${fmt.date(p.stops_at)}`, 'warn'))] : null) },
         { label: 'Added', render: p => fmt.date(p.created_at) },
         { label: 'Last used', render: p => (p.last_used_at ? fmt.dt(p.last_used_at) : 'never') },
         { label: '', srLabel: 'Actions', render: p => h('div', { class: 'row nowrap' },

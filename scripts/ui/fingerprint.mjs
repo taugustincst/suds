@@ -22,6 +22,10 @@
 //      passkeys would stop working, must confirm that, and saves with the password again; the supervisor's older
 //      passkey is marked not accepted on My profile and refused at sign-in with the reason; a passkey the virtual
 //      authenticator makes cannot prove a listed model and is refused with the reason; axe and no sideways scroll.
+//   8. The allow-list's grace period (built for 1.22.0): the card says synced passkeys cannot be added while it is on
+//      and offers a grace period of 14 days; the preview says when each passkey stops and lists apart the accounts
+//      whose only second factor stops; saved, the supervisor's passkey keeps working, the supervisor is told the date
+//      on every page and on My profile; saved again with 0 days, it stops at once (7's checks).
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -300,12 +304,25 @@ try {
     await A.selectOption('[data-allowlist-card] select[name=catalog_pick]', MODEL);
     ok((await A.inputValue('[data-allowlist-card] textarea[name=models]')).includes(MODEL), 'choosing a model from the metadata file adds it to the list');
     await A.selectOption('[data-allowlist-card] select[name=enabled]', '1');
+    // 8. The grace period, and what the card says of synced passkeys.
+    const synced = await A.textContent('[data-allowlist-card] [data-allowlist-synced]');
+    ok(/cannot be added while the list is on/.test(synced) && /iCloud Keychain/.test(synced) && /Google Password Manager/.test(synced), 'the card says synced passkeys (iCloud Keychain, Google Password Manager) cannot be added while the list is on', synced);
+    eq(await A.inputValue('[data-allowlist-card] input[name=grace_days]'), '14', 'the grace period is 14 days unless the administrator chooses');
+    eq(await A.getAttribute('[data-allowlist-card] input[name=grace_days]', 'max'), '90', 'and at most 90');
     await A.click('[data-allowlist-check]');
     const affected = await until(async () => { const n = await A.getAttribute('[data-allowlist-preview] [data-affected-count]', 'data-affected-count').catch(() => null); return n === null ? null : Number(n); });
     ok(affected >= 1, 'before saving, the administrator sees how many passkeys would stop working', affected);
     ok(/jwalker/.test(await A.textContent('[data-allowlist-preview]')), 'and whose: the supervisor\'s passkey, added before the list, is listed');
     ok(await A.$('[data-allowlist-preview][role=status][aria-live=polite]'), 'the preview is a polite live region');
-    await axe(A, 'allow-list with who would be affected (1280)');
+    const graceUntil = await A.getAttribute('[data-allowlist-preview] [data-affected-count]', 'data-grace-until');
+    ok(graceUntil && Math.abs(Date.parse(graceUntil) - (Date.now() + 14 * 86400000)) < 5 * 60_000, 'the preview says the passkeys stop 14 days from now', graceUntil);
+    ok(/after a grace period ending/.test(await A.textContent('[data-allowlist-preview] [data-affected-count]')), 'in words');
+    eq(await A.$$eval('[data-allowlist-preview] [data-stops-at=now]', e => e.length), 0, 'none of them stops at once');
+    const pv14 = (await api(A, 'POST', '/api/admin/authenticator-allowlist/preview', { enabled: true, models: [{ name: 'SUDS browser-suite key', aaguid: MODEL }], grace_days: 14 })).data.affected;
+    const onlyShown = Number(await A.getAttribute('[data-allowlist-preview] [data-allowlist-only-factor]', 'data-allowlist-only-factor').catch(() => '0'));
+    eq(onlyShown, pv14.only_factor_count, 'the accounts whose only second factor stops are listed apart, as many as the server counts');
+    if (pv14.only_factor_count) ok(/no other second factor/.test(await A.textContent('[data-allowlist-only-factor]')) && /authenticator-app code, or a new passkey on an accepted authenticator/.test(await A.textContent('[data-allowlist-only-factor]')), 'with what they will need');
+    await axe(A, 'allow-list with who would be affected and when (1280)');
     // Saving without confirming is refused at the checkbox; confirming asks for the password again.
     await A.click('[data-allowlist-card] form:has(textarea[name=models]) button[type=submit]');
     ok(await until(async () => /confirm that you have checked who is affected/i.test(await A.textContent('[data-allowlist-card] [data-field=acknowledge]'))), 'saving without confirming who is affected is refused, at the checkbox');
@@ -313,10 +330,31 @@ try {
     await A.click('[data-allowlist-card] form:has(textarea[name=models]) button[type=submit]');
     await A.waitForSelector('[data-signature-dialog] input[name=password]');
     await A.fill('[data-signature-dialog] input[name=password]', 'AdminPassw0rd!x'); await A.click('[data-signature-dialog] button[type=submit]');
-    ok(await toast(A, /allow-list on: 1 model/), 'the list is turned on with the password again');
+    ok(await toast(A, /allow-list on: 1 model.*refused passkeys stop on/), 'the list is turned on with the password again, and the toast says when refused passkeys stop');
     eq((await api(A, 'GET', '/api/admin/authenticator-allowlist')).data.enabled, true, 'and is on');
+    // In the grace period: the supervisor's passkey still works, and the supervisor is told when it stops.
+    await S.reload(); await S.waitForSelector('.layout'); await settle(S);
+    const graceBanner = await until(async () => S.textContent('#banners [data-banner="passkey-grace"]').catch(() => null));
+    ok(graceBanner && /stops working on|stop working on/.test(graceBanner) && /add a passkey on an accepted authenticator/.test(graceBanner), 'every page tells the supervisor when the passkey stops and what to do', graceBanner);
+    ok(await S.$('#banners [data-banner="passkey-grace"] a[href="#/profile"]'), 'with a link to My profile');
+    await go(S, 'profile'); await S.waitForSelector('[data-passkeys-card] [data-passkey-grace-notice]');
+    ok(await S.$('[data-passkey-stops]'), 'My profile marks the passkey with the date it stops');
+    ok(!(await S.$('[data-passkey-not-accepted]')), 'and not as refused yet');
+    await axe(S, 'My profile in the allow-list grace period (390)');
+    ok(await noSideScroll(S), 'My profile with the grace notice does not scroll sideways at 390 px');
+    { const st = await strayText(S); ok(st.length === 0, 'the grace notice shows no stray "null" or "undefined"', st); }
+    // Saved again with a grace period of 0 days: it stops at once.
+    await go(A, 'admin?tab=settings'); await A.waitForSelector('[data-allowlist-card] input[name=grace_days]'); await settle(A);
+    await A.fill('[data-allowlist-card] input[name=grace_days]', '0');
+    await A.click('[data-allowlist-check]');
+    ok(await until(async () => (await A.$$eval('[data-allowlist-preview] [data-stops-at]', e => e.map(x => x.getAttribute('data-stops-at')))).includes('now')), 'with 0 days the preview says the passkeys stop at once');
+    await A.check('[data-allowlist-card] input[name=acknowledge]');
+    await A.click('[data-allowlist-card] form:has(textarea[name=models]) button[type=submit]');
+    await A.waitForSelector('[data-signature-dialog] input[name=password]');
+    await A.fill('[data-signature-dialog] input[name=password]', 'AdminPassw0rd!x'); await A.click('[data-signature-dialog] button[type=submit]');
+    eq(await until(async () => { const g = (await api(A, 'GET', '/api/admin/authenticator-allowlist')).data.grace_days; return g === 0 ? 0 : null; }), 0, 'saved with the password again: the grace period is now 0 days');
     // The supervisor's passkey, added before the list, now says why it is refused.
-    await go(S, 'profile'); await S.waitForSelector('[data-passkeys-allowlist]');
+    await go(S, `profile?_=${Date.now()}`); await S.waitForSelector('[data-passkeys-allowlist]'); await S.waitForSelector('[data-passkey-not-accepted]', { timeout: 5000 }).catch(() => null);
     ok(await S.$('[data-passkey-not-accepted]'), 'My profile marks the passkey as not accepted');
     ok(/accepts only these authenticator models: SUDS browser-suite key/.test(await S.textContent('[data-passkeys-allowlist]')), 'and names the models the programme accepts');
     await axe(S, 'My profile under the authenticator allow-list (390)');
@@ -339,7 +377,7 @@ try {
     ok(why, 'adding a passkey an unlisted authenticator makes is refused, and the dialog says why', why ? why.slice(0, 300) : (await S.textContent('.modal').catch(() => 'no dialog')).slice(0, 400));
     await S.keyboard.press('Escape');
     // Back as it was: the list off (the password again), and the supervisor's passkey works again.
-    eq((await api(A, 'PUT', '/api/admin/authenticator-allowlist', { enabled: false, models: [{ name: 'SUDS browser-suite key', aaguid: MODEL }], password: 'AdminPassw0rd!x' })).status, 200, 'the administrator turns the list off again');
+    eq((await api(A, 'PUT', '/api/admin/authenticator-allowlist', { enabled: false, models: [{ name: 'SUDS browser-suite key', aaguid: MODEL }], grace_days: 14, password: 'AdminPassw0rd!x' })).status, 200, 'the administrator turns the list off again');
     await go(S, `profile?_=${Date.now()}`); await S.waitForSelector('[data-passkeys-card]'); await settle(S);
     ok(!(await S.$('[data-passkey-not-accepted]')) && !(await S.$('[data-passkeys-allowlist]')), 'and the passkey is accepted again');
     for (const width of [390, 320]) {

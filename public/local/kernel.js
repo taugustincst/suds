@@ -6934,7 +6934,11 @@ CREATE TABLE IF NOT EXISTS passkeys (
   -- allow-list"): JSON { verified, fmt, type, aaguid, mds_no, verified_at }. NULL for a passkey added while the list
   -- was off (attestation 'none': its AAGUID is only what the device said), which the list, once on, does not accept.
   -- The attestation certificate itself is not kept (migration 63).
-  attestation TEXT
+  attestation TEXT,
+  -- The authenticator allow-list's grace period (built for 1.22.0, migration 66): when an administrator turned the list
+  -- on or narrowed it, a passkey it would refuse that was working until then keeps working until this time (UTC ISO),
+  -- unless its model is reported compromised or revoked. NULL: no grace (accepted, or refused already).
+  allowlist_grace_until TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_passkeys_user ON passkeys(user_id);
 
@@ -49602,6 +49606,14 @@ var require_auth2 = __commonJS({
       if (config2.local) return { passkeySignin: false, passkeySigning: false, signStrongRequired: false };
       return { passkeySignin: db3.getSetting("passkey_signin", "1") !== "0", passkeySigning: db3.getSetting("passkey_signing", "1") !== "0", signStrongRequired: db3.getSetting("sign_strong_required", "0") === "1" };
     }
+    function passkeyGrace(userId) {
+      if (config2.local || !userId) return null;
+      try {
+        return require_passkeys().graceNotice(userId);
+      } catch {
+        return null;
+      }
+    }
     function passkeyCount(userId) {
       if (config2.local || !userId) return 0;
       try {
@@ -50325,7 +50337,9 @@ var require_auth2 = __commonJS({
         // How many passkeys (fingerprint sign-in, docs/FINGERPRINT.md) the account has; 0 on a device. passkey_mfa: whether
         // they count as its two-step verification, which they do only while fingerprint sign-in is allowed (mfaDeadline).
         passkeys: passkeyCount(u.id),
-        passkey_mfa: policy().passkeySignin && passkeyCount(u.id) > 0
+        passkey_mfa: policy().passkeySignin && passkeyCount(u.id) > 0,
+        // Passkeys in the authenticator allow-list's grace period (1.22.0): when they stop, for the notice on every page.
+        passkey_grace: passkeyGrace(u.id)
       };
     }
     function passwordPolicy(pw) {
@@ -51726,6 +51740,20 @@ var require_db = __commonJS({
       (d) => {
         addColumn(d, "passkeys", "attestation", "TEXT");
         createTablesFromSchema(d, safeSchema(), ["authenticator_metadata"], 63);
+      },
+      // 64: a number held for another 1.22.0 stream's migration (the release's integration puts it here). A documented
+      //     no-op on this branch.
+      () => {
+      },
+      // 65: likewise held for another 1.22.0 stream's migration; a documented no-op on this branch.
+      () => {
+      },
+      // 66: the authenticator allow-list's grace period (built for 1.22.0, not yet released; docs/FINGERPRINT.md
+      //     "Grace period"): passkeys.allowlist_grace_until, NULL for every existing passkey (none is in a grace period:
+      //     a list turned on under 1.21.0 refused at once). Office server only. Self-contained and idempotent, so it can be
+      //     renumbered.
+      (d) => {
+        addColumn(d, "passkeys", "allowlist_grace_until", "TEXT");
       }
     ];
     var PERF_INDEXES_47 = [
