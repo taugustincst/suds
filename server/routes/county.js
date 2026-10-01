@@ -627,7 +627,12 @@ module.exports = (r) => {
       throw new HttpError(409, 'The figures changed since you prepared this release (a file was imported, withdrawn or reinstated, or figures were entered). Prepare it again and review what would be published.', { reason: 'changed' });
     }
     let rec;
-    try { rec = PUB.record(p, c, ctx.user); } catch (e) { if (e instanceof PUB.PublicationError) throw new HttpError(e.status, e.message, { reason: e.code }); throw e; }
+    try { rec = PUB.record(p, c, ctx.user); } catch (e) {
+      if (!(e instanceof PUB.PublicationError)) throw e;
+      // Refused where it is written (a release of an overlapping period, or a consent withdrawn, in the meantime): audited as a refusal.
+      audit.log({ user: ctx.user, action: 'county.publication.refuse', ip: ctx.ip, success: false, details: { step: 'record', from: c.from, to: c.to, reason: e.code, sha256: p.sha256, ...(e.programmes ? { without_consent: e.programmes.map(x => x.id) } : {}) } });
+      throw new HttpError(e.status, e.message, { reason: e.code, ...(e.programmes ? { programmes: e.programmes } : {}) });
+    }
     audit.log({ user: ctx.user, action: 'county.publication.publish', entity: 'county_publication', entityId: rec.id, ip: ctx.ip, details: { ...pubDetails(c, p), method: p.content.method.name, confirmation: PUB.REVIEW_CONFIRMATION } });
     ctx.status = 201;
     return rec;
