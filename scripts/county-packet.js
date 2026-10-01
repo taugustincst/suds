@@ -12,7 +12,10 @@
 //
 // What goes in: PACKET_FILES (fixed paths) and PACKET_NEWEST (the newest SBOM and the newest recovery, upgrade and
 // installer drill evidence, by the version or date in their names). A path that does not exist at --ref fails the
-// run: a packet missing a document it lists is worse than none.
+// run: a packet missing a document it lists is worse than none. From 1.22.0 it also holds the threat model, data
+// inventory, logging and audit, county view, backup and DR, and incident response documents, and its README flags
+// every file that states a release of an older minor line than the packet's ("Older than this release": an
+// accessibility report or a drill made on an earlier release is evidence about that release, not this one).
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
@@ -26,10 +29,34 @@ const PACKET_FILES = [
   { path: 'docs/market/templates/DPA-DRAFT.md', what: 'Data processing addendum (DRAFT for counsel; not reviewed)' },
   { path: 'docs/market/templates/BAA-QSOA-DRAFT.md', what: 'Business associate agreement and 42 CFR Part 2 QSOA (DRAFT for counsel; not reviewed)' },
   { path: 'docs/security/PEN-TEST-SCOPE.md', what: 'Penetration test scope for a county-commissioned test (no test has been done)' },
-  { path: 'docs/accessibility/ACR-WCAG21.md', what: 'Accessibility conformance report, WCAG 2.1 (a self-assessment, not a third-party review)', describes: (t) => { const m = /Name of Product\/Version[\s\S]*?SUDS (\d+\.\d+\.\d+)/.exec(t); return m ? `SUDS ${m[1]} (its *Name of Product/Version*; later releases are covered by the accessibility checks in CI, not by a new report)` : null; } },
+  // Its Name of Product/Version is the release it was last revised for; its conformance levels are those established on
+  // an earlier release ("established on SUDS X"), which is what the README compares.
+  { path: 'docs/accessibility/ACR-WCAG21.md', what: 'Accessibility conformance report, WCAG 2.1 (a self-assessment, not a third-party review)',
+    describes: (t) => { const m = /Name of Product\/Version[\s\S]*?SUDS (\d+\.\d+\.\d+)/.exec(t); const e = /conformance levels in the tables were established on SUDS (\d+\.\d+\.\d+)/.exec(unwrap(t)); return m ? `SUDS ${m[1]} (its *Name of Product/Version*)${e && e[1] !== m[1] ? `; its conformance levels were established on SUDS ${e[1]}, and later screens are covered by automated checks only (its *Revisions*)` : ''}` : null; },
+    stated: (t) => { const e = /conformance levels in the tables were established on SUDS (\d+\.\d+\.\d+)/.exec(unwrap(t)); const m = /Name of Product\/Version[\s\S]*?SUDS (\d+\.\d+\.\d+)/.exec(t); return e ? e[1] : m ? m[1] : null; } },
+  // Added in 1.22.0: the documents a county's security and privacy review asks for next (the review of 1.21.0).
+  { path: 'docs/security/THREAT-MODEL.md', what: 'Threat model: assets, attackers, threats and mitigations by area with their code and tests, residual risks', describes: (t) => { const m = /^\*\*Version\.\*\*\s*It describes (\d+\.\d+\.\d+)/m.exec(t); return m ? `SUDS ${m[1]} (its *Version.* line)` : null; } },
+  { path: 'docs/security/DATA-INVENTORY.md', what: 'Data inventory and data flows: what SUDS holds, where and how, every way it leaves, how long it is kept' },
+  { path: 'docs/security/LOGGING-AND-AUDIT.md', what: 'Logging and audit: what is audited, the hash-chained audit log, anchors, export and verification, the operational log' },
+  { path: 'docs/COUNTY-VIEW.md', what: 'The county view: what the county server holds and does (signed submissions, the connection, entered figures, award amounts, publication)' },
+  { path: 'docs/security/BACKUP-AND-DR.md', what: 'Backup, disaster recovery and business continuity: objectives, backups, drills, restore', describes: (t) => { const m = /\*\*latest, (\d{4}-\d{2}-\d{2}), on the released (\d+\.\d+\.\d+)\*\*/.exec(t); return m ? `its latest recorded recovery drill: ${m[1]}, on SUDS ${m[2]}` : null; } },
+  { path: 'docs/security/INCIDENT-RESPONSE.md', what: 'Incident response and breach notification: what SUDS records and supports; the plan and decisions are the county\'s' },
   { path: 'SECURITY.md', what: 'Security policy: supported versions and how to report a vulnerability' },
   { path: 'LICENSE', what: 'The licence (MIT)' },
 ];
+const unwrap = (t) => t.replace(/[*_]/g, '').replace(/\s+/g, ' ');
+const minorOf = (v) => v.split('.').slice(0, 2).map(Number);
+/** The newest version a "describes" text names (the release a document or an evidence folder states), or null. */
+function statedVersion(describes) {
+  const vs = String(describes || '').match(/\b\d+\.\d+\.\d+\b/g);
+  return vs ? vs.sort((a, b) => cmpV(a, b)).pop() : null;
+}
+/** Whether a stated version is of an older minor line than the packet's: the README flags it. */
+function olderThan(stated, version) {
+  if (!stated) return false;
+  const [a, b] = [minorOf(stated), minorOf(version)];
+  return a[0] < b[0] || (a[0] === b[0] && a[1] < b[1]);
+}
 // A dated evidence folder, and the release it was re-run on when there was more than one that day (the 1.20.0 re-runs
 // are "<kind>-2026-09-30-v1.20.0" beside the 1.19.0 "<kind>-2026-09-30"). Newest: the latest date, then the latest
 // release on that date (a folder without a release suffix is the older one).
@@ -71,7 +98,7 @@ function buildPacket(root, ref = 'HEAD') {
   const entries = []; // one row of the README each: { what, paths, describes, kind }
   for (const f of PACKET_FILES) {
     const text = blob(f.path).toString('utf8');
-    entries.push({ kind: 'file', what: f.what, paths: [f.path], describes: (f.describes && f.describes(text)) || null });
+    entries.push({ kind: 'file', what: f.what, paths: [f.path], describes: (f.describes && f.describes(text)) || null, stated: (f.stated && f.stated(text)) || null });
   }
   for (const n of PACKET_NEWEST) {
     const found = new Map();
@@ -113,11 +140,21 @@ function readmeText({ commit, date, version }, entries, files) {
   L.push('attestation or independent audit, and **no penetration test** has been done; the drills are **development-environment');
   L.push('exercises**, not production drills; the accessibility report is a **self-assessment**. The owner-pending items are');
   L.push('listed in `docs/market/COUNTY-KIT.md`, *Owner-pending items*.', '');
+  const where = (e) => (e.root && e.paths.length > 1 ? `\`${e.root}/\` (${e.paths.length} files)` : `\`${e.paths[0]}\``);
+  const stated = (e) => e.stated || statedVersion(e.describes);
+  const older = entries.filter((e) => olderThan(stated(e), version));
+  if (older.length) {
+    L.push(`**Older than this release.** ${older.length === 1 ? 'One file states' : `${older.length} files state`} an earlier release than this packet's ${version}.`);
+    L.push(`${older.length === 1 ? 'It has' : 'They have'} not been redone or revised for what changed since. Read each as evidence about the release it names,`);
+    L.push(`not about ${version}:`, '');
+    for (const e of older) L.push(`* ${where(e)}: ${e.describes}.`);
+    L.push('');
+  }
   L.push('## What is in it', '');
   L.push('| File | What it is | What it describes |', '| --- | --- | --- |');
   for (const e of entries) {
-    const where = e.root && e.paths.length > 1 ? `\`${e.root}/\` (${e.paths.length} files)` : `\`${e.paths[0]}\``;
-    L.push(`| ${where} | ${e.what} | ${e.describes || `no version line of its own: the document as at \`${short}\` (${version})`} |`);
+    const flag = older.includes(e) ? ` **Older than this release** (${stated(e)}; this packet is ${version}).` : '';
+    L.push(`| ${where(e)} | ${e.what} | ${e.describes || `no version line of its own: the document as at \`${short}\` (${version})`}${flag} |`);
   }
   L.push('| `README.md` | This page | — |', '| `MANIFEST.sha256` | SHA-256 of every file above, this page included | — |', '');
   L.push('## Checking it', '');
@@ -219,4 +256,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { PACKET_FILES, PACKET_NEWEST, buildPacket, writeDir, zipBytes, crc32, packetName, sha256 };
+module.exports = { PACKET_FILES, PACKET_NEWEST, buildPacket, writeDir, zipBytes, crc32, packetName, sha256, readmeText, statedVersion, olderThan };

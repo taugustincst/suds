@@ -92,8 +92,11 @@ claim can be trusted instead if the county turns that on. Evidence:
 **Q. Passwordless or biometric sign-in? Do you collect biometric data?**
 Passkeys (WebAuthn, "fingerprint sign-in"), released in 1.19.0, office server only: sign-in, the second step,
 and signing notes and approvals with the device's own authenticator. No biometric data reaches the server: the
-fingerprint or face stays on the device, which only returns a signed assertion. Evidence:
-[../../FINGERPRINT.md](../../FINGERPRINT.md); `server/webauthn.js`, `server/passkeys.js`.
+fingerprint or face stays on the device, which only returns a signed assertion. An authenticator allow-list
+(released in 1.21.0, off by default) limits passkeys to the authenticator models an administrator lists, each proven
+by attestation. **With it on, synced passkeys (iCloud Keychain, Google Password Manager: attestation `none` or
+`apple`) cannot be added.** Turning it on also ends existing unproven passkeys, with no grace period. Evidence:
+[../../FINGERPRINT.md](../../FINGERPRINT.md); `server/webauthn.js`, `server/passkeys.js`, `server/attestation.js`.
 
 **Q. Least privilege?** Six roles; the county view has two permissions of its own, `county:view` and the
 sensitive `county:manage`, neither grantable to a role that does not see exact aggregates. Evidence:
@@ -145,9 +148,23 @@ for build tooling, the container base and CI actions. Evidence:
 [../../evidence/sbom-1.21.0.cdx.json](../../evidence/sbom-1.21.0.cdx.json) (`node scripts/sbom.js`,
 `test/sbom.test.js`).
 
+**Q. Release integrity: how does the county know the build it runs is the released code?** **Releases 1.16.3 to
+1.21.0 were published without a tag**, without a GitHub Release and without the release gate's approval. The owner
+had each put on GitHub Pages by a direct push to `gh-pages`, and each is recorded as a policy exception
+([../../RELEASE.md](../../RELEASE.md), *The exceptions in one place*). For these versions there is no tag or published
+zip to check against, and SUDS Server's `upgrade.sh` cannot download them. Verify against the commit instead. Each
+commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
+release zip, which anyone can rebuild with `git archive` and compare. `scripts/release-site-check.js` checks a
+published web app byte for byte against the commit's build. The steps are in
+[../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #39. Releases are not signed. **[owner to
+complete]: push the owed tags, then turn on the release protections (RELEASE.md, *Owner: repository settings*).**
+
 **Q. Penetration testing?** **None has been done. [owner to complete]: an independent penetration test and its
-remediation.** A scope for a county-commissioned test, including the county view's import, read API and push
-endpoint, is in [../../security/PEN-TEST-SCOPE.md](../../security/PEN-TEST-SCOPE.md). The project's own reviews
+remediation.** A scope for a county-commissioned test is in
+[../../security/PEN-TEST-SCOPE.md](../../security/PEN-TEST-SCOPE.md). It covers the county view's import, read API
+and push endpoint, and the areas 1.21.0 added: county publication (differencing), field devices and participant
+codes, the authenticator allow-list and metadata upload, the version 2 county file (award amounts) and the SUDS
+Server upgrade hand-over. The project's own reviews
 and the attack classes fixed are in [../../security/THREAT-MODEL.md](../../security/THREAT-MODEL.md).
 
 **Q. How are vulnerabilities reported and fixed?** Privately through GitHub's private vulnerability reporting on

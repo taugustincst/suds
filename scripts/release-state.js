@@ -17,6 +17,8 @@
 //   * every "X.Y.Z is live" / "live on GitHub Pages" / "is what GitHub Pages serves" against gh-pages' version.json
 //     (and, offline, against each other);
 //   * a stamped version newer than the newest pushed tag that the hand-off does not list;
+//   * while released versions are untagged: QUESTIONNAIRE #36 and #39 and the RFI template's release-integrity
+//     answer say they were "published without a tag" and name the first and last of them (1.22.0);
 //   * CHANGELOG.md: inside a dated section "## X.Y.Z — date", a line calling another minor "the latest minor" or
 //     "the previous", or saying "checked against", "describe(s)", "not yet released" or "fix release" of another
 //     version. Legitimate history is in CHANGELOG_ALLOW below, each with its reason.
@@ -225,11 +227,74 @@ function lintChangelog(changelog, allow = CHANGELOG_ALLOW) {
   return out;
 }
 
+/**
+ * The answers a county reads about release integrity (1.22.0). The review of 1.21.0 found QUESTIONNAIRE #39 saying
+ * releases are built from the tag and the web app checked against the tag, and #36 that the gate refuses a commit,
+ * when 1.16.3 to 1.21.0 had no tag and never went through the gate. While any released version is untagged, each of
+ * these must carry UNTAGGED_MARKER and name the first and last untagged versions: QUESTIONNAIRE #36's row, #39 (its
+ * row and its *in detail* section), and the RFI template's release-integrity answer.
+ */
+const UNTAGGED_MARKER = 'published without a tag';
+const squash = (s) => unmark(s).replace(/\s+/g, ' ');
+function disclosureSections(questionnaire, rfi) {
+  const out = [];
+  if (questionnaire != null) {
+    const lines = questionnaire.split('\n');
+    const rowAt = (n) => lines.findIndex((l) => new RegExp(`^\\|\\s*${n}\\s*\\|`).test(l));
+    const r36 = rowAt(36);
+    out.push({ key: 'questionnaire', label: 'QUESTIONNAIRE #36', line: r36 + 1, text: r36 >= 0 ? lines[r36] : null });
+    const r39 = rowAt(39);
+    const d = /^\*\*#39,[^\n]*$/m.exec(questionnaire);
+    let detail = '';
+    if (d) {
+      const rest = questionnaire.slice(d.index + 1);
+      const end = rest.search(/^\*\*#\d+|^## /m);
+      detail = end >= 0 ? rest.slice(0, end) : rest;
+    }
+    out.push({ key: 'questionnaire', label: 'QUESTIONNAIRE #39', line: d ? lineAt(questionnaire, d.index) : r39 + 1, text: r39 >= 0 || d ? `${r39 >= 0 ? lines[r39] : ''}\n${detail}` : null });
+  }
+  if (rfi != null) {
+    const q = /^\*\*Q\. Release integrity[^\n]*/m.exec(rfi);
+    let text = null;
+    if (q) {
+      const rest = rfi.slice(q.index + 1);
+      const end = rest.search(/^\*\*Q\.|^## /m);
+      text = rfi.slice(q.index, q.index + 1 + (end >= 0 ? end : rest.length));
+    }
+    out.push({ key: 'rfi', label: 'the RFI template\'s "Release integrity" answer', line: q ? lineAt(rfi, q.index) : 1, text });
+  }
+  return out;
+}
+/** Problems with the disclosure, given the untagged released versions (none: nothing to disclose). */
+function checkUntaggedDisclosure(docs, untagged) {
+  const problems = [];
+  if (!untagged.length) return problems;
+  const sorted = [...new Set(untagged)].sort(cmp);
+  const [lo, hi] = [sorted[0], sorted[sorted.length - 1]];
+  for (const s of disclosureSections(docs.questionnaire, docs.rfi)) {
+    const file = FILES[s.key];
+    if (s.text == null) {
+      problems.push(P(file, s.line, `${s.label} is missing; ${sorted.length} released version(s) are untagged (${lo} to ${hi})`, `restore it, saying the releases were "${UNTAGGED_MARKER}" and how to verify one against its commit`, 'untagged-undisclosed'));
+      continue;
+    }
+    const text = squash(s.text);
+    if (!text.toLowerCase().includes(UNTAGGED_MARKER)) {
+      problems.push(P(file, s.line, `${s.label} does not say that ${lo} to ${hi} were "${UNTAGGED_MARKER}" (no tag, GitHub Release or gate approval)`, 'say it plainly, with what it means for a county and how to verify a build against its commit (QUESTIONNAIRE #39)', 'untagged-undisclosed'));
+      continue;
+    }
+    const named = (v) => new RegExp(`(^|[^\\d.])${v.replace(/\./g, '\\.')}(?!\\d|\\.\\d)`).test(text);
+    const missing = [...new Set([lo, hi])].filter((v) => !named(v));
+    if (missing.length) problems.push(P(file, s.line, `${s.label} says releases were "${UNTAGGED_MARKER}" but does not name ${missing.join(' and ')}; the untagged releases are ${lo} to ${hi}`, `name the range ${lo} to ${hi}`, 'untagged-range'));
+  }
+  return problems;
+}
+
 // -------------------------------------------------------------------------------------------------------- checks
 const P = (file, line, message, fix, code) => ({ file, line: line || 1, message, fix, code });
 const FILES = {
   pkg: 'package.json', changelog: 'CHANGELOG.md', questionnaire: 'docs/security/QUESTIONNAIRE.md', evidence: 'docs/evidence/README.md',
   release: 'docs/RELEASE.md', handoff: 'docs/evidence/RELEASE-HANDOFF.md', notes: 'HANDOFF.md',
+  rfi: 'docs/market/templates/COUNTY-RFI-ANSWERS.md',
 };
 const LIVE_DOCS = ['questionnaire', 'evidence', 'release', 'handoff', 'notes'];
 
@@ -400,7 +465,20 @@ function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = nul
   if (mainPkg) info.push(`origin/main's package.json says ${mainPkg.version}`);
   else if (git) notChecked.push('origin/main\'s package.json (no origin/main ref)');
 
-  // 7. The CHANGELOG lint.
+  // 7. Untagged releases, disclosed where a county reads about release integrity: the hand-off's owed tags (less any
+  // origin has), and, when origin's tags are known, every stamped version newer than the newest pushed tag.
+  {
+    const isPushed = (tag) => !!remote && Object.prototype.hasOwnProperty.call(remote.tags, tag);
+    const untagged = new Set(all.filter((r) => !isPushed(r.tag)).map((r) => r.version));
+    if (remote) {
+      const newest = Object.keys(remote.tags).map((x) => x.replace(/^v/, '')).filter((v) => parseV(v)).sort(cmp).pop() || '0.0.0';
+      for (const s of stamped) if (cmp(s.version, newest) > 0 && !isPushed(`v${s.version}`)) untagged.add(s.version);
+    }
+    if (untagged.size && docs.rfi == null) notChecked.push(`the RFI template's release-integrity answer (${FILES.rfi} not read)`);
+    problems.push(...checkUntaggedDisclosure(docs, [...untagged]));
+  }
+
+  // 8. The CHANGELOG lint.
   for (const f of lintChangelog(docs.changelog || '')) problems.push(P(FILES.changelog, f.line, f.message, `say what was true of ${f.section} (${f.want}), or add the line to CHANGELOG_ALLOW in scripts/release-state.js with its reason if it is history`, 'changelog-version'));
 
   problems.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line));
@@ -509,5 +587,6 @@ if (require.main === module) {
 
 module.exports = {
   parseV, cmp, stampedVersions, targetVersion, parseQuestionnaire, parseEvidence, parseRelease, parseHandoff,
-  parseHandoffNotes, liveClaims, lintChangelog, evaluate, run, format, CHANGELOG_ALLOW, FILES,
+  parseHandoffNotes, liveClaims, lintChangelog, evaluate, run, format, CHANGELOG_ALLOW, FILES, UNTAGGED_MARKER,
+  disclosureSections, checkUntaggedDisclosure,
 };

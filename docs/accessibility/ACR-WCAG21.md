@@ -4,8 +4,14 @@
 
 ## Name of Product/Version
 
-SUDS — SUD Navigator Services Tracker, SUDS 1.11.0 (1.10.2 with the accessibility changes that accompany
-this report), including the clinical documentation (problem list, care plan, six-dimension assessment
+SUDS — SUD Navigator Services Tracker, SUDS 1.21.0 (this revision; see *Revisions* below).
+
+**The conformance levels in the tables were established on SUDS 1.11.0** (1.10.2 with the accessibility changes
+that accompanied the first version of this report), by every method under *Evaluation Methods Used*. They have not
+been re-established since by manual review or by any assistive technology. The screens added in later releases,
+1.21.0's included, are covered by the automated audit (axe) and scripted checks only. *Revisions* lists 1.21.0's new
+screens and what was and was not done for them. The 1.11.0 evaluation covered the whole product as it was then,
+including the clinical documentation (problem list, care plan, six-dimension assessment
 (ASAM-aligned) and outcome measures), CalOMS Tx state reporting, the FHIR interface settings, the security evidence pages and the
 42 CFR Part 2 controls that release adds. Both ways SUDS is run are covered: the **office server** (the web application an
 administrator installs for a programme) and **SUDS on this device** (the same web application published as a
@@ -13,7 +19,7 @@ static site, keeping its records in the browser).
 
 ## Report Date
 
-25 September 2026
+25 September 2026 (the evaluation of 1.11.0); revised 1 October 2026 for 1.21.0 (see *Revisions*).
 
 ## Product Description
 
@@ -95,8 +101,43 @@ shown in the application as **Accessibility** (`accessibility.html`).
   sensory characteristics, consistent navigation and identification, error suggestion and prevention, input
   purpose, content on hover or focus, non-text contrast of form fields and focus rings, which were measured
   from the colour tokens in both themes).
-* Not yet done: testing with screen readers (NVDA, JAWS, VoiceOver, TalkBack) and with speech recognition by
-  their users. That is planned before the release after SUDS 1.11.0; findings will be added to this report.
+* **Still not done, as of 1.21.0 (1 October 2026):** testing with screen readers (NVDA, JAWS, VoiceOver,
+  TalkBack) and with speech recognition by their users. It was planned for the release after SUDS 1.11.0 and has
+  not happened in any release since. It is an **owner item**: it needs people who use these tools, or an
+  accessibility tester, which automated work cannot replace. Findings will be added to this report when it is done.
+
+## Revisions
+
+**1 October 2026: revised for SUDS 1.21.0.** This revision changes no conformance level. It records what has been
+checked since the 1.11.0 evaluation, and what has not.
+
+* **Automated testing now includes the screens 1.21.0 added.** Each runs the same axe rules as above (`wcag2a`,
+  `wcag2aa`, `wcag21a`, `wcag21aa` and the structural rules), and each browser script fails on any finding:
+  * **County publication.** The county view's Publish tab, with what would be published, and its dialogs: View
+    release and Withdraw. These are covered in `scripts/ui/accessibility.mjs` in all five configurations, and in
+    `scripts/ui/county-publication.mjs` at 1280 and 390 CSS px, with nothing scrolling sideways at 390 and 320.
+  * **Field devices and participant codes.** Settings › Program with minimal personal information open, Settings ›
+    Synced devices, the Make field device confirmation, This device on a field device, and New client and Street
+    outreach in participant-code mode. All are covered in `scripts/ui/field-device.mjs` at 1280 or 390 CSS px.
+  * **The authenticator allow-list card** in Settings, with the password asked again to load the metadata file, and
+    with who would be affected; and My profile under the allow-list. All are covered in `scripts/ui/fingerprint.mjs`:
+    the card at 1280 and 320 CSS px, its dialogs at 1280, and My profile at 390.
+  * **Award fields.** The award fields of the Enter figures dialog, and the combined view's Spending against the
+    award. Both are covered in `scripts/ui/county.mjs` at 1280 CSS px.
+  * **County reminders.** Settlement outcomes with the county's reporting schedule, Home with a county file
+    reminder, and the Stop reminders dialog. All are covered in `scripts/ui/county.mjs` at 1280 and 390 CSS px.
+
+  These scripts are part of the browser suite (`scripts/ui/run-all.sh`) that CI runs on every change. Only the
+  Publish tab is audited in all five configurations of *Evaluation Methods Used*. The others are audited in the
+  light theme at the widths named, not in the dark theme or at 200% text.
+* **Keyboard.** The scripts above operate these screens with the keyboard where they say so: the Publish review and
+  its focus handling; the reporting schedule's errors and saved status; the reminder leading to the schedule. This
+  is not the full keyboard-only task list of *Evaluation Methods Used*.
+* **Not done for these screens:** the manual review (*review*) of the criteria that need judgement, and any testing
+  with a screen reader or speech recognition. The results in the tables are therefore not re-established for
+  them. No defect is known.
+* **Not done for the product as a whole:** screen-reader and speech-recognition testing (above, still pending; an
+  owner item). Criteria 4.1.2 and 4.1.3 stay Partially Supports until it is done.
 
 ## Applicable Standards/Guidelines
 

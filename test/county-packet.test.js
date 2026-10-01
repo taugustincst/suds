@@ -65,6 +65,63 @@ test('every listed file exists, in the packet and in the repository, and the man
   for (const f of p.files) assert.ok(!/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(f.data.toString('latin1')), `${f.path} holds no private key`);
 });
 
+test('the packet holds what a county security and privacy review asks for next (1.22.0)', () => {
+  const p = CP.buildPacket(ROOT, HEAD);
+  const paths = p.files.map((f) => f.path);
+  for (const f of ['docs/security/THREAT-MODEL.md', 'docs/security/DATA-INVENTORY.md', 'docs/security/LOGGING-AND-AUDIT.md',
+    'docs/COUNTY-VIEW.md', 'docs/security/BACKUP-AND-DR.md', 'docs/security/INCIDENT-RESPONSE.md']) {
+    assert.ok(CP.PACKET_FILES.some((x) => x.path === f), `${f} is listed`);
+    assert.ok(paths.includes(f), `${f} is in the packet`);
+  }
+  const tm = p.entries.find((e) => e.paths[0] === 'docs/security/THREAT-MODEL.md');
+  assert.match(tm.describes || '', /^SUDS \d+\.\d+\.\d+ \(its \*Version\.\* line\)$/, 'the threat model\'s own version line is read');
+  const dr = p.entries.find((e) => e.paths[0] === 'docs/security/BACKUP-AND-DR.md');
+  assert.match(dr.describes || '', /latest recorded recovery drill: \d{4}-\d{2}-\d{2}, on SUDS \d+\.\d+\.\d+/, 'BACKUP-AND-DR.md\'s latest recorded drill is read');
+});
+
+test('the README flags every file whose stated release is older than the packet\'s minor', () => {
+  assert.equal(CP.statedVersion('1.16.2, 1.18.0 and 1.19.0 → 1.20.0'), '1.20.0', 'the newest version named');
+  assert.equal(CP.statedVersion('SUDS 1.21.0, built from commit `d1efeb7057da791227134a1187e858bf627b40b1`'), '1.21.0');
+  assert.equal(CP.statedVersion(null), null);
+  assert.ok(CP.olderThan('1.11.0', '1.21.0') && CP.olderThan('1.20.9', '1.21.0') && CP.olderThan('0.99.0', '1.0.0'));
+  assert.ok(!CP.olderThan('1.21.0', '1.21.3') && !CP.olderThan('1.21.4', '1.21.0') && !CP.olderThan(null, '1.21.0'), 'the same minor line, or no version, is not flagged');
+  // Synthetic entries: an accessibility report on 1.11.0 and a drill on 1.20.0 in a 1.21.x packet; the threat model
+  // on 1.21.0 and a file with no version line are not flagged.
+  const entries = [
+    { kind: 'file', what: 'ACR', paths: ['docs/accessibility/ACR-WCAG21.md'], describes: 'SUDS 1.11.0 (its *Name of Product/Version*)' },
+    { kind: 'file', what: 'TM', paths: ['docs/security/THREAT-MODEL.md'], describes: 'SUDS 1.21.0 (its *Version.* line)' },
+    { kind: 'file', what: 'Licence', paths: ['LICENSE'], describes: null },
+    { kind: 'dr', what: 'Drill', paths: ['docs/evidence/dr-drill-x/a', 'docs/evidence/dr-drill-x/b'], root: 'docs/evidence/dr-drill-x', describes: 'SUDS 1.20.0' },
+  ];
+  const text = CP.readmeText({ commit: 'a'.repeat(40), date: '2026-10-01T00:00:00Z', version: '1.21.2' }, entries, []);
+  assert.match(text, /\*\*Older than this release\.\*\* 2 files state an earlier release than this packet's 1\.21\.2\./);
+  assert.match(text, /^\* `docs\/accessibility\/ACR-WCAG21\.md`: SUDS 1\.11\.0 /m);
+  assert.match(text, /^\* `docs\/evidence\/dr-drill-x\/` \(2 files\): SUDS 1\.20\.0\.$/m);
+  const row = (p) => text.split('\n').find((l) => l.startsWith(`| \`${p}`));
+  assert.match(row('docs/accessibility/ACR-WCAG21.md'), /\*\*Older than this release\*\* \(1\.11\.0; this packet is 1\.21\.2\)/);
+  assert.match(row('docs/evidence/dr-drill-x/'), /\*\*Older than this release\*\* \(1\.20\.0;/);
+  for (const p of ['docs/security/THREAT-MODEL.md', 'LICENSE']) assert.doesNotMatch(row(p), /Older than this release/, `${p} is not flagged`);
+  // Nothing older: no flag at all.
+  assert.doesNotMatch(CP.readmeText({ commit: 'a'.repeat(40), date: '2026-10-01T00:00:00Z', version: '1.21.0' }, entries.slice(1, 3), []), /Older than this release/);
+  // The repository's own packet: every flagged file really states an older minor, and every such file is flagged.
+  const p = CP.buildPacket(ROOT, HEAD);
+  const readme = p.files.find((f) => f.path === 'README.md').data.toString('utf8');
+  for (const e of p.entries) {
+    const stated = e.stated || CP.statedVersion(e.describes);
+    const line = readme.split('\n').find((l) => l.startsWith(`| \`${e.root && e.paths.length > 1 ? `${e.root}/` : e.paths[0]}\``));
+    assert.equal(/Older than this release/.test(line), CP.olderThan(stated, p.version), `${e.paths[0]}: states ${stated}, packet ${p.version}`);
+  }
+  // The accessibility report: revised for a release, its conformance levels established on an earlier one. The README
+  // compares the latter, and says both.
+  const acr = CP.PACKET_FILES.find((f) => f.path === 'docs/accessibility/ACR-WCAG21.md');
+  const revised = '## Name of Product/Version\n\nSUDS — x, SUDS 1.21.0 (this revision).\n\n**The conformance levels in the tables were established on SUDS 1.11.0** (y).\n';
+  assert.equal(acr.stated(revised), '1.11.0');
+  assert.match(acr.describes(revised), /^SUDS 1\.21\.0 \(its \*Name of Product\/Version\*\); its conformance levels were established on SUDS 1\.11\.0/);
+  assert.equal(acr.stated('## Name of Product/Version\n\nSUDS 1.21.0, all of it evaluated.\n'), '1.21.0', 'a report evaluated on the release it names');
+  const acrEntry = p.entries.find((e) => e.paths[0] === acr.path);
+  assert.ok(acrEntry.stated, 'the repository\'s report states a version');
+});
+
 test('the zip: stored entries under one folder, readable by its own central directory', () => {
   assert.equal(CP.crc32(Buffer.from('123456789')), 0xcbf43926, 'CRC-32 check value');
   const p = CP.buildPacket(ROOT, HEAD);
