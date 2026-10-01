@@ -367,7 +367,8 @@ route('field-phone', async () => {
         h('p', {}, 'On ', h('a', { href: '#/outreach' }, 'Street outreach'), ', a contact with no participant code or notes is kept on this phone and sent to the office when you are back online, or the next time you sign in. The top of every page says how many are waiting.')),
       h('section', { class: 'card', 'aria-labelledby': 'fp-what-h' }, h('h2', { id: 'fp-what-h' }, 'A field device, for everything else'),
         h('p', {}, 'For your clients, to-dos and every kind of contact with no signal, this phone needs an offline copy of SUDS that keeps only what a field worker needs: your own clients assigned or seen recently (their name, participant code and safety flags), your contacts, your to-dos, supplies and lists. Notes, documents, consents and intake details stay at the office.'),
-        h('p', {}, 'Who decides: making a phone a field device narrows what it holds, so you may do it yourself as you set the phone up. Only an administrator can widen a phone back to everything.')),
+        // Only what is true here (1.23.2): with offline copies off, the card below says an administrator decides first.
+        st.local_mode ? h('p', { 'data-field-who-decides': '1' }, 'Who decides: making a phone a field device narrows what it holds, so you may do it yourself as you set the phone up. Only an administrator can widen a phone back to everything.') : null),
       st.local_mode
         ? h('section', { class: 'card', 'aria-labelledby': 'fp-self-h', 'data-field-self': '1' }, h('h2', { id: 'fp-self-h' }, 'Set it up yourself'),
           h('ol', {},

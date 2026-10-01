@@ -15,6 +15,8 @@
 //   * on a device that syncs with the office, the header says whether anything is waiting to be sent;
 //   * 1.23.1: unticking Follow-up needed clears the date; a phone to-do row's Open button is "Open: <title> (<priority>)";
 //     a field-device request approved while offline copies are off says so to the administrator and the worker.
+//   * 1.23.2: a phone to-do row offers the call, visit or referral it came from; a clinician's new note is a clinical
+//     progress note.
 // Every new state is put through axe (WCAG 2.1 A/AA).
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
@@ -133,6 +135,18 @@ try {
   });
   ok(rowName && rowName.title && rowName.pri, 'the phone To-dos list has rows with a title and a priority', rowName);
   eq(rowName && rowName.name, rowName && `Open: ${rowName.title} (${rowName.pri})`, 'the row\'s Open button is named "Open: <title> (<priority>)", not the two run together');
+  // 1.23.2 (N1b): a to-do from a call offers the call on its phone row, not only inside Edit.
+  const cbRow = nav.page.locator('.compact-list .compact-row', { hasText: 'Call back: Bed callback' }).first();
+  const src = cbRow.locator('[data-task-source="call"]');
+  eq(await src.count(), 1, 'the call-back to-do\'s phone row has "Open the call"');
+  eq(await src.getAttribute('aria-label'), 'Open the call: Call back: Bed callback', 'named with the to-do\'s title');
+  const srcBox = await src.boundingBox();
+  ok(srcBox && srcBox.height >= 44 && srcBox.width >= 44, 'a 44 px touch target', srcBox);
+  await src.tap();
+  ok(await until(() => nav.page.$('.modal')), 'it opens the call');
+  ok(/Bed callback/.test(await nav.page.textContent('.modal')) && !(await nav.page.$('.modal input[name=title]')), 'the call itself, not the to-do\'s form', (await nav.page.textContent('.modal')).slice(0, 200));
+  await axe(nav.page, 'a call opened from its to-do row (390 px)');
+  await nav.page.keyboard.press('Escape'); await settle(nav.page);
   await axe(nav.page, 'To-dos on a phone (390 px)');
 
   // ---- + Log a visit: the follow-up date has the same quick choices ----
@@ -189,8 +203,16 @@ try {
 
   // ======== a counselor writes a structured note ========
   const cl = await session('kpatel', PW);
+  // 1.23.2 (evaluation of 1.23.1, N6): with no format remembered, a clinician's new note is a clinical progress note.
+  eq((await cl.api('PUT', '/api/me/prefs', { note_formats: null })).status, 200, 'the clinician has no remembered note format');
+  await cl.page.reload(); await cl.page.waitForSelector('.layout'); await settle(cl.page);
   await cl.go(`client/${cid}`);
   await cl.page.click('.client-actions.wide button:text-is("+ Note")'); await cl.page.waitForSelector('.modal form');
+  eq(await cl.page.inputValue('.modal select[name=kind]'), 'clinical', 'a clinician\'s new note starts as a clinical note');
+  eq(await cl.page.inputValue('.modal select[name=format]'), 'progress', 'in the Progress format');
+  await cl.page.selectOption('.modal select[name=kind]', 'admin');
+  eq(await cl.page.inputValue('.modal select[name=format]'), 'narrative', 'an administrative note starts as a narrative');
+  await cl.page.selectOption('.modal select[name=kind]', 'clinical');
   await cl.page.selectOption('.modal select[name=format]', 'SOAP');
   await cl.page.waitForSelector('.modal textarea[data-sec="S"]');
   const unlabelled = await cl.page.$$eval('.modal textarea[data-sec]', els => els.filter(t => !t.id || !document.querySelector(`label[for="${t.id}"]`)).length);

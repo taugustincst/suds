@@ -10,6 +10,8 @@
 //   4. axe on the phone Home and the open phone menu.
 //   1.23.1: Notes in a clinician's phone menu; the open menu over the banners; Home's to-dos capped at 5 with "N more";
 //   the + Log button clear of the alert badges; a short offline banner.
+//   1.23.2: a to-do on Home is marked done by its box alone (the title opens it) and "Done" has an Undo; nothing is
+//   left under the + Log button at the end of a page.
 // Measurements are printed as "measure:" lines (before/after figures for the release notes).
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
@@ -150,6 +152,43 @@ try {
       ok(capped.href === '#/tasks' && /more due to-do/.test(capped.text), `${label}: and opens To-dos`, capped);
     } else eq(capped.more, 0, `${label}: no "more" link with 5 or fewer`);
     if (who === 'dchen') ok(due.length > 5, 'the seed gives the peer navigator more than five to-dos due, so the cap is exercised', due.length);
+    if (who === 'dchen') {
+      // 1.23.2 (evaluation of 1.23.1, N1): tapping a to-do's title marked it done (the title was inside the box's label).
+      // Now the box alone completes it, named "Mark done: <title>"; the title opens it; "Done" has an Undo.
+      const first = await s.page.evaluate(() => { const row = document.querySelector('.today-item[data-today-task]'); const box = row.querySelector('input[type=checkbox]'); const open = row.querySelector('[data-today-open]');
+        const r = (e) => { const b = e.getBoundingClientRect(); return [Math.round(b.width), Math.round(b.height)]; };
+        return { id: row.dataset.todayTask, name: box.getAttribute('aria-label'), title: open && open.textContent, openIsButton: open && open.tagName === 'BUTTON', titleInLabel: !!(open && open.closest('label')), boxTarget: r(box.closest('label') || box), openTarget: open && r(open) }; });
+      eq(first.name, `Mark done: ${first.title}`, 'N1: the box is named "Mark done: <title>"');
+      ok(first.openIsButton && !first.titleInLabel, 'N1: the title is its own button, outside the box\'s label', first);
+      ok(first.boxTarget[0] >= 24 && first.boxTarget[1] >= 24 && first.openTarget[1] >= 24, 'N1: the box and the title are each at least 24 px to hit', first);
+      const status = async () => (await s.api('GET', `/api/tasks/${first.id}`)).data.row.status;
+      await s.page.click(`[data-today-open="${first.id}"]`);
+      ok(await until(() => s.page.$('.modal')), 'N1: the title opens the to-do (or the record it came from)');
+      eq(await status(), 'open', 'N1: and opening it does not mark it done');
+      await axe(s.page, 'a to-do opened from Home');
+      await s.page.keyboard.press('Escape'); await until(async () => !(await s.page.$('.modal-bg')));
+      await s.page.check(`[data-today-task="${first.id}"] input[type=checkbox]`);
+      ok(await until(async () => (await status()) === 'done'), 'N1: the box marks it done');
+      ok(await until(() => s.page.$('.undo-toast [data-undo]')), 'N1: the "Done" message offers Undo');
+      await s.page.click('.undo-toast [data-undo]');
+      ok(await until(async () => (await status()) === 'open'), 'N1: Undo reopens it');
+      ok(await until(() => s.page.$(`[data-today-task="${first.id}"]`)), 'N1: and it is back on Home');
+      await axe(s.page, 'the phone Home after Undo');
+      // N4: at the end of every page with the + Log button, nothing is left under it (the program-wide cards open).
+      for (const page of ['dashboard', 'tasks', 'clients', 'calls', 'interventions', 'referrals']) {
+        await s.go(page);
+        await s.page.evaluate(() => document.querySelectorAll('.main details').forEach(d => { d.open = true; }));
+        const under = await s.page.evaluate(async () => {
+          window.scrollTo(0, document.documentElement.scrollHeight); await new Promise(r => requestAnimationFrame(r));
+          const fe = document.querySelector('.fab'); if (!fe || getComputedStyle(fe).display === 'none') return null;
+          const f = fe.getBoundingClientRect();
+          return [...document.querySelectorAll('.main a, .main button, .main input, .main select, .main summary')].filter(a => { const b = a.getBoundingClientRect(); return b.width && b.height && a.checkVisibility() && b.bottom > f.top && b.top < f.bottom && b.right > f.left && b.left < f.right; }).map(a => a.textContent.trim().slice(0, 30) || a.tagName);
+        });
+        ok(under !== null, `N4: ${page} has the + Log button at 390 px`);
+        eq((under || []).join(' | '), '', `N4: at the end of ${page}, no link or button is under the + Log button`);
+      }
+      await s.go('dashboard');
+    }
     // 1.23.1: the + Log button never covers a Home alert badge (the Part 2 notice one), wherever the page is scrolled.
     const fabHits = await s.page.evaluate(() => { const f = document.querySelector('.fab').getBoundingClientRect(); return [...document.querySelectorAll('.home-alerts a.badge')].filter(b => b.getBoundingClientRect().right > f.left).map(b => b.textContent.trim()); });
     eq(fabHits.join(' | '), '', `${label}: the Home alert badges stop short of the + Log button's column`);

@@ -22,10 +22,14 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   const startKind = kind || values?.kind || (kinds.includes('clinical') ? 'clinical' : kinds[0]);
   const lastFormat = (k) => { const v = (prefs.get(NOTE_FORMATS, null) || {})[k]; return v && listEntries('NOTE_FORMATS').some(e => e.code === v && !e.hidden) ? v : null; };
   const remember = isNew && !prefill?.format;
+  // With nothing remembered, a clinical note starts as a progress note, the note a clinician writes most (1.23.2: it
+  // started as a narrative, and the evaluation read the form as an administrative one); an administrative one as a
+  // narrative. Only while Progress is on the programme's list.
+  const startFormat = (k) => lastFormat(k) || (k === 'clinical' && listEntries('NOTE_FORMATS').some(e => e.code === 'progress' && !e.hidden) ? 'progress' : 'narrative');
   const f = form([
     { name: 'client_id', label: 'Client', type: 'client', required: true, value: clientId || values?.client_id, display: clientDisplay },
     { name: 'kind', label: 'Note type', type: 'select', options: kinds.map(k => ({ value: k, label: k === 'clinical' ? 'Clinical (not shown to finance or read-only)' : 'Administrative / contact' })), value: startKind, noBlank: true, required: true }, // clinical for those who write it (r8 L8)
-    { name: 'format', label: 'Format', type: 'select', list: 'NOTE_FORMATS', value: prefill?.format || (remember && lastFormat(startKind)) || 'narrative', noBlank: true }, { name: 'occurred_at', label: 'Date of service', type: 'datetime', required: true, value: values?.occurred_at || new Date().toISOString() },
+    { name: 'format', label: 'Format', type: 'select', list: 'NOTE_FORMATS', value: prefill?.format || (remember && startFormat(startKind)) || 'narrative', noBlank: true }, { name: 'occurred_at', label: 'Date of service', type: 'datetime', required: true, value: values?.occurred_at || new Date().toISOString() },
     { name: 'title', label: 'Title', span: true, value: prefill?.title }, narrative,
     { name: 'part2_protected', label: 'Contains 42 CFR Part 2 protected SUD information', type: 'checkbox', value: values ? values.part2_protected : true },
     // 42 CFR §2.11: a clinician's own analysis of a counselling session, kept apart from the rest of the record
@@ -135,7 +139,7 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   // person chose themselves, or sections already written in, are left alone).
   if (remember) {
     let chosen = false; fmtSel.addEventListener('change', (e) => { if (e.isTrusted) chosen = true; });
-    f.inputs.kind.addEventListener('change', () => { if (chosen || readStructured()) return; const v = lastFormat(f.inputs.kind.value) || 'narrative'; if (fmtSel.value !== v) { fmtSel.value = v; renderStructured(); } });
+    f.inputs.kind.addEventListener('change', () => { if (chosen || readStructured()) return; const v = startFormat(f.inputs.kind.value); if (fmtSel.value !== v) { fmtSel.value = v; renderStructured(); } });
   }
   // ---- the AI copilot (views/ai.js): a draft from the author's own session notes, put into the sections
   // above for them to review, marked "AI draft — review before signing"; signing asks for the review statement.

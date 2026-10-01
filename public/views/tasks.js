@@ -36,6 +36,14 @@ async function openSource(t, onDone) {
   else if (REMINDER.test(t.title || '') && !row.outcome_recorded_at && can('referrals:write')) (await import('./referrals.js')).openOutcomeForm(row, onDone);
   else nav(`client/${row.client_id}/referrals`);
 }
+/** The same on a phone's to-do row (1.23.2), which opens the to-do itself on a tap: this button opens the record,
+ *  named with the to-do's title for a screen reader ("Open the call: Call back"). */
+function rowSource(t, onDone) {
+  const b = sourceButton(t, null, onDone); if (!b) return null;
+  b.setAttribute('aria-label', `${b.textContent}: ${t.title}`);
+  b.addEventListener('click', (e) => e.stopPropagation());
+  return b;
+}
 /** "Open the call", "Open the visit" or "Open the referral" for a to-do that came from one, else null. */
 export function sourceButton(t, close, onDone) {
   const s = sourceOf(t);
@@ -45,6 +53,18 @@ export function sourceButton(t, close, onDone) {
 // A to-do is changed by whoever it is assigned to or made it, or someone who manages others' records
 // (server/rules/tasks.js editableBy); anyone who can write to-dos may still mark it done.
 const mayChangeTask = (t) => mayChange(t.assigned_to, t.created_by);
+/**
+ * Open a to-do from a list that shows only its title (Home's "To-dos for today", 1.23.2): the call, visit or referral
+ * it came from when it has one (as "Open the call" does), a change notice as its card, otherwise the to-do itself:
+ * its form, or read-only when it is someone else's. Home's list carries only the title, so the to-do is fetched first.
+ */
+export async function openTodo(id, onDone) {
+  let t;
+  try { t = (await get(`/api/tasks/${encodeURIComponent(id)}`)).row; } catch (e) { toast(e && e.status === 404 ? 'That to-do is no longer there.' : (e && e.message) || 'The to-do could not be opened.', 'error'); return; }
+  if (changeNotice(t)) return openChangeNotice(t, { onDone });
+  if (sourceOf(t)) return openSource(t, onDone);
+  return can('tasks:write') && mayChangeTask(t) ? openTaskForm(t, { onDone }) : openTaskView(t);
+}
 /** Someone else's to-do on a phone, to read: it used to open as a form whose Save was then refused. */
 function openTaskView(t) {
   const src = sourceButton(t, () => m.close());
@@ -162,7 +182,9 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false } = 
         catch (err) { e.target.checked = !wanted; toast(err.message || 'Could not update this to-do. Check your connection and try again.', 'error'); }
         finally { e.target.disabled = false; }
       } })) : null, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title)), badge(fmt.label(t.priority), statusKind(t.priority))],
-      secondary: t => [showClient && t.client_id ? h('span', {}, t.client_name || t.client_code) : null, changeNotice(t) ? h('span', {}, `Changed: ${changeNotice(t).fields.join(', ')}`) : h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? (overdue(t) ? 'overdue · ' : 'due ') + fmt.dt(t.due_at) : 'no due date'), t.status === 'done' ? badge('Done', 'ok') : null],
+      // The record it came from, a tap away on the row itself (1.23.2): it was only inside Edit.
+      secondary: t => [showClient && t.client_id ? h('span', {}, t.client_name || t.client_code) : null, changeNotice(t) ? h('span', {}, `Changed: ${changeNotice(t).fields.join(', ')}`) : h('span', { style: overdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, t.due_at ? (overdue(t) ? 'overdue · ' : 'due ') + fmt.dt(t.due_at) : 'no due date'), t.status === 'done' ? badge('Done', 'ok') : null,
+        changeNotice(t) ? null : rowSource(t, onChange)],
       onTap: t => (changeNotice(t) ? openChangeNotice(t, { onDone: onChange }) : can('tasks:write') && mayChangeTask(t) ? openTaskForm(t, { onDone: onChange }) : openTaskView(t)) } });
   return toolbar ? h('div', {}, toolbar, tbl) : tbl;
 }

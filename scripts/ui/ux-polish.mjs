@@ -181,8 +181,9 @@ if (box) {
 await go(page, 'dashboard');
 const bars = await page.$$eval('a.bar.link', a => a.map(x => x.getBoundingClientRect().height));
 ok(bars.length && bars.every(hh => hh >= 44), 'M5: the Home chart rows are 44px tap targets', bars);
-const today = await page.$$eval('.today-item .check', a => a.map(x => x.getBoundingClientRect().height));
-ok(today.every(hh => hh >= 44), 'M5: Home\'s to-do rows are 44px tap targets', today);
+// 1.23.2: the box and the title are separate controls (the box marks it done, the title opens it), each 44px.
+const today = await page.$$eval('.today-item .today-check, .today-item .today-open', a => a.map(x => x.getBoundingClientRect().height));
+ok(today.length && today.every(hh => hh >= 44), 'M5: Home\'s to-do boxes and titles are 44px tap targets', today);
 await go(page, `client/${cid}`); await bigText(page); await settle(page);
 const more = await page.$('.tabs-more:visible');
 if (more) {

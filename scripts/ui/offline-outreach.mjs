@@ -196,7 +196,19 @@ try {
   eq((await nav.page.textContent('.main h1')).trim(), 'Set up this phone for the field', 'the page opens');
   ok(/Set up this phone for the field/.test(await nav.page.title()), 'with its own title', await nav.page.title());
   ok(await nav.page.$('[data-field-self] a[data-field-open-copy]'), 'where offline copies are allowed, it says how to set it up yourself (Keep only what I need in the field)');
+  ok(await nav.page.$('[data-field-who-decides]'), 'and that the worker may do it themselves as they set the phone up');
   await axe(nav.page, 'Set up this phone for the field');
+  // 1.23.2 (evaluation of 1.23.1, N3): with offline copies off on the office server, the page said both "you may do it
+  // yourself" and "an administrator decides first". Only the true sentence now. (The suite's server has them on: the
+  // answer is changed on its way to the page.)
+  await nav.page.route('**/api/me/field-device', async (r) => { const res = await r.fetch(); const j = await res.json(); await r.fulfill({ response: res, json: { ...j, local_mode: false } }); });
+  await nav.fresh('field-phone');
+  const offText = await nav.page.textContent('.main');
+  ok(await nav.page.$('[data-field-ask-only]'), 'offline copies off: the page says to ask an administrator');
+  ok(!(await nav.page.$('[data-field-who-decides]')) && !/you may do it yourself/.test(offText), 'and no longer says the worker may do it themselves', offText.slice(0, 600));
+  eq((offText.match(/an administrator decides first/g) || []).length, 1, 'it says once who decides');
+  await nav.page.unroute('**/api/me/field-device');
+  await nav.fresh('field-phone');
   await nav.page.click('[data-field-request]');
   ok(await until(async () => (await nav.page.$eval('[data-field-request-status]', e => e.dataset.fieldRequestStatus)) === 'open'), 'Ask my administrator: the request is open');
   await axe(nav.page, 'Set up this phone for the field, asked');

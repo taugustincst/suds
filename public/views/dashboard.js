@@ -1,5 +1,5 @@
 import { backupReminderCard, recoveryPromptCard } from './local.js';
-import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, greetingName, prefs, welcomeCard } from '../app.js';
+import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, undoToast, greetingName, prefs, welcomeCard } from '../app.js';
 
 // One refresh timer for Home, however often it is drawn (each draw used to start another, and they piled up).
 let homeTimer = null;
@@ -248,11 +248,19 @@ async function drawHome(r) {
       can('resources:read') ? h('li', {}, h('a', { class: 'btn', href: '#/resources' }, 'Resource directory'), h('span', { class: 'small' }, 'The services and partners the program refers people to.')) : null)) : null;
   // The empty caseload's next step: add a client, where this person may.
   const newClientBtn = () => (can('clients:write') ? h('button', { class: 'btn primary', type: 'button', 'data-empty-action': 'new-client', onClick: async () => (await import('./clients.js')).openClientForm(null) }, '+ New client') : null);
+  // Only the box completes a to-do (1.23.2): the title used to sit inside the box's label, so tapping it to see the to-do
+  // marked it done. The title opens the to-do, or the call, visit or referral it came from (tasks.js openTodo), and
+  // "Done" offers Undo, which reopens it.
+  const refreshHome = () => nav('dashboard?_=' + Date.now());
   const done = async (t, box) => {
     if (box) box.disabled = true;
-    try { await put(`/api/tasks/${t.id}`, { status: 'done' }); toast('Done ✓', 'ok'); nav('dashboard?_=' + Date.now()); }
-    catch (err) { if (box) { box.checked = false; box.disabled = false; } toast(err.message || 'Could not mark that done. Check your connection and try again.', 'error'); }
+    try {
+      await put(`/api/tasks/${t.id}`, { status: 'done' });
+      undoToast(`Done: ${t.title}`, async () => { await put(`/api/tasks/${t.id}`, { status: 'open' }); refreshHome(); });
+      refreshHome();
+    } catch (err) { if (box) { box.checked = false; box.disabled = false; } toast(err.message || 'Could not mark that done. Check your connection and try again.', 'error'); }
   };
+  const openTodo = async (t) => (await import('./tasks.js')).openTodo(t.id, refreshHome);
   // A phone's Home is triage (1.23.0): today's work first — to-dos due and overdue (follow-ups included), then the
   // things waiting on this person (unsigned notes, clients to call, as one compact row of links), then where they
   // left off — and the rest below: the welcome, the program-wide figures folded, the auto-refresh switch at the foot.
@@ -277,7 +285,7 @@ async function drawHome(r) {
   const todayRows = dueSorted.slice(0, TODAY_MAX); const todayMore = dueSorted.length - todayRows.length;
   const todayMoreLink = todayMore > 0 ? h('p', { class: 'small mt', 'data-today-more': String(todayMore) }, h('a', { href: '#/tasks' }, `${dueSorted.length >= 10 ? 'At least ' : ''}${todayMore} more due to-do${todayMore === 1 ? '' : 's'}`)) : null;
   const todosCard = !showTodos ? null : h('div', { class: phone ? 'card mb' : 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'To-dos for today'), can('tasks:read') ? h('a', { href: '#/tasks' }, 'All to-dos') : null),
-    cont.due_today.length ? todayRows.map(t => h('div', { class: 'today-item', 'data-overdue': isOverdue(t) ? '1' : '0' }, h('label', { class: 'check', style: { marginTop: 0 } }, h('span', { class: 'tap-target' }, h('input', { type: 'checkbox', 'aria-label': `Mark "${t.title}" done`, onChange: (e) => done(t, e.target) })), h('span', {}, t.title, t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null)), h('span', { class: 'small today-due', style: isOverdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, isOverdue(t) ? [badge('Overdue', 'danger'), ' '] : null, h('span', { class: 'nowrap' }, fmt.dt(t.due_at))))).concat(todayMoreLink || []) : emptyState('Nothing due today', 'Reminders you set for today will appear here.', can('tasks:write') ? h('button', { class: 'btn sm', onClick: async () => (await import('./tasks.js')).openTaskForm(null, { onDone: () => nav('dashboard?_=' + Date.now()) }) }, '+ Add a reminder') : null));
+    cont.due_today.length ? todayRows.map(t => h('div', { class: 'today-item', 'data-overdue': isOverdue(t) ? '1' : '0', 'data-today-task': t.id }, h('span', { class: 'today-main' }, h('label', { class: 'tap-target today-check' }, h('input', { type: 'checkbox', 'aria-label': `Mark done: ${t.title}`, onChange: (e) => done(t, e.target) })), h('span', {}, h('button', { type: 'button', class: 'today-open', 'data-today-open': t.id, onClick: () => openTodo(t) }, t.title), t.client_name ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null)), h('span', { class: 'small today-due', style: isOverdue(t) ? { color: 'var(--danger)', fontWeight: 600 } : {} }, isOverdue(t) ? [badge('Overdue', 'danger'), ' '] : null, h('span', { class: 'nowrap' }, fmt.dt(t.due_at))))).concat(todayMoreLink || []) : emptyState('Nothing due today', 'Reminders you set for today will appear here.', can('tasks:write') ? h('button', { class: 'btn sm', onClick: async () => (await import('./tasks.js')).openTaskForm(null, { onDone: () => nav('dashboard?_=' + Date.now()) }) }, '+ Add a reminder') : null));
   const continueCard = !showContinue ? null : h('div', { class: phone ? 'card mb' : 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Continue where you left off'), window.SUDS_STATIC_HOST ? null : h('span', { class: 'muted small' }, 'from any device')),
     cont.drafts.length ? h('div', { class: 'mb' }, h('h3', { class: 'eyebrow' }, 'Unfinished notes'), cont.drafts.slice(0, 4).map(n => h('div', { class: 'today-item' }, h('a', { href: '#', onClick: async (e) => { e.preventDefault(); (await import('./notes.js')).openNote(n.id, { onChange: () => nav('dashboard?_=' + Date.now()) }); } }, n.title || `${fmt.label(n.format, 'NOTE_FORMATS')} note`, h('span', { class: 'muted small' }, ` · ${n.client_name}`)), h('span', { class: 'muted small' }, fmt.ago(n.updated_at))))) : null,
     cont.recent.length ? h('div', {}, h('h3', { class: 'eyebrow' }, 'Recent clients'), h('div', { class: 'row' }, cont.recent.slice(0, 8).map(x => h('a', { class: 'chip', href: `#/client/${x.id}` }, x.display_name)))) : null,
