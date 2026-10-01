@@ -589,15 +589,18 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
   // the signed-in person manages the device.
   router.get('/api/local/device', (ctx) => {
     if (!ctx.user) throw new HttpError(401, 'Sign in first');
-    return { static: sync.isStaticHost(), device_admin: isDeviceAdmin(ctx.user), signup_enabled: signupEnabled(), users: userCount(), clients: clientCount(), last_backup_at: db.getSetting('last_backup_at', null), recovery: recoveryInfo() };
+    return { static: sync.isStaticHost(), device_admin: isDeviceAdmin(ctx.user), signup_enabled: signupEnabled(), users: userCount(), clients: clientCount(), last_backup_at: db.getSetting('last_backup_at', null), backup: backupInfo(), recovery: recoveryInfo() };
   });
   router.put('/api/local/device', (ctx) => {
     if (!ctx.user) throw new HttpError(401, 'Sign in first');
     if (!isDeviceAdmin(ctx.user)) throw new HttpError(403, 'Only the person who manages this device can change this.');
-    const v = validate(ctx.body, { signup_enabled: { type: 'boolean' } });
+    const v = validate(ctx.body, { signup_enabled: { type: 'boolean' }, backup_every_days: { type: 'number', integer: true }, backup_keep: { type: 'number', integer: true, min: backup.MIN_KEEP, max: backup.MAX_KEEP } });
+    if (v.backup_every_days !== undefined && !backup.SCHEDULES.includes(v.backup_every_days)) throw new HttpError(400, `Back up every ${backup.SCHEDULES.join(', ')} days.`, { fields: { backup_every_days: `One of ${backup.SCHEDULES.join(', ')}` } });
     if (v.signup_enabled !== undefined) db.setSetting('local_signup', v.signup_enabled ? '1' : '0');
-    audit.log({ user: ctx.user, action: 'local.device.settings', details: { signup_enabled: v.signup_enabled } });
-    return { ok: true };
+    if (v.backup_every_days !== undefined) db.setSetting('backup_every_days', String(v.backup_every_days));
+    if (v.backup_keep !== undefined) db.setSetting('backup_keep', String(v.backup_keep));
+    audit.log({ user: ctx.user, action: 'local.device.settings', details: { signup_enabled: v.signup_enabled, backup_every_days: v.backup_every_days, backup_keep: v.backup_keep } });
+    return { ok: true, backup: backupInfo() };
   });
 
   // ---- the owner's recovery code (local/vault.js; docs/architecture/ADR-0008-device-encryption.md) ----
@@ -705,15 +708,17 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
     const previous = db.getSetting('last_backup_at', null);
     // Recorded before the export, so a device restored from this file knows when its backup was taken.
     db.setSetting('last_backup_at', at);
+    const previousTo = db.getSetting('last_backup_to', null);
+    db.setSetting('last_backup_to', 'download');
     const clients = clientCount();
-    audit.log({ user: ctx.user, action: 'device.backup.created', details: { clients } });
+    audit.log({ user: ctx.user, action: 'device.backup.created', details: { clients, to: 'download', trigger: 'passphrase' } });
     const meta = { keys: keysHex(), org_name: db.getSetting('org_name', ''), clients, users: userCount(), schema_version: Number(db.getSetting('schema_version', '0')), created_at: at };
     // So the accounts in it can unlock the device it is restored onto, with the passwords they have now
     // (local/vault.js backupRecord): their wraps and a fresh key for that device, never this device's key.
     if (vault.hasAccounts(theVault) && dekKey) { const nextDek = vault.newDek(); meta.device = await vault.backupRecord(theVault, dekKey, nextDek); nextDek.fill(0); }
     let file;
     try { file = await asHttp(() => backup.create({ bytes: sqlite.exportCurrent(), meta, passphrase: v.passphrase, appVersion: require('./shims/config.js').version })); }
-    catch (e) { if (previous) db.setSetting('last_backup_at', previous); else db.run(`DELETE FROM settings WHERE key='last_backup_at'`); throw e; }
+    catch (e) { putBack('last_backup_at', previous); putBack('last_backup_to', previousTo); throw e; }
     const name = `suds-device-backup-${at.slice(0, 10)}.sudsbackup`;
     ctx.res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${name}"` });
     ctx.res.end(Buffer.from(file));
@@ -769,6 +774,132 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
     audit.log({ user: { username: by || 'device' }, action: 'device.restore', details: { at: new Date().toISOString(), backup_created_at: out.meta.created_at || null, clients: info.clients } });
     if (wasLegacy) { try { await eraseLegacyCopies(); } catch (e) { reportError(e); } }
     return { ok: true, clients: info.clients, users: info.users, reload: false };
+  });
+
+  // ---- scheduled backups (1.24.0; docs/WEB_APP.md, "Scheduled backups") ----
+  // The device administrator chooses how often (daily, every 3 days, weekly) and, once, a backup passphrase; the
+  // key derived from it is kept sealed under the device key in the vault (local/vault.js sealBackupKey), so a due
+  // backup is made without the passphrase being typed or stored. The page writes the file: to a folder the person
+  // picked (File System Access API, where the browser has it), or as a download from one button where it does
+  // not. The kernel never learns the folder. A file is the device's last backup only once the page says it landed
+  // (/done): until then nothing durable changes, so a write refused by the browser is not mistaken for a backup.
+  const putBack = (key, value) => { if (value === null || value === undefined) db.run(`DELETE FROM settings WHERE key=?`, key); else db.setSetting(key, value); };
+  const keepCount = () => Math.min(backup.MAX_KEEP, Math.max(backup.MIN_KEEP, Number(db.getSetting('backup_keep', String(backup.DEFAULT_KEEP))) || backup.DEFAULT_KEEP));
+  function backupInfo() {
+    const last = db.getSetting('last_backup_at', null);
+    const st = backup.scheduleState(last, Number(db.getSetting('backup_every_days', String(backup.DEFAULT_EVERY_DAYS))));
+    const k = theVault && theVault.backup_key;
+    const checkAt = db.getSetting('backup_check_at', null);
+    return { ...st, last_at: last, last_to: db.getSetting('last_backup_to', null), keep: keepCount(), schedule_chosen: db.getSetting('backup_every_days', null) !== null,
+      passphrase_kept: !!k, passphrase_since: k ? k.created_at : null,
+      check: checkAt ? { at: checkAt, ok: db.getSetting('backup_check_ok', '0') === '1', problem: db.getSetting('backup_check_problem', null) || null, backup_created_at: db.getSetting('backup_check_backup_at', null) } : null };
+  }
+  const mayBackUp = (ctx, what = 'make its backups') => {
+    if (!ctx.user) throw new HttpError(401, 'Sign in first');
+    if (!isDeviceAdmin(ctx.user)) throw new HttpError(403, `Only the person who manages this device can ${what}.`);
+  };
+  router.post('/api/local/backup/schedule', async (ctx) => {
+    mayBackUp(ctx, 'set up its backups');
+    const v = validate(ctx.body, { passphrase: { type: 'string', required: true, maxLen: 500 }, every_days: { type: 'number', integer: true }, keep: { type: 'number', integer: true, min: backup.MIN_KEEP, max: backup.MAX_KEEP } });
+    if (v.every_days !== undefined && !backup.SCHEDULES.includes(v.every_days)) throw new HttpError(400, `Back up every ${backup.SCHEDULES.join(', ')} days.`, { fields: { every_days: `One of ${backup.SCHEDULES.join(', ')}` } });
+    if (v.passphrase.length < backup.MIN_PASSPHRASE) throw new HttpError(400, `Choose a passphrase of at least ${backup.MIN_PASSPHRASE} characters.`, { fields: { passphrase: `At least ${backup.MIN_PASSPHRASE} characters` } });
+    if (phase !== 'open' || !dekKey || !vault.hasAccounts(theVault) || !sqlite.hasSealer()) throw new HttpError(409, 'This device cannot keep a backup passphrase right now. Sign out, sign in again and try once more.');
+    const derived = await asHttp(() => backup.deriveKey(v.passphrase));
+    const rec = await vault.sealBackupKey(dekKey, derived); derived.raw.fill(0);
+    const replaced = !!theVault.backup_key;
+    await saveVault({ ...theVault, backup_key: rec });
+    if (v.every_days !== undefined) db.setSetting('backup_every_days', String(v.every_days));
+    if (v.keep !== undefined) db.setSetting('backup_keep', String(v.keep));
+    audit.log({ user: ctx.user, action: 'device.backup.schedule', details: { on: true, replaced, every_days: backupInfo().every_days, keep: keepCount() } });
+    return { ok: true, backup: backupInfo() };
+  });
+  router.delete('/api/local/backup/schedule', async (ctx) => {
+    mayBackUp(ctx, 'set up its backups');
+    if (theVault && theVault.backup_key) { const next = { ...theVault }; delete next.backup_key; await saveVault(next); }
+    audit.log({ user: ctx.user, action: 'device.backup.schedule', details: { on: false } });
+    return { ok: true, backup: backupInfo() };
+  });
+  // Make a backup with the kept key. `to` is where the page will put it; `existing` the names of the files already
+  // in that folder, so the answer can say which old ones to remove (only files SUDS named, oldest first, keeping
+  // `keep`). `trigger` says whether the schedule made it or the person asked. The answer is the file itself.
+  let pendingRun = null;
+  router.post('/api/local/backup/run', async (ctx) => {
+    mayBackUp(ctx);
+    const v = validate(ctx.body, { to: { type: 'string', required: true, enum: ['folder', 'download'] }, trigger: { type: 'string', enum: ['schedule', 'now'] }, existing: { type: 'array', maxLen: 5000, of: 'string' } });
+    const rec = theVault && theVault.backup_key;
+    const derived = rec && dekKey ? await vault.openBackupKey(dekKey, rec) : null;
+    if (!derived) throw new HttpError(409, 'Type the backup passphrase again to carry on with scheduled backups (This device › Keep your records safe).', { backupPassphraseNeeded: true });
+    const at = db.now();
+    const clients = clientCount();
+    const meta = { keys: keysHex(), org_name: db.getSetting('org_name', ''), clients, users: userCount(), schema_version: Number(db.getSetting('schema_version', '0')), created_at: at };
+    if (vault.hasAccounts(theVault) && dekKey) { const nextDek = vault.newDek(); meta.device = await vault.backupRecord(theVault, dekKey, nextDek); nextDek.fill(0); }
+    // The file records itself as the device's last backup (a device restored from it knows when it was taken),
+    // but this device does not, until the page says the file landed.
+    const previous = db.getSetting('last_backup_at', null); const previousTo = db.getSetting('last_backup_to', null);
+    let bytes;
+    try { db.setSetting('last_backup_at', at); db.setSetting('last_backup_to', v.to); bytes = sqlite.exportCurrent(); }
+    finally { putBack('last_backup_at', previous); putBack('last_backup_to', previousTo); }
+    let file;
+    try { file = await asHttp(() => backup.createWithKey({ bytes, meta, derived, appVersion: require('./shims/config.js').version })); }
+    finally { derived.raw.fill(0); bytes.fill(0); }
+    const name = backup.fileName(at);
+    pendingRun = { at, to: v.to, trigger: v.trigger || 'now', clients, name };
+    const remove = v.to === 'folder' ? backup.toRemove([...(v.existing || []).filter(n => n !== name), name], keepCount()) : [];
+    ctx.res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${name}"`, 'X-Suds-Backup-Remove': JSON.stringify(remove) });
+    ctx.res.end(Buffer.from(file));
+  });
+  // The page wrote the file (or could not). Each backup written is audited (where, how many clients, never a
+  // name or the folder); one that could not be written is audited as such and changes nothing else.
+  router.post('/api/local/backup/run/done', (ctx) => {
+    mayBackUp(ctx);
+    const v = validate(ctx.body, { ok: { type: 'boolean' }, removed: { type: 'number', integer: true, min: 0, max: 5000 }, problem: { type: 'string', enum: ['permission', 'write', 'space', 'other'] } });
+    if (!pendingRun) throw new HttpError(409, 'No backup is waiting to be written. Make a new one.');
+    const p = pendingRun; pendingRun = null;
+    if (v.ok === 1) {
+      db.setSetting('last_backup_at', p.at); db.setSetting('last_backup_to', p.to);
+      audit.log({ user: ctx.user, action: 'device.backup.created', details: { clients: p.clients, to: p.to, trigger: p.trigger, old_files_removed: v.removed || 0 } });
+    } else audit.log({ user: ctx.user, action: 'device.backup.failed', details: { to: p.to, trigger: p.trigger, problem: v.problem || 'other' } });
+    return { ok: true, backup: backupInfo() };
+  });
+  // The restore drill: open a backup with its passphrase, as a restore would, and check what is inside — the
+  // database reads, passes SQLite's own check, belongs to the keys it carries and has every table this version
+  // of SUDS expects — without changing anything on the device. The result is kept (This device shows it) and
+  // audited: counts, table names and the problem found, never a record.
+  const CORE_TABLES = ['settings', 'users', 'clients', 'audit_log'];
+  router.post('/api/local/backup/check', async (ctx) => {
+    mayBackUp(ctx, 'check its backups');
+    const v = validate(ctx.body, { file_b64: { type: 'string', required: true, maxLen: 400 * 1024 * 1024 }, passphrase: { type: 'string', required: true, maxLen: 500 } });
+    const file = Uint8Array.from(Buffer.from(v.file_b64.replace(/^data:[^,]*,/, ''), 'base64'));
+    let out = null; let info = null; let problem = null; let message = null; let missing = [];
+    try { out = await backup.open(file, v.passphrase); }
+    catch (e) { if (!(e instanceof backup.BackupError)) throw e; problem = e.code; message = e.message; }
+    if (out) {
+      try {
+        info = sqlite.inspect(out.bytes, (d) => ({
+          integrity: Object.values(d.one('PRAGMA quick_check') || {})[0] || null,
+          tables: String((d.one(`SELECT group_concat(name, '|') AS n FROM sqlite_master WHERE type='table'`) || {}).n || '').split('|').filter(Boolean),
+          schema_version: Number((d.one(`SELECT value FROM settings WHERE key='schema_version'`) || {}).value || 0),
+          clients: d.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n, users: d.one(`SELECT COUNT(*) n FROM users`).n,
+          fingerprint: (d.one(`SELECT value FROM settings WHERE key='encryption_key_fingerprint'`) || {}).value || null }));
+      } catch { problem = 'tampered'; message = 'This backup file is damaged: its database cannot be read.'; }
+      out.bytes.fill(0);
+    }
+    if (info) {
+      const live = String((db.one(`SELECT group_concat(name, '|') AS n FROM sqlite_master WHERE type='table'`) || {}).n || '').split('|').filter(Boolean);
+      const current = Number(db.getSetting('schema_version', '0'));
+      // A backup from this version must have every table this device has; an older one (a restore upgrades it) the core ones.
+      missing = (info.schema_version === current ? live : CORE_TABLES).filter(t => !info.tables.includes(t));
+      const { sha256 } = require('../server/crypto.js');
+      if (info.schema_version > db.LATEST_SCHEMA_VERSION) { problem = 'version'; message = 'This backup was made by a newer version of SUDS: this device could not restore it until SUDS is updated.'; }
+      else if (info.integrity !== 'ok') { problem = 'tampered'; message = 'This backup file is damaged: SQLite found errors in its database.'; }
+      else if (info.fingerprint && info.fingerprint !== sha256('suds-key-check:' + out.meta.keys.enc).slice(0, 32)) { problem = 'keys'; message = 'This backup does not carry the keys its records were written with, so it could not be restored.'; }
+      else if (missing.length) { problem = 'tables'; message = `This backup is missing part of the database (${missing.length} table${missing.length === 1 ? '' : 's'}), so a restore would not bring everything back.`; }
+    }
+    const ok = !problem;
+    const createdAt = out ? (out.meta.created_at || out.header.created_at || null) : null;
+    db.setSetting('backup_check_at', db.now()); db.setSetting('backup_check_ok', ok ? '1' : '0'); putBack('backup_check_problem', problem); putBack('backup_check_backup_at', createdAt);
+    audit.log({ user: ctx.user, action: 'device.backup.checked', details: { ok, problem, backup_created_at: createdAt, clients: info ? info.clients : null, tables: info ? info.tables.length : null, missing_tables: missing } });
+    return { ok, problem, message, created_at: createdAt, app_version: out ? out.header.app_version : null, clients: info ? info.clients : null, users: info ? info.users : null, tables: info ? info.tables.length : null, missing, backup: backupInfo() };
   });
   // Sample data on a device: the device user may be a navigator, so expose it here (not behind
   // settings:manage). As at the office, only on a device with no clients yet: the on-device app holds real

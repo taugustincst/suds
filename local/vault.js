@@ -17,8 +17,9 @@
 //            hints: { users, signup_enabled, program_contact },   what the locked sign-in page may show
 //            chain: { iv, ct },                          after a restore only: see backupRecord
 //            rekey: 'restore',                           after a restore only, until rekeyAfterRestore
-//            dropped_after_restore: [name] }             the wraps that rotation dropped (lookup names, as in
+//            dropped_after_restore: [name],              the wraps that rotation dropped (lookup names, as in
 //                                                       wraps), until each account is let in again
+//            backup_key: { salt, iterations, check, iv, ct } }   scheduled backups' key (1.24.0, sealBackupKey)
 //   image  { format, version, iv, ct }                   AES-GCM(DEK, SQLite bytes)
 //
 // Every function here is WebCrypto (crypto.subtle), so it runs the same in a browser and under Node's
@@ -194,6 +195,7 @@ export async function rekeyAfterRestore(v, currentDek, username, password, { use
   if (names.length) next.dropped_after_restore = names; else delete next.dropped_after_restore;
   if (hints) next.hints = hints;
   delete next.rekey;
+  delete next.backup_key; // sealed under the key being replaced (sealBackupKey): asked for again
   if (others.length) { const c = await seal(await importDek(prev), dek, AAD_CHAIN); next.chain = { iv: c.iv, ct: c.ct }; } else delete next.chain;
   prev.fill(0);
   return { dek, key, vault: next, dropped };
@@ -313,3 +315,24 @@ export function withWrap(vault, wrap) {
  * store. Used after sealing an old device's database to prove the plaintext copies are gone.
  */
 export function plaintextLeft(entries) { return entries.filter(([, v]) => isPlainSqlite(v)).map(([k]) => k); }
+
+/**
+ * The key scheduled backups are made with (1.24.0, local/backup.js deriveKey), sealed under the DEK so it opens
+ * only while an account has unlocked the device, like every record. It is kept in the vault, not the database,
+ * so it never travels inside a backup; a restore (a new vault) or the key rotation after one drops it, and the
+ * device administrator types the backup passphrase again to turn scheduled backups back on.
+ *   backup_key { salt, iterations, check, iv, ct, created_at }   ct = AES-GCM(DEK, the 256-bit backup key)
+ */
+const AAD_BACKUP_KEY = 'suds-device-backup-key/v1';
+export async function sealBackupKey(dekKey, derived) {
+  const s = await seal(dekKey, derived.raw, AAD_BACKUP_KEY);
+  return { salt: u8(derived.salt), iterations: derived.iterations, check: derived.check, iv: s.iv, ct: s.ct, created_at: new Date().toISOString() };
+}
+/** The backup key from `rec` (see sealBackupKey) as local/backup.js createWithKey takes it, or null if it does not open. */
+export async function openBackupKey(dekKey, rec) {
+  if (!rec || !(rec.iv instanceof Uint8Array) || !(rec.ct instanceof Uint8Array)) return null;
+  try {
+    const raw = await open(dekKey, { format: IMAGE_FORMAT, version: VERSION, iv: rec.iv, ct: rec.ct }, AAD_BACKUP_KEY);
+    return raw.length === 32 ? { raw, salt: u8(rec.salt), iterations: rec.iterations, check: rec.check } : null;
+  } catch { return null; }
+}

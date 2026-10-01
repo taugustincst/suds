@@ -17333,7 +17333,7 @@ var require_forms = __commonJS({
       auth3.assertClientAccess(ctx, f.client_id);
       return f;
     }
-    var fileName = (x) => {
+    var fileName2 = (x) => {
       try {
         return x.filename_enc ? decrypt3(x.filename_enc) : null;
       } catch {
@@ -17469,7 +17469,7 @@ var require_forms = __commonJS({
       r.get("/api/forms/:id", auth3.requireAuth, clientRecords, auth3.requirePerm("forms:read", "forms:write"), (ctx) => {
         const f = loadForm(ctx, ctx.params.id);
         audit3.log({ user: ctx.user, action: "client_form.view", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
-        const files = db3.all(`SELECT id, filename_enc, content_type, bytes, created_at, uploaded_by FROM client_form_files WHERE client_form_id=? ORDER BY created_at`, f.id).map((x) => ({ ...x, filename: fileName(x), filename_enc: void 0 }));
+        const files = db3.all(`SELECT id, filename_enc, content_type, bytes, created_at, uploaded_by FROM client_form_files WHERE client_form_id=? ORDER BY created_at`, f.id).map((x) => ({ ...x, filename: fileName2(x), filename_enc: void 0 }));
         const t = f.template_id ? db3.one(`SELECT id, name, instructions, (file_b64 IS NOT NULL) has_file, content_type FROM form_templates WHERE id=?`, f.template_id) : null;
         return { form: { ...formOut(f), files, template: t } };
       });
@@ -17545,7 +17545,7 @@ var require_forms = __commonJS({
         const x = db3.one(`SELECT * FROM client_form_files WHERE id=? AND client_form_id=?`, ctx.params.fid, f.id);
         if (!x) throw notFound();
         audit3.log({ user: ctx.user, action: "client_form.file.view", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip, details: { file_id: x.id } });
-        ctx.res.writeHead(200, fileHeaders(safeContentType(x.content_type), contentDisposition(ctx.query.get("download") === "1" ? "attachment" : "inline", fileName(x), "attachment")));
+        ctx.res.writeHead(200, fileHeaders(safeContentType(x.content_type), contentDisposition(ctx.query.get("download") === "1" ? "attachment" : "inline", fileName2(x), "attachment")));
         ctx.res.end(import_buffer.Buffer.from(decrypt3(x.data_enc), "base64"));
         return null;
       });
@@ -21149,7 +21149,7 @@ var require_compliance_report = __commonJS({
     var signing = require_signing();
     var drReport = require_dr_report();
     var FORMAT2 = "suds-compliance-report";
-    var FILE_RE = /^compliance-\d{4}-\d{2}-\d{2}T[\d-]+Z\.json$/;
+    var FILE_RE2 = /^compliance-\d{4}-\d{2}-\d{2}T[\d-]+Z\.json$/;
     var { canonical } = drReport;
     function seal2(report, seed) {
       const body = canonical(report);
@@ -21272,7 +21272,7 @@ ${rows}
     function latest(dir) {
       let names = [];
       try {
-        names = fs.readdirSync(dir).filter((f) => FILE_RE.test(f)).sort();
+        names = fs.readdirSync(dir).filter((f) => FILE_RE2.test(f)).sort();
       } catch {
         return null;
       }
@@ -21284,7 +21284,7 @@ ${rows}
       }
       return null;
     }
-    module.exports = { FORMAT: FORMAT2, FILE_RE, canonical, seal: seal2, verifyDoc, verifyHtml, renderHtml, renderText, extractFromHtml, latest, counts, overall, RESULT_LABEL };
+    module.exports = { FORMAT: FORMAT2, FILE_RE: FILE_RE2, canonical, seal: seal2, verifyDoc, verifyHtml, renderHtml, renderText, extractFromHtml, latest, counts, overall, RESULT_LABEL };
   }
 });
 
@@ -21419,7 +21419,7 @@ var require_audit_anchor = __commonJS({
     var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
     var config2 = require_config();
     var db3 = require_db();
-    var FILE_RE = /^anchor-.*\.json$/;
+    var FILE_RE2 = /^anchor-.*\.json$/;
     var keyId = (key = config2.indexKey) => crypto3.createHmac("sha256", key).update("suds-audit-anchor-key-id").digest("hex").slice(0, 16);
     var FIELDS = ["v", "kind", "at", "reason", "install", "gen", "prev_gen", "head_id", "head_hash", "first_id", "rows", "host", "key_id", "prev_mac"];
     var installId = () => db3.getSetting("audit_anchor_install", null);
@@ -21443,7 +21443,7 @@ var require_audit_anchor = __commonJS({
     function list(d = dir()) {
       let names = [];
       try {
-        names = fs.readdirSync(d).filter((f) => FILE_RE.test(f)).sort();
+        names = fs.readdirSync(d).filter((f) => FILE_RE2.test(f)).sort();
       } catch {
         return [];
       }
@@ -22300,7 +22300,7 @@ var require_scheduled_backup = __commonJS({
     var audit3 = require_audit();
     var backup = require_backup();
     var lock = require_backup_lock();
-    var FILE_RE = /^suds-\d.*\.db\.enc$/;
+    var FILE_RE2 = /^suds-\d.*\.db\.enc$/;
     var SNAP_RE = /^suds-snap-.*\.db\.enc$/;
     var OFFSITE_MISSING = "offsite directory does not exist (is the share mounted?)";
     function settings() {
@@ -22467,7 +22467,7 @@ var require_scheduled_backup = __commonJS({
       return Math.min(files.length, retain);
     }
     function prune(dir, retain) {
-      const files = fs.readdirSync(dir).filter((f) => FILE_RE.test(f)).sort();
+      const files = fs.readdirSync(dir).filter((f) => FILE_RE2.test(f)).sort();
       const excess = files.length - retain;
       if (excess > 0) for (const f of files.slice(0, excess)) {
         try {
@@ -22477,7 +22477,7 @@ var require_scheduled_backup = __commonJS({
       }
       return Math.min(files.length, retain);
     }
-    module.exports = { runIfDue, run: run2, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };
+    module.exports = { runIfDue, run: run2, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, FILE_RE: FILE_RE2, SNAP_RE };
   }
 });
 
@@ -28433,7 +28433,7 @@ var require_caloms_schedule = __commonJS({
       if (!x.ready.length) return { empty: true, provider_id: providerId, held_back: x.excluded };
       const body = zipOf(x.files);
       const hash2 = sha2562(body);
-      const fileName = `caloms-tx-SUBMISSION-${from}_${to}${providerId ? `-${providerId}` : ""}-${id.slice(0, 8)}.zip`;
+      const fileName2 = `caloms-tx-SUBMISSION-${from}_${to}${providerId ? `-${providerId}` : ""}-${id.slice(0, 8)}.zip`;
       const stamp2 = db3.now();
       const keeper = user || db3.one(`SELECT id FROM users WHERE role='admin' AND is_active=1 ORDER BY created_at LIMIT 1`) || db3.one(`SELECT id FROM users ORDER BY created_at LIMIT 1`);
       db3.transaction(() => {
@@ -28442,7 +28442,7 @@ var require_caloms_schedule = __commonJS({
           id,
           from,
           to,
-          fileName,
+          fileName2,
           hash2,
           body.length,
           x.clientIds.length,
@@ -28458,7 +28458,7 @@ var require_caloms_schedule = __commonJS({
         logEvent(id, "prepared", user, hash2);
       });
       audit3.log({ user, action: "caloms.submission.prepare", entity: "caloms_submission", entityId: id, ip, details: { from, to, provider_id: providerId || void 0, origin, ...x.counts, held_back: x.excluded, clients: x.clientIds.length, sha256: hash2 } });
-      return { id, from, to, provider_id: providerId, clients: x.clientIds.length, counts: x.counts, held_back: x.excluded, sha256: hash2, file_name: fileName };
+      return { id, from, to, provider_id: providerId, clients: x.clientIds.length, counts: x.counts, held_back: x.excluded, sha256: hash2, file_name: fileName2 };
     }
     function alreadyPrepared(from, to, providerId) {
       return db3.one(`SELECT id FROM caloms_submissions WHERE period_from=? AND period_to=? AND origin='scheduled' AND provider_id IS ?
@@ -28866,7 +28866,7 @@ var require_caloms2 = __commonJS({
         const { encrypt: encrypt3 } = require_crypto();
         const body = zipOf(x.files);
         const hash2 = sha2562(body);
-        const fileName = `caloms-tx-SUBMISSION-${from}_${to}${v.provider_id ? `-${v.provider_id}` : ""}-${id.slice(0, 8)}.zip`;
+        const fileName2 = `caloms-tx-SUBMISSION-${from}_${to}${v.provider_id ? `-${v.provider_id}` : ""}-${id.slice(0, 8)}.zip`;
         const stamp2 = db3.now();
         db3.transaction(() => {
           db3.run(
@@ -28874,7 +28874,7 @@ var require_caloms2 = __commonJS({
             id,
             from,
             to,
-            fileName,
+            fileName2,
             hash2,
             body.length,
             x.clientIds.length,
@@ -28887,12 +28887,12 @@ var require_caloms2 = __commonJS({
             JSON.stringify(x.ready.map((rec) => rec.id))
           );
           require_caloms_schedule().logEvent(id, "produced", ctx.user, hash2);
-          disclosure.recordStateReport({ clientIds: x.clientIds, what: `CalOMS Tx records (${from} to ${to}): ${x.counts.admission} admission, ${x.counts.discharge} discharge, ${x.counts.annual_update} annual update; submission file ${fileName}, SHA-256 ${hash2}`, sourceRef: `caloms:${id}`, user: ctx.user, ip: ctx.ip });
+          disclosure.recordStateReport({ clientIds: x.clientIds, what: `CalOMS Tx records (${from} to ${to}): ${x.counts.admission} admission, ${x.counts.discharge} discharge, ${x.counts.annual_update} annual update; submission file ${fileName2}, SHA-256 ${hash2}`, sourceRef: `caloms:${id}`, user: ctx.user, ip: ctx.ip });
           for (const rec of x.ready) db3.run(`UPDATE caloms_records SET extracted_at=?, updated_at=? WHERE id=?`, stamp2, stamp2, rec.id);
         });
         require_incidents().maybeMassExport({ clients: x.clientIds.length, kind: "caloms", user: ctx.user });
         audit3.log({ user: ctx.user, action: "caloms.submitted", entity: "caloms_submission", entityId: id, ip: ctx.ip, details: { from, to, ...x.counts, held_back: x.excluded, clients_disclosed: x.clientIds.length, sha256: hash2 } });
-        return { ok: true, id, from, to, submitted_at: stamp2, file_name: fileName, sha256: hash2, bytes: body.length, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded };
+        return { ok: true, id, from, to, submitted_at: stamp2, file_name: fileName2, sha256: hash2, bytes: body.length, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded };
       });
       const ownOnly = (ctx) => auth3.caseloadRestricted(ctx.user);
       const mayReach = (ctx, sub, what) => {
@@ -53912,9 +53912,27 @@ async function derive(passphrase, salt, iterations) {
 async function create({ bytes: bytes3, meta, passphrase, appVersion }) {
   if (typeof passphrase !== "string" || passphrase.length < MIN_PASSPHRASE) throw new BackupError(`Choose a passphrase of at least ${MIN_PASSPHRASE} characters.`, "weak");
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
   const { key, check } = await derive(passphrase, salt, ITERATIONS);
-  const header = { format: FORMAT, version: VERSION, kdf: "PBKDF2-SHA256", iterations: ITERATIONS, salt: b64(salt), iv: b64(iv), check, created_at: meta.created_at, app_version: appVersion };
+  return sealFile({ bytes: bytes3, meta, appVersion, key, salt, iterations: ITERATIONS, check });
+}
+async function deriveKey(passphrase) {
+  if (typeof passphrase !== "string" || passphrase.length < MIN_PASSPHRASE) throw new BackupError(`Choose a passphrase of at least ${MIN_PASSPHRASE} characters.`, "weak");
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const base = await crypto.subtle.importKey("raw", enc.encode(passphrase), "PBKDF2", false, ["deriveBits"]);
+  const bits2 = new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: ITERATIONS }, base, 512));
+  const raw = bits2.slice(0, 32);
+  const check = hex(await crypto.subtle.digest("SHA-256", bits2.slice(32))).slice(0, 32);
+  bits2.fill(0);
+  return { raw, salt, iterations: ITERATIONS, check };
+}
+async function createWithKey({ bytes: bytes3, meta, derived, appVersion }) {
+  if (!derived || !(derived.raw instanceof Uint8Array) || derived.raw.length !== 32 || !(derived.salt instanceof Uint8Array) || derived.salt.length < 16 || !Number.isInteger(derived.iterations) || derived.iterations < MIN_ITERATIONS || !/^[0-9a-f]{32}$/.test(derived.check || "")) throw new BackupError("Scheduled backups need their passphrase again.", "key");
+  const key = await crypto.subtle.importKey("raw", derived.raw, "AES-GCM", false, ["encrypt"]);
+  return sealFile({ bytes: bytes3, meta, appVersion, key, salt: derived.salt, iterations: derived.iterations, check: derived.check });
+}
+async function sealFile({ bytes: bytes3, meta, appVersion, key, salt, iterations, check }) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const header = { format: FORMAT, version: VERSION, kdf: "PBKDF2-SHA256", iterations, salt: b64(salt), iv: b64(iv), check, created_at: meta.created_at, app_version: appVersion };
   const headerLine = enc.encode(JSON.stringify(header));
   const metaBytes = enc.encode(JSON.stringify(meta));
   const plain = new Uint8Array(4 + metaBytes.length + bytes3.length);
@@ -53968,6 +53986,47 @@ async function open(file, passphrase) {
   if (!meta || !meta.keys || !/^[0-9a-f]{64}$/.test(meta.keys.enc || "") || !/^[0-9a-f]{64}$/.test(meta.keys.idx || "")) throw new BackupError("This backup file is damaged or has been altered.", "tampered");
   if (dec.decode(bytes3.subarray(0, 15)) !== "SQLite format 3") throw new BackupError("This backup file is damaged or has been altered.", "tampered");
   return { header, meta, bytes: bytes3 };
+}
+var SCHEDULES = [1, 3, 7];
+var DEFAULT_EVERY_DAYS = 7;
+var DEFAULT_KEEP = 7;
+var MIN_KEEP = 2;
+var MAX_KEEP = 30;
+var localDay = (t) => {
+  const d = new Date(t);
+  return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 864e5;
+};
+function daysSince(fromIso, now2 = Date.now()) {
+  const t = Date.parse(fromIso || "");
+  if (!Number.isFinite(t)) return null;
+  return Math.max(0, Math.round(localDay(now2) - localDay(t)));
+}
+function scheduleState(lastIso, everyDays = DEFAULT_EVERY_DAYS, now2 = Date.now()) {
+  const every = SCHEDULES.includes(Number(everyDays)) ? Number(everyDays) : DEFAULT_EVERY_DAYS;
+  const days = daysSince(lastIso, now2);
+  if (days === null) return { every_days: every, days: null, due: true, overdue: true, next_due: null };
+  const t = new Date(Date.parse(lastIso));
+  const next = new Date(t.getFullYear(), t.getMonth(), t.getDate() + every);
+  const p = (n) => String(n).padStart(2, "0");
+  return { every_days: every, days, due: days >= every, overdue: days > every, next_due: `${next.getFullYear()}-${p(next.getMonth() + 1)}-${p(next.getDate())}` };
+}
+var FILE_RE = /^suds-device-backup-(\d{4}-\d{2}-\d{2})(?:-(\d{6}))?\.sudsbackup$/;
+function fileName(iso) {
+  const d = new Date(iso);
+  const p = (n) => String(n).padStart(2, "0");
+  return `suds-device-backup-${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}-${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}.sudsbackup`;
+}
+var isBackupName = (name) => FILE_RE.test(String(name || ""));
+var sortKey = (n) => {
+  const m = FILE_RE.exec(n);
+  return `${m[1]}-${m[2] || "000000"}`;
+};
+var oldestFirst = (names) => (names || []).filter(isBackupName).sort((a, b) => sortKey(a) < sortKey(b) ? -1 : sortKey(a) > sortKey(b) ? 1 : 0);
+function toRemove(names, keep = DEFAULT_KEEP) {
+  const n = Math.floor(Number(keep));
+  const k = Math.min(MAX_KEEP, Math.max(MIN_KEEP, Number.isFinite(n) ? n : DEFAULT_KEEP));
+  const ours = oldestFirst(names);
+  return ours.slice(0, Math.max(0, ours.length - k));
 }
 
 // local/vault.js
@@ -54111,6 +54170,7 @@ async function rekeyAfterRestore(v, currentDek, username, password, { userId, ke
   else delete next.dropped_after_restore;
   if (hints2) next.hints = hints2;
   delete next.rekey;
+  delete next.backup_key;
   if (others.length) {
     const c = await seal(await importDek(prev), dek2, AAD_CHAIN);
     next.chain = { iv: c.iv, ct: c.ct };
@@ -54213,6 +54273,20 @@ function withWrap(vault, wrap) {
 }
 function plaintextLeft(entries2) {
   return entries2.filter(([, v]) => isPlainSqlite(v)).map(([k]) => k);
+}
+var AAD_BACKUP_KEY = "suds-device-backup-key/v1";
+async function sealBackupKey(dekKey2, derived) {
+  const s = await seal(dekKey2, derived.raw, AAD_BACKUP_KEY);
+  return { salt: u83(derived.salt), iterations: derived.iterations, check: derived.check, iv: s.iv, ct: s.ct, created_at: (/* @__PURE__ */ new Date()).toISOString() };
+}
+async function openBackupKey(dekKey2, rec) {
+  if (!rec || !(rec.iv instanceof Uint8Array) || !(rec.ct instanceof Uint8Array)) return null;
+  try {
+    const raw = await open2(dekKey2, { format: IMAGE_FORMAT, version: VERSION2, iv: rec.iv, ct: rec.ct }, AAD_BACKUP_KEY);
+    return raw.length === 32 ? { raw, salt: u83(rec.salt), iterations: rec.iterations, check: rec.check } : null;
+  } catch {
+    return null;
+  }
 }
 
 // local/audit-runner.js
@@ -54928,15 +55002,18 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
   });
   router.get("/api/local/device", (ctx) => {
     if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
-    return { static: isStaticHost(), device_admin: isDeviceAdmin(ctx.user), signup_enabled: signupEnabled(), users: userCount(), clients: clientCount(), last_backup_at: import_db2.default.getSetting("last_backup_at", null), recovery: recoveryInfo() };
+    return { static: isStaticHost(), device_admin: isDeviceAdmin(ctx.user), signup_enabled: signupEnabled(), users: userCount(), clients: clientCount(), last_backup_at: import_db2.default.getSetting("last_backup_at", null), backup: backupInfo(), recovery: recoveryInfo() };
   });
   router.put("/api/local/device", (ctx) => {
     if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
     if (!isDeviceAdmin(ctx.user)) throw new import_http2.HttpError(403, "Only the person who manages this device can change this.");
-    const v = validate(ctx.body, { signup_enabled: { type: "boolean" } });
+    const v = validate(ctx.body, { signup_enabled: { type: "boolean" }, backup_every_days: { type: "number", integer: true }, backup_keep: { type: "number", integer: true, min: MIN_KEEP, max: MAX_KEEP } });
+    if (v.backup_every_days !== void 0 && !SCHEDULES.includes(v.backup_every_days)) throw new import_http2.HttpError(400, `Back up every ${SCHEDULES.join(", ")} days.`, { fields: { backup_every_days: `One of ${SCHEDULES.join(", ")}` } });
     if (v.signup_enabled !== void 0) import_db2.default.setSetting("local_signup", v.signup_enabled ? "1" : "0");
-    import_audit2.default.log({ user: ctx.user, action: "local.device.settings", details: { signup_enabled: v.signup_enabled } });
-    return { ok: true };
+    if (v.backup_every_days !== void 0) import_db2.default.setSetting("backup_every_days", String(v.backup_every_days));
+    if (v.backup_keep !== void 0) import_db2.default.setSetting("backup_keep", String(v.backup_keep));
+    import_audit2.default.log({ user: ctx.user, action: "local.device.settings", details: { signup_enabled: v.signup_enabled, backup_every_days: v.backup_every_days, backup_keep: v.backup_keep } });
+    return { ok: true, backup: backupInfo() };
   });
   const recoveryInfo = () => {
     const w = recoveryWrap(theVault);
@@ -55034,8 +55111,10 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
     const at = import_db2.default.now();
     const previous = import_db2.default.getSetting("last_backup_at", null);
     import_db2.default.setSetting("last_backup_at", at);
+    const previousTo = import_db2.default.getSetting("last_backup_to", null);
+    import_db2.default.setSetting("last_backup_to", "download");
     const clients = clientCount();
-    import_audit2.default.log({ user: ctx.user, action: "device.backup.created", details: { clients } });
+    import_audit2.default.log({ user: ctx.user, action: "device.backup.created", details: { clients, to: "download", trigger: "passphrase" } });
     const meta = { keys: keysHex(), org_name: import_db2.default.getSetting("org_name", ""), clients, users: userCount(), schema_version: Number(import_db2.default.getSetting("schema_version", "0")), created_at: at };
     if (hasAccounts(theVault) && dekKey) {
       const nextDek = newDek();
@@ -55046,8 +55125,8 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
     try {
       file = await asHttp(() => create({ bytes: sqlite_default.exportCurrent(), meta, passphrase: v.passphrase, appVersion: require_config().version }));
     } catch (e) {
-      if (previous) import_db2.default.setSetting("last_backup_at", previous);
-      else import_db2.default.run(`DELETE FROM settings WHERE key='last_backup_at'`);
+      putBack("last_backup_at", previous);
+      putBack("last_backup_to", previousTo);
       throw e;
     }
     const name = `suds-device-backup-${at.slice(0, 10)}.sudsbackup`;
@@ -55119,6 +55198,170 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
       }
     }
     return { ok: true, clients: info.clients, users: info.users, reload: false };
+  });
+  const putBack = (key, value) => {
+    if (value === null || value === void 0) import_db2.default.run(`DELETE FROM settings WHERE key=?`, key);
+    else import_db2.default.setSetting(key, value);
+  };
+  const keepCount = () => Math.min(MAX_KEEP, Math.max(MIN_KEEP, Number(import_db2.default.getSetting("backup_keep", String(DEFAULT_KEEP))) || DEFAULT_KEEP));
+  function backupInfo() {
+    const last = import_db2.default.getSetting("last_backup_at", null);
+    const st = scheduleState(last, Number(import_db2.default.getSetting("backup_every_days", String(DEFAULT_EVERY_DAYS))));
+    const k = theVault && theVault.backup_key;
+    const checkAt = import_db2.default.getSetting("backup_check_at", null);
+    return {
+      ...st,
+      last_at: last,
+      last_to: import_db2.default.getSetting("last_backup_to", null),
+      keep: keepCount(),
+      schedule_chosen: import_db2.default.getSetting("backup_every_days", null) !== null,
+      passphrase_kept: !!k,
+      passphrase_since: k ? k.created_at : null,
+      check: checkAt ? { at: checkAt, ok: import_db2.default.getSetting("backup_check_ok", "0") === "1", problem: import_db2.default.getSetting("backup_check_problem", null) || null, backup_created_at: import_db2.default.getSetting("backup_check_backup_at", null) } : null
+    };
+  }
+  const mayBackUp = (ctx, what = "make its backups") => {
+    if (!ctx.user) throw new import_http2.HttpError(401, "Sign in first");
+    if (!isDeviceAdmin(ctx.user)) throw new import_http2.HttpError(403, `Only the person who manages this device can ${what}.`);
+  };
+  router.post("/api/local/backup/schedule", async (ctx) => {
+    mayBackUp(ctx, "set up its backups");
+    const v = validate(ctx.body, { passphrase: { type: "string", required: true, maxLen: 500 }, every_days: { type: "number", integer: true }, keep: { type: "number", integer: true, min: MIN_KEEP, max: MAX_KEEP } });
+    if (v.every_days !== void 0 && !SCHEDULES.includes(v.every_days)) throw new import_http2.HttpError(400, `Back up every ${SCHEDULES.join(", ")} days.`, { fields: { every_days: `One of ${SCHEDULES.join(", ")}` } });
+    if (v.passphrase.length < MIN_PASSPHRASE) throw new import_http2.HttpError(400, `Choose a passphrase of at least ${MIN_PASSPHRASE} characters.`, { fields: { passphrase: `At least ${MIN_PASSPHRASE} characters` } });
+    if (phase !== "open" || !dekKey || !hasAccounts(theVault) || !sqlite_default.hasSealer()) throw new import_http2.HttpError(409, "This device cannot keep a backup passphrase right now. Sign out, sign in again and try once more.");
+    const derived = await asHttp(() => deriveKey(v.passphrase));
+    const rec = await sealBackupKey(dekKey, derived);
+    derived.raw.fill(0);
+    const replaced = !!theVault.backup_key;
+    await saveVault({ ...theVault, backup_key: rec });
+    if (v.every_days !== void 0) import_db2.default.setSetting("backup_every_days", String(v.every_days));
+    if (v.keep !== void 0) import_db2.default.setSetting("backup_keep", String(v.keep));
+    import_audit2.default.log({ user: ctx.user, action: "device.backup.schedule", details: { on: true, replaced, every_days: backupInfo().every_days, keep: keepCount() } });
+    return { ok: true, backup: backupInfo() };
+  });
+  router.delete("/api/local/backup/schedule", async (ctx) => {
+    mayBackUp(ctx, "set up its backups");
+    if (theVault && theVault.backup_key) {
+      const next = { ...theVault };
+      delete next.backup_key;
+      await saveVault(next);
+    }
+    import_audit2.default.log({ user: ctx.user, action: "device.backup.schedule", details: { on: false } });
+    return { ok: true, backup: backupInfo() };
+  });
+  let pendingRun = null;
+  router.post("/api/local/backup/run", async (ctx) => {
+    mayBackUp(ctx);
+    const v = validate(ctx.body, { to: { type: "string", required: true, enum: ["folder", "download"] }, trigger: { type: "string", enum: ["schedule", "now"] }, existing: { type: "array", maxLen: 5e3, of: "string" } });
+    const rec = theVault && theVault.backup_key;
+    const derived = rec && dekKey ? await openBackupKey(dekKey, rec) : null;
+    if (!derived) throw new import_http2.HttpError(409, "Type the backup passphrase again to carry on with scheduled backups (This device \u203A Keep your records safe).", { backupPassphraseNeeded: true });
+    const at = import_db2.default.now();
+    const clients = clientCount();
+    const meta = { keys: keysHex(), org_name: import_db2.default.getSetting("org_name", ""), clients, users: userCount(), schema_version: Number(import_db2.default.getSetting("schema_version", "0")), created_at: at };
+    if (hasAccounts(theVault) && dekKey) {
+      const nextDek = newDek();
+      meta.device = await backupRecord(theVault, dekKey, nextDek);
+      nextDek.fill(0);
+    }
+    const previous = import_db2.default.getSetting("last_backup_at", null);
+    const previousTo = import_db2.default.getSetting("last_backup_to", null);
+    let bytes3;
+    try {
+      import_db2.default.setSetting("last_backup_at", at);
+      import_db2.default.setSetting("last_backup_to", v.to);
+      bytes3 = sqlite_default.exportCurrent();
+    } finally {
+      putBack("last_backup_at", previous);
+      putBack("last_backup_to", previousTo);
+    }
+    let file;
+    try {
+      file = await asHttp(() => createWithKey({ bytes: bytes3, meta, derived, appVersion: require_config().version }));
+    } finally {
+      derived.raw.fill(0);
+      bytes3.fill(0);
+    }
+    const name = fileName(at);
+    pendingRun = { at, to: v.to, trigger: v.trigger || "now", clients, name };
+    const remove = v.to === "folder" ? toRemove([...(v.existing || []).filter((n) => n !== name), name], keepCount()) : [];
+    ctx.res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Disposition": `attachment; filename="${name}"`, "X-Suds-Backup-Remove": JSON.stringify(remove) });
+    ctx.res.end(import_buffer.Buffer.from(file));
+  });
+  router.post("/api/local/backup/run/done", (ctx) => {
+    mayBackUp(ctx);
+    const v = validate(ctx.body, { ok: { type: "boolean" }, removed: { type: "number", integer: true, min: 0, max: 5e3 }, problem: { type: "string", enum: ["permission", "write", "space", "other"] } });
+    if (!pendingRun) throw new import_http2.HttpError(409, "No backup is waiting to be written. Make a new one.");
+    const p = pendingRun;
+    pendingRun = null;
+    if (v.ok === 1) {
+      import_db2.default.setSetting("last_backup_at", p.at);
+      import_db2.default.setSetting("last_backup_to", p.to);
+      import_audit2.default.log({ user: ctx.user, action: "device.backup.created", details: { clients: p.clients, to: p.to, trigger: p.trigger, old_files_removed: v.removed || 0 } });
+    } else import_audit2.default.log({ user: ctx.user, action: "device.backup.failed", details: { to: p.to, trigger: p.trigger, problem: v.problem || "other" } });
+    return { ok: true, backup: backupInfo() };
+  });
+  const CORE_TABLES = ["settings", "users", "clients", "audit_log"];
+  router.post("/api/local/backup/check", async (ctx) => {
+    mayBackUp(ctx, "check its backups");
+    const v = validate(ctx.body, { file_b64: { type: "string", required: true, maxLen: 400 * 1024 * 1024 }, passphrase: { type: "string", required: true, maxLen: 500 } });
+    const file = Uint8Array.from(import_buffer.Buffer.from(v.file_b64.replace(/^data:[^,]*,/, ""), "base64"));
+    let out2 = null;
+    let info = null;
+    let problem = null;
+    let message = null;
+    let missing2 = [];
+    try {
+      out2 = await open(file, v.passphrase);
+    } catch (e) {
+      if (!(e instanceof BackupError)) throw e;
+      problem = e.code;
+      message = e.message;
+    }
+    if (out2) {
+      try {
+        info = sqlite_default.inspect(out2.bytes, (d) => ({
+          integrity: Object.values(d.one("PRAGMA quick_check") || {})[0] || null,
+          tables: String((d.one(`SELECT group_concat(name, '|') AS n FROM sqlite_master WHERE type='table'`) || {}).n || "").split("|").filter(Boolean),
+          schema_version: Number((d.one(`SELECT value FROM settings WHERE key='schema_version'`) || {}).value || 0),
+          clients: d.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n,
+          users: d.one(`SELECT COUNT(*) n FROM users`).n,
+          fingerprint: (d.one(`SELECT value FROM settings WHERE key='encryption_key_fingerprint'`) || {}).value || null
+        }));
+      } catch {
+        problem = "tampered";
+        message = "This backup file is damaged: its database cannot be read.";
+      }
+      out2.bytes.fill(0);
+    }
+    if (info) {
+      const live = String((import_db2.default.one(`SELECT group_concat(name, '|') AS n FROM sqlite_master WHERE type='table'`) || {}).n || "").split("|").filter(Boolean);
+      const current2 = Number(import_db2.default.getSetting("schema_version", "0"));
+      missing2 = (info.schema_version === current2 ? live : CORE_TABLES).filter((t) => !info.tables.includes(t));
+      const { sha256: sha2562 } = require_crypto();
+      if (info.schema_version > import_db2.default.LATEST_SCHEMA_VERSION) {
+        problem = "version";
+        message = "This backup was made by a newer version of SUDS: this device could not restore it until SUDS is updated.";
+      } else if (info.integrity !== "ok") {
+        problem = "tampered";
+        message = "This backup file is damaged: SQLite found errors in its database.";
+      } else if (info.fingerprint && info.fingerprint !== sha2562("suds-key-check:" + out2.meta.keys.enc).slice(0, 32)) {
+        problem = "keys";
+        message = "This backup does not carry the keys its records were written with, so it could not be restored.";
+      } else if (missing2.length) {
+        problem = "tables";
+        message = `This backup is missing part of the database (${missing2.length} table${missing2.length === 1 ? "" : "s"}), so a restore would not bring everything back.`;
+      }
+    }
+    const ok = !problem;
+    const createdAt = out2 ? out2.meta.created_at || out2.header.created_at || null : null;
+    import_db2.default.setSetting("backup_check_at", import_db2.default.now());
+    import_db2.default.setSetting("backup_check_ok", ok ? "1" : "0");
+    putBack("backup_check_problem", problem);
+    putBack("backup_check_backup_at", createdAt);
+    import_audit2.default.log({ user: ctx.user, action: "device.backup.checked", details: { ok, problem, backup_created_at: createdAt, clients: info ? info.clients : null, tables: info ? info.tables.length : null, missing_tables: missing2 } });
+    return { ok, problem, message, created_at: createdAt, app_version: out2 ? out2.header.app_version : null, clients: info ? info.clients : null, users: info ? info.users : null, tables: info ? info.tables.length : null, missing: missing2, backup: backupInfo() };
   });
   const demo = require_demo();
   const demoOpts = () => ({ alongside: false });
