@@ -5,6 +5,7 @@
 //   * a contact with notes is not kept as it is: the screen offers to keep it without them, and what is kept holds no
 //     notes or participant code; Discard removes one for good;
 //   * back online, the waiting contact is sent by itself, once: one contact at the office, its kit drawn once;
+//   * with the session gone, Send now opens the sign-in screen (not "no signal"), and signing in sends the contact;
 //   * Undo of a contact puts "Same as last contact" back to the bundle before it, or hides it when there was none;
 //   * a worker asks for their phone to be set up for the field; an administrator approves it under Synced devices.
 // Every new state is put through axe (WCAG 2.1 A/AA).
@@ -118,6 +119,27 @@ try {
   const flushed = await nav.page.evaluate(async () => (await import('./outreach-queue.js')).flush({ all: true }));
   eq(flushed.sent, 0, 'nothing left to send');
   eq((await shift()).contacts, before.contacts + 1, 'still one contact');
+
+  // ---- 3b. the session ended while a contact waited (review of 1.23.0): Send now asks to sign in, not "no signal",
+  // and the contact is sent once the worker has signed in again ----
+  await nav.go('outreach');
+  await nav.ctx.setOffline(true); offline = true;
+  await plus(kit.id);
+  await nav.page.click('[data-outreach-save]');
+  ok(await until(async () => (await chipCount(nav.page)) === 1), 'a second contact waits with no signal');
+  await nav.ctx.clearCookies();
+  const refused = nav.page.waitForResponse(r => r.url().includes('/api/interventions') && r.request().method() === 'POST' && r.status() === 401, { timeout: 15000 }).then(() => true, () => false);
+  await nav.ctx.setOffline(false); offline = false;
+  ok(await refused, 'back online with the session gone, the office refuses to take it (401)');
+  eq(await chipCount(nav.page), 1, 'and it stays on the phone');
+  await nav.page.click('[data-outreach-send-now]');
+  ok(await until(() => nav.page.$('input[name=username]')), 'Send now with the session gone opens the sign-in screen');
+  ok(await toastSays(nav.page, /session has ended/), 'and says the session ended, not that there is no signal');
+  ok(!/Still no signal/.test((await nav.page.$$eval('.toast', els => els.map(e => e.textContent))).join(' | ')), 'no "Still no signal" message');
+  await nav.page.fill('input[name=username]', 'mrivera'); await nav.page.fill('input[name=password]', PW); await nav.page.click('button[type=submit]');
+  await nav.page.waitForSelector('.layout', { timeout: 15000 });
+  ok(await until(async () => (await shift()).contacts === before.contacts + 2, { timeout: 15000 }), 'signed in again, the waiting contact is sent');
+  ok(await until(async () => (await chipCount(nav.page)) === 0), 'and the header count goes');
 
   // ---- 4. Undo puts "Same as last contact" back ----
   await nav.go('outreach');

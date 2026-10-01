@@ -65,15 +65,20 @@ export async function available() { try { await open(); return true; } catch { r
 export async function keep({ key, payload, what, typeLabel }) {
   if (!state.user || state.local) throw new Error('not on the office app');
   if (identifies(payload)) throw new Error('A contact with a participant code or notes is not kept on this phone.');
-  await tx('readwrite', (s) => s.put({ key, user_id: state.user.id, payload, what: what || '', type_label: typeLabel || '', queued_at: new Date().toISOString(), error: null }));
+  const uid = state.user.id;
+  await tx('readwrite', (s) => s.put({ key, user_id: uid, payload, what: what || '', type_label: typeLabel || '', queued_at: new Date().toISOString(), error: null }));
   changed();
 }
 /** This account's waiting contacts, oldest first. */
 export async function waiting() {
   if (!state.user || state.local) return [];
+  // The account asked for, taken before the wait: a sign-out (or an ended session) while IndexedDB answers must not
+  // throw, and must not show the list to whoever is signed in by then.
+  const uid = state.user.id;
   let all = [];
   try { all = (await tx('readonly', (s) => s.getAll())) || []; } catch { return []; }
-  return all.filter(x => x.user_id === state.user.id).sort((a, b) => String(a.queued_at).localeCompare(String(b.queued_at)));
+  if (!state.user || state.user.id !== uid) return [];
+  return all.filter(x => x.user_id === uid).sort((a, b) => String(a.queued_at).localeCompare(String(b.queued_at)));
 }
 export async function discard(key) { await tx('readwrite', (s) => s.delete(key)); changed(); }
 
@@ -81,28 +86,31 @@ let flushing = null;
 /**
  * Send this account's waiting contacts. `all`: also the ones the office refused before (Send now); otherwise those
  * are left for the worker to look at. Stops at the first sign of no signal or an ended session. Returns
- * { sent, failed, left }.
+ * { sent, failed, left, stopped }: stopped is 'offline', 'signin' (the session has ended), 'office' or null.
  */
 export function flush({ all = false } = {}) {
   if (flushing) return flushing;
   flushing = (async () => {
-    let sent = 0, failed = 0;
+    let sent = 0, failed = 0, stopped = null;
     for (const item of await waiting()) {
       if (item.error && !all) continue;
       try {
         await post('/api/interventions', item.payload, { idempotencyKey: item.key, headers: { 'X-Suds-Queued': '1' }, quiet: true });
         await tx('readwrite', (s) => s.delete(item.key)); sent++;
       } catch (e) {
-        if (e && (e.offline || e.status === 401 || e.status === 403 || e.status >= 500 || e.status === 429)) break;
+        // Why it stopped, for Send now to say: no signal, the session has ended (sign in again), or the office busy.
+        if (e && (e.offline || e.status === 401 || e.status === 403 || e.status >= 500 || e.status === 429)) { stopped = e.offline ? 'offline' : e.status === 401 ? 'signin' : 'office'; break; }
         failed++;
         await tx('readwrite', (s) => s.put({ ...item, error: (e && e.message) || 'The office did not accept it.', failed_at: new Date().toISOString() }));
       }
     }
     const left = (await waiting()).length;
+    // An ended session: the header drawn after signing in again sends them at once, not 20 seconds later.
+    if (stopped === 'signin') lastAuto = 0;
     changed();
     if (sent) toast(`${sent} waiting contact${sent === 1 ? '' : 's'} sent to the office${left ? `; ${left} still waiting` : ''}.`, 'ok');
     if (failed) toast(`${failed} waiting contact${failed === 1 ? ' was' : 's were'} not accepted by the office: see Street outreach.`, 'error');
-    return { sent, failed, left };
+    return { sent, failed, left, stopped };
   })().finally(() => { flushing = null; });
   return flushing;
 }

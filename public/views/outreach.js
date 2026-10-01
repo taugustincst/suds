@@ -1,4 +1,4 @@
-import { h, route, get, post, del, state, toast, undoToast, can, pageHead, prefs, fmt, listEntries, emptyState, stat, clear, announce, newIdempotencyKey, confirmDialog } from '../app.js';
+import { h, route, get, post, del, state, toast, undoToast, can, pageHead, prefs, fmt, listEntries, emptyState, stat, clear, announce, newIdempotencyKey, confirmDialog, render } from '../app.js';
 import * as Q from '../outreach-queue.js';
 
 // Street outreach (1.17.0; server/outreach.js, docs/USER_GUIDE.md "Street outreach"). One screen, big targets,
@@ -266,8 +266,14 @@ route('outreach', async () => {
     const sendBtn = h('button', { type: 'button', class: 'btn', 'data-outreach-send-now': '1', onClick: async () => {
       sendBtn.setAttribute('aria-disabled', 'true'); sendBtn.textContent = 'Sending…';
       const r = await Q.flush({ all: true });
+      // The session ended while they waited (review of 1.23.0): say so and sign in again, rather than "no signal".
+      // They stay on this phone and are sent once the worker has signed in (the header sends them).
+      if (r.stopped === 'signin') {
+        toast('Your session has ended: sign in again. The waiting contacts stay on this phone and are sent once you have.', 'error');
+        state.user = null; render(); return;
+      }
       await drawShift();
-      if (r.left && !r.sent && !r.failed) toast('Still no signal: they stay on this phone and go when you are back online.', 'error');
+      if (r.left && !r.sent && !r.failed) toast(r.stopped === 'office' ? 'The office could not take them just now: they stay on this phone. Try again in a moment.' : 'Still no signal: they stay on this phone and go when you are back online.', 'error');
       (waitCard.isConnected && !waitCard.hidden ? waitCard.querySelector('h2') : typeGroup.querySelector('input:checked'))?.focus?.();
     } }, 'Send now');
     waitCard.replaceChildren(

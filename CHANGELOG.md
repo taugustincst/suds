@@ -131,6 +131,12 @@ Built for 1.23.0, not yet released. No migration, no new permission or route (th
   and a supervisor's *Remind worker* to-do open, although the referral had left *Waiting to hear what happened*; only
   **Record outcome** closed them. Both doors now close them the same way (`server/rules/follow-ups.js`, audited as
   `task.update`). Tests: `test/supervision-referrals.test.js`, `test/follow-ups.test.js`.
+* **Send now with an ended session.** A street-outreach contact waiting on the phone, sent with **Send now** after
+  the session had ended (timed out, or signed out elsewhere), was answered *Still no signal*, and nothing asked the
+  worker to sign in. It now says the session has ended and opens the sign-in screen; the contacts stay on the phone
+  and are sent as soon as the worker has signed in again (not up to 20 seconds later). The waiting list no longer
+  throws when the session ends while it is being read, and never shows one account's list to the next one signed
+  in. `scripts/ui/offline-outreach.mjs` checks it (52 checks).
 
 ## 1.22.0 — 2026-10-01
 
