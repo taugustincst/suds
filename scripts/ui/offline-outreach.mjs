@@ -7,12 +7,20 @@
 //   * back online, the waiting contact is sent by itself, once: one contact at the office, its kit drawn once;
 //   * with the session gone, Send now opens the sign-in screen (not "no signal"), and signing in sends the contact;
 //   * Undo of a contact puts "Same as last contact" back to the bundle before it, or hides it when there was none;
-//   * a worker asks for their phone to be set up for the field; an administrator approves it under Synced devices.
+//   * a worker asks for their phone to be set up for the field; an administrator approves it under Synced devices;
+//   * 1.23.1: the office app's service worker installs and activates although the server answers 404 for local/*
+//     (an office server with local mode off: before, the unread 404s held every connection and the install never
+//     finished); with no signal, Clients, To-dos and Street outreach open from the menu; a reload with no signal
+//     loads the app from the worker's copy and shows a plain offline page (not "Failed to fetch dynamically imported
+//     module") that links to Street outreach, whose waiting list still works and is sent when the signal is back.
 // Every new state is put through axe (WCAG 2.1 A/AA).
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import { makeChecks, settle, until } from './assert.mjs';
+
+// The worker's own requests (its install) go through context.route only with this set; read at launch.
+process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = '1';
 
 const base = process.env.SUDS_URL || 'http://127.0.0.1:8090';
 const PW = 'Navigator2026!!';
@@ -28,8 +36,9 @@ function watch(page, who) {
   page.on('console', m => { if (m.type() === 'error' && !/40[134]|Failed to load resource/.test(m.text()) && !(offline && /ERR_INTERNET_DISCONNECTED|Failed to fetch|NetworkError/.test(m.text()))) errors.push(`${who} CONSOLE ${m.text().slice(0, 200)}`); });
   page.on('response', r => { if (r.status() >= 500) errors.push(`${who} HTTP ${r.status()} ${r.request().method()} ${r.url()}`); });
 }
-async function session(username, password, viewport = { width: 1280, height: 900 }) {
+async function session(username, password, viewport = { width: 1280, height: 900 }, prepare = null) {
   const ctx = await browser.newContext({ viewport, ...(viewport.width < 600 ? { isMobile: true, hasTouch: true } : {}) });
+  if (prepare) await prepare(ctx);
   const page = await ctx.newPage(); watch(page, username);
   await page.goto(base + '/#/login'); await settle(page);
   await page.fill('input[name=username]', username); await page.fill('input[name=password]', password); await page.click('button[type=submit]');
@@ -188,6 +197,57 @@ try {
   eq(await nav.page.$eval('[data-field-request-status]', e => e.dataset.fieldRequestStatus), 'approved', 'the worker sees it approved');
   await admin.ctx.close();
   await nav.ctx.close();
+
+  // ---- 6. the office app's service worker, and the app with no signal (evaluation of 1.23.0) ----
+  // The suite's server has local mode on; an office server has it off and answers 404 for local/*. The worker's
+  // requests for those three files are sent to an address the server does not have: a real 404 on a real connection.
+  const phone = await session('mrivera', PW, { width: 390, height: 844 }, (ctx) => ctx.route(/\/local\/(kernel\.js|sql-wasm\.wasm|audit-worker\.js)/, (r) => r.continue({ url: `${base}/local/no-such-file.js` })));
+  const p = phone.page;
+  const swState = await p.evaluate(() => Promise.race([navigator.serviceWorker.ready.then(r => (r.active ? r.active.state : 'none')), new Promise(r => setTimeout(() => r('timed out'), 20000))]));
+  ok(['activating', 'activated'].includes(swState), 'the office app\'s service worker installs and activates with local/* answering 404', swState);
+  const shell = await p.evaluate(async () => { const c = await caches.open((await caches.keys()).find(k => /^suds-shell-/.test(k))); return (await c.keys()).map(r => new URL(r.url).pathname); });
+  ok(shell.length >= 59 && ['/views/clients.js', '/views/tasks.js', '/views/outreach.js', '/outreach-queue.js'].every(f => shell.includes(f)), `the whole shell is cached (${shell.length} files)`, shell.length);
+  ok(await until(() => p.evaluate(() => !!navigator.serviceWorker.controller)), 'and the worker controls the page');
+  const health = await p.evaluate(() => navigator.serviceWorker.controller && fetch('/api/health').then(r => r.status, () => 0));
+  eq(health, 200, 'a request after the install is answered (it used to wait for ever)');
+  const raw = async () => /Failed to fetch|dynamically imported module|could not be shown/i.test(await p.textContent('.main'));
+  const fromMenu = async (hash) => {
+    await p.click('.mobilebar button[aria-controls=sidebar]');
+    await until(() => p.$eval('.sidebar', e => e.classList.contains('open')));
+    const link = `.sidebar a[href="#/${hash}"]`;
+    if (!(await p.isVisible(link))) await p.click('.sidebar details.nav-more > summary');
+    await p.click(link); await settle(p);
+  };
+  const shift6 = async () => (await phone.api('GET', `/api/outreach/shift?since=${encodeURIComponent(since)}`)).data.contacts;
+  const officeBefore = await shift6();
+  await phone.go('dashboard');
+  await phone.ctx.setOffline(true); offline = true;
+  for (const [hash, name] of [['clients', 'Clients'], ['tasks', 'To-dos']]) {
+    await fromMenu(hash);
+    ok(await p.$('[data-offline-page]'), `with no signal, ${name} opens from the menu: a page that says the app is offline`);
+    ok(!(await raw()), `${name}: not the browser's "Failed to fetch dynamically imported module"`, (await p.textContent('.main')).slice(0, 200));
+  }
+  await axe(p, 'the offline page');
+  await fromMenu('outreach');
+  eq((await p.textContent('.main h1')).trim(), 'Street outreach', 'with no signal, Street outreach opens from the menu');
+  // A reload with no signal: the app comes from the worker's copy, and knows who is signed in in this tab.
+  await phone.go('tasks');
+  await p.reload(); await p.waitForSelector('.layout', { timeout: 15000 }); await settle(p);
+  ok(await p.$('[data-offline-page]'), 'a reload with no signal loads the app and shows the plain offline page');
+  ok(!(await raw()), 'not the raw error', (await p.textContent('.main')).slice(0, 200));
+  ok(!(await p.$('input[name=password]')), 'not the sign-in form, which cannot work with no signal');
+  ok(await p.$('#banners [data-banner="offline"]'), 'the offline banner is up');
+  await axe(p, 'the offline page after a reload with no signal');
+  await p.click('[data-offline-page] a[data-offline-outreach]'); await settle(p);
+  eq((await p.textContent('.main h1')).trim(), 'Street outreach', 'its link opens Street outreach');
+  await p.click('[data-outreach-item="naloxone_kits"] button[data-step="1"]');
+  await p.click('[data-outreach-save]');
+  ok(await toastSays(p, /kept on this phone/), 'a contact saved after the offline reload is kept on this phone');
+  ok(await until(async () => (await chipCount(p)) === 1), 'and the header says 1 contact is waiting to send');
+  await phone.ctx.setOffline(false); offline = false;
+  ok(await until(async () => (await chipCount(p)) === 0, { timeout: 15000 }), 'back online, it is sent');
+  ok(await until(async () => (await shift6()) === officeBefore + 1), 'and the office has it, once');
+  await phone.ctx.close();
 } catch (e) {
   fail(`threw: ${e && e.stack ? e.stack.split('\n').slice(0, 4).join(' | ') : e}`);
 }
