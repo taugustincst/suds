@@ -125,6 +125,25 @@ vendor may not fill it in.
 | **Vendor support effort** | — | Vendor hours per month, by ticket severity | Recorded — feeds [templates/PRICING.md](templates/PRICING.md) |
 | **Safety / integrity** | — | Records lost, shown to the wrong person, or failed audit-chain verification | Zero (any one is a stop criterion, [docs/ADOPTION.md](../ADOPTION.md)) |
 
+### Measurement worksheet: what SUDS already records
+
+Five figures the pilot can take from SUDS itself, the same way at day 30, 60 and 90, with no new screen or report
+(SUDS 1.23.1 has none for this). Fill one row per period; keep the baseline column from the current process. Where a
+figure comes from the database, the IT partner runs the query on the restored copy from the restore drill (week −1),
+read-only (`sqlite3 -readonly <copy>.db`), with the period set first (`.param set :from '2026-11-01'`,
+`.param set :to '2026-11-30'`, and for W4 `.param set :n 3`). The queries read only dates, statuses and ids, never an encrypted (`_enc`)
+column, and the copy itself is handled under the programme's own policy for a database copy.
+
+| # | Figure | Baseline (current process) | From SUDS: how | Day 30 | Day 60 | Day 90 |
+| --- | --- | --- | --- | --- | --- | --- |
+| W1 | **Hours to prepare the monthly funder report** | The preparer's log or timesheets for the last two reports | Each preparer logs the work in **My time**, category *Admin*, with a description that begins "Funder report" (it is encrypted like every description). The pilot lead adds up those minutes from **My time › Export to Excel** | | | |
+| W2 | **Contacts logged per shift** | Paper log: contacts per worker per shift, two sample weeks | Street outreach's **My shift** shows a worker's count on screen. For the sheet: **Visits › Export to Excel** for the period, outreach and naloxone distribution visits counted per worker per day; or `SELECT user_id, date(occurred_at) AS day, count(*) FROM interventions WHERE type IN ('outreach','naloxone_distribution') AND date(occurred_at) BETWEEN :from AND :to GROUP BY 1, 2;` | | | |
+| W3 | **Follow-ups closed on time** | Of 20 recent follow-ups in the spreadsheet or diary, how many were done by their date | `SELECT count(*) AS due, sum(status = 'done' AND completed_at IS NOT NULL AND date(completed_at) <= date(due_at)) AS on_time FROM tasks WHERE due_at IS NOT NULL AND status != 'cancelled' AND date(due_at) BETWEEN :from AND :to;` (to-dos made from a follow-up date on a call, visit or referral are included). Dates are UTC: a to-do due late in the evening may count a day out | | | |
+| W4 | **Notes signed within N days** (agree N before go-live; 3 is common) | Of 20 recent paper or EHR notes, how many were complete within N days of the contact | `SELECT count(*) AS notes, sum(status IN ('signed','amended') AND julianday(signed_at) - julianday(occurred_at) <= :n) AS signed_in_time FROM notes WHERE deleted_at IS NULL AND date(occurred_at) BETWEEN :from AND :to;`. On screen, a supervisor sees **Unsigned notes across your team** and each worker **Unfinished notes** on Home | | | |
+| W5 | **Contacts sent after no signal** | — (paper: contacts re-keyed later) | SUDS does not mark a contact as having waited on the phone. Estimate it: outreach and naloxone distribution visits recorded at the office more than 15 minutes after they happened, `SELECT count(*) FROM interventions WHERE type IN ('outreach','naloxone_distribution') AND (julianday(created_at) - julianday(occurred_at)) * 1440 > 15 AND date(occurred_at) BETWEEN :from AND :to;`. It also counts a contact entered late by hand; ask the workers which it was (W-feedback, below). A contact made on a field device (an offline copy that syncs) keeps the time the device recorded it, so this query does not count it: ask those workers how often **⇅ N to send** showed contacts waiting at the end of a shift | | | |
+
+Read W2 to W5 next to the staff survey and the worker feedback: a higher count is good only if it is true.
+
 ### Copilot arm (only where the agreement is recorded)
 
 Only for a pilot on an office server whose programme has recorded its BAA with Part 2 QSOA terms with the AI
@@ -147,6 +166,27 @@ the pilot lead extracts (or the IT partner, from the database) and the vendor do
 - Time the same people doing the same kind of work; say if the pilot month was unusual (a surge, a new hire).
 - Report misses as well as hits. A case study ([templates/CASE-STUDY-TEMPLATE.md](templates/CASE-STUDY-TEMPLATE.md))
   may quote only measured numbers from this sheet.
+
+### Worker feedback during the pilot
+
+SUDS has no feedback form, and needs none for a pilot: a **to-do** carries it, from the worker to the pilot lead, in
+the app the worker already has open. (The complaints register under **Privacy & Part 2** is for a client's privacy
+complaint under 42 CFR §2.4; never use it for staff feedback.)
+
+1. **At go-live**, the pilot lead makes one to-do for each pilot worker, assigned to them, with no client, titled
+   *Pilot feedback: what got in your way this week?*, due on the day of the weekly stand-up, and makes it again each
+   week (**+ Add a to-do** on the To-dos page; the quick date **In a week**).
+2. **The worker** answers in a to-do of their own: **+ Log → To-do**, title beginning *Pilot feedback:*, **Client
+   (optional)** left empty, **Assigned to** the pilot lead, the details in **Details**. Then they tick the weekly
+   to-do done. Something blocking work now (a screen that refuses, a contact that will not send) is the same to-do
+   with **Priority** *urgent*, the same day.
+3. **No client details in feedback.** Say what the screen did, not who it was for: "the referral form asked for a
+   consent I had already recorded", not a name. A to-do's title and details are encrypted, but what it says is
+   copied into the issues log the vendor reads.
+4. **The pilot lead** reads the *Pilot feedback* to-dos before each check-in (section 4), copies each item to the
+   issues log with an owner (no client detail), and marks it done. The vendor sees the issues log, never the to-dos.
+5. **At day 30 and day 90**, add the count of feedback items, and how many were fixed or explained, to the
+   evaluation (section 7).
 
 ## 6. Exit and data-return plan
 

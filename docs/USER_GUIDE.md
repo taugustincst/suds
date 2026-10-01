@@ -1,5 +1,8 @@
 # SUDS user guide (navigators, clinicians, supervisors)
 
+New to SUDS, or want a page to print? [QUICK-START-WORKERS.md](QUICK-START-WORKERS.md) has one-screen task cards
+in plain language: log a contact, street outreach with or without signal, to-dos, notes, referrals, a field phone.
+
 ## The three things to know
 1. **Home** shows what needs attention today and where you left off — on any device.
 2. **+ Log** (blue button; bottom-right on a phone) logs a visit, an overdose or reversal, a call, a text, a note, a to-do, a referral or time.
