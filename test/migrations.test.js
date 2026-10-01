@@ -791,6 +791,13 @@ test('SUDS 1.23.0\'s first start on a 1.22.0 database: county consents, releases
     // Migration 67: the new columns, NULL on every to-do 1.22.0 made, and their indexes.
     assert.equal(db().one(`SELECT COUNT(*) n FROM tasks WHERE call_id IS NOT NULL OR intervention_id IS NOT NULL`).n, 0, 'no to-do linked yet');
     for (const i of ['idx_tasks_call', 'idx_tasks_intervention']) assert.ok(db().one(`SELECT 1 x FROM sqlite_master WHERE type='index' AND name=?`, i), i);
+    // Migration 69 (built for 1.24.0): tasks.note_id, NULL on every to-do (the old reminder keeps opening the drafts
+    // list, and still closes below), and running it again changes nothing.
+    assert.ok(!cols.tasks.includes('note_id'), '1.22.0 had no tasks.note_id');
+    assert.equal(db().one(`SELECT COUNT(*) n FROM tasks WHERE note_id IS NOT NULL`).n, 0, 'no reminder linked to a draft');
+    const m69 = require('../server/db');
+    assert.ok(db().all(`PRAGMA table_info(tasks)`).some((c) => c.name === 'note_id' && c.type === 'TEXT' && !c.notnull && c.dflt_value === null));
+    assert.equal(m69.LATEST_SCHEMA_VERSION, 69);
     // The field scope still follows the account; the whole device stays whole.
     const DEV = require('../server/devices');
     assert.equal(DEV.accountFieldBound(user.id), true, 'the field device\'s account is still held to the field scope');

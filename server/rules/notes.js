@@ -65,6 +65,11 @@ function closeSignReminders(authorId, noteId, clientId, { cause = 'signed' } = {
     if (cause === 'deleted') db.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, now, t.id);
     else db.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now, now, t.id);
   }
+  // A reminder linked to this draft (tasks.note_id, built for 1.24.0) that stays open, because other drafts of theirs on
+  // this record are left, loses the link: it opens the client's drafts list again rather than a note with nothing to
+  // finish. The reminder is not re-pointed at another draft (the supervisor chose this one); it closes as before.
+  const closed = new Set(done.map(t => t.id));
+  for (const t of db.all(`SELECT id FROM tasks WHERE note_id=? AND status IN ('open','in_progress')`, noteId)) if (!closed.has(t.id)) db.run(`UPDATE tasks SET note_id=NULL, updated_at=? WHERE id=?`, now, t.id);
   return done.map(t => t.id);
 }
 

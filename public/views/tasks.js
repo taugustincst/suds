@@ -28,8 +28,8 @@ export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
     if (isNew) await post('/api/tasks', d); else await put(`/api/tasks/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast('To-do saved', 'ok'); m.close(); onDone && onDone();
   } });
-  const src = isNew ? null : sourceButton(values, () => m.close(), onDone);
-  const m = modal(isNew ? 'New to-do' : 'Edit to-do', src ? h('div', {}, h('p', { class: 'btn-row' }, src), f) : f);
+  const src = isNew ? [] : sourceButtons(values, () => m.close(), onDone);
+  const m = modal(isNew ? 'New to-do' : 'Edit to-do', src.length ? h('div', {}, h('p', { class: 'btn-row' }, src), f) : f);
 }
 // ---- the record a to-do came from (1.23.1) ----
 // A follow-up from a call or a visit, a referral's to-do and a supervisor's reminder to record a referral's outcome
@@ -42,15 +42,26 @@ const SOURCES = [['referral_id', 'referral', 'referrals:read', '/api/referrals/'
 // isSignReminder) has no note id (that would be a new column), but it is about the author's drafts on its client's
 // record: it opens the client's Notes tab showing the reader's own drafts. It used to open only as Edit to-do, with no way
 // to the notes it asks for (market evaluation of 1.23.2, D2).
+// Built for 1.24.0: a reminder a supervisor sent about one draft carries its id (tasks.note_id, set only to the assignee's
+// own draft on that client, server/rules/tasks.js) and offers "Open the draft", which opens that note as the Notes list
+// does (notes.js openNote: Edit draft, Sign & lock; the office's access checks as ever). "Open <client>'s notes" stays:
+// beside it on the to-do itself, and alone for a reminder with no link (made before, or its draft since signed or
+// deleted while others are left) or when the draft can no longer be opened.
 const readsNotes = () => ['notes:admin:read', 'notes:clinical:read', 'notes:admin:write', 'notes:clinical:write'].some(p => can(p));
+const notesSource = (t) => ({ id: t.client_id, noun: 'notes', label: `Open ${t.client_name || t.client_code || 'the client'}'s notes` });
 function sourceOf(t) {
-  if (t && t.sign_reminder && t.client_id && readsNotes()) return { id: t.client_id, noun: 'notes', label: `Open ${t.client_name || t.client_code || 'the client'}'s notes` };
+  if (t && t.sign_reminder && t.client_id && readsNotes()) return t.note_id ? { id: t.note_id, noun: 'draft', label: 'Open the draft' } : notesSource(t);
   for (const [col, noun, perm, url] of SOURCES) if (t && t[col] && can(perm)) return { id: t[col], noun, url };
   return null;
 }
 async function openSource(t, onDone) {
   const s = sourceOf(t);
   if (s.noun === 'notes') { nav(`client/${encodeURIComponent(s.id)}/notes?drafts=mine`); return; }
+  if (s.noun === 'draft') {
+    // A draft that can no longer be opened (signed or deleted since, or refused): the client's drafts list instead.
+    (await import('./notes.js')).openNote(s.id, { onChange: onDone, onFail: (e) => { toast(e && e.status === 404 ? 'That draft is no longer there: here are your drafts on this record.' : `${(e && e.message) || 'The draft could not be opened'}: here are your drafts on this record.`, 'warn'); nav(`client/${encodeURIComponent(t.client_id)}/notes?drafts=mine`); } });
+    return;
+  }
   let row;
   try { row = (await get(s.url + encodeURIComponent(s.id))).row; } catch (e) { toast(e && e.status === 404 ? `That ${s.noun} is no longer there.` : (e && e.message) || `The ${s.noun} could not be opened.`, 'error'); return; }
   if (s.noun === 'call') (await import('./calls.js')).openCallView(row, { onChange: onDone });
@@ -89,6 +100,14 @@ export function sourceButton(t, close, onDone) {
   if (!s) return null;
   return h('button', { type: 'button', class: 'btn sm', 'data-task-source': s.noun, onClick: () => { if (close) close(); openSource(t, onDone); } }, s.label || `Open the ${s.noun}`);
 }
+/** On the to-do itself (its form or card): the record it came from, and for a reminder linked to one draft, the
+ *  client's drafts list beside "Open the draft" (the reminder covers them all). */
+function sourceButtons(t, close, onDone) {
+  const first = sourceButton(t, close, onDone);
+  if (!first || sourceOf(t).noun !== 'draft') return first ? [first] : [];
+  const s = notesSource(t);
+  return [first, h('button', { type: 'button', class: 'btn sm', 'data-task-source': 'notes', onClick: () => { if (close) close(); nav(`client/${encodeURIComponent(s.id)}/notes?drafts=mine`); } }, s.label)];
+}
 // A to-do is changed by whoever it is assigned to or made it, or someone who manages others' records
 // (server/rules/tasks.js editableBy); anyone who can write to-dos may still mark it done.
 const mayChangeTask = (t) => mayChange(t.assigned_to, t.created_by);
@@ -106,8 +125,8 @@ export async function openTodo(id, onDone) {
 }
 /** Someone else's to-do on a phone, to read: it used to open as a form whose Save was then refused. */
 function openTaskView(t) {
-  const src = sourceButton(t, () => m.close());
-  const m = modal('To-do', h('div', { 'data-task-view': t.id }, can('tasks:write') ? ownedNotice(t.assignee, { verb: 'Assigned to' }) : null, src ? h('p', { class: 'btn-row' }, src) : null,
+  const src = sourceButtons(t, () => m.close());
+  const m = modal('To-do', h('div', { 'data-task-view': t.id }, can('tasks:write') ? ownedNotice(t.assignee, { verb: 'Assigned to' }) : null, src.length ? h('p', { class: 'btn-row' }, src) : null,
     kv([['To-do', t.title], ['Client', t.client_name || t.client_code || null], ['Due', t.due_at ? fmt.dt(t.due_at) : null], ['Priority', fmt.label(t.priority)], ['Status', fmt.label(t.status)],
       ['Assigned to', t.assignee], ['Details', t.description ? h('div', { style: { whiteSpace: 'pre-wrap' } }, t.description) : null]]),
     can('tasks:write') ? h('p', { class: 'small muted' }, 'You can still mark it done with its box in the list.') : null));

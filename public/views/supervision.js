@@ -159,12 +159,15 @@ route('supervision', async (r) => {
     } catch { /* no reminders known: every row still offers one, and the server audits each */ }
   }
   const remindable = (r) => mayRemind && r.author_id && r.author_id !== state.user.id;
+  // `r` is the draft the reminder opens (built for 1.24.0: tasks.note_id, server/rules/tasks.js): the row's own draft for
+  // Remind author, the oldest overdue one of that author's on that client for Remind all. The reminder still covers every
+  // draft of theirs there and closes as before; the link only takes the worker straight to that one.
   const remind = (r) => post('/api/tasks', {
-    client_id: r.client_id, assigned_to: r.author_id,
+    client_id: r.client_id, assigned_to: r.author_id, note_id: r.id,
     // It covers every draft of theirs on that client's record and closes when the last is signed (or deleted), so it
     // names the client, not one note (market evaluation of 1.23.2, D3); the last line stays SIGN_REMINDER.
     title: `Finish and sign your draft notes for ${who(r)}`,
-    description: `${state.user.display_name} asked you to finish and sign your draft notes on ${who(r)}'s record${r.overdue ? ' (at least one is overdue)' : ''}. Open them from the client's Notes tab. This reminder is closed for you once they are all signed.\n${SIGN_REMINDER}`,
+    description: `${state.user.display_name} asked you to finish and sign your draft notes on ${who(r)}'s record${r.overdue ? ' (at least one is overdue)' : ''}, starting with the one you began on ${fmt.date(r.created_at)}: Open the draft opens it. This reminder is closed for you once they are all signed.\n${SIGN_REMINDER}`,
     due_at: fmt.today(), priority: r.overdue ? 'high' : 'normal',
   });
   const remindOne = async (r, btn) => {
@@ -172,8 +175,10 @@ route('supervision', async (r) => {
     try { await remind(r); toast(`Reminder sent to ${r.author}`, 'ok'); refresh(); }
     catch (e) { if (btn) btn.disabled = false; toast(e.message, 'error'); }
   };
-  // The drafts to send a reminder for: none already reminded, and one per author and client.
-  const toRemind = (rows) => { const seen = new Set(); return rows.filter(r => !reminded.has(r.id) && !seen.has(pairOf(r.client_id, r.author_id)) && seen.add(pairOf(r.client_id, r.author_id))); };
+  // The drafts to send a reminder for: none already reminded, and one per author and client, the oldest (the one the
+  // reminder opens).
+  const oldestFirst = (rows) => [...rows].sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+  const toRemind = (rows) => { const seen = new Set(); return oldestFirst(rows).filter(r => !reminded.has(r.id) && !seen.has(pairOf(r.client_id, r.author_id)) && seen.add(pairOf(r.client_id, r.author_id))); };
   const remindAll = async () => {
     const due = drafts.filter(r => r.overdue && remindable(r));
     const fresh = toRemind(due);

@@ -214,10 +214,13 @@ function verifyPanel(n, breakGlass) {
   return h('div', { class: 'mt row', style: { gap: '.6rem', alignItems: 'center', flexWrap: 'wrap' } }, btn, out);
 }
 
-export async function openNote(id, { onChange } = {}) {
+// `onFail(error)`: what to do instead of the error message when the note cannot be opened (a to-do's "Open the draft"
+// falls back to the client's drafts list, tasks.js).
+export async function openNote(id, { onChange, onFail } = {}) {
   let n; let breakGlass = null;
   try { n = (await get(`/api/notes/${id}`)).note; }
   catch (e) {
+    if (onFail) { onFail(e); return; }
     if (e.status === 403 && can('notes:clinical:breakglass')) {
       const reason = await confirmDialog('Break-glass access', 'This is a clinical note outside your normal role. Emergency access is permitted only with a documented reason and will be reported to the privacy officer.', { danger: true, okText: 'Access with reason', requireReason: true });
       if (!reason) return; breakGlass = reason; n = (await get(`/api/notes/${id}`, { headers: { 'X-Break-Glass-Reason': reason } })).note;
