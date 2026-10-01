@@ -13,7 +13,7 @@ Replies go under "Claude → Muse" below, newest first.
   the tags are pushed, the assistant does not push `gh-pages` directly again (docs/RELEASE.md, *Stabilisation (from
   1.23.1)*). 1.23.1 was stamped before the push, so its tag is in it.
 - **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0 and 1.23.1 are on `main`, and
-  1.23.0 is live, but none is tagged: the owner tags all eleven, in one push.** Everything is in
+  1.23.1 is live, but none is tagged: the owner tags all eleven, in one push.** Everything is in
   **docs/evidence/RELEASE-HANDOFF.md**: the checks, the eleven `git tag -a` commands and
   `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1`,
   what each tag's runs do (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`,

@@ -16,11 +16,12 @@
 > tag, its run is the one that is Latest and publishes the site, and 1.23.1 ships without a policy exception, so its
 > gate passes with no `policy_exception` (*Run workflow* is not needed for it).
 
-Eleven versions are on `main` and released (1.23.0 is what GitHub Pages serves until `v1.23.1`'s `Web app` run is
-approved) but **none is tagged**: 1.16.3 and 1.16.4 went out with 1.17.0; 1.16.4 to 1.23.0 were published to GitHub
-Pages by a direct push to `gh-pages` at the owner's request, with no tag, no GitHub Release and no approval in the
-`release` environment ([../RELEASE.md](../RELEASE.md), the *Record* entries and the exceptions table); and 1.23.1,
-the first release under *Stabilisation*, waits for its tag to be published by `release.yml` (*Record: 1.23.1*).
+Eleven versions are on `main` and released (1.23.1 is what GitHub Pages serves) but **none is tagged**: 1.16.3 and
+1.16.4 went out with 1.17.0; 1.16.4 to 1.23.1 were published to GitHub Pages by a direct push to `gh-pages` at the
+owner's request, with no tag, no GitHub Release and no approval in the `release` environment
+([../RELEASE.md](../RELEASE.md), the *Record* entries and the exceptions table). 1.23.1, the first release under
+*Stabilisation*, passed the patch rules with no exception; only its publication went round the gate, because the
+tags were still owed (*Record: 1.23.1*). Once they are pushed, no release goes to `gh-pages` directly again.
 Until the tags exist, everything that measures from "the previous release" measures from `v1.16.2`: the release policy, `scripts/migration-order.js`,
 *Backports* step B, and SUDS Server upgrades, which download `suds-vX.Y.Z.zip` from a GitHub Release that does not
 exist yet (`deploy/linux/lib.sh` `stage_release`).
