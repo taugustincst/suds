@@ -6868,9 +6868,26 @@ CREATE TABLE IF NOT EXISTS devices (
   -- When the office first answered this device's pull under the field scope: from then on its pushes are held to
   -- that scope and its field-shaped rows (blanked columns) never overwrite the office's values. NULL while a change
   -- to 'field' has not reached the device yet, and again once a full-scope pull has completed after it.
-  field_applied_at TEXT
+  field_applied_at TEXT,
+  -- Who last decided sync_scope (1.22.0; migration 64): 'default' (first seen, under field_device_default),
+  -- 'enrolment' (its user narrowed it), 'account' (the office narrowed it because its user's account is held to the
+  -- field scope, field_accounts), 'admin'. Only 'full' set by 'admin' keeps a device whole for an account held to
+  -- the field scope; it is cleared when the device signs in as someone else. NULL: decided before 1.22.0.
+  scope_set_by TEXT CHECK (scope_set_by IN ('default','enrolment','account','admin'))
 );
 CREATE INDEX IF NOT EXISTS idx_devices_user ON devices(user_id);
+
+-- Accounts whose syncs are held to the field scope whatever device they come from (1.22.0; server/devices.js,
+-- docs/PLATFORM.md "Field devices"; migration 64). A row is added the first time any device of the account becomes
+-- a field device (an administrator, its user enrolling it, the programme's default) and is never removed by the
+-- account's own user or its devices: a new device id, a re-enrolment or a missing one cannot leave the field scope.
+-- With field_device_default on, every account is held to it. An administrator keeps one device whole by marking it
+-- "Hold everything" (devices.scope_set_by 'admin'). Office server only; no PHI.
+CREATE TABLE IF NOT EXISTS field_accounts (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  bound_at TEXT NOT NULL,
+  bound_via TEXT NOT NULL CHECK (bound_via IN ('default','enrolment','account','admin','device','migration'))
+);
 
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,               -- sha256 of the bearer token
@@ -12669,6 +12686,7 @@ var require_sync_tables = __commonJS({
         ["api_keys", "created_by"],
         ["users", "supervisor_id"],
         ["devices", "user_id"],
+        ["field_accounts", "user_id"],
         ["supply_sites", "updated_by"],
         ["supply_items", "updated_by"],
         ["intervention_supplies", "user_id"],
@@ -24051,21 +24069,56 @@ var require_devices = __commonJS({
       const existing = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
       const label = labelFrom(ctx.headers["user-agent"]);
       const now2 = db3.now();
-      if (existing) db3.run(`UPDATE devices SET user_id=?, last_seen_at=?, last_ip=?, sync_count=sync_count+1, label=COALESCE(label, ?) WHERE id=?`, user.id, now2, ctx.ip, label, deviceId2);
-      else {
+      if (existing) {
+        db3.run(`UPDATE devices SET user_id=?, last_seen_at=?, last_ip=?, sync_count=sync_count+1, label=COALESCE(label, ?) WHERE id=?`, user.id, now2, ctx.ip, label, deviceId2);
+        if (existing.user_id !== user.id && adminFull(existing)) {
+          db3.run(`UPDATE devices SET scope_set_by=NULL WHERE id=?`, deviceId2);
+          require_audit().log({ user, action: "device.scope", entity: "device", entityId: deviceId2, ip: ctx.ip, details: { from: "full", to: "full", via: "reattributed", admin_decision_cleared: true, previous_user: existing.user_id, device_user: user.id } });
+        }
+      } else {
         const scope = db3.getSetting("field_device_default", "0") === "1" ? "field" : "full";
-        db3.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count,sync_scope,scope_changed_at) VALUES(?,?,?,?,?,?,1,?,?)`, deviceId2, user.id, label, now2, now2, ctx.ip, scope, scope === "field" ? now2 : null);
+        db3.run(`INSERT INTO devices(id,user_id,label,first_seen_at,last_seen_at,last_ip,sync_count,sync_scope,scope_changed_at,scope_set_by) VALUES(?,?,?,?,?,?,1,?,?,'default')`, deviceId2, user.id, label, now2, now2, ctx.ip, scope, scope === "field" ? now2 : null);
       }
-      return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
+      return bind(user, db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2), { ip: ctx.ip });
     }
     var SCOPES = ["full", "field"];
+    function accountFieldBound(userId) {
+      if (db3.getSetting("field_device_default", "0") === "1") return true;
+      return !!db3.one(`SELECT 1 FROM field_accounts WHERE user_id=?`, userId);
+    }
+    function bindAccount(userId, via, { actor, ip } = {}) {
+      const r = db3.run(`INSERT OR IGNORE INTO field_accounts(user_id, bound_at, bound_via) VALUES(?,?,?)`, userId, db3.now(), via);
+      if (r && r.changes) require_audit().log({ user: actor || { id: userId }, action: "device.account_field", entity: "user", entityId: userId, ip, details: { via } });
+    }
+    function adminFull(d) {
+      return !!d && d.sync_scope === "full" && d.scope_set_by === "admin";
+    }
+    function effectiveField(userId, device) {
+      if (device && device.sync_scope === "field") return true;
+      if (adminFull(device)) return false;
+      return accountFieldBound(userId);
+    }
+    function bind(user, device, { ip } = {}) {
+      if (!device || device.revoked_at) return device;
+      if (device.sync_scope === "field") {
+        bindAccount(user.id, "device", { actor: user, ip });
+        return device;
+      }
+      if (effectiveField(user.id, device)) return setScope(device.id, "field", { actor: user, ip, via: "account" }) || device;
+      return device;
+    }
     function setScope(deviceId2, scope, { actor, ip, via = "admin" } = {}) {
       if (!SCOPES.includes(scope)) throw new Error(`setScope: unknown scope ${scope}`);
+      if (!["admin", "enrolment", "account"].includes(via)) throw new Error(`setScope: unknown route ${via}`);
       const d = db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
-      if (!d || d.sync_scope === scope) return null;
+      if (!d) return null;
       if (via !== "admin" && scope !== "field") throw new Error("Only an administrator can widen what a device holds");
-      db3.run(`UPDATE devices SET sync_scope=?, scope_changed_at=? WHERE id=?`, scope, db3.now(), deviceId2);
+      if (d.sync_scope === scope) {
+        if (!(via === "admin" && scope === "full" && d.scope_set_by !== "admin")) return null;
+        db3.run(`UPDATE devices SET scope_set_by='admin' WHERE id=?`, deviceId2);
+      } else db3.run(`UPDATE devices SET sync_scope=?, scope_changed_at=?, scope_set_by=? WHERE id=?`, scope, db3.now(), via, deviceId2);
       require_audit().log({ user: actor, action: "device.scope", entity: "device", entityId: deviceId2, ip, details: { from: d.sync_scope, to: scope, via, device_user: d.user_id } });
+      if (scope === "field") bindAccount(d.user_id, via, { actor, ip });
       return db3.one(`SELECT * FROM devices WHERE id=?`, deviceId2);
     }
     function ofSession(ctx) {
@@ -24109,7 +24162,7 @@ var require_devices = __commonJS({
       require_audit().log({ user: actor, action: "device.wipe.requested", entity: "user", entityId: userId, ip, details: { reason, devices: rows.map((d) => d.id) } });
       return rows.map((d) => d.id);
     }
-    module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe, setScope, ofSession, SCOPES };
+    module.exports = { touch, markWiped, requestWipeForUser, labelFrom, issueWipeToken, ackWipe, setScope, ofSession, SCOPES, accountFieldBound, bindAccount, adminFull, effectiveField, bind };
   }
 });
 
@@ -24458,7 +24511,11 @@ var require_admin = __commonJS({
         if (info.configured) audit3.log({ user: ctx.user, action: "update.check", ip: ctx.ip, details: { current: info.current, latest: info.latest, available: info.available } });
         return info;
       });
-      r.get("/api/admin/devices", auth3.requireAuth, auth3.requirePerm("users:manage"), () => ({ devices: db3.all(`SELECT d.*, u.display_name, u.username FROM devices d JOIN users u ON u.id=d.user_id ORDER BY d.last_seen_at DESC`) }));
+      r.get("/api/admin/devices", auth3.requireAuth, auth3.requirePerm("users:manage"), () => {
+        const DEV = require_devices();
+        const rows = db3.all(`SELECT d.*, u.display_name, u.username FROM devices d JOIN users u ON u.id=d.user_id ORDER BY d.last_seen_at DESC`);
+        return { devices: rows.map((d) => ({ ...d, account_field: DEV.accountFieldBound(d.user_id) })), field_device_default: db3.getSetting("field_device_default", "0") === "1" };
+      });
       function findDevice(ctx) {
         const d = db3.one(`SELECT * FROM devices WHERE id=?`, ctx.params.id);
         if (!d) throw notFound();
@@ -48782,21 +48839,27 @@ var require_sync = __commonJS({
       if (!device || device.sync_scope !== "field") return null;
       return FS.context(user.id, FS.windowDays(db3.getSetting));
     }
-    function pushField(user, device) {
-      if (!device || !device.field_applied_at) return null;
+    function syncScope(ctx) {
+      const device = DEVICES.bind(ctx.user, DEVICES.ofSession(ctx), { ip: ctx.ip });
+      const field = device ? device.sync_scope === "field" : DEVICES.accountFieldBound(ctx.user.id);
+      return { device, field };
+    }
+    function pushField(user, device, field = !!device && device.sync_scope === "field") {
+      if (!device) return field ? { scope: FS.context(user.id, FS.windowDays(db3.getSetting)), blank: true } : null;
+      if (!device.field_applied_at) return null;
       return { scope: device.sync_scope === "field" ? FS.context(user.id, FS.windowDays(db3.getSetting)) : null, blank: true };
     }
     function assertFieldTable(ctx, t) {
-      const device = DEVICES.ofSession(ctx);
-      if (device && device.sync_scope === "field" && FS.excluded(t.name)) throw forbidden("This is outside what a field device holds");
+      if (syncScope(ctx).field && FS.excluded(t.name)) throw forbidden("This is outside what a field device holds");
     }
     module.exports = (r) => {
       r.get("/api/sync/pull", requireLocalMode, auth3.requireAuth, (ctx) => {
         if (!auth3.hasPerm(ctx.user, "clients:read")) throw forbidden("Your role cannot sync client data");
         const since = ctx.query.get("since") || NEVER2;
         const limit2 = Math.min(Number(ctx.query.get("limit")) || PULL_LIMIT, PULL_LIMIT);
-        const device = DEVICES.ofSession(ctx);
-        const field = fieldContext(ctx.user, device);
+        const s = syncScope(ctx);
+        const device = s.device;
+        const field = s.field ? FS.context(ctx.user.id, FS.windowDays(db3.getSetting)) : null;
         const out2 = pull(ctx.user, since, { limit: limit2, scope: ctx.query.get("scope"), field });
         if (device && field && !device.field_applied_at) db3.run(`UPDATE devices SET field_applied_at=? WHERE id=?`, db3.now(), device.id);
         if (device && !field && device.field_applied_at && out2.complete) db3.run(`UPDATE devices SET field_applied_at=NULL WHERE id=?`, device.id);
@@ -48807,9 +48870,10 @@ var require_sync = __commonJS({
       r.post("/api/sync/push", requireLocalMode, auth3.requireAuth, (ctx) => {
         if (!auth3.hasPerm(ctx.user, "clients:write")) throw forbidden("Your role cannot sync client data");
         if (!ctx.body || typeof ctx.body !== "object") throw badRequest("JSON body required");
-        const device = DEVICES.ofSession(ctx);
-        const res = push(ctx.user, ctx.body, pushField(ctx.user, device));
-        audit3.log({ user: ctx.user, action: "sync.push", ip: ctx.ip, details: { applied: res.applied, rejected: res.rejected.length, field: device && device.field_applied_at ? true : void 0 } });
+        const { device, field: inField } = syncScope(ctx);
+        const pf = pushField(ctx.user, device, inField);
+        const res = push(ctx.user, ctx.body, pf);
+        audit3.log({ user: ctx.user, action: "sync.push", ip: ctx.ip, details: { applied: res.applied, rejected: res.rejected.length, field: pf ? true : void 0 } });
         return res;
       });
       r.get("/api/sync/blob/:table/:id/:column", requireLocalMode, auth3.requireAuth, (ctx) => {
@@ -49498,6 +49562,7 @@ var require_app2 = __commonJS({
           ctx.params = m.params;
           if (!rateLimit(`api:${ctx.ip}`, config2.apiRateLimit, 6e4)) throw new HttpError3(429, "Too many requests");
           ctx.user = auth3.resolveSession(ctx);
+          if (ctx.user) auth3.assertSyncSessionReach(ctx);
           if (ctx.user && ctx.cookies[auth3.COOKIE] && !["GET", "HEAD", "OPTIONS"].includes(req.method) && req.headers["x-requested-with"] !== "suds") {
             throw new HttpError3(403, "Missing CSRF header");
           }
@@ -50156,13 +50221,25 @@ var require_auth2 = __commonJS({
       ctx.session = s;
       return user;
     }
+    var FIELD_SESSION_AUTH_PATHS = /* @__PURE__ */ new Set(["/api/auth/login", "/api/auth/mfa/verify", "/api/auth/logout"]);
+    var FIELD_SESSION_ACCOUNT_MESSAGE = "This is a field device's sync sign-in: it can only sync. Change your password, two-step verification, fingerprint sign-in or sessions in a web browser signed in to the office SUDS.";
+    function fieldSyncSession(ctx) {
+      const s = ctx.session;
+      if (!s || !s.sync_client) return false;
+      const devices = require_devices();
+      const device = s.device_id ? db3.one(`SELECT * FROM devices WHERE id=?`, s.device_id) : null;
+      return devices.effectiveField(s.user_id, device);
+    }
+    function assertSyncSessionReach(ctx) {
+      if (!ctx.session || !ctx.session.sync_client || ctx.path.startsWith("/api/sync/") || FIELD_SESSION_AUTH_PATHS.has(ctx.path)) return;
+      if (!fieldSyncSession(ctx)) return;
+      if (ctx.path.startsWith("/api/auth/")) throw new HttpError3(403, FIELD_SESSION_ACCOUNT_MESSAGE, { fieldDevice: true, useBrowser: true });
+      throw new HttpError3(403, "A field device's sync session can only sync", { fieldDevice: true });
+    }
     function requireAuth(ctx) {
       if (!ctx.user) throw unauthorized();
       if (ctx.session?.mfa_pending) throw new HttpError3(401, "MFA verification required", { mfaRequired: true });
-      if (ctx.session?.device_id && !ctx.path.startsWith("/api/sync/") && !ctx.path.startsWith("/api/auth/")) {
-        const dev = db3.one(`SELECT sync_scope FROM devices WHERE id=?`, ctx.session.device_id);
-        if (dev && dev.sync_scope === "field") throw new HttpError3(403, "A field device's sync session can only sync", { fieldDevice: true });
-      }
+      assertSyncSessionReach(ctx);
       if (!ctx.path.startsWith("/api/auth/")) {
         const shellOnly = ctx.method === "GET" && (ctx.path === "/api/meta/constants" || ctx.path === "/api/me/prefs");
         const sync = !!ctx.session?.sync_client;
@@ -50247,6 +50324,10 @@ var require_auth2 = __commonJS({
         throw new HttpError3(403, "This organisation requires single sign-on. Use the county sign-in button instead of a password.", { ssoRequired: true });
       }
       db3.run(`UPDATE users SET failed_attempts=CASE WHEN mfa_enabled=1 THEN failed_attempts ELSE 0 END, locked_until=NULL, last_login_at=? WHERE id=?`, db3.now(), user.id);
+      if (ctx.headers["x-sync-client"] && !deviceId2 && devices.accountFieldBound(user.id)) {
+        audit3.log({ user, action: "auth.login.device_unidentified", ip: ctx.ip, success: false });
+        throw new HttpError3(403, "Your account syncs as a field device, and this sync did not say which device it is from. Sync from SUDS on the device (This device \u203A Sync), or update it.", { deviceIdRequired: true });
+      }
       if (deviceId2) {
         const device = devices.touch(user, deviceId2, ctx);
         if (device.revoked_at) {
@@ -50337,6 +50418,7 @@ var require_auth2 = __commonJS({
       return errors;
     }
     module.exports = {
+      assertSyncSessionReach,
       auditUsername,
       policy,
       PERMS,
@@ -51726,6 +51808,17 @@ var require_db = __commonJS({
       (d) => {
         addColumn(d, "passkeys", "attestation", "TEXT");
         createTablesFromSchema(d, safeSchema(), ["authenticator_metadata"], 63);
+      },
+      // 64: field scope follows the account (built for 1.22.0; server/devices.js, docs/PLATFORM.md "Field devices").
+      //     field_accounts, the accounts held to the field scope on every device, starting with the users of every
+      //     existing field device; devices.scope_set_by, with 'admin' for a device already made whole again by an
+      //     administrator (only an administrator could set 'full' after first sight, so a full device with
+      //     scope_changed_at was one), so that decision stands. Self-contained and idempotent, so it can be renumbered.
+      (d) => {
+        addColumn(d, "devices", "scope_set_by", "TEXT CHECK (scope_set_by IN ('default','enrolment','account','admin'))");
+        createTablesFromSchema(d, safeSchema(), ["field_accounts"], 64);
+        d.exec(`UPDATE devices SET scope_set_by='admin' WHERE scope_set_by IS NULL AND sync_scope='full' AND scope_changed_at IS NOT NULL`);
+        d.exec(`INSERT OR IGNORE INTO field_accounts(user_id, bound_at, bound_via) SELECT user_id, MIN(COALESCE(scope_changed_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))), 'migration' FROM devices WHERE sync_scope='field' GROUP BY user_id`);
       }
     ];
     var PERF_INDEXES_47 = [

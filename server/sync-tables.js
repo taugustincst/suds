@@ -192,7 +192,7 @@ module.exports = {
     ['client_forms', 'created_by'], ['client_forms', 'completed_by'], ['client_form_files', 'uploaded_by'],
     ['resource_photos', 'uploaded_by'], ['form_templates', 'uploaded_by'], ['policy_documents', 'uploaded_by'],
     ['breakglass_events', 'user_id'], ['breakglass_events', 'acknowledged_by'], ['patient_requests', 'handled_by'], ['patient_requests', 'created_by'],
-    ['audit_log', 'user_id'], ['sessions', 'user_id'], ['user_prefs', 'user_id'], ['api_keys', 'created_by'], ['users', 'supervisor_id'], ['devices', 'user_id'],
+    ['audit_log', 'user_id'], ['sessions', 'user_id'], ['user_prefs', 'user_id'], ['api_keys', 'created_by'], ['users', 'supervisor_id'], ['devices', 'user_id'], ['field_accounts', 'user_id'],
     ['supply_sites', 'updated_by'], ['supply_items', 'updated_by'], ['intervention_supplies', 'user_id'], ['supply_ledger', 'user_id'], ['option_overrides', 'updated_by'],
     ['problems', 'added_by'], ['problems', 'updated_by'], ['problem_history', 'changed_by'], ['care_plan_goals', 'created_by'], ['care_plan_goals', 'updated_by'],
     ['care_plan_steps', 'owner_user_id'], ['care_plan_steps', 'created_by'], ['asam_assessments', 'assessed_by'], ['outcome_measures', 'administered_by'],
