@@ -4,6 +4,39 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Administrators can change their own permissions, role and account
+
+Built for the next release, not yet released. The owner's request: "Admin needs to be able to change all permissions
+including their own." Until now an administrator could not change their own individual permissions, their own role,
+deactivate their own account, or include themselves in *Apply to existing navigators and clinicians*; on SUDS on this
+device the person who manages it could not change their own role. Each of those is now allowed, through the same
+dialogs and routes (`PUT /api/users/:id`, `POST`/`DELETE /api/users/:id/permissions`,
+`POST /api/users/caseload-default/apply`, `PUT /api/local/accounts/:id`). Who may do it is unchanged: whoever holds
+*Manage users & permissions* (`users:manage`), which only an administrator can hold. No new permission, route or
+migration.
+
+- **Lockout guard.** Any change, to yourself or to someone else (a role change, a deny, removing an override, a
+  deactivation), that would leave the programme with no active account able to manage users and permissions is
+  refused: "This would leave no active administrator who can manage users. Give another account that access first."
+  Deactivating yourself is allowed only while another active administrator remains (`server/auth.js`
+  `lockoutProblem`). SCIM provisioning and single sign-on deprovisioning are not held back by it: the identity
+  provider decides who has left, and the emergency accounts provisioning never touches are the way back in.
+- **Confirmed first, effective at once.** Users & permissions confirms every change to your own access, naming what
+  you lose or gain, and applies it to your session immediately (permissions are worked out at every request). If you
+  remove your own user management, or step down from administrator, the page closes and you go to Home; deactivating
+  yourself signs you out. A demoted administrator cannot promote themselves back (1.15.4 M2 still holds).
+- **Audited the same way.** `user.permission.grant`, `.deny`, `.revoke` and `user.update` (now with
+  `role: { from, to }`) carry `self: true` for a change to your own account; a refusal by the lockout guard is
+  `user.permission.denied` or the new `user.update.denied`. On a device, `local.account.role` carries `self: true`.
+- **Unchanged.** Approving your own time or spending, acknowledging your own break-glass access and other
+  separation-of-duties rules stay refused. Permission changes ask for no re-authentication, for yourself or anyone,
+  as before.
+- Tests: `test/admin-self-permissions.test.js` (new), `test/device-signup-scope.test.js`, and the earlier refusals in
+  `test/security-1154.test.js`, `test/user-permissions.test.js` and `test/least-privilege-default.test.js` updated;
+  browser: `scripts/ui/permissions-admin.mjs` (confirmation, applied at once, the lockout message, leaving the page,
+  axe on both dialogs), `ui-eval.mjs`, `signup.mjs`. Documentation: USER_GUIDE (*Users & permissions*),
+  docs/security/IDENTITY.md, LOGGING-AND-AUDIT.md, THREAT-MODEL.md and QUESTIONNAIRE.md.
+
 ## 1.23.5 — 2026-10-02
 
 A patch of 1.23.4 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
