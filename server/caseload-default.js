@@ -37,8 +37,10 @@ function addDeny(userId, { actor, ip, cause, from, to }) {
   db.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason, granted_by) VALUES(?,?,'deny',?,?) ON CONFLICT(user_id, permission) DO NOTHING`,
     userId, PERMISSION, REASON, (actor && actor.id) || null);
   // The reason is a fixed sentence (never an administrator's words), so it is recorded as is.
-  audit.log({ user: actor, action: 'user.permission.deny', entity: 'user', entityId: userId, ip, details: { permission: PERMISSION, mode: 'deny', cause, reason: REASON, ...(from !== undefined ? { from, to } : {}) } });
+  audit.log({ user: actor, action: 'user.permission.deny', entity: 'user', entityId: userId, ip, details: { permission: PERMISSION, mode: 'deny', cause, reason: REASON, ...(from !== undefined ? { from, to } : {}), ...selfMark(actor, userId) } });
 }
+// An administrator's change to their own account is audited exactly like one to anyone else's, marked self: true.
+const selfMark = (actor, userId) => (actor && actor.id && actor.id === userId ? { self: true } : {});
 
 /**
  * An account has just become a navigator or a clinician (created, approved, provisioned, or its role changed):
@@ -63,7 +65,7 @@ function onRoleChange(userId, from, to, { actor = null, ip = null } = {}) {
   const o = override(userId);
   if (!o || o.mode !== 'deny' || o.reason !== REASON) return null;
   db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=? AND mode='deny' AND reason=?`, userId, PERMISSION, REASON);
-  audit.log({ user: actor, action: 'user.permission.revoke', entity: 'user', entityId: userId, ip, details: { permission: PERMISSION, mode: 'deny', cause: 'role_change', reason: REASON, from, to } });
+  audit.log({ user: actor, action: 'user.permission.revoke', entity: 'user', entityId: userId, ip, details: { permission: PERMISSION, mode: 'deny', cause: 'role_change', reason: REASON, from, to, ...selfMark(actor, userId) } });
   return 'lifted';
 }
 

@@ -179,7 +179,9 @@ test('"Apply to existing navigators and clinicians": lists who would change, cha
   assert.equal((await admin.post('/api/users/caseload-default/apply', { user_ids: [] })).status, 400);
   assert.equal((await admin.post('/api/users/caseload-default/apply', { user_ids: [42] })).status, 400);
   const self = H.db.one(`SELECT id FROM users WHERE username='admin'`).id;
-  assert.equal((await admin.post('/api/users/caseload-default/apply', { user_ids: [self] })).status, 400);
+  // The administrator's own account may be listed (the owner's decision after 1.23.5): not a navigator or clinician,
+  // it is skipped like any other account that is not eligible.
+  assert.deepEqual((await admin.post('/api/users/caseload-default/apply', { user_ids: [self] })).data, { ok: true, changed: 0, skipped: 1 });
   assert.equal(override(navOld.id), undefined);
   // The confirmation listed three people, plus ids that are not eligible (a supervisor, the granted navigator).
   const r = expect(await admin.post('/api/users/caseload-default/apply', { user_ids: [navOld.id, clinOld.id, ids.offNav, supU.id, granted.id] }), 200, 'apply');

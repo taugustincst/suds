@@ -229,7 +229,19 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
   await page.goto(device + '/#/sync'); await settle(page);
   const roleSel = await until(() => page.$(`[data-account-roles] select[data-account-role="${me2.id}"]`), { timeout: 5000 });
   ok(roleSel, 'the device administrator sees the other accounts with their roles');
-  ok(!(await page.$('[data-account-roles] select[data-account-role] >> nth=1')), 'only the other account (not their own)');
+  // Their own role is listed too (the owner's decision after 1.23.5), labelled as theirs; changing it asks first.
+  const ownerId = (await kernel('GET', '/api/auth/me')).data.user.id;
+  const ownSel = await page.$(`[data-account-roles] select[data-account-role="${ownerId}"]`);
+  ok(ownSel, 'and their own account, to change their own role');
+  ok(/^Your role/.test(await page.textContent(`label[for="account-role-${ownerId}"]`).catch(() => '')), 'labelled as their own');
+  if (ownSel) {
+    await ownSel.selectOption('clinician');
+    const conf = await until(() => page.$('.modal-bg .modal'), { timeout: 5000 });
+    ok(conf && /You are changing your own role from Navigator to Clinician/.test(await conf.textContent()), 'a change to their own role is confirmed first, naming it', conf && await conf.textContent());
+    await page.locator('.modal-bg').nth(-1).locator('button:has-text("Cancel")').click(); await settle(page);
+    eq(await ownSel.inputValue(), 'navigator', 'cancelled, the select goes back');
+    eq((await kernel('GET', '/api/auth/me')).data.user.role, 'navigator', 'and their role is unchanged');
+  }
   eq(roleSel ? await roleSel.inputValue() : '', 'navigator', 'the new account is a navigator');
   if (roleSel) await roleSel.selectOption('clinician');
   const roleOf = async () => ((await kernel('GET', '/api/local/accounts')).data.rows || []).find(u => u.id === me2.id)?.role;

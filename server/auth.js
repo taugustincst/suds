@@ -170,25 +170,61 @@ function rolePerms(role) { return [...(PERMS[role] || [])]; }
 function effectivePerms(user) {
   if (!user) return { allow: [], deny: [] };
   if (user._effectivePerms) return user._effectivePerms;
-  const allow = new Set(rolePerms(user.role));
-  const deny = new Set();
+  let rows = [];
   if (user.id) {
-    try {
-      const rows = db.all(`SELECT permission, mode FROM user_permission_overrides WHERE user_id=?`, user.id);
-      const defaults = PERMS[user.role] || [];
-      for (const r of rows) {
-        if (!isKnownPermission(r.permission)) continue; // defensive: ignore hand-edited typos
-        if (r.mode === 'deny') { allow.delete(r.permission); deny.add(r.permission); }
-        // A grant the account's role may not hold (a privileged one after a demotion, clients:read on a
-        // de-identified role: permissions.js grantProblem) is checked here, at every request, so a row that
-        // was left behind, written before 1.15.4 or put in by hand cannot drift into power.
-        else if (!grantProblem(user.role, defaults, r.permission)) { allow.add(r.permission); }
-      }
-    } catch (e) { /* table missing on databases that have not run migration 46 yet */ }
+    try { rows = db.all(`SELECT permission, mode FROM user_permission_overrides WHERE user_id=?`, user.id); }
+    catch (e) { /* table missing on databases that have not run migration 46 yet */ }
   }
-  const out = { allow: [...allow].sort(), deny: [...deny].sort() };
+  const out = permsFrom(user.role, rows);
   user._effectivePerms = out;
   return out;
+}
+// Role defaults plus the override rows given ({ permission, mode }), denies removed: effectivePerms for the rows in
+// the database, and the lockout guard below for the rows as a change would leave them.
+function permsFrom(role, rows) {
+  const allow = new Set(rolePerms(role));
+  const deny = new Set();
+  const defaults = PERMS[role] || [];
+  for (const r of rows || []) {
+    if (!isKnownPermission(r.permission)) continue; // defensive: ignore hand-edited typos
+    if (r.mode === 'deny') { allow.delete(r.permission); deny.add(r.permission); }
+    // A grant the account's role may not hold (a privileged one after a demotion, clients:read on a
+    // de-identified role: permissions.js grantProblem) is checked here, at every request, so a row that
+    // was left behind, written before 1.15.4 or put in by hand cannot drift into power.
+    else if (!grantProblem(role, defaults, r.permission)) { allow.add(r.permission); }
+  }
+  return { allow: [...allow].sort(), deny: [...deny].sort() };
+}
+
+// ---- The lockout guard (an administrator may change their own access: the owner's decision, after 1.23.5) ----
+// Anyone who may manage users and permissions (users:manage, an administrator's) may change anyone's role,
+// permissions and account, their own included. What keeps that safe is that no change -- to oneself or to someone
+// else -- may leave the programme with no active account able to manage users and permissions: nobody could then
+// give access back short of the command line. `change` describes one account as it would be afterwards:
+// { userId, role?, active?: false, set?: { permission, mode }, remove?: permission }.
+const LOCKOUT_MESSAGE = 'This would leave no active administrator who can manage users. Give another account that access first.';
+function userManagerIds(change = null) {
+  const out = [];
+  for (const u of db.all(`SELECT id, role FROM users WHERE is_active=1 AND access_status='active'`)) {
+    let person = { id: u.id, role: u.role };
+    if (change && u.id === change.userId) {
+      if (change.active === false) continue;
+      const role = change.role || u.role;
+      let rows = [];
+      try { rows = db.all(`SELECT permission, mode FROM user_permission_overrides WHERE user_id=?`, u.id); } catch { /* before migration 46 */ }
+      if (change.remove) rows = rows.filter(o => o.permission !== change.remove);
+      if (change.set) rows = [...rows.filter(o => o.permission !== change.set.permission), change.set];
+      person = { id: u.id, role, _effectivePerms: permsFrom(role, rows) };
+    }
+    if (hasPerm(person, 'users:manage')) out.push(u.id);
+  }
+  return out;
+}
+/** Why `change` may not be made (LOCKOUT_MESSAGE), or null. A programme that has nobody who manages users already
+ *  (a device whose first account chose another role) is not made worse by a change, so it is not refused. */
+function lockoutProblem(change) {
+  if (!userManagerIds().length) return null;
+  return userManagerIds(change).length ? null : LOCKOUT_MESSAGE;
 }
 
 // The role defaults widened in 1.16.0 (the owner's decision; CHANGELOG). A local-mode device that synced before
@@ -859,4 +895,5 @@ function passwordPolicy(pw) {
 }
 
 module.exports = { assertSyncSessionReach, auditUsername, policy, PERMS, WIDENED_1_16, asBefore1_16, hasPerm, rolePerms, effectivePerms, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
+  userManagerIds, lockoutProblem, LOCKOUT_MESSAGE,
   createSession, passkeyStepOwed, markReauth, noteSsoProof, takeSsoProof, reauthStatus, verifySigner, verifyApprover, passkeyCount, mfaMethods, hasLocalPassword, clearReauth, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };

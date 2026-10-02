@@ -2276,11 +2276,13 @@ export async function loadSession() {
 }
 /** Re-read the signed-in user's permission snapshot without signing out (an administrator may have
  *  changed it mid-session). On failure the stale snapshot stays; the server enforces regardless. */
-export async function refreshPermissions() {
+// { rerender: false } updates the snapshot without redrawing the page (which would close an open dialog): an
+// administrator's change to their own permissions, whose dialog stays open and redraws the page when it closes.
+export async function refreshPermissions({ rerender = true } = {}) {
   try {
     const me = await get('/api/me', { quiet: true });
-    state.user = { ...state.user, permissions: me.permissions, denied_permissions: me.denied_permissions, caseload_restricted: me.caseload_restricted };
-    render();
+    state.user = { ...state.user, role: me.role || state.user.role, permissions: me.permissions, denied_permissions: me.denied_permissions, caseload_restricted: me.caseload_restricted };
+    if (rerender) render();
   } catch { /* stay on the stale snapshot; the server still enforces */ }
 }
 export async function loadRefData() {

@@ -569,9 +569,15 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
     const v = validate(ctx.body, { role: { type: 'string', required: true, enum: DEVICE_ROLES } });
     const u = deviceAccounts().find(x => x.id === ctx.params.id);
     if (!u) throw new HttpError(404, 'No such account on this device');
-    // The administrator's own role is what they chose at set-up; changing it here could leave nobody able to
-    // manage the device's accounts in the app, so it is not offered.
-    if (u.id === ctx.user.id) throw new HttpError(400, 'You cannot change your own role here.');
+    // The device administrator may change their own role too (the owner's decision after 1.23.5): who manages the
+    // device stays them whatever their role (deviceAdminId), and, as at the office, no change may leave the device
+    // with no active account that can manage users and permissions (auth.lockoutProblem).
+    const self = u.id === ctx.user.id;
+    const locked = u.role !== v.role ? auth.lockoutProblem({ userId: u.id, role: v.role }) : null;
+    if (locked) {
+      audit.log({ user: ctx.user, action: 'local.account.role.denied', entity: 'user', entityId: u.id, success: false, details: { from: u.role, to: v.role, reason: 'lockout', ...(self ? { self: true } : {}) } });
+      throw new HttpError(400, locked, { lockout: true });
+    }
     db.run(`UPDATE users SET role=?, updated_at=? WHERE id=?`, v.role, db.now(), u.id);
     // A supervisor or an administrator sees every client: the sign-up's caseload denies go with the promotion.
     const lifted = v.role === 'supervisor' || v.role === 'admin'
@@ -580,9 +586,11 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
     // account that signed up here is held already); made a supervisor or an administrator, its deny goes
     // (server/caseload-default.js, audited per person).
     const caseload = require('../server/caseload-default.js').onRoleChange(u.id, u.role, v.role, { actor: ctx.user });
-    // A role change takes effect on the next sign-in, like an office role change: end that person's sessions.
-    auth.revokeAllForUser(u.id);
-    audit.log({ user: ctx.user, action: 'local.account.role', entity: 'user', entityId: u.id, details: { from: u.role, to: v.role, ...(lifted ? { denies_lifted: SIGNUP_SCOPE } : {}) } });
+    // A role change takes effect on the next sign-in: end that person's sessions. One's own takes effect at once
+    // (permissions are worked out at every request), so the session it is made from stays and the others end.
+    if (self && ctx.session) db.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL AND id<>?`, db.now(), u.id, ctx.session.id);
+    else auth.revokeAllForUser(u.id);
+    audit.log({ user: ctx.user, action: 'local.account.role', entity: 'user', entityId: u.id, details: { from: u.role, to: v.role, ...(lifted ? { denies_lifted: SIGNUP_SCOPE } : {}), ...(self ? { self: true } : {}) } });
     return { ok: true, role: v.role, ...(caseload ? { caseload_default: caseload } : {}) };
   });
   // What the "This device" page shows: the last backup, whether further sign-ups are allowed, and whether
