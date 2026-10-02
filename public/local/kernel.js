@@ -13871,6 +13871,7 @@ var require_notes = __commonJS({
         db3.run(`UPDATE notes SET signature_hash=? WHERE id=?`, hash2, n.id);
         const reminders = closeSignReminders(n.author_id, n.id, n.client_id);
         require_audit().log({ user: c.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: "device", details: { hash: hash2, via: "sync", cosign_required: !!n.cosign_required, reminders_closed: reminders.length ? reminders : void 0, ai_assisted: Number(n.ai_assisted) ? true : void 0, ai_reviewed: Number(n.ai_assisted) ? true : void 0 } });
+        for (const id of reminders) require_audit().log({ user: c.user, action: "task.update", entity: "task", entityId: id, clientId: n.client_id, ip: "device", details: { via: "sync", status: "done", cause: "signed", note: n.id } });
       }
     });
     module.exports.closeSignReminders = closeSignReminders;
@@ -13942,7 +13943,7 @@ var require_tasks = __commonJS({
       }
       return require_notes().isSignReminder(existing, text);
     }
-    var SIGN_REMINDER_MOVED = "Only the supervisor who sent this reminder can give it to someone else or move it to another client";
+    var SIGN_REMINDER_MOVED = "Only the supervisor who sent this reminder, or someone who countersigns notes, can give it to someone else or move it to another client";
     module.exports = define2({
       table: "tasks",
       // The record whose follow-up this to-do is (server/rules/follow-ups.js): a device's to-do carries its call's or
@@ -39314,6 +39315,7 @@ var require_episodes2 = __commonJS({
         const outOfReach = held.length - open3.length;
         let moved = 0;
         let tasks = 0;
+        let remindersCancelled = 0;
         const skipped = [];
         db3.transaction(() => {
           for (const a of open3) {
@@ -39348,6 +39350,7 @@ var require_episodes2 = __commonJS({
                 }
                 if (!isSignReminder(t, text)) continue;
                 db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, db3.now(), t.id);
+                remindersCancelled++;
                 audit3.log({ user: ctx.user, action: "task.update", entity: "task", entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { status: "cancelled", cause: "transferred" } });
               }
             }
@@ -39355,8 +39358,8 @@ var require_episodes2 = __commonJS({
             if (!v.client_ids || !v.client_ids.length) tasks += db3.run(`UPDATE tasks SET assigned_to=?, updated_at=? WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS NULL`, to.id, db3.now(), from.id).changes;
           }
         });
-        audit3.log({ user: ctx.user, action: "caseload.transfer", entity: "user", entityId: from.id, ip: ctx.ip, details: { to: to.id, clients: moved, tasks, skipped: skipped.length, not_on_caseload: outOfReach || void 0, effective_date: when } });
-        return { ok: true, transferred: moved, tasks_reassigned: tasks, skipped, not_on_caseload: outOfReach, from: from.display_name, to: to.display_name };
+        audit3.log({ user: ctx.user, action: "caseload.transfer", entity: "user", entityId: from.id, ip: ctx.ip, details: { to: to.id, clients: moved, tasks, reminders_cancelled: remindersCancelled || void 0, skipped: skipped.length, not_on_caseload: outOfReach || void 0, effective_date: when } });
+        return { ok: true, transferred: moved, tasks_reassigned: tasks, reminders_cancelled: remindersCancelled, skipped, not_on_caseload: outOfReach, from: from.display_name, to: to.display_name };
       });
       r.get("/api/meta/discharge-reasons", auth3.requireAuth, () => ({ discharge_reasons: O.visible("DISCHARGE_REASONS"), options: O.entries("DISCHARGE_REASONS") }));
     };
@@ -42629,6 +42632,7 @@ var require_notes2 = __commonJS({
         db3.run(`UPDATE notes SET status='signed', signed_at=?, signed_by=?, signature_hash=?, updated_at=? WHERE id=?`, db3.now(), ctx.user.id, hash2, db3.now(), n.id);
         const reminders = require_notes().closeSignReminders(ctx.user.id, n.id, n.client_id);
         audit3.log({ user: ctx.user, action: "note.sign", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash: hash2, cosign_required: !!n.cosign_required, identity, evidence: ctx.signatureEvidence || void 0, reminders_closed: reminders.length ? reminders : void 0, ai_assisted: Number(n.ai_assisted) ? true : void 0, ai_reviewed: Number(n.ai_assisted) ? true : void 0 } });
+        for (const id of reminders) audit3.log({ user: ctx.user, action: "task.update", entity: "task", entityId: id, clientId: n.client_id, ip: ctx.ip, details: { status: "done", cause: "signed", note: n.id } });
         return { ok: true, signature_hash: hash2, awaiting_cosign: !!n.cosign_required };
       });
       function cosignRefusal(ctx, n) {
@@ -48620,7 +48624,7 @@ var require_supervision = __commonJS({
         FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
         WHERE n.deleted_at IS NULL AND n.status<>'draft' AND n.cosigned_at IS NULL AND n.author_id<>? AND ((n.cosign_required=1 AND ${sf.sql}) OR n.cosign_requested=1)
         ORDER BY n.signed_at LIMIT 100`, ctx.user.id, ...sf.params)).map(({ counseling_note, cosigned_by, ...x }) => ({ ...x, title: x.title_enc && require_notes().mayReadCounseling(ctx.user, { counseling_note, author_id: x.author_id, cosigned_by }) ? decrypt3(x.title_enc) : null, title_enc: void 0 }));
-          out2.unsigned_notes = named(ctx, db3.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS},
+          out2.unsigned_notes = named(ctx, db3.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, n.author_id, u.display_name AS author, u.is_active AS author_active, c.client_code, ${NAME_COLS},
           (n.created_at < ?) AS overdue
         FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
         WHERE n.deleted_at IS NULL AND n.status='draft' AND ${sf.sql}

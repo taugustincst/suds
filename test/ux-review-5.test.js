@@ -182,12 +182,17 @@ test('signing a note closes the supervisor\'s "finish and sign" reminder for it,
   assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r2.data.id).status, 'open', 'the other note\'s reminder stays');
   const a = JSON.parse(H.db.one(`SELECT details FROM audit_log WHERE action='note.sign' ORDER BY id DESC LIMIT 1`).details);
   assert.deepEqual(a.reminders_closed, [r1.data.id]);
+  // Market evaluation of 1.23.4 (D4): the closed reminder has its own task.update entry, as a delete's and a transfer's.
+  const own = (id) => H.db.all(`SELECT details FROM audit_log WHERE action='task.update' AND entity_id=?`, id).map(x => JSON.parse(x.details || '{}'));
+  assert.deepEqual(own(r1.data.id).find(d => d.cause === 'signed'), { status: 'done', cause: 'signed', note: n1 });
+  assert.equal(own(r2.data.id).length, 0, 'nothing for the reminder left open');
   // Signed on a device and pushed: the office closes the reminder too.
   const row = H.db.one(`SELECT * FROM notes WHERE id=?`, n2);
   const push = await clin.post('/api/sync/push', { device_now: iso(), tables: { notes: [{ ...row, content_enc: 'Draft two.', title_enc: null, structured_enc: null, status: 'signed', signed_by: U.clin, signed_at: iso(), signature_hash: 'x'.repeat(64), updated_at: iso(Date.now() + 5000) }] } });
   assert.equal(push.status, 200, JSON.stringify(push.data));
   assert.equal(H.db.one(`SELECT status FROM notes WHERE id=?`, n2).status, 'signed');
   assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r2.data.id).status, 'done');
+  assert.deepEqual(own(r2.data.id).find(d => d.cause === 'signed'), { via: 'sync', status: 'done', cause: 'signed', note: n2 }, 'the push writes one too');
 });
 
 test('Home\'s Calls tile counts what a caseload-scoped worker may see, like the visits tile', async () => {
@@ -399,6 +404,8 @@ test('the assignee of a sign reminder cannot move it to a colleague or another c
   const moved = await clin.put(`/api/tasks/${r.data.id}`, { assigned_to: U.nav, client_id: other.data.id });
   assert.equal(moved.status, 403, JSON.stringify(moved.data));
   assert.match(moved.data.error || '', /supervisor who sent this reminder/);
+  // Anyone who countersigns notes may move one too, and the refusal says so (market evaluation of 1.23.4, D2).
+  assert.match(moved.data.error || '', /Only the supervisor who sent this reminder, or someone who countersigns notes, can /);
   assert.equal((await clin.put(`/api/tasks/${r.data.id}`, { assigned_to: U.nav })).status, 403, 'nor to a colleague alone');
   assert.equal((await clin.put(`/api/tasks/${r.data.id}`, { client_id: other.data.id })).status, 403, 'nor to another client alone');
   assert.equal((await clin.put(`/api/tasks/${r.data.id}`, { due_at: today, priority: 'high' })).status, 200, 'other edits stand');
@@ -433,4 +440,23 @@ test('a caseload transfer cancels the departing worker\'s sign reminders rather 
   assert.equal(t.status, 200, JSON.stringify(t.data));
   assert.equal(H.db.one(`SELECT status FROM tasks WHERE id=?`, r.data.id).status, 'cancelled', 'the reminder is cancelled');
   assert.equal(H.db.one(`SELECT assigned_to FROM tasks WHERE id=?`, other.data.id).assigned_to, to.id, 'an ordinary to-do moves as before');
+  // The result says how many reminders were cancelled, beside the to-dos moved (market evaluation of 1.23.4, D5).
+  assert.equal(t.data.reminders_cancelled, 1, JSON.stringify(t.data));
+  assert.equal(JSON.parse(H.db.one(`SELECT details FROM audit_log WHERE action='caseload.transfer' ORDER BY id DESC LIMIT 1`).details).reminders_cancelled, 1);
+  const none = await sup.post('/api/caseload/transfer', { from_user_id: U.clin, to_user_id: to.id, client_ids: [c.data.id] });
+  assert.equal(none.data.reminders_cancelled, 0, 'none to cancel the second time');
+});
+
+// Market evaluation of 1.23.4 (D5): the queue offered Remind author for a draft whose author has left. Each unsigned draft
+// says whether its author's account is active, and the Supervision page offers no reminder for one that is not.
+test('the supervision queue says whether each unsigned draft\'s author is still active (1.23.5)', async () => {
+  const leaver = H.makeUser(`lvr${Date.now() % 100000}`, 'clinician');
+  const lc = H.client(); await lc.login(leaver.username, PW);
+  const c = await lc.post('/api/clients', { first_name: 'Lea', last_name: 'Ver', status: 'active', confirm_duplicate: true });
+  const d = await lc.post('/api/notes', { client_id: c.data.id, kind: 'admin', content: 'Draft left behind.', occurred_at: iso() });
+  assert.equal(d.status, 201, JSON.stringify(d.data));
+  const row = async () => (await sup.get('/api/supervision/queue')).data.unsigned_notes.find(x => x.id === d.data.id);
+  assert.equal((await row()).author_active, 1);
+  H.db.run(`UPDATE users SET is_active=0 WHERE id=?`, leaver.id);
+  assert.equal((await row()).author_active, 0, 'deactivated: the page offers no Remind author');
 });

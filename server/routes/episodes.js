@@ -238,7 +238,7 @@ module.exports = (r) => {
     const open = held.filter(a => reach(a.client_id));
     const outOfReach = held.length - open.length;
 
-    let moved = 0; let tasks = 0; const skipped = [];
+    let moved = 0; let tasks = 0; let remindersCancelled = 0; const skipped = [];
     db.transaction(() => {
       for (const a of open) {
         if (db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND (end_date IS NULL OR end_date >= ?)`, a.client_id, to.id, when)) {
@@ -263,7 +263,7 @@ module.exports = (r) => {
           for (const t of db.all(`SELECT id, client_id, created_by, assigned_to, description_enc FROM tasks WHERE assigned_to=? AND status IN ('open','in_progress') AND description_enc IS NOT NULL AND client_id IN (${ids.map(() => '?').join(',')})`, from.id, ...ids)) {
             let text = ''; try { text = decrypt(t.description_enc); } catch { continue; }
             if (!isSignReminder(t, text)) continue;
-            db.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, db.now(), t.id);
+            db.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, db.now(), t.id); remindersCancelled++;
             audit.log({ user: ctx.user, action: 'task.update', entity: 'task', entityId: t.id, clientId: t.client_id, ip: ctx.ip, details: { status: 'cancelled', cause: 'transferred' } });
           }
         }
@@ -273,8 +273,9 @@ module.exports = (r) => {
         if (!v.client_ids || !v.client_ids.length) tasks += db.run(`UPDATE tasks SET assigned_to=?, updated_at=? WHERE assigned_to=? AND status IN ('open','in_progress') AND client_id IS NULL`, to.id, db.now(), from.id).changes;
       }
     });
-    audit.log({ user: ctx.user, action: 'caseload.transfer', entity: 'user', entityId: from.id, ip: ctx.ip, details: { to: to.id, clients: moved, tasks, skipped: skipped.length, not_on_caseload: outOfReach || undefined, effective_date: when } });
-    return { ok: true, transferred: moved, tasks_reassigned: tasks, skipped, not_on_caseload: outOfReach, from: from.display_name, to: to.display_name };
+    audit.log({ user: ctx.user, action: 'caseload.transfer', entity: 'user', entityId: from.id, ip: ctx.ip, details: { to: to.id, clients: moved, tasks, reminders_cancelled: remindersCancelled || undefined, skipped: skipped.length, not_on_caseload: outOfReach || undefined, effective_date: when } });
+    // reminders_cancelled (1.23.5): the sign reminders cancelled above, which the result now says (market evaluation of 1.23.4, D5).
+    return { ok: true, transferred: moved, tasks_reassigned: tasks, reminders_cancelled: remindersCancelled, skipped, not_on_caseload: outOfReach, from: from.display_name, to: to.display_name };
   });
 
   // The reasons a discharge may give now, in the programme's order, and their wording (Settings → Lists).

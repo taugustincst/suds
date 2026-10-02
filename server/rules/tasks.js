@@ -55,7 +55,7 @@ function storedSignReminder(existing) {
   let text; try { text = require('../crypto').decrypt(existing.description_enc); } catch { return false; }
   return require('./notes').isSignReminder(existing, text);
 }
-const SIGN_REMINDER_MOVED = 'Only the supervisor who sent this reminder can give it to someone else or move it to another client';
+const SIGN_REMINDER_MOVED = 'Only the supervisor who sent this reminder, or someone who countersigns notes, can give it to someone else or move it to another client';
 
 module.exports = define({
   table: 'tasks',

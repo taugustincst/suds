@@ -89,8 +89,9 @@ module.exports = (r) => {
         ORDER BY n.signed_at LIMIT 100`, ctx.user.id, ...sf.params))
         // A SUD counseling note's title only for someone who may read it (server/rules/notes.js, 1.16.1).
         .map(({ counseling_note, cosigned_by, ...x }) => ({ ...x, title: x.title_enc && require('../rules/notes').mayReadCounseling(ctx.user, { counseling_note, author_id: x.author_id, cosigned_by }) ? decrypt(x.title_enc) : null, title_enc: undefined }));
-      // author_id: who a "Remind author" to-do goes to (views/supervision.js, POST /api/tasks).
-      out.unsigned_notes = named(ctx, db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS},
+      // author_id: who a "Remind author" to-do goes to (views/supervision.js, POST /api/tasks). author_active (1.23.5): an
+      // author whose account is deactivated is not offered a reminder nobody would read (market evaluation of 1.23.4, D5).
+      out.unsigned_notes = named(ctx, db.all(`SELECT n.id, n.client_id, n.kind, n.occurred_at, n.created_at, n.author_id, u.display_name AS author, u.is_active AS author_active, c.client_code, ${NAME_COLS},
           (n.created_at < ?) AS overdue
         FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
         WHERE n.deleted_at IS NULL AND n.status='draft' AND ${sf.sql}

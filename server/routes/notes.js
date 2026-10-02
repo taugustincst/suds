@@ -267,6 +267,8 @@ module.exports = (r) => {
     // The supervisor's "Finish and sign your note" reminder has done its job (server/rules/notes.js).
     const reminders = require('../rules/notes').closeSignReminders(ctx.user.id, n.id, n.client_id);
     audit.log({ user: ctx.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: { hash, cosign_required: !!n.cosign_required, identity, evidence: ctx.signatureEvidence || undefined, reminders_closed: reminders.length ? reminders : undefined, ai_assisted: Number(n.ai_assisted) ? true : undefined, ai_reviewed: Number(n.ai_assisted) ? true : undefined } });
+    // Each reminder closed by the signature has its own entry, as a delete's and a transfer's have (market evaluation of 1.23.4, D4).
+    for (const id of reminders) audit.log({ user: ctx.user, action: 'task.update', entity: 'task', entityId: id, clientId: n.client_id, ip: ctx.ip, details: { status: 'done', cause: 'signed', note: n.id } });
     return { ok: true, signature_hash: hash, awaiting_cosign: !!n.cosign_required };
   });
 

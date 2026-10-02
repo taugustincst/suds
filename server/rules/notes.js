@@ -252,6 +252,8 @@ module.exports = define({
     db.run(`UPDATE notes SET signature_hash=? WHERE id=?`, hash, n.id);
     const reminders = closeSignReminders(n.author_id, n.id, n.client_id);
     require('../audit').log({ user: c.user, action: 'note.sign', entity: 'note', entityId: n.id, clientId: n.client_id, ip: 'device', details: { hash, via: 'sync', cosign_required: !!n.cosign_required, reminders_closed: reminders.length ? reminders : undefined, ai_assisted: Number(n.ai_assisted) ? true : undefined, ai_reviewed: Number(n.ai_assisted) ? true : undefined } });
+    // Each reminder closed by the signature has its own entry, as a delete's and a transfer's have (market evaluation of 1.23.4, D4).
+    for (const id of reminders) require('../audit').log({ user: c.user, action: 'task.update', entity: 'task', entityId: id, clientId: n.client_id, ip: 'device', details: { via: 'sync', status: 'done', cause: 'signed', note: n.id } });
   },
 });
 module.exports.closeSignReminders = closeSignReminders;
