@@ -938,6 +938,8 @@ export async function transferCard(fromId) {
     result.append(h('div', { class: 'banner ok', role: 'status' },
       `${r.transferred} client${r.transferred === 1 ? '' : 's'} moved from ${r.from} to ${r.to}${r.tasks_reassigned ? `, and ${r.tasks_reassigned} to-do(s) reassigned` : ''}.`));
     if (r.skipped && r.skipped.length) result.append(h('p', { class: 'small muted' }, `${r.skipped.length} were already assigned to the receiving worker.`));
+    // A sign reminder is cancelled, not handed on (1.23.4); the result says so (market evaluation of 1.23.4, D5).
+    if (r.reminders_cancelled) result.append(h('p', { class: 'small', 'data-reminders-cancelled': String(r.reminders_cancelled) }, `${r.reminders_cancelled} reminder${r.reminders_cancelled === 1 ? '' : 's'} to finish and sign draft notes cancelled: the drafts stay ${r.from}'s, and are not moved.`));
     toast('Caseload transferred', 'ok');
   } });
   return h('div', { class: 'card' },

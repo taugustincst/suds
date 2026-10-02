@@ -463,6 +463,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--focus); out
 .badge { max-width: 100%; white-space: normal; overflow-wrap: break-word; }
 @media (min-width: 901px) { table .badge { white-space: nowrap; } }
 .mfa-link { text-decoration: none; white-space: nowrap; }
+/* 1.4.1 / 4.1.2: a filter that is on or off is a toggle button with aria-pressed; when on it shows a check mark, not
+   only the primary colour (the To-dos list's "Assigned to me" and "Overdue", 1.23.5). The mark is not read out: the
+   button's pressed state already is. */
+.btn[aria-pressed="true"]::before { content: "\2713"; content: "\2713" / ""; font-weight: 700; }
 /* A button's words wrap inside it rather than running out of it at large text sizes. */
 .btn { white-space: normal; }
 .kv dt { overflow-wrap: anywhere; }

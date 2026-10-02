@@ -158,7 +158,9 @@ route('supervision', async (r) => {
       for (const d of drafts) if (!reminded.has(d.id) && byPair.has(pairOf(d.client_id, d.author_id))) reminded.set(d.id, byPair.get(pairOf(d.client_id, d.author_id)));
     } catch { /* no reminders known: every row still offers one, and the server audits each */ }
   }
-  const remindable = (r) => mayRemind && r.author_id && r.author_id !== state.user.id;
+  // An author whose account is deactivated (left, or a caseload moved on) is not reminded: nobody would read it (1.23.5).
+  const gone = (r) => r.author_active === 0;
+  const remindable = (r) => mayRemind && r.author_id && r.author_id !== state.user.id && !gone(r);
   const remind = (r) => post('/api/tasks', {
     client_id: r.client_id, assigned_to: r.author_id,
     // It covers every draft of theirs on that client's record and closes when the last is signed (or deleted), so it
@@ -205,7 +207,8 @@ route('supervision', async (r) => {
       { label: 'Reminder', render: r => reminded.has(r.id) ? h('span', { 'data-reminded': r.id }, badge(`Sent ${fmt.date(reminded.get(r.id).created_at)}`, 'info')) : h('span', { class: 'small muted' }, '—') },
       { label: '', render: r => h('div', { class: 'row nowrap' },
         h('button', { class: 'btn sm', 'data-open-note': r.id, 'aria-label': `Open note — ${r.author}, ${fmt.date(r.created_at)}`, onClick: () => openNote(r.id, { onChange: refresh }) }, 'Open note'),
-        remindable(r) && !reminded.has(r.id) ? h('button', { class: 'btn sm', 'data-remind-author': r.id, 'aria-label': `Remind author — ${r.author}, ${fmt.date(r.created_at)}`, onClick: (e) => remindOne(r, e.currentTarget) }, 'Remind author') : null) },
+        remindable(r) && !reminded.has(r.id) ? h('button', { class: 'btn sm', 'data-remind-author': r.id, 'aria-label': `Remind author — ${r.author}, ${fmt.date(r.created_at)}`, onClick: (e) => remindOne(r, e.currentTarget) }, 'Remind author')
+          : mayRemind && gone(r) ? h('span', { class: 'small muted', 'data-author-inactive': r.id }, 'Author no longer active') : null) },
     ], drafts),
     mayRemind && overdue ? h('div', { class: 'btn-row' },
       h('button', { class: 'btn', 'data-remind-all': String(overdueToRemind), onClick: remindAll }, 'Remind all overdue authors'),

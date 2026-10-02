@@ -107,7 +107,7 @@ route('overdose', async () => {
       can('overdose:write') ? h('button', { class: 'btn primary', onClick: () => openOverdoseForm(null, { onDone: refresh }) }, '+ Record an event') : null),
     h('p', { class: 'muted' }, 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the numbers funders ask for and the only place they can be counted.'),
     h('div', { class: 'row mb' }, ['all', 'reversal', 'overdose', 'fatal'].map(k =>
-      h('button', { class: `btn sm ${k === kind ? 'primary' : ''}`, onClick: () => nav(`overdose?kind=${k}`) }, k === 'all' ? 'All' : fmt.label(k, 'OVERDOSE_KINDS')))),
+      h('button', { class: `btn sm ${k === kind ? 'primary' : ''}`, 'aria-pressed': String(k === kind), onClick: () => nav(`overdose?kind=${k}`) }, k === 'all' ? 'All' : fmt.label(k, 'OVERDOSE_KINDS')))),
     rows.length ? table([
       { label: 'When', render: r => fmt.dt(r.occurred_at) },
       { label: 'Who', render: r => r.client_code || h('span', { class: 'muted' }, 'community report') },

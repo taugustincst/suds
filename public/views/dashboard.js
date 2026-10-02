@@ -290,7 +290,9 @@ async function drawHome(r) {
   const done = async (t, box) => {
     if (box) box.disabled = true;
     try {
-      const { doneToast } = await import('./tasks.js');
+      const { doneToast, confirmReminderDone } = await import('./tasks.js');
+      // A sign reminder with drafts still unsigned asks first; Cancel leaves it open (1.23.5).
+      if (!(await confirmReminderDone(t))) { if (box) { box.checked = false; box.disabled = false; } return; }
       await put(`/api/tasks/${t.id}`, { status: 'done' });
       // Reopened as it was: an in-progress to-do stays in progress (review of 1.23.2); Undo after the worker has moved
       // on reopens it where they are, without taking them back to Home. "View in Done" (1.23.3) opens the To-dos list

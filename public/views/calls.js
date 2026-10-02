@@ -39,6 +39,13 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone, 
     f.addEventListener('input', say); f.addEventListener('change', say); say();
   }
   const m = modal(isNew ? (isText ? 'Log text message' : 'Log call') : `Edit ${noun}`, f, { wide: true });
+  // Delete in the form too (1.23.5): on a phone a tap on your own call opens this form, not the card that has Delete
+  // (market evaluation of 1.23.4, D1). For whoever may change it, as on the card.
+  if (!isNew && mayEditCall(values)) {
+    const row = f.querySelector(':scope > .btn-row');
+    if (row) row.prepend(h('button', { type: 'button', class: 'btn danger', style: { marginRight: 'auto' }, 'data-call-delete': values.id,
+      onClick: () => deleteCall(values, onDone, { close: () => { f.finished(); m.close(); } }) }, isText ? 'Delete text' : 'Delete call'));
+  }
 }
 // The confirmation says what else goes: an open follow-up to-do is cancelled with the record (1.23.3).
 const deleteCall = async (r, onChange, m) => { const also = await (await import('./tasks.js')).deleteNotice('call_id', r); if (await confirmDialog(r.method === 'text' ? 'Delete text' : 'Delete call', `Delete this contact record?${also}`, { danger: true, okText: 'Delete' })) { await del(`/api/calls/${r.id}`); if (m) m.close(); onChange && onChange(); } };
@@ -92,11 +99,11 @@ route('calls', async (r) => {
       can('calls:write') ? h('button', { class: 'btn', onClick: () => openCallForm(null, { method: 'text', onDone: refresh }) }, '+ Log text') : null,
       can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/calls?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
     filterBar([crisis, fu, mine, method].filter(Boolean).length,
-      h('button', { class: `btn sm ${crisis ? 'primary' : ''}`, onClick: () => nav(link({ crisis: crisis ? '' : '1' })) }, 'Crisis only'),
-      h('button', { class: `btn sm ${fu ? 'primary' : ''}`, onClick: () => nav(link({ follow_up: fu ? '' : '1' })) }, 'Needs follow-up'),
-      h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(link({ mine: mine ? '' : '1' })) }, 'Mine'),
-      h('button', { class: `btn sm ${method === 'phone' ? 'primary' : ''}`, onClick: () => nav(link({ method: method === 'phone' ? '' : 'phone' })) }, 'Calls'),
-      h('button', { class: `btn sm ${method === 'text' ? 'primary' : ''}`, onClick: () => nav(link({ method: method === 'text' ? '' : 'text' })) }, 'Texts')),
+      h('button', { class: `btn sm ${crisis ? 'primary' : ''}`, 'aria-pressed': String(crisis), onClick: () => nav(link({ crisis: crisis ? '' : '1' })) }, 'Crisis only'),
+      h('button', { class: `btn sm ${fu ? 'primary' : ''}`, 'aria-pressed': String(fu), onClick: () => nav(link({ follow_up: fu ? '' : '1' })) }, 'Needs follow-up'),
+      h('button', { class: `btn sm ${mine ? 'primary' : ''}`, 'aria-pressed': String(mine), onClick: () => nav(link({ mine: mine ? '' : '1' })) }, 'Mine'),
+      h('button', { class: `btn sm ${method === 'phone' ? 'primary' : ''}`, 'aria-pressed': String(method === 'phone'), onClick: () => nav(link({ method: method === 'phone' ? '' : 'phone' })) }, 'Calls'),
+      h('button', { class: `btn sm ${method === 'text' ? 'primary' : ''}`, 'aria-pressed': String(method === 'text'), onClick: () => nav(link({ method: method === 'text' ? '' : 'text' })) }, 'Texts')),
     pagedList({ first: data, url: `/api/calls${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => callTable(rows, { onChange: refresh }),
       summary: (rows, total) => { const texts = rows.filter(x => x.method === 'text').length; return h('div', { class: 'muted small mb' }, `${total} contact${total === 1 ? '' : 's'}${method ? '' : ` (${rows.length - texts} calls, ${texts} texts shown)`} · ${fmt.mins(rows.reduce((s, x) => s + (x.duration_minutes || 0), 0))}`); } }));
 });

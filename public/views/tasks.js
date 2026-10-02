@@ -15,11 +15,27 @@ export function doneToast(t, { mine, onUndone } = {}) {
   }, { also: { text: 'View in Done', key: 'view-done', onClick: () => nav(`${doneListHash(t, mine)}&focus=${encodeURIComponent(t.id)}&_=${Date.now()}`) } });
 }
 
+// Who a supervisor's sign reminder is for, and which record, is changed only by its maker or someone who countersigns
+// notes (server/rules/tasks.js); for anyone else the two fields are shown fixed, with why (market evaluation of 1.23.4, D2).
+const REMINDER_FIXED = 'Only the supervisor who sent this reminder, or someone who countersigns notes, can change who it is for or its client.';
+/**
+ * Before a supervisor's sign reminder is ticked done by the person it is for (1.23.5): with drafts of theirs still unsigned
+ * on its client's record it asks first, and Cancel leaves it open (a reminder ticked done that way was closed with the work
+ * it asks for undone; market evaluation of 1.23.3, N7). True to go ahead. The UI only: the server still lets it be done.
+ */
+export async function confirmReminderDone(t) {
+  if (!t || !t.sign_reminder || !t.client_id || t.assigned_to !== state.user.id) return true;
+  let n = 0;
+  try { n = (await get(`/api/notes?client_id=${encodeURIComponent(t.client_id)}&status=draft&mine=1&limit=1`, { quiet: true })).total || 0; } catch { return true; }
+  if (!n) return true;
+  return confirmDialog('Mark the reminder done?', `You still have ${n} unsigned draft note${n === 1 ? '' : 's'} on this record. Mark the reminder done anyway?`, { okText: 'Mark done' });
+}
 export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
   const isNew = !values;
+  const fixed = !isNew && !!values.sign_reminder && values.created_by !== state.user.id && !can('notes:cosign');
   const f = form([
     { name: 'title', label: 'Title', required: true, span: true }, { name: 'client_id', label: 'Client (optional)', type: 'client', value: clientId || values?.client_id, display: clientDisplay },
-    { name: 'assigned_to', label: 'Assigned to', type: 'user', value: values?.assigned_to || state.user.id, exceptRoles: ['finance', 'readonly'] }, { name: 'due_at', label: 'Due', type: 'datetime', quick: true },
+    { name: 'assigned_to', label: 'Assigned to', type: 'user', value: values?.assigned_to || state.user.id, exceptRoles: ['finance', 'readonly'], help: fixed ? REMINDER_FIXED : null }, { name: 'due_at', label: 'Due', type: 'datetime', quick: true },
     { name: 'priority', label: 'Priority', type: 'select', options: ['low', 'normal', 'high', 'urgent'], value: 'normal', noBlank: true, required: true },
     // A new to-do is open (1.22.0: the Status choice is on the edit form only; nobody makes a to-do already done).
     isNew ? null : { name: 'status', label: 'Status', type: 'select', options: ['open', 'in_progress', 'done', 'cancelled'], value: 'open', noBlank: true, required: true },
@@ -28,6 +44,12 @@ export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
     if (isNew) await post('/api/tasks', d); else await put(`/api/tasks/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast('To-do saved', 'ok'); m.close(); onDone && onDone();
   } });
+  if (fixed) {
+    const why = f.querySelector('[data-field="assigned_to"] .help');
+    f.inputs.assigned_to.disabled = true; f.inputs.assigned_to.dataset.reminderFixed = '1';
+    const text = f.inputs.client_id && f.inputs.client_id.searchInput;
+    if (text) { text.disabled = true; text.dataset.reminderFixed = '1'; if (why) text.setAttribute('aria-describedby', why.id); }
+  }
   const src = isNew ? null : sourceButton(values, () => m.close(), onDone);
   const m = modal(isNew ? 'New to-do' : 'Edit to-do', src ? h('div', {}, h('p', { class: 'btn-row' }, src), f) : f);
 }
@@ -175,7 +197,9 @@ export async function openChangeNotice(t, { onDone } = {}) {
 export function taskTable(rows, { showClient = true, onChange, bulk = false, mine, justDone = null } = {}) {
   const fresh = (t) => (justDone && t.id === justDone ? h('span', { 'data-just-done': t.id }, badge('Just done', 'ok')) : null);
   // Ticked off: "Done" with Undo and View in Done; unticked: reopened.
+  // False when the person chose not to (a sign reminder with drafts left, confirmReminderDone): the box goes back.
   const tick = async (t, wanted) => {
+    if (wanted && !(await confirmReminderDone(t))) return false;
     await put(`/api/tasks/${t.id}`, { status: wanted ? 'done' : 'open' });
     if (wanted) doneToast(t, { mine, onUndone: onChange }); else toast('Reopened', 'ok');
     onChange && onChange();
@@ -220,7 +244,7 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false, min
       onChange: async (e) => {
         const wanted = e.target.checked;
         e.target.disabled = true;
-        try { await tick(t, wanted); } catch (err) {
+        try { if (await tick(t, wanted) === false) e.target.checked = !wanted; } catch (err) {
           // Silently reverting used to leave the worker believing a to-do was ticked off when it was not.
           e.target.checked = !wanted;
           toast(err.message || 'Could not update this to-do. Check your connection and try again.', 'error');
@@ -240,7 +264,7 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false, min
       // (the row) instead of ticking it off.
       tickable(t) ? h('label', { class: 'tap-target', onClick: (e) => e.stopPropagation() }, h('input', { type: 'checkbox', checked: t.status === 'done', 'aria-label': `Mark "${t.title}" ${t.status === 'done' ? 'not done' : 'done'}`, onClick: (e) => e.stopPropagation(), onChange: async (e) => {
         const wanted = e.target.checked; e.target.disabled = true;
-        try { await tick(t, wanted); }
+        try { if (await tick(t, wanted) === false) e.target.checked = !wanted; }
         catch (err) { e.target.checked = !wanted; toast(err.message || 'Could not update this to-do. Check your connection and try again.', 'error'); }
         finally { e.target.disabled = false; }
       } })) : null, h('span', { style: t.status === 'done' ? { textDecoration: 'line-through', color: 'var(--muted)' } : {} }, t.is_milestone ? '★ ' : '', t.title)), badge(fmt.label(t.priority), statusKind(t.priority))],
@@ -270,7 +294,7 @@ route('tasks', async (r) => {
   const suprtDue = await (await import('./suprt.js')).suprtDueCard();
   return h('div', {},
     pageHead('To-dos', can('tasks:write') ? h('button', { class: 'btn primary', onClick: () => openTaskForm(null, { onDone: refresh }) }, '+ Add a to-do') : null),
-    h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, onClick: () => nav(`tasks?status=${status}&mine=${mine ? 0 : 1}`) }, 'Assigned to me'), h('button', { class: `btn sm ${overdue ? 'primary' : ''}`, onClick: () => nav(`tasks?status=open&mine=${mine ? 1 : 0}${overdue ? '' : '&overdue=1'}`) }, 'Overdue')),
+    h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'Status'), sel), h('button', { class: `btn sm ${mine ? 'primary' : ''}`, 'aria-pressed': String(mine), 'data-toggle': 'mine', onClick: () => nav(`tasks?status=${status}&mine=${mine ? 0 : 1}`) }, 'Assigned to me'), h('button', { class: `btn sm ${overdue ? 'primary' : ''}`, 'aria-pressed': String(overdue), 'data-toggle': 'overdue', onClick: () => nav(`tasks?status=open&mine=${mine ? 1 : 0}${overdue ? '' : '&overdue=1'}`) }, 'Overdue')),
     suprtDue,
     taskTable(data.rows, { onChange: refresh, bulk: true, mine, justDone: focus }));
 });

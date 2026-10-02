@@ -2016,6 +2016,9 @@ async function renderPage() {
   if (!state.user) { forgetTabSession(); return show(routes.login(r)); }
   if (state.mfaPending && r.name !== 'mfa') { nav('mfa'); return; }
   if (r.name === 'mfa' || r.name === 'login') return show(routes[r.name === 'mfa' ? 'mfa' : 'dashboard'](r));
+  // The device's first-run address, typed while signed in, showed its Sign up form inside the app (market evaluation of
+  // 1.23.4, D7): it goes to Home. location.replace, so Back does not land on it again.
+  if (r.name === 'localsetup') { location.replace('#/dashboard'); return; }
   if (state.user.must_change_password && r.name !== 'profile') { nav('profile?force=1'); return; }
   // Addresses people guess or bookmark for "SUDS on my phone" and for the list of devices were "Page not
   // found". The phone/tablet page is a page of its own (get-app.html; /app on the office server); the
