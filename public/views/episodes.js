@@ -128,9 +128,13 @@ export async function episodesPanel(clientId, { onChange, client = null } = {}) 
 route('waitlist', async () => {
   const PAGE = 200;
   const first = await get(`/api/waitlist?limit=${PAGE}`);
+  // Putting someone on the list is always in the page's header for a role that may add clients (1.24.0): it used to
+  // be offered only while the list was empty, and a worker with people already waiting could not find it.
+  const addToWaitlist = async () => (await import('./clients.js')).openClientForm(null, (id) => nav(id ? `client/${id}` : `waitlist?_=${Date.now()}`), { full: true, prefill: { status: 'waitlist' } });
   return h('div', {},
-    pageHead('Waitlist'),
-    h('p', { class: 'muted' }, 'Everyone waiting for a place, longest and highest risk first. This is the list to work through each morning.'),
+    pageHead('Waitlist', can('clients:write') ? h('button', { class: 'btn primary', type: 'button', 'data-waitlist-add': '1', onClick: addToWaitlist }, '+ Add to waitlist') : null),
+    h('p', { class: 'muted' }, 'Everyone waiting for a place, longest and highest risk first. This is the list to work through each morning.',
+      can('clients:write') ? ' Someone already in SUDS goes on it when their status is set to Waitlist on their record.' : ''),
     first.rows.length ? pagedList({ first, url: '/api/waitlist', limit: PAGE, summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} waiting`), render: (rows) => table([
       { label: 'Client', render: r => r.display_name },
       { label: 'Code', key: 'client_code' },
@@ -146,6 +150,6 @@ route('waitlist', async () => {
         ? 'Clients with the status "waitlist" appear here, ordered by how long they have waited. Add someone waiting for a place, or change a client\'s status to Waitlist on their record.'
         : 'Clients with the status "waitlist" appear here, ordered by how long they have waited. Staff who add clients (navigators, clinicians, supervisors) put people on it.',
       can('clients:write')
-        ? h('button', { class: 'btn primary', type: 'button', 'data-empty-action': 'waitlist-add', onClick: async () => (await import('./clients.js')).openClientForm(null, (id) => nav(id ? `client/${id}` : `waitlist?_=${Date.now()}`), { full: true, prefill: { status: 'waitlist' } }) }, 'Add someone to the waitlist')
+        ? h('button', { class: 'btn', type: 'button', 'data-empty-action': 'waitlist-add', onClick: addToWaitlist }, 'Add someone to the waitlist')
         : h('a', { class: 'btn', 'data-empty-action': 'clients', href: '#/clients' }, 'Open the client list')));
 });

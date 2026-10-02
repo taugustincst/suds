@@ -361,6 +361,61 @@ module.exports = (r) => {
     return { ok: true };
   });
 
+  // ---- A departed worker's draft notes, handed on (1.24.0; the rule is server/rules/notes.js reassignRefusal) ----
+  // Office only: who wrote a note is never carried by sync, so a device could not pass the change on.
+  const R = () => require('../rules/notes');
+  const refusal = (why) => new (require('../http').HttpError)(why.status, why.message, why.field ? { fields: { [why.field]: why.message } } : undefined);
+  const targetUser = (id) => (id ? db.one(`SELECT * FROM users WHERE id=?`, id) : null);
+  // Who left drafts behind: per inactive author, how many drafts on clients this manager can reach, and how many of
+  // them are clinical or SUD counseling notes (which can only go to someone who writes clinical notes). Counts and
+  // names only: no title, content or client.
+  r.get('/api/notes/departed-drafts', auth.requireAuth, auth.requirePerm('records:manage-others'), (ctx) => {
+    const rows = db.all(`SELECT n.author_id, n.client_id, n.kind, n.counseling_note, u.display_name, u.role FROM notes n JOIN users u ON u.id=n.author_id
+      JOIN clients c ON c.id=n.client_id WHERE n.status='draft' AND n.deleted_at IS NULL AND c.deleted_at IS NULL AND u.is_active=0`);
+    const by = new Map();
+    for (const n of rows) {
+      if (!auth.canAccessClient(ctx.user, n.client_id)) continue;
+      const a = by.get(n.author_id) || { id: n.author_id, display_name: n.display_name, role: n.role, drafts: 0, clinical: 0, counseling: 0 };
+      a.drafts++; if (n.kind === 'clinical') a.clinical++; if (Number(n.counseling_note)) a.counseling++;
+      by.set(n.author_id, a);
+    }
+    return { authors: [...by.values()].sort((x, y) => String(x.display_name).localeCompare(String(y.display_name))) };
+  });
+  r.post('/api/notes/:id/reassign', auth.requireAuth, auth.requirePerm('records:manage-others'), (ctx) => {
+    require('../rules/shared').assertRulingHere('Handing on a draft note');
+    const v = validate(ctx.body, { to_user_id: { type: 'string', required: true } });
+    const n = load(ctx, ctx.params.id);
+    const target = targetUser(v.to_user_id);
+    const why = R().reassignRefusal(ctx.user, n, target);
+    if (why) throw refusal(why);
+    const reminders = R().reassignDraft(ctx.user, n, target, { ip: ctx.ip });
+    return { ok: true, id: n.id, author_id: target.id, author: target.display_name, reminders_cancelled: reminders.length };
+  });
+  // Every draft a departed worker left, in one step (Settings → Move a caseload): each checked on its own by the same
+  // rule, and audited on its own; a draft that cannot go to the chosen worker stays where it is, counted by reason.
+  r.post('/api/notes/reassign-drafts', auth.requireAuth, auth.requirePerm('records:manage-others'), (ctx) => {
+    require('../rules/shared').assertRulingHere('Handing on draft notes');
+    const v = validate(ctx.body, { from_user_id: { type: 'string', required: true }, to_user_id: { type: 'string', required: true } });
+    const from = db.one(`SELECT id, display_name, is_active FROM users WHERE id=?`, v.from_user_id);
+    if (!from) throw notFound('Worker not found');
+    if (from.is_active) throw badRequest('That worker\'s account is still active: they finish or delete their own drafts. Only a departed worker\'s drafts are handed on.', { fields: { from_user_id: 'still active' } });
+    const target = targetUser(v.to_user_id);
+    if (!target) throw notFound('Worker not found');
+    const drafts = db.all(`SELECT n.* FROM notes n JOIN clients c ON c.id=n.client_id WHERE n.author_id=? AND n.status='draft' AND n.deleted_at IS NULL AND c.deleted_at IS NULL ORDER BY n.created_at`, from.id);
+    let moved = 0; let reminders = 0; const skipped = new Map();
+    const skip = (reason) => skipped.set(reason, (skipped.get(reason) || 0) + 1);
+    db.transaction(() => {
+      for (const n of drafts) {
+        if (!auth.canAccessClient(ctx.user, n.client_id)) { skip('not on your caseload'); continue; }
+        const why = R().reassignRefusal(ctx.user, n, target);
+        if (why) { if (!R().PER_NOTE_REFUSALS.includes(why.code)) throw refusal(why); skip(why.message); continue; }
+        reminders += R().reassignDraft(ctx.user, n, target, { ip: ctx.ip, bulk: true }).length;
+        moved++;
+      }
+    });
+    return { ok: true, moved, reminders_cancelled: reminders, skipped: [...skipped].map(([reason, count]) => ({ reason, count })), from: from.display_name, to: target.display_name };
+  });
+
   r.get('/api/notes/:id/verify', auth.requireAuth, (ctx) => {
     const n = load(ctx, ctx.params.id);
     if (!canRead(ctx, n)) throw forbidden();

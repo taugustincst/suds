@@ -130,6 +130,8 @@ fieldset { border: 1px solid var(--border); border-radius: 8px; padding: .6rem .
 /* The "possible duplicate" question inside the time form (public/views/time.js askDuplicate, 1.24.0). */
 .time-dup .time-dup-title { font-size: 1.05rem; margin: 0 0 .35rem; } .time-dup ul { margin: .25rem 0 .5rem; padding-left: 1.2rem; }
 .time-dup fieldset { border: 0; padding: 0; margin: .4rem 0; } .time-dup legend { font-weight: 600; padding: 0; } .time-dup .btn-row { margin-top: .5rem; }
+/* A form's save error repeated beside its Save button on a long form (app.js form(), 1.24.0): looks like the danger banner. */
+.banner.form-error-near { border-color: var(--danger); background: var(--danger-soft); }
 /* What kind of funder report run this is (public/views/funder.js runKindBanner): the first thing on the page. */
 .banner.run-kind { font-size: 1em; }
 .banner.run-kind .run-kind-title { font-size: 1.15rem; margin: 0 0 .25rem; }

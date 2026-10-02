@@ -178,6 +178,19 @@ try {
     ok(!(await n2.page.$('[data-overview-problems], [data-overview-careplan], [data-overview-asam]')), 'and the Overview no clinical picture');
     await n2.go(`client/${cid}/careplan`);
     ok(!/This page could not be shown/.test(await n2.page.textContent('#main')), 'a care plan made earlier can still be opened at its address');
+    // 1.24.0: opened at its address while the module is off, it is read only: it says so, and offers no form the server would refuse.
+    ok(await until(() => n2.page.$('[data-module-off=careplan]')), 'the care plan opened at its address says the module is switched off');
+    ok(!(await n2.page.$('[data-add-goal], [data-empty-action=goal], [data-edit-goal], [data-add-step]')), 'and offers no goal or step to add or edit');
+    await n2.go(`client/${cid}/problems`);
+    ok(await until(() => n2.page.$('[data-module-off=careplan]')), 'the problem list at its address says so too');
+    ok(!(await n2.page.$('[data-add-problem], [data-empty-action=problem], [data-edit-problem], [data-resolve-problem]')), 'and offers no problem to add, edit or resolve');
+    {
+      const c2 = await session('kpatel', PW);
+      await c2.go(`client/${cid}/assessments`);
+      ok(await until(() => c2.page.$('[data-module-off=assessments]')), 'a clinician\'s Assessments at its address says the module is switched off');
+      ok(!(await c2.page.$('[data-add-asam], [data-add-outcome]')), 'and offers no six-dimension assessment or screening to fill in (the save would be refused)');
+      await c2.ctx.close();
+    }
     await n2.go('reports');
     ok(!(await n2.page.$('[data-state-reporting-link]')) && !(await n2.page.$('[data-outcomes-report]')), 'Reports has no State reporting or outcome measures card');
     const r = await n2.api('POST', `/api/clients/${cid}/problems`, { problem: 'x' });
@@ -204,6 +217,12 @@ try {
       const W = `clinician at ${viewport.width}px`;
       const mods = await cl.page.evaluate(async () => { const a = await import('./app.js'); return ['careplan', 'assessments'].map(m => a.moduleOn(m)); });
       eq(mods.join(','), 'true,true', `${W}: the treatment-adjacent profile has Care plan and Assessments on`);
+      if (viewport.width === 1280) {
+        // 1.24.0: a programme not known yet means a module is off (no form the server might refuse), and it is fetched again.
+        const unknown = await cl.page.evaluate(async () => { const a = await import('./app.js'); a.state.programme = null; return a.moduleOn('assessments'); });
+        eq(unknown, false, `${W}: with the programme unknown, a module counts as off`);
+        ok(await until(() => cl.page.evaluate(async () => (await import('./app.js')).moduleOn('assessments'))), `${W}: and the programme is fetched again, so the module is back on`);
+      }
       const kid = (await cl.api('GET', '/api/clients?limit=1')).data.clients[0].id;
       await cl.go(`client/${kid}/overview`);
       await until(() => cl.page.$('.main nav.tabs button[data-tab=careplan]'));

@@ -748,7 +748,7 @@ route('admin', async (r) => {
           h('div', { class: 'row mt' }, h('button', { class: 'btn sm', onClick: checkForUpdate }, 'Check for updates'), updateStatus)));
     },
     async security() { return securityTab(); },
-    async caseload() { return transferCard(r.query.get('from')); },
+    async caseload() { return h('div', {}, await transferCard(r.query.get('from')), await departedDraftsCard()); },
     async lists() { return listsTab(r.query.get('list')); },
     async devices() {
       const { devices } = await get('/api/admin/devices');
@@ -1032,6 +1032,37 @@ export async function transferCard(fromId) {
     h('h2', {}, 'Move a caseload to another worker'),
     h('p', { class: 'small muted' }, 'When someone leaves or goes on extended leave, this ends every one of their current assignments and gives those clients to another worker in one step. Their last day is the day before the transfer takes effect, so nobody holds a client twice.'),
     f, result);
+}
+
+// ---------------------------------------------------------------------------
+// A departed worker's draft notes (1.24.0). Moving a caseload leaves the leaver's drafts theirs (only an author
+// signs), so once their account is inactive a supervisor or administrator gives the drafts to someone who can
+// finish and sign them. The server checks each one (server/rules/notes.js reassignRefusal): a clinical note only to
+// someone who writes clinical notes, a SUD counseling note likewise, and only to a worker who can open the client.
+// ---------------------------------------------------------------------------
+export async function departedDraftsCard() {
+  if (!can('records:manage-others')) return null;
+  const { authors = [] } = await get('/api/notes/departed-drafts', { quiet: true }).catch(() => ({}));
+  const head = h('h2', {}, 'Draft notes left by departed workers');
+  const intro = h('p', { class: 'small muted' }, 'A draft note is its author\'s to finish and sign. When the author has left (their account is inactive), give their drafts to another worker, who becomes the author and finishes and signs each one. Signed notes never change author.');
+  if (!authors.length) return h('div', { class: 'card mt', 'data-departed-drafts': '0' }, head, intro, h('p', { class: 'small' }, 'No inactive account has an unsigned draft note on a client you can open.'));
+  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const staff = caseloadStaff();
+  const result = h('div', { class: 'mt' });
+  const f = form([
+    { name: 'from_user_id', label: 'Draft notes of', type: 'select', required: true, options: authors.map(a => ({ value: a.id, label: `${a.display_name} (inactive) — ${plural(a.drafts, 'draft')}${a.clinical ? `, ${a.clinical} clinical` : ''}${a.counseling ? `, ${a.counseling} SUD counseling` : ''}` })) },
+    { name: 'to_user_id', label: 'Give them to', type: 'select', required: true, options: staff.map(u => ({ value: u.id, label: `${u.display_name} (${fmt.label(u.role)})` })),
+      help: 'A clinical note, and a SUD counseling note above all, can only go to someone who writes clinical notes (a clinician or supervisor). A draft that cannot go to this person stays where it is, and is counted below.' },
+  ], { submitText: 'Hand on the drafts', onSubmit: async (d) => {
+    const from = authors.find(a => a.id === d.from_user_id), to = staff.find(u => u.id === d.to_user_id);
+    if (!await confirmDialog('Hand on draft notes', `Give ${from ? plural(from.drafts, 'draft note') : 'the draft notes'} of ${from?.display_name} to ${to?.display_name}? They become the author, and finish and sign them.`, { okText: 'Hand on' })) return;
+    const r = await post('/api/notes/reassign-drafts', d);
+    clear(result);
+    result.append(h('div', { class: 'banner ok', role: 'status', 'data-drafts-moved': String(r.moved) }, `${plural(r.moved, 'draft note')} given from ${r.from} to ${r.to}.`));
+    if (r.skipped && r.skipped.length) result.append(h('ul', { class: 'small', 'data-drafts-skipped': '1' }, r.skipped.map(x => h('li', {}, `${plural(x.count, 'draft')} left with ${r.from}: ${x.reason}`))));
+    toast('Draft notes handed on', 'ok');
+  } });
+  return h('div', { class: 'card mt', 'data-departed-drafts': String(authors.length) }, head, intro, f, result);
 }
 
 // ---------------------------------------------------------------------------
