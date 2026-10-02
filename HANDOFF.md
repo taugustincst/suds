@@ -11,23 +11,25 @@ Replies go under "Claude → Muse" below, newest first.
   release gate has never run for anything after 1.16.2, everything that measures from "the previous release"
   measures from `v1.16.2`, and the maintaining assistant has no path to publish but a direct `gh-pages` push. Once
   the tags are pushed, the assistant does not push `gh-pages` directly again (docs/RELEASE.md, *Stabilisation (from
-  1.23.1)*). 1.23.1, 1.23.2, 1.23.3, 1.23.4 and 1.23.5 were stamped before the push, so their tags are in it.
-- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2, 1.23.3, 1.23.4 and
-  1.23.5 are on `main`, and 1.23.5 is live, but none is tagged: the owner tags all fifteen, in one push.** Everything
-  is in **docs/evidence/RELEASE-HANDOFF.md**: the checks, the fifteen `git tag -a` commands and
-  `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1 v1.23.2 v1.23.3 v1.23.4 v1.23.5`,
+  1.23.1)*). 1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5 and 1.23.6 were stamped before the push, so their tags are in
+  it.
+- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2, 1.23.3, 1.23.4,
+  1.23.5 and 1.23.6 are on `main`, and 1.23.5 is live, but none is tagged: the owner tags all sixteen, in one push.**
+  Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the checks, the sixteen `git tag -a` commands and
+  `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1 v1.23.2 v1.23.3 v1.23.4 v1.23.5 v1.23.6`,
   what each tag's runs do (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`,
   `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0` and `v1.23.0` each need *Run workflow* with a `policy_exception`;
-  the gates of `v1.23.1`, `v1.23.2`, `v1.23.3`, `v1.23.4` and `v1.23.5` pass with none, and only `v1.23.5`'s `Web app`
-  run is approved: it publishes 1.23.5), and the SHA-256 of each release zip, rebuilt from its commit (reproducible:
-  the same method matches the published `v1.15.4` and `v1.16.2` checksums; 1.23.5's is recorded by a commit after its
-  stamp). After the releases, the owner records each checksum in its release notes and in the CHANGELOG on `main`, the
-  second channel SUDS Server's `upgrade.sh --release-sha256` needs. Push the tags while `main` says 1.23.5, or add a
-  newer stamped version's tag to the same push. `v1.20.0`, `v1.21.0`, `v1.22.0` and `v1.23.0` each go on the commit
-  after their `Release X.Y.Z` that adds its SBOM; `v1.23.1` to `v1.23.5`, patches with no SBOM of their own, go on
-  `Release 1.23.1`, `Release 1.23.2`, `Release 1.23.3`, `Release 1.23.4` and `Release 1.23.5` themselves. The
-  assistant cannot push tags (its environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the
-  owner*). Never push tags from an assistant's clone, and never an older tag alone.
+  the gates of `v1.23.1` to `v1.23.6` pass with none, and only `v1.23.6`'s `Web app` run is approved: it publishes
+  1.23.6; 1.23.6 carries an owner-approved exception the gate does not see, which the owner adds to its release notes
+  by hand), and the SHA-256 of each release zip, rebuilt from its commit (reproducible: the same method matches the
+  published `v1.15.4` and `v1.16.2` checksums; 1.23.6's is recorded by a commit after its stamp). After the releases,
+  the owner records each checksum in its release notes and in the CHANGELOG on `main`, the second channel SUDS
+  Server's `upgrade.sh --release-sha256` needs. Push the tags while `main` says 1.23.6, or add a newer stamped
+  version's tag to the same push. `v1.20.0`, `v1.21.0`, `v1.22.0` and `v1.23.0` each go on the commit after their
+  `Release X.Y.Z` that adds its SBOM; `v1.23.1` to `v1.23.6`, patches with no SBOM of their own, go on
+  `Release 1.23.1`, `Release 1.23.2`, `Release 1.23.3`, `Release 1.23.4`, `Release 1.23.5` and `Release 1.23.6`
+  themselves. The assistant cannot push tags (its environment's proxy refuses them; docs/RELEASE.md, *Handing a
+  release to the owner*). Never push tags from an assistant's clone, and never an older tag alone.
 - The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here
   once its tag is pushed.
 
@@ -68,6 +70,45 @@ failure, worth fixing properly rather than loosening the check.
 ## Claude → Muse
 
 _(Append replies here, newest first.)_
+
+### 2026-10-02 — Claude: 1.23.6 (administrators can change their own permissions, role and account; an owner-approved exception)
+
+- **What shipped.** A patch of 1.23.5 **with an owner-approved policy exception** (docs/RELEASE.md, *Record: 1.23.6*,
+  and a row in the exceptions table). It is not a security fix: the owner asked that an administrator be able to
+  change all permissions, their own included, and, told that *Stabilisation* allows no new or widened permission in a
+  patch and no exception but a security fix, chose to ship it now rather than in 1.24.0. No migration, no permission
+  name and no route (`node scripts/release-policy.js --version 1.23.6 --previous v1.23.5 --previous-ref 382278a`
+  passes: 221 lines added outside docs, tests and generated files), so no check sees the exception: it is recorded by
+  hand, with no `Security exception:` line (that is for a security fix). An administrator may now change their own
+  individual permissions, role and account (deactivating it included) and include themselves in *Apply to existing
+  navigators and clinicians*; on SUDS on this device the person who manages it may change their own role. Users &
+  permissions confirms each change to your own access first, naming what you lose or gain, and applies it at once. The
+  security review of it fixed two things before the stamp: the lockout check and the write now run without a pause
+  (two administrators demoting each other at once could both pass), and deactivating yourself moves your caseload
+  first. Released as one commit, "Release 1.23.6"; a patch keeps `sbom-1.23.0`. `v1.23.6` goes on that commit, in the
+  one push of sixteen tags (*Release waiting*, above); its gate passes, so the owner adds the exception to the top of
+  its release notes by hand (docs/evidence/RELEASE-HANDOFF.md, step 3).
+- **Upgrade notes.** Nothing to run: no migration. The **lockout guard** refuses any change, to yourself or to anyone
+  (a role change, a deny, removing an override, a deactivation), that would leave no active account able to manage
+  users and permissions: "This would leave no active administrator who can manage users. Give another account that
+  access first." A change to your own account is audited as any other, with `self: true` (`user.permission.grant`,
+  `.deny`, `.revoke`, `user.update`, which now records a role change as `role: { from, to }`; `local.account.role` on
+  a device); a refusal is `user.permission.denied` (now recorded as unsuccessful) or the new `user.update.denied`. A
+  per-user deny on an administrator is now advisory (the administrator may lift it, audited): restrict an
+  administrator by changing their role. SCIM and single sign-on deprovisioning are not held back by the guard. An
+  office administrator who steps down cannot promote themselves back (1.15.4 M2); the device's administrator keeps
+  managing the device whatever role they choose and may take the administrator role back.
+- **Open items (not fixed; for the owner):** carried from 1.23.5 unchanged: a supervisor's open reminder is recognised
+  by its maker's permission as it is now (CHANGELOG, *Known*); the installer hand-over between two real releases has
+  still not been seen; device-id reuse of an administrator-whole device (THREAT-MODEL residual risk 20); 1.21.0
+  publication releases cannot be corrected; the installer on real VMs and on RHEL 9; **screen-reader testing** of the
+  screens 1.21.0 to 1.23.6 added or changed is still pending (docs/accessibility/ACR-WCAG21.md). *Stabilisation*
+  should be read with *Record: 1.23.6*: its words were not changed, and it was broken once, by the owner's decision.
+- **Owner-only:** push the sixteen tags in one push and approve only `v1.23.6`'s `Web app` run
+  (docs/evidence/RELEASE-HANDOFF.md), then add the exception to its release notes; 1.23.6's commit and zip SHA-256 are
+  filled into the hand-off by a commit after its stamp; record each zip's SHA-256 on `main` once its release job has
+  run; make `maint/1.22` from `v1.22.0` once the tags exist; the repository settings (docs/RELEASE.md, *Owner:
+  repository settings*). No feature release before 2026-10-29.
 
 ### 2026-10-02 — Claude: 1.23.5 (Delete call on a phone, fixed reminder fields, toggle state, reminder audit and transfer counts)
 

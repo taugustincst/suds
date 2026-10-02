@@ -156,6 +156,44 @@ attempt), so `382278a` was pushed to `main` and its static build to `gh-pages` d
 1.23.5)"; `release-site-check` found the 73 built files the commit's, byte for byte), and the exceptions table has a
 row for it.
 
+**Record: 1.23.6 ships with an owner-approved exception.** 1.23.6 is a patch of 1.23.5 that widens what an
+administrator may do: whoever holds *Manage users & permissions* (`users:manage`, which only an administrator can
+hold) may now change their own individual permissions, their own role and their own account (deactivating it
+included), and include themselves in *Apply to existing navigators and clinicians*; on SUDS on this device the
+person who manages it may change their own role. Until 1.23.5 each of those was refused. The owner asked for it
+("Admin needs to be able to change all permissions including their own") and, told that *Stabilisation* point 1 allows
+no new or widened permission in a patch and point 2 no exception but a security fix, chose to ship it now, as 1.23.6,
+with the exception recorded, rather than hold it for 1.24.0. **It is not a security fix**, and this record does not
+call it one: it is the owner's decision to widen an administrator's own access during the feature freeze, and it
+breaks points 1 and 2 as written. No `Security exception:` line is recorded for it, because that line is for a
+security fix only (and `scripts/release-policy-ci.js` reads it only for a minor or major bump). The release-policy
+check passes mechanically: no migration, no permission name, no grant of a permission to another role and no route
+is added (the widening is in who may act on whom, `server/routes/users.js`, `server/auth.js` and the device's
+`PUT /api/local/accounts/:id`, not in `PERMS`), and 221 lines are added outside docs, tests and generated files,
+within the 1,500-line limit (`node scripts/release-policy.js --version 1.23.6 --previous v1.23.5 --previous-ref
+382278a` passes). So no check sees the exception; it is recorded here by hand, in the CHANGELOG section and in the
+exceptions table. The safeguards it ships with: a **lockout guard** (`server/auth.js` `lockoutProblem`) that refuses
+any change, to oneself or to anyone (a role change, a deny, removing an override, a deactivation), that would leave
+the programme, or the device, with no active account able to manage users and permissions ("This would leave no
+active administrator who can manage users. Give another account that access first."), with the check and the write
+run without a pause between them (its security review); a **confirmation** in Users & permissions before every change
+to one's own access, naming what is lost or gained; **audit** of each such change as of one to anyone else, with
+`self: true` in its details, and of each refusal (`user.permission.denied`, or the new `user.update.denied`;
+`local.account.role.denied` on a device). It follows that a per-user deny placed on an administrator is now
+**advisory**, since the administrator may remove it (audited): to restrict an administrator, change their role
+(docs/security/IDENTITY.md). An office administrator who steps down still cannot promote themselves back (1.15.4
+M2); separation of duties (approving one's own time or spending, acknowledging one's own break-glass access) is
+unchanged; SCIM provisioning and single sign-on deprovisioning are not held back by the guard. *Stabilisation*
+otherwise stands unchanged: the feature freeze until 2026-10-29, and no further exception but a security fix. It
+is released as one commit, "Release 1.23.6" (a patch keeps its minor's SBOM, `sbom-1.23.0`), and that commit is the
+one CI passes and the owner tags: `v1.23.6` goes in the same push as the fifteen tags owed before it (step 2 of
+[evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), it is the newest tag, and its `release.yml` run is the
+Latest release and starts the `Web app` run that publishes it. Its gate passes with no `policy_exception`, so the
+gate writes no exception paragraph into its GitHub Release notes; the owner adds this exception to the top of those
+notes by hand (`gh release edit v1.23.6 --notes-file`), as every exception is stated there. If 1.23.6 has to go live
+before the owner has pushed the tags, the direct `gh-pages` push is said here and in the exceptions table, as point 4
+requires.
+
 ### Supported versions
 
 | Line | Gets | For how long |
@@ -308,6 +346,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.23.3 | none of the policy (a patch within the patch rules: no migration, permission or route, 187 lines); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner's UX backlog ("View in Done", phone Home order) and the 1.23.2 evaluation's defects; the tags owed since 1.16.3 were not yet pushed, so the gate could not publish it (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.3*, above) |
 | 1.23.4 | none of the policy (a patch within the patch rules: no migration, permission or route, 111 lines); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner asked for the 1.23.3 evaluation's defects to be resolved and the release published with a full marketability evaluation; the tags owed since 1.16.3 were not yet pushed, so the gate could not publish it (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.4*, above) |
 | 1.23.5 | none of the policy (a patch within the patch rules: no migration, permission or route, 91 lines); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner asked for every identified bug to be fixed and the release pushed; the tags owed since 1.16.3 were not yet pushed, so the gate could not publish it (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.5*, above) |
+| 1.23.6 | a widened permission in a patch during the feature freeze, and an exception that is not a security fix (*Stabilisation*, points 1 and 2): an administrator may change their own permissions, role and account. The release-policy check passes (no migration, permission name or route; 221 lines), so the exception is recorded by hand | the owner asked that an administrator be able to change all permissions, their own included, and chose to ship it in 1.23.6 rather than wait for 1.24.0; safeguards: the lockout guard, a confirmation before each change to one's own access, `self: true` in the audit, and a deny on an administrator now advisory | owner (a request, no workflow record; *Record: 1.23.6*, above) |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as
@@ -418,15 +457,17 @@ change: 1.16.0 is the previous feature release) and for any 1.16.x patch (whose 
 `v1.16.2`: 1.16.3 and 1.16.4 alone count 1,137 of the 1,500 lines), `scripts/migration-order.js`'s baseline, and
 *Backports* step B, whose `git rev-parse 'v1.16.4^{commit}'` fails without the tag.
 
-**Now fifteen tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.23.5). 1.17.1,
-1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2, 1.23.3 and 1.23.4 were published the same way, and
-1.23.5 was stamped before the owner pushed them, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`, `v1.17.1`,
-`v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0`, `v1.23.0`, `v1.23.1`, `v1.23.2`, `v1.23.3`, `v1.23.4` and
-`v1.23.5`, pushed together while `main` says 1.23.5. The hand-off has the checks, the tag commands, the one push,
-what each tag's runs do (the 1.16.x gates refuse, the eight from `v1.17.0` to `v1.23.0` need a *Run workflow* with
-`policy_exception`, the gates of `v1.23.1`, `v1.23.2`, `v1.23.3`, `v1.23.4` and `v1.23.5` pass, and only `v1.23.5`'s
-`Web app` run is approved: it publishes 1.23.5), and the SHA-256 each release zip will have, rebuilt from each commit
-(1.23.5's is recorded by a later commit on `main`). The paragraphs below are the reasoning of 1.17.0's time, for three
+**Now sixteen tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.23.6). 1.17.1,
+1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2, 1.23.3, 1.23.4 and 1.23.5 were published the same
+way, and 1.23.6 was stamped before the owner pushed them, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`,
+`v1.17.1`, `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0`, `v1.23.0`, `v1.23.1`, `v1.23.2`, `v1.23.3`,
+`v1.23.4`, `v1.23.5` and `v1.23.6`, pushed together while `main` says 1.23.6. The hand-off has the checks, the tag
+commands, the one push, what each tag's runs do (the 1.16.x gates refuse, the eight from `v1.17.0` to `v1.23.0` need
+a *Run workflow* with `policy_exception`, the gates of `v1.23.1` to `v1.23.6` pass, and only `v1.23.6`'s `Web app` run
+is approved: it publishes 1.23.6; 1.23.6's gate passes although it carries the owner-approved exception of *Record:
+1.23.6*, which the owner adds to its release notes by hand), and the SHA-256 each release zip will have, rebuilt from
+each commit (1.23.6's is recorded by a later commit on `main`). The paragraphs below are the reasoning of 1.17.0's
+time, for three
 tags; the rule they set, never an older tag alone, is unchanged.
 
 **Tag 1.16.3, 1.16.4 and 1.17.0 in one push, never 1.16.x alone** (engineering review of 1.17.0, H1). 1.17.0 is on

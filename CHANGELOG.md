@@ -4,9 +4,35 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+## 1.23.6 — 2026-10-02
+
+A patch of 1.23.5 that ships **with an owner-approved policy exception** (docs/RELEASE.md, *Stabilisation (from
+1.23.1)*, and *Record: 1.23.6*). It is not a security fix: the owner decided that an administrator may change their
+own permissions, their own role and their own account during the feature freeze, which widens what an administrator
+may do, and the stabilisation commitment allows no new or widened permission in a patch. No migration, no permission
+name and no route is added or changed, so the release-policy check passes on its own (`node scripts/release-policy.js
+--version 1.23.6 --previous v1.23.5 --previous-ref 382278a` passes: 221 lines added outside docs, tests and generated
+files, of the 1,500 a patch may add); the exception is recorded by hand, here, in *Record: 1.23.6* and in the
+exceptions table, because no check can see it. Upgrading needs nothing beyond replacing the files and restarting. What
+an administrator should know: whoever holds *Manage users & permissions* (`users:manage`, an administrator) may now
+change their own individual permissions, their own role and their own account (including deactivating it), and
+include themselves in *Apply to existing navigators and clinicians*, through the same dialogs and routes as for
+anyone else; Users & permissions confirms each change to your own access first and applies it at once. A lockout
+guard refuses any change, to yourself or to anyone, that would leave no active account able to manage users and
+permissions ("This would leave no active administrator who can manage users. Give another account that access
+first."). Each change to your own account is audited as one to anyone else's, with `self: true` in its details
+(`user.permission.grant`, `.deny`, `.revoke`, `user.update`, which now also records a role change as
+`role: { from, to }`; on a device, `local.account.role`); a change the guard refuses is `user.permission.denied`, or
+the new audit action `user.update.denied`. A per-user deny placed on an administrator is now advisory, since the
+administrator may remove it themselves (audited): to restrict an administrator, change their role. SCIM provisioning
+and single sign-on deprovisioning are not held back by the lockout guard: the identity provider decides who has
+left, and the emergency accounts provisioning never touches are the way back in. An office administrator who steps
+down cannot promote themselves back (1.15.4 M2 still holds); on SUDS on this device the person who manages the
+device keeps managing it whatever role they choose, and may take the administrator role back themselves.
+
 ### Administrators can change their own permissions, role and account
 
-Built for the next release, not yet released. The owner's request: "Admin needs to be able to change all permissions
+The owner's request: "Admin needs to be able to change all permissions
 including their own." Until now an administrator could not change their own individual permissions, their own role,
 deactivate their own account, or include themselves in *Apply to existing navigators and clinicians*; on SUDS on this
 device the person who manages it could not change their own role. Each of those is now allowed, through the same
