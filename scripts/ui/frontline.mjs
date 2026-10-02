@@ -101,6 +101,26 @@ let consentId;
   await page.selectOption('.modal select[name=consent_id]', '');
   ok(/No consent chosen/.test(await page.textContent('.modal [data-consent-used]')), 'clearing it says no consent is chosen');
   await closeModals(page);
+
+  // A consent that names the provider but was given for another purpose (pen test of 1.23.6, M1): it is not
+  // chosen for the worker, "Record a consent naming …" is offered, and relying on it says why it cannot be used.
+  const billing = await api('POST', '/api/resources', { name: 'Frontline Billing Clinic', category: 'mat_otp' });
+  eq(billing.status, 201, 'a second provider');
+  const bc = await api('POST', `/api/clients/${client.id}/consents`, { type: 'part2_disclosure', recipient: 'Frontline Billing Clinic', purpose: 'Billing and payment processing only', ...ELEMENTS });
+  eq(bc.status, 201, 'with a consent naming it, for billing only');
+  await page.evaluate(async ({ id, rid }) => (await import('./views/referrals.js')).openReferralForm(null, { clientId: id, clientDisplay: 'the client', resourceId: rid }), { id: client.id, rid: billing.data.id });
+  await page.waitForSelector('.modal select[name=consent_id]');
+  await settle(page);
+  eq(await page.inputValue('.modal select[name=consent_id]'), '', 'the billing-only consent is not chosen for the worker');
+  ok(await page.$('.modal [data-record-consent-naming]'), '"Record a consent naming …" is offered instead');
+  await page.selectOption('.modal select[name=consent_id]', bc.data.id);
+  await page.check('.modal input[name=warm_handoff]');
+  await page.click('.modal button[type=submit]');
+  const refusal = await until(async () => { const t = await page.textContent('.modal .banner.danger').catch(() => ''); return /was given for/.test(t || '') ? t : null; });
+  ok(refusal && /Billing and payment processing only/.test(refusal), 'saving says what the consent was given for');
+  ok(refusal && /does not cover this disclosure's purpose/.test(refusal) && /record a new one/.test(refusal), 'that it does not cover a referral, and what to do');
+  eq((await api('GET', `/api/referrals?client_id=${client.id}&resource_id=${billing.data.id}`)).data.rows.length, 0, 'and nothing was saved');
+  await closeModals(page);
 }
 
 // ---- 4. a consent already on file ----

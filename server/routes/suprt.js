@@ -261,7 +261,7 @@ module.exports = (r) => {
     const basis = ctx.query.get('basis') || 'consent';
     if (!S.EXPORT_BASES.includes(basis)) throw badRequest(`A SPARS entry file is disclosed under each client's Part 2 consent naming the recipient (basis=consent), or an audit or evaluation approval on file with it (basis=audit_evaluation); not "${basis}".`);
     const disclosure = require('../disclosure');
-    const gate = { basis, restriction_reviewed: ctx.query.get('restriction_reviewed') === '1', recipient, agreement_id: ctx.query.get('agreement_id') || undefined, user: ctx.user };
+    const gate = { basis, restriction_reviewed: ctx.query.get('restriction_reviewed') === '1', recipient, purpose, agreement_id: ctx.query.get('agreement_id') || undefined, user: ctx.user };
     disclosure.requireExportBasis([], gate);
     const cf = auth.caseloadFilter(ctx.user, 'c.id');
     const types = set === 'closeout' ? ['closeout'] : ['baseline', 'reassessment', 'annual'];
@@ -276,8 +276,8 @@ module.exports = (r) => {
     const excludedCodes = [...new Set(rows.filter(x => out.has(x.client_id)).map(x => x.client_code))].sort();
     const included = ids.filter(id => !out.has(id));
     if (!included.length) {
-      audit.log({ user: ctx.user, action: 'suprt.export.refused', ip: ctx.ip, success: false, details: { basis, set, clients: ids.length, reason: 'no client has a consent naming the recipient' } });
-      throw new HttpError(409, `None of the ${ids.length} client${ids.length === 1 ? '' : 's'} with an assessment in this period has a Part 2 consent on file naming "${recipient}", so nothing can be put in the file. Record each client's consent to SPARS reporting (Consents tab), or use an audit or evaluation approval on file with the recipient.`, { code: 'no_consent', excluded: excludedCodes });
+      audit.log({ user: ctx.user, action: 'suprt.export.refused', ip: ctx.ip, success: false, details: { basis, set, clients: ids.length, reason: 'no client has a consent naming the recipient for the purpose' } });
+      throw new HttpError(409, `None of the ${ids.length} client${ids.length === 1 ? '' : 's'} with an assessment in this period has a Part 2 consent on file naming "${recipient}" for this purpose ("${purpose}"), so nothing can be put in the file. Record each client's consent to SPARS reporting (Consents tab), or use an audit or evaluation approval on file with the recipient.`, { code: 'no_consent', excluded: excludedCodes });
     }
     const exportId = uuid(); const stamp = db.now();
     const kept = rows.filter(x => !out.has(x.client_id));

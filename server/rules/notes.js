@@ -22,6 +22,28 @@ const parseList = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
 // Everything about a signed note stays as signed, except asking a supervisor to look at it (request-cosign).
 const SIGNED_KEEPS = ['kind', 'format', 'title_enc', 'content_enc', 'structured_enc', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'counseling_note', 'problem_ids',
   'status', 'signed_by', 'signed_at', 'signature_hash', 'source', 'source_ref', 'import_item_id', 'deleted_at', 'ai_assisted'];
+// What a signed note says (its signature's bookkeeping aside): a push that would change any of it is refused, as
+// PUT /api/notes/:id refuses it, never reported as applied while the office quietly keeps what was signed (pen test
+// of 1.23.6, L3). The message is the REST route's own.
+const SIGNED_CONTENT = ['kind', 'format', 'title_enc', 'content_enc', 'structured_enc', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'counseling_note', 'problem_ids'];
+const SIGNED_MESSAGE = 'Signed notes cannot be edited; add an addendum instead';
+/** Do two values of a note column say the same thing (a list, a yes/no, a moment may arrive written another way)? */
+function sameValue(col, a, b) {
+  const blank = (x) => x === undefined || x === null || x === '';
+  if (col === 'problem_ids') { const list = (x) => { try { return JSON.stringify(blank(x) ? [] : parseList(x) || []); } catch { return String(x); } }; return list(a) === list(b); }
+  if (col === 'part2_protected' || col === 'counseling_note') return Number(isYes(a)) === Number(isYes(b));
+  if (blank(a) || blank(b)) return blank(a) && blank(b);
+  if (col === 'occurred_at') { const ms = (x) => Date.parse(x); return String(a) === String(b) || (Number.isFinite(ms(a)) && ms(a) === ms(b)); }
+  return String(a) === String(b);
+}
+/** The refusal for a push that would change a signed note, or null. */
+function signedNoteEdit(row, c) {
+  const e = c.existing;
+  if (!e || e.status === 'draft') return null;
+  const unsigns = row.status !== undefined && row.status !== null && row.status !== e.status && row.status === 'draft';
+  if (!unsigns && !SIGNED_CONTENT.some(col => row[col] !== undefined && !sameValue(col, row[col], c.was(col)))) return null;
+  return refuse(`not permitted: ${SIGNED_MESSAGE}`, { message: SIGNED_MESSAGE });
+}
 
 /**
  * A supervisor's "Finish and sign your note" reminder (public/views/supervision.js) has done its job once the note is
@@ -53,7 +75,8 @@ function isSignReminder(t, text) {
   if (!hasReminderLine(text)) return false;
   return makerMaySend(t.created_by);
 }
-// `cause: 'deleted'`: the last draft was deleted, not signed, so the reminder is cancelled rather than done (1.23.3).
+// `cause: 'deleted'`: the last draft was deleted, not signed, so the reminder is cancelled rather than done (1.23.3);
+// `cause: 'reassigned'` (1.24.0): the last draft was handed on to another worker (reassignRefusal below), likewise.
 function closeSignReminders(authorId, noteId, clientId, { cause = 'signed' } = {}) {
   const { decrypt } = require('../crypto');
   const ref = `Reference: supervision reminder for note ${noteId}`;
@@ -62,7 +85,7 @@ function closeSignReminders(authorId, noteId, clientId, { cause = 'signed' } = {
     .filter(t => { let text; try { text = decrypt(t.description_enc); } catch { return false; } return isSignReminder(t, text) && (text.includes(ref) || (!draftsLeft && text.includes(SIGN_REMINDER))); });
   const now = db.now();
   for (const t of done) {
-    if (cause === 'deleted') db.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, now, t.id);
+    if (cause === 'deleted' || cause === 'reassigned') db.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, now, t.id);
     else db.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now, now, t.id);
   }
   // A reminder linked to this draft (tasks.note_id, built for 1.24.0) that stays open, because other drafts of theirs on
@@ -188,6 +211,9 @@ module.exports = define({
   },
   normalise(row, c) {
     const e = c.existing;
+    // A signed note is the legal record: a device's change to it is refused and the device told (signedNoteEdit).
+    const signedEdit = signedNoteEdit(row, c);
+    if (signedEdit) return signedEdit;
     // When a new note was written is the device's to say (offline work), but never after now: it bounds the signature's
     // time below, and a future one hid the note from a later flag's drop (security review of 1.16.3, N7).
     if (!e) { const ms = Date.parse(row.created_at); const now = db.now(); row.created_at = Number.isFinite(ms) && new Date(ms).toISOString() < now ? new Date(ms).toISOString() : now; }
@@ -263,6 +289,7 @@ module.exports = define({
 });
 module.exports.closeSignReminders = closeSignReminders;
 module.exports.SIGN_REMINDER = SIGN_REMINDER;
+module.exports.SIGNED_MESSAGE = SIGNED_MESSAGE;
 module.exports.hasReminderLine = hasReminderLine;
 Object.assign(module.exports, { isSignReminder, maySendSignReminder });
 module.exports.reissueAddenda = reissueAddenda;
@@ -283,3 +310,53 @@ function counselingFilter(user, alias = 'n') {
   return readsCounseling(user) ? { sql: '1=1', params: [] } : { sql: `(${alias}.counseling_note=0 OR ${alias}.author_id=? OR ${alias}.cosigned_by IS ?)`, params: [user.id, user.id] };
 }
 Object.assign(module.exports, { readsCounseling, mayReadCounseling, counselingFilter });
+
+/**
+ * Handing on a departed worker's draft notes (1.24.0; market evaluation of 1.23.4, D5). A draft is its author's,
+ * and only its author signs it, so a draft left by someone who has gone (their account inactive) could only be
+ * deleted: the work in it was lost, or the client's record kept an unsigned note nobody could finish. A manager
+ * (records:manage-others, the "or a manager" power over another worker's drafts) may now give such a draft to
+ * another worker, who then edits and signs it as its author. The rule, shared by POST /api/notes/:id/reassign and
+ * POST /api/notes/reassign-drafts:
+ *   - only a draft: a signed note is the legal record and its author never changes;
+ *   - only from an author whose account is inactive: an active author finishes (or deletes) their own draft;
+ *   - only to an active account that may write that kind of note (notes:<kind>:write) and reach the client;
+ *   - a SUD counseling note (42 CFR §2.11) only to someone who may read one as staff, that is who holds
+ *     notes:clinical:write (readsCounseling below): never to a navigator, who could not even open it.
+ * Who wrote a note is never a device's to say (createdBy: author_id is confined to the syncing user on push, and kept
+ * on every update), so sync push cannot reassign a note at all, and this is an office act (assertRulingHere).
+ * `actor` and `target` are user rows; `note` a notes row. Returns null, or { code, status, message, field }:
+ * `code` is counseling, kind or reach when it is this note that cannot go to this worker (a batch skips it).
+ */
+function reassignRefusal(actor, note, target) {
+  if (!auth.hasPerm(actor, 'records:manage-others')) return { code: 'permission', status: 403, message: 'Handing on another worker\'s draft notes needs a supervisor or administrator (records:manage-others)' };
+  if (!note || note.deleted_at) return { code: 'missing', status: 404, message: 'Note not found' };
+  if (note.status !== 'draft') return { code: 'signed', status: 400, message: 'A signed note is part of the legal record: its author cannot be changed. Add an addendum instead.' };
+  const author = db.one(`SELECT id, is_active FROM users WHERE id=?`, note.author_id);
+  if (author && author.is_active) return { code: 'author_active', status: 400, message: 'The author\'s account is still active: they finish or delete their own draft. Only a departed worker\'s drafts are handed on.' };
+  if (!target) return { code: 'target', status: 404, message: 'Worker not found', field: 'to_user_id' };
+  if (target.id === note.author_id) return { code: 'target', status: 400, message: 'Choose a different worker', field: 'to_user_id' };
+  if (!target.is_active) return { code: 'target', status: 400, message: 'That worker\'s account is not active', field: 'to_user_id' };
+  if (Number(note.counseling_note) && !readsCounseling(target)) return { code: 'counseling', status: 400, message: 'A SUD counseling note can only go to a worker who writes clinical notes (a clinician or supervisor)', field: 'to_user_id' };
+  if (!auth.hasPerm(target, `notes:${note.kind}:write`)) return { code: 'kind', status: 400, message: `That worker cannot write ${note.kind} notes`, field: 'to_user_id' };
+  if (!auth.canAccessClient(target, note.client_id)) return { code: 'reach', status: 400, message: 'That worker cannot open this client\'s record (it is not on their caseload)', field: 'to_user_id' };
+  return null;
+}
+/**
+ * Give the draft to `target` (reassignRefusal has passed): it is theirs to edit and sign. A countersignature the old
+ * author's account required stays required, and the new author's own requirement is added (never lowered). A
+ * reminder to sign the old author's drafts on this record is cancelled once none is left. Audited as note.reassign,
+ * with user ids only (no title, no content). Returns the ids of the reminders cancelled.
+ */
+function reassignDraft(actor, note, target, { ip, bulk = false } = {}) {
+  const audit = require('../audit');
+  const req = db.one(`SELECT requires_cosign FROM users WHERE id=?`, target.id);
+  const cosign = Number(note.cosign_required) || (req && req.requires_cosign) ? 1 : 0;
+  db.run(`UPDATE notes SET author_id=?, cosign_required=?, updated_at=? WHERE id=? AND status='draft' AND deleted_at IS NULL`, target.id, cosign, db.now(), note.id);
+  const reminders = closeSignReminders(note.author_id, note.id, note.client_id, { cause: 'reassigned' });
+  audit.log({ user: actor, action: 'note.reassign', entity: 'note', entityId: note.id, clientId: note.client_id, ip, details: { from: note.author_id, to: target.id, kind: note.kind, counseling_note: Number(note.counseling_note) ? true : undefined, bulk: bulk || undefined, reminders_closed: reminders.length ? reminders : undefined } });
+  for (const id of reminders) audit.log({ user: actor, action: 'task.update', entity: 'task', entityId: id, clientId: note.client_id, ip, details: { status: 'cancelled', cause: 'reassigned', note: note.id } });
+  return reminders;
+}
+const PER_NOTE_REFUSALS = ['counseling', 'kind', 'reach'];
+Object.assign(module.exports, { reassignRefusal, reassignDraft, PER_NOTE_REFUSALS });

@@ -26,8 +26,11 @@ module.exports = define({
   check(row, c) {
     if (c.via !== 'sync' || c.existing || row.source === 'referral') return null;
     try {
-      require('../disclosure').requireBasis(row.client_id, { consent_id: row.consent_id, basis: row.basis || 'consent', justification: row.justification_enc || null, court_order_id: row.court_order_id,
-        legal_proceeding: !!row.legal_proceeding, counseling_notes: !!row.counseling_notes, recipient: row.recipient_enc, restriction_reviewed: true, user: c.user });
+      // A device's row carries its free text as written (rules/push.js): the purpose is checked against the consent
+      // as on the office, and a supervisor's consent override the device recorded is read back from its justification.
+      const D = require('../disclosure'); const over = D.parseOverride(row.justification_enc);
+      D.requireBasis(row.client_id, { consent_id: row.consent_id, basis: row.basis || 'consent', justification: over.why, court_order_id: row.court_order_id,
+        legal_proceeding: !!row.legal_proceeding, counseling_notes: !!row.counseling_notes, recipient: row.recipient_enc, purpose: row.purpose_enc, recipient_override: over.override, restriction_reviewed: true, user: c.user });
       return null;
     } catch (e) {
       return flag('was recorded, but the office could not confirm the basis it was made under; the privacy officer will review it', { code: 'disclosure_basis' });

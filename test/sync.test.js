@@ -131,15 +131,17 @@ test('a device cannot assert a countersignature', async () => {
   assert.equal(row.cosignature_hash, null);
 });
 
-test('a row that comes back from the dead does not leave its tombstone behind', async () => {
+test('a row deleted at the office does not come back from the dead, and keeps its tombstone', async () => {
+  // Until the pen test of 1.23.6 (M2) a device edit newer than the deletion brought the row back and removed its
+  // tombstone; a deletion at the office now stands (test/pentest-1236.test.js has the rest).
   const id = randomUUID();
   await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Round trip', created_at: iso(Date.now() - 10000), updated_at: iso(Date.now() - 10000) }] } });
   assert.equal((await nav.del(`/api/tasks/${id}`)).status, 200);
   assert.ok(H.db.one(`SELECT 1 FROM tombstones WHERE table_name='tasks' AND id=?`, id), 'deleting left a tombstone');
-  // The device edited it after the delete, so the edit wins and the tombstone must go.
-  await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Edited after delete', created_at: iso(Date.now()), updated_at: iso(Date.now() + 1000) }] } });
-  assert.ok(H.db.one(`SELECT 1 FROM tasks WHERE id=?`, id), 'the row is alive again');
-  assert.ok(!H.db.one(`SELECT 1 FROM tombstones WHERE table_name='tasks' AND id=?`, id), 'and the stale tombstone is gone');
+  const r = await push(nav, { tables: { tasks: [{ id, client_id: clientId, created_by: navId, title_enc: 'Edited after delete', created_at: iso(Date.now()), updated_at: iso(Date.now() + 1000) }] } });
+  assert.ok(r.data.rejected.some(x => x.id === id && x.reason === 'deleted at the office' && x.permanent), 'the device is told');
+  assert.ok(!H.db.one(`SELECT 1 FROM tasks WHERE id=?`, id), 'the row stays deleted');
+  assert.ok(H.db.one(`SELECT 1 FROM tombstones WHERE table_name='tasks' AND id=?`, id), 'and its tombstone stays');
 });
 
 test('device audit rows are accepted but cannot inject arbitrary structure', async () => {

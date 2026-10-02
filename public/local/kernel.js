@@ -12930,7 +12930,9 @@ var require_sync_tables = __commonJS({
         "needs a lawful basis for disclosure",
         "drawn down at the office",
         // A field device writing outside its scope (server/field-scope.js, server/rules/push.js fieldRefusal).
-        "outside this field device"
+        "outside this field device",
+        // A row the office has deleted (server/rules/push.js deletedAtOffice): the device drops its copy.
+        "deleted at the office"
       ],
       // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
       // emergency access, and a device has no supervisor to review it.
@@ -13221,6 +13223,7 @@ var require_sync_tables = __commonJS({
       return hasPerm(user, t.unlinked.all) || t.unlinked.owners.some((c) => row[c] === user.id);
     }
     module.exports.mayReachUnlinked = mayReachUnlinked;
+    module.exports.DELETED_AT_OFFICE = "deleted at the office";
     module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some((p) => String(reason || "").startsWith(p));
     module.exports.exportRow = exportRow2;
     module.exports.importRow = importRow2;
@@ -13797,6 +13800,35 @@ var require_notes = __commonJS({
       "deleted_at",
       "ai_assisted"
     ];
+    var SIGNED_CONTENT = ["kind", "format", "title_enc", "content_enc", "structured_enc", "occurred_at", "intervention_id", "call_id", "part2_protected", "counseling_note", "problem_ids"];
+    var SIGNED_MESSAGE = "Signed notes cannot be edited; add an addendum instead";
+    function sameValue(col, a, b) {
+      const blank = (x) => x === void 0 || x === null || x === "";
+      if (col === "problem_ids") {
+        const list = (x) => {
+          try {
+            return JSON.stringify(blank(x) ? [] : parseList(x) || []);
+          } catch {
+            return String(x);
+          }
+        };
+        return list(a) === list(b);
+      }
+      if (col === "part2_protected" || col === "counseling_note") return Number(isYes(a)) === Number(isYes(b));
+      if (blank(a) || blank(b)) return blank(a) && blank(b);
+      if (col === "occurred_at") {
+        const ms = (x) => Date.parse(x);
+        return String(a) === String(b) || Number.isFinite(ms(a)) && ms(a) === ms(b);
+      }
+      return String(a) === String(b);
+    }
+    function signedNoteEdit(row, c) {
+      const e = c.existing;
+      if (!e || e.status === "draft") return null;
+      const unsigns = row.status !== void 0 && row.status !== null && row.status !== e.status && row.status === "draft";
+      if (!unsigns && !SIGNED_CONTENT.some((col) => row[col] !== void 0 && !sameValue(col, row[col], c.was(col)))) return null;
+      return refuse(`not permitted: ${SIGNED_MESSAGE}`, { message: SIGNED_MESSAGE });
+    }
     var SIGN_REMINDER = "This reminder closes itself once your draft notes on this client's record are signed.";
     var OLD_REMINDER_REF = /Reference: supervision reminder for note ([\w-]+)/;
     var hasReminderLine = (text) => !!text && (String(text).includes(SIGN_REMINDER) || OLD_REMINDER_REF.test(String(text)));
@@ -13825,7 +13857,7 @@ var require_notes = __commonJS({
       });
       const now2 = db3.now();
       for (const t of done) {
-        if (cause === "deleted") db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, now2, t.id);
+        if (cause === "deleted" || cause === "reassigned") db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, now2, t.id);
         else db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now2, now2, t.id);
       }
       const closed = new Set(done.map((t) => t.id));
@@ -13937,6 +13969,8 @@ var require_notes = __commonJS({
       },
       normalise(row, c) {
         const e = c.existing;
+        const signedEdit = signedNoteEdit(row, c);
+        if (signedEdit) return signedEdit;
         if (!e) {
           const ms = Date.parse(row.created_at);
           const now2 = db3.now();
@@ -14010,6 +14044,7 @@ var require_notes = __commonJS({
     });
     module.exports.closeSignReminders = closeSignReminders;
     module.exports.SIGN_REMINDER = SIGN_REMINDER;
+    module.exports.SIGNED_MESSAGE = SIGNED_MESSAGE;
     module.exports.hasReminderLine = hasReminderLine;
     Object.assign(module.exports, { isSignReminder, maySendSignReminder });
     module.exports.reissueAddenda = reissueAddenda;
@@ -14020,6 +14055,32 @@ var require_notes = __commonJS({
       return readsCounseling(user) ? { sql: "1=1", params: [] } : { sql: `(${alias}.counseling_note=0 OR ${alias}.author_id=? OR ${alias}.cosigned_by IS ?)`, params: [user.id, user.id] };
     }
     Object.assign(module.exports, { readsCounseling, mayReadCounseling, counselingFilter });
+    function reassignRefusal(actor, note, target) {
+      if (!auth3.hasPerm(actor, "records:manage-others")) return { code: "permission", status: 403, message: "Handing on another worker's draft notes needs a supervisor or administrator (records:manage-others)" };
+      if (!note || note.deleted_at) return { code: "missing", status: 404, message: "Note not found" };
+      if (note.status !== "draft") return { code: "signed", status: 400, message: "A signed note is part of the legal record: its author cannot be changed. Add an addendum instead." };
+      const author = db3.one(`SELECT id, is_active FROM users WHERE id=?`, note.author_id);
+      if (author && author.is_active) return { code: "author_active", status: 400, message: "The author's account is still active: they finish or delete their own draft. Only a departed worker's drafts are handed on." };
+      if (!target) return { code: "target", status: 404, message: "Worker not found", field: "to_user_id" };
+      if (target.id === note.author_id) return { code: "target", status: 400, message: "Choose a different worker", field: "to_user_id" };
+      if (!target.is_active) return { code: "target", status: 400, message: "That worker's account is not active", field: "to_user_id" };
+      if (Number(note.counseling_note) && !readsCounseling(target)) return { code: "counseling", status: 400, message: "A SUD counseling note can only go to a worker who writes clinical notes (a clinician or supervisor)", field: "to_user_id" };
+      if (!auth3.hasPerm(target, `notes:${note.kind}:write`)) return { code: "kind", status: 400, message: `That worker cannot write ${note.kind} notes`, field: "to_user_id" };
+      if (!auth3.canAccessClient(target, note.client_id)) return { code: "reach", status: 400, message: "That worker cannot open this client's record (it is not on their caseload)", field: "to_user_id" };
+      return null;
+    }
+    function reassignDraft(actor, note, target, { ip, bulk = false } = {}) {
+      const audit3 = require_audit();
+      const req = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, target.id);
+      const cosign = Number(note.cosign_required) || req && req.requires_cosign ? 1 : 0;
+      db3.run(`UPDATE notes SET author_id=?, cosign_required=?, updated_at=? WHERE id=? AND status='draft' AND deleted_at IS NULL`, target.id, cosign, db3.now(), note.id);
+      const reminders = closeSignReminders(note.author_id, note.id, note.client_id, { cause: "reassigned" });
+      audit3.log({ user: actor, action: "note.reassign", entity: "note", entityId: note.id, clientId: note.client_id, ip, details: { from: note.author_id, to: target.id, kind: note.kind, counseling_note: Number(note.counseling_note) ? true : void 0, bulk: bulk || void 0, reminders_closed: reminders.length ? reminders : void 0 } });
+      for (const id of reminders) audit3.log({ user: actor, action: "task.update", entity: "task", entityId: id, clientId: note.client_id, ip, details: { status: "cancelled", cause: "reassigned", note: note.id } });
+      return reminders;
+    }
+    var PER_NOTE_REFUSALS = ["counseling", "kind", "reach"];
+    Object.assign(module.exports, { reassignRefusal, reassignDraft, PER_NOTE_REFUSALS });
   }
 });
 
@@ -14511,8 +14572,11 @@ var require_consents2 = __commonJS({
         if (resourceId) {
           const res = db3.one(`SELECT name, organization FROM resources WHERE id=?`, resourceId);
           const names = res ? disclosure.recipientNames([res.name, res.organization].filter(Boolean)) : [];
-          for (const c of consents) c.names_resource = !!names.length && disclosure.consentNamesRecipient(c, names);
-          const live = consents.filter((c) => c.names_resource && c.can_disclose);
+          for (const c of consents) {
+            c.names_resource = !!names.length && disclosure.consentNamesRecipient(c, names);
+            c.covers_referral = disclosure.consentCoversPurpose(c, disclosure.REFERRAL_PURPOSE);
+          }
+          const live = consents.filter((c) => c.names_resource && c.covers_referral && c.can_disclose);
           suggested = live.length === 1 ? live[0].id : null;
         }
         audit3.log({ user: ctx.user, action: "consent.list", entity: "client", entityId: ctx.params.id, clientId: ctx.params.id, ip: ctx.ip, details: { consents: consents.length, disclosures: disclosures.length, court_orders: orders ? orders.length : void 0, notices: notices.length } });
@@ -14702,6 +14766,7 @@ var require_consents2 = __commonJS({
           courtOrderId: basis.court_order?.id || null,
           agreementId: basis.agreement?.id || null,
           recipientOverride: basis.recipient_override,
+          purposeOverride: basis.purpose_override,
           legalProceeding: basis.legal_proceeding,
           counselingNotes: basis.counseling_notes,
           recipient: v.disclosed_to,
@@ -16844,7 +16909,7 @@ var require_referrals = __commonJS({
         const names = disclosure.recipientNames(resourceNames(row.resource_id));
         const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         const types = disclosure.disclosingConsentTypes();
-        cache.set(key, !!names.length && db3.all(`SELECT * FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, row.client_id, today).some((c) => types.includes(c.type) && !disclosure.consentElementProblems(c).length && disclosure.consentNamesRecipient({ type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null }, names)));
+        cache.set(key, !!names.length && db3.all(`SELECT * FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, row.client_id, today).some((c) => types.includes(c.type) && !disclosure.consentElementProblems(c).length && disclosure.consentNamesRecipient({ type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null }, names) && disclosure.consentCoversPurpose({ type: c.type, purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null }, disclosure.REFERRAL_PURPOSE)));
       }
       return { ...row, consent_on_file: cache.get(key) };
     }
@@ -16870,6 +16935,7 @@ var require_referrals = __commonJS({
         justification: v._disclosure_justification,
         court_order_id: v._court_order_id,
         recipient: resourceNames(v.resource_id || row.resource_id),
+        purpose: disclosure.REFERRAL_PURPOSE,
         recipient_override: v._recipient_override,
         allowed: disclosure.REFERRAL_BASES,
         restriction_reviewed: v._restriction_reviewed,
@@ -16883,8 +16949,9 @@ var require_referrals = __commonJS({
         consentId: basis.consent?.id || null,
         courtOrderId: basis.court_order?.id || null,
         recipientOverride: basis.recipient_override,
+        purposeOverride: basis.purpose_override,
         recipient: resourceName(v.resource_id || row.resource_id),
-        purpose: "Referral for services",
+        purpose: disclosure.REFERRAL_PURPOSE,
         what: v._disclosure_what || "Referral information (name, contact details and presenting need)",
         method: v.warm_handoff ?? row.warm_handoff ? "warm handoff" : "referral",
         basis: basis.basis,
@@ -16895,24 +16962,24 @@ var require_referrals = __commonJS({
         ip: ctx.ip
       });
     }
-    var OVERRIDE_PREFIX = /^Recipient override \(the consent names "[\s\S]*?"\): /;
     function pushDisclosure(user, raw, existing, deviceRows = []) {
       if (!sharesInformation(raw, existing || {})) return null;
       const recipientChanged = !!existing && !!raw.resource_id && raw.resource_id !== existing.resource_id;
       if (existing && !recipientChanged && existingDisclosure(raw.id)) return null;
       if (existing && !deviceRows.length && changesNothingSent(raw, plainEnc(existing))) return null;
       const dev = deviceRows.length ? deviceRows[deviceRows.length - 1] : null;
-      const just = dev && dev.justification_enc ? String(dev.justification_enc) : "";
+      const over = disclosure.parseOverride(dev && dev.justification_enc);
       const resourceId = raw.resource_id || existing?.resource_id;
       let basis;
       try {
         basis = disclosure.requireBasis(raw.client_id, {
           consent_id: dev && dev.consent_id || raw.consent_id,
           basis: dev && dev.basis || "consent",
-          justification: just.replace(OVERRIDE_PREFIX, "") || null,
+          justification: over.why,
           court_order_id: dev && dev.court_order_id,
           recipient: resourceNames(resourceId),
-          recipient_override: OVERRIDE_PREFIX.test(just),
+          purpose: disclosure.REFERRAL_PURPOSE,
+          recipient_override: over.override,
           allowed: disclosure.REFERRAL_BASES,
           // The device's gate asked the worker to confirm an agreed restriction before it wrote its row.
           restriction_reviewed: !!dev,
@@ -16920,8 +16987,8 @@ var require_referrals = __commonJS({
         });
       } catch (e) {
         const x = e && e.extra || {};
-        const why = x.recipientNotCovered ? "the consent it cites does not name the agency it is sent to" : x.restrictionReview ? "the client has an agreed restriction on sharing, which has to be confirmed at the office" : x.consentIncomplete ? "the consent it cites does not carry every \xA72.31 element" : "it needs a live consent that names the agency, or another basis recorded at the office";
-        return { refused: `needs a lawful basis for disclosure the office accepts: ${why}`, code: x.recipientNotCovered ? "recipient_not_covered" : x.restrictionReview ? "restriction" : x.consentIncomplete ? "consent_incomplete" : "no_basis" };
+        const why = x.recipientNotCovered ? "the consent it cites does not name the agency it is sent to" : x.purposeNotCovered ? "the consent it cites was not given for a referral" : x.restrictionReview ? "the client has an agreed restriction on sharing, which has to be confirmed at the office" : x.consentIncomplete ? "the consent it cites does not carry every \xA72.31 element" : "it needs a live consent that names the agency, or another basis recorded at the office";
+        return { refused: `needs a lawful basis for disclosure the office accepts: ${why}`, code: x.recipientNotCovered ? "recipient_not_covered" : x.purposeNotCovered ? "purpose_not_covered" : x.restrictionReview ? "restriction" : x.consentIncomplete ? "consent_incomplete" : "no_basis" };
       }
       return {
         deviceIds: deviceRows.map((d) => d.id),
@@ -16932,8 +16999,9 @@ var require_referrals = __commonJS({
             consentId: basis.consent?.id || null,
             courtOrderId: basis.court_order?.id || null,
             recipientOverride: basis.recipient_override,
+            purposeOverride: basis.purpose_override,
             recipient: resourceName(resourceId),
-            purpose: "Referral for services",
+            purpose: disclosure.REFERRAL_PURPOSE,
             what: dev && dev.what_enc || "Referral information (name, contact details and presenting need)",
             method: raw.warm_handoff ?? existing?.warm_handoff ? "warm handoff" : "referral",
             basis: basis.basis,
@@ -17221,14 +17289,18 @@ var require_disclosures = __commonJS({
       check(row, c) {
         if (c.via !== "sync" || c.existing || row.source === "referral") return null;
         try {
-          require_disclosure().requireBasis(row.client_id, {
+          const D = require_disclosure();
+          const over = D.parseOverride(row.justification_enc);
+          D.requireBasis(row.client_id, {
             consent_id: row.consent_id,
             basis: row.basis || "consent",
-            justification: row.justification_enc || null,
+            justification: over.why,
             court_order_id: row.court_order_id,
             legal_proceeding: !!row.legal_proceeding,
             counseling_notes: !!row.counseling_notes,
             recipient: row.recipient_enc,
+            purpose: row.purpose_enc,
+            recipient_override: over.override,
             restriction_reviewed: true,
             user: c.user
           });
@@ -19206,7 +19278,7 @@ var require_suprt2 = __commonJS({
         const basis = ctx.query.get("basis") || "consent";
         if (!S.EXPORT_BASES.includes(basis)) throw badRequest(`A SPARS entry file is disclosed under each client's Part 2 consent naming the recipient (basis=consent), or an audit or evaluation approval on file with it (basis=audit_evaluation); not "${basis}".`);
         const disclosure = require_disclosure();
-        const gate = { basis, restriction_reviewed: ctx.query.get("restriction_reviewed") === "1", recipient, agreement_id: ctx.query.get("agreement_id") || void 0, user: ctx.user };
+        const gate = { basis, restriction_reviewed: ctx.query.get("restriction_reviewed") === "1", recipient, purpose, agreement_id: ctx.query.get("agreement_id") || void 0, user: ctx.user };
         disclosure.requireExportBasis([], gate);
         const cf = auth3.caseloadFilter(ctx.user, "c.id");
         const types = set === "closeout" ? ["closeout"] : ["baseline", "reassessment", "annual"];
@@ -19225,8 +19297,8 @@ var require_suprt2 = __commonJS({
         const excludedCodes = [...new Set(rows.filter((x) => out2.has(x.client_id)).map((x) => x.client_code))].sort();
         const included = ids.filter((id) => !out2.has(id));
         if (!included.length) {
-          audit3.log({ user: ctx.user, action: "suprt.export.refused", ip: ctx.ip, success: false, details: { basis, set, clients: ids.length, reason: "no client has a consent naming the recipient" } });
-          throw new HttpError3(409, `None of the ${ids.length} client${ids.length === 1 ? "" : "s"} with an assessment in this period has a Part 2 consent on file naming "${recipient}", so nothing can be put in the file. Record each client's consent to SPARS reporting (Consents tab), or use an audit or evaluation approval on file with the recipient.`, { code: "no_consent", excluded: excludedCodes });
+          audit3.log({ user: ctx.user, action: "suprt.export.refused", ip: ctx.ip, success: false, details: { basis, set, clients: ids.length, reason: "no client has a consent naming the recipient for the purpose" } });
+          throw new HttpError3(409, `None of the ${ids.length} client${ids.length === 1 ? "" : "s"} with an assessment in this period has a Part 2 consent on file naming "${recipient}" for this purpose ("${purpose}"), so nothing can be put in the file. Record each client's consent to SPARS reporting (Consents tab), or use an audit or evaluation approval on file with the recipient.`, { code: "no_consent", excluded: excludedCodes });
         }
         const exportId = uuid2();
         const stamp2 = db3.now();
@@ -20383,6 +20455,7 @@ var require_referral_links = __commonJS({
           basis: "consent",
           consent_id: v.consent_id || referral.consent_id,
           recipient: resourceNames(res),
+          purpose: disclosure.REFERRAL_PURPOSE,
           allowed: ["consent"],
           restriction_reviewed: v.restriction_reviewed,
           user
@@ -20542,7 +20615,7 @@ var require_referral_links = __commonJS({
       const restrictedSince = db3.one(`SELECT 1 FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled' AND updated_at > ?`, link.client_id, link.created_at);
       if (restrictedSince) return { ok: false, reason: "restriction" };
       try {
-        const basis = disclosure.requireBasis(link.client_id, { basis: "consent", consent_id: link.consent_id, recipient: res.names, allowed: ["consent"], restriction_reviewed: true, user: creator });
+        const basis = disclosure.requireBasis(link.client_id, { basis: "consent", consent_id: link.consent_id, recipient: res.names, purpose: disclosure.REFERRAL_PURPOSE, allowed: ["consent"], restriction_reviewed: true, user: creator });
         return { ok: true, basis, res };
       } catch (e) {
         return { ok: false, reason: e && e.extra && e.extra.recipientNotCovered ? "recipient_not_covered" : "consent_not_valid" };
@@ -20590,7 +20663,7 @@ var require_referral_links = __commonJS({
             clientId: link.client_id,
             consentId: cover.basis.consent.id,
             recipient: cover.res.name,
-            purpose: "Referral for services",
+            purpose: disclosure.REFERRAL_PURPOSE,
             what: `Secure referral link ${link.reference}: ${parts.join(", ")}`,
             method: "secure referral link",
             basis: "consent",
@@ -35971,6 +36044,7 @@ var require_reports = __commonJS({
           restriction_reviewed: ctx.query.get("restriction_reviewed") === "1",
           legal_proceeding: ctx.query.get("legal_proceeding") === "1",
           recipient,
+          purpose,
           agreement_id: ctx.query.get("agreement_id") || void 0,
           user: ctx.user
         };
@@ -35993,7 +36067,7 @@ var require_reports = __commonJS({
           }
           if (g.excluded.length) {
             excludedCodes = db3.all(`SELECT client_code FROM clients WHERE id IN (${g.excluded.map(() => "?").join(",")})`, ...g.excluded).map((r2) => r2.client_code).sort();
-            aboutSheet.rows.push({ k: "Left out (no consent on file naming this recipient)", v: excludedCodes.join(", ") });
+            aboutSheet.rows.push({ k: "Left out (no consent on file naming this recipient for this purpose)", v: excludedCodes.join(", ") });
           }
           return g;
         };
@@ -41775,9 +41849,9 @@ var require_handoff = __commonJS({
         return o;
       }).sort((a, b) => a.service_date.localeCompare(b.service_date) || a.client_code.localeCompare(b.client_code));
     }
-    function consentFor(clientId, recipient) {
+    function consentFor(clientId, recipient, purpose = null) {
       const D = require_disclosure();
-      if (recipient) return D.fileConsentFor(clientId, D.recipientNames(recipient));
+      if (recipient) return D.fileConsentFor(clientId, D.recipientNames(recipient), purpose);
       const types = D.fileConsentTypes();
       return db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, clientId, ...types).find((c) => !D.consentElementProblems(c).length) || null;
     }
@@ -41787,7 +41861,8 @@ var require_handoff = __commonJS({
         const rows = encounters(ctx, p);
         const clients = [...new Map(rows.map((x) => [x._client_id, x.client_code])).entries()];
         const recipient = (ctx.query.get("recipient") || "").trim().slice(0, 200);
-        const without = clients.filter(([id]) => !consentFor(id, recipient)).map(([, code]) => code).sort();
+        const purpose = (ctx.query.get("purpose") || "").trim().slice(0, 500) || null;
+        const without = clients.filter(([id]) => !consentFor(id, recipient, purpose)).map(([, code]) => code).sort();
         const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((x) => x.client_id));
         audit3.log({ user: ctx.user, action: "handoff.preview", ip: ctx.ip, details: { from: p.from, to: p.to, rows: rows.length, clients: clients.length } });
         return {
@@ -41816,7 +41891,7 @@ var require_handoff = __commonJS({
         const consentOf = /* @__PURE__ */ new Map();
         const excluded = /* @__PURE__ */ new Set();
         if (basis === "consent") for (const id of new Set(all.map((x) => x._client_id))) {
-          const c = consentFor(id, recipient);
+          const c = consentFor(id, recipient, purpose);
           if (c) consentOf.set(id, c.id);
           else excluded.add(id);
         }
@@ -41850,7 +41925,7 @@ var require_handoff = __commonJS({
           { k: "Period", v: `${p.from} to ${p.to}` },
           { k: "Generated", v: db3.now() },
           { k: "Generated by", v: ctx.user.display_name || ctx.user.username },
-          { k: "Left out (no consent on file naming this recipient)", v: excludedCodes.join(", ") || "none" },
+          { k: "Left out (no consent on file naming this recipient for this purpose)", v: excludedCodes.join(", ") || "none" },
           ...part2 ? [{ k: "Protected by 42 CFR Part 2", v: notice.short }, { k: "Notice to recipient (42 CFR \xA72.32)", v: notice.text }] : []
         ] }]) : S.toCsv(out2, COLUMNS) + (part2 ? "\r\n\r\n" + S.toCsv([{ n: disclosure.fileNotice() }], [{ key: "n", label: "" }]).split("\r\n")[1] : "");
         ctx.res.writeHead(200, {
@@ -43312,7 +43387,7 @@ var require_notes2 = __commonJS({
       r.put("/api/notes/:id", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
         if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
-        if (n.status !== "draft") throw badRequest("Signed notes cannot be edited; add an addendum instead");
+        if (n.status !== "draft") throw badRequest(require_notes().SIGNED_MESSAGE);
         rules.assertEditable("notes", ctx, n);
         require_crud().assertFresh(ctx, n, "note");
         const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids, ai_assisted: shape.ai_assisted }, { partial: true, existing: n });
@@ -43486,6 +43561,64 @@ var require_notes2 = __commonJS({
         audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reminders.length ? { reminders_closed: reminders } : void 0 });
         for (const id of reminders) audit3.log({ user: ctx.user, action: "task.update", entity: "task", entityId: id, clientId: n.client_id, ip: ctx.ip, details: { status: "cancelled", cause: "deleted", note: n.id } });
         return { ok: true };
+      });
+      const R = () => require_notes();
+      const refusal = (why) => new (require_http()).HttpError(why.status, why.message, why.field ? { fields: { [why.field]: why.message } } : void 0);
+      const targetUser = (id) => id ? db3.one(`SELECT * FROM users WHERE id=?`, id) : null;
+      r.get("/api/notes/departed-drafts", auth3.requireAuth, auth3.requirePerm("records:manage-others"), (ctx) => {
+        const rows = db3.all(`SELECT n.author_id, n.client_id, n.kind, n.counseling_note, u.display_name, u.role FROM notes n JOIN users u ON u.id=n.author_id
+      JOIN clients c ON c.id=n.client_id WHERE n.status='draft' AND n.deleted_at IS NULL AND c.deleted_at IS NULL AND u.is_active=0`);
+        const by = /* @__PURE__ */ new Map();
+        for (const n of rows) {
+          if (!auth3.canAccessClient(ctx.user, n.client_id)) continue;
+          const a = by.get(n.author_id) || { id: n.author_id, display_name: n.display_name, role: n.role, drafts: 0, clinical: 0, counseling: 0 };
+          a.drafts++;
+          if (n.kind === "clinical") a.clinical++;
+          if (Number(n.counseling_note)) a.counseling++;
+          by.set(n.author_id, a);
+        }
+        return { authors: [...by.values()].sort((x, y) => String(x.display_name).localeCompare(String(y.display_name))) };
+      });
+      r.post("/api/notes/:id/reassign", auth3.requireAuth, auth3.requirePerm("records:manage-others"), (ctx) => {
+        require_shared().assertRulingHere("Handing on a draft note");
+        const v = validate(ctx.body, { to_user_id: { type: "string", required: true } });
+        const n = load(ctx, ctx.params.id);
+        const target = targetUser(v.to_user_id);
+        const why = R().reassignRefusal(ctx.user, n, target);
+        if (why) throw refusal(why);
+        const reminders = R().reassignDraft(ctx.user, n, target, { ip: ctx.ip });
+        return { ok: true, id: n.id, author_id: target.id, author: target.display_name, reminders_cancelled: reminders.length };
+      });
+      r.post("/api/notes/reassign-drafts", auth3.requireAuth, auth3.requirePerm("records:manage-others"), (ctx) => {
+        require_shared().assertRulingHere("Handing on draft notes");
+        const v = validate(ctx.body, { from_user_id: { type: "string", required: true }, to_user_id: { type: "string", required: true } });
+        const from = db3.one(`SELECT id, display_name, is_active FROM users WHERE id=?`, v.from_user_id);
+        if (!from) throw notFound("Worker not found");
+        if (from.is_active) throw badRequest("That worker's account is still active: they finish or delete their own drafts. Only a departed worker's drafts are handed on.", { fields: { from_user_id: "still active" } });
+        const target = targetUser(v.to_user_id);
+        if (!target) throw notFound("Worker not found");
+        const drafts = db3.all(`SELECT n.* FROM notes n JOIN clients c ON c.id=n.client_id WHERE n.author_id=? AND n.status='draft' AND n.deleted_at IS NULL AND c.deleted_at IS NULL ORDER BY n.created_at`, from.id);
+        let moved = 0;
+        let reminders = 0;
+        const skipped = /* @__PURE__ */ new Map();
+        const skip = (reason) => skipped.set(reason, (skipped.get(reason) || 0) + 1);
+        db3.transaction(() => {
+          for (const n of drafts) {
+            if (!auth3.canAccessClient(ctx.user, n.client_id)) {
+              skip("not on your caseload");
+              continue;
+            }
+            const why = R().reassignRefusal(ctx.user, n, target);
+            if (why) {
+              if (!R().PER_NOTE_REFUSALS.includes(why.code)) throw refusal(why);
+              skip(why.message);
+              continue;
+            }
+            reminders += R().reassignDraft(ctx.user, n, target, { ip: ctx.ip, bulk: true }).length;
+            moved++;
+          }
+        });
+        return { ok: true, moved, reminders_cancelled: reminders, skipped: [...skipped].map(([reason, count]) => ({ reason, count })), from: from.display_name, to: target.display_name };
       });
       r.get("/api/notes/:id/verify", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
@@ -50084,6 +50217,7 @@ var require_push = __commonJS({
         c.statements = Object.fromEntries((R.statements || []).filter((k) => raw[k] !== void 0).map((k) => [k, raw[k]]));
         this.confine(R, raw, c);
         if (refused(this.authorise(R, t, raw, c))) return false;
+        if (!existing && refused(this.deletedAtOffice(t, raw))) return false;
         if (refused(this.fieldRefusal(t, raw, c))) return false;
         if (R.authorise && refused(R.authorise(raw, c))) return false;
         if (refused(this.validate(R, t, raw, c))) return false;
@@ -50097,7 +50231,6 @@ var require_push = __commonJS({
         }
         if (refused(this.attribute(R, t, raw, c))) return false;
         if (R.normalise && refused(R.normalise(raw, c))) return false;
-        if (db3.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=? AND deleted_at > ?`, t.name, raw.id, incomingAt)) return false;
         if (R.beforeWrite && refused(R.beforeWrite(raw, c))) return false;
         for (const col of SYNC2.user_ref_cols) if (raw[col] && !this.knownUsers.has(raw[col]) && existingCols.includes(col)) raw[col] = user.id;
         if (R.beforeStore) R.beforeStore(raw, c);
@@ -50206,6 +50339,21 @@ var require_push = __commonJS({
           for (const k of Object.keys(raw)) if (k !== "id" && !allowed.includes(k)) delete raw[k];
         }
         return null;
+      }
+      /**
+       * A row the office has deleted (its tombstone is here, the row is not) stays deleted, whatever the device's clock
+       * says: a deletion at the office is a decision, and an edit made on a device before or after it does not undo it
+       * (pen test of 1.23.6, M2: a push with a fresh updated_at brought a deleted row back and took its tombstone away).
+       * The device is told, permanently, so it drops its copy rather than resending it (local/sync.js settleRejections),
+       * and the refusal is audited by table and record id only. A purged client's rows are refused earlier (authorise).
+       */
+      deletedAtOffice(t, raw) {
+        if (!db3.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=?`, t.name, raw.id)) return null;
+        return {
+          reason: SYNC2.DELETED_AT_OFFICE,
+          permanent: true,
+          audit: { action: "sync.resurrect_refused", entity: t.name, entityId: raw.id, clientId: t.clientCol && t.name !== "clients" ? raw[t.clientCol] || null : null, details: { table: t.name } }
+        };
       }
       /** The table's own check, the REST shape's fields and the programme module: fatal refusals first. */
       validate(R, t, raw, c) {
@@ -52571,6 +52719,35 @@ var require_disclosure = __commonJS({
       if (r === normalise(db3.getSetting("org_name", ""))) return true;
       return db3.all(`SELECT username, display_name FROM users WHERE is_active=1`).some((u) => normalise(u.username) === r || normalise(u.display_name) === r);
     }
+    var REFERRAL_PURPOSE = "Referral for services";
+    var PATIENT_REQUEST = [/\bat (my|his|her|their) (own )?request\b/, /\bat the request of the (patient|client|individual)\b/, /\b(patient|client|individual)( s)? (own )?request\b/];
+    function patientRequested(text) {
+      const t = normalise(text);
+      return PATIENT_REQUEST.some((re) => re.test(t));
+    }
+    function purposeCodes(text) {
+      if (!normalise(text)) return [];
+      if (isTpo(text)) return Object.keys(FHIR_PURPOSES);
+      const p = ` ${normalise(text)} `;
+      return Object.keys(FHIR_PURPOSES).filter((code) => FHIR_PURPOSES[code].words.some((w) => p.includes(` ${normalise(w)} `)));
+    }
+    function consentCoversPurposeOfUse({ type, purpose }, code) {
+      if (!FHIR_PURPOSES[code]) return false;
+      if (type === "part2_tpo") return true;
+      return purposeCodes(purpose).includes(code);
+    }
+    var PURPOSE_FILLER = new Set("a an and any all are as at be by for from in into is it its of on or other the their this that to with without my me i his her client clients patient patients individual person information info record records data file files service services program programme purpose purposes use uses used disclose disclosure disclosures share shared sharing send sent provide provided providing release only general health care request requested requests about regarding related relating support supporting help helping need needs needed".split(" "));
+    function purposeWords(text) {
+      return new Set(normalise(text).split(" ").filter((w) => w.length > 2 && !PURPOSE_FILLER.has(w)).map((w) => w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w));
+    }
+    function consentCoversPurpose({ type, purpose: consentPurpose }, purpose) {
+      if (!normalise(purpose)) return false;
+      if (patientRequested(consentPurpose)) return true;
+      const wanted = purposeCodes(purpose);
+      if (wanted.length) return wanted.every((code) => consentCoversPurposeOfUse({ type, purpose: consentPurpose }, code));
+      const theirs = purposeWords(consentPurpose);
+      return [...purposeWords(purpose)].some((w) => theirs.has(w));
+    }
     function agreementProblems(a) {
       const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
       const out2 = [];
@@ -52604,7 +52781,7 @@ var require_disclosure = __commonJS({
       }
       return a;
     }
-    function requireBasis(clientId, { consent_id, basis, justification, user, court_order_id, legal_proceeding, counseling_notes, restriction_reviewed, recipient, agreement_id, recipient_override, allowed } = {}) {
+    function requireBasis(clientId, { consent_id, basis, justification, user, court_order_id, legal_proceeding, counseling_notes, restriction_reviewed, recipient, purpose, agreement_id, recipient_override, allowed } = {}) {
       const b = basis || "consent";
       if (!BASES.includes(b)) throw badRequest(`"${b}" is not a lawful basis for disclosure`);
       if (allowed && !allowed.includes(b)) throw badRequest(`A referral can only be made with the client's consent, in a medical emergency, under a court order, or on a supervisor's justified override \u2014 not on a "${b.replace(/_/g, " ")}" basis. Record that disclosure on the client's Consents tab instead.`);
@@ -52621,6 +52798,7 @@ var require_disclosure = __commonJS({
       let order = null;
       let agreement = null;
       let override = false;
+      let purposeOverride = false;
       if (b === "consent") {
         consent = activeConsent(clientId, consent_id, { elements: false });
         if (!consent) throw badRequest("A valid, unexpired consent must be selected before information can be shared. Record the consent first, or choose another lawful basis.");
@@ -52644,6 +52822,17 @@ var require_disclosure = __commonJS({
           if (why.length < MIN_JUSTIFICATION) throw badRequest(`Relying on a consent for a recipient it does not name needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.`);
           override = true;
         }
+        const stated = String(purpose || "").trim();
+        if (!stated) throw badRequest("Say what the disclosure is for (its purpose): the consent is checked against it.");
+        const consentPurpose = dec2(consent.purpose_enc);
+        if (!consentCoversPurpose({ type: consent.type, purpose: consentPurpose }, stated)) {
+          if (!recipient_override) {
+            throw new HttpError3(409, `This consent was given for "${consentPurpose}", which does not cover this disclosure's purpose ("${stated}"). Choose a consent given for this purpose, record a new one, or ask a supervisor to override with a written justification.`, { consentPurpose, purposeNotCovered: true });
+          }
+          if (!canOverride) throw forbidden("Only a supervisor or administrator can rely on a consent for a purpose it does not state");
+          if (why.length < MIN_JUSTIFICATION) throw badRequest(`Relying on a consent for a purpose it does not state needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.`);
+          purposeOverride = true;
+        }
       }
       if (b === "court_order") {
         order = court_order_id ? db3.one(`SELECT * FROM court_orders WHERE id=? AND client_id=?`, court_order_id, clientId) : null;
@@ -52659,10 +52848,18 @@ var require_disclosure = __commonJS({
       if (NEEDS_JUSTIFICATION.includes(b) && why.length < MIN_JUSTIFICATION) {
         throw badRequest(b === "other" ? `Sharing without consent on an "other" basis needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.` : b === "medical_emergency" ? `A medical emergency disclosure (42 CFR \xA72.51) needs a written justification of at least ${MIN_JUSTIFICATION} characters: the nature of the emergency and who was told.` : `A ${b === "crime_on_premises" ? "report of a crime on the premises or against staff (\xA72.12(c)(5))" : "mandated report of suspected child abuse or neglect (\xA72.12(c)(6))"} needs a written justification of at least ${MIN_JUSTIFICATION} characters: what happened, and what was reported to whom.`);
       }
-      const kept = override ? `Recipient override (the consent names "${dec2(consent.recipient_enc)}"): ${why}` : why || null;
-      return { basis: b, consent, court_order: order, agreement, justification: kept, legal_proceeding: proceeding, counseling_notes: notes, recipient_override: override };
+      const kept = override || purposeOverride ? overrideJustification({ recipient: override ? dec2(consent.recipient_enc) : null, purpose: purposeOverride ? dec2(consent.purpose_enc) : null }, why) : why || null;
+      return { basis: b, consent, court_order: order, agreement, justification: kept, legal_proceeding: proceeding, counseling_notes: notes, recipient_override: override, purpose_override: purposeOverride };
     }
-    function requireExportBasis(clientIds, { basis, restriction_reviewed, legal_proceeding, recipient, agreement_id, user } = {}) {
+    var OVERRIDE_PREFIX = /^(?:(?:Recipient override \(the consent names "[\s\S]*?"\)|Purpose override \(the consent's purpose is "[\s\S]*?"\)): )+/;
+    function overrideJustification({ recipient, purpose }, why) {
+      return [recipient !== null && recipient !== void 0 ? `Recipient override (the consent names "${recipient}"): ` : "", purpose !== null && purpose !== void 0 ? `Purpose override (the consent's purpose is "${purpose}"): ` : "", why].join("");
+    }
+    function parseOverride(justification) {
+      const just = String(justification || "");
+      return { override: OVERRIDE_PREFIX.test(just), why: just.replace(OVERRIDE_PREFIX, "") || null };
+    }
+    function requireExportBasis(clientIds, { basis, restriction_reviewed, legal_proceeding, recipient, purpose, agreement_id, user } = {}) {
       if (legal_proceeding) throw badRequest("Records for use in a legal proceeding against a patient are disclosed one client at a time, under a recorded court order or a proceedings-only consent (Consents tab \u2192 Record a disclosure), never as a bulk export.");
       if (!basis) throw badRequest(`An identified export must state its lawful basis (basis=${EXPORT_BASES.join("|")}); it is written to the accounting of disclosures for every client in the file`);
       if (!EXPORT_BASES.includes(basis)) throw badRequest(`"${basis}" is not a basis an identified export can be made under (${EXPORT_BASES.join(", ")})`);
@@ -52675,8 +52872,9 @@ var require_disclosure = __commonJS({
       const excluded = [];
       if (basis === "consent") {
         const names = recipientNames(recipient);
+        if (!String(purpose || "").trim()) throw badRequest("An identified export under consent must state its purpose: each client's consent is checked against it.");
         for (const id of clientIds) {
-          const c = fileConsentFor(id, names);
+          const c = fileConsentFor(id, names, purpose);
           if (c) consentOf.set(id, c.id);
           else excluded.push(id);
         }
@@ -52685,11 +52883,12 @@ var require_disclosure = __commonJS({
       requireRestrictionReview(clientIds.filter((id) => !out2.has(id)), restriction_reviewed);
       return { basis, agreement, consentOf, excluded };
     }
-    function fileConsentFor(clientId, names) {
+    function fileConsentFor(clientId, names, purpose) {
       const types = fileConsentTypes();
       if (!names.length || !types.length) return null;
+      if (purpose !== null && !String(purpose || "").trim()) return null;
       const rows = db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY signed_at DESC, created_at DESC`, clientId, ...types);
-      return rows.find((c) => !consentElementProblems(c).length && consentNamesRecipient({ type: c.type, recipient: dec2(c.recipient_enc) }, names)) || null;
+      return rows.find((c) => !consentElementProblems(c).length && consentNamesRecipient({ type: c.type, recipient: dec2(c.recipient_enc) }, names) && (purpose === null || consentCoversPurpose({ type: c.type, purpose: dec2(c.purpose_enc) }, purpose))) || null;
     }
     function requireRestrictionReview(clientIds, restriction_reviewed) {
       if (restriction_reviewed || !clientIds.length) return;
@@ -52697,7 +52896,7 @@ var require_disclosure = __commonJS({
       const n = clientIds.filter((id) => restricted.has(id)).length;
       if (n) throw badRequest(`${n} client${n === 1 ? "" : "s"} in this export ${n === 1 ? "has" : "have"} an agreed restriction on how their information is shared. Check the export respects it, then confirm (restriction_reviewed=1).`, { restrictionReview: true, restrictedClients: n });
     }
-    function record({ id: givenId = null, clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
+    function record({ id: givenId = null, clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, purposeOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = "consent", justification = null, source = "manual", sourceRef = null, disclosedAt = null, user, ip }) {
       const id = givenId || uuid2();
       const at = disclosedAt || db3.now();
       const noticeVersion = part2Program() ? C.PART2_NOTICE_VERSION : null;
@@ -52728,6 +52927,7 @@ var require_disclosure = __commonJS({
         court_order_id: courtOrderId || void 0,
         agreement_id: agreementId || void 0,
         recipient_override: recipientOverride ? true : void 0,
+        purpose_override: purposeOverride ? true : void 0,
         justified: justification ? true : void 0,
         legal_proceeding: legalProceeding ? true : void 0,
         counseling_notes: counselingNotes ? true : void 0,
@@ -52758,7 +52958,22 @@ var require_disclosure = __commonJS({
       return { client_id: client?.id, client_code: client?.client_code, generated_at: db3.now(), part2_program: part2Program(), notice: part2Program() ? notice() : null, disclosures, consents };
     }
     var FHIR_PURPOSES = {
-      TREAT: { display: "Treatment", words: ["treatment", "care coordination", "coordination of care", "continuity of care"] },
+      // A referral to another provider is treatment (45 CFR §164.501), so a consent "for referral" covers it; so are an
+      // intake or admission for SUD treatment, MAT/MOUD and withdrawal management, in the words consents use for them.
+      TREAT: { display: "Treatment", words: [
+        "treatment",
+        "care coordination",
+        "coordination of care",
+        "continuity of care",
+        "referral",
+        "referrals",
+        "intake",
+        "admission",
+        "mat",
+        "moud",
+        "detox",
+        "withdrawal management"
+      ] },
       HPAYMT: { display: "Payment", words: ["payment", "billing", "claims"] },
       HOPERAT: { display: "Health care operations", words: ["operations"] }
     };
@@ -52775,10 +52990,7 @@ var require_disclosure = __commonJS({
       if (type !== void 0 && !fhirConsentTypes().includes(type)) return false;
       if (category !== void 0 && !categoriesCover(categories, category)) return false;
       if (!consentNamesRecipient({ type, recipient }, recipients)) return false;
-      if (type === "part2_tpo") return !!FHIR_PURPOSES[purposeOfUse];
-      if (isTpo(purpose)) return true;
-      const p = ` ${normalise(purpose)} `;
-      return (FHIR_PURPOSES[purposeOfUse]?.words || []).some((w) => p.includes(` ${normalise(w)} `));
+      return consentCoversPurposeOfUse({ type, purpose }, purposeOfUse);
     }
     var CATEGORY_OF_FHIR_TYPE = {
       Patient: "demographics",
@@ -52807,7 +53019,7 @@ var require_disclosure = __commonJS({
       return ["all", "everything", "entire", "complete", "whole", "full", "general", "any and all"].includes(t);
     }
     function consentPurposeCodes({ type, purpose }) {
-      return Object.keys(FHIR_PURPOSES).filter((code) => type === "part2_tpo" || consentCovers({ recipient: "x", purpose }, { recipients: ["x"], purposeOfUse: code }));
+      return Object.keys(FHIR_PURPOSES).filter((code) => consentCoversPurposeOfUse({ type, purpose }, code));
     }
     var coverageCache = /* @__PURE__ */ new Map();
     function fhirCoverage({ cacheKey, recipients, purposeOfUse, resourceType }) {
@@ -52852,6 +53064,7 @@ var require_disclosure = __commonJS({
     module.exports = {
       BASES,
       EXPORT_BASES,
+      REFERRAL_PURPOSE,
       SYSTEM_BASES,
       STATE_REPORTING,
       NEEDS_JUSTIFICATION,
@@ -52875,6 +53088,12 @@ var require_disclosure = __commonJS({
       normalise,
       recipientNames,
       consentNamesRecipient,
+      purposeCodes,
+      consentCoversPurposeOfUse,
+      consentCoversPurpose,
+      patientRequested,
+      overrideJustification,
+      parseOverride,
       isInternalRecipient,
       agreementProblems,
       agreementNames,
@@ -54709,6 +54928,11 @@ function settleRejections(rejections, chunk, conflicts) {
     if (x.reason === "purged") {
       import_db.default.run(`DELETE FROM ${x.table} WHERE id=?`, x.id);
       import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, x.table, x.id);
+    } else if (x.reason === import_sync_tables.default.DELETED_AT_OFFICE) {
+      import_db.default.savepoint(() => {
+        import_db.default.run(`DELETE FROM ${x.table} WHERE id=?`, x.id);
+        import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, x.table, x.id);
+      }, () => seen(x.table, x.id, stamp(r)));
     } else {
       seen(x.table, x.id, stamp(r));
     }

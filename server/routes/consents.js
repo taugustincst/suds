@@ -58,15 +58,19 @@ module.exports = (r) => {
     const notices = db.all(`SELECT n.*, u.display_name AS given_by_name FROM part2_notices n JOIN users u ON u.id=n.given_by WHERE n.client_id=? ORDER BY n.given_at DESC`, ctx.params.id)
       .map(n => ({ ...n, notes: n.notes_enc ? decrypt(n.notes_enc) : null, notes_enc: undefined }));
     // For a referral to a provider (?resource_id=): which consents name it — by its name or organisation,
-    // with the same matching the referral gate uses (disclosure.consentNamesRecipient) — and, when exactly
-    // one live consent does, that one as the suggestion the referral form pre-selects.
+    // with the same matching the referral gate uses (disclosure.consentNamesRecipient) — whether each covers a
+    // referral's purpose (covers_referral: disclosure.consentCoversPurpose), and, when exactly one live consent
+    // does both, that one as the suggestion the referral form pre-selects.
     let suggested;
     const resourceId = ctx.query.get('resource_id');
     if (resourceId) {
       const res = db.one(`SELECT name, organization FROM resources WHERE id=?`, resourceId);
       const names = res ? disclosure.recipientNames([res.name, res.organization].filter(Boolean)) : [];
-      for (const c of consents) c.names_resource = !!names.length && disclosure.consentNamesRecipient(c, names);
-      const live = consents.filter(c => c.names_resource && c.can_disclose);
+      for (const c of consents) {
+        c.names_resource = !!names.length && disclosure.consentNamesRecipient(c, names);
+        c.covers_referral = disclosure.consentCoversPurpose(c, disclosure.REFERRAL_PURPOSE);
+      }
+      const live = consents.filter(c => c.names_resource && c.covers_referral && c.can_disclose);
       suggested = live.length === 1 ? live[0].id : null;
     }
     // Reading who a client's information may be shared with is itself a PHI read.
@@ -199,10 +203,11 @@ module.exports = (r) => {
       method: { type: 'string', maxLen: 60 }, disclosed_at: { type: 'datetime', required: true }, basis: { type: 'string', enum: disclosure.BASES }, justification: { type: 'string', maxLen: 2000 },
       court_order_id: { type: 'string' }, agreement_id: { type: 'string' }, recipient_override: { type: 'boolean' },
       legal_proceeding: { type: 'boolean' }, counseling_notes: { type: 'boolean' }, restriction_reviewed: { type: 'boolean' } });
-    // The consent, or the registered agreement, is checked against the recipient typed here.
+    // The consent, or the registered agreement, is checked against the recipient typed here, and a consent
+    // against the purpose too (v.purpose: disclosure.consentCoversPurpose).
     const basis = disclosure.requireBasis(ctx.params.id, { ...v, recipient: v.disclosed_to, user: ctx.user });
     const id = disclosure.record({ clientId: ctx.params.id, consentId: basis.consent?.id || null, courtOrderId: basis.court_order?.id || null, agreementId: basis.agreement?.id || null,
-      recipientOverride: basis.recipient_override, legalProceeding: basis.legal_proceeding, counselingNotes: basis.counseling_notes,
+      recipientOverride: basis.recipient_override, purposeOverride: basis.purpose_override, legalProceeding: basis.legal_proceeding, counselingNotes: basis.counseling_notes,
       recipient: v.disclosed_to, purpose: v.purpose, what: v.info_disclosed, method: v.method || null, basis: basis.basis, justification: basis.justification, source: 'manual', disclosedAt: v.disclosed_at, user: ctx.user, ip: ctx.ip });
     // The §2.32 statement the worker must send with it (written disclosures) — returned so the form can show it.
     ctx.status = 201; return { id, notice: disclosure.part2Program() && basis.basis === 'consent' ? disclosure.notice() : null };

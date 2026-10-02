@@ -260,11 +260,17 @@ try {
     await until(async () => (await dialogs(nav.page)) === 0);
     await nav.go('waitlist');
     ok((await nav.page.textContent('.main')).includes(`Wait${tag}`), 'and the person is then on the Waitlist');
+    // 1.24.0: with people waiting, Add to waitlist is still in the page's header (the persona could not find it).
+    const headAdd = await nav.page.$('.main .topbar [data-waitlist-add]');
+    ok(headAdd && await headAdd.isVisible(), 'with someone waiting, "+ Add to waitlist" is in the page header');
+    await headAdd.click(); await nav.page.waitForSelector('.modal select[name=status]'); await settle(nav.page);
+    eq(await nav.page.inputValue('.modal select[name=status]'), 'waitlist', 'and it opens the intake form on Waitlist');
+    await nav.page.keyboard.press('Escape'); await until(async () => (await dialogs(nav.page)) === 0);
     await axe(nav.page, 'Waitlist');
     const ro = await session('rreader');
     await ro.go('waitlist');
     const t = await ro.page.textContent('.main');
-    ok(/Nobody is waiting|Not available/.test(t) && !(await ro.page.$('[data-empty-action="waitlist-add"]')), 'a role that cannot add clients is not offered the button');
+    ok(/Nobody is waiting|Not available/.test(t) && !(await ro.page.$('[data-empty-action="waitlist-add"], [data-waitlist-add]')), 'a role that cannot add clients is not offered the button');
     await ro.ctx.close();
   }
 

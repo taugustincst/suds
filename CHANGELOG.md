@@ -4,6 +4,43 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Security
+
+Fixes from an owner-authorised white-box pen test of 1.23.6. No migration, permission or route is added.
+
+* **M1 — the disclosure gate now checks purpose.** A consent covers the purpose it states, as well as the recipient
+  it names: a referral "for treatment services" was accepted on a consent given for "billing and payment processing
+  only", and so was a manual disclosure. `requireBasis` (`server/disclosure.js`) now compares the disclosure's
+  purpose with the consent's, using the same rule as the FHIR API (`consentCoversPurposeOfUse`). Treatment, payment
+  and health care operations are recognised by their words. A referral counts as treatment (45 CFR §164.501), as do
+  an intake, an admission, MAT/MOUD and withdrawal management, which the FHIR API now also recognises as treatment.
+  The single TPO consent covers all three. A purpose outside them (housing, a court case) is covered only by a
+  consent that states it. A consent "at the request of the patient" (§2.31(a)(4)) covers what a worker discloses at
+  the patient's request, but never the FHIR API's automated feed. A mismatch is refused with **409**, and the
+  message gives the consent's purpose. A supervisor or administrator may override with the existing consent
+  override (`recipient_override` / `_recipient_override`, now labelled "does not name the recipient or was given
+  for another purpose") and a written justification of at least 20 characters. The justification is kept with the
+  accounting row ("Purpose override …"), and the audit entry carries `purpose_override: true`. The check covers
+  referrals (REST, the outcome route and a device's push), manual disclosures (REST, and a device's disclosure
+  rows, which are flagged for the privacy officer), secure referral links, identified exports, the SPARS file and
+  the county EHR hand-off. Files have no override: a client whose consent does not cover the file's purpose is left
+  out and listed by code. The referral form no longer suggests a consent that names the provider but was given for
+  another purpose, and it offers "Record a consent naming …" instead. The hand-off preview checks the purpose too.
+  Test data that relied on mismatched purposes was corrected. Before you upgrade, check whether your consents state
+  their purpose in other words: from this release, a referral on such a consent needs a supervisor's override or a
+  new consent.
+* **M2 — an office deletion stands.** A device's push with a fresh `updated_at` could bring back a row the office had
+  deleted and remove its tombstone. Sync push (`server/rules/push.js`) now refuses any row whose tombstone is on file,
+  whatever the device's clock says. It is reported to the device as a permanent rejection (`deleted at the office`),
+  and the device removes its own copy rather than resending it, as it does for a purged record
+  (`local/sync.js`). Each refusal is audited as the new action `sync.resurrect_refused`, with only the table and the
+  record id. A purged client's rows are still refused as `purged`. A row the office deleted while a device had
+  unsent edits to it no longer silently disappears from the push either: the device is told.
+* **L3 — a push that edits a signed note is refused.** A push that changed a signed note was counted as applied while
+  the office quietly kept what was signed. It is now rejected, with the REST route's own message ("not permitted:
+  Signed notes cannot be edited; add an addendum instead"), so the device shows it on the sync screen and stops
+  resending it. A signed note sent back unchanged (for example, asking for a review) still lands.
+
 ### Scheduled backups for SUDS on this device (built for 1.24.0, not yet released)
 
 Built on a feature branch for 1.24.0, which comes no earlier than 2026-10-29 and through the release gate; nothing
@@ -198,6 +235,37 @@ settings rows.
   The audit-anchor item is left off Home when the production banner above already says it.
 - Added: **Settings › Security status** starts with a **Hardening checklist** card listing every item, done or not,
   with which are server settings for IT.
+
+### Fixes from the persona test of 1.23.6 (built for 1.24.0, not yet released)
+
+Fixes from the persona test of 1.23.6, for 1.24.0. No migration and no new permission name.
+
+- **Assessments and the care plan no longer lose work when the module is off.** The six-dimension assessment, the
+  screenings, the problem list and the care plan's goals and steps were offered on a client's record even while their
+  programme module was switched off, and from an address naming the tab; the server refused the save (403) and what
+  had been typed was gone. Switched off, a tab named in the address now shows the records made before, read only, with
+  a notice saying the module is off and where it is switched on; no add or edit button is shown and no form opens. The
+  page's own check of a module (`moduleOn`) now treats an unknown programme as off rather than on, and fetches the
+  programme once (`GET /api/auth/me`) and draws the page again if a session came without it.
+- **Long clinical forms keep a draft.** The six-dimension assessment, each screening, and the problem, goal and step
+  forms keep what was typed when the dialog is closed or a save fails, as the visit, call and referral forms do: in
+  the tab's memory only, never browser storage, cleared on sign-out (the same drafts as every other form).
+- **A failed save is said where the person is.** On a form long enough that its error banner is more than half a
+  screen above the Save button, the message is shown beside the button too, and the focus goes there (or to the
+  first field to fix), as well as being announced. Every form built with the shared form helper gets this.
+- **Add to waitlist is always in the Waitlist page's header** for a role that may add clients, not only while the
+  list is empty; the page also says that someone already in SUDS goes on the list by setting their status.
+- **A departed worker's draft notes can be handed on.** A supervisor or administrator (`records:manage-others`) can
+  give the unsigned drafts of a worker whose account is inactive to another worker, who becomes the author and
+  finishes and signs them: Settings › Move a caseload › *Draft notes left by departed workers*. New routes (office
+  server only): `GET /api/notes/departed-drafts` (counts only), `POST /api/notes/:id/reassign { to_user_id }` and
+  `POST /api/notes/reassign-drafts { from_user_id, to_user_id }`. A signed note is refused, as is an active author's
+  draft, an inactive target, a target who may not write that kind of note or open the client, and a SUD counseling
+  note to anyone without `notes:clinical:write`. The rule lives in `server/rules/notes.js` (`reassignRefusal`); sync
+  push cannot change a note's author at all. Each move is audited as the new action `note.reassign` (the old and new
+  author's ids, no title or text); a reminder to sign the old author's drafts on that record is cancelled once none
+  is left.
+- **Accessibility:** the global search box is now in a search landmark (axe "region").
 
 ## 1.23.6 — 2026-10-02
 

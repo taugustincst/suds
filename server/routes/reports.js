@@ -349,10 +349,11 @@ module.exports = (r) => {
     const disclosure = require('../disclosure');
     // An identified export is a disclosure like any other and passes the same gate (server/disclosure.js):
     // one lawful basis for the file, checked against every client in it once the rows are known. Under
-    // consent, a client whose consent does not name the stated recipient is left out of the file (and
+    // consent, a client whose consent does not name the stated recipient, or does not cover the stated purpose
+    // (disclosure.consentCoversPurpose), is left out of the file (and
     // listed by code); a QSOA, research or audit basis names its registered agreement with the recipient.
     const gate = { basis: ctx.query.get('basis') || '', restriction_reviewed: ctx.query.get('restriction_reviewed') === '1', legal_proceeding: ctx.query.get('legal_proceeding') === '1',
-      recipient, agreement_id: ctx.query.get('agreement_id') || undefined, user: ctx.user };
+      recipient, purpose, agreement_id: ctx.query.get('agreement_id') || undefined, user: ctx.user };
     if (identified) disclosure.requireExportBasis([], gate);
     const part2 = identified && disclosure.part2Program(); const notice = disclosure.notice();
     const format = ctx.query.get('format') === 'xlsx' || ctx.params.kind === 'workbook' ? 'xlsx' : 'csv';
@@ -368,7 +369,7 @@ module.exports = (r) => {
       catch (e) { audit.log({ user: ctx.user, action: 'report.export.refused', ip: ctx.ip, success: false, details: { kind, basis: gate.basis, clients: ids.length, reason: String(e.message).slice(0, 200) } }); throw e; }
       if (g.excluded.length) {
         excludedCodes = db.all(`SELECT client_code FROM clients WHERE id IN (${g.excluded.map(() => '?').join(',')})`, ...g.excluded).map(r => r.client_code).sort();
-        aboutSheet.rows.push({ k: 'Left out (no consent on file naming this recipient)', v: excludedCodes.join(', ') });
+        aboutSheet.rows.push({ k: 'Left out (no consent on file naming this recipient for this purpose)', v: excludedCodes.join(', ') });
       }
       return g;
     };

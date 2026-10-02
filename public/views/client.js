@@ -39,15 +39,15 @@ route('client', async (r) => {
   // The "n" shortcut logs a visit for the client whose record is open (public/app.js), like + Log a visit here.
   state.pageClient = { id, display: disp, onDone: refresh };
   // The clinical modules show only when the programme uses them (server/programme.js); an address that names
-  // one still opens it, so a record made before a module was switched off can be read.
-  const shows = (mod, k) => moduleOn(mod) || tab === k;
+  // one still opens it, so a record made before a module was switched off can be read, but read only (1.24.0):
+  // the tab says the module is off and offers no form (public/views/clinical.js), as the server would refuse the save.
   // The everyday sections first, in the order a visit is worked (and the same on every width): what
   // happened, what was written, what is owed, whether it may be shared, where they were sent. Those six are
   // always in the strip; everything else is under its More menu, on every screen (up to 18 tabs used to fill
   // a desktop strip). Timeline is not a tab of its own: the Overview ends with the recent activity, and
   // "All activity" opens the whole of it at the same address as before (client/:id/timeline).
   // A module's tab (care plan, assessments, SUPRT-A) shows when the programme uses the module and this record
-  // has something in it or the reader may add to it; an address that names one still opens it.
+  // has something in it or the reader may add to it; an address that names one still opens it, to read.
   const n = (k) => Number((c.counts && c.counts[k]) || 0);
   const moduleTab = (mod, k, label, readable, writable, count) => (tab === k || (moduleOn(mod) && readable && (writable || count > 0)) ? [k, label] : null);
   const tabs = [['overview', 'Overview'], ['interventions', `Visits (${c.counts.interventions})`], ['notes', `Notes (${c.counts.notes})`], ['tasks', `To-dos (${c.counts.open_tasks})`], ['consents', 'Consents'], ['referrals', `Referrals (${c.counts.referrals})`],
