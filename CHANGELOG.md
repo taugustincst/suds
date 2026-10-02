@@ -9,7 +9,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 A patch of 1.23.4 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
 1.23.5*): fixes from the market evaluation of 1.23.4, tests and documentation, with no migration, no new or widened
 permission and no new route (`node scripts/release-policy.js --version 1.23.5 --previous v1.23.4 --previous-ref
-598d08b` passes: 76 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It passes the
+598d08b` passes: 91 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It passes the
 release policy with no exception. It lets a call or text be deleted on a phone, shows a *Finish and sign* reminder's
 **Assigned to** and **Client** fixed to whoever may not change them, shows the To-dos list's toggles (and the other
 filters and one-of-several choices) as on or off by more than colour, and asks before a sign reminder is ticked done

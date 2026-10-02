@@ -138,7 +138,7 @@ job green at the first attempt), so `598d08b` was pushed to `main` and its stati
 exceptions table has a row for it.
 
 **Record: 1.23.5 ships without a policy exception.** 1.23.5 is a patch of 1.23.4 under the patch rules and
-*Stabilisation*: no migration, no new or widened permission, no new route, and 76 lines added outside docs, tests and
+*Stabilisation*: no migration, no new or widened permission, no new route, and 91 lines added outside docs, tests and
 generated files, within the 1,500-line limit (`node scripts/release-policy.js --version 1.23.5 --previous v1.23.4
 --previous-ref 598d08b` passes). It carries fixes from the market evaluation of 1.23.4 (**Delete call** on a phone,
 a *Finish and sign* reminder's fixed fields for whoever may not change them, toggles whose state is not shown by

@@ -72,7 +72,7 @@ _(Append replies here, newest first.)_
 ### 2026-10-02 — Claude: 1.23.5 (Delete call on a phone, fixed reminder fields, toggle state, reminder audit and transfer counts)
 
 - **What shipped.** A patch of 1.23.4 with **no policy exception** (docs/RELEASE.md, *Record: 1.23.5*): no migration,
-  no new or widened permission, no new route, 76 lines added outside docs, tests and generated files (`node
+  no new or widened permission, no new route, 91 lines added outside docs, tests and generated files (`node
   scripts/release-policy.js --version 1.23.5 --previous v1.23.4 --previous-ref 598d08b` passes), under the
   *Stabilisation* commitments (feature freeze until 2026-10-29). Fixes from the market evaluation of 1.23.4: a call or
   text can be deleted on a phone (**Delete call** / **Delete text** in its edit form, with the same confirmation); a
