@@ -75,8 +75,11 @@ each sync). The office copy wins ties. A device edit that loses is **not silent*
 revocation from a device always applies. On the device, `sync_seen` records what was last exchanged so a row
 the device never touched is never pushed back with a device timestamp (`local/sync.js`).
 
-**Deletes.** Hard deletes travel as **tombstones** (`tombstones` table, migration 2). A tombstone newer than
-a device edit wins. Tombstones are purged after a retention period and the horizon is recorded
+**Deletes.** Hard deletes travel as **tombstones** (`tombstones` table, migration 2). Up to 1.23.6 a tombstone
+newer than a device edit won, and an edit newer than the tombstone brought the row back. Since the pen test of 1.23.6
+(M2), a deletion at the office always stands. A pushed row whose tombstone is on file is refused permanently
+(`deleted at the office`; `server/rules/push.js` `deletedAtOffice`), audited as `sync.resurrect_refused`, and the
+device drops its copy. Tombstones are purged after a retention period and the horizon is recorded
 (`tombstone_purged_before`); a device whose cursor is older is told `full_resync_required`.
 
 **Fencing and restores.** Two fences: (1) on the device, the IndexedDB epoch fence (ADR-0002) stops a stale

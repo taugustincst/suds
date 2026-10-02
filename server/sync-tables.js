@@ -131,6 +131,8 @@ module.exports = {
     'needs a lawful basis for disclosure', 'drawn down at the office',
     // A field device writing outside its scope (server/field-scope.js, server/rules/push.js fieldRefusal).
     'outside this field device',
+    // A row the office has deleted (server/rules/push.js deletedAtOffice): the device drops its copy.
+    'deleted at the office',
   ],
   // Server-side only, never synchronised: breakglass_events is the office supervisor's review queue for
   // emergency access, and a device has no supervisor to review it.
@@ -341,6 +343,9 @@ function mayReachUnlinked(tableName, user, row, hasPerm) {
 module.exports.mayReachUnlinked = mayReachUnlinked;
 
 /** Whether a push rejection reason is one a retry can never fix (see permanent_reasons). */
+// The reason a push is refused a row the office has deleted (server/rules/push.js deletedAtOffice); a device that
+// is told it removes its own copy, as for a purged record (local/sync.js settleRejections).
+module.exports.DELETED_AT_OFFICE = 'deleted at the office';
 module.exports.isPermanentReason = (reason) => module.exports.permanent_reasons.some(p => String(reason || '').startsWith(p));
 module.exports.exportRow = exportRow;
 module.exports.importRow = importRow;

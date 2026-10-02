@@ -307,6 +307,7 @@ class PushSession {
 
     // ---- authorise ----
     if (refused(this.authorise(R, t, raw, c))) return false;
+    if (!existing && refused(this.deletedAtOffice(t, raw))) return false;
     if (refused(this.fieldRefusal(t, raw, c))) return false;
     if (R.authorise && refused(R.authorise(raw, c))) return false;
     // ---- validate ----
@@ -325,7 +326,6 @@ class PushSession {
     // ---- normalise ----
     if (refused(this.attribute(R, t, raw, c))) return false;
     if (R.normalise && refused(R.normalise(raw, c))) return false;
-    if (db.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=? AND deleted_at > ?`, t.name, raw.id, incomingAt)) return false; // deleted on the server after the device's edit
     if (R.beforeWrite && refused(R.beforeWrite(raw, c))) return false;
     // ---- apply ----
     // A user id minted on the device means nothing here, so it becomes the syncing user.
@@ -346,8 +346,8 @@ class PushSession {
       }
       db.run(`UPDATE ${t.name} SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, ...keys.map(k => o[k]), raw.id);
     } else db.run(`INSERT INTO ${t.name}(id,${keys.join(',')}) VALUES(?,${keys.map(() => '?').join(',')})`, raw.id, ...keys.map(k => o[k]));
-    // A row that comes back after being deleted must not leave its tombstone behind, or other devices are told
-    // to delete a row that is alive here.
+    // A row deleted at the office never comes back by sync (deletedAtOffice), so a tombstone here is a stale one
+    // left beside a live row; it must not stay, or other devices are told to delete a row that is alive here.
     db.run(`DELETE FROM tombstones WHERE table_name=? AND id=?`, t.name, raw.id);
     if (R.afterApply) R.afterApply(raw, o, c);
     if (t.name === 'assignments' || t.name === 'clients') { this.memo.access.clear(); this.fieldIn.clear(); } // who may reach whom may have changed
@@ -436,6 +436,19 @@ class PushSession {
       for (const k of Object.keys(raw)) if (k !== 'id' && !allowed.includes(k)) delete raw[k];
     }
     return null;
+  }
+
+  /**
+   * A row the office has deleted (its tombstone is here, the row is not) stays deleted, whatever the device's clock
+   * says: a deletion at the office is a decision, and an edit made on a device before or after it does not undo it
+   * (pen test of 1.23.6, M2: a push with a fresh updated_at brought a deleted row back and took its tombstone away).
+   * The device is told, permanently, so it drops its copy rather than resending it (local/sync.js settleRejections),
+   * and the refusal is audited by table and record id only. A purged client's rows are refused earlier (authorise).
+   */
+  deletedAtOffice(t, raw) {
+    if (!db.one(`SELECT 1 FROM tombstones WHERE table_name=? AND id=?`, t.name, raw.id)) return null;
+    return { reason: SYNC.DELETED_AT_OFFICE, permanent: true,
+      audit: { action: 'sync.resurrect_refused', entity: t.name, entityId: raw.id, clientId: t.clientCol && t.name !== 'clients' ? raw[t.clientCol] || null : null, details: { table: t.name } } };
   }
 
   /** The table's own check, the REST shape's fields and the programme module: fatal refusals first. */

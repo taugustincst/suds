@@ -22,6 +22,28 @@ const parseList = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
 // Everything about a signed note stays as signed, except asking a supervisor to look at it (request-cosign).
 const SIGNED_KEEPS = ['kind', 'format', 'title_enc', 'content_enc', 'structured_enc', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'counseling_note', 'problem_ids',
   'status', 'signed_by', 'signed_at', 'signature_hash', 'source', 'source_ref', 'import_item_id', 'deleted_at', 'ai_assisted'];
+// What a signed note says (its signature's bookkeeping aside): a push that would change any of it is refused, as
+// PUT /api/notes/:id refuses it, never reported as applied while the office quietly keeps what was signed (pen test
+// of 1.23.6, L3). The message is the REST route's own.
+const SIGNED_CONTENT = ['kind', 'format', 'title_enc', 'content_enc', 'structured_enc', 'occurred_at', 'intervention_id', 'call_id', 'part2_protected', 'counseling_note', 'problem_ids'];
+const SIGNED_MESSAGE = 'Signed notes cannot be edited; add an addendum instead';
+/** Do two values of a note column say the same thing (a list, a yes/no, a moment may arrive written another way)? */
+function sameValue(col, a, b) {
+  const blank = (x) => x === undefined || x === null || x === '';
+  if (col === 'problem_ids') { const list = (x) => { try { return JSON.stringify(blank(x) ? [] : parseList(x) || []); } catch { return String(x); } }; return list(a) === list(b); }
+  if (col === 'part2_protected' || col === 'counseling_note') return Number(isYes(a)) === Number(isYes(b));
+  if (blank(a) || blank(b)) return blank(a) && blank(b);
+  if (col === 'occurred_at') { const ms = (x) => Date.parse(x); return String(a) === String(b) || (Number.isFinite(ms(a)) && ms(a) === ms(b)); }
+  return String(a) === String(b);
+}
+/** The refusal for a push that would change a signed note, or null. */
+function signedNoteEdit(row, c) {
+  const e = c.existing;
+  if (!e || e.status === 'draft') return null;
+  const unsigns = row.status !== undefined && row.status !== null && row.status !== e.status && row.status === 'draft';
+  if (!unsigns && !SIGNED_CONTENT.some(col => row[col] !== undefined && !sameValue(col, row[col], c.was(col)))) return null;
+  return refuse(`not permitted: ${SIGNED_MESSAGE}`, { message: SIGNED_MESSAGE });
+}
 
 /**
  * A supervisor's "Finish and sign your note" reminder (public/views/supervision.js) has done its job once the note is
@@ -189,6 +211,9 @@ module.exports = define({
   },
   normalise(row, c) {
     const e = c.existing;
+    // A signed note is the legal record: a device's change to it is refused and the device told (signedNoteEdit).
+    const signedEdit = signedNoteEdit(row, c);
+    if (signedEdit) return signedEdit;
     // When a new note was written is the device's to say (offline work), but never after now: it bounds the signature's
     // time below, and a future one hid the note from a later flag's drop (security review of 1.16.3, N7).
     if (!e) { const ms = Date.parse(row.created_at); const now = db.now(); row.created_at = Number.isFinite(ms) && new Date(ms).toISOString() < now ? new Date(ms).toISOString() : now; }
@@ -264,6 +289,7 @@ module.exports = define({
 });
 module.exports.closeSignReminders = closeSignReminders;
 module.exports.SIGN_REMINDER = SIGN_REMINDER;
+module.exports.SIGNED_MESSAGE = SIGNED_MESSAGE;
 module.exports.hasReminderLine = hasReminderLine;
 Object.assign(module.exports, { isSignReminder, maySendSignReminder });
 module.exports.reissueAddenda = reissueAddenda;

@@ -10,11 +10,15 @@ function referralBases() {
   return [{ value: 'medical_emergency', label: 'Medical emergency (42 CFR §2.51)' },
     ...(can('disclosures:override') ? [{ value: 'other', label: 'Other — supervisor override, must be justified' }] : [])];
 }
-/** The supervisor's override for a consent that covers this provider without naming it exactly. */
-const recipientOverrideField = (name) => (can('disclosures:override') ? [{ name, label: 'Rely on this consent although it does not name this provider (supervisor override; justify below)', type: 'checkbox', span: true }] : []);
+/**
+ * The supervisor's override for a consent that covers this referral without saying so in words SUDS can match: it
+ * does not name this provider exactly, or was given for another purpose (server/disclosure.js requireBasis).
+ */
+const recipientOverrideField = (name) => (can('disclosures:override') ? [{ name, label: 'Rely on this consent although it does not name this provider or was given for another purpose (supervisor override; justify below)', type: 'checkbox', span: true }] : []);
 
-// A client's consents, marked with the ones that name this provider (names_resource) and, when exactly one
-// live consent does, that one as suggested_consent_id (server/routes/consents.js).
+// A client's consents, marked with the ones that name this provider (names_resource) and cover a referral's purpose
+// (covers_referral), and, when exactly one live consent does both, that one as suggested_consent_id
+// (server/routes/consents.js).
 const consentsUrl = (clientId, resourceId) => `/api/clients/${clientId}/consents${resourceId && !String(resourceId).startsWith('__') ? `?resource_id=${encodeURIComponent(resourceId)}` : ''}`;
 
 // Statuses that mean the referral is still under way: the outcome and barrier are recorded when it closes
@@ -59,7 +63,8 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
   let providerId = resourceId || values?.resource_id || '';
   const addedNames = {};
   const providerName = () => { const x = res.find(r => r.id === providerId); return x ? x.name : (addedNames[providerId] || ''); };
-  const namesProvider = (st) => st.valid.some(c => c.names_resource);
+  // ...and was given for a referral (covers_referral: the purpose it states covers one, server/disclosure.js).
+  const namesProvider = (st) => st.valid.some(c => c.names_resource && c.covers_referral !== false);
   const recordNaming = (st) => (st.clientId && providerId && !String(providerId).startsWith('__') && can('consents:write') && providerName() && !namesProvider(st)
     ? h('button', { type: 'button', class: 'btn sm', 'data-record-consent-naming': '1', onClick: (e) => recordConsentFor(st.clientId, e.currentTarget) }, `Record a consent naming ${providerName()}`) : null);
   const consentOption = (c) => ({ value: c.id, label: `${consentTypeLabel(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)}${c.expires_at ? `, expires ${fmt.date(c.expires_at)}` : ''})` });
@@ -285,7 +290,7 @@ const ACK_LABEL = { received: 'received it', accepted: 'accepted the client', sc
 export async function openSecureLinkDialog(r, onChange) {
   const [links, consentsRes] = await Promise.all([get(`/api/referrals/${r.id}/links`), get(consentsUrl(r.client_id, r.resource_id))]);
   const today = fmt.today();
-  const naming = (consentsRes.consents || []).filter(c => c.names_resource && !c.revoked_at && (!c.expires_at || c.expires_at >= today) && !(c.incomplete && c.incomplete.length));
+  const naming = (consentsRes.consents || []).filter(c => c.names_resource && c.covers_referral !== false && !c.revoked_at && (!c.expires_at || c.expires_at >= today) && !(c.incomplete && c.incomplete.length));
   const body = h('div', { 'data-secure-link': r.id });
   const refresh = () => { m.close(); openSecureLinkDialog(r, onChange); };
   const revoke = async (l) => { if (!await confirmDialog('Withdraw this link', `Withdraw link ${l.reference}? It stops working at once.`, { danger: true, okText: 'Withdraw' })) return; await post(`/api/referral-links/${l.id}/revoke`, {}); toast('Link withdrawn', 'ok'); refresh(); };
