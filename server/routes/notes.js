@@ -236,17 +236,20 @@ module.exports = (r) => {
 
   // Shift hand-off notes from the last day, for the whole team: what the next worker on needs to know.
   // Read like any other admin note (caseload scoped, audited); the text is decrypted because the card
-  // exists to be read at a glance at the start of a shift.
+  // exists to be read at a glance at the start of a shift. ?client_id= narrows it to one client's, within the
+  // caseload all the same (accepted and ignored up to 1.23.6: pen test L7).
   r.get('/api/notes/handoffs', auth.requireAuth, auth.requirePerm('notes:admin:read', 'notes:admin:write'), (ctx) => {
-    const hours = Math.min(24 * 7, Math.max(1, Number(ctx.query.get('hours') || 24)));
+    const hours = Math.min(24 * 7, Math.max(1, Number(ctx.query.get('hours')) || 24));
     const since = new Date(Date.now() - hours * 3600000).toISOString();
     const cf = auth.caseloadFilter(ctx.user, 'n.client_id');
+    const clientId = ctx.query.get('client_id') || null;
+    if (clientId) { cf.sql = `${cf.sql} AND n.client_id=?`; cf.params = [...cf.params, clientId]; }
     const { withClientName, SELECT: NAME_COLS } = require('../client-name');
     const rows = db.all(`SELECT n.id, n.client_id, n.occurred_at, n.status, n.title_enc, n.content_enc, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS}
       FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
       WHERE n.deleted_at IS NULL AND n.kind='admin' AND n.format='handoff' AND n.occurred_at >= ? AND ${cf.sql} ORDER BY n.occurred_at DESC LIMIT 50`, since, ...cf.params);
     const out = rows.map(x => { const o = withClientName(ctx, x); let content = ''; try { content = decrypt(x.content_enc); } catch { content = ''; } return { ...o, title: x.title_enc ? decrypt(x.title_enc) : null, excerpt: content.slice(0, 240), title_enc: undefined, content_enc: undefined }; });
-    audit.log({ user: ctx.user, action: 'note.list', ip: ctx.ip, details: { count: out.length, kinds: ['admin'], filter: 'handoffs', hours } });
+    audit.log({ user: ctx.user, action: 'note.list', clientId: clientId || undefined, ip: ctx.ip, details: { count: out.length, kinds: ['admin'], filter: 'handoffs', hours } });
     return { rows: out, hours };
   });
 

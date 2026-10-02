@@ -6724,6 +6724,7 @@ var require_config = __commonJS({
       // One person, one device: there is no address to rate-limit, and the office server's per-address cap
       // must not turn into a lockout here.
       loginRateLimit: 1e5,
+      loginIpRateLimit: 1e5,
       signupRateLimit: 1e5,
       msGraph: { tenantId: "", clientId: "", clientSecret: "", user: "" },
       auditRetentionDays: 2555,
@@ -9126,6 +9127,11 @@ var require_audit = __commonJS({
       console.log(`[suds] audit checkpoint id=${last.id} rows=${rowCount} head=${head}`);
       return { lastId: last.id, rowCount, head };
     }
+    function sealHeadAtStart() {
+      if (db3.getSetting("audit_head", null) && Number(db3.getSetting("audit_head_id", 0))) return null;
+      if (!db3.one(`SELECT 1 FROM audit_log LIMIT 1`)) log({ user: { username: "system" }, action: "audit.started" });
+      return checkpoint();
+    }
     function checkHead({ key = config2.indexKey } = {}) {
       const head = db3.getSetting("audit_head", null);
       const lastId = Number(db3.getSetting("audit_head_id", 0));
@@ -9298,7 +9304,7 @@ var require_audit = __commonJS({
       }
       return r;
     }
-    module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };
+    module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead, sealHeadAtStart };
   }
 });
 
@@ -11575,8 +11581,15 @@ var require_validate = __commonJS({
       return out2;
     }
     function paging(query, defaults = { limit: 50, max: 500 }) {
-      const limit2 = Math.min(defaults.max, Math.max(1, Number(query.get("limit") || defaults.limit)));
-      const offset = Math.max(0, Number(query.get("offset") || 0));
+      const read = (name, dflt2) => {
+        const raw = query.get(name);
+        if (raw === null || raw.trim() === "") return dflt2;
+        const n = Number(raw.trim());
+        if (!Number.isFinite(n)) throw badRequest(`${name} must be a whole number`, { fields: { [name]: "must be an integer" } });
+        return Math.floor(n);
+      };
+      const limit2 = Math.min(defaults.max, Math.max(1, read("limit", defaults.limit)));
+      const offset = Math.max(0, read("offset", 0));
       return { limit: limit2, offset };
     }
     module.exports = { validate, paging };
@@ -21889,6 +21902,10 @@ var require_audit_anchor = __commonJS({
       if (last && now2 - Date.parse(last) < hours * 36e5 - 5 * 6e4) return null;
       return safeWrite("schedule");
     }
+    function firstAnchorAtStart() {
+      if (!(config2.auditAnchorHours > 0) || db3.getSetting("audit_anchor_last_at", null)) return null;
+      return safeWrite("first-start");
+    }
     function safeWrite(reason, opts = {}) {
       try {
         return write(reason, opts);
@@ -22035,7 +22052,7 @@ var require_audit_anchor = __commonJS({
       }
       return r;
     }
-    module.exports = { write, safeWrite, runIfDue, verify, verifyAndRecord, list, dirStatus, placementProblem, keyId, macOf, macOk, canonical, FIELDS };
+    module.exports = { write, safeWrite, runIfDue, firstAnchorAtStart, verify, verifyAndRecord, list, dirStatus, placementProblem, keyId, macOf, macOk, canonical, FIELDS };
   }
 });
 
@@ -23645,7 +23662,7 @@ var require_security_status = __commonJS({
         pol.ssoRequired ? "Every emergency sign-in is audited (auth.login with emergency_account) and logged." : 'Settings \u2192 Security policy \u2192 "Require single sign-on" turns password sign-in off for everyone but named break-glass administrators.',
         "server/auth.js login()"
       );
-      add("Identity", "Password policy", "info", `${config2.password.minLength}+ characters with upper, lower, digit and symbol; expires after ${pol.passwordMaxAgeDays} days; locked for ${config2.lockout.minutes} min after ${config2.lockout.maxAttempts} failures`, "Hashed with scrypt (N=32768).", "server/auth.js passwordPolicy, server/crypto.js");
+      add("Identity", "Password policy", "info", `${config2.password.minLength}+ characters with upper, lower, digit and symbol, not containing the username or name and not a common password; expires after ${pol.passwordMaxAgeDays} days; locked for ${config2.lockout.minutes} min after ${config2.lockout.maxAttempts} failures`, "Hashed with scrypt (N=32768).", "server/auth.js passwordProblem, server/password-strength.js, server/crypto.js");
       add("Identity", "Session timeouts", pol.idleMinutes <= 15 ? "ok" : "warn", `signed out after ${pol.idleMinutes} min idle; ${pol.absoluteHours} h maximum`, pol.idleMinutes <= 15 ? "" : "HIPAA automatic logoff: 15 minutes or less is typical.", "Settings \u2192 Security policy; server/auth.js resolveSession");
       const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
       const lastBackup = db3.getSetting("last_scheduled_backup_at", null);
@@ -28144,14 +28161,16 @@ var require_auth = __commonJS({
     var { hashPasswordAsync, verifyPasswordAsync, generateTotpSecret, otpauthUrl, encrypt: encrypt3 } = require_crypto();
     module.exports = (r) => {
       r.post("/api/auth/login", async (ctx) => {
-        const limit2 = require_config().loginRateLimit;
-        if (rateLimited(`login:${ctx.ip}`, limit2)) throw new HttpError3(429, "Too many login attempts. Try again later.");
+        const config2 = require_config();
         const { username, password } = validate(ctx.body, { username: { type: "string", required: true, maxLen: 100 }, password: { type: "string", required: true, maxLen: 500 } });
+        const userKey = `login-user:${ctx.ip}|${username.trim().toLowerCase()}`, ipKey = `login-ip:${ctx.ip}`;
+        if (rateLimited(userKey, config2.loginRateLimit) || rateLimited(ipKey, config2.loginIpRateLimit)) throw new HttpError3(429, "Too many login attempts. Try again later.");
         let result;
         try {
           result = await auth3.login({ username, password, ctx });
         } catch (e) {
-          rateLimit(`login:${ctx.ip}`, limit2, 15 * 6e4);
+          rateLimit(userKey, config2.loginRateLimit, 15 * 6e4);
+          rateLimit(ipKey, config2.loginIpRateLimit, 15 * 6e4);
           throw e;
         }
         ctx.res.setHeader("Set-Cookie", auth3.cookieHeader(result.token));
@@ -28177,8 +28196,8 @@ var require_auth = __commonJS({
           password: { type: "string", required: true, maxLen: 500 },
           reason: { type: "string", maxLen: 200 }
         });
-        const errs = auth3.passwordPolicy(v.password);
-        if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
+        const pwProblem = auth3.passwordProblem(v.password, { username: v.username, display_name: v.display_name });
+        if (pwProblem) throw badRequest(pwProblem, { fields: { password: pwProblem } });
         const hash2 = await hashPasswordAsync(v.password);
         const taken = !!db3.one(`SELECT 1 FROM users WHERE username=?`, v.username);
         if (!taken) {
@@ -28250,8 +28269,8 @@ var require_auth = __commonJS({
         const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
         await auth3.confirmPassword(ctx, current_password, { action: "auth.password.change.failed", message: "Current password is incorrect" });
         auth3.clearFailures(u.id);
-        const errs = auth3.passwordPolicy(new_password);
-        if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
+        const pwProblem = auth3.passwordProblem(new_password, u);
+        if (pwProblem) throw badRequest(pwProblem, { fields: { new_password: pwProblem } });
         if (await verifyPasswordAsync(new_password, u.password_hash)) throw badRequest("New password must differ from the current password");
         db3.run(`UPDATE users SET password_hash=?, must_change_password=0, password_changed_at=?, updated_at=? WHERE id=?`, await hashPasswordAsync(new_password), db3.now(), db3.now(), u.id);
         db3.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND id<>? AND revoked_at IS NULL`, db3.now(), u.id, ctx.session.id);
@@ -39647,8 +39666,10 @@ var require_episodes2 = __commonJS({
       r.get("/api/episodes", auth3.requireAuth, auth3.requirePerm("episodes:read", "episodes:write"), (ctx) => {
         const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
         const cf = auth3.caseloadFilter(ctx.user, "e.client_id");
-        const where = [cf.sql];
-        const params = [...cf.params];
+        const clientId = ctx.query.get("client_id") || null;
+        const byClient = clientId ? { sql: "e.client_id=?", params: [clientId] } : { sql: "1=1", params: [] };
+        const where = [cf.sql, byClient.sql];
+        const params = [...cf.params, ...byClient.params];
         const status = ctx.query.get("status");
         if (status && status !== "all") {
           where.push("e.status=?");
@@ -39666,8 +39687,8 @@ var require_episodes2 = __commonJS({
         const rows = db3.all(`SELECT e.id, e.client_id, e.opened_at, e.closed_at, e.status, e.discharge_reason, e.discharge_disposition, c.client_code, c.status AS client_status, f.name AS funding_source
       FROM episodes e JOIN clients c ON c.id=e.client_id LEFT JOIN funding_sources f ON f.id=e.funding_source_id ${w} ORDER BY e.opened_at DESC LIMIT ? OFFSET ?`, ...params, limit2, offset);
         const opened = db3.one(`SELECT COUNT(*) n, SUM(e.status='open') open, SUM(e.status='closed') closed FROM episodes e JOIN clients c ON c.id=e.client_id ${w}`, ...params);
-        const dWhere = [cf.sql, `e.status='closed'`];
-        const dParams = [...cf.params];
+        const dWhere = [cf.sql, byClient.sql, `e.status='closed'`];
+        const dParams = [...cf.params, ...byClient.params];
         if (ctx.query.get("from")) {
           dWhere.push("e.closed_at >= ?");
           dParams.push(ctx.query.get("from"));
@@ -39677,7 +39698,7 @@ var require_episodes2 = __commonJS({
           dParams.push(ctx.query.get("to"));
         }
         const byReason = db3.all(`SELECT COALESCE(e.discharge_reason,'not_recorded') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE ${dWhere.join(" AND ")} GROUP BY 1 ORDER BY n DESC, k`, ...dParams);
-        audit3.log({ user: ctx.user, action: "episode.list", ip: ctx.ip, details: { count: rows.length } });
+        audit3.log({ user: ctx.user, action: "episode.list", clientId: clientId || void 0, ip: ctx.ip, details: { count: rows.length } });
         return {
           rows,
           total: opened.n,
@@ -42360,7 +42381,7 @@ var require_supplies2 = __commonJS({
     var S = require_supplies();
     var N = require_supply_names();
     var { badRequest, notFound, HttpError: HttpError3 } = require_http();
-    var { validate } = require_validate();
+    var { validate, paging } = require_validate();
     var { uuid: uuid2 } = require_crypto();
     var QTY = { type: "number", integer: true, min: 1, max: S.MAX_QTY };
     var LOT = { lot_number: { type: "string", maxLen: 60 }, expires_on: { type: "date" } };
@@ -42497,8 +42518,7 @@ var require_supplies2 = __commonJS({
           p.push(q.get("to"));
         }
         if (q.get("flagged") === "1") where.push("l.flagged=1");
-        const limit2 = Math.min(500, Math.max(1, Number(q.get("limit") || 100)));
-        const offset = Math.max(0, Number(q.get("offset") || 0));
+        const { limit: limit2, offset } = paging(q, { limit: 100, max: 500 });
         const rows = db3.all(`SELECT l.*, i.name AS item_name, i.unit, s.name AS site_name, u.display_name AS user_name, f.name AS fund_name FROM supply_ledger l
       JOIN supply_items i ON i.id=l.item_id JOIN supply_sites s ON s.id=l.site_id LEFT JOIN users u ON u.id=l.user_id LEFT JOIN funding_sources f ON f.id=l.funding_source_id
       WHERE ${where.join(" AND ")} ORDER BY l.occurred_on DESC, l.created_at DESC, l.id LIMIT ? OFFSET ?`, ...p, limit2, offset);
@@ -43024,9 +43044,14 @@ var require_notes2 = __commonJS({
         return { ok: true, cosign_requested: !!flag, awaiting_cosign: !!flag && n.status !== "draft" };
       });
       r.get("/api/notes/handoffs", auth3.requireAuth, auth3.requirePerm("notes:admin:read", "notes:admin:write"), (ctx) => {
-        const hours = Math.min(24 * 7, Math.max(1, Number(ctx.query.get("hours") || 24)));
+        const hours = Math.min(24 * 7, Math.max(1, Number(ctx.query.get("hours")) || 24));
         const since = new Date(Date.now() - hours * 36e5).toISOString();
         const cf = auth3.caseloadFilter(ctx.user, "n.client_id");
+        const clientId = ctx.query.get("client_id") || null;
+        if (clientId) {
+          cf.sql = `${cf.sql} AND n.client_id=?`;
+          cf.params = [...cf.params, clientId];
+        }
         const { withClientName, SELECT: NAME_COLS } = require_client_name();
         const rows = db3.all(`SELECT n.id, n.client_id, n.occurred_at, n.status, n.title_enc, n.content_enc, n.author_id, u.display_name AS author, c.client_code, ${NAME_COLS}
       FROM notes n JOIN users u ON u.id=n.author_id JOIN clients c ON c.id=n.client_id
@@ -43041,7 +43066,7 @@ var require_notes2 = __commonJS({
           }
           return { ...o, title: x.title_enc ? decrypt3(x.title_enc) : null, excerpt: content.slice(0, 240), title_enc: void 0, content_enc: void 0 };
         });
-        audit3.log({ user: ctx.user, action: "note.list", ip: ctx.ip, details: { count: out2.length, kinds: ["admin"], filter: "handoffs", hours } });
+        audit3.log({ user: ctx.user, action: "note.list", clientId: clientId || void 0, ip: ctx.ip, details: { count: out2.length, kinds: ["admin"], filter: "handoffs", hours } });
         return { rows: out2, hours };
       });
       r.post("/api/notes/:id/sign", auth3.requireAuth, async (ctx) => {
@@ -49188,8 +49213,8 @@ var require_setup = __commonJS({
           main_fund_settlement_hiaa: { type: "string", enum: [...C.SETTLEMENT_HIAA.map((x) => x.code), "none"] }
           // port omitted → 'auto' (standard port with fallback)
         });
-        const errs = auth3.passwordPolicy(v.admin_password);
-        if (errs.length) throw badRequest("Password must contain " + errs.join(", "), { fields: { admin_password: errs.join(", ") } });
+        const pwProblem = auth3.passwordProblem(v.admin_password, { username: v.admin_username, display_name: v.admin_display_name });
+        if (pwProblem) throw badRequest(pwProblem, { fields: { admin_password: pwProblem } });
         if (config2.keySource !== "env" && !fs.existsSync(config2.keysJsonPath)) {
           const keys = { SUDS_ENCRYPTION_KEY: config2.encryptionKey.toString("hex"), SUDS_INDEX_KEY: config2.indexKey.toString("hex"), SUDS_SIGNING_KEY: config2.signingKey.toString("hex"), created_at: (/* @__PURE__ */ new Date()).toISOString() };
           fs.writeFileSync(config2.keysJsonPath, JSON.stringify(keys, null, 2), { mode: 384 });
@@ -50458,7 +50483,7 @@ var require_sync = __commonJS({
       r.get("/api/sync/pull", requireLocalMode, auth3.requireAuth, (ctx) => {
         if (!auth3.hasPerm(ctx.user, "clients:read")) throw forbidden("Your role cannot sync client data");
         const since = ctx.query.get("since") || NEVER2;
-        const limit2 = Math.min(Number(ctx.query.get("limit")) || PULL_LIMIT, PULL_LIMIT);
+        const limit2 = Math.max(1, Math.min(Math.floor(Number(ctx.query.get("limit"))) || PULL_LIMIT, PULL_LIMIT));
         const s = syncScope(ctx);
         const device = s.device;
         const field = s.field ? FS.context(ctx.user.id, FS.windowDays(db3.getSetting)) : null;
@@ -50632,9 +50657,14 @@ var require_users2 = __commonJS({
       r.post("/api/users", auth3.requireAuth, auth3.requirePerm("users:manage"), async (ctx) => {
         const v = validate(ctx.body, shape);
         if (db3.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw badRequest("Username already exists");
-        const temp = v.password || randomToken(10) + "Aa1!";
-        const errs = auth3.passwordPolicy(temp);
-        if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
+        const who = { username: v.username, display_name: v.display_name };
+        let temp = v.password;
+        for (let i = 0; !temp && i < 10; i++) {
+          const t = randomToken(10) + "Aa1!";
+          if (!auth3.passwordProblem(t, who)) temp = t;
+        }
+        const pwProblem = auth3.passwordProblem(temp, who);
+        if (pwProblem) throw badRequest(pwProblem, { fields: { password: pwProblem } });
         const id = uuid2();
         if (v.supervisor_id && !db3.one(`SELECT 1 FROM users WHERE id=? AND role IN ('supervisor','admin')`, v.supervisor_id)) throw badRequest("The supervisor must be a supervisor or administrator account");
         if (v.default_fund_id && !db3.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v.default_fund_id)) throw badRequest("The default fund must be an active funding source");
@@ -50667,8 +50697,8 @@ var require_users2 = __commonJS({
         const v = validate(ctx.body, { ...shape, username: { ...shape.username, required: false }, role: { ...shape.role, required: false }, display_name: { ...shape.display_name, required: false } }, { partial: true });
         let passwordHash = null;
         if (v.password) {
-          const errs = auth3.passwordPolicy(v.password);
-          if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
+          const pwProblem = auth3.passwordProblem(v.password, { username: v.username ?? u.username, display_name: v.display_name ?? u.display_name });
+          if (pwProblem) throw badRequest(pwProblem, { fields: { password: pwProblem } });
           passwordHash = await hashPasswordAsync(v.password);
           u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
           if (!u) throw notFound();
@@ -51244,6 +51274,124 @@ var require_app2 = __commonJS({
       };
     }
     module.exports = { createHandler, rateLimit, rateLimited, rateLimitReset, bodyLimitFor, ROUTE_MODULES, LOCAL_ROUTE_MODULES: LOCAL_ROUTE_MODULES2 };
+  }
+});
+
+// server/password-strength.js
+var require_password_strength = __commonJS({
+  "server/password-strength.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var COMMON = [
+      "password",
+      "passwort",
+      "passwd",
+      "pass",
+      "welcome",
+      "letmein",
+      "changeme",
+      "secret",
+      "login",
+      "default",
+      "temp",
+      "temporary",
+      "test",
+      "testing",
+      "guest",
+      "user",
+      "admin",
+      "administrator",
+      "root",
+      "master",
+      "hello",
+      "helloworld",
+      "qwerty",
+      "qwertyuiop",
+      "qwertz",
+      "azerty",
+      "asdf",
+      "asdfgh",
+      "asdfghjkl",
+      "zxcvbn",
+      "zxcvbnm",
+      "qazwsx",
+      "abc",
+      "abcd",
+      "abcdef",
+      "abcdefg",
+      "abcdefgh",
+      "iloveyou",
+      "trustno",
+      "monkey",
+      "dragon",
+      "shadow",
+      "sunshine",
+      "princess",
+      "football",
+      "baseball",
+      "soccer",
+      "superman",
+      "batman",
+      "starwars",
+      "whatever",
+      "freedom",
+      "jesus",
+      "summer",
+      "winter",
+      "spring",
+      "autumn",
+      "fall",
+      "january",
+      "february",
+      "march",
+      "april",
+      "may",
+      "june",
+      "july",
+      "august",
+      "september",
+      "october",
+      "november",
+      "december",
+      "california",
+      "suds"
+    ];
+    var LOOKALIKE = { a: "a@4", b: "b8", e: "e3", g: "g9", i: "i1!|", l: "l1|", o: "o0", s: "s5$", t: "t7+", z: "z2" };
+    var esc = (c) => c.replace(/[\\^$.*+?()[\]{}|-]/g, "\\$&");
+    var wordPattern = (w) => [...w].map((c) => `[${[...LOOKALIKE[c] || c].map(esc).join("")}]`).join("");
+    var COMMON_RE = new RegExp(`^[^a-z]*(?:${COMMON.map((w) => `(?:${wordPattern(w)})+`).join("|")})[^a-z]*$`);
+    var UNLEET = { "@": "a", 4: "a", 8: "b", 3: "e", 9: "g", 1: "i", "!": "i", "|": "i", 0: "o", 5: "s", $: "s", 7: "t", "+": "t" };
+    var unleet = (s) => s.replace(/[@483916!|05$7+]/g, (c) => UNLEET[c]);
+    function namesOf({ username, display_name } = {}) {
+      const user = [], name = [];
+      if (typeof username === "string" && username.trim()) {
+        const u = username.trim().toLowerCase();
+        user.push(u);
+        const local = u.split("@")[0];
+        if (local !== u) user.push(local);
+      }
+      if (typeof display_name === "string") {
+        for (const p of display_name.toLowerCase().split(/[^\p{L}\p{N}]+/u)) if (p) name.push(p);
+      }
+      return { user: user.filter((x) => x.length >= 3), name: name.filter((x) => x.length >= 3) };
+    }
+    function weakness(pw, who) {
+      if (typeof pw !== "string") return null;
+      const lower = pw.toLowerCase();
+      const read = unleet(lower);
+      const word = (s, part) => {
+        for (let i = s.indexOf(part); i >= 0; i = s.indexOf(part, i + 1)) if (!/[a-z]/.test(s[i - 1] || "") && !/[a-z]/.test(s[i + part.length] || "")) return true;
+        return false;
+      };
+      const has = (part) => part.length >= 4 ? lower.includes(part) || read.includes(part) : word(lower, part) || word(read, part);
+      const { user, name } = namesOf(who);
+      if (user.some(has)) return "A password must not contain the username. Choose one that does not include it.";
+      if (name.some(has)) return "A password must not contain the person\u2019s name. Choose one that does not include it.";
+      if (COMMON_RE.test(lower)) return "That password is too common: it is a well-known word or keyboard pattern with numbers or symbols added. Choose something less predictable \u2014 a few unrelated words together work well.";
+      if (new Set(lower).size < 5) return "That password uses too few different characters. Choose something less predictable \u2014 a few unrelated words together work well.";
+      return null;
+    }
+    module.exports = { weakness, COMMON };
   }
 });
 
@@ -51884,6 +52032,7 @@ var require_auth2 = __commonJS({
     }
     var FIELD_SESSION_AUTH_PATHS = /* @__PURE__ */ new Set(["/api/auth/login", "/api/auth/mfa/verify", "/api/auth/logout"]);
     var FIELD_SESSION_ACCOUNT_MESSAGE = "This is a field device's sync sign-in: it can only sync. Change your password, two-step verification, fingerprint sign-in or sessions in a web browser signed in to the office SUDS.";
+    var SYNC_SESSION_ACCOUNT_MESSAGE = "This is a device's sync sign-in. Change your password, two-step verification, fingerprint sign-in or sessions in a web browser signed in to the office SUDS.";
     function fieldSyncSession(ctx) {
       const s = ctx.session;
       if (!s || !s.sync_client) return false;
@@ -51900,8 +52049,11 @@ var require_auth2 = __commonJS({
         }
       }
       if (!ctx.session || !ctx.session.sync_client || ctx.path.startsWith("/api/sync/") || FIELD_SESSION_AUTH_PATHS.has(ctx.path)) return;
+      if (ctx.path.startsWith("/api/auth/")) {
+        const field = fieldSyncSession(ctx);
+        throw new HttpError3(403, field ? FIELD_SESSION_ACCOUNT_MESSAGE : SYNC_SESSION_ACCOUNT_MESSAGE, { ...field ? { fieldDevice: true } : {}, syncSession: true, useBrowser: true });
+      }
       if (!fieldSyncSession(ctx)) return;
-      if (ctx.path.startsWith("/api/auth/")) throw new HttpError3(403, FIELD_SESSION_ACCOUNT_MESSAGE, { fieldDevice: true, useBrowser: true });
       throw new HttpError3(403, "A field device's sync session can only sync", { fieldDevice: true });
     }
     function requireAuth(ctx) {
@@ -52087,6 +52239,11 @@ var require_auth2 = __commonJS({
       if (!/[^A-Za-z0-9]/.test(pw)) errors.push("a symbol");
       return errors;
     }
+    function passwordProblem(pw, who = {}) {
+      const errs = passwordPolicy(pw);
+      if (errs.length) return "Password must contain " + errs.join(", ");
+      return require_password_strength().weakness(pw, who);
+    }
     module.exports = {
       assertSyncSessionReach,
       auditUsername,
@@ -52136,6 +52293,7 @@ var require_auth2 = __commonJS({
       verifyMfa,
       publicUser,
       passwordPolicy,
+      passwordProblem,
       COOKIE
     };
   }
@@ -55647,8 +55805,8 @@ async function tryRecovery(code) {
 }
 function recoveryRequestProblem(b) {
   if (typeof b.password !== "string" || !b.password) return { message: "Choose a new password.", extra: { fields: { password: "Required" } } };
-  const errs = import_auth2.default.passwordPolicy(b.password);
-  if (errs.length) return { message: "Password must contain " + errs.join(", "), extra: { fields: { password: "Must contain " + errs.join(", ") } } };
+  const pwProblem = import_auth2.default.passwordProblem(b.password, { username: typeof b.username === "string" ? b.username : void 0, display_name: typeof b.display_name === "string" ? b.display_name : void 0 });
+  if (pwProblem) return { message: pwProblem, extra: { fields: { password: pwProblem } } };
   if (b.username !== void 0 && b.username !== null && b.username !== "" && (typeof b.username !== "string" || b.username.length > 60 || !/^[a-zA-Z0-9._@-]+$/.test(b.username.trim()))) return { message: "A username is letters, numbers and . _ @ - only.", extra: { fields: { username: "Letters, numbers and . _ @ - only" } } };
   return null;
 }
@@ -55880,8 +56038,8 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
     if (userCount() > 0) throw new import_http2.HttpError(403, "Already set up");
     const v = validate(body, accountShape);
     if (isStaticHost() && !v.storage_ack) throw new import_http2.HttpError(400, "Confirm that you understand where your records are kept before creating the account.", { storageAckRequired: true });
-    const errs = import_auth2.default.passwordPolicy(v.password);
-    if (errs.length) throw new import_http2.HttpError(400, "Password must contain " + errs.join(", "));
+    const pwProblem = import_auth2.default.passwordProblem(v.password, { username: v.username, display_name: v.display_name });
+    if (pwProblem) throw new import_http2.HttpError(400, pwProblem, { fields: { password: pwProblem } });
     const { hashPassword, uuid: uuid2 } = require_crypto();
     const id = uuid2();
     import_db2.default.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, id, v.username, hashPassword(v.password), v.display_name, v.role || "navigator", import_db2.default.now());
@@ -55905,8 +56063,8 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
     if (!signupEnabled()) throw new import_http2.HttpError(403, isStaticHost() ? "Sign-ups are turned off on this device. Ask the person who manages it to turn them back on." : "This device is already set up. Accounts come from the office SUDS.", { signupDisabled: true });
     const v = validate(ctx.body, { display_name: accountShape.display_name, username: accountShape.username, password: accountShape.password, role: accountShape.role });
     if (v.role && v.role !== "navigator") throw new import_http2.HttpError(403, "A new account on this device starts as a navigator. The person who manages this device can change its role afterwards.", { roleNotAllowed: true });
-    const errs = import_auth2.default.passwordPolicy(v.password);
-    if (errs.length) throw new import_http2.HttpError(400, "Password must contain " + errs.join(", "));
+    const pwProblem = import_auth2.default.passwordProblem(v.password, { username: v.username, display_name: v.display_name });
+    if (pwProblem) throw new import_http2.HttpError(400, pwProblem, { fields: { password: pwProblem } });
     if (import_db2.default.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw new import_http2.HttpError(400, "That username cannot be used here. Choose another.");
     const { hashPassword, uuid: uuid2 } = require_crypto();
     const id = uuid2();

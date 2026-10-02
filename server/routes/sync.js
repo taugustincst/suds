@@ -527,7 +527,8 @@ module.exports = (r) => {
   r.get('/api/sync/pull', requireLocalMode, auth.requireAuth, (ctx) => {
     if (!auth.hasPerm(ctx.user, 'clients:read')) throw forbidden('Your role cannot sync client data');
     const since = ctx.query.get('since') || NEVER;
-    const limit = Math.min(Number(ctx.query.get('limit')) || PULL_LIMIT, PULL_LIMIT);
+    // At least 1: a negative LIMIT is no limit at all to SQLite.
+    const limit = Math.max(1, Math.min(Math.floor(Number(ctx.query.get('limit'))) || PULL_LIMIT, PULL_LIMIT));
     // The device's scope is the office's record of the device this session signed in from, never the request's word.
     const s = syncScope(ctx); const device = s.device;
     const field = s.field ? FS.context(ctx.user.id, FS.windowDays(db.getSetting)) : null;

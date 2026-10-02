@@ -148,6 +148,14 @@ function runIfDue(now = Date.now()) {
   if (last && now - Date.parse(last) < hours * 3600_000 - 5 * 60_000) return null;
   return safeWrite('schedule');
 }
+/**
+ * At every start of the office server: the first anchor, if none has ever been written (and anchoring is on), rather
+ * than an hour later at the first housekeeping pass (pen test of 1.23.6, L5). Never throws (safeWrite).
+ */
+function firstAnchorAtStart() {
+  if (!(config.auditAnchorHours > 0) || db.getSetting('audit_anchor_last_at', null)) return null;
+  return safeWrite('first-start');
+}
 function safeWrite(reason, opts = {}) {
   try { return write(reason, opts); }
   catch (e) {
@@ -247,4 +255,4 @@ function verifyAndRecord() {
   return r;
 }
 
-module.exports = { write, safeWrite, runIfDue, verify, verifyAndRecord, list, dirStatus, placementProblem, keyId, macOf, macOk, canonical, FIELDS };
+module.exports = { write, safeWrite, runIfDue, firstAnchorAtStart, verify, verifyAndRecord, list, dirStatus, placementProblem, keyId, macOf, macOk, canonical, FIELDS };

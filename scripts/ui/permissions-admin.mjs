@@ -175,7 +175,7 @@ else {
 
   // ---- with another administrator, removing their own user management takes them off the page gracefully ----
   const a2name = 'permadm' + Date.now().toString().slice(-5);
-  const a2 = await admin.api('POST', '/api/users', { username: a2name, display_name: 'Second Admin', role: 'admin', password: 'SecondAdmin2026!!' });
+  const a2 = await admin.api('POST', '/api/users', { username: a2name, display_name: 'Second Admin', role: 'admin', password: 'Copper2026!!y' });
   eq(a2.status, 201, 'a second administrator is created');
   await openEditor('admin');
   await until(() => page.$('[data-perm-grant-form]'), { timeout: 8000 });
@@ -188,8 +188,8 @@ else {
   eq(await deniedNow('users:manage'), true, 'the deny applies at once');
   eq((await admin.api('GET', `/api/users/${me.id}/permissions`)).status, 403, 'and the server refuses them user management on the next request');
   // The second administrator gives it back (as only another administrator can), and the others return.
-  const second = await session(a2name, 'SecondAdmin2026!!');
-  eq((await second.api('POST', '/api/auth/password', { current_password: 'SecondAdmin2026!!', new_password: 'SecondAdmin2026!!x' })).status, 200, 'the second administrator clears the forced password change');
+  const second = await session(a2name, 'Copper2026!!y');
+  eq((await second.api('POST', '/api/auth/password', { current_password: 'Copper2026!!y', new_password: 'Copper2026!!z' })).status, 200, 'the second administrator clears the forced password change');
   eq((await second.api('DELETE', `/api/users/${me.id}/permissions/users:manage`, { reason: 'Back to managing users after the check' })).status, 200, 'and gives user management back');
   for (const u of otherAdmins) eq((await second.api('PUT', `/api/users/${u.id}`, { is_active: true })).status, 200, `${u.username} is active again`);
   eq((await second.api('PUT', `/api/users/${a2.data.id}`, { is_active: false, wipe_devices: false })).status, 200, 'and the second administrator deactivates their own account, another administrator remaining');

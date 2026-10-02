@@ -608,9 +608,11 @@ function resolveSession(ctx) {
 // step, signing out. The scope is what the device may hold, and the rest of the API would hand it everything its user
 // may read; account management (password, two-step verification, passkeys, sessions) is for the person in a browser,
 // not for a phone's sync token. Checked for every request with a session (server/app.js), whether or not the route
-// calls requireAuth, and again by requireAuth.
+// calls requireAuth, and again by requireAuth. Since 1.24 every device's sync session, field or not, is held to those
+// three under /api/auth/ (pen test of 1.23.6, L6); a whole device's session still reaches the rest of the API.
 const FIELD_SESSION_AUTH_PATHS = new Set(['/api/auth/login', '/api/auth/mfa/verify', '/api/auth/logout']);
 const FIELD_SESSION_ACCOUNT_MESSAGE = 'This is a field device\'s sync sign-in: it can only sync. Change your password, two-step verification, fingerprint sign-in or sessions in a web browser signed in to the office SUDS.';
+const SYNC_SESSION_ACCOUNT_MESSAGE = 'This is a device\'s sync sign-in. Change your password, two-step verification, fingerprint sign-in or sessions in a web browser signed in to the office SUDS.';
 function fieldSyncSession(ctx) {
   const s = ctx.session;
   if (!s || !s.sync_client) return false;
@@ -631,8 +633,15 @@ function assertSyncSessionReach(ctx) {
     }
   }
   if (!ctx.session || !ctx.session.sync_client || ctx.path.startsWith('/api/sync/') || FIELD_SESSION_AUTH_PATHS.has(ctx.path)) return;
+  // Any device's sync session, field or not (1.24, pen test of 1.23.6, L6): account management under /api/auth/ —
+  // the password, two-step verification (whose first step hands out a new secret), passkeys, the sessions list and
+  // ending the others — is for the person in a browser. The device's sync runner (local/sync.js) only signs in,
+  // gives the second step and signs out; a copied sync token could otherwise take the account over.
+  if (ctx.path.startsWith('/api/auth/')) {
+    const field = fieldSyncSession(ctx);
+    throw new HttpError(403, field ? FIELD_SESSION_ACCOUNT_MESSAGE : SYNC_SESSION_ACCOUNT_MESSAGE, { ...(field ? { fieldDevice: true } : {}), syncSession: true, useBrowser: true });
+  }
   if (!fieldSyncSession(ctx)) return;
-  if (ctx.path.startsWith('/api/auth/')) throw new HttpError(403, FIELD_SESSION_ACCOUNT_MESSAGE, { fieldDevice: true, useBrowser: true });
   throw new HttpError(403, 'A field device\'s sync session can only sync', { fieldDevice: true });
 }
 
@@ -893,7 +902,19 @@ function passwordPolicy(pw) {
   if (!/[^A-Za-z0-9]/.test(pw)) errors.push('a symbol');
   return errors;
 }
+/**
+ * Why this password cannot be used for this account, in plain language, or null. Every path that sets a
+ * password calls this (sign-up, set-up, an administrator creating or resetting an account, a password change,
+ * the device's own sign-up and recovery): the character classes above, then server/password-strength.js — not
+ * the username or the person's name, not a very common password (pen test of 1.23.6, L1).
+ * `who`: { username, display_name } of the account the password is for.
+ */
+function passwordProblem(pw, who = {}) {
+  const errs = passwordPolicy(pw);
+  if (errs.length) return 'Password must contain ' + errs.join(', ');
+  return require('./password-strength').weakness(pw, who);
+}
 
 module.exports = { assertSyncSessionReach, auditUsername, policy, PERMS, WIDENED_1_16, asBefore1_16, hasPerm, rolePerms, effectivePerms, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
   userManagerIds, lockoutProblem, LOCKOUT_MESSAGE,
-  createSession, passkeyStepOwed, markReauth, noteSsoProof, takeSsoProof, reauthStatus, verifySigner, verifyApprover, passkeyCount, mfaMethods, hasLocalPassword, clearReauth, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, COOKIE };
+  createSession, passkeyStepOwed, markReauth, noteSsoProof, takeSsoProof, reauthStatus, verifySigner, verifyApprover, passkeyCount, mfaMethods, hasLocalPassword, clearReauth, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, passwordProblem, COOKIE };

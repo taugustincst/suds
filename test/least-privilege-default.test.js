@@ -116,7 +116,7 @@ test('the user list says who is held to their caseload, and whether by the progr
 test('an approved access request as a navigator or clinician is held; approved as a supervisor it is not', async () => {
   const anon = H.client();
   for (const [username, role] of [['lp_req_nav', 'navigator'], ['lp_req_clin', 'clinician'], ['lp_req_sup', 'supervisor']]) {
-    expect(await anon.post('/api/auth/signup', { display_name: username, username, password: 'Request-Passw0rd!', reason: 'new outreach staff' }), 202, `request ${username}`);
+    expect(await anon.post('/api/auth/signup', { display_name: username, username, password: 'Lantern-Harbor-9!', reason: 'new outreach staff' }), 202, `request ${username}`);
     const id = H.db.one(`SELECT id FROM users WHERE username=?`, username).id;
     assert.equal(override(id), undefined, 'a waiting request holds nothing');
     const r = expect(await admin.post(`/api/users/${id}/approve`, { role }), 200, `approve ${username}`);
@@ -124,7 +124,7 @@ test('an approved access request as a navigator or clinician is held; approved a
     if (role === 'supervisor') { assert.equal(override(id), undefined); continue; }
     assert.equal(override(id).reason, CD.REASON);
     assert.equal(audits('user.permission.deny', id)[0].cause, 'access_request_approved');
-    const c = H.client(); await c.login(username, 'Request-Passw0rd!');
+    const c = H.client(); await c.login(username, 'Lantern-Harbor-9!');
     assert.equal(expect(await c.get('/api/auth/me'), 200, 'me').user.caseload_restricted, true);
   }
 });

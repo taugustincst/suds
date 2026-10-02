@@ -290,7 +290,7 @@ test('M1: assignments:manage, clients:read and clients:list-deidentified are rat
 
 // ------------------------------------------------------------------------------------------------ M2
 test('M2: privileged grants do not survive a role change, and a demoted account cannot promote itself back (the reviewer\'s repro)', async () => {
-  const nu = await admin.post('/api/users', { username: 's154_evil2', display_name: 'Evil Two', role: 'admin', password: 'EvilPass2026!!x' });
+  const nu = await admin.post('/api/users', { username: 's154_evil2', display_name: 'Evil Two', role: 'admin', password: 'Lantern2026!!x' });
   assert.equal(nu.status, 201, JSON.stringify(nu.data));
   assert.equal((await grant(nu.data.id, 'users:manage', 'grant', 'belt and braces grant')).status, 200);
   assert.equal((await grant(nu.data.id, 'settings:manage', 'grant', 'belt and braces grant')).status, 200);
@@ -305,7 +305,7 @@ test('M2: privileged grants do not survive a role change, and a demoted account 
   // Even a row put back by hand does nothing for a non-administrator.
   H.db.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason) VALUES(?, 'users:manage', 'grant', 'hand-edited')`, nu.data.id);
   H.db.run(`UPDATE users SET must_change_password=0 WHERE id=?`, nu.data.id);
-  const evil = H.client(); await evil.login('s154_evil2', 'EvilPass2026!!x');
+  const evil = H.client(); await evil.login('s154_evil2', 'Lantern2026!!x');
   assert.equal((await evil.get('/api/users')).data.users[0].username, undefined, 'the directory only, not the admin list');
   const self = await evil.put(`/api/users/${nu.data.id}`, { role: 'admin' });
   assert.equal(self.status, 403, 'self-promotion refused');

@@ -7,7 +7,7 @@ const assert = require('node:assert');
 const H = require('./helpers');
 
 let admin;
-const PW = 'Requested-Passw0rd!';
+const PW = 'Lantern-Harbor-0rbit!';
 before(async () => {
   await H.start();
   admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');

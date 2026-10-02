@@ -14,7 +14,7 @@ let L; let cleanup; let call;
 before(async () => { ({ L, cleanup } = await loadKernel({ staticHost: true })); call = kernelCaller(L); });
 after(async () => { if (cleanup) cleanup(); });
 
-const PW = 'Owner-Device-2026!'; const PW2 = 'Second-Device-2026!'; const PW3 = 'Third-Device-2026!x';
+const PW = 'Lantern-Harbor-2026!'; const PW2 = 'Maple-Thunder-2026!'; const PW3 = 'Granite-Comet-2026!x';
 const expect = (r, status, what) => { assert.equal(r.status, status, `${what}: ${JSON.stringify(r.data)}`); return r.data; };
 const signIn = async (username, password) => expect(await call('POST', '/api/auth/login', { username, password }), 200, `sign in as ${username}`);
 const signOut = () => call('POST', '/api/auth/logout', {});

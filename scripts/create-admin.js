@@ -8,8 +8,8 @@ const audit = require('../server/audit');
 const username = process.env.SUDS_ADMIN_USERNAME || 'guest';
 const password = process.env.SUDS_ADMIN_PASSWORD;
 if (!password) { console.error('Set SUDS_ADMIN_PASSWORD'); process.exit(1); }
-const errs = auth.passwordPolicy(password);
-if (errs.length) { console.error('Password must contain ' + errs.join(', ')); process.exit(1); }
+const pwProblem = auth.passwordProblem(password, { username });
+if (pwProblem) { console.error(pwProblem); process.exit(1); }
 db.open();
 const ex = db.one(`SELECT id FROM users WHERE username=?`, username);
 if (ex) {

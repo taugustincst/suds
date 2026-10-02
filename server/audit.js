@@ -54,6 +54,18 @@ function checkpoint({ key = config.indexKey } = {}) {
   console.log(`[suds] audit checkpoint id=${last.id} rows=${rowCount} head=${head}`);
   return { lastId: last.id, rowCount, head };
 }
+/**
+ * At every start of the office server (server/index.js): seal the head now if none has ever been sealed. Until
+ * 1.24 the first seal waited for the first daily verification, an hour after the start at the soonest, and until
+ * then checkHead answered "not checkpointed": the newest entries of a new install, or of one whose housekeeping
+ * never ran, could be deleted without a trace (pen test of 1.23.6, L5). A database with no entry yet gets one
+ * first ('audit.started'), since an empty chain has no head to seal. Returns the checkpoint, or null when one existed.
+ */
+function sealHeadAtStart() {
+  if (db.getSetting('audit_head', null) && Number(db.getSetting('audit_head_id', 0))) return null;
+  if (!db.one(`SELECT 1 FROM audit_log LIMIT 1`)) log({ user: { username: 'system' }, action: 'audit.started' });
+  return checkpoint();
+}
 /** Compare the chain as it stands now with the last sealed head. */
 function checkHead({ key = config.indexKey } = {}) {
   const head = db.getSetting('audit_head', null);
@@ -283,4 +295,4 @@ async function scheduledVerify({ full = false, batch } = {}) {
   return r;
 }
 
-module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead };
+module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead, sealHeadAtStart };

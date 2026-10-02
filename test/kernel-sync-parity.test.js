@@ -11,7 +11,7 @@ const H = require('./helpers');
 const { loadKernel, kernelCaller, strip } = require('./fixtures/kernel-harness');
 
 let L; let cleanup; let base; let office;
-const USER = 'syncadmin'; const PASSWORD = 'SyncAdminPassw0rd!x';
+const USER = 'syncadmin'; const PASSWORD = 'Orchid-Lamp-77!x';
 before(async () => {
   ({ L, cleanup } = await loadKernel({ staticHost: false }));
   base = await H.start();
