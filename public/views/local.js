@@ -1,4 +1,4 @@
-import { h, route, get, post, put, state, form, toast, nav, navAndRender, render, loadSession, badge, fmt, pageHead, eraseDeviceButton, kv, modal, clear, forgetDue, confirmDialog, refreshPermissions } from '../app.js';
+import { h, route, get, post, put, del, state, form, toast, nav, navAndRender, render, loadSession, badge, fmt, pageHead, eraseDeviceButton, kv, modal, clear, forgetDue, confirmDialog, refreshPermissions } from '../app.js';
 
 // A column name as the person would say it: `first_name_enc` is "first name" (the suffix is how the
 // database marks an encrypted column, not something a navigator should have to read past).
@@ -105,20 +105,252 @@ export function restoreBackupButton({ link = false } = {}) {
     : h('button', { type: 'button', class: 'btn', 'data-restore-open': '1', onClick: () => openRestoreDialog() }, 'Restore from a backup');
 }
 
-/** Home's reminder on the on-device app: no backup for a week (or ever), with at least one client. Per day. */
+// ---------------------------------------------------------------------------------------------------------
+// Scheduled backups (built for 1.24.0, not yet released; docs/WEB_APP.md, "Scheduled backups"). The device
+// administrator chooses how often and a backup passphrase once; the kernel keeps the key made from it sealed
+// with the device key, and makes each due backup with it (local/kernel.js /api/local/backup/run). Where the
+// browser has the File System Access API (Chrome, Edge on a computer), the file goes to a folder chosen once,
+// written when due: as SUDS opens Home after a sign-in, and when the person leaves the page after a day's work.
+// Elsewhere (Safari, Firefox, iPhone and iPad) a due backup is one button on Home that downloads it. Nothing
+// but the encrypted file leaves the browser, and only into the folder or download the person chose.
+// ---------------------------------------------------------------------------------------------------------
+const kernelCall = (method, path, body, { background = false } = {}) =>
+  window.SUDS_LOCAL.handle(method, path, body, { 'X-Requested-With': 'suds', ...(background ? { 'X-Background': '1' } : {}) });
+/** Can this browser write to a folder the person picks? */
+export const folderSupported = () => typeof window.showDirectoryPicker === 'function';
+async function savedFolder() {
+  try { return (window.SUDS_LOCAL && window.SUDS_LOCAL.backupFolder) ? await window.SUDS_LOCAL.backupFolder.get() : null; } catch { return null; }
+}
+/** 'granted', 'prompt' or 'denied'. Asking (`ask`) needs a click: the browser shows its own question. */
+async function folderPermission(folder, ask) {
+  try {
+    if (!folder.queryPermission) return 'granted';
+    let p = await folder.queryPermission({ mode: 'readwrite' });
+    if (p !== 'granted' && ask && folder.requestPermission) p = await folder.requestPermission({ mode: 'readwrite' });
+    return p;
+  } catch { return 'denied'; }
+}
+async function chooseFolder() {
+  let folder;
+  try { folder = await window.showDirectoryPicker({ id: 'suds-backups', mode: 'readwrite' }); }
+  catch (e) { if (e && e.name === 'AbortError') return null; throw new Error('That folder cannot be used. Choose another one.'); }
+  await window.SUDS_LOCAL.backupFolder.set(folder);
+  return folder;
+}
+const fileNameOf = (r) => (/filename="([^"]+)"/.exec((r.headers || {})['content-disposition'] || '') || [])[1] || 'suds-device-backup.sudsbackup';
+const problemOf = (e) => (e && (e.name === 'NotAllowedError' || e.name === 'SecurityError') ? 'permission' : e && e.name === 'QuotaExceededError' ? 'space' : 'write');
+const PROBLEM_TEXT = { permission: 'the browser did not allow SUDS to write to the folder', space: 'the folder’s drive is full', write: 'the file could not be written there', other: 'something went wrong' };
+// One backup at a time: Home, the timer and the buttons may all ask at once.
+let running = null;
+const once = (fn) => { if (running) return running; running = fn().finally(() => { running = null; }); return running; };
+
+/** Write a backup into `folder` and remove the oldest of SUDS's own beyond the number kept. { ok, name, removed } or { ok: false, ... }. */
+function backUpToFolder(folder, trigger) {
+  return once(async () => {
+    const background = trigger === 'schedule';
+    const existing = [];
+    try { for await (const [name, entry] of folder.entries()) if (entry.kind === 'file' && /^suds-device-backup-/.test(name)) existing.push(name); }
+    catch (e) { return { ok: false, problem: 'permission', message: `SUDS could not open the folder “${folder.name}”.` }; }
+    const r = await kernelCall('POST', '/api/local/backup/run', { to: 'folder', trigger, existing }, { background });
+    if (r.status >= 400) return { ok: false, needPassphrase: !!(r.json && r.json.backupPassphraseNeeded), message: (r.json && r.json.error) || 'The backup could not be made.' };
+    const name = fileNameOf(r);
+    let remove = []; try { remove = JSON.parse(r.headers['x-suds-backup-remove'] || '[]'); } catch {}
+    try { const fh = await folder.getFileHandle(name, { create: true }); const w = await fh.createWritable(); await w.write(r.body); await w.close(); }
+    catch (e) {
+      const problem = problemOf(e);
+      await kernelCall('POST', '/api/local/backup/run/done', { ok: false, problem }, { background });
+      return { ok: false, problem, message: `The backup was not saved: ${PROBLEM_TEXT[problem]}.` };
+    }
+    let removed = 0;
+    for (const n of remove) { try { await folder.removeEntry(n); removed++; } catch {} }
+    await kernelCall('POST', '/api/local/backup/run/done', { ok: true, removed }, { background });
+    try { await window.SUDS_LOCAL.flush(); } catch {}
+    return { ok: true, name, removed };
+  });
+}
+/** Make a backup with the kept key and hand it to the browser as a download (no folder, or this browser has none). */
+function downloadKept(trigger) {
+  return once(async () => {
+    const r = await kernelCall('POST', '/api/local/backup/run', { to: 'download', trigger });
+    if (r.status >= 400) { const e = new Error((r.json && r.json.error) || 'The backup could not be made.'); e.needPassphrase = !!(r.json && r.json.backupPassphraseNeeded); throw e; }
+    const url = URL.createObjectURL(new Blob([r.body], { type: 'application/octet-stream' }));
+    const a = h('a', { href: url, download: fileNameOf(r) }); document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    await kernelCall('POST', '/api/local/backup/run/done', { ok: true });
+    try { await window.SUDS_LOCAL.flush(); } catch {}
+    return { ok: true };
+  });
+}
+/** "Back up now" (a click, so the browser may be asked for the folder again). */
+async function backUpNow(folder) {
+  if (folder) {
+    if (await folderPermission(folder, true) !== 'granted') throw new Error(`The browser did not allow SUDS to save to “${folder.name}”. Choose the folder again, or download the backup instead.`);
+    const r = await backUpToFolder(folder, 'now');
+    if (!r.ok) throw new Error(r.message);
+    toast(`Backed up to “${folder.name}”${r.removed ? ` (${r.removed} older backup${r.removed === 1 ? '' : 's'} removed)` : ''}.`, 'ok');
+    return;
+  }
+  await downloadKept('now');
+  toast('Backup downloaded. Move the file off this device, to a USB stick or a county drive.', 'ok');
+}
+
+// The quiet path: a due backup, a kept passphrase, a chosen folder the browser still lets SUDS write to. Checked
+// when the page is hidden (leaving SUDS after a day's work) and every hour while it is open; never a prompt, and
+// nothing counts as activity that would keep the device from locking when idle.
+let watching = false;
+async function backUpIfDue() {
+  if (!state.user || !state.local || !isStaticHost() || !window.SUDS_LOCAL || running) return null;
+  const r = await kernelCall('GET', '/api/local/device', undefined, { background: true }).catch(() => null);
+  const st = r && r.status === 200 ? r.json : null;
+  if (!st || !st.device_admin || !st.clients || !st.backup || !st.backup.due || !st.backup.passphrase_kept) return null;
+  const folder = await savedFolder();
+  if (!folder || await folderPermission(folder, false) !== 'granted') return null;
+  return backUpToFolder(folder, 'schedule');
+}
+function watchBackups() {
+  if (watching) return; watching = true;
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') backUpIfDue().catch(() => {}); });
+  setInterval(() => { backUpIfDue().catch(() => {}); }, 3600000);
+}
+
+/**
+ * Home on the on-device app, for the person who manages it, with at least one client: a backup that is due is
+ * written to the chosen folder there and then where the browser allows it (a note says so); otherwise a card says
+ * when the last one was made and offers the one step that makes it: allow the folder again, download the backup
+ * made with the kept passphrase, or (no schedule set up) type a passphrase. Dismissed, it stays away for the day.
+ */
 const REMINDER_KEY = 'suds.backupReminderDismissed';
 const today = () => new Date().toLocaleDateString('en-CA');
 export async function backupReminderCard() {
   if (!state.local || !isStaticHost()) return null;
   let st; try { st = await get('/api/local/device', { quiet: true }); } catch { return null; }
-  if (!st.device_admin || !st.clients) return null;
-  const days = daysSince(st.last_backup_at);
-  if (days !== null && days < BACKUP_EVERY_DAYS) return null;
+  if (!st.device_admin) return null;
+  watchBackups();
+  const b = st.backup || { due: daysSince(st.last_backup_at) === null || daysSince(st.last_backup_at) >= BACKUP_EVERY_DAYS };
+  if (!st.clients || !b.due) return null;
+  const folder = b.passphrase_kept ? await savedFolder() : null;
+  let failed = null;
+  if (folder && await folderPermission(folder, false) === 'granted') {
+    const r = await backUpToFolder(folder, 'schedule');
+    if (r.ok) return h('div', { class: 'banner ok mb', role: 'status', 'data-backup-written': r.name }, h('div', {}, h('b', {}, 'Backed up. '), `Today’s backup was saved to “${folder.name}”.`));
+    failed = r.message;
+  }
   try { if (localStorage.getItem(REMINDER_KEY) === today()) return null; } catch {}
-  const card = h('div', { class: 'banner warn mb', role: 'status', 'data-backup-reminder': '1' },
-    h('div', {}, h('b', {}, `Last backup: ${ago(st.last_backup_at)}. `), 'Your records are kept only in this browser. ', backupButton(() => card.remove())),
+  const done = () => card.remove();
+  let step;
+  if (folder) {
+    step = [failed || `The browser needs your permission again to save it to “${folder.name}”.`, ' ',
+      h('button', { type: 'button', class: 'btn primary', 'data-backup-folder-now': '1', onClick: async (e) => { e.target.disabled = true; try { await backUpNow(folder); done(); } catch (x) { e.target.disabled = false; toast(x.message, 'error'); } } }, `Back up to “${folder.name}” now`)];
+  } else if (b.passphrase_kept) {
+    step = [folderSupported() ? 'Download it now, or choose a folder on This device so SUDS saves it there by itself. ' : 'This browser cannot save backups to a folder by itself, so SUDS asks you to download each one. Move the file off this device afterwards. ',
+      h('button', { type: 'button', class: 'btn primary', 'data-backup-download-now': '1', onClick: async (e) => { e.target.disabled = true; try { await backUpNow(null); done(); } catch (x) { e.target.disabled = false; toast(x.message, 'error'); } } }, 'Download the backup')];
+  } else {
+    step = [backupButton(done), ' ', h('a', { href: '#/sync', 'data-backup-schedule-link': '1' }, 'Set up scheduled backups')];
+  }
+  const card = h('div', { class: 'banner warn mb', role: 'status', 'data-backup-reminder': '1', 'data-backup-overdue': b.overdue ? '1' : '0' },
+    h('div', {}, h('b', {}, `Last backup: ${ago(st.last_backup_at)}. `), b.passphrase_kept ? (b.overdue ? 'Your scheduled backup is overdue. ' : 'Your scheduled backup is due. ') : 'Your records are kept only in this browser. ', ...step),
     h('button', { type: 'button', class: 'btn ghost sm', 'aria-label': 'Dismiss until tomorrow', 'data-backup-reminder-dismiss': '1', onClick: () => { try { localStorage.setItem(REMINDER_KEY, today()); } catch {} card.remove(); } }, '✕'));
   return card;
+}
+
+/** Turn scheduled backups on: the passphrase twice, and how often. */
+function openScheduleDialog(b, onDone) {
+  const f = form([
+    { name: 'passphrase', label: 'Backup passphrase', type: 'password', required: true, autocomplete: 'new-password', help: `At least ${MIN_PASSPHRASE} characters. You need it to restore or check a backup; nobody can recover it for you. Using the passphrase of your downloaded backups lets one passphrase open them all.` },
+    { name: 'confirm', label: 'Type the passphrase again', type: 'password', required: true, autocomplete: 'new-password' },
+    { name: 'every_days', label: 'Back up', type: 'select', noBlank: true, value: String(b && b.schedule_chosen ? b.every_days : 1), options: SCHEDULE_OPTIONS },
+  ], { submitText: 'Turn on scheduled backups', onCancel: () => m.close(), onSubmit: async (d) => {
+    if (d.passphrase.length < MIN_PASSPHRASE) { const e = new Error(`Choose a passphrase of at least ${MIN_PASSPHRASE} characters.`); e.labelled = true; e.data = { fields: { passphrase: `At least ${MIN_PASSPHRASE} characters` } }; throw e; }
+    if (d.passphrase !== d.confirm) { const e = new Error('The two passphrases do not match.'); e.labelled = true; e.data = { fields: { confirm: 'Does not match' } }; throw e; }
+    await post('/api/local/backup/schedule', { passphrase: d.passphrase, every_days: Number(d.every_days) });
+    m.close();
+    toast(folderSupported() ? 'Scheduled backups are on. Now choose the folder they are saved to.' : 'Scheduled backups are on. When one is due, Home asks you to download it.', 'ok');
+    if (onDone) onDone();
+  } });
+  const m = modal('Set up scheduled backups', h('div', {},
+    h('p', {}, 'SUDS makes an encrypted backup of every record on this device as often as you choose, without asking for the passphrase each time: it keeps a key made from it on this device, locked with your password like the records. The passphrase itself is not kept.'),
+    h('p', { class: 'small muted' }, folderSupported()
+      ? 'Next you choose a folder — a USB stick, or a folder your county backs up — and SUDS saves each backup there when it is due.'
+      : 'This browser cannot save to a folder by itself, so when a backup is due Home shows one button that downloads it.'), f));
+  return m;
+}
+const SCHEDULE_OPTIONS = [{ value: '1', label: 'Every day' }, { value: '3', label: 'Every 3 days' }, { value: '7', label: 'Every week' }];
+const KEEP_OPTIONS = [3, 7, 14, 30];
+
+const readBlob = (blob) => new Promise((resolve, reject) => { const fr = new FileReader(); fr.onload = () => resolve(String(fr.result).split(',')[1] || ''); fr.onerror = () => reject(new Error('That file could not be read')); fr.readAsDataURL(blob); });
+/** The restore drill: open the newest backup (in the folder, or a file chosen) with its passphrase and check it, changing nothing. */
+function openCheckDialog(folder, onDone) {
+  const out = h('div', { class: 'mt', 'aria-live': 'polite' }); let checked = false;
+  const pass = h('input', { type: 'password', name: 'check_passphrase', autocomplete: 'off', id: 'check-passphrase' });
+  const file = folder ? null : h('input', { type: 'file', name: 'check_file', id: 'check-file', accept: '.sudsbackup,application/octet-stream' });
+  const go = async (e) => {
+    clear(out); e.target.disabled = true;
+    out.append(h('p', { class: 'small muted', role: 'status' }, 'Opening the backup…'));
+    try {
+      let blob; let label;
+      if (folder) {
+        if (await folderPermission(folder, true) !== 'granted') throw new Error(`The browser did not allow SUDS to open “${folder.name}”.`);
+        const names = []; for await (const [n, entry] of folder.entries()) if (entry.kind === 'file' && /^suds-device-backup-.*\.sudsbackup$/.test(n)) names.push(n);
+        // Newest by the date and time in the name (local/backup.js fileName): the timed name sorts after the dated one.
+        names.sort((a, b) => (a.replace('.sudsbackup', '-000000') < b.replace('.sudsbackup', '-000000') ? -1 : 1));
+        label = names[names.length - 1];
+        if (!label) throw new Error(`There is no SUDS backup in “${folder.name}” yet. Use Back up now first.`);
+        blob = await (await folder.getFileHandle(label)).getFile();
+      } else {
+        blob = file.files && file.files[0]; label = blob && blob.name;
+        if (!blob) throw new Error('Choose the backup file first.');
+      }
+      const r = await post('/api/local/backup/check', { file_b64: await readBlob(blob), passphrase: pass.value });
+      clear(out).append(r.ok
+        ? h('div', { class: 'banner ok', role: 'status', 'data-backup-check-result': 'ok' }, h('div', {}, h('b', {}, 'This backup can be restored. '), `${label}, made ${fmt.dt(r.created_at)}: it opens with this passphrase, its database is intact, and it holds ${r.clients} client${r.clients === 1 ? '' : 's'} and ${r.users} account${r.users === 1 ? '' : 's'}.`))
+        : h('div', { class: 'banner error', role: 'alert', 'data-backup-check-result': r.problem || 'failed' }, h('div', {}, h('b', {}, 'This backup could not be restored. '), `${label}: ${r.message}`)));
+      checked = true;
+    } catch (x) { clear(out).append(h('div', { class: 'banner error', role: 'alert', 'data-backup-check-result': 'error' }, h('div', {}, x.message))); }
+    finally { e.target.disabled = false; }
+  };
+  const m = modal('Check a backup', h('div', {},
+    h('p', {}, 'Open a backup the way a restore would, and check that everything is in it. Nothing on this device changes.'),
+    folder ? h('p', { class: 'small' }, `SUDS opens the newest backup in “${folder.name}”.`) : h('div', { class: 'field' }, h('label', { for: 'check-file' }, 'Backup file *'), file),
+    h('div', { class: 'field' }, h('label', { for: 'check-passphrase' }, 'Backup passphrase *'), pass),
+    h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn', onClick: () => m.close() }, 'Close'), h('button', { type: 'button', class: 'btn primary', 'data-backup-check-go': '1', onClick: go }, 'Check this backup')),
+    out), { onClose: () => { if (checked && onDone) onDone(); } });
+  return m;
+}
+
+/** The device administrator's scheduled-backup controls on This device (the on-device app only). */
+async function scheduleSection(dev, onChange) {
+  const b = dev.backup;
+  const folder = await savedFolder();
+  const supported = folderSupported();
+  const busy = (fn) => async (e) => { const btn = e.currentTarget || e.target; btn.disabled = true; try { await fn(); } catch (x) { toast(x.message, 'error'); } finally { btn.disabled = false; } };
+  const every = h('select', { id: 'backup-every', name: 'backup_every_days', 'data-backup-every': '1', onChange: busy(async () => { await put('/api/local/device', { backup_every_days: Number(every.value) }); toast('Backup schedule saved', 'ok'); onChange(); }) },
+    SCHEDULE_OPTIONS.map(o => h('option', { value: o.value, selected: o.value === String(b.every_days) }, o.label)));
+  const keep = h('select', { id: 'backup-keep', name: 'backup_keep', 'data-backup-keep': '1', onChange: busy(async () => { await put('/api/local/device', { backup_keep: Number(keep.value) }); toast('Saved', 'ok'); onChange(); }) },
+    [...new Set([...KEEP_OPTIONS, b.keep])].sort((x, y) => x - y).map(n => h('option', { value: String(n), selected: n === b.keep }, `The newest ${n}`)));
+  const where = folder ? `The folder “${folder.name}”` : supported ? 'Downloads, until you choose a folder' : 'Downloads (this browser cannot save to a folder by itself)';
+  const check = b.check
+    ? h('span', { 'data-backup-check': b.check.ok ? 'ok' : 'failed' }, b.check.ok ? badge('Passed', 'ok') : badge('Failed', 'danger'), ` ${fmt.dt(b.check.at)}`)
+    : h('span', { 'data-backup-check': 'never' }, 'Never run');
+  return h('div', { class: 'mt', 'data-backup-schedule': b.passphrase_kept ? 'on' : 'off' },
+    h('h3', { class: 'eyebrow' }, 'Scheduled backups'),
+    kv([
+      ['Status', b.passphrase_kept ? badge('On', 'ok') : badge('Off', 'warn')],
+      ['Next backup', h('span', { 'data-backup-next': b.due ? 'due' : (b.next_due || '') }, b.due ? 'Due now' : fmt.date(b.next_due))],
+      ['Saved to', h('span', { 'data-backup-where': folder ? 'folder' : 'download' }, where)],
+      ['Restore check', check],
+    ]),
+    h('div', { class: 'field mt' }, h('label', { for: 'backup-every' }, 'Back up'), every),
+    folder ? h('div', { class: 'field' }, h('label', { for: 'backup-keep' }, 'Backups kept in the folder'), keep) : null,
+    h('p', { class: 'small muted' }, supported
+      ? 'Choose a folder once — a USB stick, or a folder your county backs up — and SUDS saves each backup there when it is due: when you sign in, and when you leave SUDS after a day’s work. After the browser restarts it may ask you to allow the folder again; Home shows the button. Older backups beyond the number kept are removed (only SUDS’s own files).'
+      : 'This browser cannot save to a folder by itself (Safari, Firefox, and every browser on iPhone and iPad). When a backup is due, Home shows one button that downloads it; move each file off this device.'),
+    h('div', { class: 'btn-row' },
+      b.passphrase_kept ? h('button', { type: 'button', class: 'btn primary', 'data-backup-now': '1', onClick: busy(async () => { await backUpNow(folder); onChange(); }) }, folder ? `Back up to “${folder.name}” now` : 'Back up now (download)')
+        : h('button', { type: 'button', class: 'btn primary', 'data-backup-schedule-setup': '1', onClick: () => openScheduleDialog(b, onChange) }, 'Set up scheduled backups'),
+      supported ? h('button', { type: 'button', class: 'btn', 'data-backup-folder-choose': '1', onClick: busy(async () => { const f = await chooseFolder(); if (f) { toast(`Backups will be saved to “${f.name}”.`, 'ok'); onChange(); } }) }, folder ? 'Choose another folder' : 'Choose a folder') : null,
+      folder ? h('button', { type: 'button', class: 'btn ghost', 'data-backup-folder-forget': '1', onClick: busy(async () => { await window.SUDS_LOCAL.backupFolder.set(null); toast('SUDS will no longer save to that folder. The backups already there stay.', 'ok'); onChange(); }) }, 'Stop saving to this folder') : null,
+      h('button', { type: 'button', class: 'btn', 'data-backup-check-open': '1', onClick: () => openCheckDialog(folder, onChange) }, 'Check a backup'),
+      b.passphrase_kept ? h('button', { type: 'button', class: 'btn ghost', 'data-backup-schedule-off': '1', onClick: busy(async () => { await del('/api/local/backup/schedule'); toast('Scheduled backups are off. Download one from this page regularly.', 'ok'); onChange(); }) }, 'Turn off scheduled backups') : null));
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -267,14 +499,20 @@ async function safetyCard(dev, onChange) {
   const persisted = await storagePersisted();
   const storageLine = h('span', { 'data-storage-state': persisted ? 'protected' : 'best-effort' }, persisted ? badge('Protected', 'ok') : badge('May be cleared by the browser', 'warn'));
   const protect = persisted ? null : h('button', { type: 'button', class: 'btn sm', onClick: async () => { const ok = await requestPersistentStorage(); toast(ok ? 'The browser will keep SUDS’s storage.' : 'The browser did not agree. Installing SUDS to the home screen usually helps; keep downloading backups either way.', ok ? 'ok' : 'error'); onChange(); } }, 'Ask the browser to protect it');
+  const b = dev && dev.backup;
+  const folder = b && b.last_to === 'folder' ? await savedFolder() : null;
+  // "Last backup: today, to the folder “SUDS backups”" — when, and where it went.
+  const lastWhere = !b || !b.last_at || !b.last_to ? null : b.last_to === 'folder' ? (folder ? `, to the folder “${folder.name}”` : ', to a folder') : ', downloaded';
+  const scheduled = isStaticHost() && dev && dev.device_admin && b ? await scheduleSection(dev, onChange) : null;
   return h('div', { class: 'card', 'data-device-safety': '1' }, h('h2', {}, 'Keep your records safe'),
-    kv([['Storage', h('span', {}, storageLine, ' ', protect)], ['Last backup', h('span', { 'data-last-backup': dev ? (dev.last_backup_at || 'never') : '' }, dev ? ago(dev.last_backup_at) : '—')]]),
+    kv([['Storage', h('span', {}, storageLine, ' ', protect)], ['Last backup', h('span', {}, h('span', { 'data-last-backup': dev ? (dev.last_backup_at || 'never') : '' }, dev ? ago(dev.last_backup_at) : '—'), lastWhere ? h('span', { 'data-last-backup-to': b.last_to }, lastWhere) : null)]]),
     h('p', { class: 'small muted mt' }, isStaticHost()
-      ? 'The records on this device exist only in this browser. If its site data is cleared, or the device is lost, only a backup brings them back. Download one at least weekly and keep it off this device.'
+      ? 'The records on this device exist only in this browser. If its site data is cleared, or the device is lost, only a backup brings them back. Back up at least weekly and keep the backups off this device.'
       : 'The office SUDS is where your records are kept for good; sync often. A backup here protects what has not been synced yet.'),
     dev && dev.device_admin
       ? h('div', { class: 'btn-row' }, backupButton(onChange), restoreBackupButton())
-      : h('p', { class: 'small muted' }, 'Backups hold every record on this device, so only the person who manages it can download or restore one.'));
+      : h('p', { class: 'small muted' }, 'Backups hold every record on this device, so only the person who manages it can download or restore one.'),
+    scheduled);
 }
 
 /** Who may create an account on this device (the on-device app only; the device administrator decides). */

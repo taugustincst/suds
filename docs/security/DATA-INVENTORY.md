@@ -211,6 +211,7 @@ The GitHub Pages build holds the same tables in one browser. It holds no office-
 
 - **Sealed at rest.** The whole database image is sealed with AES-256-GCM under a key that each device account's password unwraps.
 - **Nothing leaves the browser**, except a device backup the person chooses to save. The backup is sealed under a passphrase.
+- **Scheduled backups (built for 1.24.0, not yet released).** When the device administrator turns them on, the key derived from the backup passphrase is kept in the device's vault, sealed under the device key (opened only while an account has unlocked the device); the passphrase itself is not kept. The folder backups go to is a File System Access directory handle kept beside the vault (a folder the person picked: no record, no key); erasing the device forgets both, and a restore drops the key. The files written there are ordinary encrypted device backups. The schedule, the last backup's date and destination (*folder* or *download*), and the last restore check's result are settings in the device database. Audit: `device.backup.created` (where, why, how many clients, how many old files removed), `device.backup.failed`, `device.backup.checked`, `device.backup.schedule`: never a name, a file name, the folder or the passphrase.
 - **No server-side copy.** Retention, audit review and residency are the device's and the programme's to manage.
 
 Two things a reviewer should know:

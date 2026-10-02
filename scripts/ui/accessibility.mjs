@@ -711,6 +711,28 @@ async function deviceRun(cfg) {
   await page.click('[data-recovery-new]'); await page.waitForSelector('.modal input[name=password]'); await settle(page);
   await axe(page, `device ${cfg.id} dialog: make a new recovery code`);
   await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal')), { timeout: 5000 });
+  // Scheduled backups (built for 1.24.0, not yet released): the set-up dialog, This device with them on, Home
+  // with a backup due, and the restore check with its result.
+  await page.click('[data-backup-schedule-setup]'); await page.waitForSelector('.modal input[name=passphrase]'); await settle(page);
+  await axe(page, `device ${cfg.id} dialog: set up scheduled backups`);
+  await page.fill('.modal input[name=passphrase]', 'accessible backup passphrase'); await page.fill('.modal input[name=confirm]', 'accessible backup passphrase');
+  await page.click('.modal button[type=submit]');
+  ok(await until(async () => (await page.getAttribute('[data-backup-schedule]', 'data-backup-schedule').catch(() => null)) === 'on', { timeout: 20000 }), `device ${cfg.id}: scheduled backups turned on`);
+  await settle(page);
+  await axe(page, `device ${cfg.id} This device (scheduled backups on)`);
+  if (cfg.mobile) await reflowCheck(page, `device ${cfg.id} This device (scheduled backups on)`, 320);
+  await page.click('[data-backup-check-open]'); await page.waitForSelector('.modal #check-passphrase'); await settle(page);
+  await axe(page, `device ${cfg.id} dialog: check a backup`);
+  await page.setInputFiles('.modal #check-file', { name: 'not-a-backup.sudsbackup', mimeType: 'application/octet-stream', buffer: Buffer.from('not a backup\n') });
+  await page.fill('.modal #check-passphrase', 'accessible backup passphrase'); await page.click('.modal [data-backup-check-go]');
+  await until(() => page.$('.modal [data-backup-check-result]'), { timeout: 20000 }); await settle(page);
+  await axe(page, `device ${cfg.id} dialog: check a backup (result)`);
+  await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal')), { timeout: 5000 });
+  await go(page, device, 'dashboard');
+  ok(await until(() => page.$('[data-backup-reminder] [data-backup-download-now]'), { timeout: 8000 }), `device ${cfg.id}: Home offers the due scheduled backup`);
+  await axe(page, `device ${cfg.id} Home (scheduled backup due)`);
+  if (cfg.mobile) await reflowCheck(page, `device ${cfg.id} Home (scheduled backup due)`, 320);
+  await go(page, device, 'sync');
   await page.evaluate(async () => (await import('./app.js')).logout()); await page.waitForSelector('.login input[name=username]'); await settle(page);
   ok(await page.$('[data-cant-sign-in] [data-recover-open]'), `device ${cfg.id}: the locked sign-in page offers the recovery code`);
   await axe(page, `device ${cfg.id} Log in (locked, Can't sign in?)`);

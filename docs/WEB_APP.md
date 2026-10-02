@@ -153,6 +153,47 @@ restored saves nothing more before it reloads. A wrong passphrase, a file that i
 tampered or damaged file, and a backup from a newer SUDS are all refused before anything changes. Backups and
 restores are audited (`device.backup.created`, `device.restore`).
 
+## Scheduled backups (built for 1.24.0, not yet released)
+
+A device whose records exist nowhere else should not depend on someone remembering to download a file. Under
+**This device → Keep your records safe → Scheduled backups** the device's manager chooses how often SUDS backs up
+(**every day**, **every 3 days** or **every week**; a device that never chose keeps the weekly reminder it had,
+which is also the longest interval offered) and types a backup passphrase once (**Set up scheduled backups**).
+
+- **The passphrase is not kept.** The kernel derives the backup key from it (PBKDF2-SHA256, 600,000 iterations, a
+  salt of its own: `local/backup.js` `deriveKey`) and keeps that key in the device's vault, sealed under the device
+  key (`local/vault.js` `sealBackupKey`), so it opens only while an account has unlocked the device, like the
+  records. It is not in the database, so it never travels inside a backup; a restore, or the key rotation after
+  one, drops it, and the manager types the passphrase again. Each scheduled file is an ordinary version-1 device
+  backup with a fresh IV: it opens with the passphrase on any device, by **Restore from a backup**, with nothing
+  scheduled-backup-specific about it.
+- **Where the browser can write to a folder** (the File System Access API: Chrome and Edge on a computer), the
+  manager picks a folder once (**Choose a folder**; a USB stick, or a folder the county backs up). When a backup
+  is due SUDS writes it there by itself: when Home opens after a sign-in, when the page is hidden at the end of a
+  day's work, and hourly while it is open. Files are named `suds-device-backup-<date>-<time>.sudsbackup`; the
+  newest *N* are kept (**Backups kept in the folder**, 7 to begin with) and older ones SUDS named are removed —
+  nothing else in the folder is read or touched. After the browser restarts it may withhold the folder until it is
+  allowed again: Home then shows **Back up to “folder” now**, one click that asks the browser and writes the file.
+  The folder handle is kept with the device's stored values, so **Erase data on this device** forgets it.
+- **Where it cannot** (Safari, Firefox, every browser on iPhone and iPad), a due backup is one button on Home,
+  **Download the backup**, made with the kept key; the card says plainly that this browser cannot save backups to a
+  folder by itself, and to move the file off the device. Without a schedule the card is the reminder it always
+  was (**Download a backup**, with the passphrase), plus **Set up scheduled backups**.
+- **Last backup** on This device says when and where (*today, to the folder “SUDS backups”*, *3 days ago,
+  downloaded*); **Next backup** the date it falls due. A backup counts as made only once the page has written it:
+  a file the browser refused to save is audited (`device.backup.failed`) and changes nothing else.
+- **Check a backup** is the restore drill: it opens the newest backup in the folder (or a file chosen) with its
+  passphrase, as a restore would, and checks that the database is intact (`PRAGMA quick_check`), belongs to the
+  keys it carries and has every table this version of SUDS has — without changing anything on the device. This
+  device shows the last result (**Restore check: Passed** or **Failed**, with when).
+- **Who.** Only the device's manager sets scheduled backups up, makes or checks one; the other accounts on the
+  device are not asked (the backup holds every account's records). Every backup written is audited
+  (`device.backup.created` with where it went, what made it, the client count and how many old files were
+  removed), as are failures, checks and turning the schedule on or off (`device.backup.schedule`) — never a name,
+  a file or folder name, or the passphrase. Routes: `POST`/`DELETE /api/local/backup/schedule`,
+  `POST /api/local/backup/run` (answers with the file), `POST /api/local/backup/run/done`,
+  `POST /api/local/backup/check`; `PUT /api/local/device` takes `backup_every_days` and `backup_keep`.
+
 ## Where it lives
 
 `.github/workflows/web-app.yml` builds it (`node scripts/build-static-site.js`), checks that it boots with

@@ -4,6 +4,37 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Scheduled backups for SUDS on this device (built for 1.24.0, not yet released)
+
+Built on a feature branch for 1.24.0, which comes no earlier than 2026-10-29 and through the release gate; nothing
+here is in a release yet. The 1.23.1 market evaluation rated device-only use 2.75/5 because its backups were
+manual: a programme on SUDS on this device lost everything if nobody remembered to download a file before the
+browser's storage went.
+
+- Added: **scheduled backups** on SUDS on this device (This device → Keep your records safe → Scheduled backups).
+  The device's manager chooses every day, every 3 days or every week (a device that never chose keeps the weekly
+  reminder, which is also the longest interval) and types a backup passphrase once. The kernel keeps the key
+  derived from it in the vault, sealed under the device key: never the passphrase, never in the database or a
+  backup, dropped by a restore (`local/backup.js` `deriveKey`/`createWithKey`, `local/vault.js` `sealBackupKey`).
+  Each file is an ordinary encrypted version-1 device backup that opens with the passphrase.
+- Added: where the browser has the File System Access API (Chrome, Edge on a computer), **a folder chosen once**
+  receives each due backup by itself — when Home opens after a sign-in, when the page is hidden after a day's
+  work, and hourly while open — keeping the newest 7 (or the number chosen) and removing only older files SUDS
+  named. When the browser withholds the folder after a restart, Home shows one **Back up to “folder” now** button.
+  Where there is no such API (Safari, Firefox, iPhone and iPad), a due backup is one **Download the backup** button
+  on Home, and the card says why.
+- Added: **Last backup** says when and where (*today, to the folder “SUDS backups”*, *downloaded*), with the next
+  due date; a backup counts only once it was written. **Check a backup**, the restore drill, opens the newest
+  backup with its passphrase and checks its database, keys and tables without changing anything; This device
+  shows the last result.
+- Added: audit actions `device.backup.failed`, `device.backup.checked` and `device.backup.schedule`;
+  `device.backup.created` now records where the file went and what made it (no PHI, file or folder name). New
+  device routes `POST`/`DELETE /api/local/backup/schedule`, `POST /api/local/backup/run`,
+  `POST /api/local/backup/run/done` and `POST /api/local/backup/check` (the device administrator only); no
+  migration (settings rows and the vault). Tests: `test/device-backup-schedule.test.js`; `scripts/ui/signup.mjs`
+  drives a folder browser, a browser that must be asked again and one with no folder API; `accessibility.mjs`
+  audits the new dialogs, This device and Home.
+
 ## 1.23.6 — 2026-10-02
 
 A patch of 1.23.5 that ships **with an owner-approved policy exception** (docs/RELEASE.md, *Stabilisation (from
