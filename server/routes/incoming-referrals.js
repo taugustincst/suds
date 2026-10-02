@@ -53,7 +53,8 @@ function update(id, cols) {
 
 module.exports = (r) => {
   const read = [auth.requireAuth, auth.requirePerm('intake:read'), guard];
-  const write = [auth.requireAuth, auth.requirePerm('intake:write'), guard];
+  // Working the queue needs seeing it: a person denied intake:read records nothing into it.
+  const write = [auth.requireAuth, auth.requirePerm('intake:write'), auth.requirePerm('intake:read'), guard];
 
   // The queue, filtered: status (open = new and contacting, the default; closed; all; or one status), assignee (me,
   // none, or an account id), urgency, and q (a surname, matched on its blind index, or the referring organisation).
@@ -174,7 +175,7 @@ module.exports = (r) => {
     if (!client || client.deleted_at) throw badRequest('Validation failed', { fields: { client_id: 'is not a client record' } });
     if (client.merged_into) throw badRequest('That record was merged into another client: choose the one it was merged into', { merged_into: client.merged_into });
     auth.assertClientAccess(ctx, client.id);
-    const asNew = client.created_by === ctx.user.id && Date.parse(client.created_at) >= Date.parse(row.created_at) - 1000
+    const asNew = client.created_by === ctx.user.id && Date.parse(client.created_at) > Date.parse(row.created_at)
       && !db.one(`SELECT 1 x FROM incoming_referrals WHERE client_id=? AND id<>?`, client.id, row.id);
     const at = db.now();
     update(row.id, { status: 'accepted', client_id: client.id, accepted_as: asNew ? 'new' : 'existing', closed_at: at, closed_by: ctx.user.id });
