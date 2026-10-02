@@ -37,6 +37,18 @@ migration.
   axe on both dialogs), `ui-eval.mjs`, `signup.mjs`. Documentation: USER_GUIDE (*Users & permissions*),
   docs/security/IDENTITY.md, LOGGING-AND-AUDIT.md, THREAT-MODEL.md and QUESTIONNAIRE.md.
 
+### Fixed in the security review of administrators changing their own access
+
+- Fixed: two administrators demoting each other at the same moment, each also resetting the other's password, could
+  both pass the lockout guard (the password was hashed between the check and the write) and leave nobody able to
+  manage users; the password is hashed first, and the check and the write now run without a pause between them.
+- Fixed: an administrator deactivating their own account and choosing someone to take their caseload had the move
+  dropped without a word (their sessions ended first); the caseload now moves first, and if that fails nothing is
+  deactivated.
+- Changed: a refused permission change (`user.permission.denied`) is recorded as unsuccessful, as other refusals are.
+- Documented: a per-user deny on an administrator is advisory now that administrators may change their own access;
+  to restrict an administrator, change their role (docs/security/IDENTITY.md).
+
 ## 1.23.5 — 2026-10-02
 
 A patch of 1.23.4 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:

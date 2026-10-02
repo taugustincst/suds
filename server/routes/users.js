@@ -140,7 +140,7 @@ module.exports = (r) => {
   });
 
   r.put('/api/users/:id', auth.requireAuth, auth.requirePerm('users:manage'), async (ctx) => {
-    const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
+    let u = db.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
     if (!u) throw notFound();
     const v = validate(ctx.body, { ...shape, username: { ...shape.username, required: false }, role: { ...shape.role, required: false }, display_name: { ...shape.display_name, required: false } }, { partial: true });
     // Whoever manages users may change anyone's role and account, their own included (the owner's decision after
@@ -148,6 +148,17 @@ module.exports = (r) => {
     // (permissions.js grantProblem; security review of 1.15.3, M2), so whoever gets here is an administrator already.
     // What is refused is a change that would leave no active account able to manage users and permissions,
     // whoever it is made to: a demotion or a deactivation, one's own included (auth.lockoutProblem).
+    // The new password is hashed first, the only wait in this route: from the lockout check to the write nothing yields,
+    // so two administrators demoting each other at once cannot both pass the check (review of the self-edit change).
+    let passwordHash = null;
+    if (v.password) {
+      const errs = auth.passwordPolicy(v.password);
+      if (errs.length) throw badRequest('Password must contain ' + errs.join(', '));
+      passwordHash = await hashPasswordAsync(v.password);
+      // Read again after the wait: another request may have changed the account meanwhile.
+      u = db.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
+      if (!u) throw notFound();
+    }
     const self = u.id === ctx.user.id;
     const roleChange = v.role !== undefined && v.role !== u.role;
     const deactivating = v.is_active === 0 && !!u.is_active;
@@ -165,9 +176,7 @@ module.exports = (r) => {
     const sets = []; const params = [];
     for (const k of ['username', 'display_name', 'email', 'title', 'role', 'is_active', 'hourly_cost', 'oidc_subject', 'requires_cosign', 'supervisor_id', 'default_fund_id']) if (v[k] !== undefined) { sets.push(`${k}=?`); params.push(v[k]); }
     if (v.password) {
-      const errs = auth.passwordPolicy(v.password);
-      if (errs.length) throw badRequest('Password must contain ' + errs.join(', '));
-      sets.push('password_hash=?', 'must_change_password=1', 'password_changed_at=?'); params.push(await hashPasswordAsync(v.password), db.now());
+      sets.push('password_hash=?', 'must_change_password=1', 'password_changed_at=?'); params.push(passwordHash, db.now());
       auth.revokeAllForUser(u.id);
     }
     if (ctx.body.unlock) { sets.push('locked_until=NULL', 'failed_attempts=0'); }
@@ -257,7 +266,7 @@ module.exports = (r) => {
     const self = ctx.params.id === ctx.user.id;
     const selfMark = self ? { self: true } : {};
     const fail = (msg, status = 400, extra) => {
-      audit.log({ user: ctx.user, action: 'user.permission.denied', entity: 'user', entityId: ctx.params.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason: msg, ...selfMark } });
+      audit.log({ user: ctx.user, action: 'user.permission.denied', entity: 'user', entityId: ctx.params.id, ip: ctx.ip, success: false, details: { permission: v.permission, mode: v.mode, reason: msg, ...selfMark } });
       if (status === 404) throw notFound(msg);
       throw badRequest(msg, extra);
     };

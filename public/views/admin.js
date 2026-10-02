@@ -122,6 +122,15 @@ async function openUserForm(values, onDone) {
         const r = await del(`/api/users/${values.id}/passkeys`);
         toast(`Revoked ${r.removed} passkey${r.removed === 1 ? '' : 's'} (fingerprint sign-in) for ${values.display_name}. Any session a passkey opened is signed out; they sign in with their password.`, 'ok');
       }
+      // Deactivating oneself ends one's own sessions, so a caseload chosen to move goes first, while one is still signed
+      // in (review of the self-edit change: it was dropped without a word); if it fails, nothing is deactivated.
+      if (selfDeactivate && moveTo) {
+        try {
+          const r = await post('/api/caseload/transfer', { from_user_id: values.id, to_user_id: moveTo, reassign_open_tasks: true, reason: 'Account deactivated' });
+          toast(`${r.transferred} client${r.transferred === 1 ? '' : 's'}${r.tasks_reassigned ? ` and ${r.tasks_reassigned} to-do${r.tasks_reassigned === 1 ? '' : 's'}` : ''} moved to ${r.to}`, 'ok');
+        } catch (e) { toast(`Your caseload was not moved, so your account was not deactivated: ${e.message}`, 'error'); return; }
+        moveTo = null;
+      }
       const saved = await put(`/api/users/${values.id}`, d); m.close();
       if (selfRole || selfDeactivate) {
         if (selfRole && !selfDeactivate) toast(`Your role is now ${fmt.label(d.role)}`, 'ok');

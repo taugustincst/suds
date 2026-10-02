@@ -49963,9 +49963,17 @@ var require_users2 = __commonJS({
         return { id, temporary_password: v.password ? void 0 : temp, held_to_caseload: held };
       });
       r.put("/api/users/:id", auth3.requireAuth, auth3.requirePerm("users:manage"), async (ctx) => {
-        const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
+        let u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
         if (!u) throw notFound();
         const v = validate(ctx.body, { ...shape, username: { ...shape.username, required: false }, role: { ...shape.role, required: false }, display_name: { ...shape.display_name, required: false } }, { partial: true });
+        let passwordHash = null;
+        if (v.password) {
+          const errs = auth3.passwordPolicy(v.password);
+          if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
+          passwordHash = await hashPasswordAsync(v.password);
+          u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
+          if (!u) throw notFound();
+        }
         const self2 = u.id === ctx.user.id;
         const roleChange = v.role !== void 0 && v.role !== u.role;
         const deactivating = v.is_active === 0 && !!u.is_active;
@@ -49987,10 +49995,8 @@ var require_users2 = __commonJS({
           params.push(v[k]);
         }
         if (v.password) {
-          const errs = auth3.passwordPolicy(v.password);
-          if (errs.length) throw badRequest("Password must contain " + errs.join(", "));
           sets.push("password_hash=?", "must_change_password=1", "password_changed_at=?");
-          params.push(await hashPasswordAsync(v.password), db3.now());
+          params.push(passwordHash, db3.now());
           auth3.revokeAllForUser(u.id);
         }
         if (ctx.body.unlock) {
@@ -50052,7 +50058,7 @@ var require_users2 = __commonJS({
         const self2 = ctx.params.id === ctx.user.id;
         const selfMark = self2 ? { self: true } : {};
         const fail = (msg, status = 400, extra) => {
-          audit3.log({ user: ctx.user, action: "user.permission.denied", entity: "user", entityId: ctx.params.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason: msg, ...selfMark } });
+          audit3.log({ user: ctx.user, action: "user.permission.denied", entity: "user", entityId: ctx.params.id, ip: ctx.ip, success: false, details: { permission: v.permission, mode: v.mode, reason: msg, ...selfMark } });
           if (status === 404) throw notFound(msg);
           throw badRequest(msg, extra);
         };
