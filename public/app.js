@@ -1547,7 +1547,10 @@ export function helpTip(text) {
 // Empty state with one obvious next step
 // The accessibility statement (public/accessibility.html; docs/accessibility/STATEMENT.md): how SUDS meets
 // WCAG 2.1 AA, what does not yet, and how to report a barrier. Linked from every screen's footer.
-export function accessibilityLink() { return h('p', { class: 'small center a11y-link' }, h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility')); }
+// Beside it (1.24.0), the page for organizations evaluating SUDS (public/procurement.html): buyer guides, the
+// security questionnaire, the BAA/QSOA templates and how to reach the maintainer. Neither needs a session.
+export function accessibilityLink() { return h('p', { class: 'small center a11y-link' }, h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility'), ' · ', procurementLink()); }
+export function procurementLink() { return h('a', { href: 'procurement.html', 'data-procurement-link': '1' }, 'Security & procurement'); }
 // `level`: when the empty state is the whole page (Not found, Not available), its title is that page's heading.
 export function emptyState(title, text, action, { level = 0 } = {}) { return h('div', { class: 'empty-state' }, h(level ? `h${level}` : 'div', { class: 'big' }, title), h('p', { class: 'muted' }, text), action || null); }
 
@@ -2117,7 +2120,7 @@ function sidebar(r) {
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, state.org))),
     navMenu(r),
     h('div', { class: 'foot' }, state.local ? h('a', { href: '#/sync', class: 'badge info', style: { display: 'block', textAlign: 'center', marginBottom: '.5rem' } }, window.SUDS_STATIC_HOST ? '📱 On this device · Backup' : '📱 On this device · Sync') : null, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
-      h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#/dashboard?welcome=1', 'data-help-link': '1', title: 'Getting started with SUDS' }, 'Help'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'), h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility')),
+      h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#/dashboard?welcome=1', 'data-help-link': '1', title: 'Getting started with SUDS' }, 'Help'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'), h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility'), procurementLink()),
       h('div', { class: 'small muted', 'data-build-stamp': '1', style: { marginTop: '.4rem' } }, `SUDS ${SUDS_VERSION}`)));
 }
 function mobileBar(r, side) {

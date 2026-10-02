@@ -68,6 +68,8 @@ async function drawHome(r) {
       quiet('/api/admin/settings').catch(() => null),
       quiet('/api/consent-template').catch(() => null),
       can('interventions:write') ? quiet('/api/supplies').catch(() => null) : null,
+      // The hardening checklist (server/hardening.js, 1.24.0): security settings shipped off or unset.
+      quiet('/api/admin/security/hardening').catch(() => null),
     ]) : null,
   };
   // Waited for below, in order; marked handled now so a failure is not reported before its turn comes.
@@ -192,15 +194,16 @@ async function drawHome(r) {
   let setupCard = null;
   if (can('settings:manage') && !state.local) {
     try {
-      const [forms, users, funds, resources, sys, settings, consentTemplate, supplies] = await early.setup;
+      const [forms, users, funds, resources, sys, settings, consentTemplate, supplies, hardening] = await early.setup;
       const steps = [];
-      // Nothing about the deployment was ever going to point an administrator at these. Backups off and no
-      // MFA requirement are the defaults a fresh install runs with until someone finds the Settings tab.
-      if (settings && !Number(settings.backup_schedule_hours || 0)) {
-        steps.push(['Turn on scheduled backups', 'Right now nothing is backing up this database automatically. Set how often, and where a copy should go, under Settings.', 'Set up backups', () => nav('admin?tab=settings')]);
-      }
-      if (settings && settings.policy && !(settings.policy.mfaRequiredRoles || []).length) {
-        steps.push(['Require two-step verification', 'No role has to use an authenticator app yet. Staff who can see client records should, and the county will expect it.', 'Choose roles', () => nav('admin?tab=settings')]);
+      // Nothing about the deployment was ever going to point an administrator at these: backups off, two-step
+      // verification not required or not set up by the privileged accounts, the idle sign-out nobody confirmed, and
+      // the security switches that ship off (1.24.0: server/hardening.js). Each is computed from the configuration in
+      // force, so it leaves this card the moment the setting is saved, and comes back if someone turns it off. The
+      // audit-anchor finding is already a banner above in production, so it is not said twice.
+      const shownAlerts = new Set((((await early.security) || {}).alerts || []).map(a => a.key));
+      for (const it of ((hardening && hardening.items) || []).filter(x => x.recommended && !x.done && !(x.id === 'audit_anchor' && shownAlerts.has('audit_anchor_dir')))) {
+        steps.push([it.title, it.why, it.action.label, () => nav(it.action.href.replace(/^#\//, '')), null, it.id]);
       }
       // Without the keys, every backup is unreadable — so this is the step that matters most, and it goes first.
       if (sys.key_source === 'file' && !sys.keys_backup_at) {
@@ -253,7 +256,7 @@ async function drawHome(r) {
       if (steps.length) {
         setupCard = h('section', { class: 'card mb' },
           h('div', { class: 'card-head' }, h('h2', {}, 'Finish setting up'), badge(`${steps.length} left`, 'warn')),
-          h('div', {}, steps.map(([title, why, label, action, more]) => h('div', { class: 'list-item row', style: { justifyContent: 'space-between', alignItems: 'center', gap: '1rem' } },
+          h('div', {}, steps.map(([title, why, label, action, more, key]) => h('div', { class: 'list-item row', 'data-setup-step': key || null, style: { justifyContent: 'space-between', alignItems: 'center', gap: '1rem' } },
             h('div', {}, h('b', {}, title), h('div', { class: 'small muted' }, why)),
             h('div', { class: 'row' }, typeof action === 'string'
               // A download, not a page: an anchor, so the browser saves the file. Re-render afterwards so the
