@@ -15,6 +15,9 @@
 //      20. "Your first day" in the welcome card, per role (none for an administrator: "Finish setting up");
 //      21. the inline help on the Part 2 consent form and the supply adjustments, and the funder report's own;
 //      22. 200% browser zoom (640×400 CSS px at device scale 2): no sideways scroll and no tab past the edge.
+//   1.24.0 (built, not yet released): time that may already be logged (overlapping, same worker and day) is asked about
+//          in the time form (Merge / Save anyway / Cancel); approved time is not merged into; a device's pushed
+//          duplicate lands, marked on the time list and the approval queue, where it is merged.
 // Pages it changes are checked with axe (WCAG 2.1 A/AA).
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
@@ -40,7 +43,8 @@ async function session(username, password = PW, ctxOpts = { viewport: { width: 1
   const ctx = await browser.newContext(ctxOpts);
   const page = await ctx.newPage();
   page.on('pageerror', e => errors.push(`${username} PAGEERROR ${e.message}`));
-  page.on('console', m => { if (m.type() === 'error' && !/40[0134]/.test(m.text())) errors.push(`${username} CONSOLE ${m.text().slice(0, 200)}`); });
+  // 409: the "possible duplicate" question (1.24.0) is an answer the time form expects.
+  page.on('console', m => { if (m.type() === 'error' && !/40[01349]/.test(m.text())) errors.push(`${username} CONSOLE ${m.text().slice(0, 200)}`); });
   page.on('response', r => { if (r.status() >= 500) errors.push(`${username} HTTP ${r.status()} ${r.url()}`); });
   await signIn(page, username, password);
   const api = (method, path, body) => page.evaluate(async ({ method, path, body }) => { const r = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: body ? JSON.stringify(body) : undefined }); return { status: r.status, data: await r.json().catch(() => null) }; }, { method, path, body });
@@ -137,6 +141,102 @@ try {
     await page.click(`${top} .btn-row button:has-text("Log it anyway")`); await settle(page);
     await until(async () => (await dialogs(page)) === 0);
     eq((await api('GET', `/api/time?source=manual&from=${today}&to=${today}`)).data.rows.length, before + 1, '"Log it anyway" saves it: a warning, not a block');
+  }
+
+  // ------------------------------------------------------------------- 1.24.0: possible duplicate time
+  // Time that overlaps time already logged (same worker, same day) is asked about inside the form: Merge, Save
+  // anyway or Cancel. A device's pushed duplicate lands and is marked for review on the time list and the queue.
+  {
+    const { page, api } = nav;
+    const day = inDays(-3);
+    const dayRows = async () => (await api('GET', `/api/time?from=${day}&to=${day}&limit=200&mine=1`)).data.rows.filter(r => /^ux13 dup/.test(r.description || ''));
+    const openForm = async () => {
+      await closeModals(page);
+      await page.evaluate(async () => (await import('./views/time.js')).openTimeForm(null, {}));
+      await page.waitForSelector('.modal input[name=start_time]'); await settle(page);
+    };
+    const fill = async (start, minutes, text) => {
+      await page.fill('.modal input[name=work_date]', day);
+      await page.fill('.modal input[name=start_time]', start);
+      await page.fill('.modal input[name=minutes]', String(minutes));
+      await page.fill('.modal [name=description]', text);
+    };
+    const prompt = () => page.$(`${top} [data-time-duplicate]`);
+    const answer = async (a) => { await page.click(`${top} [data-time-duplicate] [data-time-dup-answer="${a}"]`); await settle(page); };
+
+    await openForm(); await fill('09:00', 60, 'ux13 dup first');
+    await save(page);
+    await until(async () => (await dialogs(page)) === 0);
+    eq((await dayRows()).length, 1, 'the first entry with a start time saves without a question');
+
+    await openForm(); await fill('09:30', 45, 'ux13 dup second');
+    await save(page);
+    ok(await until(prompt), 'an overlapping entry for the same day asks, inside the form');
+    eq(await dialogs(page), 1, 'the question is part of the time form, not another dialog');
+    ok(/09:00–10:00/.test(await page.textContent(`${top} [data-time-duplicate]`)) && /ux13 dup first/.test(await page.textContent(`${top} [data-time-duplicate]`)), 'it names the entry already logged, with its times and description');
+    ok(/times overlap/.test(await page.textContent(`${top} [data-time-duplicate]`)), 'and says why it matched');
+    eq(await page.evaluate(() => document.activeElement && document.activeElement.classList.contains('time-dup-title')), true, 'focus moves to the question');
+    ok(await page.$(`${top} [data-time-dup-times] input[value=union]:checked`), 'with the combined range offered by default when the times differ');
+    for (const a of ['merge', 'anyway', 'cancel']) ok(await page.$(`${top} [data-time-dup-answer="${a}"]`), `it offers ${a}`);
+    await axe(page, 'time form, possible duplicate question');
+    await answer('cancel');
+    ok(!(await prompt()), 'Cancel puts the question away');
+    eq(await dialogs(page), 1, 'and leaves the form open');
+    eq((await dayRows()).length, 1, 'Cancel saves nothing');
+
+    await save(page);
+    await until(prompt);
+    await answer('anyway');
+    await until(async () => (await dialogs(page)) === 0);
+    eq((await dayRows()).length, 2, 'Save anyway saves it: both entries are kept');
+
+    await openForm(); await fill('09:15', 30, 'ux13 dup third');
+    await save(page);
+    await until(prompt);
+    eq((await page.$$(`${top} [data-time-dup-candidate]`)).length, 2, 'both overlapping entries are named');
+    ok(await page.$(`${top} [data-time-duplicate] fieldset legend:has-text("Merge into")`), 'and the person picks which to merge into');
+    await answer('merge');
+    await until(async () => (await dialogs(page)) === 0);
+    const rows = await dayRows();
+    eq(rows.length, 2, 'Merge leaves one entry, not a third');
+    const first = rows.find(r => /ux13 dup first/.test(r.description));
+    ok(first && /ux13 dup first\nux13 dup third/.test(first.description), 'the entry already there keeps both descriptions', first && first.description);
+    eq(first && first.minutes, 60, 'and 09:15–09:45 inside 09:00–10:00 adds nothing to its 60 minutes');
+
+    // Approved time is never merged into.
+    const ap = await api('POST', '/api/time', { work_date: inDays(-4), start_time: '14:00', minutes: 30, category: 'admin', description: 'ux13 dup approved' });
+    eq(ap.status, 201, 'an entry to approve is logged');
+    eq((await api('POST', `/api/time/${ap.data.id}/submit`, {})).status, 200, 'and submitted');
+    eq((await sup.api('POST', `/api/time/${ap.data.id}/approve`, { decision: 'approved' })).status, 200, 'and approved by the supervisor');
+    await openForm();
+    await page.fill('.modal input[name=work_date]', inDays(-4)); await page.fill('.modal input[name=start_time]', '14:10');
+    await page.fill('.modal input[name=minutes]', '20'); await page.fill('.modal [name=description]', 'ux13 dup after approval');
+    await save(page);
+    await until(prompt);
+    ok(/cannot be merged into/.test(await page.textContent(`${top} [data-time-duplicate]`)), 'the question says the approved entry cannot be merged into');
+    ok(!(await page.$(`${top} [data-time-dup-answer="merge"]`)), 'and offers no Merge');
+    await answer('cancel'); await closeModals(page);
+
+    // A device's push is not blocked: it lands, marked for review.
+    const pushedId = await page.evaluate(() => crypto.randomUUID());
+    const push = await api('POST', '/api/sync/push', { device_now: new Date().toISOString(), tables: { time_entries: [{ id: pushedId, user_id: meNav.id, work_date: day, start_time: '09:40', minutes: 30, category: 'admin', description_enc: 'ux13 dup from the phone', status: 'submitted', updated_at: new Date().toISOString() }] } });
+    eq(push.status, 200, 'a device pushes an overlapping entry');
+    eq((push.data.rejected || []).length, 0, 'it is not refused');
+    ok((push.data.warnings || []).some(w => w.id === pushedId && /duplicate/.test(w.reason)), 'the device is told it may be a duplicate');
+    await nav.go(`time?from=${day}&to=${day}`);
+    ok(await page.$(`[data-time-dup-merge="${pushedId}"]`), 'the time list marks it, with Merge');
+    ok(/Possible duplicate/.test(await page.textContent('.main')), 'and says "Possible duplicate"');
+    await axe(page, 'time list with a possible duplicate');
+    await sup.go('supervision');
+    ok(await sup.page.$(`[data-time-dup-merge="${pushedId}"]`), 'the approval queue shows the pair to the supervisor');
+    await axe(sup.page, 'approval queue with a possible duplicate');
+    await sup.page.click(`[data-time-dup-merge="${pushedId}"]`); await settle(sup.page);
+    await sup.page.click(`${top} .btn-row button:has-text("Merge")`); await settle(sup.page);
+    await until(async () => !(await sup.page.$(`[data-time-dup-merge="${pushedId}"]`)));
+    const after = await dayRows();
+    eq(after.length, 2, 'merged in the queue: the pushed entry is gone');
+    const kept = after.find(r => r.description && r.description.includes('ux13 dup from the phone'));
+    ok(kept, 'its description is on the entry it was merged into');
   }
 
   // --------------------------------------------------------------------------------------- 4 / 16: the bell

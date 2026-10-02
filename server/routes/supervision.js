@@ -98,8 +98,11 @@ module.exports = (r) => {
         ORDER BY n.created_at LIMIT 100`, staleBefore, ...sf.params));
     }
     if (auth.hasPerm(ctx.user, 'time:approve')) {
-      out.time_awaiting_approval = named(ctx, db.all(`SELECT t.id, t.user_id, t.client_id, t.work_date, t.minutes, t.category, t.billable, t.submitted_at, u.display_name AS worker, c.client_code, ${NAME_COLS}, f.name AS funding_source
-        FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id
+      // duplicate_* (1.24.0): the entry this one may duplicate (a device's push marks it: server/rules/time_entries.js),
+      // its hours and status only, so the approver can merge the pair or clear the mark before approving.
+      out.time_awaiting_approval = named(ctx, db.all(`SELECT t.id, t.user_id, t.client_id, t.work_date, t.start_time, t.minutes, t.category, t.billable, t.submitted_at, u.display_name AS worker, c.client_code, ${NAME_COLS}, f.name AS funding_source,
+          dup.id AS duplicate_of, dup.start_time AS duplicate_start_time, dup.minutes AS duplicate_minutes, dup.status AS duplicate_status
+        FROM time_entries t JOIN users u ON u.id=t.user_id LEFT JOIN clients c ON c.id=t.client_id LEFT JOIN funding_sources f ON f.id=t.funding_source_id LEFT JOIN time_entries dup ON dup.id=t.duplicate_of
         WHERE t.status='submitted' AND t.user_id<>? AND ${tf.sql} ORDER BY t.work_date LIMIT 200`, ctx.user.id, ...tf.params));
       out.time_totals = db.one(`SELECT COUNT(*) entries, COALESCE(SUM(minutes),0) minutes FROM time_entries t WHERE t.status='submitted' AND t.user_id<>? AND ${tf.sql}`, ctx.user.id, ...tf.params);
     }

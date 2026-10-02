@@ -3,6 +3,7 @@
 // unsigned notes, so none of this was visible to the person responsible for it.
 import { h, route, get, post, state, toast, table, badge, fmt, can, pageHead, nav, emptyState, modal, form, announce, confirmDialog, pageTabs } from '../app.js';
 import { openNote, signatureDialog, ssoReauthNotice } from './notes.js';
+import { duplicateActions } from './time.js';
 import { openOutcomeForm } from './referrals.js';
 import { approvalProof } from '../passkey.js';
 
@@ -263,12 +264,15 @@ route('supervision', async (r) => {
           { label: 'Worker', key: 'worker' },
           { label: 'Date', render: r => fmt.date(r.work_date) },
           { label: 'Minutes', key: 'minutes', num: true },
-          { label: 'Activity', render: r => fmt.label(r.category, 'TIME_CATEGORIES') },
+          { label: 'Activity', render: r => h('span', {}, fmt.label(r.category, 'TIME_CATEGORIES'),
+            // A device's entry that may duplicate another of the worker's that day (1.24.0): merge or clear it first.
+            r.duplicate_of ? h('div', { 'data-time-dup-mark': '' }, badge('Possible duplicate', 'warn'), h('span', { class: 'small muted' }, ` of ${fmt.mins(r.duplicate_minutes)}${r.duplicate_start_time ? ` from ${r.duplicate_start_time}` : ''}`)) : null) },
           { label: 'Client', render: clientCell },
           { label: 'Fund', render: r => r.funding_source || '—' },
           { label: '', render: r => h('div', { class: 'row' },
             h('button', { class: 'btn sm primary', 'aria-label': `Approve ${what(r)}`, onClick: (e) => { e.stopPropagation(); decide('approved', [r.id]); } }, 'Approve'),
-            h('button', { class: 'btn sm', 'aria-label': `Return ${what(r)}`, onClick: (e) => { e.stopPropagation(); decide('rejected', [r.id]); } }, 'Return')) },
+            h('button', { class: 'btn sm', 'aria-label': `Return ${what(r)}`, onClick: (e) => { e.stopPropagation(); decide('rejected', [r.id]); } }, 'Return'),
+            r.duplicate_of ? duplicateActions({ ...r, status: 'submitted' }, what(r), refresh) : null) },
         ], rows, { rowLabel: (r) => `${r.worker}, ${fmt.date(r.work_date)}, ${r.minutes} minutes` }),
         h('div', { class: 'btn-row' },
           h('button', { class: 'btn primary', onClick: () => decide('approved', [...selected]) }, 'Approve selected'),

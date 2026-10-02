@@ -530,7 +530,14 @@ CREATE TABLE IF NOT EXISTS time_entries (
   approved_at TEXT,
   approval_note_enc TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  -- When the time started (HH:MM, the worker's wall clock; optional, 1.24.0): with minutes, the range the
+  -- duplicate check compares (server/rules/time_entries.js duplicatesOf).
+  start_time TEXT,
+  -- Another entry this one may duplicate, set by the office when a device's push lands one (it cannot answer the
+  -- "possible duplicate" question a form asks), for a supervisor to merge or dismiss (1.24.0). Office-set: a
+  -- device never writes it. No foreign key: the entry it names can be merged away; readers join to check.
+  duplicate_of TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_time_user ON time_entries(user_id, work_date);
 CREATE INDEX IF NOT EXISTS idx_time_status ON time_entries(status, work_date);

@@ -82,11 +82,11 @@ function assertRulingHere(what) {
  * From 1.16.2 (security review of 1.16.1, M1) the entries a visit or call writes as a side effect (its expenditure,
  * its time entry, and their resizing when the visit is edited) are audited as `<entity>.create`/`.update` too, and
  * submitting someone else's time for them (time.submit by a time:all holder: the approver is never the worker)
- * counts as changing it.
+ * counts as changing it. From 1.24.0 merging another entry into it (`<entity>.merge`, POST /api/time/:id/merge) does too.
  */
 function recordedOrChanged(entity, table, id, userId) {
-  return !!require('../db').one(`SELECT 1 FROM audit_log WHERE user_id=? AND entity_id=? AND ((entity=? AND action IN (?,?,?)) OR (entity=? AND action IN ('sync.overwrite','sync.record'))) LIMIT 1`,
-    userId, id, entity, `${entity}.create`, `${entity}.update`, entity === 'time_entry' ? 'time.submit' : `${entity}.create`, table);
+  return !!require('../db').one(`SELECT 1 FROM audit_log WHERE user_id=? AND entity_id=? AND ((entity=? AND action IN (?,?,?,?)) OR (entity=? AND action IN ('sync.overwrite','sync.record'))) LIMIT 1`,
+    userId, id, entity, `${entity}.create`, `${entity}.update`, entity === 'time_entry' ? 'time.submit' : `${entity}.create`, `${entity}.merge`, table);
 }
 /** The push side of recordedOrChanged: an entry a device records under someone else's name is logged as its user's. */
 function logRecordedFor(table, row, c) {
