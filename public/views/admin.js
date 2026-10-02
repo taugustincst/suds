@@ -671,7 +671,10 @@ route('admin', async (r) => {
       // A link to one setting (Home's "Finish setting up", 1.24.0: field=…): its section is open; the field is scrolled
       // to and focused once the page is drawn (after the router has put focus on the heading).
       const want = r.query.get('field');
-      if (want) setTimeout(() => { const el = f.querySelector(`[name="${CSS.escape(want)}"]`); if (!el || !el.isConnected) return; const d = el.closest('details'); if (d) d.open = true; el.scrollIntoView({ block: 'center' }); try { el.focus({ preventScroll: true }); } catch { /* ignore */ } }, 50);
+      // Polled: the rest of the tab (the cards below) is still loading when this runs, and the router focuses the
+      // heading in the same turn it attaches the page, so the first look that finds the field attached comes after it.
+      const el = want ? f.querySelector(`[name="${CSS.escape(want)}"]`) : null;
+      if (el) { let tries = 0; const place = () => { if (!el.isConnected) { if (++tries < 100) setTimeout(place, 50); return; } const d = el.closest('details'); if (d) d.open = true; el.scrollIntoView({ block: 'center' }); try { el.focus({ preventScroll: true }); } catch { /* ignore */ } }; setTimeout(place, 0); }
       return h('div', { class: 'grid cols-2' }, s.programme ? programmeCard(s, refresh) : null, h('div', { class: 'card' }, h('h2', {}, 'Program settings'), f), state.local ? deviceSettingsCard() : null,
         state.local ? null : await allowlistCard(refresh), await instrumentsCard(refresh), await sampleDataCard(refresh),
         h('div', { class: 'card' }, h('h2', {}, 'Server security configuration'), h('p', { class: 'small muted' }, 'Set via environment variables (see .env.example and docs/DEPLOYMENT.md).'),

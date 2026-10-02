@@ -67,6 +67,40 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   const main = await page.textContent('.main');
   ok(/Turn on scheduled backups/.test(main), 'a fresh install is told that nothing is backing it up');
 
+  // 1.24.0: the hardening checklist (server/hardening.js) is part of "Finish setting up": each step says what and
+  // why, links to the exact setting (its section open, the field focused), and leaves the card once the setting is on.
+  for (const id of ['backups', 'session_idle', 'sign_strong', 'mfa_privileged']) ok(await page.$(`[data-setup-step="${id}"]`), `"Finish setting up" lists the hardening step ${id}`);
+  ok(/Require a fingerprint or authenticator code to sign and approve/.test(main) && /password alone/.test(main), 'the signing step says what it is and why');
+  await page.click('[data-setup-step="sign_strong"] button');
+  await until(async () => /section=security&field=sign_strong_required/.test(page.url()));
+  ok(/#\/admin\?tab=settings&section=security&field=sign_strong_required/.test(page.url()), 'its button opens Settings at that setting', page.url());
+  const focused = await until(() => page.evaluate(() => document.activeElement && document.activeElement.getAttribute('name')).then(n => n === 'sign_strong_required' ? n : null), { timeout: 5000 });
+  eq(focused, 'sign_strong_required', 'with the setting itself focused');
+  ok(await page.$eval('select[name=sign_strong_required]', el => el.closest('details').open), 'inside its opened section');
+  eq((await admin.api('PUT', '/api/admin/settings', { sign_strong_required: '1', session_idle_minutes: 15 })).status, 200, 'the settings are turned on');
+  await go(page, 'dashboard');
+  ok(!(await page.$('[data-setup-step="sign_strong"]')) && !(await page.$('[data-setup-step="session_idle"]')), 'and those steps tick themselves off: they leave the card');
+  ok(await page.$('[data-setup-step="backups"]'), 'while the ones not done stay');
+  await go(page, 'admin?tab=security');
+  eq(await page.getAttribute('[data-hardening-item="sign_strong"]', 'data-done'), '1', 'Security status lists the checklist with that item done');
+  eq(await page.getAttribute('[data-hardening-item="backups"]', 'data-done'), '0', 'and backups still to do');
+  ok(await page.$('[data-hardening-item="compliance_check"]'), 'and the weekly host compliance check\'s state');
+  // Back as it was: the rest of this script signs notes with the password.
+  eq((await admin.api('PUT', '/api/admin/settings', { sign_strong_required: '0' })).status, 200, 'the signing setting is put back');
+
+  // The Security & procurement page on the office server: the administrator's published facts, the rest blank.
+  eq((await admin.api('PUT', '/api/admin/settings', { procurement_legal_entity: 'Example Services LLC', procurement_contact_email: 'buyers@example.org', procurement_sla: 'Business-hours support.' })).status, 200, 'an administrator publishes three of the facts');
+  await go(page, 'admin?tab=settings&section=procurement');
+  ok(await page.$eval('input[name=procurement_legal_entity]', el => el.value === 'Example Services LLC' && el.closest('details').open), 'Settings shows them in the opened Security & procurement page section');
+  await page.goto(base + '/procurement.html'); await page.waitForSelector('[data-field="sla"][data-published]', { timeout: 10000 });
+  eq(await page.textContent('[data-field="legal_entity"]'), 'Example Services LLC', 'the page shows the published legal entity');
+  eq(await page.getAttribute('[data-field="contact_email"] a', 'href'), 'mailto:buyers@example.org', 'the email as a mail link');
+  eq(await page.textContent('[data-field="pricing"]'), 'Not yet published by the maintainer', 'and what is not published says so');
+  ok((await page.$$eval('a[data-doc]', as => as.map(a => a.href))).every(h => /^https:\/\/github\.com\/.+\/blob\/main\/docs\//.test(h)), 'its documents link to the repository on the default branch');
+  await page.goto(base + '/');
+  await page.waitForSelector('.layout', { timeout: 10000 });
+  ok(await page.$('.sidebar a[data-procurement-link]'), 'the menu foot, beside Help, links to it');
+
   // an administrator has a way in to clinical notes: break-glass, with a reason, logged
   {
     const clients = (await admin.api('GET', '/api/clients?limit=1')).data.clients;

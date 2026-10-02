@@ -116,11 +116,34 @@ ok(await page.$eval('#signin-note', el => el.classList.contains('hidden')), 'and
 ok(await page.$eval('#static-local', el => !el.classList.contains('hidden') && /Your records stay on this device/.test(el.textContent) && /backup/.test(el.textContent)), 'the "your records stay on this device" section is shown, with the advice to back up');
 eq((await page.$$eval('a', as => as.filter(a => /^Open SUDS$/.test(a.textContent.trim())).map(a => a.getAttribute('href')))).join('|'), './', 'one "Open SUDS" link, which opens this site (the notice no longer repeats it)');
 ok(await page.$eval('#static-url', el => /127\.0\.0\.1/.test(el.textContent) && !/get-app/.test(el.textContent)), 'the address shown is this site\'s, not a server\'s', await page.$eval('#static-url', el => el.textContent));
+// The Security & procurement page (1.24.0), for organizations evaluating SUDS: in the build, linked, with its
+// documents on the repository's default branch (this build ships no docs/), and the maintainer's contact blank
+// until procurement.json says otherwise. It asks no office server for anything.
+ok(await page.$('a[data-procurement-link][href="procurement.html"]'), 'the phone/tablet page links to Security & procurement');
+{
+  const asked = [];
+  const onReq = (r) => { if (/\/api\//.test(r.url())) asked.push(r.url()); };
+  page.on('request', onReq);
+  await page.goto(base + '/procurement.html'); await page.waitForSelector('[data-field="sla"][data-published]', { timeout: 10000 }).catch(() => {});
+  eq(await page.title(), 'Security and procurement — SUDS', 'procurement.html is in the build and opens');
+  ok(await page.evaluate(() => window.SUDS_STATIC_HOST === true), 'it knows it is the static build');
+  const docs = await page.$$eval('a[data-doc]', as => as.map(a => a.href));
+  ok(docs.length >= 10 && docs.every(h => /^https:\/\/github\.com\/[^/]+\/[^/]+\/blob\/main\/docs\/.+\.md$/.test(h)), 'every document link points at the repository\'s docs on its default branch', docs.slice(0, 3));
+  ok(docs.some(h => /PEN-TEST-SCOPE/.test(h)) && docs.some(h => /BAA-QSOA-DRAFT/.test(h)) && docs.some(h => /PILOT-KIT/.test(h)) && docs.some(h => /QUESTIONNAIRE/.test(h)), 'including the pen-test scope, the BAA/QSOA template, the pilot kit and the questionnaire');
+  ok(/Penetration test: not yet commissioned/.test(await page.textContent('main')), 'the pen-test status is stated as it is');
+  const blanks = await page.$$eval('[data-field]', els => els.map(e => [e.dataset.field, e.dataset.published, e.textContent.trim()]));
+  eq(blanks.length, 6, 'six facts in the contact block');
+  ok(blanks.every(([, pub, t]) => pub === '0' && t === 'Not yet published by the maintainer'), 'each says "Not yet published by the maintainer" until the owner fills procurement.json', blanks);
+  ok(!/\bdemo\b|evaluation copy/i.test((await page.textContent('main')).replace(/organizations evaluating/i, '')), 'no demo or evaluation-copy wording about SUDS itself');
+  eq(asked.length, 0, 'the page asked no server API for anything', asked);
+  page.off('request', onReq);
+}
 // every way into that page uses the file name: the login screen's tip, the offline banner, the admin card
 await page.goto(base + '/'); await signInAgain(page, 'staticnav', 'Navigator2026!!');
 await page.evaluate(async () => (await import('./app.js')).logout());
 await page.waitForSelector('input[name=username]', { timeout: 10000 });
 eq(await page.$eval('.login-wrap a[href="get-app.html"]', a => a.textContent), 'Use SUDS on your phone or tablet', 'the login screen links the page by file name');
+ok(await page.$('.login-wrap a[data-procurement-link][href="procurement.html"]'), 'the sign-in page links to Security & procurement');
 await page.fill('input[name=username]', 'staticnav'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.click('button[type=submit]');
 await page.waitForSelector('.layout', { timeout: 10000 });
 ok(await page.$('.layout'), 'signed back in');

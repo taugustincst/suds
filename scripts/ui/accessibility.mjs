@@ -643,7 +643,8 @@ async function officeRun(cfg, roles) {
   await signedOut(`office ${cfg.id} signed out #/login`);
   await page.goto(office + '/#/login?mode=signup'); await page.reload(); await page.waitForSelector('[data-account-mode=signup]'); await settle(page);
   await signedOut(`office ${cfg.id} signed out #/login?mode=signup`);
-  for (const file of only ? [] : ['get-app.html', 'accessibility.html']) {
+  // procurement.html (1.24.0): the Security & procurement page for organizations evaluating SUDS.
+  for (const file of only ? [] : ['get-app.html', 'accessibility.html', 'procurement.html']) {
     await page.goto(`${office}/${file}`); await page.waitForLoadState('networkidle');
     await axe(page, `office ${cfg.id} ${file}`);
     if (cfg.mobile) await reflowCheck(page, `office ${cfg.id} ${file}`, 320);
@@ -652,6 +653,7 @@ async function officeRun(cfg, roles) {
   // The statement is reachable from the sign-in page and, signed in, from the menu (checked below).
   await page.goto(office + '/#/login'); await page.waitForSelector('input[name=username]');
   ok(await page.$('a[data-accessibility-statement][href="accessibility.html"]'), `office ${cfg.id}: the sign-in page links to the accessibility statement`);
+  ok(await page.$('a[data-procurement-link][href="procurement.html"]'), `office ${cfg.id}: and to the Security & procurement page`);
   for (const [user, pw] of roles) {
     // Sign the previous role out the way the app does (the page must drop its signed-in state too).
     if (await page.$('.layout')) { await page.evaluate(async () => (await import('./app.js')).logout()); await page.waitForSelector('input[name=username]'); }
@@ -662,6 +664,7 @@ async function officeRun(cfg, roles) {
     const resourceId = await firstId(page, '/api/resources?limit=1', 'rows');
     const settingsTabs = await page.evaluate(async () => { const a = await import('./app.js'); return a.can('users:manage') || a.can('assignments:manage'); });
     ok(await page.$('.sidebar a[data-accessibility-statement]'), `${tag}: the menu links to the accessibility statement`);
+    ok(await page.$('.sidebar a[data-procurement-link][href="procurement.html"]'), `${tag}: and, beside Help, to Security & procurement`);
     await auditPages(page, office, cfg, tag, { clientId, resourceId, settingsTabs });
     await auditDialogs(page, office, tag, clientId);
   }
@@ -722,7 +725,7 @@ async function deviceRun(cfg) {
   await axe(page, `device ${cfg.id} dialog: use your recovery code (wrong code)`);
   await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal')), { timeout: 5000 });
   await signIn(page, device, 'avery', PW);
-  for (const file of ['get-app.html', 'accessibility.html']) {
+  for (const file of ['get-app.html', 'accessibility.html', 'procurement.html']) {
     await page.goto(`${device}/${file}`); await page.waitForLoadState('networkidle');
     await axe(page, `device ${cfg.id} ${file}`);
     if (cfg.mobile) await reflowCheck(page, `device ${cfg.id} ${file}`, 320);

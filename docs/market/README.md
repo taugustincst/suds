@@ -26,6 +26,18 @@ beside any EHR, CalOMS automation as a county wedge, a cross-organisation referr
 (the forward-deployed, or FDE, model: cheap software, paid implementation). Only the parts marked *built* in
 STRATEGY.md exist; the rest is planned, and the organisational items below remain the critical path.
 
+**In the app (built for 1.24.0, not yet released).** A buyer no longer has to find this folder: every SUDS sign-in
+page links, with no account needed, to **Security & procurement** (`public/procurement.html`), on an office server and
+on SUDS on this device alike. It summarises what SUDS is and the two ways to run it, links the buyer guides,
+[PROCUREMENT.md](PROCUREMENT.md), the [pilot kit](PILOT-KIT.md), the security questionnaire, threat model, data
+inventory and pen-test scope (stated as not yet commissioned), the accessibility conformance report and the
+[BAA/QSOA](templates/BAA-QSOA-DRAFT.md), [DPA](templates/DPA-DRAFT.md) and [SLA](templates/SUPPORT-SLA.md) templates,
+each on the repository's default branch (`repository_url` in `public/procurement.json`). Its contact block — legal
+entity, contact name, email, web page, pricing and service levels — reads *Not yet published by the maintainer*
+until the owner fills it: the six empty keys of `public/procurement.json` for the published SUDS on this device, and
+Settings › Program › Security & procurement page (the `procurement_*` settings) on an office server. **Owner item:**
+fill them; SUDS invents none of them.
+
 ## Index
 
 | Document | For | What it covers |

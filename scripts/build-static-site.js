@@ -60,6 +60,13 @@ function stageShell(outDir) {
   const getAppMarker = '<script src="get-app.js"></script>';
   if (!getApp.includes(getAppMarker)) throw new Error(`build-static-site: expected to find ${JSON.stringify(getAppMarker)} in get-app.html`);
   fs.writeFileSync(getAppPath, getApp.replace(getAppMarker, `<script src="local-boot.js"></script>${getAppMarker}`));
+  // The Security & procurement page (1.24.0) likewise: on this build it reads only procurement.json, and asks no
+  // office server for the administrator's published contact (there is none).
+  const procPath = path.join(outDir, 'procurement.html');
+  const proc = fs.readFileSync(procPath, 'utf8');
+  const procMarker = '<script src="procurement.js"></script>';
+  if (!proc.includes(procMarker)) throw new Error(`build-static-site: expected to find ${JSON.stringify(procMarker)} in procurement.html`);
+  fs.writeFileSync(procPath, proc.replace(procMarker, `<script src="local-boot.js"></script>${procMarker}`));
 
   // Every page gets the office server's Content-Security-Policy as a <meta>, and the frame guard as its first
   // script: a static host sends neither the CSP nor the anti-framing headers the office server does.
