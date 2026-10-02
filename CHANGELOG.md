@@ -11,7 +11,7 @@ A patch of 1.23.5 that ships **with an owner-approved policy exception** (docs/R
 own permissions, their own role and their own account during the feature freeze, which widens what an administrator
 may do, and the stabilisation commitment allows no new or widened permission in a patch. No migration, no permission
 name and no route is added or changed, so the release-policy check passes on its own (`node scripts/release-policy.js
---version 1.23.6 --previous v1.23.5 --previous-ref 382278a` passes: 221 lines added outside docs, tests and generated
+--version 1.23.6 --previous v1.23.5 --previous-ref 382278a` passes: 224 lines added outside docs, tests and generated
 files, of the 1,500 a patch may add); the exception is recorded by hand, here, in *Record: 1.23.6* and in the
 exceptions table, because no check can see it. Upgrading needs nothing beyond replacing the files and restarting. What
 an administrator should know: whoever holds *Manage users & permissions* (`users:manage`, an administrator) may now

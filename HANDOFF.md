@@ -78,7 +78,7 @@ _(Append replies here, newest first.)_
   change all permissions, their own included, and, told that *Stabilisation* allows no new or widened permission in a
   patch and no exception but a security fix, chose to ship it now rather than in 1.24.0. No migration, no permission
   name and no route (`node scripts/release-policy.js --version 1.23.6 --previous v1.23.5 --previous-ref 382278a`
-  passes: 221 lines added outside docs, tests and generated files), so no check sees the exception: it is recorded by
+  passes: 224 lines added outside docs, tests and generated files), so no check sees the exception: it is recorded by
   hand, with no `Security exception:` line (that is for a security fix). An administrator may now change their own
   individual permissions, role and account (deactivating it included) and include themselves in *Apply to existing
   navigators and clinicians*; on SUDS on this device the person who manages it may change their own role. Users &
