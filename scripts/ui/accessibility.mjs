@@ -419,6 +419,7 @@ const DIALOGS = [
   ['New to-do', 'tasks:write', async (p) => p.evaluate(async () => (await import('./views/tasks.js')).openTaskForm(null, {}))],
   ['Log time', 'time:write', async (p) => p.evaluate(async () => (await import('./views/time.js')).openTimeForm(null, {}))],
   ['New referral', 'referrals:write', async (p) => p.evaluate(async () => (await import('./views/referrals.js')).openReferralForm(null, {}))],
+  ['Incoming referral', 'intake:write', async (p) => p.evaluate(async () => (await import('./views/incoming.js')).openIncomingForm(null))],
   ['New resource', 'resources:write', async (p) => p.evaluate(async () => (await import('./views/resources.js')).openResourceForm(null))],
   ['Overdose report', 'overdose:write', async (p) => p.evaluate(async () => (await import('./views/overdose.js')).openOverdoseForm(null, {}))],
   // The referral form's "Record a consent naming <provider>", and the program's usual consent (Home checklist).
