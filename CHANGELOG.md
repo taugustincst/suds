@@ -87,6 +87,61 @@ stabilisation period (not before 2026-10-29). Nothing here is in a release yet.
   script `ui-eval` (Remind author and Remind all set the link, **Open the draft** on the to-do, Home's title and a phone
   row, the fallback after the linked draft is deleted, with axe on each).
 
+### Security & procurement page and hardening checklist (built for 1.24.0, not yet released)
+
+Feature work for 1.24.0, on its own branch (`feature/1.24-procurement-hardening`), from the live persona tests ("zero
+procurement surface in the live app — no BAA, pricing, SLA, or vendor contact anywhere a buyer can find"; "MFA and
+hardening ship unset with nothing prompting the admin to turn them on"). It goes through the release gate after the
+stabilisation period. Nothing here is in a release yet. No migration and no schema change: the new values are
+settings rows.
+
+#### Added: a Security & procurement page for organizations evaluating SUDS
+
+- Added: `procurement.html`, reachable with no account from the sign-in page's footer (beside *Accessibility*), the
+  menu's foot beside *Help* once signed in, the accessibility statement and the phone/tablet page, on an office server
+  and on SUDS on this device alike. It says what SUDS is and the two ways to run it, and links the buyer guides, the
+  procurement guide, the 90-day pilot kit, the security questionnaire, the threat model, the data inventory, identity
+  and access, the security pack, the Accessibility Conformance Report, and the BAA/QSOA, DPA and support-SLA templates.
+  It states the penetration test as it is: **not yet commissioned**, with the scope ready
+  (`docs/security/PEN-TEST-SCOPE.md`), and that SUDS holds no SOC 2, ISO 27001, HITRUST, StateRAMP or FedRAMP
+  attestation.
+- The documents are linked on the SUDS repository's default branch (the static build ships no `docs/`, and the office
+  server does not serve them), from one setting: `repository_url` (and `default_branch`) in `public/procurement.json`.
+- Its **Contact and terms** block (legal entity, contact, email, web page, pricing, support and service levels) is the
+  maintainer's to publish and SUDS never fills it in: each blank line reads *Not yet published by the maintainer*. On an
+  office server an administrator publishes them under **Settings › Program › Security & procurement page** (settings
+  `procurement_legal_entity`, `procurement_contact_name`, `procurement_contact_email`, `procurement_contact_url`,
+  `procurement_pricing`, `procurement_sla`; `settings:manage`, audited as `settings.update`; an email must be one, the
+  web page `https://`, the two texts up to 2,000 characters). The page reads them from the new public route
+  `GET /api/procurement`, which answers without a session and carries exactly those six values (no program contact,
+  organization name, version or configuration). On SUDS on this device the owner fills the same six keys in
+  `public/procurement.json`, which ships with every one blank; an office server's settings win where both are set.
+- Plain HTML with its script in `procurement.js` (the CSP forbids inline scripts); in the service worker's shell, so it
+  opens offline; checked with axe on both builds (`scripts/ui/accessibility.mjs`) and end to end in
+  `scripts/ui/static-site.mjs` and `scripts/ui/review-fixes.mjs`.
+
+#### Added: the hardening checklist on Home and Security status
+
+- Added: `GET /api/admin/security/hardening` (`settings:manage`; office server only, `server/hardening.js`): the
+  security settings an office server ships with off, unset or merely defaulted, each with what it is, why it matters,
+  its state now, and a link to the exact setting. Every item is **computed from the configuration in force**, never
+  ticked by hand: it ticks itself off the moment the setting is saved (or the server restarts with the environment
+  variable set), and comes back if someone turns it off. The items: two-step verification **required for
+  administrators and supervisors and set up by every such account**; scheduled backups, **and an offsite copy**; the
+  monthly restore drill (asked for once backups are scheduled); the automatic sign-out after inactivity, **confirmed**
+  and 15 minutes or less; a fingerprint or authenticator code to sign and approve (`sign_strong_required`, off by
+  default); HTTPS (served by SUDS or a proxy, `TRUST_PROXY`); the audit log's anchors off the database disk
+  (`AUDIT_ANCHOR_DIR`); audit retention of at least six years; the sign-in rate limit; and the **weekly host compliance
+  check** (SUDS Server's `suds-compliance.timer`): its last signed report's result and date, or that none has arrived
+  (asked for on a server SUDS Server installed). The authenticator allow-list and required single sign-on are listed as
+  options, not gaps.
+- Changed: Home's **Finish setting up** (administrators, office server) lists the recommended items not yet done, in
+  place of its two earlier steps for backups and two-step verification; each button opens Settings at that setting,
+  its section open and the field focused (`#/admin?tab=settings&section=security|backups|sso|procurement&field=<key>`).
+  The audit-anchor item is left off Home when the production banner above already says it.
+- Added: **Settings › Security status** starts with a **Hardening checklist** card listing every item, done or not,
+  with which are server settings for IT.
+
 ## 1.23.6 — 2026-10-02
 
 A patch of 1.23.5 that ships **with an owner-approved policy exception** (docs/RELEASE.md, *Stabilisation (from

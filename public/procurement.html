@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Security and procurement — SUDS</title><link rel="icon" href="favicon.svg"><meta name="theme-color" content="#1f5f8b"><meta name="referrer" content="no-referrer"><link rel="stylesheet" href="styles.css"></head>
+<body><a class="skip-link" href="#main">Skip to content</a>
+<main class="login-wrap" id="main"><div class="card statement" style="max-width:760px;width:100%" data-procurement-page>
+<div class="brand"><img src="favicon.svg" alt=""><div><h1 class="brand-title">Security and procurement</h1><small>For organizations evaluating SUDS — SUD Navigator Services Tracker</small></div></div>
+
+<h2>What SUDS is</h2>
+<p>SUDS records the work of harm-reduction, outreach and prevention programmes: outreach contacts, visits, naloxone and supply distribution, referrals and follow-ups, and the reports their funders ask for, with HIPAA and 42 CFR Part 2 privacy controls. Clinical modules are optional. It is not an electronic health record and does not bill. The software is open source under the MIT licence.</p>
+
+<h2>Two ways to run it</h2>
+<p><b>On an office server.</b> A programme (or its IT partner or county) installs SUDS on a server it controls. Staff use it in the browser on a computer, phone or tablet; the office server is the system of record, with scheduled encrypted backups. <b>Sign up</b> asks for an account, which an administrator approves.</p>
+<p><b>SUDS on this device.</b> The same web application, published as a website, for a person or a small team with no office server. Records are kept only in that browser on that device, encrypted, and protected by the backups its users download. Nothing is sent anywhere and it does not sync with an office server.</p>
+<p class="small muted">Either way it is the same production application; the <a data-doc="docs/PLATFORM.md" href="https://github.com/taugustincst/suds/blob/main/docs/PLATFORM.md" rel="noopener">platform policy</a> explains the difference.</p>
+
+<h2>Documents for your review</h2>
+<h3>Buying and piloting</h3>
+<ul>
+<li><a data-doc="docs/market/BUYER-GUIDE-PROGRAM.md" href="https://github.com/taugustincst/suds/blob/main/docs/market/BUYER-GUIDE-PROGRAM.md" rel="noopener">Buyer guide for programme leaders</a></li>
+<li><a data-doc="docs/market/BUYER-GUIDE-IT.md" href="https://github.com/taugustincst/suds/blob/main/docs/market/BUYER-GUIDE-IT.md" rel="noopener">Buyer guide for IT and security reviewers</a></li>
+<li><a data-doc="docs/market/PROCUREMENT.md" href="https://github.com/taugustincst/suds/blob/main/docs/market/PROCUREMENT.md" rel="noopener">Procurement guide for counties and community organizations</a></li>
+<li><a data-doc="docs/market/PILOT-KIT.md" href="https://github.com/taugustincst/suds/blob/main/docs/market/PILOT-KIT.md" rel="noopener">90-day pilot kit</a></li>
+</ul>
+<h3>Security and privacy</h3>
+<ul>
+<li><a data-doc="docs/security/QUESTIONNAIRE.md" href="https://github.com/taugustincst/suds/blob/main/docs/security/QUESTIONNAIRE.md" rel="noopener">Pre-answered security questionnaire</a></li>
+<li><a data-doc="docs/security/THREAT-MODEL.md" href="https://github.com/taugustincst/suds/blob/main/docs/security/THREAT-MODEL.md" rel="noopener">Threat model</a></li>
+<li><a data-doc="docs/security/DATA-INVENTORY.md" href="https://github.com/taugustincst/suds/blob/main/docs/security/DATA-INVENTORY.md" rel="noopener">Data inventory and data flows</a></li>
+<li><a data-doc="docs/security/IDENTITY.md" href="https://github.com/taugustincst/suds/blob/main/docs/security/IDENTITY.md" rel="noopener">Identity and access (sign-in, two-step verification, single sign-on)</a></li>
+<li><a data-doc="docs/security/README.md" href="https://github.com/taugustincst/suds/blob/main/docs/security/README.md" rel="noopener">The whole security pack</a></li>
+</ul>
+<h3>Accessibility</h3>
+<ul>
+<li><a data-doc="docs/accessibility/ACR-WCAG21.md" href="https://github.com/taugustincst/suds/blob/main/docs/accessibility/ACR-WCAG21.md" rel="noopener">Accessibility Conformance Report (VPAT® 2.5, WCAG 2.1)</a></li>
+<li><a href="accessibility.html" data-accessibility-statement>Accessibility statement</a></li>
+</ul>
+<h3>Contract templates</h3>
+<ul>
+<li><a data-doc="docs/market/templates/BAA-QSOA-DRAFT.md" href="https://github.com/taugustincst/suds/blob/main/docs/market/templates/BAA-QSOA-DRAFT.md" rel="noopener">Business Associate Agreement and Part 2 Qualified Service Organization Agreement (draft for counsel)</a></li>
+<li><a data-doc="docs/market/templates/DPA-DRAFT.md" href="https://github.com/taugustincst/suds/blob/main/docs/market/templates/DPA-DRAFT.md" rel="noopener">Data processing agreement (draft for counsel)</a></li>
+<li><a data-doc="docs/market/templates/SUPPORT-SLA.md" href="https://github.com/taugustincst/suds/blob/main/docs/market/templates/SUPPORT-SLA.md" rel="noopener">Support service levels (template, not in force)</a></li>
+</ul>
+<p class="small muted">The templates are starting points for both parties' counsel, not offers or signed agreements.</p>
+
+<h2>Independent testing and attestation</h2>
+<p><b>Penetration test: not yet commissioned.</b> No independent penetration test of SUDS has been done. A <a data-doc="docs/security/PEN-TEST-SCOPE.md" href="https://github.com/taugustincst/suds/blob/main/docs/security/PEN-TEST-SCOPE.md" rel="noopener">test scope</a> is ready, written so a county can commission one against its own staging installation.</p>
+<p>SUDS holds no SOC 2, ISO 27001, HITRUST, StateRAMP or FedRAMP attestation. The threat model and questionnaire are the project's own work, and each answer names the code, test or document that shows it.</p>
+
+<h2 id="contact-heading">Contact and terms</h2>
+<dl class="kv" data-procurement-contact>
+<dt>Legal entity</dt><dd data-field="legal_entity"></dd>
+<dt>Contact</dt><dd data-field="contact_name"></dd>
+<dt>Email</dt><dd data-field="contact_email"></dd>
+<dt>Website</dt><dd data-field="contact_url"></dd>
+<dt>Pricing</dt><dd data-field="pricing" style="white-space:pre-line"></dd>
+<dt>Support and service levels</dt><dd data-field="sla" style="white-space:pre-line"></dd>
+</dl>
+<p class="small muted">Where a line says “Not yet published by the maintainer”, nothing has been published for it yet: ask for it directly. SUDS never fills these in itself.</p>
+<p class="small">Source code, releases and issues: <a data-repo href="https://github.com/taugustincst/suds" rel="noopener">the SUDS repository</a>.</p>
+
+<p class="small muted">Last reviewed 2 October 2026<span id="version"></span>.</p>
+<p><a class="btn primary" href="./">Back to SUDS</a></p>
+</div></main>
+<script src="procurement.js"></script></body></html>

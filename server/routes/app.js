@@ -64,6 +64,9 @@ module.exports = (r) => {
   // and carrying no PHI or configuration detail, so a monitor or a county's IT can call it. It answers 503
   // for anything an operator must act on — including warnings a restart cannot fix — which is why probes use
   // /api/health/live and /api/health/ready above.
+  // The "Security & procurement" page's published facts (public/procurement.html; server/procurement.js): public, so
+  // an organization evaluating SUDS can read them before it has an account. Only the six procurement_* settings.
+  r.get('/api/procurement', () => require('../procurement').publicInfo());
   r.get('/api/health', (ctx) => {
     // Status and warnings are for any monitor. The version, schema number and disk figures describe the
     // installation (what to attack, how much it holds) and go only to an administrator's session or to a
