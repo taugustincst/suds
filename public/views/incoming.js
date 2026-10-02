@@ -9,6 +9,8 @@
 import { h, route, get, post, put, state, form, modal, toast, table, badge, fmt, can, pageHead, nav, filterBar, pagedList, emptyState, kv, confirmDialog } from '../app.js';
 
 export const SOURCE_LABELS = { er_hospital: 'Emergency department or hospital', jail_reentry: 'Jail or re-entry', detox: 'Detox or withdrawal management', justice: 'Probation, parole or court', other_provider: 'Another provider or agency', self: 'Self-referral', family_friend: 'Family or friend', other: 'Other' };
+// The client form's "Who referred them to us" choice for each source (views/clients.js clientFields).
+const TO_CLIENT_SOURCE = { er_hospital: 'emergency_dept', jail_reentry: 'jail', detox: 'treatment_provider', justice: 'court_probation', other_provider: 'treatment_provider', self: 'self', family_friend: 'family', other: 'other' };
 const VIA_LABELS = { phone: 'Phone call', fax: 'Fax', email: 'Email', walk_in: 'Walk-in', ereferral: 'eReferral' };
 const URGENCY_LABELS = { routine: 'Routine', soon: 'Soon (within a few days)', urgent: 'Urgent (today)' };
 const STATUS_LABELS = { new: 'New', contacting: 'Contacting', accepted: 'Accepted', declined: 'Declined', unable_to_reach: 'Unable to reach', referred_elsewhere: 'Referred elsewhere' };
@@ -110,7 +112,7 @@ async function acceptReferral(row, may, refresh) {
         m.close();
         const { openClientForm } = await import('./clients.js');
         const prefill = { first_name: row.first_name || '', last_name: row.last_name || '', dob: row.dob || '', phone: row.phone || '',
-          referral_source: [SOURCE_LABELS[row.source_type], row.referring_org].filter(Boolean).join(' — ').slice(0, 120), referral_date: String(row.received_at || '').slice(0, 10), status: 'active', intake_date: fmt.today() };
+          referral_source: TO_CLIENT_SOURCE[row.source_type] || 'other', referral_date: String(row.received_at || '').slice(0, 10), status: 'active', intake_date: fmt.today() };
         openClientForm(null, (clientId) => link(clientId), { full: true, prefill });
       } }, 'Create a new client from this referral'));
   }

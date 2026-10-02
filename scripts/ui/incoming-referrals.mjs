@@ -93,7 +93,7 @@ try {
   await page.waitForSelector('.modal [name=last_name]');
   eq(await page.inputValue('.modal [name=last_name]'), surname, 'New client is filled in from the referral (surname)');
   eq(await page.inputValue('.modal [name=phone]'), '555-0144', '…and phone');
-  ok(/County Jail Re-entry Unit/.test(await page.inputValue('.modal [name=referral_source]')), '…and who referred them');
+  eq(await page.inputValue('.modal [name=referral_source]'), 'jail', '…and who referred them (Jail)');
   await page.click('.modal button[type=submit]');
   const accepted = await until(() => page.evaluate(() => document.querySelector('[data-accepted-client]')?.dataset.acceptedClient), { timeout: 15000 });
   ok(accepted, 'saving the client accepts the referral and links it', await page.evaluate(() => [...document.querySelectorAll('.modal .err, .modal .banner')].map(x => x.textContent).filter(Boolean)));

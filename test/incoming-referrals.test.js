@@ -194,7 +194,7 @@ test('accept into an existing client found by the duplicate check: only records 
 test('accept into a new client made from the referral\'s details', async () => {
   const id = await make(clin, { first_name: 'Nadia', last_name: 'Brandnewclient', dob: '1990-01-30', phone: '555-0111' });
   // The worker opens New client prefilled from the referral (views/incoming.js), saves it, and the referral is linked.
-  const c = await clin.post('/api/clients', { first_name: 'Nadia', last_name: 'Brandnewclient', dob: '1990-01-30', phone: '555-0111', referral_source: 'Emergency department or hospital — Mercy General ED', status: 'active' });
+  const c = await clin.post('/api/clients', { first_name: 'Nadia', last_name: 'Brandnewclient', dob: '1990-01-30', phone: '555-0111', referral_source: 'emergency_dept', status: 'active' });
   assert.equal(c.status, 201, JSON.stringify(c.data));
   const ok = await clin.post(`/api/incoming-referrals/${id}/accept`, { client_id: c.data.id });
   assert.equal(ok.status, 200, JSON.stringify(ok.data));
