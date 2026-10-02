@@ -71,6 +71,14 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-10-02 — Claude: incoming referrals (built for 1.24.0, branch `feature/1.24-incoming-referrals`, not released)
+
+An intake queue for referrals TO the program (ER/hospital, jail/re-entry, detox, probation/court, other providers,
+self, family): `#/incoming`, Home's "N new referrals", a Supervision card with time to first contact, `intake:read` /
+`intake:write`, migration 70 (`incoming_referrals`, `incoming_referral_attempts`; office-only, never synchronised).
+No send-back to the referrer (that would be a disclosure). The browser suite is **60 scripts** now
+(`incoming-referrals.mjs` added). CHANGELOG *Unreleased* has the details.
+
 ### 2026-10-02 — Claude: 1.23.6 (administrators can change their own permissions, role and account; an owner-approved exception)
 
 - **What shipped.** A patch of 1.23.5 **with an owner-approved policy exception** (docs/RELEASE.md, *Record: 1.23.6*,

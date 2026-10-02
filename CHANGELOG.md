@@ -142,7 +142,7 @@ person or their family). It goes through the release gate after the stabilisatio
   existing client and a new one, caseload limits on linking, retention, the synced device); `test/migrations.test.js`
   (migration 70; fresh and upgraded identical); `test/data-inventory.test.js`, `test/doc-content-currency.test.js`,
   `test/role-expansion.test.js`; the browser script `incoming-referrals` (record one, Home and the queue, an attempt, accept
-  into a new client) and the accessibility audit of the queue, a referral and its form.
+  into a new client; with it the suite is now 60 scripts) and the accessibility audit of the queue, a referral and its form.
 
 ### Security & procurement page and hardening checklist (built for 1.24.0, not yet released)
 
