@@ -20,8 +20,8 @@
 > so its gate passes with no `policy_exception` too; the owner states the exception in its release notes by hand
 > (step 3).
 
-Sixteen versions are on `main` and released (1.23.5 is what GitHub Pages serves until `v1.23.6`'s `Web app` run is
-approved) but **none is tagged**: 1.16.3 and 1.16.4 went out with 1.17.0; 1.16.4 to 1.23.5 were published to GitHub
+Sixteen versions are on `main` and released (1.23.6 is what GitHub Pages serves) but **none is tagged**: 1.16.3 and
+1.16.4 went out with 1.17.0; 1.16.4 to 1.23.6 were published to GitHub
 Pages by a direct push to `gh-pages` at the owner's request, with no tag, no GitHub Release and no approval in the
 `release` environment ([../RELEASE.md](../RELEASE.md), the *Record* entries and the exceptions table). 1.23.1, the
 first release under *Stabilisation*, passed the patch rules with no exception; only its publication went round the
@@ -29,9 +29,9 @@ gate, because the tags were still owed (*Record: 1.23.1*). 1.23.2 passed the pat
 went out the same way for the same reason (*Record: 1.23.2*). 1.23.3 passed the patch rules with no exception too,
 and went out the same way for the same reason (*Record: 1.23.3*). 1.23.4 passed the patch rules with no exception
 too, and went out the same way for the same reason (*Record: 1.23.4*). 1.23.5 passed the patch rules with no
-exception too, and went out the same way for the same reason (*Record: 1.23.5*). 1.23.6 passes the patch rules
-mechanically but ships with an owner-approved exception, recorded by hand because no check sees it (*Record:
-1.23.6*), and waits for its tag to be published by `release.yml`. Once the tags are pushed, no release goes to
+exception too, and went out the same way for the same reason (*Record: 1.23.5*). 1.23.6 passed the patch rules
+mechanically but shipped with an owner-approved exception, recorded by hand because no check sees it, and went out
+the same way as the others, because the tags were still owed (*Record: 1.23.6*). Once the tags are pushed, no release goes to
 `gh-pages` directly again.
 Until the tags exist, everything that measures from "the previous release" measures from `v1.16.2`: the release policy, `scripts/migration-order.js`,
 *Backports* step B, and SUDS Server upgrades, which download `suds-vX.Y.Z.zip` from a GitHub Release that does not
@@ -49,8 +49,8 @@ Prepared on branch `docs/1191-stamp-pass` from `3dc20dc`, 30 September 2026, and
 a zip built from it. 1.23.1 to 1.23.6 are patches, so they have no SBOM commit (they keep `sbom-1.23.0`) and each tag
 goes on its stamp, "Release 1.23.1" (`3bff36f`), "Release 1.23.2" (`a45c716`, its row filled by `9924b6a`), "Release
 1.23.3" (`c02a261`, its row filled by `e86d5b0`), "Release 1.23.4" (`598d08b`, its row filled by `2496ef4`), "Release
-1.23.5" (`382278a`, its row filled by `c326dde`) and "Release 1.23.6", itself. The 1.23.6 row is filled in the same
-way, by a commit after its stamp; until then it holds placeholders, and step 1 finds the commit by its subject.
+1.23.5" (`382278a`, its row filled by `c326dde`) and "Release 1.23.6", itself. The 1.23.6 row was filled in the same
+way, by a commit after its stamp (`57bf2df`); step 1 still finds each by its subject.
 
 ## The sixteen releases
 
@@ -71,7 +71,7 @@ way, by a commit after its stamp; until then it holds placeholders, and step 1 f
 | `v1.23.3` | `c02a261de66277d7b86ccab19dfa0755be9e7db6` ("Release 1.23.3": `git log -1 --format=%H --grep='^Release 1.23.3$' origin/main`) | 2026-10-01 | `9ffa1c319a8562276416957e20aa6c51250ca9e06e2ad2440ca4a4f20be30e28` |
 | `v1.23.4` | `598d08bc250c996a6cb737f2febe12c41e931110` ("Release 1.23.4": `git log -1 --format=%H --grep='^Release 1.23.4$' origin/main`) | 2026-10-01 | `48a312aa4b0c22654e90920c0f236ff0e6a39da0628bd0ade855f835c603387f` |
 | `v1.23.5` | `382278ab2feb27992e222f3330c8c02f5d0aa579` ("Release 1.23.5": `git log -1 --format=%H --grep='^Release 1.23.5$' origin/main`) | 2026-10-02 | `100d8e8d144a5fcf370278d8fcb5a5606fd1b008bcc61da1c25dbb6c2f8b56be` |
-| `v1.23.6` | `<1.23.6 release commit>` ("Release 1.23.6": `git log -1 --format=%H --grep='^Release 1.23.6$' origin/main`) | 2026-10-02 | `<filled after the release>`; rebuild it with the command below |
+| `v1.23.6` | `57bf2df5668a51c2b8614996085feb356a414800` ("Release 1.23.6": `git log -1 --format=%H --grep='^Release 1.23.6$' origin/main`) | 2026-10-02 | `3cdfe0ea70c96b833126e3da96a20a00b5f3358c098f5abf8544da9b9a98a74a` |
 
 **How the checksums were made, and why they can be trusted before the release exists.** The release job builds
 the zip with `git archive --format=zip --prefix="suds-vX.Y.Z/" -o suds-vX.Y.Z.zip <commit>` and hashes it with
