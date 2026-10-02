@@ -1,7 +1,7 @@
 # SUDS go-to-market strategy
 
 **Status: the owner's strategy, written down and assessed, 29 September 2026; its *Built vs planned* table is current to
-1.23.4.** It replaces nothing in the rest of this pack until a row below says it is done. Everything described as
+1.23.5.** It replaces nothing in the rest of this pack until a row below says it is done. Everything described as
 *planned* is not in a released version of SUDS. It was first written at 1.17.0, whose features are **released in
 1.17.0**. Under *Stabilisation* ([docs/RELEASE.md](../RELEASE.md)) the next feature release, 1.24.0, comes no earlier
 than 2026-10-29 and only through the release gate; `test/release-wording.test.js` keeps these lines honest at each
@@ -327,7 +327,7 @@ until counsel and one pilot have looked at it.
 
 ## Built vs planned, exactly
 
-| Capability | State on 1 October 2026 (1.23.4) |
+| Capability | State on 2 October 2026 (1.23.5) |
 | --- | --- |
 | Outreach, anonymous contacts, supplies, funder reporting, settlement report and DHCS/county layouts | **Built** (layouts not checked against current official templates) |
 | Local mode (offline copy, office sync) | **Built**, off by default; the wizard recommends it for harm reduction |
@@ -353,6 +353,7 @@ until counsel and one pilot have looked at it.
 | The fixes the evaluation of 1.23.1 found (Home's to-dos on a phone, follow-up to-do titles, a supervisor's sign reminder per author and client) | **Released in 1.23.2** ([CHANGELOG](../../CHANGELOG.md)); a patch: no migration, no permission, no route |
 | **View in Done** after a to-do is marked done, Home that follows the screen's width, *Finish and sign* reminders only from someone who countersigns notes, and **Open <client>'s notes** from a reminder | **Released in 1.23.3** ([CHANGELOG](../../CHANGELOG.md)); a patch: no migration, no permission, no route |
 | *Finish and sign* reminders that their recipient cannot move to a colleague or another client, Home that keeps the keyboard focus through a re-layout, **View in Done** that shows the to-do just done first, clearer reminder and delete wording, and no tick box on a colleague's to-do you may not mark done | **Released in 1.23.4** ([CHANGELOG](../../CHANGELOG.md)); a patch: no migration, no permission, no route |
+| **Delete call** (and **Delete text**) on a phone, a *Finish and sign* reminder whose **Assigned to** and **Client** are shown fixed to its recipient, To-dos toggles whose state is not shown by colour alone, an audit entry of its own for a reminder closed by signing, a caseload transfer that reports the reminders it cancelled, no **Remind author** for an inactive author, and a question before a sign reminder is ticked done with drafts left | **Released in 1.23.5** ([CHANGELOG](../../CHANGELOG.md)); a patch: no migration, no permission, no route |
 | One-time secure referral links to organisations not on SUDS, with an invitation | **Released in 1.17.0**; off by default; counsel reviews the design before a programme switches it on |
 | A cross-organisation referral network (organisations that join and accept referrals in SUDS) | **Planned**, not scheduled |
 | Inbound FHIR referrals | **Design placeholder** ([docs/integration/FHIR.md](../integration/FHIR.md)) |

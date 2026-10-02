@@ -6,7 +6,7 @@ months of compliance and security work, **C** cut the EHR-adjacent framing and r
 
 **The owner chose B and C together**: commit to the work, and aim it at the workflow SUDS does best —
 outreach, naloxone and supply distribution, and grant reporting for harm-reduction and prevention programmes.
-This page answers each point with its status through 1.23.4, the latest release, and where the evidence is (what
+This page answers each point with its status through 1.23.5, the latest release, and where the evidence is (what
 1.17.0 to 1.23.0 added is also listed in [STRATEGY.md](STRATEGY.md), *Built vs planned, exactly*; 1.20.0 added
 county-entered figures for grantees not on SUDS, the installer fixes from a real install in a container, and the
 county-contract kit; 1.21.0 added screened county publication releases, field devices that hold only a field
@@ -20,7 +20,8 @@ office app go on without signal (contacts that name nobody, counted once), let a
 gave supervisors the referrals still waiting to hear what happened; 1.23.1, a patch released under the
 stabilisation commitments of [RELEASE.md](../RELEASE.md), fixed what the evaluation of 1.23.0 found and checks the
 release policy on every push; 1.23.2, another such patch, fixed what the evaluation of 1.23.1 found; 1.23.3, a third,
-fixed what the retest of 1.23.2 found; 1.23.4, a fourth, fixed what the evaluation of 1.23.3 found). "Addressed in software"
+fixed what the retest of 1.23.2 found; 1.23.4, a fourth, fixed what the evaluation of 1.23.3 found; 1.23.5, a fifth, fixed what the evaluation of 1.23.4
+found). "Addressed in software"
 means the capability exists and is tested; it does not mean an auditor, a regulator or counsel has confirmed it.
 Organisational items that software cannot close are marked **open**.
 

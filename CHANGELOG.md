@@ -4,14 +4,26 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
-### Built for 1.23.5, not yet released
+## 1.23.5 — 2026-10-02
 
-A patch of 1.23.4 under the *Stabilisation* commitments (docs/RELEASE.md): fixes from the market evaluation of 1.23.4,
-tests and documentation, with no migration, no new or widened permission and no new route. Not stamped: the version
-stays 1.23.4 until it is released. What an administrator should know: a *Finish and sign* reminder closed by signing
-now writes a `task.update` of its own (status `done`, cause `signed`, the note's id; `via: sync` from a device), as a
-delete and a transfer already did; `caseload.transfer` counts the reminders it cancelled (`reminders_cancelled`), and
-`POST /api/caseload/transfer` returns that count; the supervision queue's unsigned drafts carry `author_active`.
+A patch of 1.23.4 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
+1.23.5*): fixes from the market evaluation of 1.23.4, tests and documentation, with no migration, no new or widened
+permission and no new route (`node scripts/release-policy.js --version 1.23.5 --previous v1.23.4 --previous-ref
+598d08b` passes: 76 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It passes the
+release policy with no exception. It lets a call or text be deleted on a phone, shows a *Finish and sign* reminder's
+**Assigned to** and **Client** fixed to whoever may not change them, shows the To-dos list's toggles (and the other
+filters and one-of-several choices) as on or off by more than colour, and asks before a sign reminder is ticked done
+while drafts are left. Upgrading needs nothing beyond replacing the files and restarting. What an administrator should
+know: a *Finish and sign* reminder closed because its author signed their last draft on that record now writes a
+`task.update` of its own (status `done`, cause `signed`, the note's id; `via: sync` from a device), as a delete and a
+transfer already did, so signing writes one more audit entry per reminder it closes; the result of **Move a caseload**
+(and of **Move and deactivate**) says how many sign reminders it cancelled: `caseload.transfer` counts them, and
+`POST /api/caseload/transfer` returns the count in a new response field, `reminders_cancelled`; the supervision queue
+no longer offers **Remind author** for a draft whose author's account is inactive (its unsigned drafts carry
+`author_active`); and ticking a *Finish and sign* reminder done while you still have draft notes on its client's
+record now asks first (the office still lets it be marked done).
+
+### Fixed: deleting a call on a phone, a sign reminder's fixed fields, toggle state, and reminders on signing and transfer
 
 - Fixed: on a phone a call or text could not be deleted from **Calls & texts**: a tap on your own opens its edit form,
   which had only Cancel and Save, and **Delete call** was only on the card a computer opens. The edit form now has

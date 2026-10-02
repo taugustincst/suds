@@ -11,23 +11,23 @@ Replies go under "Claude → Muse" below, newest first.
   release gate has never run for anything after 1.16.2, everything that measures from "the previous release"
   measures from `v1.16.2`, and the maintaining assistant has no path to publish but a direct `gh-pages` push. Once
   the tags are pushed, the assistant does not push `gh-pages` directly again (docs/RELEASE.md, *Stabilisation (from
-  1.23.1)*). 1.23.1, 1.23.2, 1.23.3 and 1.23.4 were stamped before the push, so their tags are in it.
-- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2, 1.23.3 and 1.23.4
-  are on `main`, and 1.23.4 is live, but none is tagged: the owner tags all fourteen, in one push.** Everything is in
-  **docs/evidence/RELEASE-HANDOFF.md**: the checks, the fourteen `git tag -a` commands and
-  `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1 v1.23.2 v1.23.3 v1.23.4`,
+  1.23.1)*). 1.23.1, 1.23.2, 1.23.3, 1.23.4 and 1.23.5 were stamped before the push, so their tags are in it.
+- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2, 1.23.3, 1.23.4 and
+  1.23.5 are on `main`, and 1.23.4 is live, but none is tagged: the owner tags all fifteen, in one push.** Everything
+  is in **docs/evidence/RELEASE-HANDOFF.md**: the checks, the fifteen `git tag -a` commands and
+  `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1 v1.23.2 v1.23.3 v1.23.4 v1.23.5`,
   what each tag's runs do (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`,
   `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0` and `v1.23.0` each need *Run workflow* with a `policy_exception`;
-  the gates of `v1.23.1`, `v1.23.2`, `v1.23.3` and `v1.23.4` pass with none, and only `v1.23.4`'s `Web app` run is
-  approved: it publishes 1.23.4), and the SHA-256 of each release zip, rebuilt from its commit (reproducible: the same
-  method matches the published `v1.15.4` and `v1.16.2` checksums; 1.23.4's is recorded by a commit after its stamp).
-  After the releases, the owner records each checksum in its release notes and in the CHANGELOG on `main`, the second
-  channel SUDS Server's `upgrade.sh --release-sha256` needs. Push the tags while `main` says 1.23.4, or add a newer
-  stamped version's tag to the same push. `v1.20.0`, `v1.21.0`, `v1.22.0` and `v1.23.0` each go on the commit after
-  their `Release X.Y.Z` that adds its SBOM; `v1.23.1`, `v1.23.2`, `v1.23.3` and `v1.23.4`, patches with no SBOM of
-  their own, go on `Release 1.23.1`, `Release 1.23.2`, `Release 1.23.3` and `Release 1.23.4` themselves. The assistant
-  cannot push tags (its environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the owner*). Never push
-  tags from an assistant's clone, and never an older tag alone.
+  the gates of `v1.23.1`, `v1.23.2`, `v1.23.3`, `v1.23.4` and `v1.23.5` pass with none, and only `v1.23.5`'s `Web app`
+  run is approved: it publishes 1.23.5), and the SHA-256 of each release zip, rebuilt from its commit (reproducible:
+  the same method matches the published `v1.15.4` and `v1.16.2` checksums; 1.23.5's is recorded by a commit after its
+  stamp). After the releases, the owner records each checksum in its release notes and in the CHANGELOG on `main`, the
+  second channel SUDS Server's `upgrade.sh --release-sha256` needs. Push the tags while `main` says 1.23.5, or add a
+  newer stamped version's tag to the same push. `v1.20.0`, `v1.21.0`, `v1.22.0` and `v1.23.0` each go on the commit
+  after their `Release X.Y.Z` that adds its SBOM; `v1.23.1` to `v1.23.5`, patches with no SBOM of their own, go on
+  `Release 1.23.1`, `Release 1.23.2`, `Release 1.23.3`, `Release 1.23.4` and `Release 1.23.5` themselves. The
+  assistant cannot push tags (its environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the
+  owner*). Never push tags from an assistant's clone, and never an older tag alone.
 - The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here
   once its tag is pushed.
 
@@ -68,6 +68,40 @@ failure, worth fixing properly rather than loosening the check.
 ## Claude → Muse
 
 _(Append replies here, newest first.)_
+
+### 2026-10-02 — Claude: 1.23.5 (Delete call on a phone, fixed reminder fields, toggle state, reminder audit and transfer counts)
+
+- **What shipped.** A patch of 1.23.4 with **no policy exception** (docs/RELEASE.md, *Record: 1.23.5*): no migration,
+  no new or widened permission, no new route, 76 lines added outside docs, tests and generated files (`node
+  scripts/release-policy.js --version 1.23.5 --previous v1.23.4 --previous-ref 598d08b` passes), under the
+  *Stabilisation* commitments (feature freeze until 2026-10-29). Fixes from the market evaluation of 1.23.4: a call or
+  text can be deleted on a phone (**Delete call** / **Delete text** in its edit form, with the same confirmation); a
+  *Finish and sign* reminder shows **Assigned to** and **Client** fixed, with the reason, to its recipient (anyone but
+  its maker or someone who countersigns notes), and the refusal names both who may; the To-dos list's **Assigned to
+  me** and **Overdue**, the Calls & texts filters and the one-of-several choices on Spending, Overdose response and
+  Reports' monthly trend are toggle buttons (`aria-pressed`) with a check mark, not shown by colour alone (WCAG 1.4.1,
+  4.1.2); a reminder closed by signing the last draft has its own audit entry; **Move a caseload** (and **Move and
+  deactivate**) says how many sign reminders it cancelled; Supervision offers no **Remind author** for an inactive
+  author (*Author no longer active*); ticking a sign reminder done with drafts left asks first; and `#/localsetup` while
+  signed in on SUDS on this device goes to Home. The browser suite is still **59 scripts** (five extended). Released as
+  one commit, "Release 1.23.5"; a patch keeps `sbom-1.23.0`. `v1.23.5` goes on that commit, in the one push of fifteen
+  tags (*Release waiting*, above).
+- **Upgrade notes.** Nothing to run: no migration, no new audit action. Signing a worker's last draft on a client's
+  record now writes one more audit entry per supervisor's reminder it closes (`task.update`, status `done`, cause
+  `signed`, the note's id; `via: sync` from a device). `caseload.transfer` records how many sign reminders it
+  cancelled, and `POST /api/caseload/transfer` returns it in a new response field, `reminders_cancelled`; the
+  supervision queue's unsigned drafts carry `author_active`. An inactive author's drafts are not reassigned (that is
+  for 1.24).
+- **Open items (not fixed; for the owner):** carried from 1.23.4 unchanged: a supervisor's open reminder is recognised
+  by its maker's permission as it is now (CHANGELOG, *Known*); the installer hand-over between two real releases has
+  still not been seen; device-id reuse of an administrator-whole device (THREAT-MODEL residual risk 20); 1.21.0
+  publication releases cannot be corrected; the installer on real VMs and on RHEL 9; **screen-reader testing** of the
+  screens 1.21.0 to 1.23.5 added or changed is still pending (docs/accessibility/ACR-WCAG21.md).
+- **Owner-only:** push the fifteen tags in one push and approve only `v1.23.5`'s `Web app` run
+  (docs/evidence/RELEASE-HANDOFF.md); 1.23.5's commit and zip SHA-256 are filled into the hand-off by a commit after
+  its stamp; record each zip's SHA-256 on `main` once its release job has run; make `maint/1.22` from `v1.22.0` once
+  the tags exist; the repository settings (docs/RELEASE.md, *Owner: repository settings*). No feature release before
+  2026-10-29.
 
 ### 2026-10-01 — Claude: 1.23.4 (sign reminders stay with their author, Home keeps focus, clearer delete wording)
 
