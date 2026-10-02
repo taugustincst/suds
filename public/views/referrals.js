@@ -356,6 +356,7 @@ route('referrals', async (r) => {
     // "Referrals we make": this program sending a client on to another provider (outbound). Who referred a
     // client to this program is on the client's intake ("Who referred them to us").
     pageHead('Referrals we make', can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, { onDone: refresh }) }, '+ Make a referral') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv('/api/reports/export/referrals?from=2000-01-01&format=xlsx') }, 'Export to Excel') : null),
+    can('intake:read') ? h('p', { class: 'small' }, 'Referrals to this program from a hospital, jail, court or anyone else are in ', h('a', { href: '#/incoming' }, 'Incoming referrals'), '.') : null,
     filterBar(status === 'open' ? 0 : 1, h('div', { class: 'field' }, h('label', {}, 'Status'), sel)),
     pagedList({ first: data, url: `/api/referrals${qs ? '?' + qs : ''}`, limit: PAGE, render: (rows) => referralTable(rows, { onChange: refresh }), summary: (rows, total) => h('div', { class: 'muted small mb' }, `${total} referrals`) }));
 });

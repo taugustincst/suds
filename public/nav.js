@@ -53,6 +53,9 @@ export const NAV = [
   { name: 'time', hideIn: ['part2_layer'], label: 'My time', ico: '◷', perm: 'time:read', front: 'more', help: 'Your hours by activity. A call adds its time, and a visit does when you tick "Also log this as a time entry"; log meetings, travel and paperwork here.' },
   { sec: 'Connect clients' },
   { name: 'referrals', team: true, label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
+  // Incoming referrals (1.24.0): the intake queue of people referred to the programme. A supervisor's team page; a
+  // front-line worker finds it under More (Home's "New referrals" leads to it), so the phone menu stays short.
+  { name: 'incoming', team: true, front: 'more', label: 'Incoming referrals', ico: '⇠', perm: 'intake:read', help: 'People referred to this program by a hospital, jail, detox, probation or a court, another provider, themselves or their family: try to reach them, then accept them as a client or close the referral.' },
   { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Syringe services, drop-ins, shelters, MAT and treatment programs, legal aid and the other partners you refer people to.' },
   { sec: 'Program' },
   { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', front: 'more', help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },

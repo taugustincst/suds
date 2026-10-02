@@ -1574,6 +1574,8 @@ export function quickActions() {
     can('tasks:write') ? ['☑', 'To-do', async () => (await import('./views/tasks.js')).openTaskForm(null, hereClient())] : null,
     // A referral is as much a part of a field contact as the visit itself; the form asks for the client.
     can('referrals:write') ? ['⇢', 'Make a referral', async () => (await import('./views/referrals.js')).openReferralForm(null, hereClient())] : null,
+    // A referral TO the programme (1.24.0): the intake queue, on a database that keeps it (not a device synced with an office).
+    can('intake:write') && (!state.local || !!window.SUDS_STATIC_HOST) ? ['⇠', 'Incoming referral', async () => (await import('./views/incoming.js')).openIncomingForm(null)] : null,
     can('time:write') ? ['◷', 'Time (meeting, travel, paperwork…)', async () => (await import('./views/time.js')).openTimeForm(null, hereClient())] : null,
     can('clients:write') ? ['👤', 'New client', async () => (await import('./views/clients.js')).openClientForm(null)] : null,
   ].filter(Boolean);

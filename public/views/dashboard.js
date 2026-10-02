@@ -55,6 +55,8 @@ async function drawHome(r) {
     requests: can('users:manage') && !state.local ? quiet('/api/users/access-requests').catch(() => null) : null,
     security: can('settings:manage') && !state.local ? quiet('/api/admin/security/alerts').catch(() => null) : null,
     caseloads: can('assignments:manage') ? quiet('/api/users/caseloads').catch(() => null) : null,
+    // The intake queue (1.24.0): new referrals to the programme, and the open ones assigned to this person.
+    incoming: can('intake:read') && (!state.local || !!window.SUDS_STATIC_HOST) ? quiet('/api/incoming-referrals/summary').catch(() => null) : null,
     supplies: can('supplies:manage') ? import('./supplies.js').then(m => m.supplyHome()) : null,
     // County files due (released in 1.21.0; server/county-schedule.js): for whoever makes the county
     // file, on an office server (SUDS on this device makes none).
@@ -121,6 +123,13 @@ async function drawHome(r) {
   // An administrator switched the programme's Part 2 protections off: shown until it is switched back on.
   if (d.part2_program_off) alerts.push(['danger', `42 CFR Part 2 protections are switched off${d.part2_program_off.since ? ` (since ${fmt.date(d.part2_program_off.since)})` : ''}`, '#/compliance?tab=overview']);
   if (d.complaints_open) alerts.push(['warn', `${d.complaints_open} open privacy complaint${d.complaints_open > 1 ? 's' : ''}`, '#/compliance?tab=complaints']);
+  // Referrals to the programme waiting for someone to try to reach the person (red when one is urgent), and the
+  // open ones assigned to this person.
+  {
+    const inc = await early.incoming;
+    if (inc && inc.new) alerts.push([inc.new_urgent ? 'danger' : 'warn', `${inc.new} new referral${inc.new > 1 ? 's' : ''}${inc.new_urgent ? ` (${inc.new_urgent} urgent)` : ''}`, '#/incoming?status=new']);
+    if (inc && inc.mine) alerts.push(['info', `${inc.mine} incoming referral${inc.mine > 1 ? 's' : ''} assigned to you`, '#/incoming?assigned_to=me']);
+  }
   // Account requests from the sign-in page's Sign up, waiting for an administrator (office server only).
   if (can('users:manage') && !state.local) {
     const reqs = await early.requests;

@@ -11,7 +11,7 @@ import './views/dashboard.js';
 
 const views = {
   clients: ['clients'], client: ['client'], interventions: ['interventions'], calls: ['calls'], time: ['time'],
-  resources: ['resources', 'resource'], referrals: ['referrals'], tasks: ['tasks'], budget: ['budget'], notes: ['notes'],
+  resources: ['resources', 'resource'], referrals: ['referrals'], incoming: ['incoming'], tasks: ['tasks'], budget: ['budget'], notes: ['notes'],
   imports: ['imports'], reports: ['reports'], admin: ['admin'], profile: ['profile'], setup: ['setup'], local: ['sync', 'recovery-code'],
   forms: ['forms'], documents: ['documents'], supervision: ['supervision'], episodes: ['waitlist'],
   overdose: ['overdose'], prevention: ['prevention'], funder: ['funder'], caloms: ['caloms'], supplies: ['supplies', 'ssp'], compliance: ['compliance'], suprt: ['suprt'],

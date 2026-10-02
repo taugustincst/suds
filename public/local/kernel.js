@@ -8444,6 +8444,60 @@ CREATE TABLE IF NOT EXISTS referral_links (
 CREATE INDEX IF NOT EXISTS idx_referral_links_referral ON referral_links(referral_id);
 CREATE INDEX IF NOT EXISTS idx_referral_links_client ON referral_links(client_id);
 
+-- Referrals TO the programme (1.24.0; server/incoming-referrals.js, docs/USER_GUIDE.md "Incoming referrals"): a person an
+-- emergency department, a jail's re-entry team, a detox, probation or a court, another provider, the person themselves
+-- or their family asked the programme to see. Not yet a client: the intake queue works it (new -> contacting -> accepted,
+-- linked to a client, or declined / unable to reach / referred elsewhere). Receiving one is not a disclosure. Everything
+-- that names or describes the person, and the referrer's own contact details, is encrypted; the referring organisation's
+-- name is not (it names a hospital or an agency, never the person). Office server only, never synchronised
+-- (server/sync-tables.js server_only); SUDS on this device keeps its own.
+CREATE TABLE IF NOT EXISTS incoming_referrals (
+  id TEXT PRIMARY KEY,
+  source_type TEXT NOT NULL CHECK (source_type IN ('er_hospital','jail_reentry','detox','justice','other_provider','self','family_friend','other')),
+  referring_org TEXT,                  -- the hospital, jail, court or agency (not PHI: it does not identify the person)
+  referrer_name_enc TEXT,              -- the person who made the referral, and how to reach them
+  referrer_phone_enc TEXT,
+  referrer_email_enc TEXT,
+  received_at TEXT NOT NULL,
+  received_via TEXT NOT NULL CHECK (received_via IN ('phone','fax','email','walk_in','ereferral')),
+  urgency TEXT NOT NULL DEFAULT 'routine' CHECK (urgency IN ('routine','soon','urgent')),
+  reason_enc TEXT,                     -- why they were referred, and what they need
+  first_name_enc TEXT,
+  last_name_enc TEXT,
+  last_name_idx TEXT,                  -- blind index: the queue's search by surname
+  dob_enc TEXT,
+  phone_enc TEXT,
+  notes_enc TEXT,
+  status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','contacting','accepted','declined','unable_to_reach','referred_elsewhere')),
+  assigned_to TEXT REFERENCES users(id),
+  first_contact_at TEXT,               -- the first attempt to reach the person: time to first contact is from received_at
+  client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,   -- accepted: the client record it became
+  accepted_as TEXT CHECK (accepted_as IS NULL OR accepted_as IN ('existing','new')),
+  outcome_reason_enc TEXT,             -- declined: why; referred elsewhere: to whom; unable to reach: what was tried
+  closed_at TEXT,
+  closed_by TEXT REFERENCES users(id),
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (status <> 'accepted' OR accepted_as IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_incoming_referrals_status ON incoming_referrals(status, received_at);
+CREATE INDEX IF NOT EXISTS idx_incoming_referrals_assigned ON incoming_referrals(assigned_to, status);
+CREATE INDEX IF NOT EXISTS idx_incoming_referrals_client ON incoming_referrals(client_id);
+CREATE INDEX IF NOT EXISTS idx_incoming_referrals_name ON incoming_referrals(last_name_idx);
+-- Each attempt to reach the person an incoming referral names: when, how, and what happened. Its note is encrypted.
+CREATE TABLE IF NOT EXISTS incoming_referral_attempts (
+  id TEXT PRIMARY KEY,
+  referral_id TEXT NOT NULL REFERENCES incoming_referrals(id) ON DELETE CASCADE,
+  attempted_at TEXT NOT NULL,
+  method TEXT NOT NULL CHECK (method IN ('phone','text','email','in_person','letter','other')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('reached','left_message','no_answer','wrong_number','other')),
+  notes_enc TEXT,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_incoming_referral_attempts_referral ON incoming_referral_attempts(referral_id, attempted_at);
+
 -- The county view (docs/COUNTY-VIEW.md; server/county.js). Office server only, never synchronised
 -- (server/sync-tables.js server_only).
 -- county_signing_keys: the Ed25519 keys this office server signs its county submission files with. The current one
@@ -11018,11 +11072,14 @@ var require_permissions = __commonJS({
       // ai:draft (1.17.0) sends de-identified session text about a client to the AI provider (docs/AI-COPILOT.md).
       "ai:draft",
       // county:manage decides whose signed figures a county accepts (it registers the keys they are checked with).
-      "county:manage"
+      "county:manage",
+      // intake:read and intake:write (1.24.0) open the names and needs of everyone referred to the programme, client or not.
+      "intake:read",
+      "intake:write"
     ]);
     var COUNTY_PERMS = ["county:view", "county:manage"];
     var EXACT_COUNTS = ["reports:exact", "reports:funder"];
-    var IDENTIFYING = ["clients:read", "clients:write", "export:identified"];
+    var IDENTIFYING = ["clients:read", "clients:write", "export:identified", "intake:read", "intake:write"];
     function grantProblem(role, roleDefaults, permission) {
       const defaults = roleDefaults || [];
       if (PRIVILEGED_PERMISSIONS.includes(permission) && role !== "admin") return `"${permission}" can only be granted to an administrator \u2014 change their role instead`;
@@ -11100,6 +11157,8 @@ var require_permissions = __commonJS({
       ["supplies:receive", "Receive supply deliveries", "Record stock that arrived at a site."],
       ["county:view", "See the county view", "For a county that funds programmes: the signed submissions they send, side by side and summed for a period, and its Excel or CSV file. Exact aggregate figures for authorised county staff, not for publication; never a client. Administrators, supervisors and finance by default."],
       ["county:manage", "Manage county submissions", "Register the programmes whose signed submissions the county accepts (each by its public key), import their files and withdraw one. Administrators by default."],
+      ["intake:read", "See incoming referrals", "The intake queue: every referral to the program from a hospital, jail, detox, probation or court, another provider, the person or their family, with the person's name, contact details and needs, before they are a client. Not limited to a caseload. Navigators, clinicians, supervisors and administrators by default."],
+      ["intake:write", "Work incoming referrals", "Record a referral to the program, log attempts to reach the person, assign it, and accept it (linking or creating the client record) or close it as declined, unable to reach or referred elsewhere. Navigators, clinicians, supervisors and administrators by default."],
       ["ai:draft", "Use the AI documentation copilot", "Ask the AI copilot for a draft (progress note sections, assessment narratives, care plan and CalOMS suggestions) from text they give it, with identifiers replaced before it is sent. Only while an administrator has recorded the agreement with the provider and switched the copilot on. Clinicians, supervisors and navigators by default."]
     ];
     var PERMISSION_CATALOG = DEFS.map(([name, label, description]) => ({
@@ -12920,7 +12979,13 @@ var require_sync_tables = __commonJS({
         "signature_evidence",
         // authenticator_metadata (the authenticator allow-list, docs/FINGERPRINT.md): what the office keeps of the FIDO
         // Metadata Service file its administrator uploaded. Public data about authenticator models; a device has no passkeys.
-        "authenticator_metadata"
+        "authenticator_metadata",
+        // incoming_referrals and incoming_referral_attempts (1.24.0, server/incoming-referrals.js): the intake queue of people
+        // referred to the programme who are not clients yet. It is the office's: a field device never holds the names of
+        // people nobody has met, and a device that syncs with an office refuses the routes (the office keeps the queue);
+        // SUDS on this device, with no office, keeps its own. An accepted referral's client travels as every client does.
+        "incoming_referrals",
+        "incoming_referral_attempts"
       ],
       // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
       // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
@@ -12950,6 +13015,8 @@ var require_sync_tables = __commonJS({
         webauthn_challenges: [],
         signature_evidence: ["evidence_enc"],
         authenticator_metadata: [],
+        incoming_referrals: ["referrer_name_enc", "referrer_phone_enc", "referrer_email_enc", "reason_enc", "first_name_enc", "last_name_enc", "dob_enc", "phone_enc", "notes_enc", "outcome_reason_enc"],
+        incoming_referral_attempts: ["notes_enc"],
         idempotency_keys: ["response_enc"]
       },
       // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
@@ -13055,7 +13122,11 @@ var require_sync_tables = __commonJS({
         ["county_connect_sends", "sent_by"],
         ["passkeys", "user_id"],
         ["signature_evidence", "user_id"],
-        ["webauthn_challenges", "user_id"]
+        ["webauthn_challenges", "user_id"],
+        ["incoming_referrals", "assigned_to"],
+        ["incoming_referrals", "closed_by"],
+        ["incoming_referrals", "created_by"],
+        ["incoming_referral_attempts", "user_id"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -28954,9 +29025,9 @@ var require_retention = __commonJS({
     var db3 = require_db();
     var config2 = require_config();
     var audit3 = require_audit();
-    var DELETE_TABLES = ["care_plan_steps", "care_plan_goals", "problem_history", "problems", "asam_assessments", "outcome_measures", "client_form_files", "client_forms", "disclosures", "court_orders", "part2_notices", "consents", "patient_requests", "referral_links", "referrals", "tasks", "calls", "overdose_events", "intervention_supplies", "interventions", "caloms_records", "suprt_assessments", "episodes", "assignments", "breakglass_events", "client_revisions"];
+    var DELETE_TABLES = ["care_plan_steps", "care_plan_goals", "problem_history", "problems", "asam_assessments", "outcome_measures", "client_form_files", "client_forms", "disclosures", "court_orders", "part2_notices", "consents", "patient_requests", "referral_links", "referrals", "tasks", "calls", "overdose_events", "intervention_supplies", "interventions", "caloms_records", "suprt_assessments", "episodes", "assignments", "breakglass_events", "client_revisions", "incoming_referrals"];
     var UNLINK_TABLES = ["time_entries", "expenditures", "complaints"];
-    var NO_TOMBSTONE = ["breakglass_events", "client_revisions", "referral_links"];
+    var NO_TOMBSTONE = ["breakglass_events", "client_revisions", "referral_links", "incoming_referrals"];
     function retentionYears() {
       const v = Number(db3.getSetting("client_retention_years", ""));
       return Number.isFinite(v) && v > 0 ? v : config2.clientRetentionYears;
@@ -28988,6 +29059,8 @@ var require_retention = __commonJS({
       part2_notices: ["given_at"],
       // A secure referral link the recipient opened or answered is work on the record like the referral itself.
       referral_links: ["created_at", "opened_at", "ack_at"],
+      // An incoming referral accepted into the record: the programme was asked to see the person then.
+      incoming_referrals: ["received_at"],
       time_entries: ["work_date"],
       expenditures: ["spent_at"]
     };
@@ -29037,6 +29110,7 @@ var require_retention = __commonJS({
         const inFiles = db3.all(`SELECT DISTINCT source_ref FROM disclosures WHERE client_id=? AND source='caloms' AND source_ref LIKE 'caloms:%'`, client.id).map((r) => r.source_ref.slice("caloms:".length));
         counts.caloms_files_cleared = inFiles.reduce((n, id) => n + db3.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE id=? AND file_enc IS NOT NULL`, db3.now(), db3.now(), id).changes, 0);
         counts.caloms_files_cleared += db3.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE status='prepared' AND file_enc IS NOT NULL`, db3.now(), db3.now()).changes;
+        counts.incoming_referral_attempts = db3.run(`DELETE FROM incoming_referral_attempts WHERE referral_id IN (SELECT id FROM incoming_referrals WHERE client_id=?)`, client.id).changes;
         for (const t of DELETE_TABLES) {
           const ids = db3.all(`SELECT id FROM ${t} WHERE client_id=?`, client.id).map((r) => r.id);
           counts[t] = ids.length;
@@ -29098,6 +29172,19 @@ var require_retention = __commonJS({
       db3.setSetting("client_retention_ran_at", db3.now());
       return { years, purged, skipped };
     }
+    function purgeExpiredIncomingReferrals(years = retentionYears(), now2 = /* @__PURE__ */ new Date(), { user = { username: "system" } } = {}) {
+      const cutoff = new Date(now2.getTime() - years * 365.25 * 864e5).toISOString();
+      const ids = db3.all(`SELECT id FROM incoming_referrals WHERE client_id IS NULL AND status NOT IN ('new','contacting') AND COALESCE(closed_at, received_at) < ?`, cutoff).map((r) => r.id);
+      if (!ids.length) return 0;
+      db3.transaction(() => {
+        for (const id of ids) {
+          db3.run(`DELETE FROM incoming_referral_attempts WHERE referral_id=?`, id);
+          db3.run(`DELETE FROM incoming_referrals WHERE id=?`, id);
+        }
+      });
+      audit3.log({ user, action: "incoming_referral.purge", entity: "incoming_referral", details: { referrals: ids.length, years } });
+      return ids.length;
+    }
     var CALOMS_FILE_DAYS = 90;
     function clearOldCalomsFiles(days = CALOMS_FILE_DAYS) {
       const cutoff = new Date(Date.now() - days * 864e5).toISOString();
@@ -29123,9 +29210,14 @@ var require_retention = __commonJS({
       } catch (e) {
         console.error(`[suds] retention: could not clear old CalOMS files: ${e.message}`);
       }
+      try {
+        purgeExpiredIncomingReferrals();
+      } catch (e) {
+        console.error(`[suds] retention: could not purge old incoming referrals: ${e.message}`);
+      }
       return purgeExpiredClients();
     }
-    module.exports = { ACTIVITY, NOT_ACTIVITY, retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, runIfDue, DELETE_TABLES, UNLINK_TABLES, CALOMS_FILE_DAYS, clearOldCalomsFiles, clearCommittedImportText };
+    module.exports = { ACTIVITY, NOT_ACTIVITY, retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, purgeExpiredIncomingReferrals, runIfDue, DELETE_TABLES, UNLINK_TABLES, CALOMS_FILE_DAYS, clearOldCalomsFiles, clearCommittedImportText };
   }
 });
 
@@ -42222,6 +42314,328 @@ var require_imports2 = __commonJS({
   }
 });
 
+// server/incoming-referrals.js
+var require_incoming_referrals = __commonJS({
+  "server/incoming-referrals.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
+    var SOURCE_TYPES = ["er_hospital", "jail_reentry", "detox", "justice", "other_provider", "self", "family_friend", "other"];
+    var SOURCE_LABELS = { er_hospital: "Emergency department or hospital", jail_reentry: "Jail or re-entry", detox: "Detox or withdrawal management", justice: "Probation, parole or court", other_provider: "Another provider or agency", self: "Self-referral", family_friend: "Family or friend", other: "Other" };
+    var VIA = ["phone", "fax", "email", "walk_in", "ereferral"];
+    var URGENCY = ["routine", "soon", "urgent"];
+    var STATUSES = ["new", "contacting", "accepted", "declined", "unable_to_reach", "referred_elsewhere"];
+    var OPEN = ["new", "contacting"];
+    var CLOSE_STATUSES = ["declined", "unable_to_reach", "referred_elsewhere"];
+    var ATTEMPT_METHODS = ["phone", "text", "email", "in_person", "letter", "other"];
+    var ATTEMPT_OUTCOMES = ["reached", "left_message", "no_answer", "wrong_number", "other"];
+    var ENC = ["referrer_name", "referrer_phone", "referrer_email", "reason", "first_name", "last_name", "dob", "phone", "notes", "outcome_reason"];
+    var PLAIN = ["source_type", "referring_org", "received_at", "received_via", "urgency"];
+    function shape({ create: create3 = false } = {}) {
+      return {
+        source_type: { type: "string", enum: SOURCE_TYPES, required: create3 },
+        referring_org: { type: "string", maxLen: 200 },
+        referrer_name: { type: "string", maxLen: 200 },
+        referrer_phone: { type: "string", maxLen: 40 },
+        referrer_email: { type: "string", maxLen: 200, pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/ },
+        received_at: { type: "datetime" },
+        received_via: { type: "string", enum: VIA, required: create3 },
+        urgency: { type: "string", enum: URGENCY },
+        reason: { type: "string", maxLen: 4e3 },
+        first_name: { type: "string", maxLen: 100 },
+        last_name: { type: "string", maxLen: 100 },
+        dob: { type: "date" },
+        phone: { type: "string", maxLen: 40 },
+        notes: { type: "string", maxLen: 4e3 },
+        assigned_to: { type: "string", maxLen: 64 }
+      };
+    }
+    function keptHere() {
+      return require_client_revisions().keptHere();
+    }
+    var OFFICE_ONLY = "Incoming referrals are kept at the office. Open the office SUDS to record or work one.";
+    function toColumns(v) {
+      const cols2 = {};
+      for (const k of PLAIN) if (v[k] !== void 0) cols2[k] = v[k];
+      for (const k of ENC) if (v[k] !== void 0) cols2[`${k}_enc`] = v[k] === null || v[k] === "" ? null : encrypt3(String(v[k]));
+      if (v.last_name !== void 0) cols2.last_name_idx = v.last_name ? blindIndex2(v.last_name) : null;
+      if (v.assigned_to !== void 0) cols2.assigned_to = v.assigned_to || null;
+      return cols2;
+    }
+    var dec2 = (x) => {
+      if (!x) return null;
+      try {
+        return decrypt3(x);
+      } catch {
+        return null;
+      }
+    };
+    var userName = (id) => id ? (db3.one(`SELECT display_name FROM users WHERE id=?`, id) || {}).display_name || null : null;
+    function hoursToFirstContact(row) {
+      if (!row.first_contact_at || !row.received_at) return null;
+      const ms = Date.parse(row.first_contact_at) - Date.parse(row.received_at);
+      return Number.isFinite(ms) ? Math.max(0, Math.round(ms / 36e4) / 10) : null;
+    }
+    function present(row) {
+      const out2 = { id: row.id };
+      for (const k of PLAIN) out2[k] = row[k];
+      for (const k of ENC) out2[k] = dec2(row[`${k}_enc`]);
+      out2.display_name = [out2.first_name, out2.last_name].filter(Boolean).join(" ") || "Name not given";
+      out2.source_label = SOURCE_LABELS[row.source_type] || row.source_type;
+      Object.assign(out2, {
+        status: row.status,
+        assigned_to: row.assigned_to,
+        assignee_name: userName(row.assigned_to),
+        first_contact_at: row.first_contact_at,
+        hours_to_first_contact: hoursToFirstContact(row),
+        client_id: row.client_id,
+        client_code: row.client_id ? (db3.one(`SELECT client_code FROM clients WHERE id=?`, row.client_id) || {}).client_code || null : null,
+        accepted_as: row.accepted_as,
+        closed_at: row.closed_at,
+        closed_by: row.closed_by,
+        closed_by_name: userName(row.closed_by),
+        created_by: row.created_by,
+        created_by_name: userName(row.created_by),
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        open: OPEN.includes(row.status)
+      });
+      const a = db3.one(`SELECT COUNT(*) n, MAX(attempted_at) last FROM incoming_referral_attempts WHERE referral_id=?`, row.id);
+      out2.attempts_count = a.n;
+      out2.last_attempt_at = a.last || null;
+      return out2;
+    }
+    function attempts(referralId) {
+      return db3.all(`SELECT a.*, u.display_name AS user_name FROM incoming_referral_attempts a LEFT JOIN users u ON u.id=a.user_id WHERE a.referral_id=? ORDER BY a.attempted_at, a.created_at`, referralId).map((a) => ({ id: a.id, attempted_at: a.attempted_at, method: a.method, outcome: a.outcome, notes: dec2(a.notes_enc), user_id: a.user_id, user_name: a.user_name, created_at: a.created_at }));
+    }
+    function matchDetails(row) {
+      return { first_name: dec2(row.first_name_enc) || void 0, last_name: dec2(row.last_name_enc) || void 0, dob: dec2(row.dob_enc) || void 0, phone: dec2(row.phone_enc) || void 0 };
+    }
+    var median = (xs) => {
+      if (!xs.length) return null;
+      const s = [...xs].sort((a, b) => a - b);
+      const m = Math.floor(s.length / 2);
+      return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2 * 10) / 10;
+    };
+    function summary(user, { days = 90, now: now2 = /* @__PURE__ */ new Date() } = {}) {
+      const n = (sql, ...p) => db3.one(sql, ...p).n;
+      const open3 = `status IN ('new','contacting')`;
+      const since = new Date(now2.getTime() - days * 864e5).toISOString();
+      const recent = db3.all(`SELECT received_at, first_contact_at FROM incoming_referrals WHERE received_at >= ?`, since);
+      const hours = recent.map(hoursToFirstContact).filter((x) => x !== null);
+      const oldest = db3.one(`SELECT MIN(received_at) at FROM incoming_referrals WHERE status='new'`).at || null;
+      return {
+        new: n(`SELECT COUNT(*) n FROM incoming_referrals WHERE status='new'`),
+        contacting: n(`SELECT COUNT(*) n FROM incoming_referrals WHERE status='contacting'`),
+        open: n(`SELECT COUNT(*) n FROM incoming_referrals WHERE ${open3}`),
+        unassigned: n(`SELECT COUNT(*) n FROM incoming_referrals WHERE ${open3} AND assigned_to IS NULL`),
+        urgent: n(`SELECT COUNT(*) n FROM incoming_referrals WHERE ${open3} AND urgency='urgent'`),
+        new_urgent: n(`SELECT COUNT(*) n FROM incoming_referrals WHERE status='new' AND urgency='urgent'`),
+        mine: user ? n(`SELECT COUNT(*) n FROM incoming_referrals WHERE ${open3} AND assigned_to=?`, user.id) : 0,
+        oldest_new_at: oldest,
+        first_contact: { days, received: recent.length, contacted: hours.length, median_hours: median(hours), within_24h: hours.filter((h) => h <= 24).length }
+      };
+    }
+    module.exports = { SOURCE_TYPES, SOURCE_LABELS, VIA, URGENCY, STATUSES, OPEN, CLOSE_STATUSES, ATTEMPT_METHODS, ATTEMPT_OUTCOMES, ENC, PLAIN, shape, keptHere, OFFICE_ONLY, toColumns, present, attempts, matchDetails, hoursToFirstContact, summary, median };
+  }
+});
+
+// server/routes/incoming-referrals.js
+var require_incoming_referrals2 = __commonJS({
+  "server/routes/incoming-referrals.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var IR = require_incoming_referrals();
+    var { validate, paging } = require_validate();
+    var { uuid: uuid2, blindIndex: blindIndex2 } = require_crypto();
+    var { badRequest, notFound, conflict, HttpError: HttpError3 } = require_http();
+    var FUTURE_GRACE_MS = 5 * 6e4;
+    var notFuture = (field, iso) => {
+      if (iso && Date.parse(iso) > Date.now() + FUTURE_GRACE_MS) throw badRequest("Validation failed", { fields: { [field]: "cannot be in the future" } });
+    };
+    function officeOnly(ctx) {
+      if (IR.keptHere()) return;
+      throw new HttpError3(403, IR.OFFICE_ONLY, { officeOnly: true });
+    }
+    var guard = (ctx) => {
+      officeOnly(ctx);
+    };
+    function load(id) {
+      const row = db3.one(`SELECT * FROM incoming_referrals WHERE id=?`, id);
+      if (!row) throw notFound("Referral not found");
+      return row;
+    }
+    function assertOpen(row) {
+      if (!IR.OPEN.includes(row.status)) throw conflict(row.status === "accepted" ? "This referral was accepted and is closed" : "This referral is closed. Reopen it first.");
+    }
+    function checkAssignee(id) {
+      if (!id) return;
+      const u = db3.one(`SELECT id, role, is_active, access_status FROM users WHERE id=?`, id);
+      if (!u || !u.is_active || u.access_status && u.access_status !== "active") throw badRequest("Validation failed", { fields: { assigned_to: "is not an active account" } });
+      if (!auth3.hasPerm({ id: u.id, role: u.role }, "intake:read")) throw badRequest("Validation failed", { fields: { assigned_to: "cannot see incoming referrals" } });
+    }
+    function checkPerson(v, row = null) {
+      const val = (k) => v[k] !== void 0 ? v[k] : row ? IR.matchDetails(row)[k] : void 0;
+      if (!String(val("first_name") || "").trim() && !String(val("last_name") || "").trim() && !String(val("phone") || "").trim()) {
+        throw badRequest("Give the person's name, or a phone number to reach them on", { fields: { last_name: "is required unless a first name or phone is given" } });
+      }
+      if (v.dob && v.dob > (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) throw badRequest("Validation failed", { fields: { dob: "cannot be in the future" } });
+      notFuture("received_at", v.received_at);
+    }
+    function update(id, cols2) {
+      const keys = Object.keys(cols2);
+      db3.run(`UPDATE incoming_referrals SET ${keys.map((k) => `${k}=?`).join(", ")}, updated_at=? WHERE id=?`, ...keys.map((k) => cols2[k]), db3.now(), id);
+    }
+    module.exports = (r) => {
+      const read = [auth3.requireAuth, auth3.requirePerm("intake:read"), guard];
+      const write = [auth3.requireAuth, auth3.requirePerm("intake:write"), auth3.requirePerm("intake:read"), guard];
+      r.get("/api/incoming-referrals", ...read, (ctx) => {
+        const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 500 });
+        const status = ctx.query.get("status") || "open";
+        const assignee = ctx.query.get("assigned_to") || "";
+        const urgency = ctx.query.get("urgency") || "";
+        const q = (ctx.query.get("q") || "").trim();
+        const where = [];
+        const params = [];
+        if (status === "open") where.push(`status IN ('new','contacting')`);
+        else if (status === "closed") where.push(`status NOT IN ('new','contacting')`);
+        else if (status !== "all") {
+          if (!IR.STATUSES.includes(status)) throw badRequest("Unknown status");
+          where.push("status=?");
+          params.push(status);
+        }
+        if (assignee === "me") {
+          where.push("assigned_to=?");
+          params.push(ctx.user.id);
+        } else if (assignee === "none") where.push("assigned_to IS NULL");
+        else if (assignee) {
+          where.push("assigned_to=?");
+          params.push(assignee);
+        }
+        if (urgency) {
+          if (!IR.URGENCY.includes(urgency)) throw badRequest("Unknown urgency");
+          where.push("urgency=?");
+          params.push(urgency);
+        }
+        if (q) {
+          where.push(`(last_name_idx=? OR referring_org LIKE ? ESCAPE '\\')`);
+          params.push(blindIndex2(q), `%${q.replace(/[\\%_]/g, (c) => "\\" + c)}%`);
+        }
+        const w = where.length ? `WHERE ${where.join(" AND ")}` : "";
+        const order = status === "open" || status === "new" || status === "contacting" ? `CASE urgency WHEN 'urgent' THEN 0 WHEN 'soon' THEN 1 ELSE 2 END, received_at` : `COALESCE(closed_at, received_at) DESC`;
+        const rows = db3.all(`SELECT * FROM incoming_referrals ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, limit2, offset);
+        const total = db3.one(`SELECT COUNT(*) n FROM incoming_referrals ${w}`, ...params).n;
+        audit3.log({ user: ctx.user, action: "incoming_referral.list", entity: "incoming_referral", ip: ctx.ip, details: { status, assigned_to: assignee || void 0, urgency: urgency || void 0, q: q ? "[redacted]" : void 0, count: rows.length, offset: offset || void 0 } });
+        return { rows: rows.map(IR.present), total, limit: limit2, offset };
+      });
+      r.get("/api/incoming-referrals/summary", ...read, (ctx) => {
+        const days = Math.min(365, Math.max(7, Number(ctx.query.get("days")) || 90));
+        return IR.summary(ctx.user, { days });
+      });
+      r.post("/api/incoming-referrals", ...write, (ctx) => {
+        const v = validate(ctx.body, IR.shape({ create: true }));
+        checkPerson(v);
+        checkAssignee(v.assigned_to);
+        const id = uuid2();
+        const cols2 = { id, ...IR.toColumns(v), received_at: v.received_at || db3.now(), urgency: v.urgency || "routine", status: "new", created_by: ctx.user.id };
+        const keys = Object.keys(cols2);
+        db3.run(`INSERT INTO incoming_referrals(${keys.join(",")}) VALUES(${keys.map(() => "?").join(",")})`, ...keys.map((k) => cols2[k]));
+        audit3.log({ user: ctx.user, action: "incoming_referral.create", entity: "incoming_referral", entityId: id, ip: ctx.ip, details: { source_type: v.source_type, received_via: v.received_via, urgency: cols2.urgency, fields: Object.keys(v).filter((k) => v[k] !== null && v[k] !== void 0 && k !== "assigned_to"), assigned_to: v.assigned_to || void 0 } });
+        ctx.status = 201;
+        return { id, row: IR.present(load(id)) };
+      });
+      r.get("/api/incoming-referrals/:id", ...read, (ctx) => {
+        const row = load(ctx.params.id);
+        audit3.log({ user: ctx.user, action: "incoming_referral.read", entity: "incoming_referral", entityId: row.id, clientId: row.client_id || void 0, ip: ctx.ip, details: { status: row.status } });
+        return { row: IR.present(row), attempts: IR.attempts(row.id), may: { write: auth3.hasPerm(ctx.user, "intake:write"), link: auth3.hasPerm(ctx.user, "clients:read"), create_client: auth3.hasPerm(ctx.user, "clients:write") } };
+      });
+      r.put("/api/incoming-referrals/:id", ...write, (ctx) => {
+        const row = load(ctx.params.id);
+        assertOpen(row);
+        const v = validate(ctx.body, IR.shape(), { partial: true });
+        if (v.source_type === null || v.received_via === null) throw badRequest("Validation failed", { fields: { [v.source_type === null ? "source_type" : "received_via"]: "required" } });
+        if (v.received_at === null) delete v.received_at;
+        if (v.urgency === null) v.urgency = "routine";
+        checkPerson(v, row);
+        if (v.assigned_to !== void 0) checkAssignee(v.assigned_to);
+        const cols2 = IR.toColumns(v);
+        if (!Object.keys(cols2).length) return { row: IR.present(row) };
+        update(row.id, cols2);
+        const fields = Object.keys(v).filter((k) => k !== "assigned_to");
+        if (fields.length) audit3.log({ user: ctx.user, action: "incoming_referral.update", entity: "incoming_referral", entityId: row.id, ip: ctx.ip, details: { fields } });
+        if (v.assigned_to !== void 0 && (v.assigned_to || null) !== row.assigned_to) audit3.log({ user: ctx.user, action: "incoming_referral.assign", entity: "incoming_referral", entityId: row.id, ip: ctx.ip, details: { assigned_to: v.assigned_to || null, was: row.assigned_to || null } });
+        return { row: IR.present(load(row.id)) };
+      });
+      r.post("/api/incoming-referrals/:id/attempts", ...write, (ctx) => {
+        const row = load(ctx.params.id);
+        assertOpen(row);
+        const v = validate(ctx.body, { attempted_at: { type: "datetime" }, method: { type: "string", enum: IR.ATTEMPT_METHODS, required: true }, outcome: { type: "string", enum: IR.ATTEMPT_OUTCOMES, required: true }, notes: { type: "string", maxLen: 2e3 } });
+        const at = v.attempted_at && /T/.test(v.attempted_at) ? v.attempted_at : v.attempted_at ? new Date(v.attempted_at).toISOString() : db3.now();
+        notFuture("attempted_at", at);
+        if (Date.parse(at) < Date.parse(row.received_at) - FUTURE_GRACE_MS) throw badRequest("Validation failed", { fields: { attempted_at: "is before the referral was received" } });
+        const id = uuid2();
+        db3.transaction(() => {
+          db3.run(`INSERT INTO incoming_referral_attempts(id,referral_id,attempted_at,method,outcome,notes_enc,user_id) VALUES(?,?,?,?,?,?,?)`, id, row.id, at, v.method, v.outcome, v.notes ? require_crypto().encrypt(v.notes) : null, ctx.user.id);
+          const first = !row.first_contact_at || Date.parse(at) < Date.parse(row.first_contact_at) ? at : row.first_contact_at;
+          update(row.id, { first_contact_at: first, status: row.status === "new" ? "contacting" : row.status });
+        });
+        audit3.log({ user: ctx.user, action: "incoming_referral.attempt", entity: "incoming_referral", entityId: row.id, ip: ctx.ip, details: { attempt: id, method: v.method, outcome: v.outcome, first: !row.first_contact_at, status: row.status === "new" ? "contacting" : row.status } });
+        ctx.status = 201;
+        return { id, row: IR.present(load(row.id)), attempts: IR.attempts(row.id) };
+      });
+      r.get("/api/incoming-referrals/:id/matches", ...write, auth3.requirePerm("clients:read"), (ctx) => {
+        const row = load(ctx.params.id);
+        const C = require_clients();
+        if (!require_app2().rateLimit(`duplicate-check:${ctx.user.id}`, C.DUPLICATE_CHECKS, C.DUPLICATE_CHECK_WINDOW_MS)) {
+          audit3.log({ user: ctx.user, action: "client.duplicate_check", ip: ctx.ip, success: false, details: { reason: "rate limited", source: "incoming_referral" } });
+          throw new HttpError3(429, "Too many duplicate checks. Wait a few minutes, or search for the client by name.");
+        }
+        const d = IR.matchDetails(row);
+        const all = C.possibleDuplicates(d);
+        const matches = all.filter((m) => C.mayOpen(ctx.user, m.id));
+        audit3.log({ user: ctx.user, action: "client.duplicate_check", entity: "incoming_referral", entityId: row.id, ip: ctx.ip, details: { source: "incoming_referral", asked: Object.keys(d).filter((k) => d[k]), matches: all.length, hidden: all.length - matches.length, shown: matches.map((m) => m.client_code) } });
+        return { matches };
+      });
+      r.post("/api/incoming-referrals/:id/accept", ...write, auth3.requirePerm("clients:read"), (ctx) => {
+        const row = load(ctx.params.id);
+        assertOpen(row);
+        const v = validate(ctx.body, { client_id: { type: "string", required: true, maxLen: 64 } });
+        const client = db3.one(`SELECT id, client_code, created_at, created_by, deleted_at, merged_into FROM clients WHERE id=?`, v.client_id);
+        if (!client || client.deleted_at) throw badRequest("Validation failed", { fields: { client_id: "is not a client record" } });
+        if (client.merged_into) throw badRequest("That record was merged into another client: choose the one it was merged into", { merged_into: client.merged_into });
+        auth3.assertClientAccess(ctx, client.id);
+        const asNew = client.created_by === ctx.user.id && Date.parse(client.created_at) > Date.parse(row.created_at) && !db3.one(`SELECT 1 x FROM incoming_referrals WHERE client_id=? AND id<>?`, client.id, row.id);
+        const at = db3.now();
+        update(row.id, { status: "accepted", client_id: client.id, accepted_as: asNew ? "new" : "existing", closed_at: at, closed_by: ctx.user.id });
+        audit3.log({ user: ctx.user, action: "incoming_referral.accept", entity: "incoming_referral", entityId: row.id, clientId: client.id, ip: ctx.ip, details: { client_code: client.client_code, accepted_as: asNew ? "new" : "existing", from: row.status } });
+        return { row: IR.present(load(row.id)) };
+      });
+      r.post("/api/incoming-referrals/:id/close", ...write, (ctx) => {
+        const row = load(ctx.params.id);
+        assertOpen(row);
+        const v = validate(ctx.body, { status: { type: "string", enum: IR.CLOSE_STATUSES, required: true }, reason: { type: "string", maxLen: 2e3 } });
+        if (!v.reason && v.status !== "unable_to_reach") throw badRequest("Validation failed", { fields: { reason: v.status === "declined" ? "say why it was declined" : "say where they were referred" } });
+        update(row.id, { status: v.status, outcome_reason_enc: v.reason ? require_crypto().encrypt(v.reason) : null, closed_at: db3.now(), closed_by: ctx.user.id });
+        audit3.log({ user: ctx.user, action: "incoming_referral.close", entity: "incoming_referral", entityId: row.id, ip: ctx.ip, details: { status: v.status, from: row.status, reason_given: !!v.reason } });
+        return { row: IR.present(load(row.id)) };
+      });
+      r.post("/api/incoming-referrals/:id/reopen", ...write, (ctx) => {
+        const row = load(ctx.params.id);
+        if (IR.OPEN.includes(row.status)) throw conflict("This referral is already open");
+        if (row.status === "accepted") throw conflict("This referral was accepted and is closed: carry on in the client's record");
+        const status = row.first_contact_at ? "contacting" : "new";
+        update(row.id, { status, closed_at: null, closed_by: null, outcome_reason_enc: null });
+        audit3.log({ user: ctx.user, action: "incoming_referral.reopen", entity: "incoming_referral", entityId: row.id, ip: ctx.ip, details: { from: row.status, status } });
+        return { row: IR.present(load(row.id)) };
+      });
+    };
+  }
+});
+
 // server/routes/intake.js
 var require_intake = __commonJS({
   "server/routes/intake.js"(exports, module) {
@@ -50728,6 +51142,7 @@ var init_ = __esm({
       "./routes/forms.js": () => require_forms(),
       "./routes/handoff.js": () => require_handoff(),
       "./routes/imports.js": () => require_imports2(),
+      "./routes/incoming-referrals.js": () => require_incoming_referrals2(),
       "./routes/intake.js": () => require_intake(),
       "./routes/interventions.js": () => require_interventions2(),
       "./routes/me.js": () => require_me(),
@@ -50908,6 +51323,7 @@ var require_app2 = __commonJS({
       "resources",
       "referrals",
       "referral-links",
+      "incoming-referrals",
       "tasks",
       "budget",
       "notes",
@@ -51213,7 +51629,9 @@ var require_auth2 = __commonJS({
         "reports:funder",
         "supplies:*",
         "county:view",
-        "county:manage"
+        "county:manage",
+        "intake:read",
+        "intake:write"
       ],
       supervisor: [
         "clients:read",
@@ -51267,7 +51685,9 @@ var require_auth2 = __commonJS({
         "reports:funder",
         "supplies:*",
         "ai:draft",
-        "county:view"
+        "county:view",
+        "intake:read",
+        "intake:write"
       ],
       // Front-line staff hold export:read so the Export buttons on their own screens work; without
       // export:identified every file they can produce is de-identified (Safe Harbor), and caseload-scoped for a
@@ -51305,7 +51725,9 @@ var require_auth2 = __commonJS({
         "agreements:read",
         "supplies:read",
         "supplies:receive",
-        "ai:draft"
+        "ai:draft",
+        "intake:read",
+        "intake:write"
       ],
       navigator: [
         "clients:read",
@@ -51339,7 +51761,9 @@ var require_auth2 = __commonJS({
         "agreements:read",
         "supplies:read",
         "supplies:receive",
-        "ai:draft"
+        "ai:draft",
+        "intake:read",
+        "intake:write"
       ],
       // finance sees money, not people: export:read without export:identified means every export it can run
       // comes out keyed by client_code. Do not add 'export:identified' here — docs/HIPAA.md promises otherwise.
@@ -53389,6 +53813,14 @@ var require_db = __commonJS({
       //     Depends on nothing but tasks; self-contained and idempotent, so it can be renumbered.
       (d) => {
         addColumn(d, "tasks", "note_id", "TEXT");
+      },
+      // 70: incoming referrals (built for 1.24.0; server/incoming-referrals.js, docs/USER_GUIDE.md "Incoming referrals"):
+      //     incoming_referrals (a referral to the programme from a hospital, a jail, a detox, probation, another provider,
+      //     the person or their family, worked in the intake queue) and incoming_referral_attempts (each attempt to reach the
+      //     person), with every index schema.sql declares on them. New tables: nothing to backfill. Office server only
+      //     (never synchronised); SUDS on this device keeps its own. Self-contained and idempotent, so it can be renumbered.
+      (d) => {
+        createTablesFromSchema(d, safeSchema(), ["incoming_referrals", "incoming_referral_attempts"], 70);
       }
     ];
     var PERF_INDEXES_47 = [
@@ -55152,6 +55584,7 @@ var routeLoaders = {
   supervision: () => Promise.resolve().then(() => __toESM(require_supervision())),
   resources: () => Promise.resolve().then(() => __toESM(require_resources3())),
   referrals: () => Promise.resolve().then(() => __toESM(require_referrals())),
+  "incoming-referrals": () => Promise.resolve().then(() => __toESM(require_incoming_referrals2())),
   tasks: () => Promise.resolve().then(() => __toESM(require_tasks2())),
   budget: () => Promise.resolve().then(() => __toESM(require_budget())),
   notes: () => Promise.resolve().then(() => __toESM(require_notes2())),

@@ -307,6 +307,20 @@ route('supervision', async (r) => {
     }
   }
 
+  // ---- incoming referrals (1.24.0): the intake queue in numbers, and time to first contact ----
+  if (can('intake:read') && (!state.local || !!window.SUDS_STATIC_HOST)) {
+    let inc = null; try { inc = await get('/api/incoming-referrals/summary', { quiet: true }); } catch { inc = null; }
+    if (inc) {
+      const { hoursText } = await import('./incoming.js');
+      const fc = inc.first_contact;
+      page.append(h('section', { class: 'card', 'data-supervision-incoming': '1' },
+        h('div', { class: 'card-head' }, h('h2', {}, 'Incoming referrals'), badge(inc.open ? `${inc.open} open` : 'None open', inc.new_urgent ? 'danger' : inc.new ? 'warn' : 'ok')),
+        h('p', {}, `${inc.new} new, nobody has tried to reach them yet${inc.new_urgent ? ` (${inc.new_urgent} urgent)` : ''}; ${inc.contacting} being contacted; ${inc.unassigned} open with nobody assigned.${inc.oldest_new_at ? ` The oldest new one was received ${fmt.dt(inc.oldest_new_at)}.` : ''}`),
+        h('p', { 'data-supervision-first-contact': '1' }, fc.contacted ? `Time to first contact over the last ${fc.days} days: median ${hoursText(fc.median_hours)}; ${fc.within_24h} of ${fc.received} referrals tried within 24 hours, ${fc.received - fc.contacted} not tried yet.` : `No referral received in the last ${fc.days} days has had an attempt to reach the person yet.`),
+        h('p', {}, h('a', { href: '#/incoming' }, 'Open the queue'))));
+    }
+  }
+
   // ---- referrals that never closed the loop ----
   // "Waiting to hear what happened" (1.23.0): only referrals with no outcome at all — the provider was told and has
   // not answered, or the client had an appointment and nobody has said whether it happened (the server leaves out
