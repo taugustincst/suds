@@ -51,3 +51,25 @@ test('made a clinician by the device administrator, the sign-up stays held to it
   assert.deepEqual(await names(), ['Ownersclient', 'Secondsclient'], 'a supervisor sees every client');
   assert.equal(expect(await call('GET', '/api/auth/me'), 200, 'me').user.denied_permissions.length, 0, 'the sign-up denies went with the promotion');
 });
+
+// The owner's decision after 1.23.5: the device administrator may change their own role too. They keep managing
+// the device whatever it is (deviceAdminId), the change applies to the session they make it from at once, and the
+// device always keeps an account that can manage users and permissions (auth.lockoutProblem), as at the office.
+test('the device administrator changes their own role, audited with self: true, but never leaves nobody who manages users', async () => {
+  await signOut(); await signIn('owner', PW);
+  const ownerId = expect(await call('GET', '/api/auth/me'), 200, 'me').user.id;
+  // A navigator device with nobody who manages users yet: becoming an administrator is not refused.
+  expect(await call('PUT', `/api/local/accounts/${ownerId}`, { role: 'admin' }), 200, 'own role to administrator');
+  const me = expect(await call('GET', '/api/auth/me'), 200, 'still signed in').user;
+  assert.equal(me.role, 'admin'); assert.ok(me.permissions.includes('users:manage'), 'at once, in the same session');
+  const a = expect(await call('GET', '/api/admin/audit?action=local.account.role'), 200, 'audit').rows.find(x => x.entity_id === ownerId);
+  assert.equal(a.details.self, true);
+  // The only administrator now: stepping down is refused.
+  const r = await call('PUT', `/api/local/accounts/${ownerId}`, { role: 'navigator' });
+  assert.equal(r.status, 400); assert.match(r.data.error, /no active administrator who can manage users/);
+  // With another administrator, it is allowed, and they still manage the device.
+  expect(await call('PUT', `/api/local/accounts/${secondId}`, { role: 'admin' }), 200, 'second to administrator');
+  expect(await call('PUT', `/api/local/accounts/${ownerId}`, { role: 'supervisor' }), 200, 'own role to supervisor');
+  assert.equal(expect(await call('GET', '/api/local/device'), 200, 'device').device_admin, true, 'still manages the device');
+  expect(await call('PUT', `/api/local/accounts/${ownerId}`, { role: 'admin' }), 200, 'and can take the administrator role back here');
+});

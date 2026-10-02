@@ -20694,8 +20694,9 @@ var require_caseload_default = __commonJS({
         REASON,
         actor && actor.id || null
       );
-      audit3.log({ user: actor, action: "user.permission.deny", entity: "user", entityId: userId, ip, details: { permission: PERMISSION, mode: "deny", cause, reason: REASON, ...from !== void 0 ? { from, to } : {} } });
+      audit3.log({ user: actor, action: "user.permission.deny", entity: "user", entityId: userId, ip, details: { permission: PERMISSION, mode: "deny", cause, reason: REASON, ...from !== void 0 ? { from, to } : {}, ...selfMark(actor, userId) } });
     }
+    var selfMark = (actor, userId) => actor && actor.id && actor.id === userId ? { self: true } : {};
     function holdIfDefault(userId, role, { actor = null, ip = null, cause = "created", from, to } = {}) {
       if (!enabled() || !heldRole(role)) return false;
       if (override(userId)) return false;
@@ -20708,7 +20709,7 @@ var require_caseload_default = __commonJS({
       const o = override(userId);
       if (!o || o.mode !== "deny" || o.reason !== REASON) return null;
       db3.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=? AND mode='deny' AND reason=?`, userId, PERMISSION, REASON);
-      audit3.log({ user: actor, action: "user.permission.revoke", entity: "user", entityId: userId, ip, details: { permission: PERMISSION, mode: "deny", cause: "role_change", reason: REASON, from, to } });
+      audit3.log({ user: actor, action: "user.permission.revoke", entity: "user", entityId: userId, ip, details: { permission: PERMISSION, mode: "deny", cause: "role_change", reason: REASON, from, to, ...selfMark(actor, userId) } });
       return "lifted";
     }
     function candidates() {
@@ -49926,7 +49927,6 @@ var require_users2 = __commonJS({
       r.post("/api/users/caseload-default/apply", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
         const body = ctx.body || {};
         if (!Array.isArray(body.user_ids) || !body.user_ids.length || body.user_ids.length > 5e3 || body.user_ids.some((x) => typeof x !== "string" || x.length > 64)) throw badRequest("user_ids must list the accounts to hold to their caseload, as the confirmation showed them");
-        if (body.user_ids.includes(ctx.user.id)) throw badRequest("You cannot change your own permissions");
         const res = caseloadDefault.applyExisting(body.user_ids, { actor: ctx.user, ip: ctx.ip });
         return { ok: true, changed: res.changed.length, skipped: res.skipped.length };
       });
@@ -49966,7 +49966,16 @@ var require_users2 = __commonJS({
         const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
         if (!u) throw notFound();
         const v = validate(ctx.body, { ...shape, username: { ...shape.username, required: false }, role: { ...shape.role, required: false }, display_name: { ...shape.display_name, required: false } }, { partial: true });
-        if (u.id === ctx.user.id && (v.role !== void 0 && v.role !== u.role || v.is_active === 0)) throw badRequest("You cannot change your own role or deactivate your own account. Ask another administrator.");
+        const self2 = u.id === ctx.user.id;
+        const roleChange = v.role !== void 0 && v.role !== u.role;
+        const deactivating = v.is_active === 0 && !!u.is_active;
+        if (roleChange || deactivating) {
+          const locked = auth3.lockoutProblem({ userId: u.id, role: v.role, active: deactivating ? false : void 0 });
+          if (locked) {
+            audit3.log({ user: ctx.user, action: "user.update.denied", entity: "user", entityId: u.id, ip: ctx.ip, success: false, details: { reason: "lockout", fields: Object.keys(v).filter((k) => k !== "password"), ...self2 ? { self: true } : {} } });
+            throw badRequest(locked, { lockout: true });
+          }
+        }
         if (v.oidc_subject && db3.one(`SELECT 1 FROM users WHERE oidc_subject=? AND id<>?`, v.oidc_subject, u.id)) throw badRequest("That single sign-on identity is already linked to a different account");
         if (v.supervisor_id && !db3.one(`SELECT 1 FROM users WHERE id=? AND id<>? AND role IN ('supervisor','admin')`, v.supervisor_id, u.id)) throw badRequest("The supervisor must be a different supervisor or administrator account");
         if (v.default_fund_id && !db3.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v.default_fund_id)) throw badRequest("The default fund must be an active funding source");
@@ -50008,11 +50017,11 @@ var require_users2 = __commonJS({
           for (const o of db3.all(`SELECT permission, mode, reason FROM user_permission_overrides WHERE user_id=? AND mode='grant'`, u.id)) {
             if (!grantProblem(v.role, auth3.rolePerms(v.role), o.permission)) continue;
             db3.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, u.id, o.permission);
-            audit3.log({ user: ctx.user, action: "user.permission.revoke", entity: "user", entityId: u.id, ip: ctx.ip, details: { permission: o.permission, mode: o.mode, cause: "role_change", from: u.role, to: v.role } });
+            audit3.log({ user: ctx.user, action: "user.permission.revoke", entity: "user", entityId: u.id, ip: ctx.ip, details: { permission: o.permission, mode: o.mode, cause: "role_change", from: u.role, to: v.role, ...self2 ? { self: true } : {} } });
           }
         }
         const caseload = v.role !== void 0 ? caseloadDefault.onRoleChange(u.id, u.role, v.role, { actor: ctx.user, ip: ctx.ip }) : null;
-        audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped2.length, wipe_devices: wipeDevices, passkeys_removed: passkeysRemoved || void 0 } });
+        audit3.log({ user: ctx.user, action: "user.update", entity: "user", entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter((k) => k !== "password"), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped2.length, wipe_devices: wipeDevices, passkeys_removed: passkeysRemoved || void 0, ...roleChange ? { role: { from: u.role, to: v.role } } : {}, ...self2 ? { self: true } : {} } });
         return { ok: true, devices_wiped: wiped2.length, ...caseload ? { caseload_default: caseload } : {} };
       });
       r.get("/api/permissions/catalog", auth3.requireAuth, auth3.requirePerm("users:manage"), () => ({ permissions: PERMISSION_CATALOG }));
@@ -50040,12 +50049,13 @@ var require_users2 = __commonJS({
       const permShape = { permission: { type: "string", required: true, maxLen: 100 }, mode: { type: "string", required: true, maxLen: 10 }, reason: { type: "string", required: true, maxLen: 2e3 } };
       r.post("/api/users/:id/permissions", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
         const v = validate(ctx.body || {}, permShape);
-        const fail = (msg, status = 400) => {
-          audit3.log({ user: ctx.user, action: "user.permission.denied", entity: "user", entityId: ctx.params.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason: msg } });
+        const self2 = ctx.params.id === ctx.user.id;
+        const selfMark = self2 ? { self: true } : {};
+        const fail = (msg, status = 400, extra) => {
+          audit3.log({ user: ctx.user, action: "user.permission.denied", entity: "user", entityId: ctx.params.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason: msg, ...selfMark } });
           if (status === 404) throw notFound(msg);
-          throw badRequest(msg);
+          throw badRequest(msg, extra);
         };
-        if (ctx.params.id === ctx.user.id) return fail("You cannot change your own permissions");
         const target = db3.one(`SELECT id, role FROM users WHERE id=?`, ctx.params.id);
         if (!target) return fail("User not found", 404);
         if (v.mode !== "grant" && v.mode !== "deny") return fail('mode must be "grant" or "deny"');
@@ -50056,6 +50066,8 @@ var require_users2 = __commonJS({
           const no = grantProblem(target.role, auth3.rolePerms(target.role), v.permission);
           if (no) return fail(no);
         }
+        const locked = auth3.lockoutProblem({ userId: target.id, set: { permission: v.permission, mode: v.mode } });
+        if (locked) return fail(locked, 400, { lockout: true });
         db3.run(
           `INSERT INTO user_permission_overrides(user_id, permission, mode, reason, granted_by)
             VALUES(?, ?, ?, ?, ?) ON CONFLICT(user_id, permission) DO UPDATE SET mode=excluded.mode, reason=excluded.reason, granted_by=excluded.granted_by, granted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
@@ -50065,14 +50077,12 @@ var require_users2 = __commonJS({
           v.reason,
           ctx.user.id
         );
-        audit3.log({ user: ctx.user, action: v.mode === "deny" ? "user.permission.deny" : "user.permission.grant", entity: "user", entityId: target.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason_length: v.reason.length, reason_sha256: sha2562(v.reason) } });
-        return { ok: true };
+        audit3.log({ user: ctx.user, action: v.mode === "deny" ? "user.permission.deny" : "user.permission.grant", entity: "user", entityId: target.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason_length: v.reason.length, reason_sha256: sha2562(v.reason), ...selfMark } });
+        return { ok: true, ...self2 ? { self: true } : {} };
       });
       r.delete("/api/users/:id/permissions/:permission", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => {
-        if (ctx.params.id === ctx.user.id) {
-          audit3.log({ user: ctx.user, action: "user.permission.denied", entity: "user", entityId: ctx.params.id, ip: ctx.ip, details: { permission: ctx.params.permission, reason: "self-edit" } });
-          throw badRequest("You cannot change your own permissions");
-        }
+        const self2 = ctx.params.id === ctx.user.id;
+        const selfMark = self2 ? { self: true } : {};
         const target = db3.one(`SELECT id FROM users WHERE id=?`, ctx.params.id);
         if (!target) throw notFound("User not found");
         const row = db3.one(`SELECT permission, mode, reason FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
@@ -50080,9 +50090,14 @@ var require_users2 = __commonJS({
         const reason = ctx.body && typeof ctx.body.reason === "string" ? ctx.body.reason : "";
         const bad = reasonProblem(reason);
         if (bad) throw badRequest(`Say why the override is being revoked: ${bad}`, { fields: { reason: bad } });
+        const locked = auth3.lockoutProblem({ userId: target.id, remove: row.permission });
+        if (locked) {
+          audit3.log({ user: ctx.user, action: "user.permission.denied", entity: "user", entityId: target.id, ip: ctx.ip, details: { permission: row.permission, reason: "lockout", ...selfMark } });
+          throw badRequest(locked, { lockout: true });
+        }
         db3.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
-        audit3.log({ user: ctx.user, action: "user.permission.revoke", entity: "user", entityId: target.id, ip: ctx.ip, details: { permission: row.permission, mode: row.mode, reason_length: String(row.reason || "").length, revoke_reason_length: reason.length, revoke_reason_sha256: sha2562(reason) } });
-        return { ok: true };
+        audit3.log({ user: ctx.user, action: "user.permission.revoke", entity: "user", entityId: target.id, ip: ctx.ip, details: { permission: row.permission, mode: row.mode, reason_length: String(row.reason || "").length, revoke_reason_length: reason.length, revoke_reason_sha256: sha2562(reason), ...selfMark } });
+        return { ok: true, ...self2 ? { self: true } : {} };
       });
       r.get("/api/users/access-requests", auth3.requireAuth, auth3.requirePerm("users:manage"), () => ({ requests: db3.all(`SELECT id,username,display_name,email,access_note AS reason,requested_at FROM users WHERE access_status='pending' ORDER BY requested_at, username`) }));
       function pendingRequest(ctx) {
@@ -50790,27 +50805,56 @@ var require_auth2 = __commonJS({
     function effectivePerms(user) {
       if (!user) return { allow: [], deny: [] };
       if (user._effectivePerms) return user._effectivePerms;
-      const allow = new Set(rolePerms(user.role));
-      const deny = /* @__PURE__ */ new Set();
+      let rows = [];
       if (user.id) {
         try {
-          const rows = db3.all(`SELECT permission, mode FROM user_permission_overrides WHERE user_id=?`, user.id);
-          const defaults = PERMS[user.role] || [];
-          for (const r of rows) {
-            if (!isKnownPermission(r.permission)) continue;
-            if (r.mode === "deny") {
-              allow.delete(r.permission);
-              deny.add(r.permission);
-            } else if (!grantProblem(user.role, defaults, r.permission)) {
-              allow.add(r.permission);
-            }
-          }
+          rows = db3.all(`SELECT permission, mode FROM user_permission_overrides WHERE user_id=?`, user.id);
         } catch (e) {
         }
       }
-      const out2 = { allow: [...allow].sort(), deny: [...deny].sort() };
+      const out2 = permsFrom(user.role, rows);
       user._effectivePerms = out2;
       return out2;
+    }
+    function permsFrom(role, rows) {
+      const allow = new Set(rolePerms(role));
+      const deny = /* @__PURE__ */ new Set();
+      const defaults = PERMS[role] || [];
+      for (const r of rows || []) {
+        if (!isKnownPermission(r.permission)) continue;
+        if (r.mode === "deny") {
+          allow.delete(r.permission);
+          deny.add(r.permission);
+        } else if (!grantProblem(role, defaults, r.permission)) {
+          allow.add(r.permission);
+        }
+      }
+      return { allow: [...allow].sort(), deny: [...deny].sort() };
+    }
+    var LOCKOUT_MESSAGE = "This would leave no active administrator who can manage users. Give another account that access first.";
+    function userManagerIds(change = null) {
+      const out2 = [];
+      for (const u of db3.all(`SELECT id, role FROM users WHERE is_active=1 AND access_status='active'`)) {
+        let person = { id: u.id, role: u.role };
+        if (change && u.id === change.userId) {
+          if (change.active === false) continue;
+          const role = change.role || u.role;
+          let rows = [];
+          try {
+            rows = db3.all(`SELECT permission, mode FROM user_permission_overrides WHERE user_id=?`, u.id);
+          } catch {
+          }
+          if (change.remove) rows = rows.filter((o) => o.permission !== change.remove);
+          if (change.set) rows = [...rows.filter((o) => o.permission !== change.set.permission), change.set];
+          person = { id: u.id, role, _effectivePerms: permsFrom(role, rows) };
+        }
+        if (hasPerm(person, "users:manage")) out2.push(u.id);
+      }
+      return out2;
+    }
+    function lockoutProblem(change) {
+      if (!userManagerIds().length) return null;
+      return userManagerIds(change).length ? null : LOCKOUT_MESSAGE;
     }
     var WIDENED_1_16 = { navigator: ["clients:all", "notes:clinical:read"], clinician: ["clients:all", "budget:read"] };
     function asBefore1_16(user) {
@@ -51358,6 +51402,9 @@ var require_auth2 = __commonJS({
       caseloadRestricted,
       reportRunAllowed,
       submissionRunAllowed,
+      userManagerIds,
+      lockoutProblem,
+      LOCKOUT_MESSAGE,
       createSession,
       passkeyStepOwed,
       markReauth,
@@ -55017,12 +55064,18 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
     const v = validate(ctx.body, { role: { type: "string", required: true, enum: DEVICE_ROLES } });
     const u = deviceAccounts2().find((x) => x.id === ctx.params.id);
     if (!u) throw new import_http2.HttpError(404, "No such account on this device");
-    if (u.id === ctx.user.id) throw new import_http2.HttpError(400, "You cannot change your own role here.");
+    const self2 = u.id === ctx.user.id;
+    const locked2 = u.role !== v.role ? import_auth2.default.lockoutProblem({ userId: u.id, role: v.role }) : null;
+    if (locked2) {
+      import_audit2.default.log({ user: ctx.user, action: "local.account.role.denied", entity: "user", entityId: u.id, success: false, details: { from: u.role, to: v.role, reason: "lockout", ...self2 ? { self: true } : {} } });
+      throw new import_http2.HttpError(400, locked2, { lockout: true });
+    }
     import_db2.default.run(`UPDATE users SET role=?, updated_at=? WHERE id=?`, v.role, import_db2.default.now(), u.id);
     const lifted = v.role === "supervisor" || v.role === "admin" ? import_db2.default.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND mode='deny' AND reason=? AND permission IN (${SIGNUP_SCOPE.map(() => "?").join(",")})`, u.id, SIGNUP_SCOPE_REASON, ...SIGNUP_SCOPE).changes : 0;
     const caseload = require_caseload_default().onRoleChange(u.id, u.role, v.role, { actor: ctx.user });
-    import_auth2.default.revokeAllForUser(u.id);
-    import_audit2.default.log({ user: ctx.user, action: "local.account.role", entity: "user", entityId: u.id, details: { from: u.role, to: v.role, ...lifted ? { denies_lifted: SIGNUP_SCOPE } : {} } });
+    if (self2 && ctx.session) import_db2.default.run(`UPDATE sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL AND id<>?`, import_db2.default.now(), u.id, ctx.session.id);
+    else import_auth2.default.revokeAllForUser(u.id);
+    import_audit2.default.log({ user: ctx.user, action: "local.account.role", entity: "user", entityId: u.id, details: { from: u.role, to: v.role, ...lifted ? { denies_lifted: SIGNUP_SCOPE } : {}, ...self2 ? { self: true } : {} } });
     return { ok: true, role: v.role, ...caseload ? { caseload_default: caseload } : {} };
   });
   router.get("/api/local/device", (ctx) => {

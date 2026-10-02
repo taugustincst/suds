@@ -113,7 +113,8 @@ module.exports = (r) => {
     const body = ctx.body || {};
     // The accounts the administrator confirmed, by id: exactly those change (if still eligible), never more.
     if (!Array.isArray(body.user_ids) || !body.user_ids.length || body.user_ids.length > 5000 || body.user_ids.some(x => typeof x !== 'string' || x.length > 64)) throw badRequest('user_ids must list the accounts to hold to their caseload, as the confirmation showed them');
-    if (body.user_ids.includes(ctx.user.id)) throw badRequest('You cannot change your own permissions');
+    // The administrator's own account may be among them (it changes as anyone's would): this only denies
+    // clients:all to navigators and clinicians, so it can never take away who manages users (auth.lockoutProblem).
     const res = caseloadDefault.applyExisting(body.user_ids, { actor: ctx.user, ip: ctx.ip });
     return { ok: true, changed: res.changed.length, skipped: res.skipped.length };
   });
@@ -142,9 +143,21 @@ module.exports = (r) => {
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);
     if (!u) throw notFound();
     const v = validate(ctx.body, { ...shape, username: { ...shape.username, required: false }, role: { ...shape.role, required: false }, display_name: { ...shape.display_name, required: false } }, { partial: true });
-    // Nobody changes their own role, up or down (security review of 1.15.3, M2: a demoted account that kept a
-    // users:manage grant promoted itself back to administrator). Saving one's own profile unchanged is fine.
-    if (u.id === ctx.user.id && ((v.role !== undefined && v.role !== u.role) || v.is_active === 0)) throw badRequest('You cannot change your own role or deactivate your own account. Ask another administrator.');
+    // Whoever manages users may change anyone's role and account, their own included (the owner's decision after
+    // 1.23.5; until then nobody could). Self-promotion stays impossible: users:manage is an administrator's alone
+    // (permissions.js grantProblem; security review of 1.15.3, M2), so whoever gets here is an administrator already.
+    // What is refused is a change that would leave no active account able to manage users and permissions,
+    // whoever it is made to: a demotion or a deactivation, one's own included (auth.lockoutProblem).
+    const self = u.id === ctx.user.id;
+    const roleChange = v.role !== undefined && v.role !== u.role;
+    const deactivating = v.is_active === 0 && !!u.is_active;
+    if (roleChange || deactivating) {
+      const locked = auth.lockoutProblem({ userId: u.id, role: v.role, active: deactivating ? false : undefined });
+      if (locked) {
+        audit.log({ user: ctx.user, action: 'user.update.denied', entity: 'user', entityId: u.id, ip: ctx.ip, success: false, details: { reason: 'lockout', fields: Object.keys(v).filter(k => k !== 'password'), ...(self ? { self: true } : {}) } });
+        throw badRequest(locked, { lockout: true });
+      }
+    }
     if (v.oidc_subject && db.one(`SELECT 1 FROM users WHERE oidc_subject=? AND id<>?`, v.oidc_subject, u.id)) throw badRequest('That single sign-on identity is already linked to a different account');
     if (v.supervisor_id && !db.one(`SELECT 1 FROM users WHERE id=? AND id<>? AND role IN ('supervisor','admin')`, v.supervisor_id, u.id)) throw badRequest('The supervisor must be a different supervisor or administrator account');
     if (v.default_fund_id && !db.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v.default_fund_id)) throw badRequest('The default fund must be an active funding source');
@@ -192,13 +205,13 @@ module.exports = (r) => {
       for (const o of db.all(`SELECT permission, mode, reason FROM user_permission_overrides WHERE user_id=? AND mode='grant'`, u.id)) {
         if (!grantProblem(v.role, auth.rolePerms(v.role), o.permission)) continue;
         db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, u.id, o.permission);
-        audit.log({ user: ctx.user, action: 'user.permission.revoke', entity: 'user', entityId: u.id, ip: ctx.ip, details: { permission: o.permission, mode: o.mode, cause: 'role_change', from: u.role, to: v.role } });
+        audit.log({ user: ctx.user, action: 'user.permission.revoke', entity: 'user', entityId: u.id, ip: ctx.ip, details: { permission: o.permission, mode: o.mode, cause: 'role_change', from: u.role, to: v.role, ...(self ? { self: true } : {}) } });
       }
     }
     // Into navigator or clinician: the programme's least-privilege default applies as to a new account; out of
     // them, its own deny of clients:all goes (server/caseload-default.js onRoleChange).
     const caseload = v.role !== undefined ? caseloadDefault.onRoleChange(u.id, u.role, v.role, { actor: ctx.user, ip: ctx.ip }) : null;
-    audit.log({ user: ctx.user, action: 'user.update', entity: 'user', entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter(k => k !== 'password'), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length, wipe_devices: wipeDevices, passkeys_removed: passkeysRemoved || undefined } });
+    audit.log({ user: ctx.user, action: 'user.update', entity: 'user', entityId: u.id, ip: ctx.ip, details: { fields: Object.keys(v).filter(k => k !== 'password'), password_reset: !!v.password, unlock: !!ctx.body.unlock, reset_mfa: !!ctx.body.reset_mfa, devices_wiped: wiped.length, wipe_devices: wipeDevices, passkeys_removed: passkeysRemoved || undefined, ...(roleChange ? { role: { from: u.role, to: v.role } } : {}), ...(self ? { self: true } : {}) } });
     return { ok: true, devices_wiped: wiped.length, ...(caseload ? { caseload_default: caseload } : {}) };
   });
 
@@ -239,12 +252,15 @@ module.exports = (r) => {
 
   r.post('/api/users/:id/permissions', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
     const v = validate(ctx.body || {}, permShape);
-    const fail = (msg, status = 400) => {
-      audit.log({ user: ctx.user, action: 'user.permission.denied', entity: 'user', entityId: ctx.params.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason: msg } });
+    // An administrator's own permissions change exactly as anyone's do (the owner's decision after 1.23.5), audited
+    // the same way with self: true; the lockout guard below applies to them as to anyone.
+    const self = ctx.params.id === ctx.user.id;
+    const selfMark = self ? { self: true } : {};
+    const fail = (msg, status = 400, extra) => {
+      audit.log({ user: ctx.user, action: 'user.permission.denied', entity: 'user', entityId: ctx.params.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason: msg, ...selfMark } });
       if (status === 404) throw notFound(msg);
-      throw badRequest(msg);
+      throw badRequest(msg, extra);
     };
-    if (ctx.params.id === ctx.user.id) return fail('You cannot change your own permissions');
     const target = db.one(`SELECT id, role FROM users WHERE id=?`, ctx.params.id);
     if (!target) return fail('User not found', 404);
     if (v.mode !== 'grant' && v.mode !== 'deny') return fail('mode must be "grant" or "deny"');
@@ -254,20 +270,21 @@ module.exports = (r) => {
     // administrator's; a de-identified role is never granted a way to identify clients (M1), nor records:manage-others
     // (1.16.0), which presupposes a role that records client work.
     if (v.mode === 'grant') { const no = grantProblem(target.role, auth.rolePerms(target.role), v.permission); if (no) return fail(no); }
+    // A deny of users:manage (or a grant replacing a deny, which never takes away) must leave someone who manages users.
+    const locked = auth.lockoutProblem({ userId: target.id, set: { permission: v.permission, mode: v.mode } });
+    if (locked) return fail(locked, 400, { lockout: true });
     db.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason, granted_by)
             VALUES(?, ?, ?, ?, ?) ON CONFLICT(user_id, permission) DO UPDATE SET mode=excluded.mode, reason=excluded.reason, granted_by=excluded.granted_by, granted_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
       target.id, v.permission, v.mode, v.reason, ctx.user.id);
     // A deny is audited as a deny, a grant as a grant.
-    audit.log({ user: ctx.user, action: v.mode === 'deny' ? 'user.permission.deny' : 'user.permission.grant', entity: 'user', entityId: target.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason_length: v.reason.length, reason_sha256: sha256(v.reason) } });
-    return { ok: true };
+    audit.log({ user: ctx.user, action: v.mode === 'deny' ? 'user.permission.deny' : 'user.permission.grant', entity: 'user', entityId: target.id, ip: ctx.ip, details: { permission: v.permission, mode: v.mode, reason_length: v.reason.length, reason_sha256: sha256(v.reason), ...selfMark } });
+    return { ok: true, ...(self ? { self: true } : {}) };
   });
 
   // Revoking an override needs a reason too (the same bounds), in the body: DELETE ... { reason }.
   r.delete('/api/users/:id/permissions/:permission', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
-    if (ctx.params.id === ctx.user.id) {
-      audit.log({ user: ctx.user, action: 'user.permission.denied', entity: 'user', entityId: ctx.params.id, ip: ctx.ip, details: { permission: ctx.params.permission, reason: 'self-edit' } });
-      throw badRequest('You cannot change your own permissions');
-    }
+    const self = ctx.params.id === ctx.user.id;
+    const selfMark = self ? { self: true } : {};
     const target = db.one(`SELECT id FROM users WHERE id=?`, ctx.params.id);
     if (!target) throw notFound('User not found');
     const row = db.one(`SELECT permission, mode, reason FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
@@ -275,9 +292,14 @@ module.exports = (r) => {
     const reason = ctx.body && typeof ctx.body.reason === 'string' ? ctx.body.reason : '';
     const bad = reasonProblem(reason);
     if (bad) throw badRequest(`Say why the override is being revoked: ${bad}`, { fields: { reason: bad } });
+    const locked = auth.lockoutProblem({ userId: target.id, remove: row.permission });
+    if (locked) {
+      audit.log({ user: ctx.user, action: 'user.permission.denied', entity: 'user', entityId: target.id, ip: ctx.ip, details: { permission: row.permission, reason: 'lockout', ...selfMark } });
+      throw badRequest(locked, { lockout: true });
+    }
     db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission=?`, target.id, ctx.params.permission);
-    audit.log({ user: ctx.user, action: 'user.permission.revoke', entity: 'user', entityId: target.id, ip: ctx.ip, details: { permission: row.permission, mode: row.mode, reason_length: String(row.reason || '').length, revoke_reason_length: reason.length, revoke_reason_sha256: sha256(reason) } });
-    return { ok: true };
+    audit.log({ user: ctx.user, action: 'user.permission.revoke', entity: 'user', entityId: target.id, ip: ctx.ip, details: { permission: row.permission, mode: row.mode, reason_length: String(row.reason || '').length, revoke_reason_length: reason.length, revoke_reason_sha256: sha256(reason), ...selfMark } });
+    return { ok: true, ...(self ? { self: true } : {}) };
   });
 
   // ---- Access requests (self sign-up, POST /api/auth/signup) ----

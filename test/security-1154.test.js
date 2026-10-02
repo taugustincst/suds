@@ -289,7 +289,7 @@ test('M1: assignments:manage, clients:read and clients:list-deidentified are rat
 });
 
 // ------------------------------------------------------------------------------------------------ M2
-test('M2: privileged grants do not survive a role change, and nobody changes their own role (the reviewer\'s repro)', async () => {
+test('M2: privileged grants do not survive a role change, and a demoted account cannot promote itself back (the reviewer\'s repro)', async () => {
   const nu = await admin.post('/api/users', { username: 's154_evil2', display_name: 'Evil Two', role: 'admin', password: 'EvilPass2026!!x' });
   assert.equal(nu.status, 201, JSON.stringify(nu.data));
   assert.equal((await grant(nu.data.id, 'users:manage', 'grant', 'belt and braces grant')).status, 200);
@@ -312,12 +312,17 @@ test('M2: privileged grants do not survive a role change, and nobody changes the
   assert.equal(H.db.one(`SELECT role FROM users WHERE id=?`, nu.data.id).role, 'navigator');
 });
 
-test('M2: an administrator cannot change their own role at all', async () => {
+// Until 1.23.5 an administrator could not change their own role at all. The owner's decision after it: they may,
+// while another active account can manage users (auth.lockoutProblem; test/admin-self-permissions.test.js); once
+// demoted they cannot promote themselves back, as the repro above shows (users:manage is an administrator's alone).
+test('M2: an administrator may change their own role while another administrator remains, and cannot undo it themselves', async () => {
   const a2 = H.makeUser('s154_admin2', 'admin');
   const c = H.client(); await c.login(a2.username, a2.password);
-  for (const role of ['supervisor', 'navigator']) assert.equal((await c.put(`/api/users/${a2.id}`, { role })).status, 400, role);
-  // Saving their own profile with the role unchanged is fine.
+  // Saving their own profile with the role unchanged is fine, as before.
   assert.equal((await c.put(`/api/users/${a2.id}`, { role: 'admin', title: 'Director' })).status, 200);
+  assert.equal((await c.put(`/api/users/${a2.id}`, { role: 'supervisor' })).status, 200);
+  assert.equal((await c.put(`/api/users/${a2.id}`, { role: 'admin' })).status, 403, 'no way back on their own');
+  assert.equal(H.db.one(`SELECT role FROM users WHERE id=?`, a2.id).role, 'supervisor');
 });
 
 // ------------------------------------------------------------------------------------------------ L2

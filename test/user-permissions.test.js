@@ -94,9 +94,11 @@ test('permissions API: guards', async () => {
   r = await a.post(`/api/users/${nav.id}/permissions`, { permission: 'users:manage', mode: 'grant', reason: 'wants to be a user manager' });
   assert.equal(r.status, 400);
 
-  // self-edit blocked
+  // an administrator may change their own permissions (the owner's decision after 1.23.5), audited with self: true
   r = await a.post(`/api/users/${admin.id}/permissions`, { permission: 'reports:funder', mode: 'grant', reason: 'admin grants to self' });
-  assert.equal(r.status, 400);
+  assert.equal(r.status, 200);
+  assert.equal(JSON.parse(H.db.one(`SELECT details FROM audit_log WHERE action='user.permission.grant' AND entity_id=? ORDER BY rowid DESC LIMIT 1`, admin.id).details).self, true);
+  H.db.run(`DELETE FROM user_permission_overrides WHERE user_id=?`, admin.id);
 
   // non-admin cannot use the API at all
   r = await n.post(`/api/users/${nav.id}/permissions`, { permission: 'audit:read', mode: 'grant', reason: 'escalation attempt' });
