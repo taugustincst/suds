@@ -16,6 +16,24 @@ const PROBLEM_STATUS_KIND = { active: 'warn', resolved: 'ok', inactive: '' };
 const GOAL_STATUS_KIND = { active: 'info', met: 'ok', partially_met: 'warn', not_met: 'danger', discontinued: '' };
 const users = () => (state.users || []).filter(u => u.is_active !== 0);
 const userName = (id) => (state.users || []).find(u => u.id === id)?.display_name || '';
+// The care plan (problem list, goals, steps) and the assessments are programme modules (server/programme.js), whose
+// write routes answer 403 while one is switched off. Until 1.24.0 the forms were offered anyway (from the client's
+// page, and from an address naming the tab), and what was typed was lost on save. Switched off, a tab named in the
+// address still shows the records made before, to read, with this notice in place of every add and edit button,
+// and no form opens.
+const MODULE_LABEL = { careplan: 'The care plan and problem list', assessments: 'Assessments' };
+const mayWrite = (mod, perm) => moduleOn(mod) && can(perm);
+const offNotice = (mod) => (moduleOn(mod) ? null : h('div', { class: 'banner info', role: 'note', 'data-module-off': mod },
+  `${MODULE_LABEL[mod]} ${mod === 'assessments' ? 'are' : 'is'} switched off for this program. Records made before it was switched off are shown here to read; nothing new can be added or changed.${can('settings:manage') ? ' You can switch it on in Settings › Program › Modules.' : ' An administrator can switch it on in Settings › Program › Modules.'}`));
+// The long forms here (a six-dimension assessment, a screening, a problem, a goal or step) keep what is typed as a
+// draft under a key of their own (1.24.0): closing the dialog, or a save that fails, no longer throws the work away.
+// The same in-memory drafts every form uses (public/app.js form(), draftKey): never browser storage, as PHI.
+/** A form of a switched-off module is not opened (whatever called it): say why instead. */
+function moduleClosed(mod) {
+  if (moduleOn(mod)) return false;
+  toast(`${MODULE_LABEL[mod]} ${mod === 'assessments' ? 'are' : 'is'} switched off for this program, so nothing can be saved there. An administrator can switch it on in Settings › Program › Modules.`, 'error');
+  return true;
+}
 
 /** Bars scaled to the instrument's own range, so a PHQ-9 of 5 looks small even when it is the only score. */
 function trend(series, max) {
@@ -78,10 +96,17 @@ function zCodeBox(selected = []) {
       h('div', { class: 'field span' }, h('label', {}, 'Other Z55–Z65 codes (comma separated)'), h('input', { type: 'text', 'data-z-other': '1', value: other.join(', ') }))));
   box.read = () => [...box.querySelectorAll('input[type=checkbox]:checked')].map(i => i.value)
     .concat(box.querySelector('[data-z-other]').value.split(',').map(x => x.trim()).filter(Boolean));
+  // A draft's Z codes put back (the problem form's draftExtras).
+  box.restore = (codes = []) => {
+    for (const i of box.querySelectorAll('input[type=checkbox]')) i.checked = codes.includes(i.value);
+    box.querySelector('[data-z-other]').value = codes.filter(c => !known.has(c)).join(', ');
+    if (codes.length) box.open = true;
+  };
   return box;
 }
 
 export function openProblemForm(clientId, p, { onDone } = {}) {
+  if (moduleClosed('careplan')) return;
   const K = C();
   const z = zCodeBox(p?.z_codes || []);
   const f = form([
@@ -92,12 +117,13 @@ export function openProblemForm(clientId, p, { onDone } = {}) {
     { name: 'source', label: 'Identified through', type: 'select', options: (K.PROBLEM_SOURCES || []).map(v => ({ value: v, label: fmt.label(v) })), noBlank: true, value: p?.source || 'self_report' },
     { name: 'onset_date', label: 'Onset / identified on', type: 'date' },
     { name: 'resolved_date', label: 'Resolved on', type: 'date', help: 'Filled in with today when the status is set to resolved.' },
-  ], { values: p || {}, submitText: p ? 'Save changes' : 'Add problem', extra: z, onCancel: () => m.close(), onSubmit: async (d) => {
+  ], { values: p || {}, submitText: p ? 'Save changes' : 'Add problem', extra: z, draftKey: p ? `problem:${p.id}` : `problem:new:${clientId}`, onCancel: () => m.close(), onSubmit: async (d) => {
     const body = { ...d, z_codes: z.read() };
     if (p) { await put(`/api/problems/${p.id}`, { ...body, if_updated_at: p.updated_at }); toast('Problem updated', 'ok'); }
     else { await post(`/api/clients/${clientId}/problems`, body); toast('Added to the problem list', 'ok'); }
     m.close(); onDone && onDone();
   } });
+  f.draftExtras = { read: () => { const codes = z.read(); return codes.length ? codes : null; }, restore: (codes) => z.restore(Array.isArray(codes) ? codes : []) };
   const m = modal(p ? 'Edit problem' : 'Add to the problem list', f, { wide: true });
 }
 
@@ -112,8 +138,8 @@ async function showHistory(p) {
 
 export async function problemsTab(clientId, { refresh } = {}) {
   const { rows } = await get(`/api/clients/${clientId}/problems?status=all`);
-  const writable = can('careplan:write');
-  return h('div', { class: 'card', 'data-problems': '1' },
+  const writable = mayWrite('careplan', 'careplan:write');
+  return h('div', { class: 'card', 'data-problems': '1' }, offNotice('careplan'),
     h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Problem list'), h('div', { class: 'small muted' }, 'The client\'s current problems and needs (CalAIM). Keep it current: resolve what no longer applies rather than deleting it — every change is kept in the history. Notes can say which problems they address.')),
       writable ? h('button', { class: 'btn sm primary', 'data-add-problem': '1', onClick: () => openProblemForm(clientId, null, { onDone: refresh }) }, '+ Problem') : null),
     rows.length ? table([
@@ -132,19 +158,21 @@ export async function problemsTab(clientId, { refresh } = {}) {
 
 // ---------------------------------------------------------------- Care plan
 function openGoalForm(clientId, g, problems, { onDone } = {}) {
+  if (moduleClosed('careplan')) return;
   const f = form([
     { name: 'goal', label: 'Goal, in the client\'s words', type: 'textarea', rows: 3, span: true, required: true, placeholder: 'e.g. "I want my own place by winter."' },
     { name: 'problem_id', label: 'Problem it addresses', type: 'select', options: problems.map(p => ({ value: p.id, label: p.problem.slice(0, 80) })), placeholder: '— none —' },
     { name: 'status', label: 'Status', type: 'select', options: C().GOAL_STATUSES || ['active'], noBlank: true, value: g?.status || 'active' },
     { name: 'target_date', label: 'Target date', type: 'date' },
     { name: 'review_date', label: 'Review with the client by', type: 'date', help: 'Shown as overdue on the client\'s Overview once it passes.' },
-  ], { values: g || {}, submitText: g ? 'Save goal' : 'Add goal', onCancel: () => m.close(), onSubmit: async (d) => {
+  ], { values: g || {}, submitText: g ? 'Save goal' : 'Add goal', draftKey: g ? `goal:${g.id}` : `goal:new:${clientId}`, onCancel: () => m.close(), onSubmit: async (d) => {
     if (g) await put(`/api/goals/${g.id}`, { ...d, if_updated_at: g.updated_at }); else await post(`/api/clients/${clientId}/goals`, d);
     toast(g ? 'Goal saved' : 'Goal added', 'ok'); m.close(); onDone && onDone();
   } });
   const m = modal(g ? 'Edit goal' : 'New care plan goal', f, { wide: true });
 }
 function openStepForm(goal, s, { onDone } = {}) {
+  if (moduleClosed('careplan')) return;
   const f = form([
     { name: 'step', label: 'Step or intervention', type: 'textarea', rows: 2, span: true, required: true },
     { name: 'owner_role', label: 'Who does it', type: 'select', options: C().STEP_OWNERS || ['staff'], noBlank: true, value: s?.owner_role || 'staff' },
@@ -152,7 +180,7 @@ function openStepForm(goal, s, { onDone } = {}) {
     { name: 'target_date', label: 'Target date', type: 'date' },
     s ? { name: 'status', label: 'Status', type: 'select', options: C().STEP_STATUSES || ['open'], noBlank: true, value: s.status } : null,
     !s && can('tasks:write') ? { name: 'create_task', label: 'Also add it to the to-do list', type: 'checkbox', span: true } : null,
-  ].filter(Boolean), { values: s || {}, submitText: s ? 'Save step' : 'Add step', onCancel: () => m.close(), onSubmit: async (d) => {
+  ].filter(Boolean), { values: s || {}, submitText: s ? 'Save step' : 'Add step', draftKey: s ? `step:${s.id}` : `step:new:${goal.id}`, onCancel: () => m.close(), onSubmit: async (d) => {
     if (s) await put(`/api/steps/${s.id}`, { ...d, if_updated_at: s.updated_at }); else { const r = await post(`/api/goals/${goal.id}/steps`, d); if (r.task_id) toast('Step added, and put on the to-do list', 'ok'); }
     if (s || !d.create_task) toast(s ? 'Step saved' : 'Step added', 'ok');
     m.close(); onDone && onDone();
@@ -177,7 +205,7 @@ function printCarePlan(clientDisplay, problems, goals) {
 
 export async function carePlanTab(clientId, { refresh, clientDisplay } = {}) {
   const [{ goals }, { rows: problems }] = await Promise.all([get(`/api/clients/${clientId}/care-plan`), get(`/api/clients/${clientId}/problems?status=all`)]);
-  const writable = can('careplan:write');
+  const writable = mayWrite('careplan', 'careplan:write');
   const active = problems.filter(p => p.status === 'active');
   const goalCard = (g) => h('div', { class: 'card mt', 'data-goal': g.id },
     h('div', { class: 'card-head' }, h('div', {},
@@ -204,7 +232,7 @@ export async function carePlanTab(clientId, { refresh, clientDisplay } = {}) {
         s.status === 'open' ? h('button', { class: 'btn sm', 'data-step-done': s.id, onClick: async () => { await put(`/api/steps/${s.id}`, { status: 'done' }); toast('Step done', 'ok'); refresh && refresh(); } }, 'Done') : null,
         h('button', { class: 'btn sm ghost', onClick: () => openStepForm(g, s, { onDone: refresh }) }, 'Edit')) : null },
     ], g.steps) : h('p', { class: 'small muted' }, 'No steps yet.'));
-  return h('div', { 'data-careplan': '1' },
+  return h('div', { 'data-careplan': '1' }, offNotice('careplan'),
     h('div', { class: 'card' }, h('div', { class: 'card-head' },
       h('div', {}, h('h2', {}, 'Care coordination plan'), h('div', { class: 'small muted' }, 'Goals in the client\'s own words, tied to the problem list, with the steps toward each one, who does them and by when. Set a review date and go over the plan with the client when it comes due.')),
       h('div', { class: 'row nowrap' },
@@ -224,6 +252,7 @@ export async function carePlanTab(clientId, { refresh, clientDisplay } = {}) {
 
 // ---------------------------------------------------------------- ASAM
 function openAsamForm(clientId, a, { onDone } = {}) {
+  if (moduleClosed('assessments')) return;
   const K = C(); const dims = K.ASAM_DIMENSIONS || [];
   const ratings = (K.ASAM_RATINGS || []).map(r => ({ value: String(r.value), label: r.label }));
   const fields = [{ name: 'assessed_at', label: 'Date of assessment', type: 'date', required: true, value: a?.assessed_at || fmt.today() }];
@@ -240,7 +269,7 @@ function openAsamForm(clientId, a, { onDone } = {}) {
     { name: 'summary', label: 'Summary', type: 'textarea', rows: 3, span: true });
   const values = a ? { ...a } : {};
   let ai = { confirmed: () => true };
-  const f = form(fields, { values, submitText: a ? 'Save assessment' : 'Save assessment', onCancel: () => m.close(), onSubmit: async (d) => {
+  const f = form(fields, { values, submitText: 'Save assessment', draftKey: a ? `asam:${a.id}` : `asam:new:${clientId}`, onCancel: () => m.close(), onSubmit: async (d) => {
     // An AI draft is saved only once the clinician has reviewed every dimension and chosen its rating (views/ai.js).
     if (!ai.confirmed()) throw new Error('The AI copilot drafted this assessment: tick "I have reviewed" under each dimension once you have checked its notes and chosen its rating.');
     const body = { assessed_at: d.assessed_at, recommended_loc: d.recommended_loc, actual_loc: d.actual_loc, discrepancy_reason: d.discrepancy_reason, discrepancy_notes: d.discrepancy_notes, summary: d.summary, dimension_notes: {} };
@@ -258,7 +287,7 @@ function openAsamForm(clientId, a, { onDone } = {}) {
 }
 function asamDetail(a, { onDone } = {}) {
   const dims = C().ASAM_DIMENSIONS || [];
-  const mayEdit = can('assessments:write') && (a.assessed_by === state.user.id || can('records:manage-others'));
+  const mayEdit = mayWrite('assessments', 'assessments:write') && (a.assessed_by === state.user.id || can('records:manage-others'));
   const m = modal(`Six-dimension assessment — ${fmt.date(a.assessed_at)}`, h('div', {},
     kv([['Assessed by', a.assessed_by_name], ['Recommended level', a.recommended_loc], ['Referred to', a.actual_loc], ['Discrepancy', a.discrepancy ? `${fmt.label(a.discrepancy_reason)}${a.discrepancy_notes ? ' — ' + a.discrepancy_notes : ''}` : 'None'], ['Summary', a.summary]]),
     table([{ label: 'Dimension', key: 'label' }, { label: 'Rating', render: d => String(a[`${d.key}_rating`]) }, { label: 'Notes', render: d => a.dimension_notes?.[d.key] || '—' }], dims),
@@ -278,6 +307,7 @@ function previewScore(ins, answers, variant) {
 }
 
 export function openOutcomeForm(clientId, code, { onDone, clientDisplay } = {}) {
+  if (moduleClosed('assessments')) return;
   const ins = (C().INSTRUMENTS || {})[code]; if (!ins) return;
   const fields = [{ name: 'administered_at', label: 'Date given', type: 'date', required: true, value: fmt.today() }];
   if (ins.variants) fields.push({ name: 'variant', label: 'Scoring cut-off', type: 'select', options: ins.variants.map(v => ({ value: v.value, label: v.label })), value: 'unspecified', noBlank: true });
@@ -285,7 +315,7 @@ export function openOutcomeForm(clientId, code, { onDone, clientDisplay } = {}) 
   ins.items.forEach((it, i) => fields.push({ name: `q${i}`, label: `${ins.items.length > 1 ? `${i + 1}. ` : ''}${it.text}`, type: 'select', span: true, required: true, options: it.options.map(o => ({ value: String(o.value), label: `${o.label}${ins.items.length > 1 && it.options.length <= 5 ? ` (${o.value})` : ''}` })) }));
   fields.push({ name: 'notes', label: 'Notes', type: 'textarea', rows: 2, span: true });
   const scoreLine = h('div', { class: 'banner', role: 'status', 'aria-live': 'polite', 'data-outcome-preview': '1' }, 'Answer every question to see the score.');
-  const f = form(fields, { submitText: 'Save', extra: scoreLine, onCancel: () => m.close(), onSubmit: async (d) => {
+  const f = form(fields, { submitText: 'Save', extra: scoreLine, draftKey: `outcome:new:${clientId}:${code}`, onCancel: () => m.close(), onSubmit: async (d) => {
     const responses = ins.items.map((_, i) => Number(d[`q${i}`]));
     const r = await post(`/api/clients/${clientId}/outcomes`, { instrument: code, administered_at: d.administered_at, responses, variant: d.variant || undefined, notes: d.notes });
     m.close();
@@ -302,6 +332,8 @@ export function openOutcomeForm(clientId, code, { onDone, clientDisplay } = {}) 
     if (item9) scoreLine.append(h('div', {}, 'Question 9 is above "Not at all": saving will raise a safety alert.'));
   };
   f.addEventListener('change', update);
+  // A draft put back (a closed dialog, a failed save) shows its score straight away.
+  try { update(); } catch { /* nothing answered yet */ }
   const m = modal(`${ins.name} — ${ins.title}`, h('div', { 'data-outcome-form': code }, f, h('p', { class: 'small muted' }, ins.credit)), { wide: true });
 }
 
@@ -318,7 +350,7 @@ function safetyAlert(clientId, alert, { onDone, clientDisplay } = {}) {
 
 export async function assessmentsTab(clientId, { refresh, clientDisplay } = {}) {
   const [asam, out, list] = await Promise.all([get(`/api/clients/${clientId}/asam`), get(`/api/clients/${clientId}/outcomes`), get('/api/instruments', { quiet: true }).catch(() => null)]);
-  const writable = can('assessments:write');
+  const writable = mayWrite('assessments', 'assessments:write');
   const INS = C().INSTRUMENTS || {};
   // Only the instruments this programme uses are offered; an optional one (the DAST-10) is off until an
   // administrator confirms the programme holds the rights to use it. Results already recorded always show.
@@ -348,7 +380,7 @@ export async function assessmentsTab(clientId, { refresh, clientDisplay } = {}) 
       modal(`${m.name} — ${fmt.date(m.administered_at)}`, h('div', {}, kv([['Score', `${m.total_score} of ${ins?.max ?? '?'} — ${m.band || ''}`], ['Given by', m.administered_by_name], ['Notes', m.notes]]),
         ins ? table([{ label: 'Question', render: x => x.text }, { label: 'Answer', render: x => x.answer }], ins.items.map((it, i) => ({ text: it.text, answer: (it.options.find(o => o.value === m.responses[i]) || {}).label || '—' }))) : null), { wide: true });
     } }));
-  return h('div', {}, asamCard, outcomesCard);
+  return h('div', {}, offNotice('assessments'), asamCard, outcomesCard);
 }
 
 // ---------------------------------------------------------------- optional instruments (Settings)

@@ -973,6 +973,10 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   const putBack = (d) => { for (const [k, v] of Object.entries(d)) { const i = inputs[k]; if (!i) continue; if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? ''; } };
   if (kept && !resume) { restored = kept; putBack(kept); }
   const errBox = h('div', { class: 'banner danger hidden', role: 'alert', tabindex: '-1' });
+  // The same message beside the Save button (1.24.0), shown when the form is long enough that the banner above is out
+  // of sight from there (an assessment, a screening, an intake): a failed save used to leave the person at the
+  // bottom of the dialog with the only sign of it scrolled away at the top. No live role: announce() says it once.
+  const errNear = h('div', { class: 'banner danger hidden', tabindex: '-1', 'data-form-error-near': '1' });
   const submitBtn = h('button', { class: 'btn primary', type: 'submit' }, submitText);
   let submitted = false; let saveTimer;
   // This submission's Idempotency-Key base (see idempotencyKey above): kept while the contents are
@@ -986,7 +990,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   // so nothing here depends on a native UI that does not reliably render on every platform.
   const el = h('form', { noValidate: true, onSubmit: async (e) => {
     e.preventDefault();
-    errBox.classList.add('hidden');
+    errBox.classList.add('hidden'); errNear.classList.add('hidden');
     submitBtn.disabled = true;
     // Everything from clearing the old errors onwards is inside the try: whatever throws — read() on a
     // half-entered date, the request itself, or a DOM assumption that a view broke (the resource form
@@ -1032,6 +1036,10 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       const rest = fieldsErr ? Object.entries(fieldsErr).filter(([k]) => generic || !inline.has(k)) : [];
       const text = err.labelled ? err.message : fieldsErr && rest.length ? `${generic ? CHECK_ANSWERS : err.message}: ${rest.map(([k, m]) => fieldProblem(labelOf(k), m)).join('; ')}` : err.message;
       errBox.textContent = text; errBox.classList.remove('hidden');
+      // Far from the Save button (more than half a screen above it): say it beside the button as well.
+      let far = false;
+      try { const top = errBox.getBoundingClientRect(), btn = submitBtn.getBoundingClientRect(); far = btn.top - top.bottom > (window.innerHeight || 800) / 2; } catch { far = false; }
+      errNear.textContent = far ? `Not saved: ${text}` : ''; errNear.classList.toggle('hidden', !far);
       // Someone else saved this record after it was opened (409 from if_updated_at). Saving again would
       // overwrite their changes, so the way forward is to reload and see them. The draft goes too: restoring
       // it over the fresh record would put back the very values the other person just changed.
@@ -1041,8 +1049,10 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       // Say it out loud and put the cursor on the first thing that needs fixing, rather than leaving a
       // keyboard user to hunt for a red outline they cannot see.
       announce(text);
-      (firstBad || errBox).focus({ preventScroll: false });
-      (firstBad || errBox).scrollIntoView({ block: 'center', behavior: 'smooth' });
+      // A field to fix gets the focus; otherwise the message nearest the person (beside Save on a long form).
+      const where = firstBad || (far ? errNear : errBox);
+      where.focus({ preventScroll: false });
+      where.scrollIntoView({ block: 'center', behavior: 'smooth' });
     } finally { submitBtn.disabled = false; }
   } }, restored ? h('div', { class: 'banner', role: 'status' },
     h('span', {}, 'Restored what you had already typed.'),
@@ -1061,7 +1071,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
           asking = false; drafts.delete(draftKey); e.target.closest('.banner').remove();
           const first = el.querySelector('input:not([type=hidden]),select,textarea'); if (first) first.focus();
         } }, 'Discard'))) : null,
-    errBox, grid, extra || null, h('div', { class: 'btn-row' }, onCancel ? h('button', { class: 'btn', type: 'button', onClick: onCancel }, cancelText) : null, submitBtn));
+    errBox, grid, extra || null, errNear, h('div', { class: 'btn-row' }, onCancel ? h('button', { class: 'btn', type: 'button', onClick: onCancel }, cancelText) : null, submitBtn));
 
   // Changed contents are a different submission, with a different Idempotency-Key.
   const newSubmission = () => { submitKey = newIdempotencyKey(); };
@@ -1591,7 +1601,9 @@ export function globalSearch() {
   // What was found is said out loud (WCAG 4.1.3, 1.16.0): "3 clients and 1 resource found" or "No match", in a
   // polite live region, and Down arrow moves into the results (Up and Down move through them, Escape returns).
   const status = h('div', { class: 'sr-only', role: 'status', 'aria-live': 'polite', 'data-search-status': '1' });
-  const wrap = h('div', { class: 'gsearch' }, input, list, status);
+  // A search landmark (1.24.0): the top bar is not one, so axe's "region" rule found the box outside every landmark.
+  // There is one global search on the page, so the landmark needs no name of its own.
+  const wrap = h('div', { class: 'gsearch', role: 'search' }, input, list, status);
   let t;
   const hits = () => [...list.querySelectorAll('a.search-hit')];
   input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 400); });
@@ -1954,8 +1966,23 @@ export function supervising() { return isSupervising(navContext()); }
 export function navPlacement(n) { return placement(n, navContext()); }
 /** The programme profile (server/programme.js): harm_reduction, treatment or part2_layer; null before sign-in. */
 export function programmeProfile() { return (state.programme && state.programme.profile) || null; }
-/** Is a module of the programme profile switched on (server/programme.js)? Unknown means on. */
-export function moduleOn(key) { const m = state.programme && state.programme.modules; return !m || m[key] !== false; }
+/** Is a module of the programme profile switched on (server/programme.js)? Unknown means off (1.24.0): until 1.24.0
+ *  an unknown programme meant every module on, so a form the server would refuse (403, module switched off) was
+ *  offered, and what was typed into it was lost on save. The programme comes with the session (GET /api/auth/me,
+ *  loadSession); signed in without it (a tab session kept by an older version), it is fetched once and the page drawn again. */
+export function moduleOn(key) {
+  const m = state.programme && state.programme.modules;
+  if (!m) { loadProgramme(); return false; }
+  return m[key] === true;
+}
+let programmeLoading = null;
+function loadProgramme() {
+  if (programmeLoading || !state.user || state.mfaPending || state.signedInOffline) return;
+  programmeLoading = get('/api/auth/me', { quiet: true })
+    .then((me) => { if (me && me.programme && state.user && !state.programme) { state.programme = me.programme; render(); } })
+    .catch(() => { /* stays off; the next sign-in brings it */ })
+    .finally(() => { setTimeout(() => { programmeLoading = null; }, 30000); });
+}
 
 let current = null;
 let renderSeq = 0;

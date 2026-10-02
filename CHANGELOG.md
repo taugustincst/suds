@@ -4,6 +4,35 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+Fixes from the persona test of 1.23.6, for 1.24.0. No migration and no new permission name.
+
+- **Assessments and the care plan no longer lose work when the module is off.** The six-dimension assessment, the
+  screenings, the problem list and the care plan's goals and steps were offered on a client's record even while their
+  programme module was switched off, and from an address naming the tab; the server refused the save (403) and what
+  had been typed was gone. Switched off, a tab named in the address now shows the records made before, read only, with
+  a notice saying the module is off and where it is switched on; no add or edit button is shown and no form opens. The
+  page's own check of a module (`moduleOn`) now treats an unknown programme as off rather than on, and fetches the
+  programme once (`GET /api/auth/me`) and draws the page again if a session came without it.
+- **Long clinical forms keep a draft.** The six-dimension assessment, each screening, and the problem, goal and step
+  forms keep what was typed when the dialog is closed or a save fails, as the visit, call and referral forms do: in
+  the tab's memory only, never browser storage, cleared on sign-out (the same drafts as every other form).
+- **A failed save is said where the person is.** On a form long enough that its error banner is more than half a
+  screen above the Save button, the message is shown beside the button too, and the focus goes there (or to the
+  first field to fix), as well as being announced. Every form built with the shared form helper gets this.
+- **Add to waitlist is always in the Waitlist page's header** for a role that may add clients, not only while the
+  list is empty; the page also says that someone already in SUDS goes on the list by setting their status.
+- **A departed worker's draft notes can be handed on.** A supervisor or administrator (`records:manage-others`) can
+  give the unsigned drafts of a worker whose account is inactive to another worker, who becomes the author and
+  finishes and signs them: Settings › Move a caseload › *Draft notes left by departed workers*. New routes (office
+  server only): `GET /api/notes/departed-drafts` (counts only), `POST /api/notes/:id/reassign { to_user_id }` and
+  `POST /api/notes/reassign-drafts { from_user_id, to_user_id }`. A signed note is refused, as is an active author's
+  draft, an inactive target, a target who may not write that kind of note or open the client, and a SUD counseling
+  note to anyone without `notes:clinical:write`. The rule lives in `server/rules/notes.js` (`reassignRefusal`); sync
+  push cannot change a note's author at all. Each move is audited as the new action `note.reassign` (the old and new
+  author's ids, no title or text); a reminder to sign the old author's drafts on that record is cancelled once none
+  is left.
+- **Accessibility:** the global search box is now in a search landmark (axe "region").
+
 ## 1.23.6 — 2026-10-02
 
 A patch of 1.23.5 that ships **with an owner-approved policy exception** (docs/RELEASE.md, *Stabilisation (from

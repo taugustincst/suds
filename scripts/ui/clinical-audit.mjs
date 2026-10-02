@@ -211,6 +211,37 @@ const adm = await session('admin', 'AdminPassw0rd!x');
   }
 }
 
+// ---------------- 1.24.0: a departed worker's draft notes, handed on ----------------
+{
+  const { page, api } = adm;
+  const uname = `leaver${stamp}`; const pw1 = 'LeaverTemp2026!!', pw2 = 'LeaverTemp2026!!x';
+  const made = await api('POST', '/api/users', { username: uname, display_name: `Leaving Worker ${stamp}`, role: 'clinician', password: pw1 });
+  eq(made.status, 201, 'an administrator adds a clinician who will leave', made.data);
+  const ctx = await browser.newContext(); const lp = await ctx.newPage(); await lp.goto(base + '/#/login');
+  const lapi = (method, path, body) => lp.evaluate(async ({ method, path, body, h }) => { const r = await fetch(path, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body), credentials: 'same-origin' }); const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; } return { status: r.status, data: j }; }, { method, path, body, h: H });
+  eq((await lapi('POST', '/api/auth/login', { username: uname, password: pw1 })).status, 200, 'they sign in');
+  await lapi('POST', '/api/auth/password', { current_password: pw1, new_password: pw2 });
+  // A new clinician may start held to their caseload (the programme default): their own client, so they can reach it.
+  const someone = (await lapi('POST', '/api/clients', { first_name: 'Departed', last_name: `Draft${stamp}`, confirm_duplicate: true })).data;
+  const draft = await lapi('POST', '/api/notes', { client_id: someone.id, kind: 'clinical', content: 'Half-written progress note', occurred_at: new Date().toISOString() });
+  eq(draft.status, 201, 'and leave a draft note unsigned', draft.data);
+  await ctx.close();
+  eq((await api('PUT', `/api/users/${made.data.id}`, { is_active: false })).status, 200, 'their account is deactivated');
+  await go(page, 'admin?tab=caseload');
+  const card = await until(() => page.$('[data-departed-drafts]:not([data-departed-drafts="0"])'));
+  ok(card, 'Move a caseload offers to hand on the drafts left by departed workers');
+  if (card) {
+    await page.selectOption('[data-departed-drafts] select[name=from_user_id]', made.data.id);
+    const to = (await api('GET', '/api/users')).data.users.find(u => u.role === 'clinician' && u.is_active && u.id !== made.data.id);
+    await page.selectOption('[data-departed-drafts] select[name=to_user_id]', to.id);
+    await page.click('[data-departed-drafts] button[type=submit]');
+    await (await until(() => page.$('.modal button:has-text("Hand on")'))).click();
+    const done = await until(() => page.$('[data-drafts-moved]'));
+    eq(done ? await done.getAttribute('data-drafts-moved') : null, '1', 'the draft is handed on, and the page says so');
+    ok(!(await api('GET', '/api/notes/departed-drafts')).data.authors.some(x => x.id === made.data.id), 'and nothing is left with the departed worker');
+  }
+}
+
 // ---------------- phone: a dialog sits above the banners ----------------
 const phone = await session('mrivera', 'Navigator2026!!', { width: 390, height: 844 }, { hasTouch: true, isMobile: true });
 {
@@ -408,10 +439,22 @@ const phone = await session('mrivera', 'Navigator2026!!', { width: 390, height: 
   await page.waitForSelector('.modal select[name=d1_rating]');
   for (const [k, v] of [['d1', '1'], ['d2', '0'], ['d3', '2'], ['d4', '3'], ['d5', '3'], ['d6', '4']]) await page.selectOption(`.modal select[name=${k}_rating]`, v);
   await page.fill('.modal textarea[name=note_d6]', 'Sleeping outside; partner still using');
+  // 1.24.0: the assessment keeps a draft, so a dialog closed part-way loses nothing.
+  ok(await until(() => page.evaluate(async (k) => (await import('./app.js')).draftSavedAt(k) > 0, `asam:new:${c.id}`)), 'the six-dimension assessment keeps a draft as it is filled in');
+  await closeModal(page);
+  await (await until(() => page.$('[data-add-asam]'))).click();
+  await page.waitForSelector('.modal select[name=d1_rating]');
+  eq(await page.$eval('.modal textarea[name=note_d6]', e => e.value), 'Sleeping outside; partner still using', 'reopened, what was typed is back');
+  eq(await page.$eval('.modal select[name=d6_rating]', e => e.value), '4', 'and the ratings chosen');
+  ok(await page.$('.modal .banner:has-text("Restored what you had already typed")'), 'and it says so');
   await page.selectOption('.modal select[name=recommended_loc]', '3.5');
   await page.selectOption('.modal select[name=actual_loc]', '2.1');
   await page.click('.modal button[type=submit]'); await settle(page);
   ok(await until(() => page.$('.modal .field[data-field=discrepancy_reason].error')), 'a different level referred to needs a reason');
+  // 1.24.0: the error is said beside Save as well (the banner is far above it on this long form), and the focus is on the field to fix.
+  const near = await until(() => page.$('.modal [data-form-error-near]:not(.hidden)'));
+  ok(near && /Not saved/.test(await near.textContent()), 'the refusal is shown beside the Save button too', near && await near.textContent());
+  eq(await page.evaluate(() => document.activeElement && document.activeElement.name), 'discrepancy_reason', 'and the focus is on the field to fix');
   await page.selectOption('.modal select[name=discrepancy_reason]', 'waitlist');
   await page.click('.modal button[type=submit]');
   await until(async () => !(await page.$('.modal-bg')));
@@ -419,6 +462,7 @@ const phone = await session('mrivera', 'Navigator2026!!', { width: 390, height: 
   const asamText = asamRow ? await asamRow.textContent() : '';
   ok(/3\.5/.test(asamText) && /2\.1/.test(asamText) && /Waitlist/.test(asamText), 'the ASAM assessment is listed with both levels and the reason', asamText);
   eq((await api('GET', `/api/clients/${c.id}`)).data.client.asam_level, '2.1', 'and the client\'s level of care follows it');
+  eq(await page.evaluate(async (k) => (await import('./app.js')).draftSavedAt(k), `asam:new:${c.id}`), 0, 'saved, the assessment\'s draft is gone');
 
   // PHQ-9: the score is shown while answering and after saving; item 9 raises the safety alert
   await (await until(() => page.$('[data-add-outcome=phq9]'))).click();
