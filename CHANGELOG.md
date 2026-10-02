@@ -20,7 +20,8 @@ the office's NAT address; and a device's sync sign-in can no longer manage the a
   office sign-up, the set-up wizard, an administrator creating or resetting an account (a generated temporary password
   is drawn again in the rare case it would trip it), a password change, `npm run create-admin`, and on SUDS on this
   device to the first account, sign-up and recovery. The refusal says which rule, under the password field too.
-  Existing passwords are not affected until they are next changed.
+  Existing passwords are not affected until they are next changed. On SUDS on this device, *Try it with sample data*
+  now creates its "sample" account with the password `Look-Around-2026` (the old one contained the username).
 * **L2 — sign-in limit.** `POST /api/auth/login` counted failures per source address only, and past 20 refused every
   sign-in from it, right passwords included. Failures now count per username from an address (`LOGIN_RATE_LIMIT`,
   default 20, as before) and per address whatever the username (`LOGIN_IP_RATE_LIMIT`, default ten times that, 200),
