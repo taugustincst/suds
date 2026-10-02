@@ -161,7 +161,12 @@ module.exports = {
     'passkeys', 'webauthn_challenges', 'signature_evidence',
     // authenticator_metadata (the authenticator allow-list, docs/FINGERPRINT.md): what the office keeps of the FIDO
     // Metadata Service file its administrator uploaded. Public data about authenticator models; a device has no passkeys.
-    'authenticator_metadata'],
+    'authenticator_metadata',
+    // incoming_referrals and incoming_referral_attempts (1.24.0, server/incoming-referrals.js): the intake queue of people
+    // referred to the programme who are not clients yet. It is the office's: a field device never holds the names of
+    // people nobody has met, and a device that syncs with an office refuses the routes (the office keeps the queue);
+    // SUDS on this device, with no office, keeps its own. An accepted referral's client travels as every client does.
+    'incoming_referrals', 'incoming_referral_attempts'],
   // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
   // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
   // list against the schema, so a table with PHI is always either synchronised or deliberately kept apart.
@@ -174,6 +179,8 @@ module.exports = {
     county_publication_consents: ['reference_enc'], county_publication_inputs: ['inputs_enc'],
     county_connect_tokens: [], county_connection: ['token_enc'], county_connect_sends: [],
     passkeys: [], webauthn_challenges: [], signature_evidence: ['evidence_enc'], authenticator_metadata: [],
+    incoming_referrals: ['referrer_name_enc', 'referrer_phone_enc', 'referrer_email_enc', 'reason_enc', 'first_name_enc', 'last_name_enc', 'dob_enc', 'phone_enc', 'notes_enc', 'outcome_reason_enc'],
+    incoming_referral_attempts: ['notes_enc'],
     idempotency_keys: ['response_enc'],
   },
   // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
@@ -210,6 +217,7 @@ module.exports = {
     ['county_publication_consents', 'recorded_by'], ['county_publication_consents', 'withdrawn_by'],
     ['county_connect_tokens', 'created_by'], ['county_connect_tokens', 'revoked_by'], ['county_connection', 'updated_by'], ['county_connect_sends', 'sent_by'],
     ['passkeys', 'user_id'], ['signature_evidence', 'user_id'], ['webauthn_challenges', 'user_id'],
+    ['incoming_referrals', 'assigned_to'], ['incoming_referrals', 'closed_by'], ['incoming_referrals', 'created_by'], ['incoming_referral_attempts', 'user_id'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.

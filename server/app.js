@@ -30,7 +30,7 @@ function rateLimitReset(key) { buckets.delete(key); }
 // fails loudly if it is missing a loader for one, so adding a route file cannot silently leave the feature
 // out of the local-mode kernel.
 const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
-  'interventions', 'overdose', 'prevention', 'calls', 'time', 'supervision', 'resources', 'referrals', 'referral-links', 'tasks', 'budget', 'notes',
+  'interventions', 'overdose', 'prevention', 'calls', 'time', 'supervision', 'resources', 'referrals', 'referral-links', 'incoming-referrals', 'tasks', 'budget', 'notes',
   'consents', 'patient-requests', 'part2', 'compliance', 'careplan', 'assessments', 'suprt', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'security', 'options', 'regions', 'intake', 'client-errors', 'fhir', 'scim', 'ai', 'county', 'county-connect', 'passkeys'];
 
 // Not on a device: setup and app are office-server concerns (first-run wizard, connection info), sync is the
@@ -48,6 +48,8 @@ const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport
 // a programme's office server and its county's (server/county-connect.js): the same, and a device has no address a
 // county could reach. passkeys is fingerprint sign-in and signing (docs/FINGERPRINT.md): a passkey is made for the
 // office server's host, and SUDS on this device does not offer one (deferred: unlocking a device with one).
+// incoming-referrals (the intake queue, server/incoming-referrals.js) IS in the kernel: SUDS on this device keeps its own
+// queue. A device that syncs with an office refuses its routes (the queue is the office's and never synchronised).
 const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir', 'security', 'scim', 'ai', 'referral-links', 'county', 'county-connect', 'passkeys'].includes(m));
 
 // Served in place of the app shell when local mode is off (the wizard's answer in server.json, or LOCAL_MODE_ENABLED). No scripts, nothing to configure.

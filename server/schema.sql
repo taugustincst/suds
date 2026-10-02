@@ -1677,6 +1677,60 @@ CREATE TABLE IF NOT EXISTS referral_links (
 CREATE INDEX IF NOT EXISTS idx_referral_links_referral ON referral_links(referral_id);
 CREATE INDEX IF NOT EXISTS idx_referral_links_client ON referral_links(client_id);
 
+-- Referrals TO the programme (1.24.0; server/incoming-referrals.js, docs/USER_GUIDE.md "Incoming referrals"): a person an
+-- emergency department, a jail's re-entry team, a detox, probation or a court, another provider, the person themselves
+-- or their family asked the programme to see. Not yet a client: the intake queue works it (new -> contacting -> accepted,
+-- linked to a client, or declined / unable to reach / referred elsewhere). Receiving one is not a disclosure. Everything
+-- that names or describes the person, and the referrer's own contact details, is encrypted; the referring organisation's
+-- name is not (it names a hospital or an agency, never the person). Office server only, never synchronised
+-- (server/sync-tables.js server_only); SUDS on this device keeps its own.
+CREATE TABLE IF NOT EXISTS incoming_referrals (
+  id TEXT PRIMARY KEY,
+  source_type TEXT NOT NULL CHECK (source_type IN ('er_hospital','jail_reentry','detox','justice','other_provider','self','family_friend','other')),
+  referring_org TEXT,                  -- the hospital, jail, court or agency (not PHI: it does not identify the person)
+  referrer_name_enc TEXT,              -- the person who made the referral, and how to reach them
+  referrer_phone_enc TEXT,
+  referrer_email_enc TEXT,
+  received_at TEXT NOT NULL,
+  received_via TEXT NOT NULL CHECK (received_via IN ('phone','fax','email','walk_in','ereferral')),
+  urgency TEXT NOT NULL DEFAULT 'routine' CHECK (urgency IN ('routine','soon','urgent')),
+  reason_enc TEXT,                     -- why they were referred, and what they need
+  first_name_enc TEXT,
+  last_name_enc TEXT,
+  last_name_idx TEXT,                  -- blind index: the queue's search by surname
+  dob_enc TEXT,
+  phone_enc TEXT,
+  notes_enc TEXT,
+  status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','contacting','accepted','declined','unable_to_reach','referred_elsewhere')),
+  assigned_to TEXT REFERENCES users(id),
+  first_contact_at TEXT,               -- the first attempt to reach the person: time to first contact is from received_at
+  client_id TEXT REFERENCES clients(id) ON DELETE SET NULL,   -- accepted: the client record it became
+  accepted_as TEXT CHECK (accepted_as IS NULL OR accepted_as IN ('existing','new')),
+  outcome_reason_enc TEXT,             -- declined: why; referred elsewhere: to whom; unable to reach: what was tried
+  closed_at TEXT,
+  closed_by TEXT REFERENCES users(id),
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  CHECK (status <> 'accepted' OR accepted_as IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_incoming_referrals_status ON incoming_referrals(status, received_at);
+CREATE INDEX IF NOT EXISTS idx_incoming_referrals_assigned ON incoming_referrals(assigned_to, status);
+CREATE INDEX IF NOT EXISTS idx_incoming_referrals_client ON incoming_referrals(client_id);
+CREATE INDEX IF NOT EXISTS idx_incoming_referrals_name ON incoming_referrals(last_name_idx);
+-- Each attempt to reach the person an incoming referral names: when, how, and what happened. Its note is encrypted.
+CREATE TABLE IF NOT EXISTS incoming_referral_attempts (
+  id TEXT PRIMARY KEY,
+  referral_id TEXT NOT NULL REFERENCES incoming_referrals(id) ON DELETE CASCADE,
+  attempted_at TEXT NOT NULL,
+  method TEXT NOT NULL CHECK (method IN ('phone','text','email','in_person','letter','other')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('reached','left_message','no_answer','wrong_number','other')),
+  notes_enc TEXT,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE INDEX IF NOT EXISTS idx_incoming_referral_attempts_referral ON incoming_referral_attempts(referral_id, attempted_at);
+
 -- The county view (docs/COUNTY-VIEW.md; server/county.js). Office server only, never synchronised
 -- (server/sync-tables.js server_only).
 -- county_signing_keys: the Ed25519 keys this office server signs its county submission files with. The current one

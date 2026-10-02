@@ -16,12 +16,15 @@ const SENSITIVE = new Set(['export:identified', 'clients:all', 'records:manage-o
   // ai:draft (1.17.0) sends de-identified session text about a client to the AI provider (docs/AI-COPILOT.md).
   'ai:draft',
   // county:manage decides whose signed figures a county accepts (it registers the keys they are checked with).
-  'county:manage']);
+  'county:manage',
+  // intake:read and intake:write (1.24.0) open the names and needs of everyone referred to the programme, client or not.
+  'intake:read', 'intake:write']);
 
 const COUNTY_PERMS = ['county:view', 'county:manage'];
 const EXACT_COUNTS = ['reports:exact', 'reports:funder'];
 // What opens a client's identity: a record (clients:write implies clients:read, auth.hasPerm), or a file of them.
-const IDENTIFYING = ['clients:read', 'clients:write', 'export:identified'];
+// The intake queue (1.24.0) names people referred to the programme, so it identifies them too.
+const IDENTIFYING = ['clients:read', 'clients:write', 'export:identified', 'intake:read', 'intake:write'];
 /**
  * Why an individual grant of `permission` does not fit an account of `role` (whose defaults are `roleDefaults`),
  * or null when it does. The same rule refuses the grant (POST /api/users/:id/permissions), removes it when the
@@ -116,6 +119,8 @@ const DEFS = [
   ['supplies:receive', 'Receive supply deliveries', 'Record stock that arrived at a site.'],
   ['county:view', 'See the county view', 'For a county that funds programmes: the signed submissions they send, side by side and summed for a period, and its Excel or CSV file. Exact aggregate figures for authorised county staff, not for publication; never a client. Administrators, supervisors and finance by default.'],
   ['county:manage', 'Manage county submissions', 'Register the programmes whose signed submissions the county accepts (each by its public key), import their files and withdraw one. Administrators by default.'],
+  ['intake:read', 'See incoming referrals', 'The intake queue: every referral to the program from a hospital, jail, detox, probation or court, another provider, the person or their family, with the person\'s name, contact details and needs, before they are a client. Not limited to a caseload. Navigators, clinicians, supervisors and administrators by default.'],
+  ['intake:write', 'Work incoming referrals', 'Record a referral to the program, log attempts to reach the person, assign it, and accept it (linking or creating the client record) or close it as declined, unable to reach or referred elsewhere. Navigators, clinicians, supervisors and administrators by default.'],
   ['ai:draft', 'Use the AI documentation copilot', 'Ask the AI copilot for a draft (progress note sections, assessment narratives, care plan and CalOMS suggestions) from text they give it, with identifiers replaced before it is sent. Only while an administrator has recorded the agreement with the provider and switched the copilot on. Clinicians, supervisors and navigators by default.'],
 ];
 

@@ -45,6 +45,11 @@ const DERIVATIONS = {
     source: ['participant_code_enc'],
     derive(p) { return { participant_code_idx: require('../server/participant-code').index(p.participant_code_enc) }; },
   },
+  // The intake queue's search by surname (1.24.0), as server/incoming-referrals.js toColumns writes it.
+  incoming_referrals: {
+    source: ['last_name_enc'],
+    derive(p) { return { last_name_idx: p.last_name_enc ? require('../server/crypto').blindIndex(p.last_name_enc) : null }; },
+  },
 };
 
 /**
