@@ -97,7 +97,7 @@ async function passkeysCard({ onChange = null } = {}) {
 route('profile', async (r) => {
   const force = r.query.get('force') === '1'; const mfaPrompt = r.query.get('mfa') === '1';
   const u = state.user;
-  const pw = form([{ name: 'current_password', label: 'Current password', type: 'password', required: true }, { name: 'new_password', label: 'New password', type: 'password', required: true, autocomplete: 'new-password', help: 'At least 12 characters with upper & lower case, a number and a symbol.' }, { name: 'confirm', label: 'Confirm new password', type: 'password', required: true, autocomplete: 'new-password' }],
+  const pw = form([{ name: 'current_password', label: 'Current password', type: 'password', required: true }, { name: 'new_password', label: 'New password', type: 'password', required: true, autocomplete: 'new-password', help: 'At least 12 characters with upper & lower case, a number and a symbol. Not your name or username, and not a common password.' }, { name: 'confirm', label: 'Confirm new password', type: 'password', required: true, autocomplete: 'new-password' }],
     { submitText: 'Change password', onSubmit: async (d) => { if (d.new_password !== d.confirm) throw new Error('Passwords do not match'); await post('/api/auth/password', { current_password: d.current_password, new_password: d.new_password }); toast('Password changed', 'ok'); await loadSession(); nav(force ? 'dashboard' : 'profile'); render(); } });
   const mfaBox = h('div', {});
   // Drawn from state.user each time: adding or removing fingerprint sign-in (below) changes what it says.

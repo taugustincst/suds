@@ -14,7 +14,7 @@ export const PURPOSE = 'Outreach, visits, naloxone and supplies, referrals and g
 // The published on-device web app (scripts/build-static-site.js): records live in this browser and nowhere
 // else, and nothing is ever synced from it (local/sync.js). An internal marker for those differences only.
 export const isStaticHost = () => { try { return window.SUDS_STATIC_HOST === true; } catch { return false; } };
-const PASSWORD_HELP = '12+ characters with upper and lower case, a number and a symbol.';
+const PASSWORD_HELP = '12+ characters with upper and lower case, a number and a symbol. Not your name or username, and not a common password.';
 // The account the optional "Try it with sample data" button creates on the on-device app. Shown on screen
 // before it is used: the password is printed here, so it is for looking around, not for real records.
 const SAMPLE_ACCOUNT = { username: 'sample', password: 'Sample-SUDS-2026', display_name: 'Sample User', role: 'admin', org_name: 'SUDS sample data' };

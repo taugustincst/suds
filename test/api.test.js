@@ -575,7 +575,7 @@ test('a brand-new account can get as far as the change-password page', async () 
   assert.equal((await c.get('/api/me/prefs')).status, 200, 'preferences load');
   assert.equal((await c.get('/api/clients')).status, 403, 'but nothing else does');
   assert.equal((await c.post('/api/tasks', { title: 'x' })).status, 403);
-  assert.equal((await c.post('/api/auth/password', { current_password: u.data.temporary_password, new_password: 'Brand-New-Passw0rd!' })).status, 200);
+  assert.equal((await c.post('/api/auth/password', { current_password: u.data.temporary_password, new_password: 'Brand-Fresh-Passw0rd!' })).status, 200);
   assert.equal((await c.get('/api/clients')).status, 200, 'and everything opens once it is changed');
 });
 
@@ -586,8 +586,27 @@ test('only failed sign-ins count against an address', async () => {
   try {
     for (let i = 0; i < 5; i++) assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' })).status, 200, `sign-in ${i + 1} is fine`);
     for (let i = 0; i < 3; i++) assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'wrong-' + i })).status, 401);
-    assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' })).status, 429, 'three failures and the address is limited');
-  } finally { config.loginRateLimit = was; require('../server/app').rateLimitReset('login:127.0.0.1'); }
+    assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' })).status, 429, 'three failures and that username from this address is limited');
+  } finally { config.loginRateLimit = was; resetLoginBuckets(); }
+});
+
+const resetLoginBuckets = () => { const app = require('../server/app'); app.rateLimitReset('login-ip:127.0.0.1'); for (const u of ['nav1', 'l2guessed', 'l2other', 'nobody-here']) app.rateLimitReset(`login-user:127.0.0.1|${u}`); };
+test('one person guessing from an address does not lock everyone else there out (pen test L2)', async () => {
+  // Regression: the per-address bucket refused every sign-in from a NAT'd office once anyone there failed 20 times.
+  const config = require('../server/config'); const was = [config.loginRateLimit, config.loginIpRateLimit];
+  const guessed = H.makeUser('l2guessed', 'navigator'); const other = H.makeUser('l2other', 'navigator');
+  config.loginRateLimit = 3; config.loginIpRateLimit = 8; resetLoginBuckets();
+  try {
+    for (let i = 0; i < 3; i++) assert.equal((await H.client().post('/api/auth/login', { username: guessed.username, password: 'wrong-' + i })).status, 401);
+    assert.equal((await H.client().post('/api/auth/login', { username: 'L2Guessed', password: guessed.password })).status, 429, 'the guessed name is limited, however it is capitalised');
+    assert.equal((await H.client().post('/api/auth/login', { username: other.username, password: other.password })).status, 200, 'another person at the same address still signs in');
+    // A name that does not exist is limited exactly like one that does: the 429 says nothing about which.
+    for (let i = 0; i < 3; i++) assert.equal((await H.client().post('/api/auth/login', { username: 'nobody-here', password: 'wrong-' + i })).status, 401);
+    assert.equal((await H.client().post('/api/auth/login', { username: 'nobody-here', password: 'wrong-x' })).status, 429);
+    // Spraying many names from one address still meets the per-address ceiling (6 failures so far; 8 allowed).
+    for (let i = 0; i < 2; i++) assert.equal((await H.client().post('/api/auth/login', { username: 'spray-' + i, password: 'wrong' })).status, 401);
+    assert.equal((await H.client().post('/api/auth/login', { username: other.username, password: other.password })).status, 429, 'past the per-address ceiling every sign-in from it waits');
+  } finally { [config.loginRateLimit, config.loginIpRateLimit] = was; resetLoginBuckets(); }
 });
 
 test('money and hours cannot be charged to a fund outside its period, or in the future', async () => {
@@ -1185,7 +1204,7 @@ test('a half-authenticated session cannot change the account password', async ()
   const again = H.client();
   const login = await again.post('/api/auth/login', { username: u.username, password: u.password });
   assert.equal(login.data.mfaPending, true);
-  const r = await again.post('/api/auth/password', { current_password: u.password, new_password: 'Brand-New-Passw0rd!' });
+  const r = await again.post('/api/auth/password', { current_password: u.password, new_password: 'Brand-Fresh-Passw0rd!' });
   assert.equal(r.status, 401, 'the password change is refused until the second factor is given');
   assert.equal(r.data.mfaRequired, true);
 });

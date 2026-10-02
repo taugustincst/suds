@@ -179,9 +179,14 @@ const config = {
   mfaGraceDays: (() => { const v = Number(process.env.MFA_GRACE_DAYS ?? 3); return Number.isFinite(v) && v >= 0 ? v : 3; })(),
   password: { minLength: 12, maxAgeDays: 90 },
   lockout: { maxAttempts: 5, minutes: 15 },
-  // Sign-in attempts allowed per source address per 15 minutes. A whole office behind one NAT address
-  // shares this, so it is a knob; the test suite raises it because every script signs in afresh.
+  // Failed sign-ins allowed per username from one source address per 15 minutes (POST /api/auth/login); the
+  // test suite raises it because every script signs in afresh. Keyed on the username as well as the address
+  // since 1.24 (pen test of 1.23.6, L2): keyed on the address alone, one person typing wrong passwords for
+  // any name locked every desk behind the office's NAT address out, right passwords included.
   loginRateLimit: Number(process.env.LOGIN_RATE_LIMIT ?? (env === 'test' ? 100000 : 20)),
+  // The backstop against spraying many usernames from one address: failed sign-ins per source address per
+  // 15 minutes, whatever the username. Ten times the per-username limit unless set (200 by default).
+  loginIpRateLimit: (() => { const v = Number(process.env.LOGIN_IP_RATE_LIMIT); const per = Number(process.env.LOGIN_RATE_LIMIT ?? (env === 'test' ? 100000 : 20)); return Number.isFinite(v) && v > 0 ? v : Math.max(200, per * 10); })(),
   // API requests allowed per source address per minute (every route but sign-in, which has its own limit
   // above). A whole office behind one NAT address shares it too, so it is a knob (docs/DEPLOYMENT.md): raise it
   // for a day of bulk imports from many desks. Not a positive number: 600.

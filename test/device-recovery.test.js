@@ -15,7 +15,7 @@ let L; let cleanup; let call;
 before(async () => { ({ L, cleanup } = await loadKernel({ staticHost: true })); call = kernelCaller(L); });
 after(async () => { if (cleanup) cleanup(); });
 
-const PW = 'Owner-Device-2026!'; const PW2 = 'New-Owner-Pass-2026!'; const NAV_PW = 'Navigator-Two-2026!';
+const PW = 'Lantern-Harbor-2026!'; const PW2 = 'Copper-Kettle-2026!'; const NAV_PW = 'Willow-Canyon-2026!';
 const CODE_SHAPE = /^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){6}$/;
 const codes = []; // every code this test was shown, to look for afterwards
 const norm = (c) => c.replace(/-/g, '');

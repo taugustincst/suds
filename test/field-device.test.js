@@ -388,8 +388,9 @@ test('an administrator\'s "Hold everything" keeps one device whole; its user can
   const p = await pullAll(whole.c);
   assert.equal(p.last.device_scope, 'full');
   assert.ok(idsOf(p.tables.notes).includes(ids.note), 'the whole scope');
-  // A whole session reaches account management as before.
-  assert.equal((await whole.c.get('/api/auth/sessions')).status, 200);
+  // A whole device's session reaches the rest of the API, but not account management (1.24, pen test of 1.23.6, L6).
+  const acct = await whole.c.get('/api/auth/sessions');
+  assert.equal(acct.status, 403); assert.equal(acct.data.syncSession, true); assert.equal(acct.data.fieldDevice, undefined);
   // A second device of the same account is still a field device.
   assert.deepEqual((await deviceSession(s, uuid())).login.device, { scope: 'field' });
   // The listing says so.

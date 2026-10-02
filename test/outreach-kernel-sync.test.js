@@ -9,7 +9,7 @@ const H = require('./helpers');
 const { loadKernel, kernelCaller } = require('./fixtures/kernel-harness');
 
 let L; let cleanup; let base; let office;
-const USER = 'fieldnav'; const PASSWORD = 'FieldNavPassw0rd!x';
+const USER = 'fieldnav'; const PASSWORD = 'Orchid-Lamp-77!x';
 before(async () => {
   ({ L, cleanup } = await loadKernel({ staticHost: false }));
   base = await H.start();

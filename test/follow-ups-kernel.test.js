@@ -9,7 +9,7 @@ const H = require('./helpers');
 const { loadKernel, kernelCaller } = require('./fixtures/kernel-harness');
 
 let L; let cleanup; let base; let office;
-const USER = 'fusync'; const PASSWORD = 'FuSyncPassw0rd!x';
+const USER = 'fusync'; const PASSWORD = 'Orchid-Lamp-77!x';
 before(async () => {
   ({ L, cleanup } = await loadKernel({ staticHost: false }));
   base = await H.start();

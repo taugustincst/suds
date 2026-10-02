@@ -32,6 +32,10 @@ try { db.checkKeyFingerprint(); } catch (e) { console.error(`[suds] ${e.message}
 ensureBootstrap();
 // Settings an installer chose for this server (SUDS_PROVISION_FILE; deploy/linux/install.sh), where unset.
 try { require('./provision').apply(); } catch (e) { console.error('[suds] provisioned settings:', e.message); }
+// The audit chain's head is sealed, and its first anchor written, from the very first start, not only by the hourly
+// housekeeping below: until then the newest audit entries could be deleted without a trace (server/audit.js).
+try { require('./audit').sealHeadAtStart(); } catch (e) { console.error('[suds] sealing the audit head:', e.message); }
+try { require('./audit-anchor').firstAnchorAtStart(); } catch (e) { console.error('[suds] first audit anchor:', e.message); }
 // Production problems nobody would otherwise see until an auditor asks: said once, loudly, at every start.
 for (const problem of require('./startup-checks').problems()) console.error(`[suds] WARNING: ${problem}`);
 // A drill or backup interrupted by a crash leaves a decrypted copy of the database in the data directory:
