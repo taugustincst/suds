@@ -87,6 +87,63 @@ stabilisation period (not before 2026-10-29). Nothing here is in a release yet.
   script `ui-eval` (Remind author and Remind all set the link, **Open the draft** on the to-do, Home's title and a phone
   row, the fallback after the linked draft is deleted, with axe on each).
 
+### Incoming referrals: an intake queue for referrals to the program (built for 1.24.0, not yet released)
+
+Feature work for 1.24.0, on its own branch (`feature/1.24-incoming-referrals`), from the persona tests (county buyers:
+SUDS tracks referrals *out*, not referrals *in* from the ER, jail, detox, probation and courts, other providers, the
+person or their family). It goes through the release gate after the stabilisation period. Nothing here is in a release yet.
+
+#### Added
+
+- Added: **Incoming referrals**, an intake queue (`#/incoming`, in the menu; under *More* for a front-line worker, in the
+  main list for a supervisor). A referral records its source (emergency department or hospital, jail or re-entry, detox or
+  withdrawal management, probation/parole/court, another provider, self, family or friend, other), the referring
+  organisation, the referrer's name, phone and email, when and how it arrived (phone, fax, email, walk-in, eReferral),
+  the reason and needs, urgency (routine, soon, urgent), the person's name, date of birth and phone, and notes; and who it
+  is assigned to. **+ Incoming referral** on the queue and in **+ Log**.
+- The workflow: *new* → *contacting* (each attempt to reach the person logged with when, how and what happened) →
+  *accepted* (linked to a client: an existing record found by the intake duplicate check on the referral's details, only
+  records the worker may open, or with the client search; or a new client made with *New client — full intake* filled in
+  from the referral, its own duplicate check included) / *declined* (why) / *unable to reach* / *referred elsewhere*
+  (where). A closed referral other than an accepted one can be reopened.
+- **Time to first contact**: the first attempt's time is kept (`first_contact_at`); each referral shows the hours from
+  received to it, and the queue and Supervision show the median over the last 90 days and how many were tried within 24
+  hours.
+- Home: *N new referrals* (red when one is urgent) and *N incoming referrals assigned to you*. Supervision: an *Incoming
+  referrals* card (the queue in numbers and the time to first contact). The *Referrals we make* page points to the queue.
+- Permissions: **`intake:read`** (*See incoming referrals*) and **`intake:write`** (*Work incoming referrals*), held by
+  navigators, clinicians, supervisors and administrators; never finance or read-only (both are identifying, so
+  `grantProblem` refuses them to a de-identified role), marked sensitive, editable per person on the Permissions page
+  like the others. Working the queue needs both (a denied read leaves nothing to write). Accepting also needs
+  *Open client records* (`clients:read`), and a new client *Edit client records*.
+- **Visibility (decided):** everyone with `intake:read` sees the whole queue, a caseload-scoped worker included: a
+  referred person is nobody's client yet, and intake is a shared desk. An accepted referral's client is reached as every
+  client is (accepting into an existing record needs one the worker may open, else 403 and `authz.denied`).
+- **Part 2 / HIPAA (decided):** receiving a referral is not a disclosure, so it writes no accounting row. SUDS builds **no
+  send-back to the referrer** (no "let the referrer know"): telling them the person became a client would be a
+  disclosure, made under the person's consent on their Consents tab like any other.
+- **Not synchronised (decided):** `incoming_referrals` and `incoming_referral_attempts` are office-only
+  (`server/sync-tables.js` `server_only`, their `_enc` columns in `unsynced_enc`): a field device never holds the names
+  of people nobody has met. The route module is in the browser kernel, so SUDS on this device keeps its own queue; a
+  device that syncs with an office refuses the routes (403, `officeOnly`) and hides Home's count and the + Log entry.
+- Schema: **migration 70** adds the two tables and their indexes. The person's name, date of birth, phone, the reason,
+  notes, the outcome reason, each attempt's note and the referrer's name, phone and email are `_enc`; `last_name_idx` is
+  the queue's surname search (a blind index, re-derived by `scripts/rotate-index-key.js`); the referring organisation
+  is readable (it names an agency, never the person).
+- Retention: an accepted referral is the client record's (activity on it from `received_at`; deleted with it, with its
+  attempts, leaving no tombstone); one closed without a client is deleted the retention period after it closed
+  (`purgeExpiredIncomingReferrals`, daily, audited as a count); an open one is never due.
+- Routes: `GET/POST /api/incoming-referrals`, `GET /api/incoming-referrals/summary`, `GET/PUT /api/incoming-referrals/:id`,
+  `POST /api/incoming-referrals/:id/attempts`, `GET /api/incoming-referrals/:id/matches`, `POST /api/incoming-referrals/:id/accept`,
+  `/close` and `/reopen`. Audit actions `incoming_referral.*` (create, read, list, update, assign, attempt, accept, close,
+  reopen, purge) and `client.duplicate_check` with `source: incoming_referral`: ids, statuses and field names, never a value.
+- Tests: `test/incoming-referrals.test.js` (roles allowed and denied, per-person denies, validation, encryption at rest,
+  audit rows without PHI, filters and search, attempts and first contact, edit and assign, close/reopen, accept into an
+  existing client and a new one, caseload limits on linking, retention, the synced device); `test/migrations.test.js`
+  (migration 70; fresh and upgraded identical); `test/data-inventory.test.js`, `test/doc-content-currency.test.js`,
+  `test/role-expansion.test.js`; the browser script `incoming-referrals` (record one, Home and the queue, an attempt, accept
+  into a new client) and the accessibility audit of the queue, a referral and its form.
+
 ### Security & procurement page and hardening checklist (built for 1.24.0, not yet released)
 
 Feature work for 1.24.0, on its own branch (`feature/1.24-procurement-hardening`), from the live persona tests ("zero
