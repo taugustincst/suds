@@ -39,6 +39,7 @@ Terms used below:
 | **Clinical documentation** | Note text and structured sections, addenda, problem list with ICD-10/Z codes, care-plan goals and steps, ASAM dimension notes, PHQ-9/GAD-7/AUDIT-C/DAST-10 answers, presenting problem, discharge summary | `_enc` | `notes`, `note_addenda`, `problems`, `problem_history`, `care_plan_goals`, `care_plan_steps`, `asam_assessments`, `outcome_measures`, `episodes` |
 | **SUD counseling notes** (42 CFR §2.11) | A note flagged `counseling_note` | `_enc`, like every note. Readable only by the author, the co-signer and holders of `notes:clinical:write`. Never on FHIR. Removed from devices that may no longer read it (1.16.1–1.16.4) | `notes`, `note_addenda` |
 | **Service records** | Visit summaries, calls (contact name, number, purpose, summary), referral outcomes and barriers, to-dos, overdose substances and notes, time and spending descriptions, an anonymous contact's SSP participant code (1.17.0), notes on a prevention event (1.17.0) | `_enc` for free text and the participant code (with a blind index for counting); readable coded fields | `interventions`, `calls`, `referrals`, `tasks`, `overdose_events`, `time_entries`, `expenditures`, `assignments`, `prevention_events` |
+| **Incoming referrals (built for 1.24.0)** | A person referred to the programme who is not a client yet: name, date of birth, phone, the reason and needs, notes, why it was declined or where they were referred, each attempt to reach them; the referrer's own name, phone and email. The referring organisation and the coded fields (source, how it arrived, urgency, status, dates) are readable | `_enc`, with a blind index on the surname for the queue's search. Office server only (SUDS on this device keeps its own) | `incoming_referrals`, `incoming_referral_attempts` |
 | **Part 2 legal record** | Consents (recipient, purpose, scope, signer, witness), court orders, the accounting of disclosures, Part 2 notices given, the QSOA/research/audit agreement register | `_enc`. Consents, disclosures and addenda are immutable once written, even by sync (`sync-tables.js` `immutable`) | `consents`, `court_orders`, `disclosures`, `part2_notices`, `disclosure_agreements` |
 | **Forms, files and imports** | Filled county forms, scanned or signed copies, file names, OneNote and Pocket AI imports before they are filed as notes | `_enc`, including file bytes and file names | `client_forms`, `client_form_files`, `imports`, `import_items` |
 | **State and grant reporting** | CalOMS Tx answers and the submission file, SUPRT-A answers | `_enc` | `caloms_records`, `caloms_submissions`, `suprt_assessments` |
@@ -91,6 +92,8 @@ The *Devices* column says whether a local-mode device receives the column. The *
 | `disclosure_agreements` | `document_ref_enc` | Where a QSOA or approval is filed | Yes, to every device (pull-only) | Kept: the programme's register, not client data |
 | `caloms_submissions` | `file_enc` | A CalOMS Tx file as produced for DHCS | No (office only) | The file is cleared after 90 days (`CALOMS_FILE_DAYS`), or when a client in it is purged. The record of the submission (period, hash, counts) stays |
 | `client_revisions` | `changes_enc` | Each change to a client's own details, with every changed field's value before and after (1.17.0) | No (office only): a device that syncs keeps no earlier values; SUDS on this device keeps its own in that browser | Deleted with the client record, leaving no tombstone; not activity (an edit does not extend retention) |
+| `incoming_referrals` | `referrer_name_enc`, `referrer_phone_enc`, `referrer_email_enc`, `reason_enc`, `first_name_enc`, `last_name_enc`, `dob_enc`, `phone_enc`, `notes_enc`, `outcome_reason_enc` | A referral to the programme (built for 1.24.0): the person's name, date of birth and phone, why they were referred and what they need, notes, the reason it was declined or where they were sent, and the referrer's own contact details | No (office only): the intake queue is the office's; a device that syncs refuses its routes; SUDS on this device keeps its own | Deleted with the client record once accepted into one, leaving no tombstone (its `received_at` is activity on the record); one closed without a client is deleted the retention period after it closed (`purgeExpiredIncomingReferrals`); an open one is never due |
+| `incoming_referral_attempts` | `notes_enc` | Each attempt to reach a referred person: when, how, what happened, and a note (built for 1.24.0) | No (office only) | Deleted with its referral |
 | `referral_links` | `packet_enc`, `ack_by_enc`, `ack_note_enc` | A secure referral link's snapshot of what the recipient is shown (client's name, reason, urgency; phone and date of birth only if ticked), and who at the recipient answered and their note (1.17.0). Tokens, access codes and claim secrets are stored only as hashes | No (office only) | Deleted with the client record, leaving no tombstone |
 | `breakglass_events` | `reason_enc` | Why a note was opened in an emergency | No (office only) | Deleted with the client record |
 | `complaints` | `summary_enc`, `resolution_enc` | A privacy complaint and its answer | No (office only) | Kept, unlinked: the programme's record of how it answered |
@@ -125,6 +128,7 @@ On a device they sit inside the sealed database image ([ENCRYPTION-AND-KEYS.md](
 | `episodes`, `referrals`, `tasks`, `calls`, `interventions` | Dates, statuses, types, outcomes (coded), locations and modalities, durations, supplies given |
 | `overdose_events` | When, kind, naloxone used and doses, EMS, hospitalised, survived, location type, `city` |
 | `notes` | Kind, format, status, signer, signature hashes, `counseling_note` and `part2_protected` flags, dates |
+| `incoming_referrals`, `incoming_referral_attempts` | The referring organisation's name (a hospital, jail, court or agency, never the person), source type, how it arrived, urgency, status, assignee, dates (received, first contact, closed), the client it was accepted into; an attempt's method and outcome |
 | `consents`, `disclosures`, `court_orders` | Type, dates, basis, method, source, flags (for example `counseling_notes`, `legal_proceeding`) |
 | `asam_assessments`, `outcome_measures` | Ratings and scores, band, safety flag |
 | `audit_log` | User, action, entity and client ids, IP address, time. No names or note text |
@@ -135,7 +139,8 @@ On a device they sit inside the sealed database image ([ENCRYPTION-AND-KEYS.md](
 The following columns are HMAC-SHA256 values under `SUDS_INDEX_KEY`, a key separate from the encryption key:
 
 - on `clients`: `last_name_idx`, `full_name_idx`, `name_prefix_idx`, `name_phonetic_idx`, `first_name_idx`, `first_name_prefix_idx`, `preferred_name_idx`, `dob_idx`, `phone_idx`;
-- on `interventions`: `participant_code_idx` (1.17.0), an anonymous contact's SSP participant code, for counting the different participants; `scripts/rotate-index-key.js` re-derives it.
+- on `interventions`: `participant_code_idx` (1.17.0), an anonymous contact's SSP participant code, for counting the different participants; `scripts/rotate-index-key.js` re-derives it;
+- on `incoming_referrals`: `last_name_idx` (built for 1.24.0), a referred person's surname, for the intake queue's search; `scripts/rotate-index-key.js` re-derives it.
 
 They make exact search possible without decrypting.
 
@@ -224,6 +229,7 @@ Two things a reviewer should know:
 | What | Kept | Mechanism |
 | --- | --- | --- |
 | A client's record: every table marked *Deleted with the client record* above | Seven years after the **last activity** on it by default (`client_retention_years`, never below six), once no episode is open. A legal hold exempts it | `server/retention.js` `purgeClient`: one transaction, daily. Deleted rows leave tombstones so devices delete them too. Audited by client code only |
+| Incoming referrals never accepted into a client (declined, unable to reach, referred elsewhere), built for 1.24.0 | The same period as a client record, counted from when the referral was closed; an open one is kept until somebody closes it | `server/retention.js` `purgeExpiredIncomingReferrals`, daily with the client purge, with its attempts. Audited by count only (`incoming_referral.purge`) |
 | Time and spending linked to a purged client | Kept; the client link is removed | `UNLINK_TABLES` |
 | Complaints; privacy incidents and their client snapshots | Kept by SUDS with no automatic purge. The county's policy decides (breach documentation: at least six years) | — |
 | CalOMS Tx submission files | 90 days, then only the record | `clearOldCalomsFiles` |
@@ -265,6 +271,7 @@ The database's schema version is the number of the newest migration it has run (
 | Migration 67 | 1.23.0 | Follow-up to-dos: `tasks.call_id` and `tasks.intervention_id` (the call or visit whose follow-up date made a to-do, so changing the date moves it; ids only, no new data about people) |
 | Migration 68 | 1.24.0 (built, not yet released) | Duplicate time entries: `time_entries.start_time` (when the time started, HH:MM, optional) and `time_entries.duplicate_of` (the id of another entry a device's pushed entry may duplicate, for a supervisor to merge or clear). A time and an id; no new data about people, nothing encrypted |
 | Migration 69 | built for 1.24.0, not yet released | A sign reminder opens its draft: `tasks.note_id` (the id of the assignee's own draft a supervisor's *Finish and sign* reminder opens; an id only, no new data about people; synced to devices with the to-do) |
+| Migration 70 | built for 1.24.0, not yet released | Incoming referrals: `incoming_referrals` (a person referred to the programme, not yet a client: their name, date of birth, phone, reason, notes and the referrer's contact details `_enc`, the surname's blind index `last_name_idx`; the referring organisation, source, urgency and status readable) and `incoming_referral_attempts` (each attempt to reach them, its note `_enc`). Office server only, never synchronised |
 
 `test/doc-content-currency.test.js` fails when the newest migration, or one the newest stamped release's CHANGELOG section names, is not in this table.
 

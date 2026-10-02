@@ -797,7 +797,11 @@ test('SUDS 1.23.0\'s first start on a 1.22.0 database: county consents, releases
     assert.equal(db().one(`SELECT COUNT(*) n FROM tasks WHERE note_id IS NOT NULL`).n, 0, 'no reminder linked to a draft');
     const m69 = require('../server/db');
     assert.ok(db().all(`PRAGMA table_info(tasks)`).some((c) => c.name === 'note_id' && c.type === 'TEXT' && !c.notnull && c.dflt_value === null));
-    assert.equal(m69.LATEST_SCHEMA_VERSION, 69);
+    // Migration 70 (built for 1.24.0): the incoming-referrals queue, two new tables, empty after the upgrade, with
+    // their indexes (the shape check above compares them with a fresh install).
+    assert.equal(m69.LATEST_SCHEMA_VERSION, 70);
+    for (const t of ['incoming_referrals', 'incoming_referral_attempts']) assert.equal(db().one(`SELECT COUNT(*) n FROM ${t}`).n, 0, `${t} exists and is empty`);
+    for (const i of ['idx_incoming_referrals_status', 'idx_incoming_referrals_assigned', 'idx_incoming_referrals_client', 'idx_incoming_referrals_name', 'idx_incoming_referral_attempts_referral']) assert.ok(db().one(`SELECT 1 x FROM sqlite_master WHERE type='index' AND name=?`, i), i);
     // The field scope still follows the account; the whole device stays whole.
     const DEV = require('../server/devices');
     assert.equal(DEV.accountFieldBound(user.id), true, 'the field device\'s account is still held to the field scope');
