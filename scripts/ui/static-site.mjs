@@ -63,6 +63,12 @@ ok(await page.$('.layout'), 'setup completes with no server round trip');
 await passRecoveryCode(page);
 ok(await page.evaluate(() => !!window.SUDS_LOCAL), 'the in-browser kernel is what answered every request');
 ok(!(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)), 'the page fits a phone screen width');
+// 1.23.5 (D7): the first-run address typed while signed in goes to Home, not to a Sign up form inside the app.
+await page.goto(base + '/#/localsetup');
+ok(await until(() => page.evaluate(() => location.hash === '#/dashboard')), '#/localsetup while signed in goes to Home', await page.evaluate(() => location.hash));
+await settle(page);
+ok(await page.$('.layout'), 'still signed in, in the app');
+eq(await page.$$eval('[data-device-signup], input[name=confirm]', e => e.length), 0, 'with no Sign up form on the page');
 
 // data survives a reload — this is IndexedDB, not memory, and it is the whole point of running locally
 await page.goto(base + '/#/clients'); await settle(page);

@@ -15,6 +15,7 @@
 //   * on a device that syncs with the office, the header says whether anything is waiting to be sent;
 //   * 1.23.1: unticking Follow-up needed clears the date; a phone to-do row's Open button is "Open: <title> (<priority>)";
 //     a field-device request approved while offline copies are off says so to the administrator and the worker.
+//   * 1.23.5: a call's edit form, which is what a tap opens on a phone, has Delete call.
 //   * 1.23.2: a phone to-do row offers the call, visit or referral it came from; a clinician's new note is a clinical
 //     progress note.
 // Every new state is put through axe (WCAG 2.1 A/AA).
@@ -194,6 +195,25 @@ try {
   await nav.page.locator('.modal-bg').last().locator('button', { hasText: /^Cancel$/ }).click();
   await until(async () => (await nav.page.$$('.modal-bg')).length === 1);
   await nav.page.keyboard.press('Escape'); await settle(nav.page);
+
+  // 1.23.5 (D1): on a phone a tap on your own call opens its form, which had only Cancel and Save; it has Delete too.
+  const tapped = await nav.api('POST', '/api/calls', { method: 'phone', direction: 'outbound', started_at: new Date(Date.now() + 60000).toISOString(), duration_minutes: 2, contact_type: 'other', contact_name: 'Phone delete check', outcome: 'reached', purpose: 'Phone delete check' });
+  eq(tapped.status, 201, 'a call to delete on the phone is logged');
+  await nav.go(`calls?mine=1&_=${Date.now()}`);
+  await nav.page.locator('.compact-list .compact-row', { hasText: 'Phone delete check' }).first().tap();
+  ok(await until(() => nav.page.$('.modal input[name=purpose]')), 'the row opens the call\'s edit form');
+  const delBtn = nav.page.locator(`.modal [data-call-delete="${tapped.data.id}"]`);
+  eq(await delBtn.count(), 1, 'D1: the phone edit form has Delete call');
+  eq((await delBtn.textContent()).trim(), 'Delete call', 'named as on the desktop card');
+  await axe(nav.page, 'a call\'s edit form with Delete (390 px)');
+  await delBtn.tap();
+  ok(await until(async () => (await nav.page.$$('.modal-bg')).length > 1), 'Delete call asks first, as on the desktop');
+  ok(/Delete this contact record\?/.test(await nav.page.locator('.modal-bg').last().textContent()), 'with the same confirmation');
+  await nav.page.locator('.modal-bg').last().locator('button', { hasText: /^Delete$/ }).click();
+  ok(await until(async () => (await nav.page.$$('.modal-bg')).length === 0), 'the form closes once it is deleted');
+  eq((await nav.api('GET', `/api/calls/${tapped.data.id}`)).status, 404, 'and the call is gone');
+  await settle(nav.page);
+  eq(await nav.page.locator('.compact-list .compact-row', { hasText: 'Phone delete check' }).count(), 0, 'and off the list');
 
   // ---- + Log a visit: the follow-up date has the same quick choices ----
   await nav.go(`client/${cid}`);

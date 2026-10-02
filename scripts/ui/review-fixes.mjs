@@ -223,6 +223,18 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   const audited = (await api('GET', '/api/admin/audit?action=caseload.transfer&limit=5')).data;
   ok(JSON.stringify(audited).includes(clin.id), 'the move went through the audited caseload transfer');
 
+  // 1.23.5 (D5): the navigator leaves a draft, and the supervisor has sent a reminder to sign it.
+  const dS = await session('dchen', 'Navigator2026!!');
+  const dClient = ((await dS.api('GET', '/api/caseload')).data.caseload || [])[0];
+  ok(dClient, 'the navigator holds a client to leave a draft on');
+  const dDraft = await dS.api('POST', '/api/notes', { client_id: dClient.id, kind: 'admin', content: 'Draft left when leaving.', occurred_at: new Date().toISOString() });
+  eq(dDraft.status, 201, 'the navigator leaves a draft note', dDraft.data);
+  await dS.close();
+  const remS = await session('jwalker', 'Navigator2026!!');
+  const rem = await remS.api('POST', '/api/tasks', { client_id: dClient.id, assigned_to: leaver.id, title: 'Finish and sign your draft notes', description: 'Please.\nThis reminder closes itself once your draft notes on this client\'s record are signed.', due_at: new Date().toISOString().slice(0, 10) });
+  eq(rem.status, 201, 'and the supervisor reminds them to sign it', rem.data);
+  await remS.close();
+
   // 2. Deactivated without moving anything: the clients stay with the inactive account...
   const held = (await api('GET', `/api/users/${leaver.id}/caseload`)).data;
   dlg = await deactivate('David Chen');
@@ -249,9 +261,18 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   await sp.click('.modal-bg button.danger:has-text("Transfer")');
   const banner = await until(() => sp.$('.banner.ok'));
   ok(banner && /moved from David Chen to Maria Rivera/.test(await banner.textContent()), 'the supervisor moves them', banner && await banner.textContent());
+  // 1.23.5 (D5): the result says the sign reminder was cancelled, not only the to-dos moved.
+  const cancelled = await until(() => sp.$('[data-reminders-cancelled]'));
+  ok(cancelled && /^1 reminder to finish and sign draft notes cancelled: the drafts stay David Chen's, and are not moved\.$/.test((await cancelled.textContent()).trim()), 'D5: the result says 1 sign reminder was cancelled', cancelled && await cancelled.textContent());
+  eq(((await supS.api('GET', `/api/tasks/${rem.data.id}`)).data.row || {}).status, 'cancelled', 'and it was');
   eq((await supS.api('GET', `/api/users/${leaver.id}/caseload`)).data.clients, 0, 'the inactive navigator holds nothing afterwards');
   await go(sp, 'dashboard');
   ok(!(await sp.$('a.badge:has-text("assigned to inactive staff")')), 'and the Home warning is gone');
+  // 1.23.5 (D5): the supervision queue offers no Remind author for the draft of someone no longer active, and says why.
+  await go(sp, 'supervision');
+  ok(await until(() => sp.$(`[data-section=unsigned] [data-open-note="${dDraft.data.id}"]`)), 'the leaver\'s draft is still in the queue');
+  ok(!(await sp.$(`[data-remind-author="${dDraft.data.id}"]`)), 'D5: with no Remind author');
+  eq(((await sp.textContent(`[data-author-inactive="${dDraft.data.id}"]`).catch(() => '')) || '').trim(), 'Author no longer active', 'D5: it says the author is no longer active');
   await supS.close();
 }
 

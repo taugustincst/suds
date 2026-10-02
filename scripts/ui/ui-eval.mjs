@@ -8,7 +8,9 @@
 //   5. a read-only account's Home leads with its reports, with no to-do or "continue" card;
 //   6. the client record's tab strip promotes Care plan and Assessments for a clinician, Episodes and Care team
 //      for a supervisor, and keeps the six everyday tabs for everyone;
-//   7. the funder report's three downloads each say what they are for.
+//   7. the funder report's three downloads each say what they are for;
+//   8. (1.23.5) a sign reminder's Assigned to and Client are fixed for its assignee, with why, and ticking it done with
+//      drafts still unsigned asks first.
 // Each page it changes is checked with axe (WCAG 2.1 A/AA) as well.
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
@@ -319,6 +321,56 @@ try {
     ok(/portal|system/.test(await sup.page.textContent('[data-funder-export-help=csv]')), 'the CSV is for a portal or data system');
     ok(/Not for sending/.test(await sup.page.textContent('[data-funder-export-help=workbook]')), 'everything-to-Excel is not for sending');
     await axe(sup.page, 'funder report downloads');
+  }
+
+  // ------------------------------------------------------------------------------------------------------ 8
+  // 1.23.5: a sign reminder's form shows who it is for and its client fixed to its assignee, with why (D2), and ticking
+  // it done with drafts still unsigned asks first (N7).
+  {
+    const c = await nav.api('POST', '/api/clients', { first_name: 'Remi', last_name: `Fixed${Date.now() % 100000}`, status: 'active', confirm_duplicate: true });
+    eq(c.status, 201, 'the navigator adds a client', c.data);
+    const draft = await nav.api('POST', '/api/notes', { client_id: c.data.id, kind: 'admin', content: 'Draft to finish.', occurred_at: new Date().toISOString() });
+    eq(draft.status, 201, 'and leaves a draft note on it', draft.data);
+    const navId = (await nav.api('GET', '/api/auth/me')).data.user.id;
+    const rem = await sup.api('POST', '/api/tasks', { client_id: c.data.id, assigned_to: navId, title: 'Finish and sign your draft notes (fixed fields)', description: `Please.\n${MARK}`, due_at: new Date().toISOString().slice(0, 10) });
+    eq(rem.status, 201, 'the supervisor reminds her to sign it', rem.data);
+    eq(((await nav.api('GET', `/api/tasks/${rem.data.id}`)).data.row || {}).sign_reminder, true, 'a real sign reminder');
+    // D2: her form shows Assigned to and Client, disabled, with the reason under them.
+    await nav.go(`tasks?id=${rem.data.id}&_=d2`);
+    ok(await until(() => nav.page.$('.modal select[name=assigned_to]')), 'her reminder opens in its form');
+    ok(await nav.page.$eval('.modal select[name=assigned_to]', e => e.disabled), 'D2: Assigned to is disabled');
+    ok(await nav.page.$eval('.modal [data-field="client_id"] input[type=text]', e => e.disabled), 'D2: and so is Client');
+    const why = await nav.page.$eval('.modal [data-field="assigned_to"] .help', e => e.textContent).catch(() => '');
+    eq(why, 'Only the supervisor who sent this reminder, or someone who countersigns notes, can change who it is for or its client.', 'D2: with the reason');
+    eq(await nav.page.$eval('.modal [data-field="client_id"] input[type=text]', e => e.getAttribute('aria-describedby')), await nav.page.$eval('.modal [data-field="assigned_to"] .help', e => e.id), 'D2: the Client box is described by it too');
+    ok(!(await nav.page.$eval('.modal select[name=priority]', e => e.disabled)), 'D2: the rest of the form stays editable');
+    await axe(nav.page, 'a sign reminder\'s form for its assignee');
+    await nav.page.selectOption('.modal select[name=priority]', 'high');
+    await nav.page.click('.modal .btn-row button[type=submit]');
+    ok(await until(async () => !(await nav.page.$('.modal-bg'))), 'D2: and it saves, with no refusal');
+    eq(((await nav.api('GET', `/api/tasks/${rem.data.id}`)).data.row || {}).priority, 'high', 'D2: the change is kept');
+    // Its maker, who countersigns notes, keeps the fields.
+    const row = (await sup.api('GET', `/api/tasks/${rem.data.id}`)).data.row;
+    await sup.page.evaluate(async (t) => (await import('./views/tasks.js')).openTaskForm(t), row);
+    ok(await until(() => sup.page.$('.modal select[name=assigned_to]')), 'the supervisor opens the same reminder');
+    ok(!(await sup.page.$eval('.modal select[name=assigned_to]', e => e.disabled)), 'D2: for its maker Assigned to stays editable');
+    await closeModals(sup.page);
+    // N7: ticking it done with the draft unsigned asks first; Cancel leaves it open.
+    await nav.go(`tasks?status=open&mine=1&_=n7`);
+    const box = `input[aria-label='Mark "Finish and sign your draft notes (fixed fields)" done']`;
+    ok(await until(() => nav.page.$(box)), 'her reminder has its done box on the To-dos list');
+    await nav.page.click(box);
+    ok(await until(() => nav.page.$('.modal-bg')), 'N7: ticking it asks first');
+    eq((await nav.page.textContent('.modal-bg:last-child .modal p')).trim(), 'You still have 1 unsigned draft note on this record. Mark the reminder done anyway?', 'N7: saying how many drafts are unsigned');
+    await axe(nav.page, 'the question before a sign reminder is ticked done');
+    await nav.page.locator('.modal-bg').last().locator('button', { hasText: /^Cancel$/ }).click();
+    ok(await until(async () => !(await nav.page.$('.modal-bg'))), 'N7: Cancel closes the question');
+    ok(await until(async () => !(await nav.page.$eval(box, e => e.checked).catch(() => true))), 'N7: and the box is unticked again');
+    eq(((await nav.api('GET', `/api/tasks/${rem.data.id}`)).data.row || {}).status, 'open', 'N7: the reminder stays open');
+    await nav.page.click(box);
+    ok(await until(() => nav.page.$('.modal-bg')), 'asked again');
+    await nav.page.locator('.modal-bg').last().locator('button', { hasText: /^Mark done$/ }).click();
+    ok(await until(async () => ((await nav.api('GET', `/api/tasks/${rem.data.id}`)).data.row || {}).status === 'done'), 'N7: "Mark done" marks it done anyway');
   }
 } catch (e) {
   fail(`script error: ${e.stack || e.message}`);
