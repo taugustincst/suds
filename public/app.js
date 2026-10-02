@@ -976,7 +976,8 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   // The same message beside the Save button (1.24.0), shown when the form is long enough that the banner above is out
   // of sight from there (an assessment, a screening, an intake): a failed save used to leave the person at the
   // bottom of the dialog with the only sign of it scrolled away at the top. No live role: announce() says it once.
-  const errNear = h('div', { class: 'banner danger hidden', tabindex: '-1', 'data-form-error-near': '1' });
+  // Styled as a danger banner, without the class: '.banner.danger' still names the form's one error banner.
+  const errNear = h('div', { class: 'banner form-error-near hidden', tabindex: '-1', 'data-form-error-near': '1' });
   const submitBtn = h('button', { class: 'btn primary', type: 'submit' }, submitText);
   let submitted = false; let saveTimer;
   // This submission's Idempotency-Key base (see idempotencyKey above): kept while the contents are
