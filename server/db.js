@@ -847,6 +847,11 @@ const migrations = [
     addColumn(d, 'time_entries', 'start_time', 'TEXT');
     addColumn(d, 'time_entries', 'duplicate_of', 'TEXT');
   },
+  // 69: a supervisor's "finish and sign" reminder opens the draft it is about (built for 1.24.0; server/rules/tasks.js
+  //     noteLink, docs/USER_GUIDE.md "Reminders to sign notes"). tasks.note_id, NULL for every existing to-do (a
+  //     reminder made before keeps opening the client's drafts list). No index: it is read only with the to-do.
+  //     Depends on nothing but tasks; self-contained and idempotent, so it can be renumbered.
+  (d) => { addColumn(d, 'tasks', 'note_id', 'TEXT'); },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

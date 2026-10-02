@@ -7432,7 +7432,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   -- the call or visit whose follow-up date made this to-do (1.23.0, server/rules/follow-ups.js): changing that date
   -- moves it and clearing the date cancels it, while it is still as SUDS made it
   call_id TEXT REFERENCES calls(id) ON DELETE SET NULL,
-  intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL
+  intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL,
+  -- the draft a supervisor's "finish and sign" reminder opens (built for 1.24.0, server/rules/tasks.js noteLink): the
+  -- assignee's own draft on this to-do's client. No REFERENCES: notes are never deleted (a deleted draft keeps its row
+  -- with deleted_at), and a device that does not hold the note must still store the reminder; a link to a note that is
+  -- not a live draft is dropped by the office, and the reminder falls back to the client's drafts list.
+  note_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks(assigned_to, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_client ON tasks(client_id);
@@ -13704,6 +13709,8 @@ var require_notes = __commonJS({
         if (cause === "deleted") db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, now2, t.id);
         else db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now2, now2, t.id);
       }
+      const closed = new Set(done.map((t) => t.id));
+      for (const t of db3.all(`SELECT id FROM tasks WHERE note_id=? AND status IN ('open','in_progress')`, noteId)) if (!closed.has(t.id)) db3.run(`UPDATE tasks SET note_id=NULL, updated_at=? WHERE id=?`, now2, t.id);
       return done.map((t) => t.id);
     }
     function reissueAddenda(noteId, was, now2) {
@@ -13903,7 +13910,7 @@ var require_tasks = __commonJS({
     "use strict";
     init_globals_inject();
     var auth3 = require_auth2();
-    var { define: define2, notPermitted } = require_core();
+    var { define: define2, notPermitted, refuse } = require_core();
     var NOTICE_MARKER = "Reference: client record change notice";
     function noticeEntry(row) {
       if (!row || !row.description_enc || !row.client_id || !row.assigned_to || row.created_by !== row.assigned_to) return null;
@@ -13952,6 +13959,42 @@ var require_tasks = __commonJS({
       return require_notes().isSignReminder(existing, text);
     }
     var SIGN_REMINDER_MOVED = "Only the supervisor who sent this reminder, or someone who countersigns notes, can give it to someone else or move it to another client";
+    var NOTE_LINK_REFUSED = "Only a supervisor who countersigns notes can link a reminder to a draft";
+    function detailsAfter(row, existing) {
+      const next = row.description !== void 0 ? row.description : row.description_enc;
+      if (next !== void 0) return next || "";
+      try {
+        return existing && existing.description_enc ? require_crypto().decrypt(existing.description_enc) : "";
+      } catch {
+        return "";
+      }
+    }
+    var after = (row, e, col, dflt2) => row[col] !== void 0 ? row[col] : e && e[col] !== void 0 ? e[col] : dflt2;
+    var liveDraft = (id) => {
+      const n = id && require_db().one(`SELECT id, author_id, client_id, status, deleted_at FROM notes WHERE id=?`, id);
+      return n && n.status === "draft" && !n.deleted_at ? n : null;
+    };
+    var setsNoteLink = (row, e) => row.note_id !== void 0 && row.note_id !== null && row.note_id !== "" && (!e || e.note_id !== row.note_id);
+    function noteLinkRefusal(row, c) {
+      const e = c.existing;
+      if (!setsNoteLink(row, e)) return null;
+      if (!require_notes().maySendSignReminder(c.user)) return notPermitted(NOTE_LINK_REFUSED);
+      const { isSignReminder } = require_notes();
+      const maker = e ? e.created_by : c.user.id;
+      if (!isSignReminder({ created_by: maker, assigned_to: after(row, e, "assigned_to", c.user.id) }, detailsAfter(row, e))) return refuse("only a reminder to sign notes links to a draft", { status: 400, message: "Only a reminder to sign notes can link to a draft", fields: { note_id: "only on a reminder to sign notes" } });
+      const n = liveDraft(row.note_id);
+      if (!n) return null;
+      const assignee = after(row, e, "assigned_to", c.user.id);
+      const client = after(row, e, "client_id", null);
+      if (n.author_id !== assignee || n.client_id !== client) return refuse("the linked draft is not the assignee's own on this client", { status: 400, message: "The draft must be one the to-do's assignee wrote, on the to-do's client", fields: { note_id: "not the assignee's draft on this client" } });
+      return null;
+    }
+    function dropNoteLink(row, e, userId) {
+      const id = after(row, e, "note_id", null);
+      if (!id) return;
+      const n = liveDraft(id);
+      if (!n || n.author_id !== after(row, e, "assigned_to", userId) || n.client_id !== after(row, e, "client_id", null)) row.note_id = null;
+    }
     module.exports = define2({
       table: "tasks",
       // The record whose follow-up this to-do is (server/rules/follow-ups.js): a device's to-do carries its call's or
@@ -13967,7 +14010,10 @@ var require_tasks = __commonJS({
         priority: { type: "string", enum: ["low", "normal", "high", "urgent"] },
         status: { type: "string", enum: ["open", "in_progress", "done", "cancelled"] },
         is_milestone: { type: "boolean" },
-        completed_at: { type: "datetime" }
+        completed_at: { type: "datetime" },
+        // The draft a sign reminder opens (built for 1.24.0): a field, so a supervisor's Remind sets it over REST and a
+        // device carries it in a push; who may set it, and to what, is noteLinkRefusal's, and dropNoteLink's at both doors.
+        note_id: { type: "string", maxLen: 64 }
       },
       editableBy: (user, row) => row.assigned_to === user.id || row.created_by === user.id || auth3.hasPerm(user, "records:manage-others") ? null : notPermitted("You cannot edit this record"),
       authorise(row, c) {
@@ -13975,6 +14021,8 @@ var require_tasks = __commonJS({
         if (c.existing && c.existing.created_by !== c.user.id && addsSignReminder(row, c.existing)) return notPermitted("Only whoever made this to-do can make it a reminder to sign notes");
         if (addsSignReminder(row, c.existing) && !require_notes().maySendSignReminder(c.user)) return notPermitted(SIGN_REMINDER_REFUSED);
         if (c.existing && c.existing.created_by !== c.user.id && c.changed().some((k) => k === "assigned_to" || k === "client_id") && !require_notes().maySendSignReminder(c.user) && storedSignReminder(c.existing)) return notPermitted(SIGN_REMINDER_MOVED);
+        const link = noteLinkRefusal(row, c);
+        if (link) return link;
         if (c.existing) return null;
         return c.via === "sync" && deviceNotice(row, c) ? { reason: null, quiet: true } : null;
       },
@@ -13996,6 +14044,7 @@ var require_tasks = __commonJS({
           if (!rec || rec.user_id !== row.assigned_to) row[col] = null;
         }
         const e = c && c.existing;
+        dropNoteLink(row, e, c && c.user && c.user.id);
         if (row.referral_id && (!e || e.referral_id !== row.referral_id)) {
           const rec = require_db().one(`SELECT user_id FROM referrals WHERE id=?`, row.referral_id);
           const assignee = row.assigned_to !== void 0 ? row.assigned_to : e && e.assigned_to;
@@ -14019,7 +14068,7 @@ var require_tasks = __commonJS({
         }
       }).filter((d) => d.task === row.id && d.notified === row.assigned_to && d.revision).map((d) => d.revision);
     }
-    Object.assign(module.exports, { NOTICE_MARKER, isNotice, noticeEntry, noticeBy, noticeIds, noticeRevisions });
+    Object.assign(module.exports, { NOTICE_MARKER, isNotice, noticeEntry, noticeBy, noticeIds, noticeRevisions, dropNoteLink });
   }
 });
 
@@ -43368,7 +43417,7 @@ var require_tasks2 = __commonJS({
     var audit3 = require_audit();
     var { withClientName, SELECT: NAME_COLS } = require_client_name();
     var { localDate } = require_budget();
-    var { isNotice, noticeBy, noticeRevisions } = require_tasks();
+    var { isNotice, noticeBy, noticeRevisions, dropNoteLink } = require_tasks();
     function dueTasks(ctx, within) {
       const cf = auth3.caseloadFilter(ctx.user, "tasks.client_id");
       const horizonMs = Date.now() + within * 6e4;
@@ -43428,14 +43477,18 @@ var require_tasks2 = __commonJS({
         },
         // A task title ("Call about detox bed") says what a named person is being treated for, and its details
         // say more: both are encrypted. The API keeps the plain field names `title` and `description`.
+        // A sign reminder's link to its draft (built for 1.24.0) is dropped when it names no live draft of the assignee's on
+        // the to-do's client (server/rules/tasks.js dropNoteLink), as sync push drops it; who may set one is the rules'.
         beforeInsert: (ctx, v) => {
           if (!v.assigned_to) v.assigned_to = ctx.user.id;
           if (v.status === "done" && !v.completed_at) v.completed_at = db3.now();
+          dropNoteLink(v, null, ctx.user.id);
           encFields(v);
         },
         beforeUpdate: (ctx, v, row) => {
           if (v.status === "done" && !row.completed_at && !v.completed_at) v.completed_at = db3.now();
           if (v.status && v.status !== "done") v.completed_at = null;
+          dropNoteLink(v, row, ctx.user.id);
           encFields(v);
         },
         afterLoad: (ctx, x) => presentTask(withClientName(ctx, x))
@@ -53077,6 +53130,13 @@ var require_db = __commonJS({
       (d) => {
         addColumn(d, "time_entries", "start_time", "TEXT");
         addColumn(d, "time_entries", "duplicate_of", "TEXT");
+      },
+      // 69: a supervisor's "finish and sign" reminder opens the draft it is about (built for 1.24.0; server/rules/tasks.js
+      //     noteLink, docs/USER_GUIDE.md "Reminders to sign notes"). tasks.note_id, NULL for every existing to-do (a
+      //     reminder made before keeps opening the client's drafts list). No index: it is read only with the to-do.
+      //     Depends on nothing but tasks; self-contained and idempotent, so it can be renumbered.
+      (d) => {
+        addColumn(d, "tasks", "note_id", "TEXT");
       }
     ];
     var PERF_INDEXES_47 = [

@@ -100,6 +100,14 @@ function compareMigrations(prev, next) {
  */
 const DEPENDENCY_CHANGES = [
   {
+    dependency: 'schema.sql:table:tasks', fingerprint: 'dda5000495391d67',
+    reason: 'Built for 1.24.0 (migration 69, a sign reminder opens its draft) adds one nullable column, note_id TEXT, '
+      + 'with no REFERENCES and no index, on top of 1.23.0\'s call_id and intervention_id (the entry below). Additive: a '
+      + 'database that runs migration 19 or 24 now builds tasks with note_id already there (every row NULL), migration 69 '
+      + 'adds it only when missing (addColumn), and test/migrations.test.js upgrades the 1.6.1 fixture and the release '
+      + 'fixtures to the same structure as a fresh install.',
+  },
+  {
     dependency: 'schema.sql:table:tasks', fingerprint: '3dd3e8683695e060',
     reason: '1.23.0 (migration 67, follow-up to-dos that follow edits) adds two nullable columns, call_id and '
       + 'intervention_id (each REFERENCES its table ON DELETE SET NULL), and their indexes. Additive: a database that '

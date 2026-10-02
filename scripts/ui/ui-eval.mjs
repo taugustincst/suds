@@ -11,6 +11,8 @@
 //   7. the funder report's three downloads each say what they are for;
 //   8. (1.23.5) a sign reminder's Assigned to and Client are fixed for its assignee, with why, and ticking it done with
 //      drafts still unsigned asks first.
+//   9. (built for 1.24.0) a reminder sent about one draft opens that draft: "Open the draft" on the to-do, its phone row
+//      and Home's title, with "Open <client>'s notes" beside it and alone once the linked draft is gone.
 // Each page it changes is checked with axe (WCAG 2.1 A/AA) as well.
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
@@ -107,6 +109,8 @@ try {
     ok(task && /on this client's record/.test(task.description) && !(one.client_code && task.description.includes(one.client_code)), 'its details say "this client\'s record", not the name and code', task && task.description);
     ok(task && /once they are all signed/.test(task.description), 'and says it closes once they are all signed', task && task.description);
     eq(task && task.sign_reminder, true, 'the office marks it a sign reminder (its maker countersigns notes)');
+    // Built for 1.24.0: it is linked to the draft it was sent from.
+    eq(task && task.note_id, one.id, 'Remind author links the reminder to that draft (note_id)');
 
     // Remind all overdue authors: confirmation, de-duplicated, one per note.
     const expected = new Set(overdue.filter(x => pair(x) !== pair(one)).map(pair)).size;
@@ -122,6 +126,13 @@ try {
     eq(await sup.page.$eval('[data-remind-all]', b => b.dataset.remindAll), '0', 'afterwards every overdue note has its reminder');
     const after = await openReminders(sup);
     for (const d of overdue) eq(after.filter(x => x === pair(d)).length, 1, `exactly one open reminder for overdue note ${d.id.slice(0, 8)}'s author and client`);
+    // Built for 1.24.0: each reminder Remind all sent opens the oldest overdue draft of that author on that client.
+    const sentAll = ((await sup.api('GET', '/api/tasks?status=open&limit=1000')).data.rows || []).filter(t => t.sign_reminder && `${t.client_id} ${t.assigned_to}` !== pair(one) && overdue.some(d => pair(d) === `${t.client_id} ${t.assigned_to}`));
+    eq(sentAll.length, expected, 'Remind all sent one linked reminder per author and client');
+    for (const t of sentAll) {
+      const oldest = overdue.filter(d => pair(d) === `${t.client_id} ${t.assigned_to}`).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))[0];
+      eq(t.note_id, oldest.id, `Remind all links ${t.id.slice(0, 8)} to the oldest overdue draft of that author and client`);
+    }
     // Pressing it again sends nothing.
     await sup.page.click('[data-remind-all]'); await settle(sup.page);
     ok(!(await sup.page.$('.modal-bg')), 'a second press asks nothing: there is nobody left to remind');
@@ -148,6 +159,48 @@ try {
       ok(/Your draft notes on this record \(\d+\)/.test(shown), 'counted, with a way back to all notes', shown.slice(0, 120));
       ok(await nav.page.$('[data-my-drafts] a[data-all-notes]'), 'and "Show all notes"');
       await axe(nav.page, 'a client\'s Notes tab on the reader\'s drafts');
+      // ---------------------------------------------------------------------------------------------------- 9
+      // Built for 1.24.0: the reminder names the draft (note_id) and opens it. On the to-do itself, "Open the draft" first
+      // and "Open <client>'s notes" beside it; the note opens as the Notes list opens it (Edit draft, Sign & lock).
+      {
+        ok(navReminder.note_id, 'her reminder is linked to a draft', navReminder.note_id);
+        const draftTitle = navReminder.note_id ? (await nav.api('GET', `/api/notes/${navReminder.note_id}`)).data.note : null;
+        eq(draftTitle && draftTitle.author_id, navReminder.assigned_to, 'the linked draft is her own');
+        eq(draftTitle && draftTitle.status, 'draft', 'and still a draft');
+        await nav.go(`tasks?id=${navReminder.id}`);
+        ok(await until(() => nav.page.$('.modal [data-task-source="draft"]')), 'her reminder offers "Open the draft"');
+        eq((await nav.page.textContent('.modal [data-task-source="draft"]').catch(() => '')).trim(), 'Open the draft', 'named "Open the draft"');
+        ok(await nav.page.$('.modal [data-task-source="notes"]'), 'with "Open <client>\'s notes" beside it');
+        await axe(nav.page, 'a sign reminder linked to its draft');
+        await nav.page.click('.modal [data-task-source="draft"]');
+        ok(await until(async () => /Sign & lock/.test(await nav.page.textContent('.modal').catch(() => ''))), 'which opens the draft, ready to sign');
+        ok(/Edit draft/.test(await nav.page.textContent('.modal').catch(() => '')), 'or to edit');
+        eq(await nav.page.evaluate(() => location.hash.split('?')[0]), '#/tasks', 'over the to-do list, not elsewhere');
+        await axe(nav.page, 'the linked draft opened from a to-do');
+        await closeModals(nav.page);
+
+        // Home: the reminder's title opens the draft (tasks.js openTodo), as Home's other to-dos open their record.
+        await nav.go('dashboard');
+        const homeBtn = await until(() => nav.page.$(`[data-today-open="${navReminder.id}"]`), { timeout: 5000 });
+        if (homeBtn) await homeBtn.click();
+        else await nav.page.evaluate(async (id) => (await import('/views/tasks.js')).openTodo(id), navReminder.id); // more than five due today: Home's "more" link
+        ok(await until(async () => /Sign & lock/.test(await nav.page.textContent('.modal').catch(() => ''))), `${homeBtn ? 'Home\'s title' : 'openTodo (Home\'s handler)'} opens the draft straight away`);
+        eq(await nav.page.evaluate(() => location.hash.split('?')[0]), '#/dashboard', 'staying on Home');
+        await closeModals(nav.page);
+
+        // A phone's to-do row: the button on the row opens the draft, named with the to-do's title.
+        const phone = await session('mrivera', PW, { width: 390, height: 844 });
+        await phone.go('tasks');
+        const rowBtn = await until(() => phone.page.$(`[data-task-source="draft"][aria-label="Open the draft: ${navReminder.title.replace(/"/g, '\\"')}"]`), { timeout: 8000 });
+        ok(rowBtn, 'the phone row has "Open the draft", named with the to-do\'s title');
+        await axe(phone.page, 'the to-do list on a phone with a linked reminder');
+        if (rowBtn) {
+          await rowBtn.click();
+          ok(await until(async () => /Sign & lock/.test(await phone.page.textContent('.modal').catch(() => ''))), 'and opens the draft, not Edit to-do');
+          ok(!/Edit to-do/.test(await phone.page.textContent('.modal-bg:last-child .modal h2').catch(() => '')), 'the dialog is the note');
+        }
+        await phone.ctx.close();
+      }
       // 1.23.4 (N6): deleting a draft says the reminder is cancelled too when it is her last draft there, and only then;
       // (N4) with none left, the view says so once, not "You have no draft notes" over the table's "No notes yet".
       const cid = navReminder.client_id;
@@ -179,6 +232,29 @@ try {
       ok(await nav.page.$('[data-my-drafts] a[data-all-notes]'), 'N4: with "Show all notes"');
       eq(((await nav.api('GET', `/api/tasks/${navReminder.id}`)).data.row || {}).status, 'cancelled', 'and the reminder is cancelled');
       await axe(nav.page, 'a client\'s Notes tab with no drafts left');
+    }
+
+    // Fallback: the linked draft signed or deleted while other drafts are left: the reminder stays open, loses its link,
+    // and opens the client's drafts list again ("Open <client>'s notes" alone).
+    {
+      const cl = (await nav.api('GET', '/api/clients?limit=5&status=active')).data.clients[0];
+      const mk = async (text) => (await nav.api('POST', '/api/notes', { client_id: cl.id, kind: 'admin', content: text, occurred_at: new Date().toISOString() })).data.id;
+      const d1 = await mk('UI eval: the linked draft.'); const d2 = await mk('UI eval: another draft.');
+      const navId = (await nav.api('GET', '/api/auth/me')).data.user.id;
+      const r = await sup.api('POST', '/api/tasks', { client_id: cl.id, assigned_to: navId, note_id: d1, title: 'UI eval: finish and sign your draft notes', description: `Asked to finish and sign.\n${MARK}`, due_at: new Date().toISOString().slice(0, 10) });
+      eq(r.status, 201, 'a supervisor\'s linked reminder is made', r.data);
+      eq((await nav.api('GET', `/api/tasks/${r.data.id}`)).data.row.note_id, d1, 'linked to the first draft');
+      eq((await nav.api('DELETE', `/api/notes/${d1}`)).status, 200, 'the linked draft is deleted');
+      const t = (await nav.api('GET', `/api/tasks/${r.data.id}`)).data.row;
+      eq(t.status, 'open', 'another draft is left: the reminder stays open');
+      eq(t.note_id, null, 'and loses its link');
+      await nav.go(`tasks?id=${r.data.id}`);
+      ok(await until(() => nav.page.$('.modal [data-task-source="notes"]')), 'it offers the client\'s notes');
+      ok(!(await nav.page.$('.modal [data-task-source="draft"]')), 'and no longer "Open the draft"');
+      await closeModals(nav.page);
+      // Tidy: the other draft goes too, which cancels the reminder (1.23.3's closing).
+      eq((await nav.api('DELETE', `/api/notes/${d2}`)).status, 200);
+      eq((await nav.api('GET', `/api/tasks/${r.data.id}`)).data.row.status, 'cancelled', 'the last draft deleted: the reminder is cancelled');
     }
   }
 

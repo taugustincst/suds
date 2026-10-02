@@ -162,14 +162,18 @@ route('supervision', async (r) => {
   // An author whose account is deactivated (left, or a caseload moved on) is not reminded: nobody would read it (1.23.5).
   const gone = (r) => r.author_active === 0;
   const remindable = (r) => mayRemind && r.author_id && r.author_id !== state.user.id && !gone(r);
+  // `r` is the draft the reminder opens (built for 1.24.0: tasks.note_id, server/rules/tasks.js): the row's own draft for
+  // Remind author, the oldest overdue one of that author's on that client for Remind all. The reminder still covers every
+  // draft of theirs there and closes as before; the link only takes the worker straight to that one.
   const remind = (r) => post('/api/tasks', {
-    client_id: r.client_id, assigned_to: r.author_id,
+    client_id: r.client_id, assigned_to: r.author_id, note_id: r.id,
     // It covers every draft of theirs on that client's record and closes when the last is signed (or deleted), so it
     // is about the client, not one note (market evaluation of 1.23.2, D3); the last line stays SIGN_REMINDER. The to-do
     // is on the client's record, and every list shows its client beside the title, so neither names them again (Home
-    // read "…for Park, Danielle (DEMO-0007) · Park, Danielle"; market evaluation of 1.23.3, N4).
+    // read "…for Park, Danielle (DEMO-0007) · Park, Danielle"; market evaluation of 1.23.3, N4). It opens the draft `r`
+    // (built for 1.24.0), so it says which one.
     title: 'Finish and sign your draft notes',
-    description: `${state.user.display_name} asked you to finish and sign your draft notes on this client's record${r.overdue ? ' (at least one is overdue)' : ''}. Open them from the client's Notes tab. This reminder is closed for you once they are all signed.\n${SIGN_REMINDER}`,
+    description: `${state.user.display_name} asked you to finish and sign your draft notes on this client's record${r.overdue ? ' (at least one is overdue)' : ''}, starting with the one you began on ${fmt.date(r.created_at)}: Open the draft opens it. This reminder is closed for you once they are all signed.\n${SIGN_REMINDER}`,
     due_at: fmt.today(), priority: r.overdue ? 'high' : 'normal',
   });
   const remindOne = async (r, btn) => {
@@ -177,8 +181,10 @@ route('supervision', async (r) => {
     try { await remind(r); toast(`Reminder sent to ${r.author}`, 'ok'); refresh(); }
     catch (e) { if (btn) btn.disabled = false; toast(e.message, 'error'); }
   };
-  // The drafts to send a reminder for: none already reminded, and one per author and client.
-  const toRemind = (rows) => { const seen = new Set(); return rows.filter(r => !reminded.has(r.id) && !seen.has(pairOf(r.client_id, r.author_id)) && seen.add(pairOf(r.client_id, r.author_id))); };
+  // The drafts to send a reminder for: none already reminded, and one per author and client, the oldest (the one the
+  // reminder opens).
+  const oldestFirst = (rows) => [...rows].sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
+  const toRemind = (rows) => { const seen = new Set(); return oldestFirst(rows).filter(r => !reminded.has(r.id) && !seen.has(pairOf(r.client_id, r.author_id)) && seen.add(pairOf(r.client_id, r.author_id))); };
   const remindAll = async () => {
     const due = drafts.filter(r => r.overdue && remindable(r));
     const fresh = toRemind(due);

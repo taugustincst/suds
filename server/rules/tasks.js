@@ -8,7 +8,7 @@
 // (records:manage-others) may delete one, for a worker who has left, but not mark it seen on their behalf (UX
 // review of 1.16.3, M2); and a discharge leaves it open (1.16.3).
 const auth = require('../auth');
-const { define, notPermitted } = require('./core');
+const { define, notPermitted, refuse } = require('./core');
 
 // Every change notice ends with this line (no id in it; the UI shows a notice as a read-only card: `notice: true`).
 const NOTICE_MARKER = 'Reference: client record change notice';
@@ -57,6 +57,52 @@ function storedSignReminder(existing) {
 }
 const SIGN_REMINDER_MOVED = 'Only the supervisor who sent this reminder, or someone who countersigns notes, can give it to someone else or move it to another client';
 
+// ---- the draft a sign reminder opens (built for 1.24.0) ----
+// tasks.note_id: the one draft a supervisor's "finish and sign" reminder is about, so the worker's to-do opens it
+// ("Open the draft", public/views/tasks.js). The reminder still covers all the author's drafts on that client and closes
+// as in 1.23.3, once the last of them is signed or deleted (rules/notes.js closeSignReminders); the link is a shortcut.
+// A link names the to-do's assignee's own draft on the to-do's client, and only someone who may send a sign reminder
+// (notes:cosign) may set or change one, on a to-do that is a sign reminder: over REST and over a push alike (a device
+// carries the column, deviceColumns). A link to a note that is not a live draft (unknown, deleted, signed) is dropped,
+// not refused; so is one that no longer fits after the to-do is given to someone else or moved to another client.
+const NOTE_LINK_REFUSED = 'Only a supervisor who countersigns notes can link a reminder to a draft';
+/** The details as they will be after this write, in plain text. */
+function detailsAfter(row, existing) {
+  const next = row.description !== undefined ? row.description : row.description_enc;
+  if (next !== undefined) return next || '';
+  try { return existing && existing.description_enc ? require('../crypto').decrypt(existing.description_enc) : ''; } catch { return ''; }
+}
+const after = (row, e, col, dflt) => (row[col] !== undefined ? row[col] : e && e[col] !== undefined ? e[col] : dflt);
+/** The note a link names, when it is a live draft (not deleted, not signed), or null. */
+const liveDraft = (id) => { const n = id && require('../db').one(`SELECT id, author_id, client_id, status, deleted_at FROM notes WHERE id=?`, id); return n && n.status === 'draft' && !n.deleted_at ? n : null; };
+/** Does this write set or change the link (to a note, not clear it)? */
+const setsNoteLink = (row, e) => row.note_id !== undefined && row.note_id !== null && row.note_id !== '' && (!e || e.note_id !== row.note_id);
+/** A refusal for a link this writer may not set, or null. A link to a note that is not a live draft is not refused here:
+ *  dropNoteLink drops it as the row is stored. */
+function noteLinkRefusal(row, c) {
+  const e = c.existing;
+  if (!setsNoteLink(row, e)) return null;
+  if (!require('./notes').maySendSignReminder(c.user)) return notPermitted(NOTE_LINK_REFUSED);
+  // A sign reminder as 1.23.3 recognises one (rules/notes.js isSignReminder): the line, given to someone else by a
+  // maker who may send one, read as the to-do will be after this write.
+  const { isSignReminder } = require('./notes');
+  const maker = e ? e.created_by : c.user.id;
+  if (!isSignReminder({ created_by: maker, assigned_to: after(row, e, 'assigned_to', c.user.id) }, detailsAfter(row, e))) return refuse('only a reminder to sign notes links to a draft', { status: 400, message: 'Only a reminder to sign notes can link to a draft', fields: { note_id: 'only on a reminder to sign notes' } });
+  const n = liveDraft(row.note_id);
+  if (!n) return null;
+  const assignee = after(row, e, 'assigned_to', c.user.id); const client = after(row, e, 'client_id', null);
+  if (n.author_id !== assignee || n.client_id !== client) return refuse('the linked draft is not the assignee\'s own on this client', { status: 400, message: 'The draft must be one the to-do\'s assignee wrote, on the to-do\'s client', fields: { note_id: 'not the assignee\'s draft on this client' } });
+  return null;
+}
+/** Drop a link that names no live draft of the assignee's on the to-do's client (as stored after this write). `row`
+ *  is changed in place: note_id set to null when the link (sent, or kept from the stored row) no longer fits. */
+function dropNoteLink(row, e, userId) {
+  const id = after(row, e, 'note_id', null);
+  if (!id) return;
+  const n = liveDraft(id);
+  if (!n || n.author_id !== after(row, e, 'assigned_to', userId) || n.client_id !== after(row, e, 'client_id', null)) row.note_id = null;
+}
+
 module.exports = define({
   table: 'tasks',
   // The record whose follow-up this to-do is (server/rules/follow-ups.js): a device's to-do carries its call's or
@@ -66,6 +112,9 @@ module.exports = define({
     client_id: { type: 'string' }, assigned_to: { type: 'string' }, title: { type: 'string', required: true, maxLen: 200 }, description: { type: 'string', maxLen: 2000 },
     due_at: { type: 'datetime' }, priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'] }, status: { type: 'string', enum: ['open', 'in_progress', 'done', 'cancelled'] },
     is_milestone: { type: 'boolean' }, completed_at: { type: 'datetime' },
+    // The draft a sign reminder opens (built for 1.24.0): a field, so a supervisor's Remind sets it over REST and a
+    // device carries it in a push; who may set it, and to what, is noteLinkRefusal's, and dropNoteLink's at both doors.
+    note_id: { type: 'string', maxLen: 64 },
   },
   editableBy: (user, row) => (row.assigned_to === user.id || row.created_by === user.id || auth.hasPerm(user, 'records:manage-others') ? null : notPermitted('You cannot edit this record')),
   authorise(row, c) {
@@ -83,6 +132,8 @@ module.exports = define({
     // someone who may send one, changes who or which record it is about (market evaluation of 1.23.3, N1).
     if (c.existing && c.existing.created_by !== c.user.id && c.changed().some(k => k === 'assigned_to' || k === 'client_id')
       && !require('./notes').maySendSignReminder(c.user) && storedSignReminder(c.existing)) return notPermitted(SIGN_REMINDER_MOVED);
+    // The draft it opens (built for 1.24.0): set only by such a supervisor, and only to the assignee's own draft there.
+    const link = noteLinkRefusal(row, c); if (link) return link;
     if (c.existing) return null;
     // A notice a device raised for an edit made on it is that device's copy: the office raises its own when the edit
     // lands (clients.js afterApply), linked in its audit trail, so the device's is not taken (it would arrive as the
@@ -107,6 +158,7 @@ module.exports = define({
       if (!rec || rec.user_id !== row.assigned_to) row[col] = null;
     }
     const e = c && c.existing;
+    dropNoteLink(row, e, c && c.user && c.user.id);
     if (row.referral_id && (!e || e.referral_id !== row.referral_id)) {
       const rec = require('../db').one(`SELECT user_id FROM referrals WHERE id=?`, row.referral_id);
       const assignee = row.assigned_to !== undefined ? row.assigned_to : e && e.assigned_to;
@@ -129,4 +181,4 @@ function noticeRevisions(row) {
   return require('../db').all(`SELECT details FROM audit_log WHERE client_id=? AND action='client.change_notice' AND details LIKE ? ORDER BY id`, row.client_id, `%"task":"${String(row.id).replace(/[%_"\\]/g, '')}"%`)
     .map(a => { try { return JSON.parse(a.details); } catch { return {}; } }).filter(d => d.task === row.id && d.notified === row.assigned_to && d.revision).map(d => d.revision);
 }
-Object.assign(module.exports, { NOTICE_MARKER, isNotice, noticeEntry, noticeBy, noticeIds, noticeRevisions });
+Object.assign(module.exports, { NOTICE_MARKER, isNotice, noticeEntry, noticeBy, noticeIds, noticeRevisions, dropNoteLink });
