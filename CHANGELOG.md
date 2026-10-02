@@ -4,6 +4,40 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Built for 1.23.5, not yet released
+
+A patch of 1.23.4 under the *Stabilisation* commitments (docs/RELEASE.md): fixes from the market evaluation of 1.23.4,
+tests and documentation, with no migration, no new or widened permission and no new route. Not stamped: the version
+stays 1.23.4 until it is released. What an administrator should know: a *Finish and sign* reminder closed by signing
+now writes a `task.update` of its own (status `done`, cause `signed`, the note's id; `via: sync` from a device), as a
+delete and a transfer already did; `caseload.transfer` counts the reminders it cancelled (`reminders_cancelled`), and
+`POST /api/caseload/transfer` returns that count; the supervision queue's unsigned drafts carry `author_active`.
+
+- Fixed: on a phone a call or text could not be deleted from **Calls & texts**: a tap on your own opens its edit form,
+  which had only Cancel and Save, and **Delete call** was only on the card a computer opens. The edit form now has
+  **Delete call** (**Delete text**), for whoever may change it, with the same confirmation (what happens to its
+  follow-up to-do). Visits and referrals already had Delete on a phone.
+- Fixed: the worker given a *Finish and sign* reminder could change **Assigned to** and **Client** in its form, only to
+  be refused on Save. For anyone but its maker or someone who countersigns notes the two fields are now shown fixed,
+  with the reason under them; and the refusal (over the API or a device's sync) now reads "Only the supervisor who sent
+  this reminder, or someone who countersigns notes, can …", since either may.
+- Fixed (accessibility, WCAG 1.4.1 and 4.1.2): the To-dos list's **Assigned to me** and **Overdue** showed whether they
+  were on by colour alone, and a screen reader could not tell. They are toggle buttons now (`aria-pressed`) and show a
+  check mark when on; so are the filters on Calls & texts and the one-of-several choices on Spending, Overdose response
+  and Reports' monthly trend.
+- Fixed: a reminder closed because its author signed their last draft on that record had no audit entry of its own,
+  only its id in `note.sign`; it now has a `task.update` (status `done`, cause `signed`, the note's id), over the web
+  app and a device's sync, as a delete and a transfer already had.
+- Fixed: after **Move a caseload** the result said how many to-dos were reassigned but not that sign reminders were
+  cancelled; it now says how many (and so does deactivating someone with **Move and deactivate**). The supervision
+  queue no longer offers **Remind author** (or counts in **Remind all overdue authors**) for a draft whose author's
+  account is inactive: the row says *Author no longer active*. The drafts are not reassigned (that is for 1.24).
+- Fixed: on SUDS on this device, typing `#/localsetup` while signed in showed a Sign up form inside the app; it now
+  goes to Home.
+- Fixed: ticking a *Finish and sign* reminder done while you still had draft notes on its client's record closed it
+  with the work undone. On Home and the To-dos list it now asks first ("You still have N unsigned draft notes on this
+  record. Mark the reminder done anyway?"); **Cancel** leaves it open. The office still lets it be marked done.
+
 ## 1.23.4 — 2026-10-01
 
 A patch of 1.23.3 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:

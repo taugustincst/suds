@@ -46,7 +46,8 @@ by rule.
 4. **Never colour alone.** A red or amber value uses `flag(content, on, why)` (⚠ plus the reason, visibly and
    for a screen reader) or says it in words (" — overdue"). `stat()` adds ⚠ to a `danger`/`warn` figure. Badges
    must contain words. Charts carry their numbers as text (`bars()` prints each value; `sparkline(values,
-   { label })` has a text alternative).
+   { label })` has a text alternative). A filter button that is on or off (or one of several choices) carries
+   `aria-pressed`; styles.css puts a ✓ before a pressed `.btn`, so its state is not only the primary colour.
 5. **Links in text are underlined** (styles.css does it for every `a`); do not turn it off for an inline link.
    Buttons, cards, navigation and list rows keep their own look.
 6. **Keep the focus ring.** Never `outline: none` without a replacement; use `var(--focus)` (3:1 in both
