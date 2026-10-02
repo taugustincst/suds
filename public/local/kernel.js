@@ -13693,7 +13693,7 @@ var require_notes = __commonJS({
       });
       const now2 = db3.now();
       for (const t of done) {
-        if (cause === "deleted") db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, now2, t.id);
+        if (cause === "deleted" || cause === "reassigned") db3.run(`UPDATE tasks SET status='cancelled', updated_at=? WHERE id=?`, now2, t.id);
         else db3.run(`UPDATE tasks SET status='done', completed_at=?, updated_at=? WHERE id=?`, now2, now2, t.id);
       }
       return done.map((t) => t.id);
@@ -13886,6 +13886,32 @@ var require_notes = __commonJS({
       return readsCounseling(user) ? { sql: "1=1", params: [] } : { sql: `(${alias}.counseling_note=0 OR ${alias}.author_id=? OR ${alias}.cosigned_by IS ?)`, params: [user.id, user.id] };
     }
     Object.assign(module.exports, { readsCounseling, mayReadCounseling, counselingFilter });
+    function reassignRefusal(actor, note, target) {
+      if (!auth3.hasPerm(actor, "records:manage-others")) return { code: "permission", status: 403, message: "Handing on another worker's draft notes needs a supervisor or administrator (records:manage-others)" };
+      if (!note || note.deleted_at) return { code: "missing", status: 404, message: "Note not found" };
+      if (note.status !== "draft") return { code: "signed", status: 400, message: "A signed note is part of the legal record: its author cannot be changed. Add an addendum instead." };
+      const author = db3.one(`SELECT id, is_active FROM users WHERE id=?`, note.author_id);
+      if (author && author.is_active) return { code: "author_active", status: 400, message: "The author's account is still active: they finish or delete their own draft. Only a departed worker's drafts are handed on." };
+      if (!target) return { code: "target", status: 404, message: "Worker not found", field: "to_user_id" };
+      if (target.id === note.author_id) return { code: "target", status: 400, message: "Choose a different worker", field: "to_user_id" };
+      if (!target.is_active) return { code: "target", status: 400, message: "That worker's account is not active", field: "to_user_id" };
+      if (Number(note.counseling_note) && !readsCounseling(target)) return { code: "counseling", status: 400, message: "A SUD counseling note can only go to a worker who writes clinical notes (a clinician or supervisor)", field: "to_user_id" };
+      if (!auth3.hasPerm(target, `notes:${note.kind}:write`)) return { code: "kind", status: 400, message: `That worker cannot write ${note.kind} notes`, field: "to_user_id" };
+      if (!auth3.canAccessClient(target, note.client_id)) return { code: "reach", status: 400, message: "That worker cannot open this client's record (it is not on their caseload)", field: "to_user_id" };
+      return null;
+    }
+    function reassignDraft(actor, note, target, { ip, bulk = false } = {}) {
+      const audit3 = require_audit();
+      const req = db3.one(`SELECT requires_cosign FROM users WHERE id=?`, target.id);
+      const cosign = Number(note.cosign_required) || req && req.requires_cosign ? 1 : 0;
+      db3.run(`UPDATE notes SET author_id=?, cosign_required=?, updated_at=? WHERE id=? AND status='draft' AND deleted_at IS NULL`, target.id, cosign, db3.now(), note.id);
+      const reminders = closeSignReminders(note.author_id, note.id, note.client_id, { cause: "reassigned" });
+      audit3.log({ user: actor, action: "note.reassign", entity: "note", entityId: note.id, clientId: note.client_id, ip, details: { from: note.author_id, to: target.id, kind: note.kind, counseling_note: Number(note.counseling_note) ? true : void 0, bulk: bulk || void 0, reminders_closed: reminders.length ? reminders : void 0 } });
+      for (const id of reminders) audit3.log({ user: actor, action: "task.update", entity: "task", entityId: id, clientId: note.client_id, ip, details: { status: "cancelled", cause: "reassigned", note: note.id } });
+      return reminders;
+    }
+    var PER_NOTE_REFUSALS = ["counseling", "kind", "reach"];
+    Object.assign(module.exports, { reassignRefusal, reassignDraft, PER_NOTE_REFUSALS });
   }
 });
 
@@ -42724,6 +42750,64 @@ var require_notes2 = __commonJS({
         audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reminders.length ? { reminders_closed: reminders } : void 0 });
         for (const id of reminders) audit3.log({ user: ctx.user, action: "task.update", entity: "task", entityId: id, clientId: n.client_id, ip: ctx.ip, details: { status: "cancelled", cause: "deleted", note: n.id } });
         return { ok: true };
+      });
+      const R = () => require_notes();
+      const refusal = (why) => new (require_http()).HttpError(why.status, why.message, why.field ? { fields: { [why.field]: why.message } } : void 0);
+      const targetUser = (id) => id ? db3.one(`SELECT * FROM users WHERE id=?`, id) : null;
+      r.get("/api/notes/departed-drafts", auth3.requireAuth, auth3.requirePerm("records:manage-others"), (ctx) => {
+        const rows = db3.all(`SELECT n.author_id, n.client_id, n.kind, n.counseling_note, u.display_name, u.role FROM notes n JOIN users u ON u.id=n.author_id
+      JOIN clients c ON c.id=n.client_id WHERE n.status='draft' AND n.deleted_at IS NULL AND c.deleted_at IS NULL AND u.is_active=0`);
+        const by = /* @__PURE__ */ new Map();
+        for (const n of rows) {
+          if (!auth3.canAccessClient(ctx.user, n.client_id)) continue;
+          const a = by.get(n.author_id) || { id: n.author_id, display_name: n.display_name, role: n.role, drafts: 0, clinical: 0, counseling: 0 };
+          a.drafts++;
+          if (n.kind === "clinical") a.clinical++;
+          if (Number(n.counseling_note)) a.counseling++;
+          by.set(n.author_id, a);
+        }
+        return { authors: [...by.values()].sort((x, y) => String(x.display_name).localeCompare(String(y.display_name))) };
+      });
+      r.post("/api/notes/:id/reassign", auth3.requireAuth, auth3.requirePerm("records:manage-others"), (ctx) => {
+        require_shared().assertRulingHere("Handing on a draft note");
+        const v = validate(ctx.body, { to_user_id: { type: "string", required: true } });
+        const n = load(ctx, ctx.params.id);
+        const target = targetUser(v.to_user_id);
+        const why = R().reassignRefusal(ctx.user, n, target);
+        if (why) throw refusal(why);
+        const reminders = R().reassignDraft(ctx.user, n, target, { ip: ctx.ip });
+        return { ok: true, id: n.id, author_id: target.id, author: target.display_name, reminders_cancelled: reminders.length };
+      });
+      r.post("/api/notes/reassign-drafts", auth3.requireAuth, auth3.requirePerm("records:manage-others"), (ctx) => {
+        require_shared().assertRulingHere("Handing on draft notes");
+        const v = validate(ctx.body, { from_user_id: { type: "string", required: true }, to_user_id: { type: "string", required: true } });
+        const from = db3.one(`SELECT id, display_name, is_active FROM users WHERE id=?`, v.from_user_id);
+        if (!from) throw notFound("Worker not found");
+        if (from.is_active) throw badRequest("That worker's account is still active: they finish or delete their own drafts. Only a departed worker's drafts are handed on.", { fields: { from_user_id: "still active" } });
+        const target = targetUser(v.to_user_id);
+        if (!target) throw notFound("Worker not found");
+        const drafts = db3.all(`SELECT n.* FROM notes n JOIN clients c ON c.id=n.client_id WHERE n.author_id=? AND n.status='draft' AND n.deleted_at IS NULL AND c.deleted_at IS NULL ORDER BY n.created_at`, from.id);
+        let moved = 0;
+        let reminders = 0;
+        const skipped = /* @__PURE__ */ new Map();
+        const skip = (reason) => skipped.set(reason, (skipped.get(reason) || 0) + 1);
+        db3.transaction(() => {
+          for (const n of drafts) {
+            if (!auth3.canAccessClient(ctx.user, n.client_id)) {
+              skip("not on your caseload");
+              continue;
+            }
+            const why = R().reassignRefusal(ctx.user, n, target);
+            if (why) {
+              if (!R().PER_NOTE_REFUSALS.includes(why.code)) throw refusal(why);
+              skip(why.message);
+              continue;
+            }
+            reminders += R().reassignDraft(ctx.user, n, target, { ip: ctx.ip, bulk: true }).length;
+            moved++;
+          }
+        });
+        return { ok: true, moved, reminders_cancelled: reminders, skipped: [...skipped].map(([reason, count]) => ({ reason, count })), from: from.display_name, to: target.display_name };
       });
       r.get("/api/notes/:id/verify", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
