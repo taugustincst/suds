@@ -446,8 +446,8 @@ export const isPermanent = (x) => (x.permanent === true || x.permanent === false
 /**
  * A permanent rejection is the office's ruling: the row is marked as exchanged so it is not sent again every
  * sync for the rest of the phone's life, and the person is told once, on the sync screen, what did not go.
- * "purged" is the one that also changes what is on the phone: the office removed that record under its
- * retention policy, and this device must not be the place it lives on.
+ * "purged" and "deleted at the office" are the ones that also change what is on the phone: the office removed that
+ * record (under its retention policy, or someone deleted it there), and this device must not be the place it lives on.
  */
 export function settleRejections(rejections, chunk, conflicts) {
   for (const x of rejections) {
@@ -457,6 +457,11 @@ export function settleRejections(rejections, chunk, conflicts) {
     if (x.reason === 'purged') {
       db.run(`DELETE FROM ${x.table} WHERE id=?`, x.id);
       db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, x.table, x.id);
+    } else if (x.reason === SYNC.DELETED_AT_OFFICE) {
+      // Deleted at the office (server/rules/push.js deletedAtOffice): the copy here goes too. A row something on this
+      // device still points at stays, marked as exchanged, so it is not sent again; the office's tombstone removes it
+      // on a later pull once what points at it has gone.
+      db.savepoint(() => { db.run(`DELETE FROM ${x.table} WHERE id=?`, x.id); db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, x.table, x.id); }, () => seen(x.table, x.id, stamp(r)));
     } else {
       seen(x.table, x.id, stamp(r));
     }

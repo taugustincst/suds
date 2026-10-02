@@ -92,7 +92,7 @@ function create({ referral, user, ip, v }) {
   if (kind === 'packet') {
     // The client's consent must name this provider (or its organisation), carry the §2.31 elements and be live.
     // Only consent: a medical emergency or a court order is not something to send as a link to be opened later.
-    const basis = disclosure.requireBasis(referral.client_id, { basis: 'consent', consent_id: v.consent_id || referral.consent_id, recipient: resourceNames(res), allowed: ['consent'],
+    const basis = disclosure.requireBasis(referral.client_id, { basis: 'consent', consent_id: v.consent_id || referral.consent_id, recipient: resourceNames(res), purpose: disclosure.REFERRAL_PURPOSE, allowed: ['consent'],
       restriction_reviewed: v.restriction_reviewed, user });
     consentId = basis.consent.id;
     const c = db.one(`SELECT first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc, participant_code_enc FROM clients WHERE id=?`, referral.client_id);
@@ -228,7 +228,7 @@ function stillCovered(link, creator) {
   const restrictedSince = db.one(`SELECT 1 FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled' AND updated_at > ?`, link.client_id, link.created_at);
   if (restrictedSince) return { ok: false, reason: 'restriction' };
   try {
-    const basis = disclosure.requireBasis(link.client_id, { basis: 'consent', consent_id: link.consent_id, recipient: res.names, allowed: ['consent'], restriction_reviewed: true, user: creator });
+    const basis = disclosure.requireBasis(link.client_id, { basis: 'consent', consent_id: link.consent_id, recipient: res.names, purpose: disclosure.REFERRAL_PURPOSE, allowed: ['consent'], restriction_reviewed: true, user: creator });
     return { ok: true, basis, res };
   } catch (e) { return { ok: false, reason: e && e.extra && e.extra.recipientNotCovered ? 'recipient_not_covered' : 'consent_not_valid' }; }
 }
@@ -281,7 +281,7 @@ function open({ token, code, claim, ip }) {
       newClaim = randomToken(32);
       // First open: the information leaves now, so it is accounted now, as the worker's disclosure.
       const parts = ['name', packet.client.preferred_name ? 'preferred name' : null, packet.client.dob ? 'date of birth' : null, packet.client.phone ? 'phone' : null, packet.reason ? 'reason for referral' : null, 'urgency'].filter(Boolean);
-      const did = disclosure.record({ clientId: link.client_id, consentId: cover.basis.consent.id, recipient: cover.res.name, purpose: 'Referral for services',
+      const did = disclosure.record({ clientId: link.client_id, consentId: cover.basis.consent.id, recipient: cover.res.name, purpose: disclosure.REFERRAL_PURPOSE,
         what: `Secure referral link ${link.reference}: ${parts.join(', ')}`, method: 'secure referral link', basis: 'consent', source: 'referral_link', sourceRef: link.id, user: creator, ip });
       bump({ sql: ', claim_hash=?, disclosure_id=?', params: [hashClaim(link.id, newClaim), did] });
     } else bump();

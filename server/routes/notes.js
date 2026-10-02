@@ -193,7 +193,7 @@ module.exports = (r) => {
   r.put('/api/notes/:id', auth.requireAuth, (ctx) => {
     const n = load(ctx, ctx.params.id);
     if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
-    if (n.status !== 'draft') throw badRequest('Signed notes cannot be edited; add an addendum instead');
+    if (n.status !== 'draft') throw badRequest(require('../rules/notes').SIGNED_MESSAGE); // as a device's push is told (rules/notes.js)
     rules.assertEditable('notes', ctx, n); // a draft is its author's, or a manager's
     require('../crud').assertFresh(ctx, n, 'note');
     const v = validate(ctx.body, { format: shape.format, title: shape.title, content: { ...shape.content, required: false }, structured: shape.structured, occurred_at: { ...shape.occurred_at, required: false }, intervention_id: shape.intervention_id, call_id: shape.call_id, part2_protected: shape.part2_protected, counseling_note: shape.counseling_note, cosign_requested: shape.cosign_requested, problem_ids: shape.problem_ids, ai_assisted: shape.ai_assisted }, { partial: true, existing: n });

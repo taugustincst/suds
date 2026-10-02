@@ -78,6 +78,7 @@ function resourceNames(resourceId) {
  * client and provider in a request.
  */
 function withConsentOnFile(ctx, row) {
+  // ...and that covers a referral's purpose (disclosure.consentCoversPurpose), as the gate checks too.
   const cache = ctx._consentOnFile || (ctx._consentOnFile = new Map());
   const key = `${row.client_id}|${row.resource_id}`;
   if (!cache.has(key)) {
@@ -85,7 +86,8 @@ function withConsentOnFile(ctx, row) {
     const today = new Date().toISOString().slice(0, 10);
     const types = disclosure.disclosingConsentTypes();
     cache.set(key, !!names.length && db.all(`SELECT * FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, row.client_id, today)
-      .some(c => types.includes(c.type) && !disclosure.consentElementProblems(c).length && disclosure.consentNamesRecipient({ type: c.type, recipient: c.recipient_enc ? decrypt(c.recipient_enc) : null }, names)));
+      .some(c => types.includes(c.type) && !disclosure.consentElementProblems(c).length && disclosure.consentNamesRecipient({ type: c.type, recipient: c.recipient_enc ? decrypt(c.recipient_enc) : null }, names)
+        && disclosure.consentCoversPurpose({ type: c.type, purpose: c.purpose_enc ? decrypt(c.purpose_enc) : null }, disclosure.REFERRAL_PURPOSE)));
   }
   return { ...row, consent_on_file: cache.get(key) };
 }
@@ -104,7 +106,7 @@ function present(row) {
  */
 function gate(ctx, v, row = {}) {
   return { consent_id: v.consent_id || row.consent_id, basis: v._disclosure_basis, justification: v._disclosure_justification, court_order_id: v._court_order_id,
-    recipient: resourceNames(v.resource_id || row.resource_id), recipient_override: v._recipient_override, allowed: disclosure.REFERRAL_BASES,
+    recipient: resourceNames(v.resource_id || row.resource_id), purpose: disclosure.REFERRAL_PURPOSE, recipient_override: v._recipient_override, allowed: disclosure.REFERRAL_BASES,
     restriction_reviewed: v._restriction_reviewed, user: ctx.user };
 }
 
@@ -114,8 +116,8 @@ function gate(ctx, v, row = {}) {
  */
 function recordDisclosure(ctx, row, v = {}) {
   const basis = disclosure.requireBasis(row.client_id, gate(ctx, v, row));
-  disclosure.record({ clientId: row.client_id, consentId: basis.consent?.id || null, courtOrderId: basis.court_order?.id || null, recipientOverride: basis.recipient_override, recipient: resourceName(v.resource_id || row.resource_id),
-    purpose: 'Referral for services', what: v._disclosure_what || 'Referral information (name, contact details and presenting need)',
+  disclosure.record({ clientId: row.client_id, consentId: basis.consent?.id || null, courtOrderId: basis.court_order?.id || null, recipientOverride: basis.recipient_override, purposeOverride: basis.purpose_override,
+    recipient: resourceName(v.resource_id || row.resource_id), purpose: disclosure.REFERRAL_PURPOSE, what: v._disclosure_what || 'Referral information (name, contact details and presenting need)',
     method: (v.warm_handoff ?? row.warm_handoff) ? 'warm handoff' : 'referral', basis: basis.basis, justification: basis.justification, source: 'referral', sourceRef: row.id, user: ctx.user, ip: ctx.ip });
 }
 
@@ -130,7 +132,6 @@ function recordDisclosure(ctx, row, v = {}) {
  * Returns null (nothing to disclose), { refused } (a short reason with no PHI in it) or { account(ip) },
  * which writes the office's accounting row — under the device row's id, so the two copies stay one row.
  */
-const OVERRIDE_PREFIX = /^Recipient override \(the consent names "[\s\S]*?"\): /;
 function pushDisclosure(user, raw, existing, deviceRows = []) {
   if (!sharesInformation(raw, existing || {})) return null;
   const recipientChanged = !!existing && !!raw.resource_id && raw.resource_id !== existing.resource_id;
@@ -139,27 +140,29 @@ function pushDisclosure(user, raw, existing, deviceRows = []) {
   // A device's row carries its free text as written (rules/push.js), the stored row as ciphertext: compare like with like.
   if (existing && !deviceRows.length && changesNothingSent(raw, plainEnc(existing))) return null;
   const dev = deviceRows.length ? deviceRows[deviceRows.length - 1] : null;
-  const just = dev && dev.justification_enc ? String(dev.justification_enc) : '';
+  // A supervisor's consent override the device recorded (recipient, purpose or both) is in its justification.
+  const over = disclosure.parseOverride(dev && dev.justification_enc);
   const resourceId = raw.resource_id || existing?.resource_id;
   let basis;
   try {
-    basis = disclosure.requireBasis(raw.client_id, { consent_id: (dev && dev.consent_id) || raw.consent_id, basis: (dev && dev.basis) || 'consent', justification: just.replace(OVERRIDE_PREFIX, '') || null,
-      court_order_id: dev && dev.court_order_id, recipient: resourceNames(resourceId), recipient_override: OVERRIDE_PREFIX.test(just), allowed: disclosure.REFERRAL_BASES,
+    basis = disclosure.requireBasis(raw.client_id, { consent_id: (dev && dev.consent_id) || raw.consent_id, basis: (dev && dev.basis) || 'consent', justification: over.why,
+      court_order_id: dev && dev.court_order_id, recipient: resourceNames(resourceId), purpose: disclosure.REFERRAL_PURPOSE, recipient_override: over.override, allowed: disclosure.REFERRAL_BASES,
       // The device's gate asked the worker to confirm an agreed restriction before it wrote its row.
       restriction_reviewed: !!dev, user });
   } catch (e) {
     const x = e && e.extra || {};
     const why = x.recipientNotCovered ? 'the consent it cites does not name the agency it is sent to'
+      : x.purposeNotCovered ? 'the consent it cites was not given for a referral'
       : x.restrictionReview ? 'the client has an agreed restriction on sharing, which has to be confirmed at the office'
         : x.consentIncomplete ? 'the consent it cites does not carry every §2.31 element'
           : 'it needs a live consent that names the agency, or another basis recorded at the office';
-    return { refused: `needs a lawful basis for disclosure the office accepts: ${why}`, code: x.recipientNotCovered ? 'recipient_not_covered' : x.restrictionReview ? 'restriction' : x.consentIncomplete ? 'consent_incomplete' : 'no_basis' };
+    return { refused: `needs a lawful basis for disclosure the office accepts: ${why}`, code: x.recipientNotCovered ? 'recipient_not_covered' : x.purposeNotCovered ? 'purpose_not_covered' : x.restrictionReview ? 'restriction' : x.consentIncomplete ? 'consent_incomplete' : 'no_basis' };
   }
   return {
     deviceIds: deviceRows.map(d => d.id),
     account(ip) {
       return disclosure.record({ id: dev ? dev.id : undefined, clientId: raw.client_id, consentId: basis.consent?.id || null, courtOrderId: basis.court_order?.id || null, recipientOverride: basis.recipient_override,
-        recipient: resourceName(resourceId), purpose: 'Referral for services', what: (dev && dev.what_enc) || 'Referral information (name, contact details and presenting need)',
+        purposeOverride: basis.purpose_override, recipient: resourceName(resourceId), purpose: disclosure.REFERRAL_PURPOSE, what: (dev && dev.what_enc) || 'Referral information (name, contact details and presenting need)',
         method: (raw.warm_handoff ?? existing?.warm_handoff) ? 'warm handoff' : 'referral', basis: basis.basis, justification: basis.justification, source: 'referral', sourceRef: raw.id,
         disclosedAt: (dev && dev.disclosed_at) || null, user, ip });
     },

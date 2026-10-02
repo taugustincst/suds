@@ -4,6 +4,43 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Security
+
+Fixes from an owner-authorised white-box pen test of 1.23.6. No migration, permission or route is added.
+
+* **M1 — the disclosure gate now checks purpose.** A consent covers the purpose it states, as well as the recipient
+  it names: a referral "for treatment services" was accepted on a consent given for "billing and payment processing
+  only", and so was a manual disclosure. `requireBasis` (`server/disclosure.js`) now compares the disclosure's
+  purpose with the consent's, using the same rule as the FHIR API (`consentCoversPurposeOfUse`). Treatment, payment
+  and health care operations are recognised by their words. A referral counts as treatment (45 CFR §164.501), as do
+  an intake, an admission, MAT/MOUD and withdrawal management, which the FHIR API now also recognises as treatment.
+  The single TPO consent covers all three. A purpose outside them (housing, a court case) is covered only by a
+  consent that states it. A consent "at the request of the patient" (§2.31(a)(4)) covers what a worker discloses at
+  the patient's request, but never the FHIR API's automated feed. A mismatch is refused with **409**, and the
+  message gives the consent's purpose. A supervisor or administrator may override with the existing consent
+  override (`recipient_override` / `_recipient_override`, now labelled "does not name the recipient or was given
+  for another purpose") and a written justification of at least 20 characters. The justification is kept with the
+  accounting row ("Purpose override …"), and the audit entry carries `purpose_override: true`. The check covers
+  referrals (REST, the outcome route and a device's push), manual disclosures (REST, and a device's disclosure
+  rows, which are flagged for the privacy officer), secure referral links, identified exports, the SPARS file and
+  the county EHR hand-off. Files have no override: a client whose consent does not cover the file's purpose is left
+  out and listed by code. The referral form no longer suggests a consent that names the provider but was given for
+  another purpose, and it offers "Record a consent naming …" instead. The hand-off preview checks the purpose too.
+  Test data that relied on mismatched purposes was corrected. Before you upgrade, check whether your consents state
+  their purpose in other words: from this release, a referral on such a consent needs a supervisor's override or a
+  new consent.
+* **M2 — an office deletion stands.** A device's push with a fresh `updated_at` could bring back a row the office had
+  deleted and remove its tombstone. Sync push (`server/rules/push.js`) now refuses any row whose tombstone is on file,
+  whatever the device's clock says. It is reported to the device as a permanent rejection (`deleted at the office`),
+  and the device removes its own copy rather than resending it, as it does for a purged record
+  (`local/sync.js`). Each refusal is audited as the new action `sync.resurrect_refused`, with only the table and the
+  record id. A purged client's rows are still refused as `purged`. A row the office deleted while a device had
+  unsent edits to it no longer silently disappears from the push either: the device is told.
+* **L3 — a push that edits a signed note is refused.** A push that changed a signed note was counted as applied while
+  the office quietly kept what was signed. It is now rejected, with the REST route's own message ("not permitted:
+  Signed notes cannot be edited; add an addendum instead"), so the device shows it on the sync screen and stops
+  resending it. A signed note sent back unchanged (for example, asking for a review) still lands.
+
 ## 1.23.6 — 2026-10-02
 
 A patch of 1.23.5 that ships **with an owner-approved policy exception** (docs/RELEASE.md, *Stabilisation (from

@@ -66,10 +66,14 @@ test('a signed note keeps everything as signed; only its author signs, and only 
   const cid = client('nav', 'nav2');
   const nid = randomUUID();
   H.db.run(`INSERT INTO notes(id,client_id,author_id,kind,format,title_enc,content_enc,occurred_at,status,signed_at,signed_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, nid, cid, U.nav, 'admin', 'narrative', enc('As signed'), enc('Body'), '2026-01-01T10:00:00.000Z', 'signed', iso(), U.nav);
-  await push('nav', { tables: { notes: [{ id: nid, client_id: cid, author_id: U.nav, kind: 'admin', format: 'handoff', title_enc: 'Rewritten', content_enc: 'Body', occurred_at: '2025-01-01T10:00:00.000Z', status: 'signed', cosign_requested: 1, ...later() }] } });
+  // Rewriting it is refused as PUT /api/notes/:id refuses it, never reported as applied (pen test of 1.23.6, L3).
+  const rw = await push('nav', { tables: { notes: [{ id: nid, client_id: cid, author_id: U.nav, kind: 'admin', format: 'handoff', title_enc: 'Rewritten', content_enc: 'Body', occurred_at: '2025-01-01T10:00:00.000Z', status: 'signed', cosign_requested: 1, ...later() }] } });
+  assert.deepEqual(rw.rejected, [{ table: 'notes', id: nid, reason: 'not permitted: Signed notes cannot be edited; add an addendum instead', permanent: true }]);
   const n = H.db.one(`SELECT * FROM notes WHERE id=?`, nid);
   assert.equal(dec(n.title_enc), 'As signed'); assert.equal(n.format, 'narrative'); assert.equal(n.occurred_at, '2026-01-01T10:00:00.000Z');
-  assert.equal(n.cosign_requested, 1, 'asking a supervisor to review a signed note is still allowed');
+  assert.equal(n.cosign_requested, 0, 'nothing of the refused row lands');
+  await push('nav', { tables: { notes: [{ id: nid, client_id: cid, author_id: U.nav, kind: 'admin', format: 'narrative', title_enc: 'As signed', content_enc: 'Body', occurred_at: '2026-01-01T10:00:00.000Z', status: 'signed', cosign_requested: 1, ...later() }] } });
+  assert.equal(H.db.one(`SELECT cosign_requested FROM notes WHERE id=?`, nid).cosign_requested, 1, 'asking a supervisor to review a signed note is still allowed');
   // A note arriving signed by someone other than its author is refused.
   const other = randomUUID();
   const r = await push('nav', { tables: { notes: [{ id: other, client_id: cid, author_id: U.nav, kind: 'admin', content_enc: 'x', occurred_at: iso(), status: 'signed', signed_at: iso(), signed_by: U.nav2, ...later() }] } });

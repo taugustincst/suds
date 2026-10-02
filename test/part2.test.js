@@ -75,7 +75,7 @@ test('a disclosure is refused without a valid consent: missing, expired, revoked
   assert.equal(r.status, 400, 'a general ROI is not a Part 2 consent'); assert.match(r.data.error, /general release/);
   // Outside a Part 2 programme an ROI does authorise it (and no §2.32 notice is attached).
   assert.equal((await admin.put('/api/part2/settings', { part2_program: false, part2_off_reason: 'Counsel: not a federally assisted Part 2 program (test).' })).status, 200);
-  const ok = await post({ consent_id: roi, disclosed_to: 'Mother' });
+  const ok = await post({ consent_id: roi, disclosed_to: 'Mother', purpose: 'Family contact' }); // the purpose the release states
   assert.equal(ok.status, 201); assert.equal(ok.data.notice, null);
   assert.equal(H.db.one(`SELECT notice_version FROM disclosures WHERE id=?`, ok.data.id).notice_version, null);
   await admin.put('/api/part2/settings', { part2_program: true });
@@ -140,8 +140,8 @@ test('subpart E: a court order must be recorded and qualify; legal proceedings n
   assert.equal(d.court_order_id, good.data.id); assert.equal(d.legal_proceeding, 1);
   // A proceedings-only consent (§2.31(d)) works for the proceeding — and for nothing else.
   const pc = (await nav.post(`/api/clients/${c}/consents`, consent('part2_proceedings', { recipient: 'Family court', purpose: 'Custody hearing' }))).data.id;
-  assert.equal((await post({ ...legal, consent_id: pc })).status, 201);
-  assert.equal((await post({ consent_id: pc })).status, 400, 'cannot be combined with another purpose');
+  assert.equal((await post({ ...legal, consent_id: pc, purpose: 'Custody hearing' })).status, 201);
+  assert.equal((await post({ consent_id: pc, purpose: 'Custody hearing' })).status, 400, 'cannot be combined with another purpose');
   // Vacated and expired orders stop working.
   assert.equal((await nav.post(`/api/court-orders/${good.data.id}/vacate`, { reason: 'Appeal' })).status, 403);
   assert.equal((await sup.post(`/api/court-orders/${good.data.id}/vacate`, {})).status, 400, 'a reason is required');

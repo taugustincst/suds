@@ -107,7 +107,8 @@ test('a supervisor may override the recipient check only with a written justific
 test('an identified export under consent includes only clients whose consent names the stated recipient', async () => {
   const named = await newClient(); const other = await newClient(); const none = await newClient();
   for (const id of [named, other, none]) assert.equal((await nav.post('/api/interventions', { client_id: id, type: 'outreach', occurred_at: '2026-08-10T10:00:00Z', duration_minutes: 10 })).status, 201);
-  await addConsent(named, consent('County auditor'));
+  // Given for the audit the file is made for (pen test of 1.23.6, M1: a consent covers the purpose it states).
+  await addConsent(named, consent('County auditor', { purpose: 'Audit of services' }));
   await addConsent(other, consent('Somebody else'));
   const code = (id) => H.db.one(`SELECT client_code FROM clients WHERE id=?`, id).client_code;
   const r = await sup.get('/api/reports/export/interventions?identified=1&basis=consent&recipient=County%20auditor&purpose=Audit&from=2026-08-01&to=2026-08-31');
@@ -233,13 +234,13 @@ test('a pushed consent without the §2.31 elements is refused, and one already o
   assert.ok(rej, 'the row is rejected'); assert.match(rej.reason, /is missing a required field/); assert.match(rej.reason, /purpose/); assert.equal(rej.permanent, true);
   assert.ok(!H.db.one(`SELECT 1 FROM consents WHERE id=?`, bare), 'and never lands');
   const full = randomUUID();
-  const ok = await nav.post('/api/sync/push', { device_now: now, tables: { consents: [{ id: full, client_id: c, type: 'part2_disclosure', recipient_enc: 'Anyone', purpose_enc: 'Care', scope_enc: 'Summary', signed_at: '2026-09-01', expires_at: '2099-01-01', signed_on_paper: 1, discloser: 'This program', signer_relationship: 'patient', revocation_right_given: 1, redisclosure_notice_given: 1, refusal_consequences_given: 1, created_by: navId, rule_version: '2024', created_at: now, updated_at: now }] } });
+  const ok = await nav.post('/api/sync/push', { device_now: now, tables: { consents: [{ id: full, client_id: c, type: 'part2_disclosure', recipient_enc: 'Anyone', purpose_enc: 'Care coordination', scope_enc: 'Summary', signed_at: '2026-09-01', expires_at: '2099-01-01', signed_on_paper: 1, discloser: 'This program', signer_relationship: 'patient', revocation_right_given: 1, redisclosure_notice_given: 1, refusal_consequences_given: 1, created_by: navId, rule_version: '2024', created_at: now, updated_at: now }] } });
   assert.equal(ok.data.applied.consents, 1, JSON.stringify(ok.data));
   // A treatment consent is not a Part 2 consent and needs none of it.
   const tx = randomUUID();
   assert.equal((await nav.post('/api/sync/push', { device_now: now, tables: { consents: [{ id: tx, client_id: c, type: 'treatment', signed_at: '2026-09-01', created_by: navId, created_at: now, updated_at: now }] } })).data.applied.consents, 1);
   // Rows that are already in the database (written before this check, or by hand) are re-checked when used.
-  const insert = (cols) => { const id = randomUUID(); const row = { id, client_id: c, type: 'part2_disclosure', recipient_enc: require('../server/crypto').encrypt('Anyone'), purpose_enc: require('../server/crypto').encrypt('Care'), scope_enc: require('../server/crypto').encrypt('Summary'), signed_at: '2026-09-01', expires_at: '2099-01-01', signed_on_paper: 1, created_by: navId, ...cols }; const k = Object.keys(row); H.db.run(`INSERT INTO consents(${k.join(',')}) VALUES(${k.map(() => '?').join(',')})`, ...k.map(x => row[x])); return id; };
+  const insert = (cols) => { const id = randomUUID(); const row = { id, client_id: c, type: 'part2_disclosure', recipient_enc: require('../server/crypto').encrypt('Anyone'), purpose_enc: require('../server/crypto').encrypt('Care coordination'), scope_enc: require('../server/crypto').encrypt('Summary'), signed_at: '2026-09-01', expires_at: '2099-01-01', signed_on_paper: 1, created_by: navId, ...cols }; const k = Object.keys(row); H.db.run(`INSERT INTO consents(${k.join(',')}) VALUES(${k.map(() => '?').join(',')})`, ...k.map(x => row[x])); return id; };
   const disclose = (consentId) => nav.post(`/api/clients/${c}/disclosures`, { ...DISC, disclosed_to: 'Anyone', consent_id: consentId });
   const stamped = insert({ rule_version: '2024', discloser: 'This program', signer_relationship: 'patient' });
   const refused = await disclose(stamped);

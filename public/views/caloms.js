@@ -364,9 +364,9 @@ route('caloms', async (r) => {
     const intro = h('p', { class: 'small', 'data-not-a-claim': '1' }, h('b', {}, 'SUDS does not submit Drug Medi-Cal claims'), ' (no 837 or Short-Doyle/Medi-Cal files). Where a service must be billed, the county EHR (SmartCare or its equivalent) is where the claim is made. This file hands the encounters over for entry there: one row per client, per service day, per kind of service and worker, with minutes, place, modality and funding source.');
     if (!can('export:identified')) return h('div', { class: 'card mb', 'data-handoff': '1' }, h('h2', {}, 'County EHR hand-off'), intro, h('p', { class: 'small muted' }, 'A supervisor or administrator produces this file.'));
     const summary = h('div', { class: 'small muted', 'data-handoff-summary': '1' }, 'Checking the period…');
-    // Checked against the recipient in the form: a consent covers only the recipient it names.
-    const check = (recipient) => get(`/api/handoff/summary?from=${from}&to=${to}&recipient=${encodeURIComponent(recipient || '')}`).then(s => {
-      summary.textContent = `${n(s.rows, 'encounter row')} for ${n(s.clients, 'client')}, ${fmt.mins(s.minutes)} in total.${s.without_consent.length ? ` No consent that can authorise the hand-off to ${recipient || 'this recipient'} (a 42 CFR Part 2 consent naming it, such as the single treatment, payment and operations consent) on file for: ${s.without_consent.join(', ')} — with the consent basis they are left out.` : ''}${s.restricted ? ` ${n(s.restricted, 'client')} ${s.restricted === 1 ? 'has' : 'have'} an agreed restriction: you will be asked to confirm the file respects it.` : ''}`;
+    // Checked against the recipient and purpose in the form: a consent covers only the recipient it names, for the purpose it states.
+    const check = (recipient, purpose) => get(`/api/handoff/summary?from=${from}&to=${to}&recipient=${encodeURIComponent(recipient || '')}&purpose=${encodeURIComponent(purpose || '')}`).then(s => {
+      summary.textContent = `${n(s.rows, 'encounter row')} for ${n(s.clients, 'client')}, ${fmt.mins(s.minutes)} in total.${s.without_consent.length ? ` No consent that can authorise the hand-off to ${recipient || 'this recipient'} for this purpose (a 42 CFR Part 2 consent naming it and given for that purpose, such as the single treatment, payment and operations consent) on file for: ${s.without_consent.join(', ')} — with the consent basis they are left out.` : ''}${s.restricted ? ` ${n(s.restricted, 'client')} ${s.restricted === 1 ? 'has' : 'have'} an agreed restriction: you will be asked to confirm the file respects it.` : ''}`;
     }).catch(e => { summary.textContent = e.message; });
     const f = form([
       { name: 'recipient', label: 'Recipient', required: true, value: 'County EHR / billing unit', span: true },
@@ -381,8 +381,9 @@ route('caloms', async (r) => {
       const done = await withRestrictionCheck((extra) => fetchDownload(`/api/handoff/export?${q}${extra.restriction_reviewed ? '&restriction_reviewed=1' : ''}`));
       toast(downloadedMessage(done, 'Hand-off file downloaded. It carries the 42 CFR Part 2 notice.'), 'ok');
     } });
-    check(f.inputs.recipient.value);
-    f.inputs.recipient.addEventListener('change', () => check(f.inputs.recipient.value));
+    const recheck = () => check(f.inputs.recipient.value, f.inputs.purpose.value);
+    recheck();
+    f.inputs.recipient.addEventListener('change', recheck); f.inputs.purpose.addEventListener('change', recheck);
     return h('div', { class: 'card mb', 'data-handoff': '1' }, h('h2', {}, 'County EHR hand-off (encounters for billing)'), intro, summary, f);
   };
 
