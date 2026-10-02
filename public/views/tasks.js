@@ -24,6 +24,8 @@ const REMINDER_FIXED = 'Only the supervisor who sent this reminder, or someone w
  * it asks for undone; market evaluation of 1.23.3, N7). True to go ahead. The UI only: the server still lets it be done.
  */
 export async function confirmReminderDone(t) {
+  // Home's rows are short (no details, no sign_reminder mark): the to-do itself says whether it is a reminder.
+  if (t && !('description' in t) && t.id && t.client_id) { try { t = (await get(`/api/tasks/${encodeURIComponent(t.id)}`, { quiet: true })).row || t; } catch { return true; } }
   if (!t || !t.sign_reminder || !t.client_id || t.assigned_to !== state.user.id) return true;
   let n = 0;
   try { n = (await get(`/api/notes?client_id=${encodeURIComponent(t.client_id)}&status=draft&mine=1&limit=1`, { quiet: true })).total || 0; } catch { return true; }

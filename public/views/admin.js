@@ -98,7 +98,7 @@ async function openUserForm(values, onDone) {
       if (moveTo) {
         try {
           const r = await post('/api/caseload/transfer', { from_user_id: values.id, to_user_id: moveTo, reassign_open_tasks: true, reason: 'Account deactivated' });
-          toast(`${r.transferred} client${r.transferred === 1 ? '' : 's'}${r.tasks_reassigned ? ` and ${r.tasks_reassigned} to-do${r.tasks_reassigned === 1 ? '' : 's'}` : ''} moved to ${r.to}`, 'ok');
+          toast(`${r.transferred} client${r.transferred === 1 ? '' : 's'}${r.tasks_reassigned ? ` and ${r.tasks_reassigned} to-do${r.tasks_reassigned === 1 ? '' : 's'}` : ''} moved to ${r.to}${r.reminders_cancelled ? `; ${r.reminders_cancelled} reminder${r.reminders_cancelled === 1 ? '' : 's'} to sign draft notes cancelled` : ''}`, 'ok');
         } catch (e) { toast(`The account is deactivated, but its caseload was not moved: ${e.message}. Move it under Settings → Move a caseload.`, 'error'); }
       }
       await loadRefData();
