@@ -226,9 +226,10 @@ try {
     // Two: the grant, and (1.17.0) the program default's deny of See every client, on for a new install.
     eq(await admin.page.locator('table tr', { hasText: uname }).locator('[data-perm-count]').getAttribute('data-perm-count'), '2', 'with a badge for their overrides (the grant and the program default\'s caseload hold)');
     ok(!(await admin.page.locator('table tr', { hasText: 'mrivera' }).locator('[data-perm-count]').count()), 'a user on their role alone has no badge');
-    // The administrator's own row: explained, not editable.
+    // The administrator's own row: editable like anyone's (the owner's decision after 1.23.5), saying it is their own.
     await admin.page.click('[data-user-permissions="admin"]');
-    ok(await until(async () => /You cannot change your own permissions/.test(await admin.page.textContent('.modal').catch(() => ''))), 'the administrator\'s own permissions are explained, not editable');
+    ok(await until(() => admin.page.$('.modal [data-perm-self]')), 'the administrator\'s own permissions say they are their own');
+    ok(await until(() => admin.page.$('.modal [data-perm-grant-form]')), 'and can be changed');
     await closeModals(admin.page);
     await axe(admin.page, 'Users & permissions');
     await admin.ctx.close();

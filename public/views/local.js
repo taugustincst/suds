@@ -1,4 +1,4 @@
-import { h, route, get, post, put, state, form, toast, nav, navAndRender, render, loadSession, badge, fmt, pageHead, eraseDeviceButton, kv, modal, clear, forgetDue } from '../app.js';
+import { h, route, get, post, put, state, form, toast, nav, navAndRender, render, loadSession, badge, fmt, pageHead, eraseDeviceButton, kv, modal, clear, forgetDue, confirmDialog, refreshPermissions } from '../app.js';
 
 // A column name as the person would say it: `first_name_enc` is "first name" (the suffix is how the
 // database marks an encrypted column, not something a navigator should have to read past).
@@ -297,18 +297,26 @@ function accountRoles() {
   const box = h('div', { class: 'mt', 'data-account-roles': '1' });
   const LABELS = { navigator: 'Navigator', clinician: 'Clinician (clinical notes)', supervisor: 'Supervisor (countersigning, approving time)', admin: 'Administrator (settings and user accounts)' };
   get('/api/local/accounts', { quiet: true }).then(({ rows, roles }) => {
-    const others = rows.filter(u => u.id !== state.user.id);
-    if (!others.length) return;
+    // Your own role is listed too (the owner's decision after 1.23.5): you keep managing this device whatever it is,
+    // a change to it is confirmed first and applies at once, and the device always keeps an account that manages users.
+    if (!rows.length) return;
     box.append(h('h3', { class: 'eyebrow' }, 'Roles'),
-      ...others.map(u => {
-        const sel = h('select', { 'data-account-role': u.id, onChange: async () => {
+      ...rows.map(u => {
+        const self = u.id === state.user.id;
+        const id = `account-role-${u.id}`;
+        const sel = h('select', { id, 'data-account-role': u.id, onChange: async () => {
           const before = u.role;
-          try { await put(`/api/local/accounts/${u.id}`, { role: sel.value }); u.role = sel.value; toast(`${u.display_name} is now ${LABELS[sel.value] || sel.value} — from their next sign-in`, 'ok'); }
+          if (self && !await confirmDialog('Change your own role', `You are changing your own role from ${LABELS[before] || before} to ${LABELS[sel.value] || sel.value}. Your permissions change immediately${before === 'admin' ? ': you will lose Settings and Users & permissions unless another role gives them' : ''}. You still manage this device.`, { danger: before === 'admin', okText: 'Change my role' })) { sel.value = before; return; }
+          try {
+            await put(`/api/local/accounts/${u.id}`, { role: sel.value }); u.role = sel.value;
+            if (self) { toast(`Your role is now ${LABELS[sel.value] || sel.value}`, 'ok'); await refreshPermissions(); }
+            else toast(`${u.display_name} is now ${LABELS[sel.value] || sel.value} — from their next sign-in`, 'ok');
+          }
           catch (e) { sel.value = before; toast(e.message, 'error'); }
         } }, roles.map(r => h('option', { value: r, selected: r === u.role }, LABELS[r] || r)));
-        return h('div', { class: 'field' }, h('label', {}, `Role for ${u.display_name} (${u.username})`), sel);
+        return h('div', { class: 'field' }, h('label', { for: id }, self ? `Your role (${u.username})` : `Role for ${u.display_name} (${u.username})`), sel);
       }),
-      h('p', { class: 'small muted' }, 'A new role applies the next time that person signs in.'));
+      h('p', { class: 'small muted' }, 'A new role applies the next time that person signs in; a change to your own applies at once.'));
   }).catch(() => {});
   return box;
 }

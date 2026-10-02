@@ -1,4 +1,4 @@
-import { h, route, api, get, post, put, del, state, form, modal, toast, table, badge, flag, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear, pageTabs, moduleOn, roleOptions, roleSummary, ROLE_SUMMARY, announce } from '../app.js';
+import { h, route, api, get, post, put, del, state, form, modal, toast, table, badge, flag, statusKind, fmt, can, pageHead, confirmDialog, nav, stat, kv, loadRefData, downloadCsv, clear, pageTabs, moduleOn, roleOptions, roleSummary, ROLE_SUMMARY, announce, refreshPermissions, logout } from '../app.js';
 import { qrSvg } from '../qr.js';
 import { listsTab } from './lists.js';
 import { securityTab, drillCard } from './security.js';
@@ -28,6 +28,24 @@ let oidcStatusPromise;
 function oidcStatusCached() {
   if (!oidcStatusPromise) oidcStatusPromise = get('/api/auth/oidc/status', { quiet: true }).catch(() => ({ enabled: false }));
   return oidcStatusPromise;
+}
+
+// ---- Changing one's own access (the owner's decision after 1.23.5) ----
+// An administrator changes their own role, permissions and account in the same dialogs as anyone's. The server
+// refuses a change that would leave nobody who manages users (auth.lockoutProblem) and audits the rest with
+// self: true; here each self-change is confirmed first, naming what is lost or gained, and afterwards the page
+// follows at once: the permission snapshot is re-read, and someone who no longer manages users leaves this page.
+const isSelf = (id) => !!state.user && id === state.user.id;
+const ADMIN_ONLY = 'managing users and permissions, program settings and API keys';
+async function afterSelfChange({ deactivated = false } = {}) {
+  if (deactivated) { toast('Your account is deactivated. You have been signed out.', 'ok'); await logout(); return; }
+  // The snapshot is re-read without redrawing (that would close the dialog the change was made in); closing it
+  // redraws the page with the new permissions. Without user management, the page is left at once.
+  await refreshPermissions({ rerender: false });
+  if (!can('users:manage')) {
+    toast('You no longer manage users and permissions, so Users & permissions has closed.', 'ok');
+    nav('dashboard');
+  }
 }
 
 async function openUserForm(values, onDone) {
@@ -80,9 +98,22 @@ async function openUserForm(values, onDone) {
       // Turning an account off is confirmed: it ends every session and, with the box above ticked, tells
       // each of their synced devices to erase its local copy. Neither is a thing to do by mis-click.
       let moveTo = null;
+      const self = isSelf(values.id);
+      const selfRole = self && d.role && d.role !== values.role;
+      const selfDeactivate = self && values.is_active && !d.is_active;
+      // Deactivating oneself is confirmed by the deactivation dialog below, which says so.
+      if (selfRole && !selfDeactivate) {
+        const from = fmt.label(values.role), to = fmt.label(d.role);
+        const msg = values.role === 'admin' && d.role !== 'admin'
+          ? `You are changing your own role from ${from} to ${to}. You will lose ${ADMIN_ONLY}, and anything else the ${to} role does not give, immediately. Only another administrator can give it back.`
+          : `You are changing your own role from ${from} to ${to}. Your permissions change to the ${to} role's immediately.`;
+        if (!await confirmDialog('Change your own role', msg, { danger: true, okText: 'Change my role' })) return;
+      }
       if (values.is_active && !d.is_active) {
         const wipe = d.wipe_devices && deviceCount ? ` ${deviceCount} synced device${deviceCount === 1 ? '' : 's'} will be told to erase ${deviceCount === 1 ? 'its' : 'their'} local copy of client records the next time ${deviceCount === 1 ? 'it' : 'they'} connect.` : '';
-        const answer = await deactivateDialog(values, `${values.display_name} will be signed out everywhere and can no longer sign in.${wipe}`);
+        const answer = await deactivateDialog(values, self
+          ? `You are deactivating your own account. You will be signed out everywhere at once, including here, and can no longer sign in; only another administrator can turn it back on.${wipe}`
+          : `${values.display_name} will be signed out everywhere and can no longer sign in.${wipe}`);
         if (!answer) return;
         moveTo = answer.moveTo;
       }
@@ -92,6 +123,12 @@ async function openUserForm(values, onDone) {
         toast(`Revoked ${r.removed} passkey${r.removed === 1 ? '' : 's'} (fingerprint sign-in) for ${values.display_name}. Any session a passkey opened is signed out; they sign in with their password.`, 'ok');
       }
       const saved = await put(`/api/users/${values.id}`, d); m.close();
+      if (selfRole || selfDeactivate) {
+        if (selfRole && !selfDeactivate) toast(`Your role is now ${fmt.label(d.role)}`, 'ok');
+        await afterSelfChange({ deactivated: !!selfDeactivate });
+        if (!state.user || !can('users:manage')) return;
+        await loadRefData(); onDone(); return;
+      }
       toast(saved && saved.caseload_default === 'held' ? 'User updated. As a new navigator or clinician they are held to their caseload (program default).' : saved && saved.caseload_default === 'lifted' ? 'User updated. The program default\'s caseload hold was lifted with the new role.' : 'User updated', 'ok');
       // The caseload moves through the same audited transfer as Settings -> Move a caseload. If that fails the
       // account is still deactivated, and Home's "assigned to inactive staff" warning keeps it in view.
@@ -126,7 +163,9 @@ function openPermissionsDialog(user, onDone, { justCreated = false } = {}) {
   const intro = justCreated ? h('div', { class: 'banner ok small mb', 'data-perm-just-created': '1' }, `${user.display_name} has been created with the ${fmt.label(user.role)} role's permissions${user.held ? ', held to their caseload by the program default ("See every client" denied)' : ''}. Grant or deny individual permissions below, or close this to finish.`) : null;
   const dlg = modal(`Permissions — ${user.display_name}`, h('div', { 'data-perm-dialog': user.id }, intro, box,
     h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn', 'data-perm-done': '1', onClick: () => dlg.close() }, 'Done'))),
-  { wide: true, onClose: onDone });
+  // Not when they have just removed their own user management: the page has been left (afterSelfChange), and
+  // the list's refresh would bring them back to it.
+  { wide: true, onClose: () => { if (can('users:manage')) onDone(); } });
   renderPermissionsSection(box, user.id);
 }
 
@@ -134,8 +173,9 @@ function openPermissionsDialog(user, onDone, { justCreated = false } = {}) {
 // The Permissions section of the user editor: the role's baseline as a collapsible grouped list, the
 // effective permissions with their provenance (role baseline, granted override, denied override), the
 // individual overrides with their reason and who made them, and the grant/deny form. The API enforces
-// the guards (no self-edit, privileged permissions stay admin-only, reasons of 10+ characters); the UI
-// explains them and surfaces the API's error text.
+// the guards (privileged permissions stay admin-only, reasons of 10+ characters, never leaving nobody who manages
+// users); the UI explains them and surfaces the API's error text. One's own permissions are edited here too, each
+// change confirmed first (confirmSelfPermission).
 function permCatalogLabel(byName, name) { return (byName[name] && byName[name].label) || name; }
 function permNamespaceGroups(names) {
   const groups = {};
@@ -151,10 +191,7 @@ function permProvBadge(prov) {
 }
 async function renderPermissionsSection(box, userId) {
   box.replaceChildren();
-  if (state.user && userId === state.user.id) {
-    box.append(h('p', { class: 'muted' }, 'You cannot change your own permissions.'));
-    return;
-  }
+  const self = isSelf(userId);
   box.append(h('p', { class: 'small muted' }, 'Loading permissions…'));
   let catalog, data;
   try {
@@ -167,6 +204,9 @@ async function renderPermissionsSection(box, userId) {
   const byName = Object.fromEntries((catalog.permissions || []).map((p) => [p.name, p]));
   const label = (n) => permCatalogLabel(byName, n);
   const refresh = () => renderPermissionsSection(box, userId);
+  // After a change to one's own permissions: re-read them, and leave this page if user management went with it.
+  const done = async () => { if (self) { await afterSelfChange(); if (!can('users:manage')) return; } await refresh(); };
+  if (self) box.append(h('div', { class: 'banner info small mb', 'data-perm-self': '1' }, 'These are your own permissions. A change applies to you at once and is recorded in the audit log like any other. SUDS will not let you remove the last active account that can manage users.'));
 
   // The role baseline: what this person's role gives them, grouped by namespace. For a navigator or clinician,
   // what they see and change by default, and how to hold them to their caseload instead.
@@ -203,7 +243,8 @@ async function renderPermissionsSection(box, userId) {
               const why = await confirmDialog('Revoke override', `Remove the ${o.permission} override for ${data.display_name || 'this person'}? Their permissions go back to what the ${data.role} role gives.`,
                 { danger: true, okText: 'Revoke', requireReason: true, minLength: 10, maxLength: 300, reasonLabel: 'Why is it being revoked? (10 to 300 characters)', reasonHint: 'About the staff member\'s job, never a client: no names or details.' });
               if (!why) return;
-              try { await del(`/api/users/${userId}/permissions/${encodeURIComponent(o.permission)}`, { reason: why }); toast('Override revoked', 'ok'); await refresh(); }
+              if (self && !await confirmSelfPermission(label(o.permission), o.permission, o.mode === 'grant' ? 'revoke-grant' : 'revoke-deny', data.role)) return;
+              try { await del(`/api/users/${userId}/permissions/${encodeURIComponent(o.permission)}`, { reason: why }); toast('Override revoked', 'ok'); await done(); }
               catch (e) { toast(e.message, 'error'); }
             } }, 'Revoke'))))
       : h('p', { class: 'small muted' }, 'No individual overrides — this person has exactly what their role gives.')));
@@ -232,12 +273,28 @@ async function renderPermissionsSection(box, userId) {
     h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', 'data-perm-save': '1',
       onClick: async () => {
         const mode = denyRadio.checked ? 'deny' : 'grant';
+        if (self && !await confirmSelfPermission(label(sel.value), sel.value, mode, data.role)) return;
         try {
           await post(`/api/users/${userId}/permissions`, { permission: sel.value, mode, reason: reason.value });
           toast(mode === 'deny' ? 'Permission denied' : 'Permission granted', 'ok');
-          await refresh();
+          await done();
         } catch (e) { toast(e.message, 'error'); }
       } }, 'Save'))));
+}
+
+// What a change to one's own permissions does, said before it is made (the server still decides, and refuses one
+// that would leave nobody who manages users).
+function confirmSelfPermission(label, perm, kind, role) {
+  const name = `${label} (${perm})`;
+  const manage = perm === 'users:manage' ? ' That includes this page: Users & permissions.' : '';
+  const msg = {
+    deny: `You are removing your own access to ${name}. You will lose it immediately.${manage}`,
+    grant: `You are giving yourself ${name}. It applies to you immediately and is recorded in the audit log.`,
+    'revoke-grant': `You are removing your own individual grant of ${name}. Unless your role (${fmt.label(role)}) gives it, you will lose it immediately.`,
+    'revoke-deny': `You are lifting your own deny of ${name}. If your role (${fmt.label(role)}) gives it, you will have it again immediately.`,
+  }[kind];
+  return confirmDialog(kind === 'grant' || kind === 'revoke-deny' ? 'Change your own permissions' : 'Remove your own access', msg,
+    { danger: kind === 'deny' || kind === 'revoke-grant', okText: kind === 'grant' ? 'Give it to me' : kind === 'revoke-deny' ? 'Lift my deny' : 'Remove my access' });
 }
 
 // Deactivating an account does not take its clients and to-dos away from it, so the confirmation says how
