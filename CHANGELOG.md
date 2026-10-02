@@ -50,6 +50,14 @@ record now asks first (the office still lets it be marked done).
   with the work undone. On Home and the To-dos list it now asks first ("You still have N unsigned draft notes on this
   record. Mark the reminder done anyway?"); **Cancel** leaves it open. The office still lets it be marked done.
 
+### Fixed in the review of the 1.23.5 integration
+
+- Fixed: ticking a to-do on Home read the to-do again first (an audited `task.view`) to learn whether it was a reminder
+  to sign notes; Home's list now says so itself (`sign_reminder`), still without the to-do's details.
+- Fixed: **Mark selected done** on the To-dos page and **Status: Done** in a to-do's form closed a reminder to sign
+  notes without the question the box asks; the form now asks it, and the bulk confirmation names the reminders selected.
+- Fixed: a sign reminder's Client box lost its own error description when it was given the reason it cannot be changed.
+
 ## 1.23.4 — 2026-10-01
 
 A patch of 1.23.3 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:

@@ -460,3 +460,17 @@ test('the supervision queue says whether each unsigned draft\'s author is still 
   H.db.run(`UPDATE users SET is_active=0 WHERE id=?`, leaver.id);
   assert.equal((await row()).author_active, 0, 'deactivated: the page offers no Remind author');
 });
+
+// Review of 1.23.5: Home's to-dos say whether each is a supervisor's sign reminder, so ticking one needs no extra read
+// of the to-do (each read is an audited task.view); their details stay off Home's payload.
+test('Home\'s due to-dos carry the sign-reminder mark and not their details', async () => {
+  const { SIGN_REMINDER } = require('../server/rules/notes');
+  const c = await clin.post('/api/clients', { first_name: 'Rem', last_name: 'Inderseven', status: 'active', confirm_duplicate: true });
+  const r = await sup.post('/api/tasks', { client_id: c.data.id, assigned_to: U.clin, title: 'Finish and sign your draft notes', description: `Please.\n${SIGN_REMINDER}`, due_at: today });
+  const plain = await sup.post('/api/tasks', { client_id: c.data.id, assigned_to: U.clin, title: 'Call the clinic', description: 'Ask for Dana.', due_at: today });
+  const due = (await clin.get('/api/me/continue')).data.due_today;
+  const a = due.find(t => t.id === r.data.id); const b = due.find(t => t.id === plain.data.id);
+  assert.ok(a && a.sign_reminder === true, 'the reminder is marked');
+  assert.ok(b && b.sign_reminder === false, 'an ordinary to-do is not');
+  assert.ok(!('description' in a) && !('description' in b) && !('created_by' in a), 'no details on Home');
+});

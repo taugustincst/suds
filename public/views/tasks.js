@@ -25,7 +25,7 @@ const REMINDER_FIXED = 'Only the supervisor who sent this reminder, or someone w
  */
 export async function confirmReminderDone(t) {
   // Home's rows are short (no details, no sign_reminder mark): the to-do itself says whether it is a reminder.
-  if (t && !('description' in t) && t.id && t.client_id) { try { t = (await get(`/api/tasks/${encodeURIComponent(t.id)}`, { quiet: true })).row || t; } catch { return true; } }
+  if (t && !('description' in t) && !('sign_reminder' in t) && t.id && t.client_id) { try { t = (await get(`/api/tasks/${encodeURIComponent(t.id)}`, { quiet: true })).row || t; } catch { return true; } }
   if (!t || !t.sign_reminder || !t.client_id || t.assigned_to !== state.user.id) return true;
   let n = 0;
   try { n = (await get(`/api/notes?client_id=${encodeURIComponent(t.client_id)}&status=draft&mine=1&limit=1`, { quiet: true })).total || 0; } catch { return true; }
@@ -43,6 +43,8 @@ export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
     isNew ? null : { name: 'status', label: 'Status', type: 'select', options: ['open', 'in_progress', 'done', 'cancelled'], value: 'open', noBlank: true, required: true },
     { name: 'is_milestone', label: 'Milestone (shows on client timeline)', type: 'checkbox' }, { name: 'description', label: 'Details', type: 'textarea', span: true },
   ].filter(Boolean), { values: values || {}, submitText: isNew ? 'Create to-do' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
+    // Done from the form asks about drafts left, as the box does (review of 1.23.5).
+    if (!isNew && d.status === 'done' && values.status !== 'done' && !(await confirmReminderDone(values))) return;
     if (isNew) await post('/api/tasks', d); else await put(`/api/tasks/${values.id}`, { ...d, if_updated_at: values.updated_at });
     toast('To-do saved', 'ok'); m.close(); onDone && onDone();
   } });
@@ -50,7 +52,7 @@ export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
     const why = f.querySelector('[data-field="assigned_to"] .help');
     f.inputs.assigned_to.disabled = true; f.inputs.assigned_to.dataset.reminderFixed = '1';
     const text = f.inputs.client_id && f.inputs.client_id.searchInput;
-    if (text) { text.disabled = true; text.dataset.reminderFixed = '1'; if (why) text.setAttribute('aria-describedby', why.id); }
+    if (text) { text.disabled = true; text.dataset.reminderFixed = '1'; if (why) text.setAttribute('aria-describedby', [text.getAttribute('aria-describedby'), why.id].filter(Boolean).join(' ')); }
   }
   const src = isNew ? null : sourceButton(values, () => m.close(), onDone);
   const m = modal(isNew ? 'New to-do' : 'Edit to-do', src ? h('div', {}, h('p', { class: 'btn-row' }, src), f) : f);
@@ -219,7 +221,10 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false, min
   const markBtn = h('button', { class: 'btn sm primary', disabled: true, onClick: async () => {
     const ids = [...selected];
     // Several to-dos at once is exactly where a stray tap does the most damage, so say how many first.
-    if (!(await confirmDialog('Mark selected done', `Mark ${ids.length} to-do${ids.length === 1 ? '' : 's'} as done?`, { okText: `Mark ${ids.length} done` }))) return;
+    // Supervisors' reminders to sign notes among them are named, so they are not closed by accident (review of 1.23.5).
+    const reminders = rows.filter(t => selected.has(t.id) && t.sign_reminder && t.assigned_to === state.user.id).length;
+    const also = reminders ? ` ${reminders === 1 ? 'One of them is a reminder' : `${reminders} of them are reminders`} to finish and sign your draft notes; marking it done does not sign them.` : '';
+    if (!(await confirmDialog('Mark selected done', `Mark ${ids.length} to-do${ids.length === 1 ? '' : 's'} as done?${also}`, { okText: `Mark ${ids.length} done` }))) return;
     markBtn.disabled = true;
     const results = await Promise.allSettled(ids.map(id => put(`/api/tasks/${id}`, { status: 'done' })));
     const failed = results.filter(x => x.status === 'rejected').length;

@@ -342,7 +342,9 @@ try {
     ok(await nav.page.$eval('.modal [data-field="client_id"] input[type=text]', e => e.disabled), 'D2: and so is Client');
     const why = await nav.page.$eval('.modal [data-field="assigned_to"] .help', e => e.textContent).catch(() => '');
     eq(why, 'Only the supervisor who sent this reminder, or someone who countersigns notes, can change who it is for or its client.', 'D2: with the reason');
-    eq(await nav.page.$eval('.modal [data-field="client_id"] input[type=text]', e => e.getAttribute('aria-describedby')), await nav.page.$eval('.modal [data-field="assigned_to"] .help', e => e.id), 'D2: the Client box is described by it too');
+    // Added to the box's own descriptions (its error slot), not in place of them (review of 1.23.5).
+    { const ids = (await nav.page.$eval('.modal [data-field="client_id"] input[type=text]', e => e.getAttribute('aria-describedby') || '')).split(/\s+/); const help = await nav.page.$eval('.modal [data-field="assigned_to"] .help', e => e.id);
+      ok(ids.includes(help) && ids.length > 1, 'D2: the Client box is described by it too, beside its own error slot', ids.join(' ')); }
     ok(!(await nav.page.$eval('.modal select[name=priority]', e => e.disabled)), 'D2: the rest of the form stays editable');
     await axe(nav.page, 'a sign reminder\'s form for its assignee');
     await nav.page.selectOption('.modal select[name=priority]', 'high');
