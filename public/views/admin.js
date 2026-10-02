@@ -584,7 +584,8 @@ route('admin', async (r) => {
         timezoneField(s),
         // The rest of the page is folded into sections, each opened when it is needed: the whole form used to be
         // one page over 4,000px tall on a phone.
-        { type: 'section', label: 'Security policy', hint: 'sign-out, passwords, two-step verification, fingerprint, sign-up', collapsible: true, heading: true },
+        // Opened, with the field focused, when Home's "Finish setting up" links here (section=security&field=…; 1.24.0).
+        { type: 'section', label: 'Security policy', hint: 'sign-out, passwords, two-step verification, fingerprint, sign-up', collapsible: true, heading: true, open: r.query.get('section') === 'security' },
         { name: 'session_idle_minutes', label: 'Auto sign-out after inactivity (minutes, max 60)', type: 'number', min: 1, max: 60, step: 1, value: s.policy.idleMinutes }, { name: 'session_absolute_hours', label: 'Maximum session length (hours)', type: 'number', min: 1, max: 24, step: 1, value: s.policy.absoluteHours },
         { name: 'password_max_age_days', label: 'Password expires after (days)', type: 'number', min: 1, step: 1, value: s.policy.passwordMaxAgeDays },
         { name: 'sign_reauth_minutes', label: 'Sign notes without the password for (minutes after signing in or confirming it, 0–60)', type: 'number', min: 0, max: 60, step: 1, value: s.policy.signReauthMinutes, help: 'Within this time a signature needs only the signer\'s confirmation of the attestation; after it, the password (or the authenticator code, with two-step verification on). 0 asks every time.' },
@@ -606,7 +607,7 @@ route('admin', async (r) => {
         ]),
         { name: 'self_signup', label: 'Sign up on the sign-in page', type: 'select', noBlank: true, value: s.self_signup === '0' ? '0' : '1', options: [{ value: '1', label: 'On — people can request an account; an administrator approves each one' }, { value: '0', label: 'Off — the sign-in page says to ask an administrator' }], span: true },
         ...(state.local ? [] : [
-          { type: 'section', label: 'Single sign-on & provisioning', hint: 'identity provider, SCIM', collapsible: true, heading: true },
+          { type: 'section', label: 'Single sign-on & provisioning', hint: 'identity provider, SCIM', collapsible: true, heading: true, open: r.query.get('section') === 'sso' },
           { name: 'sso_required', label: 'Require single sign-on', type: 'select', noBlank: true, value: s.sso_required === '1' ? '1' : '0', options: [{ value: '0', label: 'Off — passwords and SSO both work' }, { value: '1', label: 'On — password sign-in only for the emergency accounts below' }], span: true, help: s.env.oidc_configured ? 'Staff sign in through the county identity provider; leavers are cut off there.' : 'Needs single sign-on to be configured first (OIDC_* settings, docs/DEPLOYMENT.md).' },
           { name: 'sso_emergency_accounts', label: 'Emergency (break-glass) administrator accounts that keep a password', value: s.sso_emergency_accounts || '', placeholder: 'e.g. admin', span: true, help: 'Usernames, comma separated. Keep their passwords sealed; every use is audited.' },
           { name: 'sso_trust_idp_mfa', label: "Trust the identity provider's multi-factor sign-in", type: 'select', noBlank: true, value: s.sso_trust_idp_mfa === '1' ? '1' : '0', options: [{ value: '0', label: 'Off — SSO sign-ins still need the SUDS second factor' }, { value: '1', label: 'On — accept the provider\'s MFA (amr mfa, or two factor kinds such as pwd+otp) in place of it' }], span: true, help: 'Only if the county identity provider enforces MFA for SUDS (conditional access). A sign-in it does not mark as multi-factor still needs the SUDS code; every trusted sign-in is audited.' },
@@ -641,7 +642,7 @@ route('admin', async (r) => {
         // backup folder: it showed "every 0 hours, keep 0" fields that did nothing. Its backups are on the
         // This device page (the card beside this form says so).
         ...(state.local ? [] : [
-          { type: 'section', label: 'Scheduled backups & recovery', collapsible: true, heading: true },
+          { type: 'section', label: 'Scheduled backups & recovery', collapsible: true, heading: true, open: r.query.get('section') === 'backups' },
           { name: 'backup_schedule_hours', label: 'Back up automatically every (hours, 0 = off)', type: 'number', min: 0, step: 1, value: s.backup_schedule_hours || '0',
             help: Number(s.backup_schedule_hours) > 0 ? `On: a backup is made every ${s.backup_schedule_hours} hour${Number(s.backup_schedule_hours) === 1 ? '' : 's'}, and the newest ${s.backup_retain_count || 14} are kept.` : 'Off: no backups are made automatically. Enter a number of hours (24 = daily) to turn them on.' },
           { name: 'backup_retain_count', label: 'Keep this many recent backups on disk', type: 'number', min: 1, step: 1, value: s.backup_retain_count || '14' },
@@ -653,8 +654,27 @@ route('admin', async (r) => {
           { name: 'dr_rto_target_minutes', label: 'Recovery time objective (minutes)', type: 'number', min: 1, step: 1, value: s.dr_rto_target_minutes || '60' },
           { name: 'dr_rpo_target_hours', label: 'Recovery point objective (hours)', type: 'number', min: 1, step: 1, value: s.dr_rpo_target_hours || '', placeholder: 'the backup interval, else 24' },
         ]),
+        // The public "Security & procurement" page (public/procurement.html, 1.24.0): what an organization evaluating
+        // SUDS reads before it has an account. Blank fields say "Not yet published by the maintainer"; nothing is invented.
+        ...(state.local ? [] : [
+          { type: 'section', label: 'Security & procurement page', hint: 'contact, legal entity, pricing, service levels', collapsible: true, heading: true, open: r.query.get('section') === 'procurement' },
+          { name: 'procurement_legal_entity', label: 'Legal entity (who signs a BAA or QSOA)', value: s.procurement_legal_entity || '', maxLen: 200, span: true,
+            help: 'These six fields are shown to anyone, without signing in, on the Security & procurement page (procurement.html) linked from the sign-in page. A blank one shows "Not yet published by the maintainer". Never put client information here.' },
+          { name: 'procurement_contact_name', label: 'Contact name or team', value: s.procurement_contact_name || '', maxLen: 200 },
+          { name: 'procurement_contact_email', label: 'Contact email', type: 'email', value: s.procurement_contact_email || '', maxLen: 200 },
+          { name: 'procurement_contact_url', label: 'Contact web page (https://…)', type: 'url', value: s.procurement_contact_url || '', maxLen: 200, span: true },
+          { name: 'procurement_pricing', label: 'Pricing', type: 'textarea', rows: 3, value: s.procurement_pricing || '', span: true },
+          { name: 'procurement_sla', label: 'Support and service levels', type: 'textarea', rows: 3, value: s.procurement_sla || '', span: true },
+        ]),
       ], { values: s, submitText: 'Save settings', onSubmit: async (d) => { await put('/api/admin/settings', d); toast('Settings saved', 'ok'); },
         extra: state.local ? null : h('p', { class: 'small', 'data-backup-link': '1' }, 'To back up now, download a backup or restore one, open ', h('a', { href: '#/admin?tab=system' }, 'System & backups'), '.') });
+      // A link to one setting (Home's "Finish setting up", 1.24.0: field=…): its section is open; the field is scrolled
+      // to and focused once the page is drawn (after the router has put focus on the heading).
+      const want = r.query.get('field');
+      // Polled: the rest of the tab (the cards below) is still loading when this runs, and the router focuses the
+      // heading in the same turn it attaches the page, so the first look that finds the field attached comes after it.
+      const el = want ? f.querySelector(`[name="${CSS.escape(want)}"]`) : null;
+      if (el) { let tries = 0; const place = () => { if (!el.isConnected) { if (++tries < 100) setTimeout(place, 50); return; } const d = el.closest('details'); if (d) d.open = true; el.scrollIntoView({ block: 'center' }); try { el.focus({ preventScroll: true }); } catch { /* ignore */ } }; setTimeout(place, 0); }
       return h('div', { class: 'grid cols-2' }, s.programme ? programmeCard(s, refresh) : null, h('div', { class: 'card' }, h('h2', {}, 'Program settings'), f), state.local ? deviceSettingsCard() : null,
         state.local ? null : await allowlistCard(refresh), await instrumentsCard(refresh), await sampleDataCard(refresh),
         h('div', { class: 'card' }, h('h2', {}, 'Server security configuration'), h('p', { class: 'small muted' }, 'Set via environment variables (see .env.example and docs/DEPLOYMENT.md).'),

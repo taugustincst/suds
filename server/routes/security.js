@@ -41,6 +41,10 @@ module.exports = (r) => {
     return { file: hc.file, verification: { ok: hc.verification.ok, errors: hc.verification.errors, key_id: hc.verification.key_id, key_source: hc.verification.key_source }, ...hc.doc };
   });
 
+  // The hardening checklist (server/hardening.js): the security settings this server ships with off or unset, each
+  // computed from the configuration in force. Home's "Finish setting up" shows the recommended ones not yet done.
+  r.get('/api/admin/security/hardening', auth.requireAuth, auth.requirePerm('settings:manage'), () => require('../hardening').summary());
+
   r.get('/api/admin/security/mfa-report', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => {
     const rep = require('../security-status').mfaReport();
     audit.log({ user: ctx.user, action: 'security.mfa_report', ip: ctx.ip, details: { without: rep.without.length } });

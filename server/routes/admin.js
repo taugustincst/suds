@@ -35,7 +35,10 @@ const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'progra
   // (server/field-scope.js). All three are off (or 90 days) unless an administrator changes them.
   'participant_code_default', 'field_device_default', 'field_device_window_days',
   // The programme profile and its module switches (server/programme.js): presentation, not permissions.
-  ...require('../programme').SETTING_KEYS];
+  ...require('../programme').SETTING_KEYS,
+  // The public "Security & procurement" page's contact, legal entity, pricing stance and SLA (server/procurement.js;
+  // built for 1.24.0). Blank until an administrator publishes them; GET /api/procurement serves them without a session.
+  ...require('../procurement').SETTING_KEYS];
 const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
 const listener = require('../listener');
 const fs = require('node:fs');
@@ -68,7 +71,9 @@ module.exports = (r) => {
         // A blank number field reaches here as null (the frontend form reads an empty input as null, not
         // ''), and String(null) is the four-character string "null" — which failed every numeric check
         // below and, for a text setting, silently saved the literal word "null" as its value.
-        let v = ctx.body[k] === null ? '' : String(ctx.body[k]).slice(0, 500);
+        let v = ctx.body[k] === null ? '' : String(ctx.body[k]);
+        // The procurement page's texts are checked whole (a pricing stance or an SLA may run to 2,000 characters).
+        if (k.startsWith('procurement_')) v = require('../procurement').validate(k, v); else v = v.slice(0, 500);
         if (['session_idle_minutes', 'session_absolute_hours', 'password_max_age_days', 'mfa_grace_days', 'backup_schedule_hours', 'backup_retain_count', 'client_retention_years'].includes(k) && v !== '' && !(Number(v) >= 0)) throw badRequest(`${k} must be a non-negative number`);
         // A zero here would not mean zero: the policy falls back to its default for anything under 1, so
         // "0 minutes" quietly became 15. Say so instead. (0 grace days and 0 schedule hours do mean 0.)

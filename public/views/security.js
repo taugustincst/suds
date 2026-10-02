@@ -8,7 +8,7 @@ const LABEL = { ok: 'OK', warn: 'Attention', bad: 'Action needed', info: 'Info' 
 const dur = (s) => s == null ? '—' : s < 120 ? `${s} s` : s < 7200 ? `${Math.round(s / 6) / 10} min` : `${Math.round(s / 360) / 10} h`;
 
 export async function securityTab() {
-  const [s, signingKey] = await Promise.all([get('/api/admin/security/status'), get('/api/admin/security/signing-key', { quiet: true }).catch(() => null)]);
+  const [s, signingKey, hardening] = await Promise.all([get('/api/admin/security/status'), get('/api/admin/security/signing-key', { quiet: true }).catch(() => null), get('/api/admin/security/hardening', { quiet: true }).catch(() => null)]);
   const groups = [...new Set(s.items.map(i => i.group))];
   const exportLink = h('a', { class: 'btn sm', href: '/api/admin/audit/export', download: '' }, 'Download audit export (NDJSON + manifest)');
   const anchorMsg = h('span', { class: 'small muted' });
@@ -16,6 +16,7 @@ export async function securityTab() {
   return h('div', { 'data-security-status': '1' },
     h('div', { class: 'banner small mb' }, 'Read-only. Each line is read from where the control is enforced or recorded in this installation, not from a document. ', h('b', {}, s.attestation)),
     h('div', { class: 'grid cols-4 mb' }, stat('OK', s.counts.ok, 'ok'), stat('Attention', s.counts.warn, s.counts.warn ? 'warn' : ''), stat('Action needed', s.counts.bad, s.counts.bad ? 'danger' : ''), stat('Two-step verification', `${s.mfa.coverage_pct}%`, s.mfa.coverage_pct === 100 ? 'ok' : 'warn')),
+    hardening ? hardeningCard(hardening) : null,
     groups.map(g => h('div', { class: 'card mb', 'data-group': g }, h('h2', {}, g),
       table([
         // The rules each line produces evidence for (server/compliance-rules.js), shared with the host compliance check.
@@ -131,4 +132,19 @@ export async function drillCard() {
   render(await get('/api/admin/dr-drill'));
   const first = box.querySelector('[data-drill-progress]'); if (first) timer = setTimeout(poll, 1000);
   return box;
+}
+
+// The hardening checklist (server/hardening.js, 1.24.0): every security setting this server ships with off or unset,
+// done or not, computed from the configuration in force. The recommended ones not done are also on Home's "Finish
+// setting up"; the rest are choices a program may make. Each links to the setting itself, or says IT changes it.
+function hardeningCard(x) {
+  return h('section', { class: 'card mb', 'aria-labelledby': 'hardening-h', 'data-hardening': String(x.open) },
+    h('h2', { id: 'hardening-h' }, 'Hardening checklist'),
+    h('p', { class: 'small muted' }, `${x.done} of ${x.total} done. Each line ticks itself off from this server's settings when the change is saved; nothing here is ticked by hand. "Server setting" lines are changed by whoever runs the server (IT), not in SUDS.`),
+    table([
+      { label: 'Status', render: i => i.done ? badge('Done', 'ok') : i.recommended ? badge('To do', 'warn') : badge('Optional') },
+      { label: 'Setting', render: i => h('div', { 'data-hardening-item': i.id, 'data-done': i.done ? '1' : '0' }, h('b', {}, i.title), h('div', { class: 'small muted' }, i.why)) },
+      { label: 'Now', render: i => h('span', { class: 'small' }, i.status, i.where === 'server' ? h('div', { class: 'small muted' }, 'Server setting') : null) },
+      { label: '', render: i => i.done || i.action.href === '#/admin?tab=security' ? null : h('a', { class: 'btn sm', href: i.action.href }, i.action.label) },
+    ], x.items));
 }
