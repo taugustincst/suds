@@ -52,8 +52,10 @@ test('supervision queue: an overdue draft names its author, and a reminder to-do
   // The supervisor's list of open to-dos carries the reference, which is how the queue knows not to remind twice.
   const open = (await sup.get('/api/tasks?status=open&limit=1000')).data.rows;
   assert.ok(open.some(x => (x.description || '').includes(ref)), 'the open reminder is found by its reference');
-  // Once the author closes it, the reference is no longer among the open to-dos, so a new reminder can go.
-  assert.equal((await nav.put(`/api/tasks/${t.data.id}`, { status: 'done' })).status, 200);
+  // The author cannot tick it off with the draft unsigned (1.24.1, D6); once the supervisor closes it, the reference is
+  // no longer among the open to-dos, so a new reminder can go.
+  assert.equal((await nav.put(`/api/tasks/${t.data.id}`, { status: 'done' })).status, 409);
+  assert.equal((await sup.put(`/api/tasks/${t.data.id}`, { status: 'done' })).status, 200);
   const after = (await sup.get('/api/tasks?status=open&limit=1000')).data.rows;
   assert.ok(!after.some(x => (x.description || '').includes(ref)), 'a finished reminder is not an open one');
 });
