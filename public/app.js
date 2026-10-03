@@ -555,6 +555,8 @@ export function modal(title, content, { wide = false, onClose = null } = {}) {
         }
       } catch { /* no history API */ }
     }
+    // Keep what its forms hold now: once the dialog is gone they no longer save (form(), above).
+    box.querySelectorAll('form').forEach(f => { try { f.saveDraft && f.saveDraft(); } catch { /* nothing to keep */ } });
     bg.remove(); syncInertBehindDialogs(); // now, not at the observer's turn: focus goes back to the page below
     document.removeEventListener('keydown', onKey);
     if (opener && document.contains(opener) && typeof opener.focus === 'function') { try { opener.focus(); } catch { /* the element may have been replaced by a re-render */ } }
@@ -1083,7 +1085,9 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     // A field mid-typing an incomplete date/time is expected while drafting — read() now rejects that
     // rather than silently mangling it, so the autosave tick here just skips this round instead of
     // erroring; the field firms up (or clears) before the next tick or before the person tries to submit.
-    const save = (onlyIfSomething) => { if (submitted || asking || !mine()) return; try { const d = draftNow(); if (!onlyIfSomething || typedSomething(d)) drafts.set(draftKey, d); } catch { /* firms up or gets fixed before submit */ } };
+    // A form no longer on the page (its dialog closed: the close kept its draft, below) never writes again: a late
+    // change event or queued save from it used to put back a draft that the next dialog had just saved and cleared.
+    const save = (onlyIfSomething) => { if (submitted || asking || !mine() || !el.isConnected) return; try { const d = draftNow(); if (!onlyIfSomething || typedSomething(d)) drafts.set(draftKey, d); } catch { /* firms up or gets fixed before submit */ } };
     el.addEventListener('input', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => save(true), 400); });
     el.addEventListener('change', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => save(false), 400); });
   }
@@ -2022,6 +2026,8 @@ async function renderPage() {
   // A paused window stays paused: a hash change or a view's own refresh must not draw the app back over it.
   if (paused) return;
   showBuildStamp(!state.user);
+  // The forms about to be replaced keep what they hold now: once off the page they no longer save (form()).
+  document.querySelectorAll('form').forEach(f => { try { f.saveDraft && f.saveDraft(); } catch { /* nothing to keep */ } });
   if (updateArmed && !updateBlocked({ navigating: true })) { reloadForUpdate(); return; }
   clear(document.getElementById('modal-root'));
   const r = parseHash();
