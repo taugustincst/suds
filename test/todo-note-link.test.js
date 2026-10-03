@@ -178,3 +178,26 @@ test('integration of 1.24.0 with 1.23.3\'s isSignReminder: a to-do with the line
   assert.equal(r.status, 201, JSON.stringify(r.data));
   assert.equal(link(r.data.id), c.drafts[0]);
 });
+
+test('the worker cannot mark a sign reminder done while their drafts there are unsigned; the supervisor can (eval of 1.24.0, D6)', async () => {
+  const c = await clientWithDrafts('Tickoff', 1);
+  const r = await sup.post('/api/tasks', reminder(c.id, c.drafts[0]));
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  const done = await clin.put(`/api/tasks/${r.data.id}`, { status: 'done' });
+  assert.equal(done.status, 409, JSON.stringify(done.data));
+  assert.match(done.data.error || '', /closes itself once your draft notes on this client's record are signed/);
+  assert.equal(status(r.data.id), 'open');
+  assert.equal((await clin.put(`/api/tasks/${r.data.id}`, { status: 'in_progress' })).status, 200, 'other changes stand');
+  // Over sync push, the same.
+  const t = H.db.one(`SELECT * FROM tasks WHERE id=?`, r.data.id);
+  const p = await clin.post('/api/sync/push', { device_now: iso(), tables: { tasks: [{ ...t, title_enc: 'Finish and sign', description_enc: `Asked.\n${SIGN_REMINDER}`, status: 'done', completed_at: iso(), updated_at: iso(Date.now() + 5000) }] } });
+  assert.equal(p.status, 200);
+  assert.equal(status(r.data.id), 'in_progress', JSON.stringify(p.data));
+  // The supervisor who sent it may close it.
+  assert.equal((await sup.put(`/api/tasks/${r.data.id}`, { status: 'done' })).status, 200);
+  // With nothing left to sign, an ordinary tick is fine: the worker's other reminder, its draft signed meanwhile.
+  const r2 = await sup.post('/api/tasks', reminder(c.id, c.drafts[0]));
+  assert.equal(r2.status, 201);
+  H.db.run(`UPDATE notes SET status='signed' WHERE id=?`, c.drafts[0]);
+  assert.equal((await clin.put(`/api/tasks/${r2.data.id}`, { status: 'done' })).status, 200);
+});

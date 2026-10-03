@@ -438,22 +438,20 @@ try {
     ok(await until(() => sup.page.$('.modal select[name=assigned_to]')), 'the supervisor opens the same reminder');
     ok(!(await sup.page.$eval('.modal select[name=assigned_to]', e => e.disabled)), 'D2: for its maker Assigned to stays editable');
     await closeModals(sup.page);
-    // N7: ticking it done with the draft unsigned asks first; Cancel leaves it open.
+    // N7: ticking it done with the draft unsigned is stopped and says why (1.24.1, D6: the server refuses it too).
     await nav.go(`tasks?status=open&mine=1&_=n7`);
     const box = `input[aria-label='Mark "Finish and sign your draft notes (fixed fields)" done']`;
     ok(await until(() => nav.page.$(box)), 'her reminder has its done box on the To-dos list');
     await nav.page.click(box);
-    ok(await until(() => nav.page.$('.modal-bg')), 'N7: ticking it asks first');
-    eq((await nav.page.textContent('.modal-bg:last-child .modal p')).trim(), 'You still have 1 unsigned draft note on this record. Mark the reminder done anyway?', 'N7: saying how many drafts are unsigned');
-    await axe(nav.page, 'the question before a sign reminder is ticked done');
-    await nav.page.locator('.modal-bg').last().locator('button', { hasText: /^Cancel$/ }).click();
-    ok(await until(async () => !(await nav.page.$('.modal-bg'))), 'N7: Cancel closes the question');
+    ok(await until(() => nav.page.$('.modal-bg')), 'N7: ticking it says why it stays open');
+    eq((await nav.page.textContent('.modal-bg:last-child .modal p')).trim(), 'You still have 1 unsigned draft note on this record. This reminder closes itself once they are signed.', 'N7: saying how many drafts are unsigned');
+    await axe(nav.page, 'the notice before a sign reminder is ticked done');
+    await nav.page.locator('.modal-bg').last().locator('button', { hasText: /^OK$/ }).click();
+    ok(await until(async () => !(await nav.page.$('.modal-bg'))), 'N7: OK closes it');
     ok(await until(async () => !(await nav.page.$eval(box, e => e.checked).catch(() => true))), 'N7: and the box is unticked again');
     eq(((await nav.api('GET', `/api/tasks/${rem.data.id}`)).data.row || {}).status, 'open', 'N7: the reminder stays open');
-    await nav.page.click(box);
-    ok(await until(() => nav.page.$('.modal-bg')), 'asked again');
-    await nav.page.locator('.modal-bg').last().locator('button', { hasText: /^Mark done$/ }).click();
-    ok(await until(async () => ((await nav.api('GET', `/api/tasks/${rem.data.id}`)).data.row || {}).status === 'done'), 'N7: "Mark done" marks it done anyway');
+    eq((await nav.api('PUT', `/api/tasks/${rem.data.id}`, { status: 'done' })).status, 409, 'D6: and the server refuses it done while the draft is unsigned');
+    eq((await sup.api('PUT', `/api/tasks/${rem.data.id}`, { status: 'done' })).status, 200, 'D6: the supervisor who sent it may close it');
   }
 } catch (e) {
   fail(`script error: ${e.stack || e.message}`);
