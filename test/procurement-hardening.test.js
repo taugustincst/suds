@@ -32,7 +32,7 @@ test('the procurement facts are public, blank until published, and carry nothing
 
 test('only an administrator may publish them, and each value is checked', async () => {
   const body = { procurement_legal_entity: 'Example Services LLC', procurement_contact_name: 'Sales desk', procurement_contact_email: 'buyers@example.org',
-    procurement_contact_url: 'https://example.org/contact', procurement_pricing: 'Software free (MIT).\nServices quoted per programme.', procurement_sla: 'Business hours support.' };
+    procurement_contact_url: 'https://example.org/contact', procurement_pricing: 'Evaluation free for 90 days.\nServices quoted per programme.', procurement_sla: 'Business hours support.' };
   for (const c of [sup, nav, H.client()]) assert.ok([401, 403].includes((await c.put('/api/admin/settings', body)).status), 'a supervisor, a navigator or no session may not');
   assert.equal((await H.client().get('/api/procurement')).data.legal_entity, null, 'nothing was stored');
   assert.equal((await admin.put('/api/admin/settings', { procurement_contact_email: 'not an email' })).status, 400);
@@ -44,7 +44,7 @@ test('only an administrator may publish them, and each value is checked', async 
   const r = await H.client().get('/api/procurement');
   assert.equal(r.data.legal_entity, 'Example Services LLC');
   assert.equal(r.data.contact_email, 'buyers@example.org');
-  assert.equal(r.data.pricing, 'Software free (MIT).\nServices quoted per programme.', 'paragraphs kept');
+  assert.equal(r.data.pricing, 'Evaluation free for 90 days.\nServices quoted per programme.', 'paragraphs kept');
   assert.equal((await admin.get('/api/admin/settings')).data.procurement_sla, 'Business hours support.', 'the Settings form reads them back');
   // Blank clears one again.
   assert.equal((await admin.put('/api/admin/settings', { procurement_contact_name: null })).status, 200);
@@ -53,9 +53,10 @@ test('only an administrator may publish them, and each value is checked', async 
   assert.match(a.details, /procurement_contact_name/);
 });
 
-test('the static build ships public/procurement.json with every fact blank and one repository URL', () => {
+test('the static build ships public/procurement.json with the licensor\'s legal entity, every other fact blank, and one repository URL', () => {
   const j = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'public', 'procurement.json'), 'utf8'));
-  for (const f of FIELDS) assert.equal(j[f], '', `${f} is blank: the owner supplies it`);
+  assert.equal(j.legal_entity, 'AugustInnovations LLC', 'the licensor (LICENSE, owner decision of 2026-10-03)');
+  for (const f of FIELDS.filter((x) => x !== 'legal_entity')) assert.equal(j[f], '', `${f} is blank: the owner supplies it`);
   assert.match(j.repository_url, /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/);
   assert.match(j.default_branch, /^[\w./-]+$/);
   // Every document the page links to exists on the default branch's tree (here: this checkout).

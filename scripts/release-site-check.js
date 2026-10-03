@@ -14,7 +14,10 @@
 // runner's Node, without npm (test/release-site-check.test.js runs it that way). It is the tag's own code, as the
 // workflow file running it is.
 //
-//   node scripts/release-site-check.js <tag tree: a folder holding public/ and scripts/> <site folder>
+// From 1.24.1 the build also copies the tag's LICENSE and NOTICE (as LICENSE.txt and NOTICE.txt), so the tag tree
+// holds them too.
+//
+//   node scripts/release-site-check.js <tag tree: a folder holding public/, scripts/, LICENSE and NOTICE> <site folder>
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');

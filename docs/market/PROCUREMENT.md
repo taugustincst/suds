@@ -1,8 +1,8 @@
 # Buying SUDS: a procurement guide for counties and CBOs
 
 How a CBO (or a county sponsoring one) can buy implementation and support for SUDS, what the contract needs, and
-what the vendor still has to do to be buyable through each route. The software itself is MIT-licensed and free;
-only services are bought ([templates/PRICING.md](templates/PRICING.md)).
+what the vendor still has to do to be buyable through each route. SUDS is proprietary: evaluation is free, and
+production use needs a licence agreement ([LICENSE](../../LICENSE); [templates/PRICING.md](templates/PRICING.md)).
 
 > This is general guidance, not legal or procurement advice. Every county sets its own purchasing thresholds
 > and rules in its purchasing ordinance and policy manual. **Confirm local limits and required forms with the
@@ -134,7 +134,7 @@ does not hold.
    Implementation: setup, spreadsheet import, configuration, training (docs/market/PILOT-KIT.md).
    Support: today, the public issue tracker and private vulnerability reports (docs/SUPPORT.md);
    contracted business-hours support: [owner to complete from docs/market/templates/SUPPORT-SLA.md].
-   Source code: open source (MIT) — no licence lock-in; full data export on exit.
+   Licence: SUDS Proprietary Licence (LICENSE); production licence agreement [owner to complete]; source visible; full data export on exit.
 
 10. PRICING
     [Per user per month, volume-tiered; implementation fee; pilot terms] — see templates/PRICING.md.

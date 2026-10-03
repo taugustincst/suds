@@ -2,7 +2,7 @@
 // The algorithm-aware attacker (test/publication-release.test.js; docs/HIPAA.md "Small cells in aggregate
 // reports", "The pattern of what is hidden").
 //
-// SUDS is open source, so an attacker knows the audit as well as the rule. This one does not reason about a
+// SUDS's source is public, so an attacker knows the audit as well as the rule. This one does not reason about a
 // printout with constraints: it takes every programme that could lie behind it (every world of a family that
 // anyone who knows the structure - the period, the lists, the funds - has to consider), runs the real release
 // on each, and keeps the worlds whose printout is identical, character for character, to the one it holds.

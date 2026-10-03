@@ -200,8 +200,8 @@ The programme (or the county, where it is the data owner) owns its data. If the 
 3. **Deletion** of any copy the vendor held for support: all copies, including backups, deleted within 30
    days of confirmed receipt; written certificate of deletion ([templates/DPA-DRAFT.md](templates/DPA-DRAFT.md)).
 4. **Records retention**: the programme keeps what its retention rules require; SUDS's own retention clock
-   continues only if the programme keeps running it (the software is open source and may be kept without a
-   contract).
+   continues only if the programme keeps running it (after the pilot, production use needs a licence
+   agreement: [LICENSE](../../LICENSE)).
 5. Revert to spreadsheets using the export, or migrate to another system.
 
 ## 7. Pilot evaluation template
@@ -330,4 +330,4 @@ compromised if its files should stop counting).
 
 The county decides whether to continue (a county agreement covering its CBOs, [PRICING-OPTIONS.md](PRICING-OPTIONS.md)
 model C), extend, or stop. Each CBO decides for itself as in section 6: its data stays with whoever hosted it, and
-the software stays free to keep.
+keeping the software in use needs a licence agreement ([LICENSE](../../LICENSE)).

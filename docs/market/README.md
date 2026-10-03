@@ -59,7 +59,7 @@ fill them; SUDS invents none of them.
 | [templates/COUNTY-RFI-ANSWERS.md](templates/COUNTY-RFI-ANSWERS.md) | County IT, privacy, purchasing | Answers to a county's IT and privacy RFI, each with its evidence in the repository (**template; organisational answers are owner-pending**) |
 | [templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md) | Counsel, county, CBOs | CBO ↔ county agreement for the county view's aggregate figures (**DRAFT — for counsel review, not legal advice**) |
 | [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md) | IT, purchasing, counsel | Business-hours support, severity levels, response targets; hosted-tier terms only when offered (**template for counsel review**) |
-| [templates/PRICING.md](templates/PRICING.md) | Buyers, vendor | Free software; paid services at flat annual amounts per programme (**unvalidated hypothesis**) |
+| [templates/PRICING.md](templates/PRICING.md) | Buyers, vendor | Free evaluation; production licence (price to decide); paid services at flat annual amounts per programme (**unvalidated hypothesis**) |
 | [templates/ROI-CALCULATOR.md](templates/ROI-CALCULATOR.md) | Programme directors | Worksheet: staff time, report hours, supply waste — with measured pilot numbers only |
 | [templates/CASE-STUDY-TEMPLATE.md](templates/CASE-STUDY-TEMPLATE.md) | Vendor, reference CBOs | Structure for the first CBO case studies |
 

@@ -11,16 +11,19 @@ several CBOs, implementation packaged as forward-deployed services, and support 
 
 ## What is (and is not) being sold
 
-- **The software is free.** SUDS is MIT-licensed. Anyone — a CBO, its IT partner, a county — may download,
-  run, change and keep it without paying, forever. There is no licence fee and no per-user charge, and a
-  programme that hosts SUDS itself is never charged for the software.
-- **What is paid for is services**: getting a programme running, supporting it, and (planned) running the
+- **SUDS on this device is free; the office server needs a licence agreement after evaluation.** SUDS is
+  proprietary software of AugustInnovations LLC ([LICENSE](../../../LICENSE)). Anyone may use SUDS on this device
+  at its official GitHub Pages address free of charge, real records included (section 2A), and may evaluate the
+  office server for up to 90 days with fictional data, without paying. Production use of the office server needs a
+  licence agreement signed by AugustInnovations LLC; its price is **[owner to decide]** and not yet published (the Pricing line of the
+  procurement page, `public/procurement.json`, is blank). Copies of 1.24.0 and earlier keep their MIT rights.
+- **What is also paid for is services**: getting a programme running, supporting it, and (planned) running the
   server for programmes that cannot. Each is priced as a **flat annual amount per programme**, not per user, so
   a grant budget can carry it as one line and adding a part-time outreach worker costs nothing.
 
 An earlier draft priced SUDS at $35–49 per user per month, with a discount for county hosting. That draft was
-withdrawn: it included vendor hosting that does not exist, and it charged counties for MIT-licensed software
-they would run themselves.
+withdrawn: it included vendor hosting that does not exist, and it charged counties per user for software
+(then MIT-licensed) they would run themselves.
 
 ## Offers
 
@@ -29,10 +32,10 @@ they would run themselves.
 | **Implementation and onboarding** (one-time) | Setup-wizard walk-through with the programme's IT partner or county IT; lists, supplies, funding sources and budget lines; spreadsheet import; training (navigators, supervisors, finance, administrator); one restore drill with IT; funder-report check against the programme's grants | **$2,500–7,500** per programme, by data volume and number of grants | Available (owner delivers) |
 | **Support subscription** (annual) | Business-hours support per [SUPPORT-SLA.md](SUPPORT-SLA.md); release notes and upgrade help; security-release notices; answers to security questionnaires from the evidence pack; one check-in a quarter | **$3,000–6,000 / year** for a programme of up to ~15 staff; **$6,000–10,000 / year** up to ~40 | Available, business hours only |
 | **Vendor-hosted single-tenant tier** (annual) | One isolated instance, backups, monitoring, upgrades — *plus* the support subscription | **$10,000–20,000 / year** per programme (must cover the costs in [../HOSTING.md](../HOSTING.md)) | **Planned — not offered** until the HOSTING.md checklist is done |
-| **Custom work** | Reports for a specific funder template, imports from another system | Quoted per job; contributed back to the open-source code | Available |
+| **Custom work** | Reports for a specific funder template, imports from another system | Quoted per job; folded into the SUDS code | Available |
 
-Self-hosted and county-hosted programmes buy only what they want: nothing, implementation only, or
-implementation plus support. There is no "county-hosted discount" because there is no licence to discount.
+Self-hosted and county-hosted programmes need the production licence, then buy only the services they want:
+implementation, support, both or neither. Whether the licence fee differs by hosting model is **[owner to decide]**.
 
 ## Pilot terms (hypothesis)
 

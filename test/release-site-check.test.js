@@ -42,10 +42,10 @@ test('compareSites: provider pictures are allowed only as JPEG, PNG or WebP that
   assert.match(C.compareSites(want, site('region-pictures/nyc/big.png', Buffer.concat([PNG, Buffer.alloc(6 * 1024 * 1024)])))[0], /bytes, over/);
 });
 
-/** A tree as the publish job extracts it with `git archive`: public/ and the four scripts, no node_modules. */
+/** A tree as the publish job extracts it with `git archive`: public/, LICENSE, NOTICE and the four scripts, no node_modules. */
 function tagTree(dir) {
   copyDir(path.join(root, 'public'), path.join(dir, 'public'));
-  for (const f of ['server/csp.js', 'scripts/build-static-site.js', 'scripts/static-site-security.js', 'scripts/release-site-check.js']) {
+  for (const f of ['LICENSE', 'NOTICE', 'server/csp.js', 'scripts/build-static-site.js', 'scripts/static-site-security.js', 'scripts/release-site-check.js']) {
     fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
     fs.copyFileSync(path.join(root, f), path.join(dir, f));
   }
@@ -69,6 +69,9 @@ test('the check, run as the publish job runs it (the tag\'s scripts, no npm pack
     assert.match(ok.out, /the site's \d+ built files are the tag's, byte for byte/);
     // What the build generates is checked too: the boot script, the frame guard, the pages' policy, the shell list.
     assert.equal(fs.readFileSync(path.join(site, 'local-boot.js'), 'utf8'), LOCAL_BOOT_JS);
+    // The licence and the third-party notices ship with the site (the bundled MIT/BSD packages require them).
+    assert.ok(fs.readFileSync(path.join(site, 'LICENSE.txt')).equals(fs.readFileSync(path.join(root, 'LICENSE'))), 'LICENSE.txt is LICENSE');
+    assert.ok(fs.readFileSync(path.join(site, 'NOTICE.txt')).equals(fs.readFileSync(path.join(root, 'NOTICE'))), 'NOTICE.txt is NOTICE');
     const tamper = (rel, f) => { const p = path.join(site, rel); const before = fs.readFileSync(p); fs.writeFileSync(p, f(before.toString('utf8'))); const r = run(); fs.writeFileSync(p, before); return r; };
     for (const [rel, f] of [
       ['local/kernel.js', (s) => s + '\n;fetch("https://evil.example/")'],
@@ -76,6 +79,7 @@ test('the check, run as the publish job runs it (the tag\'s scripts, no npm pack
       ['frame-guard.js', () => ''],
       ['local-boot.js', (s) => s + 'window.SUDS_EXTRA = 1;\n'],
       ['sw.js', (s) => s.replace("'local-boot.js', ", '')],
+      ['NOTICE.txt', (s) => s.replace('ieee754', 'removed')],
     ]) {
       const r = tamper(rel, f);
       assert.equal(r.code, 1, `${rel} changed is refused`);
@@ -86,6 +90,12 @@ test('the check, run as the publish job runs it (the tag\'s scripts, no npm pack
     assert.equal(extra.code, 1);
     assert.match(extra.out, /evil\.js is not built from the tag and is not a provider picture/);
     fs.rmSync(path.join(site, 'evil.js'));
+    fs.rmSync(path.join(site, 'LICENSE.txt'));
+    assert.match(run().out, /LICENSE\.txt/, 'a site without the licence is refused');
+    fs.copyFileSync(path.join(root, 'LICENSE'), path.join(site, 'LICENSE.txt'));
+    fs.rmSync(path.join(tag, 'NOTICE'));
+    assert.match(run().out, /::error::The site check could not run: build-static-site: NOTICE is missing/, 'a tag tree without NOTICE cannot be checked');
+    fs.copyFileSync(path.join(root, 'NOTICE'), path.join(tag, 'NOTICE'));
     fs.symlinkSync('/etc/passwd', path.join(site, 'link'));
     assert.match(run().out, /::error::The site check could not run: link is neither a file nor a directory/);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -121,7 +131,7 @@ test('web-app.yml\'s publish job checks the site against the tag, with the tag\'
   const check = publish.indexOf('node tag/scripts/release-site-check.js tag site');
   assert.ok(check > publish.indexOf('mkdir site && tar -xf in/site.tar') && check < publish.indexOf('git push -q --force'), 'after the unpack, before the push');
   assert.match(publish, /git init -q --bare tag\.git\n/);
-  assert.match(publish, /git --git-dir=tag\.git archive "\$\{GITHUB_SHA\}" public server\/csp\.js scripts\/build-static-site\.js scripts\/static-site-security\.js scripts\/release-site-check\.js scripts\/pages-version-check\.js \| tar -x -C tag/);
+  assert.match(publish, /git --git-dir=tag\.git archive "\$\{GITHUB_SHA\}" public LICENSE NOTICE server\/csp\.js scripts\/build-static-site\.js scripts\/static-site-security\.js scripts\/release-site-check\.js scripts\/pages-version-check\.js \| tar -x -C tag/);
   // Exactly the files the check loads: it runs with nothing else of the tag, and no node_modules (test above).
   const req = (f) => [...fs.readFileSync(path.join(root, f), 'utf8').matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]).filter((m) => !m.startsWith('node:'));
   assert.deepEqual(req('scripts/static-site-security.js'), ['../server/csp']);

@@ -2,8 +2,8 @@
 
 **Status: options, not a price list.** Nothing here is decided, quoted or offered. Every value in the worksheet
 is **[owner to decide]**. Until the owner decides, the published hypothesis is
-[templates/PRICING.md](templates/PRICING.md) (free software; implementation and support at flat annual amounts
-per programme), and it too is unvalidated: no programme has paid for SUDS yet.
+[templates/PRICING.md](templates/PRICING.md) (free evaluation; production under a signed licence agreement, with
+implementation and support at flat annual amounts per programme), and it too is unvalidated: no programme has paid for SUDS yet.
 
 The strategy asks for pricing that reflects near-zero marginal cost: per user at a fraction of incumbents, or a
 county site licence ([STRATEGY.md](STRATEGY.md), *Capture 7*). This document sets out the models that could do
@@ -11,11 +11,14 @@ that, what each one actually charges for, and what the owner must decide.
 
 ## First principles
 
-1. **The code is MIT-licensed and public.** Anyone may run it without paying. A per-user price or a site
-   "licence" therefore cannot be a licence to the code; it can only be the price of a **service**: support,
-   updates applied, hosting (when offered), the AI copilot's operation, an SLA, reporting setup, a named
-   contact. Changing the licence is possible for future code but not for what is already released, would
-   contradict the "you can keep running it without us" promise that county IT values, and is not recommended.
+1. **The code is proprietary and visible for evaluation** (owner decision of 2026-10-03; [LICENSE](../../LICENSE)).
+   SUDS on this device is free for real use at its official address (LICENSE section 2A); anyone may evaluate the
+   office server free for 90 days with fictional data, and its production use needs a licence agreement signed
+   by AugustInnovations LLC, so a per-user price or a site licence can now be a licence to the code as well as the
+   price of a **service**: support, updates applied, hosting (when offered), the AI copilot's operation, an SLA,
+   reporting setup, a named contact. Copies of 1.24.0 and earlier keep the MIT rights they were released with.
+   County IT values being able to keep running it without the vendor: a production agreement should say what
+   happens to the licensee's copy and records if the agreement ends.
 2. **Software marginal cost is near zero; delivery cost is not.** The unit-cost model in
    [HOSTING.md](HOSTING.md) puts routine operations and support at roughly 3–6 hours a programme a month (an
    assumption until pilots measure it), and the fixed costs of assurance (insurance, pen test, SOC 2 if pursued,
@@ -71,7 +74,7 @@ only against a figure the buyer has given.
 | **What it buys** | Support for each CBO; a county contact; one security review for all of them; and the **county view** across the CBOs (released in 1.18.0; [../COUNTY-VIEW.md](../COUNTY-VIEW.md)): the county's own SUDS server (a county-only install: no client data on it) set up with the county code and each CBO's key, key exchange at each CBO's kickoff, help importing the signed quarterly files, and support for the combined view, its quarter-by-quarter trend and its Excel, CSV and tidy CSV files. Publishing combined figures is in it on a build that has the publication screen (1.21.0: screened releases of the combined figures, naming only CBOs whose written consent to publication the county recorded, released in 1.22.0). Not in it: a published dashboard, benchmarks across CBOs (Tier 2). County-entered figures for grantees not on SUDS are released in 1.20.0: in it only on a build that has them |
 | **For** | "Sell to the money": one buyer, one procurement, many programmes; CBOs without IT capacity get a sponsor; the county gets consistent outcome data |
 | **Against** | Long procurement; the county may expect hosting, which is not offered; one contract concentrates revenue; the county, not the vendor, must be the data steward for any benchmarking ([DATA-NETWORK.md](DATA-NETWORK.md)) |
-| **Note** | "Licence" is the buyer's word; the contract is for services. Say so in the proposal, to avoid a county expecting rights it already has under MIT |
+| **Note** | The contract is a licence agreement (LICENSE: production use needs one) plus services. Say in the proposal what each covers |
 | **The package** | What the county runs, what each CBO does, a 3-CBO timeline and the documents a county asks for: [COUNTY-KIT.md](COUNTY-KIT.md). Price nothing from it: every number here is [owner to decide] |
 
 ### D. Implementation and FDE services, packaged separately
@@ -106,7 +109,7 @@ programmes that cannot contract with an AI provider themselves.
 
 | Tier | What | Notes |
 | --- | --- | --- |
-| **Community** | Public code, documentation, public issue tracker; no response target | Free; always available |
+| **Community** | Public code for evaluation (90 days, fictional data; [LICENSE](../../LICENSE)), documentation, public issue tracker; no response target | Free; production needs a licence |
 | **Standard** | Business-hours support per [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md); upgrade help; security notices; questionnaire answers | The base of models A–C |
 | **Enhanced** | Standard plus a quarterly review, a named contact, faster business-hours targets, help with each release's upgrade | Only when capacity exists to honour it |
 | **Hosted** | Vendor-hosted single-tenant instance plus Enhanced | **Planned — not offered** until the [HOSTING.md](HOSTING.md) checklist is done |
@@ -189,6 +192,6 @@ Fill in, then test with the first pilots. Keep the reasoning next to each number
       realistic year-1 volume.
 - [ ] A small programme's total fits a grant line its funder allows and, if possible, its small-purchase threshold.
 - [ ] Any comparison with an incumbent uses a figure the buyer gave, marked to verify.
-- [ ] The proposal says the code is MIT-licensed and what the price buys instead.
+- [ ] The proposal says what the licence agreement covers ([LICENSE](../../LICENSE)) and what the services cover.
 - [ ] [templates/PRICING.md](templates/PRICING.md) updated to match the decision, and the "unvalidated" label kept
       until three pilots have paid.

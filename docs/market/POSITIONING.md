@@ -167,10 +167,10 @@ price; where one would go it says so.
 | **AI documentation tools for behavioural health** | Eleos, Nabla, and similar ambient-listening or note-drafting products | Drafting clinical notes, some from a recorded session, inside or beside a clinician's EHR | SUDS is not an AI product. Its copilot (released in 1.17.0) is one optional module of a programme record: office server only, off until the programme records its own BAA and Part 2 QSOA with the provider, drafts from text the worker gives (session notes or a transcript; SUDS records no audio), never for SUD counseling notes, every call audited without its text, and a person signs. A programme that wants ambient scribing for therapists should compare those products on their own terms; SUDS does not compete there | `[owner to verify public pricing]` |
 | **EHR vendors' AI add-ons** | The drafting and summarising features EHR vendors add to their own products | Documentation help inside the EHR the programme already bills from | Where the clinical note lives in the EHR, its own add-on is usually the natural choice for that note. SUDS's copilot is for the records SUDS holds (outreach, navigation, care-coordination notes, CalOMS answers) and is never offered on SUDS on this device | `[owner to verify public pricing]` |
 | **County EHRs** | SmartCare (through CalMHSA), Netsmart (myAvatar), and the EHRs county SUD providers use | The clinical record, DMC-ODS billing and, often, CalOMS submission for the providers on them | Not a replacement, and never proposed as one (*The boundary*). SUDS holds the non-billing work beside them, or acts as the Part 2 consent-and-disclosure layer; it can import patients and encounters from a FHIR file the EHR exports and hand encounters back, and it never connects to the EHR or bills | `[owner to verify public pricing]` |
-| **CBO case management platforms** | Apricot (Bonterra) and similar configurable case-management and outcomes tools | General case management, intake forms and outcomes reporting for many kinds of nonprofit programme | SUDS is narrower and built for this work: anonymous contacts that still count, supplies by item, site and lot, naloxone and SSP reporting, settlement spending by Exhibit E category, and Part 2 controls (consent that names the recipient, one disclosure gate, an accounting of disclosures) that a general platform leaves to configuration. It is open source, runs on the programme's or county's own server, and the programme pays, if it chooses, for services rather than licences | `[owner to verify public pricing]` |
+| **CBO case management platforms** | Apricot (Bonterra) and similar configurable case-management and outcomes tools | General case management, intake forms and outcomes reporting for many kinds of nonprofit programme | SUDS is narrower and built for this work: anonymous contacts that still count, supplies by item, site and lot, naloxone and SSP reporting, settlement spending by Exhibit E category, and Part 2 controls (consent that names the recipient, one disclosure gate, an accounting of disclosures) that a general platform leaves to configuration. Its source is visible for evaluation, it runs on the programme's or county's own server, and the programme pays for a licence agreement and, if it chooses, services | `[owner to verify public pricing]` |
 | **Harm-reduction trackers** | Spreadsheets and paper logs, SSP data tools, and the forms a funder or clearinghouse supplies | Counting distribution and participants for one funder's report | SUDS keeps the same counts as part of one record: an anonymous contact on a phone, offline where allowed, with an encrypted participant code, draws down stock and reaches the funder report, NDP log, SSP summary and settlement report. Each layout is still to be checked against the funder's current template | `[owner to verify public pricing]` |
 
-The honest line for every row: SUDS is one maintainer's open-source software with no independent audit yet, and
+The honest line for every row: SUDS is one maintainer's software, proprietary with its source visible, with no independent audit yet, and
 the incumbents in the first four rows are established companies. Where the buyer's need is inside one of those
 categories, say so and point them there.
 
@@ -263,7 +263,7 @@ consent and notice wording before first use.
 
 **"Do you have SOC 2 / HITRUST / a pen test?"**
 No, and we will not say otherwise. What exists: control documentation and a SOC 2 readiness self-assessment in
-`docs/security/`, a pre-answered questionnaire, and open source code anyone can review. An independent
+`docs/security/`, a pre-answered questionnaire, and source code anyone can review (public; licensed under [LICENSE](../../LICENSE)). An independent
 penetration test and SOC 2 are open vendor items ([EVALUATION-RESPONSE.md](EVALUATION-RESPONSE.md)).
 
 **"Is it accessible?"**
@@ -272,13 +272,18 @@ A WCAG 2.1 AA self-assessment and an Accessibility Conformance Report (VPAT form
 third-party certification.
 
 **"Who supports it? What if the vendor disappears?"**
-The vendor is one person today; say so. The code is MIT-licensed with no runtime dependencies, so a programme can
-keep running and maintaining it without the vendor, and the exports are complete. The architecture decision
+The vendor is one person today; say so. The code is visible, with no runtime dependencies, and the exports are
+complete. It is proprietary ([LICENSE](../../LICENSE)): what a licensee may keep running, and whether it may
+maintain the code, if the vendor disappears is set by the licence agreement **[owner to decide; e.g. a
+source-code escrow or continuity clause]**. The architecture decision
 records ([docs/architecture/](../architecture/README.md)) are written so a new maintainer can take over. Paid
 support is business-hours ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)).
 
-**"It's open source — why pay?"**
-You don't have to. The software is free. Programmes and counties pay, if they choose, for the people around it:
+**"The source is public — why pay?"**
+Being able to see the code is not a licence to use it. SUDS on this device is free at its official address, real
+records included; the office server may be evaluated free for 90 days with fictional data, and production use of
+it needs a licence agreement ([LICENSE](../../LICENSE); price **[owner to decide]**). Programmes and
+counties also pay, if they choose, for the people around it:
 implementation delivered alongside your team (discovery, deployment, data migration, training, reporting setup),
 business-hours support and (when offered) hosting. The current hypothesis is flat annual amounts per programme
 ([templates/PRICING.md](templates/PRICING.md)); other models (per active user, county site licence) are options

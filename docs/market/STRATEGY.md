@@ -267,8 +267,8 @@ feature.
 
 The software's marginal cost is near zero. The cost of serving a programme is not: implementation, support, and
 (if offered) hosting and assurance ([HOSTING.md](HOSTING.md), *Unit-cost model*), plus model calls for the
-copilot. SUDS is MIT-licensed, so a per-user or site "licence" cannot be enforced on the code; what a price buys is
-a service. [PRICING-OPTIONS.md](PRICING-OPTIONS.md) sets out the models and a worksheet for the owner.
+copilot. SUDS is proprietary from 1.24.1 (owner decision of 2026-10-03; [LICENSE](../../LICENSE)), so a price can buy a
+licence to the code as well as a service. [PRICING-OPTIONS.md](PRICING-OPTIONS.md) sets out the models and a worksheet for the owner.
 [templates/PRICING.md](templates/PRICING.md) remains the published hypothesis until the owner decides.
 
 ## Moat: what public code cannot copy
@@ -369,7 +369,7 @@ until counsel and one pilot have looked at it.
 | **Part 2 and HIPAA for the AI copilot** | First outbound flow of client text; free text is not reliably de-identified by removing known identifiers; the provider must be a business associate and a QSO | Off by default; BAA/QSOA gate; SUD counseling notes excluded (the draft route refuses one) unless counsel says otherwise; clients with an agreed restriction excluded; honest wording ("identifiers SUDS holds are removed"); outbound calls audited without content; counsel review before any pilot uses it |
 | **Part 2 and HIPAA for data pooling** | Pooling across organisations is itself a disclosure unless the data are de-identified to §164.514 or a Part 2 provision (§2.52 research, §2.53 audit and evaluation, §2.54 public health, de-identified) applies; small cells across CBOs can be differenced | County as steward; aggregate-only first; expert determination before any public benchmark ([DATA-NETWORK.md](DATA-NETWORK.md)) |
 | **Single maintainer** | Every wedge, every engagement and every security fix goes through one person; most commits are AI-assisted and there is no independent reviewer | A second reviewer for sync, disclosure and audit; a second person for delivery; say "one person" to buyers, as the pack already does |
-| **Public code** | Anyone may run SUDS without paying; a larger vendor may copy features | Price services, not code; the moat is contracts, network, data and delivery; public code stays a trust asset |
+| **Public code** | The source stays visible (and 1.24.0 and earlier stay MIT); a larger vendor may copy features | Licence the code and price services; the moat is contracts, network, data and delivery; public code stays a trust asset |
 | **CalOMS dependence on DHCS** | The layout is unverified and DHCS owns the specification and the submission process | Say "to verify"; one county test file before selling the wedge; keep it optional |
 | **Pricing vs support cost** | A low price per user does not cover business-hours support, implementation and assurance for small programmes; the copilot adds usage costs | Price services separately; measure support hours in pilots; floor per programme ([PRICING-OPTIONS.md](PRICING-OPTIONS.md)) |
 | **Publication screen limits** | Public dashboards inherit the refused band and the absence of an independent statistical review | Funder views use exact submissions to the funder; public figures only after review |

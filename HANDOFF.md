@@ -3,6 +3,36 @@
 A living note between the assistants working on SUDS. Tj's rule: keep it current, keep it honest.
 Replies go under "Claude → Muse" below, newest first.
 
+### Owner decision, 2026-10-03: SUDS is proprietary (ships in 1.24.1)
+
+- **Decision:** from 1.24.1 SUDS is licensed under the SUDS Proprietary Licence (`LICENSE`), "Copyright (c) 2026
+  AugustInnovations LLC. All rights reserved." AugustInnovations LLC is the licensor. **Evaluation grant:** anyone may run an
+  unmodified copy obtained from the official repository, its releases, the GitHub Pages site or the Windows zip,
+  for up to 90 days, with fictional or test data only. **SUDS on this device (section 2A):** anyone may use the web
+  app at its official GitHub Pages address free of charge for real use, real records on their own device included;
+  not to copy, modify, re-host or redistribute it, and not the office server, suds.exe or the source beyond the
+  evaluation grant; the records stay the user's and the licensor receives none of them. Otherwise production use
+  (the office server after the 90-day evaluation), real client records or PHI, use beyond 90 days, modification, redistribution, sublicensing, hosting it as a service and derivative works need a separate
+  written agreement signed by AugustInnovations LLC. 1.24.0 and earlier stay MIT for the copies people already have.
+  Third-party components keep their own licences (`NOTICE`, shipped in the Windows zip's `app\` and in the Pages
+  build as `NOTICE.txt`, beside `LICENSE.txt`; `scripts/build-static-site.js` `stageShell`, which the release site
+  check reuses).
+- **Owner: have counsel review `LICENSE` before the first paid agreement** (it is plain English written without a
+  lawyer; it is not legal advice to anyone). Ask counsel too about the copyright position of the AI-assisted
+  commits (docs/security/QUESTIONNAIRE.md #36a).
+- **Owner: record in writing the assignment of copyright in SUDS from the individual contributor to
+  AugustInnovations LLC, and confirm its state of formation** (the legal name is filled in
+  `public/procurement.json` `legal_entity` and QUESTIONNAIRE #6a).
+- **Owner: decide the production terms** - the licence price (`public/procurement.json` `pricing` is blank;
+  docs/market/templates/PRICING.md marks it [owner to decide]) and what a licensee may keep running if an agreement
+  ends (POSITIONING.md, COUNTY-RFI-ANSWERS.md). An office-server pilot with real records (docs/market/PILOT-KIT.md)
+  needs a signed agreement too: the evaluation grant covers fictional data only.
+- **Decided (owner, 2026-10-03): SUDS on this device stays free for real use** at the official Pages address
+  (LICENSE section 2A), so it remains a production way to run SUDS (docs/PLATFORM.md) and the not-a-demo rule in
+  CLAUDE.md stands as is: the app carries no evaluation wording.
+- **The repository is still public**, so the source stays visible (visibility grants no rights beyond `LICENSE`).
+  Making it private would need a paid GitHub plan to keep publishing GitHub Pages from it.
+
 ### Release waiting
 
 - **The one owner action that unblocks the most: push the release tags (docs/evidence/RELEASE-HANDOFF.md, steps 1
@@ -569,8 +599,8 @@ _(Append replies here, newest first.)_
   (docs/market/COUNTY-KIT.md), recovery and upgrade drills with evidence, and the documents brought up to 1.20.0 (the
   questionnaire, the evidence index, the buyer guides, the security documents and `docs/evidence/sbom-1.20.0.cdx.json`).
   `test/doc-currency.test.js` fails when they fall behind a stamped minor again.
-- **LICENSE** (MIT) names "The SUDS contributors" as the copyright holder, because `package.json` names no author.
-  **Owner:** replace the holder with the legal entity once one exists (or confirm it as is).
+- **LICENSE** (MIT) named "The SUDS contributors" as the copyright holder. Superseded on 2026-10-03: the SUDS
+  Proprietary Licence names AugustInnovations LLC (see *Owner decision, 2026-10-03* at the top).
 - **SECURITY.md** sends reporters to GitHub's private vulnerability reporting. **Owner:** turn it on (Settings →
   Code security → *Private vulnerability reporting*; docs/RELEASE.md, *Owner: repository settings*, step 8) and
   confirm the response targets it marks `[owner to confirm]`.

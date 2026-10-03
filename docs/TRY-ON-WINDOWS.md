@@ -4,7 +4,7 @@ This runs the SUDS office server on your own Windows PC, with **fictional sample
 your browser. It takes about ten minutes, most of which is installing Node.js. The same steps work on macOS
 and Linux, using a terminal.
 
-**This is for testing on your own computer, not for real client records.** The sample clients and staff are
+**This is for testing on your own computer, not for real client records.** The licence ([LICENSE](../LICENSE), section 2) allows evaluation for up to 90 days with fictional data only. The sample clients and staff are
 made up. This copy keeps its encryption keys in the same folder as its database, and it does no backups. It runs
 over plain HTTP and only this computer can open it. For real records, install the office server as
 [INSTALL.md](INSTALL.md) and [DEPLOYMENT.md](DEPLOYMENT.md) describe: production settings, HTTPS, BitLocker on

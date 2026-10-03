@@ -72,7 +72,7 @@ else the first that helps), and when nothing visible is left near it a table is 
 or a withheld or unprinted count the printout lets be small, must be able to be 1 and T−1 (as near as the symbols
 allow); a `suppressed` count must range over ⌈T/2⌉ values.
 
-**The check against the method** (`sdc.js` `consistent`). SUDS is open source, so for every hidden cell the audit
+**The check against the method** (`sdc.js` `consistent`). SUDS's source is public, so for every hidden cell the audit
 finds worlds with the same printed figures, runs each through the same suppression, keeps those that print the
 identical release, and requires them to show the cell at 1 and over ⌈T/2⌉ values (a `suppressed` one ⌈T/2⌉ apart).
 
