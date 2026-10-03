@@ -1,0 +1,15 @@
+# Line endings: LF in every checkout, Windows included. Git for Windows converts text files to CRLF by default
+# (core.autocrlf=true), and SUDS reads some of them byte for byte: server/schema.sql (its migrations match
+# "\n);" and split on "\n"), the generated server/schema-text.js and public/local/kernel.js that CI compares with
+# a rebuild, the shell scripts a Linux server runs, signed evidence and fixtures. A clone on Windows and a
+# GitHub "Download ZIP" (git archive applies these rules too) then have the same bytes as a clone on Linux.
+* text=auto eol=lf
+
+# Never converted: binary files, and transcripts kept exactly as they were captured.
+*.png binary
+*.gz binary
+*.br binary
+*.wasm binary
+*.zip binary
+*.db binary
+docs/evidence/** -text

@@ -13,7 +13,7 @@ function open(dbPath = config.dbPath) {
   try {
     db.exec('PRAGMA busy_timeout = 5000');
     db.exec(SECURE_DELETE);
-    initialise(db, fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'), dbPath);
+    initialise(db, readSchemaFile(), dbPath);
     sealSnapshots(dbPath);
   } catch (e) {
     // A file this build refuses (a newer schema, a failed migration) must not be left as the open handle:
@@ -54,8 +54,12 @@ function openWith(bytes) {
 }
 // schema.sql is the source of truth. schema-text.js is a generated copy of it, used only in the browser
 // kernel where there is no filesystem; scripts/build-local.js regenerates it and CI fails if it drifts.
+// Read with its line endings made LF: a checkout on Windows can turn them into CRLF (git's core.autocrlf, which
+// .gitattributes now overrides, or a file saved by a Windows editor), and the migrations below find tables and
+// index lines by matching "\n);" and splitting on "\n" -- a CRLF schema would otherwise leave a "\r" in what they run.
+function readSchemaFile() { return fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8').replace(/\r\n/g, '\n'); }
 function safeSchema() {
-  try { return fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'); }
+  try { return readSchemaFile(); }
   catch { return require('./schema-text.js'); }
 }
 

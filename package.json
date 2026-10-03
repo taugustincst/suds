@@ -10,7 +10,8 @@
   },
   "scripts": {
     "start": "node --no-warnings=ExperimentalWarning server/index.js",
-    "dev": "SUDS_ENV=development node --no-warnings=ExperimentalWarning --watch server/index.js",
+    "dev": "node scripts/dev.js",
+    "try": "node --no-warnings=ExperimentalWarning scripts/try-local.js",
     "test": "node --no-warnings=ExperimentalWarning --test \"test/*.test.js\"",
     "test:thorough": "node scripts/test-thorough.js",
     "seed": "node --no-warnings=ExperimentalWarning scripts/seed.js",

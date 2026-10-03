@@ -53296,7 +53296,7 @@ var require_db = __commonJS({
       try {
         db3.exec("PRAGMA busy_timeout = 5000");
         db3.exec(SECURE_DELETE);
-        initialise(db3, fs.readFileSync(path.join("/", "schema.sql"), "utf8"), dbPath);
+        initialise(db3, readSchemaFile(), dbPath);
         sealSnapshots(dbPath);
       } catch (e) {
         try {
@@ -53346,9 +53346,12 @@ var require_db = __commonJS({
       initialise(db3, safeSchema());
       return db3;
     }
+    function readSchemaFile() {
+      return fs.readFileSync(path.join("/", "schema.sql"), "utf8").replace(/\r\n/g, "\n");
+    }
     function safeSchema() {
       try {
-        return fs.readFileSync(path.join("/", "schema.sql"), "utf8");
+        return readSchemaFile();
       } catch {
         return require_schema_text();
       }

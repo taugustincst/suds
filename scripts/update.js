@@ -16,6 +16,15 @@ const ROOT = path.join(__dirname, '..');
 
 function isGitCheckout() { return fs.existsSync(path.join(ROOT, '.git')); }
 function run(cmd, args) { execFileSync(cmd, args, { cwd: ROOT, stdio: 'inherit' }); }
+// npm is a batch file on Windows (npm.cmd), which execFile cannot start without a shell (Node refuses .cmd files
+// without one since 20.12). Under `npm run update` npm says where its own script is (npm_execpath): run that with
+// this node, the same on every system. Otherwise npm through the shell on Windows, and npm itself elsewhere.
+function npm(args, env = process.env) {
+  const cli = env.npm_execpath;
+  if (cli && /\.c?js$/i.test(cli)) return run(process.execPath, [cli, ...args]);
+  if (process.platform === 'win32') { execFileSync('npm.cmd', args, { cwd: ROOT, stdio: 'inherit', shell: true }); return; }
+  return run('npm', args);
+}
 function out(cmd, args) { return execFileSync(cmd, args, { cwd: ROOT }).toString('utf8').trim(); }
 
 /** What would change: the branch, how many commits behind, and their one-line summaries. Fetches, but never writes. */
@@ -59,18 +68,18 @@ function main(argv = process.argv.slice(2)) {
 
   const beforePull = out('git', ['rev-parse', 'HEAD']);
   console.log('\nTaking a backup first...');
-  run('node', ['scripts/backup.js']);
+  run(process.execPath, ['--no-warnings=ExperimentalWarning', 'scripts/backup.js']);
 
   console.log('\nPulling...');
   run('git', ['pull', '--ff-only']);
   console.log('\nInstalling dependencies...');
-  run('npm', ['ci']);
+  npm(['ci']);
   console.log('\nRebuilding the local kernel...');
-  run('npm', ['run', 'build:local']);
+  npm(['run', 'build:local']);
 
   if (!opts.skipTests) {
     console.log('\nRunning the test suite...');
-    try { run('npm', ['test']); }
+    try { npm(['test']); }
     catch {
       console.error(`\nTests failed after updating. The code has been pulled but the service has NOT been restarted -- it is still running the previous version.`);
       console.error(`To roll back the code:  git reset --hard ${beforePull}`);

@@ -1,6 +1,8 @@
 node_modules/
 data/
 !data/.gitkeep
+# npm run try (scripts/try-local.js): SUDS for testing on this computer, with fictional sample data.
+/data-try/
 .env
 *.db
 *.db-journal
