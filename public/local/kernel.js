@@ -27394,6 +27394,7 @@ ${otherNote}`;
         return { ok: true, id: kept.id, merged: fromId, ...now2 };
       });
       r.post("/api/time/:id/not-duplicate", auth3.requireAuth, auth3.requirePerm("time:write", "time:approve"), (ctx) => {
+        require_shared().assertRulingHere("Clearing a possible-duplicate mark");
         const row = db3.one(`SELECT * FROM time_entries WHERE id=?`, ctx.params.id);
         if (!row) throw notFound("Time entry not found");
         reach(ctx, row);
@@ -43815,13 +43816,17 @@ var require_interventions2 = __commonJS({
       );
       audit3.log({ user: ctx.user, action: existing ? "expenditure.update" : "expenditure.create", entity: "expenditure", entityId: id, clientId: row.client_id || null, ip: ctx.ip, details: { intervention_id: row.id, for: row.user_id !== ctx.user.id ? row.user_id : void 0 } });
     }
+    function dropTimeEntry(id) {
+      require_time_entries().clearMarksTo(id);
+      db3.run(`DELETE FROM time_entries WHERE id=?`, id);
+      db3.tombstone("time_entries", id);
+    }
     function syncTimeEntry(ctx, row, prev) {
       if (row.duration_minutes === prev.duration_minutes && row.occurred_at === prev.occurred_at && !row._service_date) return;
       const te2 = db3.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
       if (!te2 || te2.status !== "draft" && te2.status !== "submitted") return;
       if (!(row.duration_minutes > 0)) {
-        db3.run(`DELETE FROM time_entries WHERE id=?`, te2.id);
-        db3.tombstone("time_entries", te2.id);
+        dropTimeEntry(te2.id);
         return;
       }
       db3.run(`UPDATE time_entries SET minutes=?, work_date=?, updated_at=? WHERE id=?`, row.duration_minutes, serviceDate(row), db3.now(), te2.id);
@@ -44021,10 +44026,8 @@ var require_interventions2 = __commonJS({
             db3.tombstone("expenditures", existing.id);
           }
           const te2 = db3.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
-          if (te2 && (te2.status === "draft" || te2.status === "submitted")) {
-            db3.run(`DELETE FROM time_entries WHERE id=?`, te2.id);
-            db3.tombstone("time_entries", te2.id);
-          } else if (te2) db3.run(`UPDATE time_entries SET intervention_id=NULL, description_enc=?, updated_at=? WHERE id=?`, encrypt3(`${te2.description_enc ? decrypt3(te2.description_enc) : ""} (the visit this was logged from was deleted)`.trim()), db3.now(), te2.id);
+          if (te2 && (te2.status === "draft" || te2.status === "submitted")) dropTimeEntry(te2.id);
+          else if (te2) db3.run(`UPDATE time_entries SET intervention_id=NULL, description_enc=?, updated_at=? WHERE id=?`, encrypt3(`${te2.description_enc ? decrypt3(te2.description_enc) : ""} (the visit this was logged from was deleted)`.trim()), db3.now(), te2.id);
           db3.transaction(() => {
             for (const l of db3.all(`SELECT id FROM intervention_supplies WHERE intervention_id=?`, row.id)) {
               db3.run(`DELETE FROM intervention_supplies WHERE id=?`, l.id);

@@ -151,7 +151,10 @@ const statusBadge = (r) => {
 export function duplicateActions(r, what, onChange) {
   const mine = r.user_id === state.user.id;
   const mayMerge = can('time:write') && (mine || can('time:all')) && r.status !== 'approved' && r.duplicate_status !== 'approved';
-  const mayClear = (can('time:write') && (mine || can('time:all'))) || can('time:approve');
+  // On a device that syncs with an office the mark is the office's (sync does not carry clearing it), so it is cleared
+  // there; SUDS on this device has no office and clears its own. Merge is an ordinary edit and deletion, which sync carries.
+  const officeDevice = !!state.local && !window.SUDS_STATIC_HOST;
+  const mayClear = !officeDevice && ((can('time:write') && (mine || can('time:all'))) || can('time:approve'));
   return h('div', { class: 'row nowrap' },
     mayMerge ? h('button', { class: 'btn sm', 'data-time-dup-merge': r.id, 'aria-label': `Merge ${what} into the entry it may duplicate`, onClick: async () => {
       if (!await confirmDialog('Merge these entries', 'Keep the earlier entry, add this one\'s description to it, combine their times, and delete this one?', { okText: 'Merge' })) return;
@@ -159,7 +162,8 @@ export function duplicateActions(r, what, onChange) {
     } }, 'Merge') : null,
     mayClear ? h('button', { class: 'btn sm', 'data-time-dup-clear': r.id, 'aria-label': `${what} is not a duplicate`, onClick: async () => {
       try { await post(`/api/time/${r.id}/not-duplicate`, {}); toast('Marked as not a duplicate', 'ok'); onChange && onChange(); } catch (e) { toast(e.message, 'error'); }
-    } }, 'Not a duplicate') : null);
+    } }, 'Not a duplicate') : null,
+    officeDevice ? h('span', { class: 'small muted', 'data-time-dup-office': r.id }, 'Not a duplicate? Clear the mark on the office SUDS.') : null);
 }
 export function timeTable(rows, { showClient = true, onChange } = {}) {
   return table([
