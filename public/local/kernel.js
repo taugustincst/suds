@@ -25060,7 +25060,7 @@ var require_update = __commonJS({
   "server/update.js"(exports, module) {
     "use strict";
     init_globals_inject();
-    var config2 = require_config();
+    var config2 = () => require_config();
     function compareVersions(a, b) {
       const pa = String(a).split(".").map((n) => parseInt(n, 10) || 0);
       const pb = String(b).split(".").map((n) => parseInt(n, 10) || 0);
@@ -25070,7 +25070,7 @@ var require_update = __commonJS({
       }
       return 0;
     }
-    async function checkForUpdate({ feedUrl = config2.updateFeedUrl, currentVersion = config2.version, fetchImpl = fetch } = {}) {
+    async function checkForUpdate({ feedUrl = config2().updateFeedUrl, currentVersion = config2().version, fetchImpl = fetch } = {}) {
       if (!feedUrl) return { configured: false };
       const res = await fetchImpl(feedUrl, { headers: { Accept: "application/vnd.github+json", "User-Agent": "suds-update-check" } });
       if (!res.ok) throw new Error(`Could not check for updates (HTTP ${res.status})`);
