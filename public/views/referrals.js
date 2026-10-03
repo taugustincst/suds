@@ -67,11 +67,17 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
   const namesProvider = (st) => st.valid.some(c => c.names_resource && c.covers_referral !== false);
   const recordNaming = (st) => (st.clientId && providerId && !String(providerId).startsWith('__') && can('consents:write') && providerName() && !namesProvider(st)
     ? h('button', { type: 'button', class: 'btn sm', 'data-record-consent-naming': '1', onClick: (e) => recordConsentFor(st.clientId, e.currentTarget) }, `Record a consent naming ${providerName()}`) : null);
+  // A consent that names the provider for another purpose (a TPO consent and a housing referral): say so, not "none names it".
+  const noneNames = (st, button) => {
+    const other = st.valid.find(c => c.names_resource && c.covers_referral === false);
+    return other ? [`The consent naming ${providerName()} was given for “${other.purpose || consentTypeLabel(other.type)}”, which does not cover this referral. `, button, ' for this purpose, or ask a supervisor to override.']
+      : [`None of the consents on file names ${providerName()}. `, button];
+  };
   const consentOption = (c) => ({ value: c.id, label: `${consentTypeLabel(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)}${c.expires_at ? `, expires ${fmt.date(c.expires_at)}` : ''})` });
   const consentHelpContent = (st) => {
     const { clientId, all, valid, expiredOnly } = st; const button = recordNaming(st);
     if (valid.length) return ['Required before the provider is told who this client is, and it must name this provider (or its organization). A referral left as "pending" with no warm handoff — just a phone number handed to the client — needs none.',
-      ...(button ? [h('span', { style: { display: 'block', marginTop: '.35rem' }, 'data-no-consent-names': '1' }, `None of the consents on file names ${providerName()}. `, button)] : [])];
+      ...(button ? [h('span', { style: { display: 'block', marginTop: '.35rem' }, 'data-no-consent-names': '1' }, ...noneNames(st, button))] : [])];
     if (!clientId) return ['Choose the client first to see their consents on file.'];
     return [expiredOnly ? `${all.length === 1 ? 'The consent on file has' : 'All consents on file have'} expired. ` : 'No consent is on file. ',
       button || h('a', { href: `#/client/${clientId}/consents`, 'data-add-consent': '1', onClick: () => m.close() }, 'Record a new release on the Consents tab'), ' before the provider is told who this client is.'];
