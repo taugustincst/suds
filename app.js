@@ -1,0 +1,2606 @@
+// SUDS frontend core: API client, hash router, DOM + form helpers, session/idle handling.
+import { queueChip, autoFlush } from './outreach-queue.js';
+import { NAV, placement, isFrontline, isSupervising } from './nav.js';
+export const state = { user: null, org: 'SUDS', constants: null, users: [], funds: [], idleMinutes: 15, prefs: {}, local: false };
+// Local mode: the whole server runs inside this page (the offline copy). Requests go to the in-page kernel.
+// window.SUDS_FORCE_LOCAL is set by a small external script tag, before this module loads, on builds
+// meant to run with no backend at all (e.g. a static hosting deploy of public/ — see
+// scripts/build-static-site.js). External, not inline, so it works under the CSP the office server sends.
+// It is distinct from window.SUDS_LOCAL, which the boot sequence itself sets only after local mode is
+// already chosen, so it cannot be used to make that choice.
+export function isLocalMode() { try { return new URLSearchParams(location.search).get('local') === '1' || location.protocol === 'file:' || window.SUDS_FORCE_LOCAL === true || !!window.SUDS_LOCAL; } catch { return false; } }
+
+// ---------- workspace preferences (follow the user across devices) ----------
+let prefsTimer; const prefsDirty = {};
+export const prefs = {
+  get: (k, d) => (state.prefs[k] === undefined ? d : state.prefs[k]),
+  set(k, v) { state.prefs[k] = v; prefsDirty[k] = v; try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {} // The pending save counts as work in progress (see activity below), so "has the page finished?" covers it.
+    if (prefsTimer) clearTimeout(prefsTimer); else busy(1);
+    prefsTimer = setTimeout(() => { prefsTimer = null; busy(-1); prefs.flush(); }, 800); },
+  async flush() {
+    const body = { ...prefsDirty };
+    if (!Object.keys(body).length || !state.user) return;
+    for (const k of Object.keys(body)) delete prefsDirty[k];
+    // On failure the change stays pending rather than being dropped, so the next save retries it — this
+    // used to lose a filter or a theme choice with no sign anything had happened.
+    try { await put('/api/me/prefs', body, { quiet: true }); }
+    catch { Object.assign(prefsDirty, body); }
+  },
+  async load() { try { state.prefs = (await get('/api/me/prefs', { quiet: true })).prefs || {}; try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {} } catch { try { state.prefs = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); } catch { state.prefs = {}; } } applyTheme(); },
+};
+function applyTheme() { const t = state.prefs.theme; if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
+
+// ---------- images ----------
+// Pictures are served as ordinary image URLs rather than base64 inside JSON, which keeps list responses
+// small. In local mode there is no HTTP server behind those URLs, so the bytes come from the in-page
+// kernel and become an object URL instead.
+const objectUrls = new Map();
+// A freshly-picked picture (a resource photo, right after upload) is passed around as a data: URL — the
+// browser's own canvas output — before anything has round-tripped through the server. That is already a
+// usable image source on its own; it is never something the local kernel's router can answer a GET for.
+const isInlineImageSrc = (path) => typeof path === 'string' && /^(data|blob):/.test(path);
+export function img(path, attrs = {}) {
+  const local = state.local && !isInlineImageSrc(path);
+  const el = h('img', { ...attrs, src: local ? TRANSPARENT_PIXEL : path });
+  if (local) {
+    if (objectUrls.has(path)) el.src = objectUrls.get(path);
+    else {
+      window.SUDS_LOCAL.handle('GET', path, undefined, {}).then((r) => {
+        if (!r || r.status >= 400 || !r.body) return;
+        const url = URL.createObjectURL(new Blob([r.body], { type: r.headers['content-type'] || 'image/png' }));
+        objectUrls.set(path, url);
+        el.src = url;
+      }).catch(() => {});
+    }
+  }
+  return el;
+}
+const TRANSPARENT_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+/** Point an existing <img> at a server path, going through the local kernel when there is no server. */
+export function setImage(el, path) {
+  if (!el) return;
+  if (!state.local || isInlineImageSrc(path)) { el.src = path; return; }
+  if (objectUrls.has(path)) { el.src = objectUrls.get(path); return; }
+  el.src = TRANSPARENT_PIXEL;
+  window.SUDS_LOCAL.handle('GET', path, undefined, {}).then((r) => {
+    if (!r || r.status >= 400 || !r.body) return;
+    const url = URL.createObjectURL(new Blob([r.body], { type: r.headers['content-type'] || 'image/png' }));
+    objectUrls.set(path, url); el.src = url;
+  }).catch(() => {});
+}
+
+// ---------- API ----------
+// A request the person did not just cause — the reminder bell's poll, the dashboard's auto-refresh, a
+// quiet lookup — must not count as activity, or a tab left open never times out (H1). `background: true`
+// says so explicitly; `quiet` requests are treated the same; and any request made after a minute with no
+// input at all cannot have been the person either. Such requests carry X-Background: 1 so the office
+// server leaves the session's last-seen time alone as well (server/auth.js).
+const BACKGROUND_AFTER_MS = 60_000;
+function isBackground(opts) { return opts.background === true || opts.quiet === true || Date.now() - lastActivity > BACKGROUND_AFTER_MS; }
+
+// What the page is still doing, for anything that needs to know when it has finished: requests in flight,
+// work scheduled to run shortly (the Home tour), and the address the last render completed for. The
+// browser suite waits on this (settle() in scripts/ui/assert.mjs) instead of sleeping a fixed time and
+// hoping the page was done. It holds counts and a hash, never data.
+const activity = { pending: 0, rendered: null, at: Date.now() };
+try { window.__sudsActivity = activity; } catch {}
+const busy = (n) => { activity.pending += n; activity.at = Date.now(); };
+// ---- validation messages ----
+// The server's validator (server/validate.js) answers "Validation failed" with a terse note per field
+// ("max length 300", "min 1", "must be YYYY-MM-DD"). Shown as they were, a person read "Validation failed:
+// To whom — name your usual referral partners max length 300". fieldProblem() says each in plain words,
+// with the field's label; a message that is already a sentence is left as it is.
+const VALIDATION_FAILED = 'Validation failed';
+const CHECK_ANSWERS = 'Some answers need changing';
+export function fieldProblem(label, msg) {
+  const m = String(msg ?? '').trim(); const L = String(label || 'This field').replace(/\s*\*$/, '');
+  let x;
+  if (!m || m === 'required') return `${L} is required`;
+  if ((x = /^max length (\d+)$/.exec(m))) return `${L} is too long: keep it under ${Number(x[1]).toLocaleString()} characters`;
+  if ((x = /^min (-?[\d.]+)$/.exec(m))) return `${L} must be at least ${x[1]}`;
+  if ((x = /^max (-?[\d.]+)$/.exec(m))) return `${L} must be ${x[1]} or less`;
+  if ((x = /^must have at most (\d+) items$/.exec(m))) return `${L}: choose at most ${x[1]}`;
+  if (m === 'must be a number') return `${L} must be a number`;
+  if (m === 'must be an integer') return `${L} must be a whole number`;
+  if (m === 'must be YYYY-MM-DD') return `${L} must be a date`;
+  if (m === 'must be an ISO datetime') return `${L} must be a date and time`;
+  if (m === 'must be a string' || m === 'must be an object' || m === 'must be an array' || m === 'must be a list of identifiers') return `${L} is not in a form SUDS can read`;
+  if (m === 'invalid format') return `${L} is not in the expected format`;
+  if (/^must be one of /.test(m)) return `Choose one of the options offered for ${L}`;
+  if (/^(is|must|should|has)\b/.test(m)) return `${L} ${m}`;
+  return m;
+}
+/** A column name as a person would say it, for a field message with no form label: "client_id" → "Client". */
+const fieldName = (k) => { const s = String(k).replace(/_(id|enc)$/, '').replace(/_/g, ' '); return s.charAt(0).toUpperCase() + s.slice(1); };
+// The server's refusal of a change to someone else's record (server/rules/shared.js ownedBy, crud.js), said
+// with who can help. The spending approver's refusal uses the same words, so budget paths keep theirs.
+const OWNED_REFUSALS = {
+  'You cannot edit this record': 'Only the person who recorded this, or a supervisor or administrator, can change it. Add your own record instead, or ask them.',
+  'You cannot delete this record': 'Only the person who recorded this, or a supervisor or administrator, can delete it. Ask them or a supervisor.',
+  'Only the author can edit a draft': 'Only the author of this draft, or a supervisor or administrator, can change, sign or delete it. Ask them to finish it, or ask a supervisor.',
+};
+function apiError(status, data, path = '') {
+  let msg = (data && data.error) || `Request failed (${status})`;
+  if (status === 403 && OWNED_REFUSALS[msg] && !String(path).startsWith('/api/budget')) msg = OWNED_REFUSALS[msg];
+  // A bare "Validation failed" in a toast said nothing a person could act on: name what needs changing.
+  if (msg === VALIDATION_FAILED && data && data.fields && typeof data.fields === 'object') msg = `${CHECK_ANSWERS}: ${Object.entries(data.fields).map(([k, m]) => fieldProblem(fieldName(k), m)).join('; ')}`;
+  const err = new Error(msg); err.status = status; err.data = data; return err;
+}
+
+export async function api(method, path, body, opts = {}) {
+  busy(1);
+  try {
+    const r = await apiCall(method, path, body, opts);
+    // Something saved can change what is due (a to-do, a visit's or call's follow-up, a referral's): the bell
+    // asks again shortly, instead of waiting for its next minute (it used to lag by up to five).
+    if (method !== 'GET' && method !== 'HEAD' && !isBackground(opts) && !String(path).startsWith('/api/tasks/due')) dueSoon();
+    return r;
+  } finally { busy(-1); }
+}
+// ---- Idempotency-Key ----
+// Every POST carries a key, so the server can answer a repeat of the same request from what it already did
+// instead of doing it twice (server/idempotency.js): a referral resent after a dropped connection used to
+// create two referrals, two disclosure records and two follow-up to-dos. A form's submission holds one key
+// for as long as its contents are unchanged, so pressing Save again after "you appear to be offline" is
+// recognised as the same submission; editing the form, or a successful save, starts a new one. Each POST
+// the submission makes gets its own key derived from it (path and sequence), stable across retries.
+// crypto.getRandomValues, not randomUUID: the latter only exists on https, and a LAN install may be http.
+export function newIdempotencyKey() { const b = new Uint8Array(16); crypto.getRandomValues(b); return Array.from(b, x => x.toString(16).padStart(2, '0')).join(''); }
+let submitScope = null;
+function idempotencyKey(method, path, opts) {
+  if (method !== 'POST') return null;
+  if (opts.idempotencyKey) return opts.idempotencyKey;
+  if (submitScope && !opts.quiet && !opts.background) {
+    const p = String(path).split('?')[0]; const n = (submitScope.seq.get(p) || 0) + 1; submitScope.seq.set(p, n);
+    return `${submitScope.key}:${n}:${p}`.slice(0, 255);
+  }
+  return newIdempotencyKey();
+}
+async function apiCall(method, path, body, opts) {
+  const background = isBackground(opts);
+  const idem = idempotencyKey(method, path, opts);
+  const headers = { 'X-Requested-With': 'suds', ...(background ? { 'X-Background': '1' } : {}), ...(idem ? { 'Idempotency-Key': idem } : {}), ...(opts.headers || {}) };
+  if (state.local && window.SUDS_LOCAL) {
+    let payload = body; if (body instanceof Blob) payload = await body.arrayBuffer();
+    // Writes in flight (a sync above all) hold off an update reload; see newVersionReady().
+    const writing = method !== 'GET' && method !== 'HEAD'; if (writing) localWritesInFlight++;
+    let r;
+    try {
+      r = await window.SUDS_LOCAL.handle(method, path, payload, headers);
+      // Something the person saved is on disk before the page says it is. The kernel batches its saves
+      // (every 250 ms) and writes the rest on the way out, but Safari's engine drops that last unload write:
+      // a client saved and the page reloaded straight away was gone. So an explicit write waits for the
+      // on-device save; background writes (autosave, preferences, polls) stay batched. A failed save still
+      // raises the "stopped saving" banner through the kernel's own error handler.
+      if (writing && !background && r.status < 400 && window.SUDS_LOCAL.flush) { try { await window.SUDS_LOCAL.flush(); } catch {} }
+    } finally { if (writing) localWritesInFlight--; }
+    if (r.status >= 500) reportClientError({ kind: 'api', status: r.status, message: `${method} ${String(path).split('?')[0]} answered ${r.status}` });
+    if (!background) touch();
+    const data = r.json !== undefined ? r.json : (r.body ? (String(r.headers['content-type'] || '').includes('json') ? JSON.parse(r.body.toString()) : r.body.toString()) : null);
+    if (r.status === 401 && state.user && !opts.quiet) { if (data && data.mfaRequired) location.hash = '#/mfa'; else { state.user = null; render(); } }
+    if (r.status === 403 && data && data.passwordChangeRequired) location.hash = '#/profile?force=1';
+    // The enrolment deadline passed (possibly mid-session): go to enrolment, rather than failing every page.
+    if (r.status === 403 && data && data.mfaSetupRequired && !location.hash.startsWith('#/profile')) location.hash = '#/profile?mfa=1';
+    if (r.status === 409 && data && data.frozen) showPausedScreen();
+    if (r.status === 403 && data && data.module_off && method !== 'GET') programmeChanged();
+    if (r.status >= 400) throw apiError(r.status, data, path);
+    return data;
+  }
+  let payload;
+  if (body instanceof Blob || body instanceof ArrayBuffer || typeof body === 'string') { payload = body; if (!headers['Content-Type']) headers['Content-Type'] = 'application/octet-stream'; }
+  else if (body !== undefined) { payload = JSON.stringify(body); headers['Content-Type'] = 'application/json'; }
+  let res;
+  try { res = await fetch(path, { method, headers, body: payload, credentials: 'same-origin' }); }
+  catch (e) {
+    // A dropped connection used to surface as "Failed to fetch" (or nothing at all) and the dialog sat
+    // there with the entry in it. Say what happened, keep the form open, and put the banner up.
+    setOffline(true);
+    const err = new Error(OFFLINE_MESSAGE); err.offline = true; err.cause = e; throw err;
+  }
+  setOffline(false);
+  if (res.status >= 500) reportClientError({ kind: 'api', status: res.status, message: `${method} ${String(path).split('?')[0]} answered ${res.status}` });
+  if (!background) touch();
+  const ct = res.headers.get('content-type') || '';
+  const data = ct.includes('json') ? await res.json() : await res.text();
+  if (res.status === 401 && state.user && !opts.quiet) { if (data && data.mfaRequired) { location.hash = '#/mfa'; } else { state.user = null; render(); toast('Session expired. Please sign in again.', 'error'); } }
+  if (res.status === 403 && data && data.passwordChangeRequired) { location.hash = '#/profile?force=1'; }
+  if (res.status === 403 && data && data.mfaSetupRequired && !location.hash.startsWith('#/profile')) { location.hash = '#/profile?mfa=1'; }
+  if (res.status === 403 && data && data.module_off && method !== 'GET') programmeChanged();
+  if (!res.ok) throw apiError(res.status, data, path);
+  return data;
+}
+export const get = (p, o) => api('GET', p, undefined, o), post = (p, b, o) => api('POST', p, b, o), put = (p, b, o) => api('PUT', p, b, o), del = (p, b, o) => api('DELETE', p, b, o);
+
+// ---------- offline ----------
+// Office mode has no offline store (PHI never sits in browser storage), so the one honest thing to do when
+// the network goes is say so, loudly, everywhere -- including on a sign-in screen served from the cached
+// shell, which used to just bounce back to the form as if the password were wrong.
+export const OFFLINE_MESSAGE = 'You appear to be offline. Your entry has been kept in this form — try again when you have signal.';
+let offlineBanner = null;
+export function setOffline(on) {
+  if (state.local) return; // the on-device copy keeps working without a network
+  if (on === state.offline) return;
+  state.offline = on;
+  document.documentElement.classList.toggle('offline', on);
+  if (on) {
+    // 1.23.0: what happens to the contact in hand (Street outreach keeps one that names nobody on the phone and
+    // sends it when there is signal, public/outreach-queue.js), and, for a worker who needs the rest with no
+    // signal, how to have this phone set up for the field (views/outreach.js field-phone). It no longer offers
+    // get-app.html, SUDS on this device: a different SUDS, with none of the office's records, that cannot send the
+    // contact in hand to the office.
+    // 1.23.1: one short line and the link (it was five lines on a 390 px phone, under the 2-step banner); the whole
+    // explanation is said once, and the field-phone page holds it.
+    offlineBanner = banner('Offline: a contact that names nobody is kept on this phone.', 'error', { id: 'offline', compact: true,
+      announceText: 'Offline — SUDS can\'t reach the office server. On Street outreach, a contact that names nobody is kept on this phone and sent when you\'re back online; anything else stays in its form until you reconnect.' });
+    if (offlineBanner && state.user) offlineBanner.firstChild.append(' ', h('a', { href: '#/field-phone', 'data-field-phone-link': '1' }, 'Working offline'));
+  } else {
+    document.querySelectorAll('#banners [data-banner="offline"]').forEach(b => b.remove());
+    if (offlineBanner) { toast('Back online', 'ok'); offlineBanner = null; autoFlush(); }
+  }
+}
+window.addEventListener('offline', () => setOffline(true));
+window.addEventListener('online', () => {
+  setOffline(false);
+  // Started with no signal from this tab's copy of the session (restoreTabSession): ask the office who is signed in.
+  // Nothing waiting is sent until the office has said who that is (outreach-queue.js): the tab's copy may be someone
+  // who has since signed out in another tab, and the cookie someone else's (review of 1.23.1).
+  if (state.signedInOffline) loadSession().then(() => { render(); autoFlush(); }, () => {});
+});
+
+// Who is signed in (the account and what it may do, never anything about a client) and the programme's lists, kept
+// for this tab only (sessionStorage), so that a reload with no signal still knows: Street outreach can then keep a
+// contact that names nobody, and every other page says plainly that it needs signal (offlinePage) instead of the
+// sign-in form, which cannot work offline (evaluation of 1.23.0). Gone as soon as nobody is signed in (render), with
+// the tab, and checked with the office again as soon as there is signal. Not on a device's offline copy.
+const TAB_SESSION = 'suds.tab-session';
+function keepTabSession(me) { if (state.local) return; try { sessionStorage.setItem(TAB_SESSION, JSON.stringify({ me, constants: state.constants })); } catch { /* a reload offline then shows the sign-in page */ } }
+function forgetTabSession() { try { sessionStorage.removeItem(TAB_SESSION); } catch { /* nothing kept */ } }
+async function restoreTabSession() {
+  if (state.local) return false;
+  let kept = null; try { kept = JSON.parse(sessionStorage.getItem(TAB_SESSION) || 'null'); } catch { kept = null; }
+  const me = kept && kept.me;
+  if (!me || !me.user) return false;
+  state.user = me.user; state.org = me.org_name; state.mfaPending = me.mfaPending; state.idleMinutes = me.idle_minutes || 15;
+  state.programme = me.programme || null; state.defaultFundId = me.default_fund_id || null;
+  state.constants = state.constants || kept.constants || {};
+  state.signedInOffline = true;
+  await prefs.load();
+  return true;
+}
+/** A failure that is the network's (no signal), not the page's: an API call that could not reach the office, or a
+ *  page's module that could not be fetched while the browser is offline. */
+export const networkFailure = (e) => !!e && (!!e.offline || (e instanceof TypeError && (state.offline || navigator.onLine === false)));
+/** What a page that needs the office shows with no signal, instead of the browser's own words for a failed fetch. */
+export function offlinePage() {
+  return h('div', { class: 'offline-page', 'data-offline-page': '1' },
+    h('h1', {}, 'You\'re offline'),
+    h('p', {}, 'This page needs the office server, and SUDS can\'t reach it with no signal. Nothing about clients is kept on this phone, so the page opens again when you\'re back online.'),
+    !state.local && can('interventions:write') ? h('p', {}, h('a', { href: '#/outreach', class: 'btn primary', 'data-offline-outreach': '1' }, 'Open Street outreach'),
+      ' works with no signal: a contact that names nobody is kept on this phone and sent when you\'re back online.') : null,
+    h('p', {}, h('button', { type: 'button', class: 'btn', 'data-offline-retry': '1', onClick: () => render() }, 'Try again')));
+}
+
+// ---------- tap-to-call / text / map ----------
+// A phone number on a screen is something a navigator standing on a sidewalk wants to tap, not copy.
+const telDigits = (p) => String(p || '').trim().replace(/[^\d+]/g, '');
+const swallow = (e) => e.stopPropagation(); // links live inside rows that are themselves clickable
+export function telLink(phone) { return phone ? h('a', { href: `tel:${telDigits(phone)}`, class: 'tel nowrap', onClick: swallow }, phone) : null; }
+export function smsLink(phone, label = 'Text') { return phone ? h('a', { href: `sms:${telDigits(phone)}`, class: 'sms small', 'aria-label': `Text ${phone}`, onClick: swallow }, label) : null; }
+export function contactLinks(phone) { return phone ? h('span', { class: 'contact' }, telLink(phone), ' ', h('span', { class: 'muted small' }, '·'), ' ', smsLink(phone)) : null; }
+export function mapLink(address, label) { return address ? h('a', { href: 'https://maps.google.com/?q=' + encodeURIComponent(address), target: '_blank', rel: 'noopener', class: 'maplink', title: 'Open in maps', onClick: swallow }, label || address) : null; }
+/** Open a tel:/sms: link the way a tap on an anchor would (the OS decides what handles it). */
+export function openHref(href) { const a = h('a', { href }); document.body.append(a); a.click(); a.remove(); }
+
+// ---------- DOM helpers ----------
+export function h(tag, attrs = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'style' && typeof v === 'object') Object.assign(el.style, v);
+    else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2).toLowerCase(), v);
+    // No `html` attribute: markup from a string is how stored text becomes script (scripts/check-html-sinks.js).
+    else if (k in el && k !== 'list' && typeof v !== 'string') el[k] = v;
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  append(el, children);
+  return el;
+}
+function append(el, children) { for (const c of children.flat(Infinity)) { if (c === null || c === undefined || c === false) continue; el.append(c instanceof Node ? c : document.createTextNode(String(c))); } }
+export function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
+export function frag(...children) { const f = document.createDocumentFragment(); append(f, children); return f; }
+
+export function toast(msg, kind = '', { ms } = {}) {
+  const t = h('div', { class: `toast ${kind}`, role: kind === 'error' ? 'alert' : 'status' }, msg);
+  document.getElementById('toasts').append(t);
+  announce(msg);
+  // ms: a longer message (a visit saved, with what it did not do) stays long enough to read.
+  setTimeout(() => t.remove(), ms || (kind === 'error' ? 6000 : 3500));
+}
+
+/**
+ * A reversible action, done at once, with an Undo (1.15.3): deactivating a resource, retiring a document,
+ * ending a care-team assignment. The owner's rule stands for everything else: an action that cannot be taken
+ * back keeps its confirmation dialog. The toast stays 10 seconds, and for as long as the pointer is over it or
+ * the Undo button has focus (WCAG 2.2.1); focus moves to Undo, since the button that did the action is usually
+ * gone once the list redraws; Escape puts it away. `onUndo` makes the request that reverses it.
+ */
+// `focus: false`: the keyboard focus stays where the page put it (Street outreach keeps it on the form for the next
+// contact); the toast's button is still reachable by Tab and is announced.
+// `also: { text, key, onClick }` (1.23.3): a second button beside Undo, for where the thing just done went ("View in
+// Done" after a to-do is marked done). Pressing it puts the toast away and does `onClick`; nothing is undone. The
+// toast holds while either button has focus or the pointer is over it, and Tab moves between the two.
+export function undoToast(msg, onUndo, { ms = 10000, action = null, focus = true, also = null } = {}) {
+  const host = document.getElementById('toasts'); if (!host) return null;
+  const back = () => { const h1 = document.querySelector('.main h1'); if (h1) { if (!h1.hasAttribute('tabindex')) h1.setAttribute('tabindex', '-1'); try { h1.focus({ preventScroll: true }); } catch { /* ignore */ } } };
+  // `action: { text, key }`: the same toast offering the next step instead of an Undo (the button says `text`, and
+  // pressing it does `onUndo` and puts the toast away; nothing is undone and no "Undone" follows).
+  const label = action ? action.text : 'Undo';
+  const btn = h('button', { class: 'btn sm', type: 'button', 'data-undo': action ? null : '1', 'data-toast-action': action ? (action.key || '1') : null, 'aria-label': `${label}: ${msg}` }, label);
+  const second = also ? h('button', { class: 'btn sm', type: 'button', 'data-toast-also': also.key || '1', 'aria-label': `${also.text}: ${msg}` }, also.text) : null;
+  const t = h('div', { class: 'toast undo-toast', 'data-undo-toast': '1' }, h('span', {}, msg), second ? h('span', { class: 'undo-toast-actions' }, btn, second) : btn);
+  let left = ms, started = 0, timer = null;
+  const gone = () => { clearTimeout(timer); t.remove(); };
+  const arm = () => { clearTimeout(timer); started = Date.now(); timer = setTimeout(() => { const had = t.contains(document.activeElement); gone(); if (had) back(); }, left); };
+  const hold = () => { if (!timer) return; clearTimeout(timer); timer = null; left = Math.max(3000, left - (Date.now() - started)); };
+  // Held while the pointer is over it or focus is in it; it runs again only once both have left (focus moving from
+  // Undo to the button beside it does not restart it).
+  t.addEventListener('mouseenter', hold); t.addEventListener('mouseleave', () => { if (!t.contains(document.activeElement)) arm(); });
+  t.addEventListener('focusin', hold); t.addEventListener('focusout', (e) => { if (t.isConnected && !t.contains(e.relatedTarget) && !t.matches(':hover')) arm(); });
+  t.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); gone(); back(); } });
+  btn.addEventListener('click', async () => {
+    btn.disabled = true; if (second) second.disabled = true;
+    try { await onUndo(); gone(); if (!action) { back(); toast('Undone', 'ok'); } }
+    catch (e) { btn.disabled = false; if (second) second.disabled = false; toast((e && e.message) || (action ? 'That did not work.' : 'It could not be undone.'), 'error'); }
+  });
+  if (second) second.addEventListener('click', () => { gone(); also.onClick(); });
+  host.append(t);
+  announce(`${msg} ${label}${also ? ` or ${also.text}` : ''} is available for ${Math.round(ms / 1000)} seconds.`);
+  arm();
+  if (focus) setTimeout(() => { if (t.isConnected) btn.focus({ preventScroll: true }); }, 0);
+  return t;
+}
+
+// A single polite live region. Screen readers announce anything written here, which is how a toast, a
+// validation failure or a background save error reaches someone not looking at the screen.
+let liveRegion;
+export function announce(message) {
+  if (!liveRegion) {
+    liveRegion = h('div', { class: 'sr-only', role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' });
+    document.body.append(liveRegion);
+  }
+  // Clearing first makes a repeated message announce again.
+  liveRegion.textContent = '';
+  clearTimeout(liveRegion._clear);
+  setTimeout(() => { liveRegion.textContent = String(message || ''); }, 50);
+  // A live region only needs its text long enough to be read out. Left in place, the last announcement
+  // (a dialog title such as "Add resource") stays in the accessibility tree of every page visited
+  // afterwards, as a stray text node that has nothing to do with what is on screen.
+  liveRegion._clear = setTimeout(() => { liveRegion.textContent = ''; }, 4000);
+}
+
+// ---------- accessibility pass (docs/accessibility/DEVELOPERS.md) ----------
+// Every view builds its DOM with h(); a few conventions are applied here, to whatever is added to the page,
+// so a view written tomorrow gets them without doing anything:
+//  * a <label> without `for` next to a control (the filter bars: h('div', {class:'field'}, h('label', {},
+//    'Status'), select)) is tied to that control, so the control has a name (WCAG 1.3.1, 4.1.2);
+//  * a table wrapper that scrolls and has nothing focusable inside becomes a named, focusable region, so a
+//    keyboard can scroll it (2.1.1);
+//  * a control given a placeholder and nothing else gets the placeholder as its name (placeholder alone
+//    disappears as soon as someone types, and some screen readers skip it).
+const LABELABLE = 'input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset]),select,textarea';
+const hasName = (c) => (c.labels && c.labels.length) || c.hasAttribute('aria-label') || c.hasAttribute('aria-labelledby') || c.closest('label');
+function a11yPass(root) {
+  if (!root || !root.querySelectorAll) return;
+  for (const label of root.querySelectorAll('label:not([for])')) {
+    if (label.querySelector(LABELABLE)) continue; // wraps its control: already tied
+    // The control that goes with it: the next element (past an "Edit this list" link), when that is a
+    // control or a wrapper around exactly one (a date field with its calendar button, the client search).
+    // A label over a group of several controls is a heading for them, not a name, and is left alone.
+    let n = label.nextElementSibling;
+    while (n && n.matches('a.field-link, .help')) n = n.nextElementSibling;
+    if (!n || n.tagName === 'LABEL') continue;
+    const inside = n.matches(LABELABLE) ? [n] : [...n.querySelectorAll(LABELABLE)];
+    const target = inside.length === 1 && !hasName(inside[0]) ? inside[0] : null;
+    if (!target) continue;
+    if (!target.id) target.id = 'c-' + Math.random().toString(36).slice(2, 9);
+    label.htmlFor = target.id;
+  }
+  for (const c of root.querySelectorAll('input[placeholder],textarea[placeholder]')) {
+    if (!hasName(c) && c.placeholder) c.setAttribute('aria-label', c.placeholder);
+  }
+}
+function scrollRegions(root) {
+  for (const w of (root || document).querySelectorAll('.table-wrap, .table-scroll, pre.note, [data-scroll-region]')) {
+    // Whether it scrolls can change after it is drawn (fonts, a sibling growing, a rotation): watch its size.
+    if (scrollWatch && !w._a11yWatched) { w._a11yWatched = true; scrollWatch.observe(w); if (w.firstElementChild) scrollWatch.observe(w.firstElementChild); }
+    const scrolls = w.scrollHeight > w.clientHeight + 1 || w.scrollWidth > w.clientWidth + 1;
+    if (w.matches('.table-wrap')) sidewaysHint(w, w.scrollWidth > w.clientWidth + 1);
+    // Only a control that is showing counts: a table that has collapsed to its phone list hides its own links.
+    if (!scrolls || w.hasAttribute('tabindex') || [...w.querySelectorAll(FOCUSABLE)].some(e => e.getClientRects().length)) continue;
+    w.tabIndex = 0; w.setAttribute('role', 'region');
+    if (!w.hasAttribute('aria-label')) {
+      // Named after the heading nearest above it in its card (a card can hold more than one table: settlement
+      // outcomes' fund card has its outcomes and its months), and never the same name as another region on the
+      // page (axe landmark-unique).
+      const head = headingAbove(w) || w.closest('.card, .modal')?.querySelector('h2,h3') || document.querySelector('.main h1');
+      const base = `${head ? head.textContent.trim() + ' — ' : ''}${w.matches('pre') ? 'text' : 'table'} (scrolls)`;
+      const taken = new Set([...document.querySelectorAll('[role="region"][aria-label]')].filter(r => r !== w).map(r => r.getAttribute('aria-label')));
+      let name = base; for (let n = 2; taken.has(name); n++) name = `${base} ${n}`;
+      w.setAttribute('aria-label', name);
+    }
+  }
+}
+// The nearest h2–h4 before `el` in document order, without leaving its card or dialog.
+function headingAbove(el) {
+  const stop = el.closest('.card, .modal');
+  for (let n = el; n && n !== stop; n = n.parentElement) {
+    for (let p = n.previousElementSibling; p; p = p.previousElementSibling) {
+      if (p.matches('h2,h3,h4')) return p;
+      const inner = p.querySelectorAll('h2,h3,h4');
+      if (inner.length) return inner[inner.length - 1];
+    }
+  }
+  return null;
+}
+// A table wider than its card said in words above it, not only by a scroll bar some systems hide (r9 L4).
+function sidewaysHint(w, wide) {
+  const hint = w.previousElementSibling && w.previousElementSibling.hasAttribute('data-scroll-hint') ? w.previousElementSibling : null;
+  if (wide && !hint) w.before(h('p', { class: 'small muted scroll-hint', 'data-scroll-hint': '1' }, 'More columns than fit here: scroll the table sideways ', h('span', { 'aria-hidden': 'true' }, '→')));
+  else if (!wide && hint) hint.remove();
+}
+let a11yFrame = 0;
+const scrollWatch = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => scrollCheckSoon());
+const scrollCheckSoon = () => { if (!a11yFrame) a11yFrame = requestAnimationFrame(() => { a11yFrame = 0; scrollRegions(document); }); };
+// Labels at once, in the same task that added them (before anyone can reach the control); whether a table
+// scrolls is only known after layout, so that check waits for the next frame (and runs again on resize).
+if (typeof MutationObserver !== 'undefined') {
+  new MutationObserver((records) => {
+    for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1 && n.isConnected) a11yPass(n);
+    scrollCheckSoon();
+  }).observe(document.documentElement, { childList: true, subtree: true });
+}
+window.addEventListener('resize', scrollCheckSoon);
+
+/**
+ * A message that stays until it is dismissed, for conditions the user has to act on rather than
+ * acknowledge in passing — a device that has stopped saving, a consent that was revoked.
+ */
+/**
+ * What a person whose passkey is in the authenticator allow-list's grace period is told: which, when it stops, and the
+ * two ways to keep signing in. `g`: /api/auth/me's passkey_grace ({ until, passkeys, accepted_left, totp }).
+ */
+export function passkeyGraceText(g) {
+  const names = g.passkeys.map(p => `“${p.name}”`).join(', ');
+  const one = g.passkeys.length === 1;
+  return `Your programme now accepts only certain authenticator models, and your passkey${one ? '' : 's'} ${names} ${one ? 'is' : 'are'} not one of them: ${one ? 'it stops' : 'they stop'} working on ${fmt.date(g.until)}. Before then, add a passkey on an accepted authenticator under My profile${g.totp ? ', or sign in with your password and authenticator code' : ', or set up an authenticator app there and sign in with your password and its code'}.`;
+}
+/** The same notice as a block, on My profile. */
+export function passkeyGraceNotice(g) {
+  return h('div', { class: 'banner warn', 'data-passkey-grace-notice': '1' }, h('div', {}, passkeyGraceText(g)));
+}
+export function banner(message, kind = 'warn', { id = message, short = null, compact: always = false, announceText = null, onDismiss = null } = {}) {
+  // After the skip link, which stays the first thing a keyboard reaches on every page.
+  const host = document.getElementById('banners') || (() => { const b = h('div', { id: 'banners' }); skipLink().after(b); return b; })();
+  if (host.querySelector(`[data-banner="${CSS.escape(String(id))}"]`)) return;
+  // `short`: a banner that must come back (two-step set-up still owed) but that this person has already
+  // dismissed once in this browser session returns as one line, not the whole paragraph above every page.
+  const key = `suds.banner.${id}`;
+  // `compact`: always one line (the message is already short); `announceText` is then said once instead.
+  let compact = always; try { compact = compact || (!!short && sessionStorage.getItem(key) === '1'); } catch { /* storage blocked: full banner */ }
+  const el = h('div', { class: `banner ${kind}${compact ? ' compact' : ''}`, 'data-banner': String(id), 'data-compact': compact ? '1' : null, role: compact ? null : 'alert' },
+    h('span', {}, compact && short ? short : message),
+    h('button', { class: 'btn ghost sm', 'aria-label': 'Dismiss', onClick: () => { el.remove(); if (short) { try { sessionStorage.setItem(key, '1'); } catch { /* not remembered */ } } if (onDismiss) onDismiss(); } }, '✕'));
+  host.append(el);
+  if (!compact) announce(message);
+  else if (always && announceText) { let said = false; try { said = sessionStorage.getItem(`${key}.said`) === '1'; sessionStorage.setItem(`${key}.said`, '1'); } catch { /* say it */ } if (!said) announce(announceText); }
+  return el;
+}
+// "Skip to content" (WCAG 2.4.1): one link, the first focusable thing in the document on every screen, that
+// moves focus to the page's <main> — the app's content, or the sign-in form.
+let skipEl = null;
+function skipLink() {
+  if (skipEl && skipEl.isConnected) return skipEl;
+  skipEl = h('a', { class: 'skip-link', href: '#main', onClick: (e) => {
+    e.preventDefault();
+    const main = document.querySelector('main') || document.getElementById('app');
+    if (!main.hasAttribute('tabindex')) main.setAttribute('tabindex', '-1');
+    main.focus(); main.scrollIntoView();
+  } }, 'Skip to content');
+  document.body.prepend(skipEl);
+  return skipEl;
+}
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+// The phone's Back button (Android, or a browser's back) closes the dialog on top instead of leaving the
+// page underneath it. Opening a dialog pushes a history entry (same URL, so no route change) marked with
+// its id; Back pops it and the popstate below closes that dialog. A dialog closed any other way (✕,
+// Escape, Save) does not call history.back() — that is asynchronous, and a Save that navigates or opens
+// the next dialog straight afterwards would be undone by it — but rewrites its entry in place as "closed"
+// (sudsClosed). The next dialog reuses such an entry, and a Back press that would only step from it onto
+// the same page is followed through to the page before, so no press is ever spent on nothing.
+const modalStack = [];
+let here = { closed: false, url: location.href };
+const syncHere = () => { here = { closed: !!(history.state && history.state.sudsClosed), url: location.href }; };
+window.addEventListener('hashchange', syncHere);
+window.addEventListener('popstate', (e) => {
+  const prev = here;
+  const landed = e.state && e.state.sudsModal;
+  syncHere();
+  for (let i = modalStack.length - 1; i >= 0; i--) if (!modalStack[i].bg.isConnected) modalStack.splice(i, 1);
+  let closedAny = false;
+  while (modalStack.length && modalStack[modalStack.length - 1].id !== landed) { modalStack.pop().close({ fromHistory: true }); closedAny = true; }
+  if (closedAny) return;
+  // Stepped off a spent entry onto the same page, or onto the entry of a dialog that is already gone
+  // (removed by a re-render): nothing changed on screen, so take the next step too.
+  if ((prev.closed && prev.url === location.href) || (landed && !modalStack.some(m => m.id === landed))) history.back();
+});
+export function modal(title, content, { wide = false, onClose = null } = {}) {
+  const root = document.getElementById('modal-root');
+  const titleId = 'modal-title-' + Math.random().toString(36).slice(2, 9);
+  const box = h('div', { class: `modal ${wide ? 'wide' : ''}`, role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': titleId },
+    h('div', { class: 'card-head' }, h('h2', { id: titleId }, title), h('button', { class: 'btn ghost sm', onClick: close, 'aria-label': 'Close' }, '✕')), content);
+  const bg = h('div', { class: 'modal-bg', onClick: (e) => { if (e.target === bg) close(); } }, box);
+  // Remember where focus was, so closing the dialog returns the keyboard to what opened it.
+  // activeElement can be null, and document.contains() throws on anything that is not a Node.
+  const opener = document.activeElement instanceof Element ? document.activeElement : null;
+  let closed = false;
+  const historyId = 'm' + Math.random().toString(36).slice(2, 10);
+  function close(opts) {
+    if (closed) return; closed = true;
+    const fromHistory = !!(opts && opts.fromHistory);
+    const at = modalStack.findIndex(x => x.id === historyId); if (at >= 0) modalStack.splice(at, 1);
+    if (!fromHistory) {
+      try {
+        if (history.state && history.state.sudsModal === historyId) {
+          const parent = modalStack.length ? modalStack[modalStack.length - 1].id : undefined;
+          history.replaceState({ ...history.state, sudsModal: parent, sudsClosed: true }, ''); syncHere();
+        }
+      } catch { /* no history API */ }
+    }
+    bg.remove(); syncInertBehindDialogs(); // now, not at the observer's turn: focus goes back to the page below
+    document.removeEventListener('keydown', onKey);
+    if (opener && document.contains(opener) && typeof opener.focus === 'function') { try { opener.focus(); } catch { /* the element may have been replaced by a re-render */ } }
+    if (onClose) onClose();
+  }
+  function onKey(e) {
+    // Only the top dialog answers the keyboard: one opened over this one (the signature dialog over a note) makes
+    // this one inert, and its Tab and Escape are the top one's (a Tab here used to pull the focus back down).
+    if (bg.inert) return;
+    if (e.key === 'Escape') { close(); return; }
+    // Keep Tab inside the dialog: a keyboard user must not tab out into the page behind it.
+    if (e.key !== 'Tab') return;
+    const items = [...box.querySelectorAll(FOCUSABLE)].filter(el => el.offsetParent !== null || el === document.activeElement);
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    else if (!box.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+  }
+  document.addEventListener('keydown', onKey);
+  watchDialogs(root);
+  root.append(bg); syncInertBehindDialogs();
+  try {
+    const st = { ...(history.state || {}), sudsModal: historyId, sudsClosed: false };
+    // A spent entry (a dialog closed with ✕ on this same page) is reused rather than piling up more.
+    if (history.state && history.state.sudsClosed) history.replaceState(st, ''); else history.pushState(st, '');
+    syncHere(); modalStack.push({ id: historyId, bg, close });
+  } catch { /* no history API: Back leaves the page as before */ }
+  // No announce(title): the dialog is named by its heading (aria-labelledby) and screen readers read it when
+  // focus moves in; copying the title into the live region put a second "Add resource" in the page.
+  const first = box.querySelector('input,select,textarea,button.primary') || box.querySelector(FOCUSABLE);
+  if (first) first.focus();
+  return { close, el: box };
+}
+// While a dialog is open the page behind it cannot be reached by Tab, a screen reader's virtual cursor or a
+// click; only the top dialog is live. Banners and toasts stay outside, so a warning is still heard.
+// Kept in step by watching #modal-root itself, so a dialog removed any way at all (closed, a re-render
+// clearing the root, the paused screen) never leaves the page behind it dead.
+function syncInertBehindDialogs() {
+  const open = [...document.querySelectorAll('#modal-root > .modal-bg')];
+  const app = document.getElementById('app');
+  // aria-hidden as well as inert: some tools that read the accessibility tree do not yet honour inert.
+  const hide = (el, on) => { el.inert = on; if (on) el.setAttribute('aria-hidden', 'true'); else el.removeAttribute('aria-hidden'); };
+  if (app) hide(app, open.length > 0);
+  open.forEach((bg, i) => hide(bg, i < open.length - 1));
+}
+let dialogWatch = null;
+function watchDialogs(root) {
+  if (dialogWatch || typeof MutationObserver === 'undefined') return;
+  dialogWatch = new MutationObserver(syncInertBehindDialogs);
+  dialogWatch.observe(root, { childList: true });
+}
+// cancelText: null for a dialog that only tells (one OK button; Escape and ✕ still close it).
+export function confirmDialog(title, message, { danger = false, okText = 'Confirm', cancelText = 'Cancel', requireReason = false, minLength = 0, maxLength = 0, reasonLabel = null, reasonHint = null } = {}) {
+  return new Promise((resolve) => {
+    let reason; let answered = false;
+    // Closed with ✕ or Escape is a Cancel: whoever waits on the answer (a form's Save) is not left hanging.
+    const answer = (v) => { if (!answered) { answered = true; resolve(v); } };
+    const err = h('div', { class: 'err', role: 'alert' });
+    const rid = 'confirm-reason-' + Math.random().toString(36).slice(2, 9);
+    const m = modal(title, h('div', {}, h('p', {}, message), requireReason ? h('div', { class: 'field' }, h('label', { for: rid }, reasonLabel || `Reason (recorded in audit log${minLength ? `, at least ${minLength} characters` : ''})`), reason = h('input', { id: rid, required: true, minLength: minLength || null, maxLength: maxLength || null }), reasonHint ? h('div', { class: 'small muted' }, reasonHint) : null, err) : null,
+      h('div', { class: 'btn-row' }, cancelText === null ? null : h('button', { class: 'btn', onClick: () => { m.close(); answer(null); } }, cancelText), h('button', { class: `btn ${danger ? 'danger' : 'primary'}`, onClick: () => {
+        if (requireReason) {
+          const text = reason.value.trim();
+          // Say what is wrong rather than quietly refusing: a too-short reason used to look like a button that did nothing.
+          if (!text || text.length < minLength) { err.textContent = !text ? 'A reason is required.' : `The reason must be at least ${minLength} characters — say why, so it can be reviewed.`; reason.closest('.field').classList.add('error'); reason.setAttribute('aria-invalid', 'true'); reason.focus(); return; }
+        }
+        const v = requireReason ? reason.value.trim() : true; answered = true; m.close(); resolve(v);
+      } }, okText))), { onClose: () => answer(null) });
+  });
+}
+
+// A locked-out or forgotten-password local device has no admin to ask for a reset, and a device whose
+// kernel failed to start (a bad migration, a lost encryption key) never even reaches window.SUDS_LOCAL —
+// so this talks to the on-device IndexedDB store directly, the same one local/shims/sqlite.js persists to,
+// rather than going through the kernel. Duplicated rather than imported: public/ is unbundled and cannot
+// reach a module esbuild wrote for local/kernel.js's bundle. Keep the store/key names in sync with that file.
+function wipeLocalDatabase() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('suds-local', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const t = req.result.transaction('kv', 'readwrite');
+      // The whole store: the sealed database (under an epoch key since 1.9.3), its epoch, the vault holding
+      // every account's wrap of its key, and a pre-1.9.3 copy; and any keys 1.11 or earlier left in localStorage.
+      t.objectStore('kv').clear();
+      t.oncomplete = resolve;
+      t.onerror = () => reject(t.error);
+    };
+  }).then(() => { for (const k of ['suds.local.session', 'suds.local.enc', 'suds.local.idx']) { try { localStorage.removeItem(k); } catch {} } });
+}
+/** The typed-confirmation dialog behind both offerDeviceReset() and eraseDeviceButton() below. The erase
+ *  button starts disabled and only enables once the typed text matches exactly — a reason field that is
+ *  merely non-empty (the pattern confirmDialog's requireReason uses elsewhere) is not a strong enough gate
+ *  for something this irreversible and reachable with a single click. */
+export function openDeviceResetDialog(onDone) {
+  let confirmBox, eraseBtn;
+  const m = modal('Reset this device', h('div', {},
+    h('p', {}, 'This permanently erases everything SUDS has stored on this device — clients, visits, notes, everything — and signs out whatever account is set up here. There is no undo.'),
+    h('p', { class: 'banner warn small' }, 'Anything recorded on this device that has not been synced to the office SUDS server is lost for good. If there is any chance the office server has a copy and you can reach it later, consider waiting instead.'),
+    h('p', {}, 'Afterwards this device is treated as brand new: the first-run setup runs again and a new local account is created.'),
+    h('div', { class: 'field' }, h('label', { for: 'reset-device-confirm' }, 'Type ERASE to confirm *'),
+      confirmBox = h('input', { id: 'reset-device-confirm', autocomplete: 'off', onInput: () => { eraseBtn.disabled = confirmBox.value.trim() !== 'ERASE'; } })),
+    h('div', { class: 'btn-row' },
+      h('button', { class: 'btn', onClick: () => m.close() }, 'Cancel'),
+      eraseBtn = h('button', { class: 'btn danger', disabled: true, onClick: async () => {
+        if (confirmBox.value.trim() !== 'ERASE') { confirmBox.focus(); return; }
+        await wipeLocalDatabase();
+        m.close();
+        // The erased device starts over at first-run Sign up, whatever address this page was on.
+        if (onDone) onDone(); else { try { history.replaceState(null, '', '#/login?mode=signup'); } catch {} location.reload(); }
+      } }, 'Erase this device'))));
+}
+/** A "Reset this device" link + typed-confirmation dialog, usable wherever a local device might need
+ *  self-service recovery: the normal login screen, and the boot-failure screen (see boot() below), which
+ *  cannot rely on window.SUDS_LOCAL because reaching it is exactly what failed. */
+export function offerDeviceReset({ onDone } = {}) {
+  return h('p', { class: 'small muted center mt' },
+    'Locked out or forgot your password? ',
+    h('a', { href: '#', onClick: (e) => { e.preventDefault(); openDeviceResetDialog(onDone); } }, 'Reset this device'),
+    ' — this erases all SUDS data stored here and starts over.');
+}
+/** A plain "Erase data on this device" button for someone already signed in and choosing this on purpose
+ *  (the Sync page), rather than someone locked out — same dialog, without the "locked out?" framing. */
+export function eraseDeviceButton({ label = 'Erase data on this device', onDone } = {}) {
+  return h('button', { class: 'btn danger sm', onClick: () => openDeviceResetDialog(onDone) }, label);
+}
+
+// ---------- formatting ----------
+export const fmt = {
+  // A value like 2026-09-26 is a calendar day, not an instant: parse it as local midnight so it never drifts to the day before.
+  isDateOnly: (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s),
+  parse: (s) => { if (!s) return null; if (fmt.isDateOnly(s)) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); } const d = new Date(s); return isNaN(d) ? null : d; },
+  date: (s) => { const d = fmt.parse(s); return d ? d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'; },
+  dt: (s) => { const d = fmt.parse(s); if (!d) return '—'; return fmt.isDateOnly(s) ? d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); },
+  time: (s) => { const d = fmt.parse(s); return d && !fmt.isDateOnly(s) ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : ''; },
+  // Past due? A calendar-day deadline is only late once that whole local day has ended.
+  isPast: (s) => { const d = fmt.parse(s); if (!d) return false; if (fmt.isDateOnly(s)) d.setHours(23, 59, 59, 999); return d.getTime() < Date.now(); },
+  money: (n) => (n === null || n === undefined) ? '—' : Number(n).toLocaleString(undefined, { style: 'currency', currency: 'USD' }),
+  bytes: (n) => { n = Number(n || 0); const u = ['B', 'KB', 'MB', 'GB']; let i = 0; while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; } return `${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${u[i]}`; },
+  // A count may arrive as "<11" (a small count of people shown to a role that runs publication releases only).
+  num: (n) => (typeof n === 'string' && n && !Number.isFinite(Number(n)) ? n : Number(n || 0).toLocaleString()),
+  mins: (m) => { m = Number(m || 0); const hh = Math.floor(m / 60), mm = m % 60; return hh ? `${hh}h ${mm}m` : `${mm}m`; },
+  // A code in words. With `list` (a documentation list: 'INTERVENTION_TYPES', 'CALL_OUTCOMES'…) it is the
+  // wording the programme set under Settings → Lists, which is the only wording a programme's own choice
+  // has. Without one it is the code tidied up: the same code ('admin', 'closed', 'other') means different
+  // things in different places, so a list's wording is never applied to a value from somewhere else.
+  // `list` may be several (a call's outcome is in the phone or the text list): the first that has it.
+  label: (s, list) => { if (!s) return '—'; const L = (state.constants || {}).option_lists; if (list && L) for (const k of [].concat(list)) { const e = (L[k] || []).find(x => x.code === s); if (e) return e.label; } return fmt.code(s); },
+  // A client's safety flags (free text, comma separated) in words: a flag stored as a code
+  // ('no_home_visits', from an import or the sample data) shows its label from the Safety flags list; a
+  // flag typed in words is shown as typed.
+  flags: (s) => String(s || '').split(',').map(x => x.trim()).filter(Boolean).map(x => { const L = ((state.constants || {}).option_lists || {}).CLIENT_FLAGS || []; const e = L.find(o => o.code === x); return e ? e.label : /^[a-z0-9]+(_[a-z0-9]+)+$/.test(x) ? fmt.code(x) : x; }).join(', '),
+  code: (s) => { const L = (state.constants || {}).CODE_LABELS; return L && s && Object.prototype.hasOwnProperty.call(L, s) ? L[s] : fmt.codeWords(s); },
+  codeWords: (s) => s ? String(s).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bSbirt\b/, 'SBIRT').replace(/\bMat\b/g, 'MAT').replace(/\bOtp\b/, 'OTP').replace(/\bObot\b/, 'OBOT').replace(/\bEd\b/, 'ED').replace(/\bMh\b/, 'MH').replace(/\bRx\b/, 'Rx').replace(/\bIds\b/, 'IDs').replace(/\bRoi\b/, 'ROI').replace(/\bPart2 Disclosure\b/, 'Part 2 disclosure').replace(/\bPart2\b/g, 'Part 2') : '—',
+  ago: (s) => { const p = fmt.parse(s); if (!p) return 'never'; const d = (Date.now() - p.getTime()) / 86400000; if (d < 1) return 'today'; if (d < 2) return 'yesterday'; return `${Math.floor(d)}d ago`; },
+  isoLocal: (d = new Date()) => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; },
+  today: () => { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; },
+};
+// ---- documentation lists (Settings → Lists) ----
+// The small link beside a list-driven select: "Edit this list" for an administrator, "Manage" beside a
+// Funding source for whoever may add, rename or retire funding sources.
+function fieldLink(f) {
+  if (f.type === 'select' && f.list && canEditLists()) return h('a', { class: 'field-link small', href: `#/admin?tab=lists&list=${f.list}`, 'data-edit-list': f.list, title: 'Change the choices offered here (Settings → Lists)' }, 'Edit this list');
+  if (f.type === 'fund' && can('budget:manage')) return h('a', { class: 'field-link small', href: fundsManageHref(), 'data-manage-funds': '1', title: 'Add, rename or retire funding sources' }, 'Manage');
+  return null;
+}
+/** The entries of one documentation list, as the office set it up: [{ code, label, hidden, custom, protected }]. */
+export function listEntries(list) { const C = state.constants || {}; return (C.option_lists && C.option_lists[list]) || (C[list] || []).map(code => ({ code, label: fmt.label(code), hidden: false })); }
+/**
+ * Select options for a documentation list: the choices a new record may use, in order — plus, when editing
+ * a record whose value has since been retired (or is unknown here), that value, so saving the record does
+ * not silently change it.
+ */
+export function listOptions(list, current) {
+  const es = listEntries(list);
+  const out = es.filter(e => !e.hidden).map(e => ({ value: e.code, label: e.label }));
+  if (current && !out.some(o => o.value === current)) { const e = es.find(x => x.code === current); out.push({ value: current, label: `${e ? e.label : fmt.label(current, list)} (no longer offered)` }); }
+  return out;
+}
+/** Every value a filter should offer (retired ones too: old records still carry them). */
+export function listFilterOptions(list) { return listEntries(list).map(e => ({ value: e.code, label: e.hidden ? `${e.label} (retired)` : e.label })); }
+// The lists belong to the office: a device that syncs with one shows them but cannot change them; SUDS on
+// this device (no office) keeps its own.
+export const canEditLists = () => can('settings:manage') && (!state.local || !!window.SUDS_STATIC_HOST);
+// Funding sources are managed from Settings → Lists by whoever can open Settings, and from Funding &
+// spending by anyone else who holds budget:manage (finance cannot open Settings).
+export const fundsManageHref = () => (can('users:manage') || can('assignments:manage') ? '#/admin?tab=lists&list=funds' : '#/budget');
+/** Fetch the lists again (after an administrator changed one, or funding sources changed). */
+// Fetch the fresh lists first and swap them in: emptying state.constants and then awaiting left every view
+// that reads it (a dialog opened in that moment) with nothing, or a TypeError.
+export async function reloadRefData() {
+  let fresh = null;
+  try { fresh = await get('/api/meta/constants', { quiet: true }); } catch { /* keep what we have */ }
+  if (fresh) state.constants = fresh;
+  await loadRefData();
+}
+
+export function badge(text, kind = '') { return h('span', { class: `badge ${kind}` }, text); }
+// A client's programme status as shown on screen. Rows from before the status column was enforced can
+// carry NULL or "" (server/db.js migration 19 backfills them); a blank badge in the header looked like
+// a missing record, so the schema default is what an empty value means here too.
+export const clientStatus = (c) => { const s = c && typeof c.status === 'string' ? c.status.trim() : ''; return s || 'active'; };
+export const statusKind = (s) => ({ active: 'ok', admitted: 'ok', completed: 'ok', done: 'ok', signed: 'ok', approved: 'ok', reimbursed: 'ok', reached: 'ok', replied: 'ok',
+  waitlist: 'warn', pending: 'warn', waitlisted: 'warn', scheduled: 'info', contacted: 'info', accepted: 'info', in_progress: 'info', open: 'info', draft: 'warn', amended: 'purple', staged: 'warn', committed: 'ok',
+  inactive: '', closed: '', cancelled: '', discarded: '', rejected: 'danger', deceased: 'danger', no_show: 'danger', declined_by_client: 'danger', declined_by_provider: 'danger', critical: 'danger', high: 'warn', urgent: 'danger', crisis_escalated: 'danger', no_reply: 'warn', sent: 'info', undeliverable: 'danger', opted_out: 'danger' }[s] || '');
+export const can = (perm) => { const u = state.user; if (!u) return false; const deny = u.denied_permissions || []; if (deny.includes(perm)) return false; const [ns] = perm.split(':'); if (deny.includes(`${ns}:*`)) return false; if (perm.endsWith(':read') && deny.includes(perm.replace(/:read$/, ':write'))) return false; const p = u.permissions || []; if (p.includes(perm)) return true; if (p.includes(`${ns}:*`)) return true; if (perm.endsWith(':read') && p.includes(perm.replace(/:read$/, ':write'))) return true; return false; };
+
+// ---------- forms ----------
+// fields: [{name,label,type:'text|number|date|datetime|select|textarea|checkbox|client|user|resource|fund', options, list, required, value, span, help, min, max, step}]
+// `list` (with type 'select'): a documentation list from Settings → Lists instead of fixed options — the
+// choices come from the office's setup, a retired value on the record being edited stays selectable, and an
+// administrator gets an "Edit this list" link beside the label. `current`: the record's value when the
+// form is not given the record as `values`, so a retired value it has is still offered.
+// Unsaved form contents, kept in memory only. Deliberately not localStorage: a half-typed intake form is
+// PHI, and this app's whole design keeps PHI out of browser storage. Memory survives a closed dialog, a
+// route change and an idle sign-out within the same tab, which is what was actually being lost; a reload or
+// a closed tab loses it, as it always has. The drafts belong to the person who typed them: signing in as
+// anyone else in the same tab starts with none (they used to be offered to the next person at the screen).
+// Not for ever, though (security review of 1.15.3, L3): a tab left signed out on a shared screen held what was
+// typed for as long as it stayed open. An explicit sign-out clears the drafts at once; after an idle sign-out (or
+// a session that expired) they are kept for DRAFT_KEEP_SIGNED_OUT_MS, then cleared, and the person who comes back
+// later starts afresh.
+export const DRAFT_KEEP_SIGNED_OUT_MS = 15 * 60000;
+// draftEpoch: which clearing a form was built after. A form built before the drafts were cleared never writes
+// one again (a save still queued, or a change event from a field left behind, would otherwise put back what
+// Sign out just cleared as soon as the same person signed in).
+const draftMap = new Map(); let draftOwner = null; let signedOutAt = 0; let draftEpoch = 0;
+function dropDrafts() { draftMap.clear(); draftOwner = null; signedOutAt = 0; draftEpoch++; document.querySelectorAll('#banners [data-resume-draft]').forEach(b => b.remove()); }
+/** Signed out without saying so (idle, or the session expired): the drafts' clock starts. */
+function noteSignedOut() { if (!signedOutAt) signedOutAt = Date.now(); }
+/** Clear the drafts once they have been kept signed out for long enough. `now` is for tests. Returns whether it did. */
+export function expireSignedOutDrafts(now = Date.now()) {
+  if (state.user || !signedOutAt) return false;
+  if (now - signedOutAt < DRAFT_KEEP_SIGNED_OUT_MS) return false;
+  dropDrafts(); return true;
+}
+/** How many drafts this tab holds in memory, whoever they belong to (a count only: for the sign-out checks). */
+export function heldDraftCount() { return draftMap.size; }
+/** When the draft under `key` was last kept (ms; 0 for none): a time only, for the browser suite to wait on the save. */
+export function draftSavedAt(key) { const d = draftMap.get(key); return d ? d.__at : 0; }
+function claimDrafts() {
+  const uid = state.user && state.user.id; if (!uid) return false;
+  // Back after too long (a background tab's timers may not have run): nothing kept.
+  if (signedOutAt && Date.now() - signedOutAt >= DRAFT_KEEP_SIGNED_OUT_MS) dropDrafts();
+  signedOutAt = 0;
+  if (draftOwner !== uid) { draftMap.clear(); draftOwner = uid; }
+  return true;
+}
+// How many times each draft has been cleared (saved, discarded, started over): a form built before the latest
+// clearing of its key never writes that draft again. A dialog closed part-way used to keep listening, and a late
+// change event from it put back the draft that the next dialog of the same kind had just saved and cleared.
+const draftGen = new Map();
+const drafts = {
+  get size() { return claimDrafts() ? draftMap.size : 0; },
+  has: (k) => claimDrafts() && draftMap.has(k),
+  get: (k) => (claimDrafts() ? draftMap.get(k) : undefined),
+  set(k, v) { if (claimDrafts()) draftMap.set(k, { ...v, __at: Date.now() }); },
+  delete(k) { draftMap.delete(k); draftGen.set(k, (draftGen.get(k) || 0) + 1); document.querySelectorAll(`[data-resume-draft="${CSS.escape(k)}"]`).forEach(b => b.remove()); },
+};
+export function discardDraft(key) { drafts.delete(key); }
+export function hasDraft(key) { return drafts.has(key); }
+// Views say how to go back to a kept draft: `offerResume('intervention:new', { question, open })`. After
+// signing back in (an idle sign-out keeps the drafts in memory), a kept draft with a way back is offered at
+// the top of the page: Resume opens its form, which asks again; Discard drops it.
+const resumers = new Map();
+export function offerResume(key, how) { resumers.set(key, how); }
+function offerKeptDrafts() {
+  if (!claimDrafts()) return;
+  for (const [key, how] of resumers) {
+    const d = draftMap.get(key); if (!d) continue;
+    const el = banner(`${how.question} You started it ${d.__at ? `at ${fmt.time(new Date(d.__at).toISOString())}` : 'earlier'} and it was not saved.`, 'info', { id: `resume-${key}` });
+    if (!el) continue;
+    el.dataset.resumeDraft = key;
+    el.insertBefore(h('span', { class: 'row', style: { gap: '.4rem' } },
+      h('button', { class: 'btn sm primary', type: 'button', 'data-resume-draft-open': key, onClick: () => { el.remove(); how.open(); } }, 'Resume'),
+      h('button', { class: 'btn sm', type: 'button', 'data-resume-draft-discard': key, onClick: () => { drafts.delete(key); el.remove(); toast('Discarded', 'ok'); } }, 'Discard')), el.lastChild);
+  }
+}
+
+// A "date & time" field is a date input and a separate, optional time input rather than one
+// datetime-local control. Every browser renders those two natively and predictably (a calendar and a
+// clock), whereas datetime-local swallows a date entered without a time — value reads as "" while the
+// box still shows the date — and its picker is awkward on phones. The wrapper exposes `.value` in the
+// shape the drafts and read() expect: "YYYY-MM-DD", "YYYY-MM-DDTHH:MM" or "".
+// Every date field in a form accepts 1900-01-01 to 2100-12-31 unless the field says otherwise. Without a
+// max, Chrome's year segment takes six digits, so digits typed in the wrong order or into the wrong
+// segment ended up as dates like 0006-09-05 or 20260-01-01 that looked accepted; read() below refuses a
+// date outside the range, by field, instead of saving it.
+export const DATE_MIN = '1900-01-01', DATE_MAX = '2100-12-31';
+// A calendar button beside a date field, opening the browser's own date picker (input.showPicker()).
+// The picker button Chrome draws inside the field ("Show date picker") is a small target at the field's
+// right edge that automated testers and some people miss; this one is a full-size button of the page's
+// own, never under anything. A browser without showPicker gets the field focused instead.
+function datePickButton(input, label) {
+  return h('button', { type: 'button', class: 'btn sm date-pick', 'data-date-pick': input.name, 'aria-label': `Choose ${label ? label.replace(/\s*\*$/, '') : 'the date'} from a calendar`, title: 'Open the calendar',
+    onClick: () => { try { if (typeof input.showPicker === 'function') { input.focus(); input.showPicker(); } else input.focus(); } catch { input.focus(); } } }, '📅');
+}
+// Only the overall range is enforced here: a field's own narrower min/max (a date of birth not in the
+// future) shapes the picker, and an existing record outside it must still be editable.
+const dateOutOfRange = (i) => !!i.value && (!/^\d{4}-\d{2}-\d{2}$/.test(i.value) || i.value < DATE_MIN || i.value > DATE_MAX);
+function dateTimePair(f, v) {
+  const dateI = h('input', { type: 'date', name: f.name, required: !!f.required, 'aria-label': `${f.label} — date`, min: f.min || DATE_MIN, max: f.max || DATE_MAX });
+  const timeI = h('input', { type: 'time', name: `${f.name}_time`, 'aria-label': `${f.label} — time (optional)` });
+  const wrap = h('div', { class: 'dt-pair' }, dateI, datePickButton(dateI, f.label), timeI);
+  wrap.dateInput = dateI; wrap.timeInput = timeI;
+  Object.defineProperty(wrap, 'value', {
+    get: () => dateI.value ? (timeI.value ? `${dateI.value}T${timeI.value}` : dateI.value) : '',
+    set: (x) => {
+      const s = x == null ? '' : String(x);
+      if (!s) { dateI.value = ''; timeI.value = ''; return; }
+      if (fmt.isDateOnly(s)) { dateI.value = s; timeI.value = ''; return; }
+      const d = new Date(s); if (isNaN(d)) { dateI.value = ''; timeI.value = ''; return; }
+      const local = fmt.isoLocal(d); dateI.value = local.slice(0, 10); timeI.value = local.slice(11, 16);
+    },
+  });
+  wrap.value = v;
+  return wrap;
+}
+
+// Quick choices under a due or follow-up date (1.22.0): Today, Tomorrow, In 3 days, In a week. A phone's date picker
+// takes four or five taps to reach next Tuesday, and most follow-ups are one of these. A choice sets the date only (a
+// date-only due date counts as the end of that day), fires the field's own input and change events so the draft and
+// the form's listeners see it, and is said out loud. `f.quick`: true for these four, or [[label, days], ...].
+export const QUICK_DATES = [['Today', 0], ['Tomorrow', 1], ['In 3 days', 3], ['In a week', 7]];
+/** For "remind me to follow up on": a follow-up is not today. */
+export const QUICK_FOLLOW_UP = [['Tomorrow', 1], ['In 3 days', 3], ['In a week', 7], ['In 2 weeks', 14]];
+/** The local calendar date `days` after `from` (default today), as YYYY-MM-DD. */
+export function addDaysLocal(days, from = new Date()) {
+  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate() + days);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function quickDates(f, input) {
+  const name = String(f.label || 'the date').replace(/\s*\*$/, '');
+  const choices = Array.isArray(f.quick) ? f.quick : QUICK_DATES;
+  const target = input.dateInput || input;
+  return h('div', { class: 'row quick-dates', role: 'group', 'aria-label': `Quick choices for ${name}`, 'data-quick-dates': f.name },
+    choices.map(([label, days]) => h('button', { type: 'button', class: 'btn sm', 'data-quick-date': String(days), onClick: () => {
+      const day = addDaysLocal(days);
+      input.value = day;
+      for (const ev of ['input', 'change']) target.dispatchEvent(new Event(ev, { bubbles: true }));
+      announce(`${name}: ${fmt.date(day)}`);
+    } }, label)));
+}
+
+/** What an onSubmit returns when it decided not to save (nothing was sent): the form stays open, draft kept. */
+export const NOT_SAVED = Symbol('not saved');
+// `resume`: a question ("Resume your unsent visit?"). A kept draft is then not put back on its own: the form
+// opens as new, with the question and Resume / Discard at the top, and nothing is autosaved over the kept
+// draft until it is answered. Without it a kept draft is restored at once, as before. A view keeps what is not
+// a field (the visit's supply lines, a note's sections) with the draft by setting
+// `el.draftExtras = { read: () => object or null, restore: (object) => {} }` right after building the form.
+export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCancel, cancelText = 'Cancel', extra, draftKey, resume = null } = {}) {
+  const inputs = {}; const sections = {};
+  // Whose form this is: a save still queued when they sign out must not land in the next person's drafts.
+  const formOwner = state.user && state.user.id; const formEpoch = draftEpoch;
+  const mine = () => !!state.user && state.user.id === formOwner && draftEpoch === formEpoch;
+  // The clearing of this draft the form was built after (drafts.delete, above); its own Start over moves it on.
+  let myGen = draftKey ? (draftGen.get(draftKey) || 0) : 0;
+  const stale = () => !!draftKey && (draftGen.get(draftKey) || 0) !== myGen;
+  const grid = h('div', { class: 'form-grid' });
+  let target = grid;
+  for (const f of fields) {
+    // `end`: the fields after it go back to the form's own grid, with no heading (a folded section ends).
+    if (f.type === 'section' && f.end) { target = grid; continue; }
+    if (f.type === 'section') {
+      // heading: the summary carries an h3, so a long form's sections are in the page's outline (a screen
+      // reader's heading list) as well as being folded away.
+      // key: the section's name for the view that built it (el.sections[key]), e.g. to open it or to say in
+      // its summary what it holds while folded ([data-section-hint]).
+      if (f.collapsible) { const inner = h('div', { class: 'form-grid' }); const d = h('details', { class: 'section', open: !!f.open, 'data-section': f.heading ? f.label : null, 'data-section-key': f.key || null }, h('summary', {}, f.heading ? h('h3', { class: 'summary-heading' }, f.label) : f.label, f.hint || f.key ? h('span', { class: 'muted small', 'data-section-hint': '1' }, f.hint ? ` — ${f.hint}` : '') : null), inner); grid.append(d); if (f.key) sections[f.key] = d; target = inner; }
+      else { target = grid; grid.append(h('div', { class: 'span' }, h('h3', { class: 'eyebrow' }, f.label))); }
+      continue;
+    }
+    let input; const v = values[f.name] ?? f.value ?? '';
+    // `exclude`: codes of the list this field never offers (an overdose's "Where" is never Phone), unless the
+    // record already has one.
+    const opts = f.list ? listOptions(f.list, values[f.name] ?? f.current).filter(o => !(f.exclude || []).includes(o.value) || o.value === (values[f.name] ?? f.current)) : (f.options || []).map(o => typeof o === 'string' ? { value: o, label: fmt.label(o) } : o);
+    switch (f.type) {
+      case 'select': input = h('select', { name: f.name, required: !!f.required }, f.noBlank ? null : h('option', { value: '' }, f.placeholder || '—'), opts.map(o => h('option', { value: o.value, selected: String(o.value) === String(v), disabled: !!o.disabled, title: o.title || null }, o.label))); break;
+      case 'textarea': input = h('textarea', { name: f.name, required: !!f.required, rows: f.rows || 4, placeholder: f.placeholder || '' }, v || ''); break;
+      case 'checkbox': input = h('input', { type: 'checkbox', name: f.name, checked: !!(v === 1 || v === true || v === '1') }); break;
+      case 'datetime': input = dateTimePair(f, v); break;
+      case 'date': input = h('input', { type: 'date', name: f.name, required: !!f.required, value: v ? String(v).slice(0, 10) : '', min: f.min || DATE_MIN, max: f.max || DATE_MAX }); break;
+      case 'number': input = h('input', { type: 'number', name: f.name, required: !!f.required, value: v ?? '', min: f.min, max: f.max, step: f.step ?? 'any', placeholder: f.placeholder || '' }); break;
+      case 'client': input = clientPicker(f.name, v, f); break;
+      case 'user': input = h('select', { name: f.name, required: !!f.required }, h('option', { value: '' }, f.placeholder || '—'), state.users.filter(u => u.is_active !== 0 && (!f.exceptRoles || !f.exceptRoles.includes(u.role) || u.id === v)).map(u => h('option', { value: u.id, selected: u.id === v }, `${u.display_name} (${fmt.label(u.role)})`))); break;
+      case 'fund': { const inactive = v && !state.funds.some(x => x.id === v) ? (state.allFunds || []).find(x => x.id === v) : null; input = h('select', { name: f.name, required: !!f.required }, h('option', { value: '' }, '—'), state.funds.map(x => h('option', { value: x.id, selected: x.id === v }, x.name)), inactive ? h('option', { value: inactive.id, selected: true }, `${inactive.name} (inactive)`) : null); break; }
+      case 'password': input = h('input', { type: 'password', name: f.name, required: !!f.required, autocomplete: f.autocomplete || 'current-password' }); break;
+      // A phone number field brings up the dial pad on a phone, not the full keyboard.
+      case 'tel': input = h('input', { type: 'tel', inputmode: 'tel', autocomplete: 'off', name: f.name, required: !!f.required, value: v ?? '', placeholder: f.placeholder || '' }); break;
+      default: input = h('input', { type: f.type || 'text', name: f.name, required: !!f.required, value: v ?? '', placeholder: f.placeholder || '', maxlength: f.maxLen, pattern: f.pattern, autocomplete: f.autocomplete || 'off' });
+    }
+    inputs[f.name] = input;
+    // Label, help text and any error are tied to the control by id, so a screen reader reads the field's
+    // name, its guidance and what went wrong — rather than just "edit text".
+    const fieldId = `f-${f.name}-${Math.random().toString(36).slice(2, 7)}`;
+    const helpId = f.help ? `${fieldId}-help` : null;
+    const errId = `${fieldId}-err`;
+    // A date & time field is two controls; the label points at the date, and both are described alike.
+    // A client picker is a wrapper; its name, description and required state belong on the search box.
+    for (const ctl of input && input.dateInput ? [input.dateInput, input.timeInput] : input && input.searchInput ? [input.searchInput] : [input]) {
+      if (!ctl || !ctl.tagName) continue;
+      ctl.id = ctl === input.timeInput ? `${fieldId}-time` : fieldId;
+      ctl.setAttribute('aria-describedby', [helpId, errId].filter(Boolean).join(' '));
+      if (f.required && ctl !== input.timeInput) ctl.setAttribute('aria-required', 'true');
+    }
+    const errEl = h('div', { class: 'err', id: errId, role: 'alert' });
+    const wrap = h('div', { class: `field ${f.span ? 'span' : ''}`, 'data-field': f.name },
+      f.type === 'checkbox' ? h('label', { class: 'check', for: fieldId }, input, f.label) : [h('label', { for: fieldId }, f.label, f.required ? ' *' : ''), fieldLink(f), f.type === 'date' ? h('div', { class: 'date-with-pick' }, input, datePickButton(input, f.label)) : input],
+      f.quick && (f.type === 'date' || f.type === 'datetime') ? quickDates(f, input) : null,
+      f.help ? h('div', { class: 'help', id: helpId }, f.help) : null, errEl);
+    target.append(wrap);
+  }
+  // What each control showed when the form opened (before any restored draft), so an edit form can send
+  // only what the person actually changed (el.changedKeys) instead of every field it happens to display.
+  const rawValue = (f) => { const i = inputs[f.name]; if (!i) return undefined; return f.type === 'checkbox' ? !!i.checked : String(i.value ?? ''); };
+  const initial = Object.fromEntries(fields.filter(f => f.type !== 'section').map(f => [f.name, rawValue(f)]));
+  // A draft kept from an earlier attempt at this same form wins over the defaults.
+  const kept = draftKey && drafts.get(draftKey);
+  let restored = null; let asking = !!(kept && resume);
+  const putBack = (d) => { for (const [k, v] of Object.entries(d)) { const i = inputs[k]; if (!i) continue; if (i.type === 'checkbox') i.checked = !!v; else i.value = v ?? ''; } };
+  if (kept && !resume) { restored = kept; putBack(kept); }
+  const errBox = h('div', { class: 'banner danger hidden', role: 'alert', tabindex: '-1' });
+  // The same message beside the Save button (1.24.0), shown when the form is long enough that the banner above is out
+  // of sight from there (an assessment, a screening, an intake): a failed save used to leave the person at the
+  // bottom of the dialog with the only sign of it scrolled away at the top. No live role: announce() says it once.
+  // Styled as a danger banner, without the class: '.banner.danger' still names the form's one error banner.
+  const errNear = h('div', { class: 'banner form-error-near hidden', tabindex: '-1', 'data-form-error-near': '1' });
+  const submitBtn = h('button', { class: 'btn primary', type: 'submit' }, submitText);
+  let submitted = false; let saveTimer;
+  // This submission's Idempotency-Key base (see idempotencyKey above): kept while the contents are
+  // unchanged, so a retry is the same submission; replaced when anything is edited or after a save.
+  let submitKey = newIdempotencyKey();
+  // noValidate: the browser's own constraint validation can silently refuse to even dispatch the submit
+  // event for a field it considers invalid — including, on some mobile browsers/WebViews, a non-required
+  // datetime-local field stuck in a broken partial state that never fires our onSubmit at all, so nothing
+  // in this file ever gets a chance to show an error. read() below now does its own required-field and
+  // bad-input checking and reports it through the same on-screen banner as every other validation error,
+  // so nothing here depends on a native UI that does not reliably render on every platform.
+  const el = h('form', { noValidate: true, onSubmit: async (e) => {
+    e.preventDefault();
+    errBox.classList.add('hidden'); errNear.classList.add('hidden');
+    submitBtn.disabled = true;
+    // Everything from clearing the old errors onwards is inside the try: whatever throws — read() on a
+    // half-entered date, the request itself, or a DOM assumption that a view broke (the resource form
+    // adds `.field` blocks of its own without an `.err` slot, and clearing them used to throw before
+    // the request was even sent) — ends up in the banner, never in an unhandled rejection that leaves
+    // the dialog sitting there looking like nothing happened.
+    try {
+      el.querySelectorAll('.field').forEach(x => { x.classList.remove('error'); const errSlot = x.querySelector('.err'); if (errSlot) errSlot.textContent = ''; const c = x.querySelector('input,select,textarea'); if (c) c.removeAttribute('aria-invalid'); });
+      const data = read();
+      submitScope = { key: submitKey, seq: new Map() };
+      let outcome; try { outcome = await onSubmit(data, el); } finally { submitScope = null; }
+      // The person chose not to save after all (a "save another?" question answered No): nothing was sent,
+      // and the form and its draft stay as they are.
+      if (outcome === NOT_SAVED) return;
+      submitKey = newIdempotencyKey();
+      // Saved: the draft is finished with, and no autosave still queued behind this submit may put it back
+      // — the debounced savers below used to fire after the delete, so the next "+ New client" opened
+      // prefilled with the person just created.
+      submitted = true; clearTimeout(saveTimer); if (draftKey) drafts.delete(draftKey);
+    } catch (err) {
+      if (!err || typeof err !== 'object') err = new Error(String(err || 'Something went wrong'));
+      if (!err.message) err.message = 'Something went wrong. Try again.';
+      const fieldsErr = err.data && err.data.fields;
+      let firstBad = null; const inline = new Set();
+      const labelOf = (k) => (fields.find(f => f.name === k) || {}).label || k;
+      if (fieldsErr) for (const [k, msg] of Object.entries(fieldsErr)) {
+        const w = el.querySelector(`[data-field="${k}"]`);
+        if (!w) continue;
+        w.classList.add('error');
+        // A field folded away in a closed section is opened, so the error and the focus land on something visible.
+        for (let d = w.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true;
+        // Under the field, say which field: "Client is required", not a bare "is required" (a server
+        // message in that shape gets the label put in front of it too).
+        const slot = w.querySelector('.err'); if (slot) { slot.textContent = fieldProblem(labelOf(k), msg); inline.add(k); }
+        const control = w.querySelector('input,select,textarea');
+        if (control) { control.setAttribute('aria-invalid', 'true'); if (!firstBad) firstBad = control; }
+      }
+      // Field errors are already shown inline under each field; the banner names them the way the form
+      // does ("Client"), never by column ("client_id").
+      // A message of its own ("Password must contain…", "Answer … before marking it complete") is said once:
+      // the fields it is about carry their own line underneath, so the banner does not repeat them (1.16.0).
+      const generic = err.message === VALIDATION_FAILED || err.message.startsWith(`${CHECK_ANSWERS}:`);
+      const rest = fieldsErr ? Object.entries(fieldsErr).filter(([k]) => generic || !inline.has(k)) : [];
+      const text = err.labelled ? err.message : fieldsErr && rest.length ? `${generic ? CHECK_ANSWERS : err.message}: ${rest.map(([k, m]) => fieldProblem(labelOf(k), m)).join('; ')}` : err.message;
+      errBox.textContent = text; errBox.classList.remove('hidden');
+      // Far from the Save button (more than half a screen above it): say it beside the button as well.
+      let far = false;
+      try { const top = errBox.getBoundingClientRect(), btn = submitBtn.getBoundingClientRect(); far = btn.top - top.bottom > (window.innerHeight || 800) / 2; } catch { far = false; }
+      errNear.textContent = far ? `Not saved: ${text}` : ''; errNear.classList.toggle('hidden', !far);
+      // Someone else saved this record after it was opened (409 from if_updated_at). Saving again would
+      // overwrite their changes, so the way forward is to reload and see them. The draft goes too: restoring
+      // it over the fresh record would put back the very values the other person just changed.
+      if (err.status === 409 && err.data && err.data.stale) {
+        errBox.append(' ', h('button', { class: 'btn sm', type: 'button', 'data-reload-stale': '1', onClick: () => { submitted = true; clearTimeout(saveTimer); if (draftKey) drafts.delete(draftKey); render(); } }, 'Reload'));
+      }
+      // Say it out loud and put the cursor on the first thing that needs fixing, rather than leaving a
+      // keyboard user to hunt for a red outline they cannot see.
+      announce(text);
+      // A field to fix gets the focus; otherwise the message nearest the person (beside Save on a long form).
+      const where = firstBad || (far ? errNear : errBox);
+      where.focus({ preventScroll: false });
+      where.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    } finally { submitBtn.disabled = false; }
+  } }, restored ? h('div', { class: 'banner', role: 'status' },
+    h('span', {}, 'Restored what you had already typed.'),
+    h('button', { class: 'btn ghost sm', type: 'button', onClick: (e) => { drafts.delete(draftKey); myGen = draftGen.get(draftKey) || 0; e.target.closest('.banner').remove(); for (const f of fields) { const i = inputs[f.name]; if (!i) continue; if (i.type === 'checkbox') i.checked = false; else i.value = ''; } } }, 'Start over'))
+    : asking ? h('div', { class: 'banner info', role: 'status', 'data-resume-question': draftKey },
+      h('span', {}, `${resume} You started it${kept.__at ? ` at ${fmt.time(new Date(kept.__at).toISOString())}` : ''} and it was not saved.`),
+      h('span', { class: 'row', style: { gap: '.4rem' } },
+        h('button', { class: 'btn sm primary', type: 'button', 'data-resume-answer': 'resume', onClick: (e) => {
+          asking = false; restored = kept; putBack(kept);
+          if (extras && extras.restore && kept.__extra) { try { extras.restore(kept.__extra); } catch { /* the fields are back; the rest is lost */ } }
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          e.target.closest('.banner').replaceWith(h('div', { class: 'banner', role: 'status' }, 'Resumed: what you had typed is back.'));
+          const first = el.querySelector('input:not([type=hidden]),select,textarea'); if (first) first.focus();
+        } }, 'Resume'),
+        h('button', { class: 'btn sm', type: 'button', 'data-resume-answer': 'discard', onClick: (e) => {
+          asking = false; drafts.delete(draftKey); myGen = draftGen.get(draftKey) || 0; e.target.closest('.banner').remove();
+          const first = el.querySelector('input:not([type=hidden]),select,textarea'); if (first) first.focus();
+        } }, 'Discard'))) : null,
+    errBox, grid, extra || null, errNear, h('div', { class: 'btn-row' }, onCancel ? h('button', { class: 'btn', type: 'button', onClick: onCancel }, cancelText) : null, submitBtn));
+
+  // Changed contents are a different submission, with a different Idempotency-Key.
+  const newSubmission = () => { submitKey = newIdempotencyKey(); };
+  el.addEventListener('input', newSubmission); el.addEventListener('change', newSubmission);
+  // Keep what has been typed so a dialog closed by accident, a route change, or an idle sign-out does not
+  // throw it away.
+  if (draftKey) {
+    // A field mid-typing an incomplete date/time is expected while drafting — read() now rejects that
+    // rather than silently mangling it, so the autosave tick here just skips this round instead of
+    // erroring; the field firms up (or clears) before the next tick or before the person tries to submit.
+    const save = (onlyIfSomething) => { if (submitted || asking || !mine() || stale()) return; try { const d = draftNow(); if (!onlyIfSomething || typedSomething(d)) drafts.set(draftKey, d); } catch { /* firms up or gets fixed before submit */ } };
+    el.addEventListener('input', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => save(true), 400); });
+    el.addEventListener('change', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => save(false), 400); });
+  }
+  // Keep what is typed right now as a draft (the paused screen closes every dialog; see showPausedScreen).
+  el.saveDraft = () => { if (draftKey && !submitted && !asking && mine() && !stale()) { clearTimeout(saveTimer); try { const d = draftNow(); if (typedSomething(d)) drafts.set(draftKey, d); } catch {} } };
+  // A view's own parts of the draft (el.draftExtras), restored as soon as the view hands them over.
+  let extras = null;
+  Object.defineProperty(el, 'draftExtras', { get: () => extras, set: (x) => { extras = x; if (restored && restored.__extra && x && x.restore) { try { x.restore(restored.__extra); } catch { /* the fields are back; the rest is lost */ } } } });
+  // For a dialog that closes this form after a save of its own (not through onSubmit): stop drafting.
+  el.finished = () => { submitted = true; clearTimeout(saveTimer); if (draftKey) drafts.delete(draftKey); };
+  // A draft is kept however unfinished: a required field not filled in yet, or a date half typed, is kept as
+  // it is (empty), not a reason to keep nothing — the visit form's client comes last as often as first.
+  function draftNow() { const d = read(true); const x = extras && extras.read ? extras.read() : null; if (x) d.__extra = x; return d; }
+  function typedSomething(d) { return Object.entries(d).some(([k, v]) => (k === '__extra' ? !!v : v !== '' && v !== null && v !== undefined && v !== 0)); }
+  function read(lenient = false) {
+    const data = {}; const bad = []; const missing = [];
+    for (const f of fields) {
+      if (f.type === 'section') continue;
+      const i = inputs[f.name];
+      if (f.type === 'checkbox') data[f.name] = i.checked;
+      else if (f.type === 'client') data[f.name] = i.value || null;
+      else if (f.type === 'number') data[f.name] = i.value === '' ? null : Number(i.value);
+      else if (f.type === 'datetime') {
+        // A date and a separate, optional time. The old single datetime-local control silently dropped a
+        // date typed without a time: the browser reports an empty value for a partial entry (validity
+        // .badInput is set, but value is ""), so the field looked filled in and saved as nothing. Now a
+        // date on its own is a valid answer, and anything the browser cannot parse is flagged by field.
+        const d = i.dateInput, t = i.timeInput;
+        if (d.validity?.badInput || t.validity?.badInput || (t.value && !d.value) || dateOutOfRange(d)) { bad.push(f); data[f.name] = null; }
+        else if (!d.value) data[f.name] = null;
+        // A required date & time (a visit, a call) with no time is midnight local, so it orders among
+        // that day's other records; an optional one (a due date, an appointment) is kept as the calendar
+        // day itself, which the server and fmt.dt already understand (a to-do due "Oct 1" is due all day).
+        else if (!t.value) data[f.name] = f.required ? new Date(`${d.value}T00:00`).toISOString() : d.value;
+        else data[f.name] = new Date(`${d.value}T${t.value}`).toISOString();
+      }
+      // A date the browser half-parsed (badInput) or a year typed into the wrong segment (0006, 20260) is
+      // refused by field rather than saved.
+      else if (f.type === 'date' && (i.validity?.badInput || dateOutOfRange(i))) { bad.push(f); data[f.name] = null; }
+      else data[f.name] = i.value === '' ? null : i.value;
+      if (f.required && (data[f.name] === null || data[f.name] === undefined || data[f.name] === '') && !bad.includes(f)) missing.push(f);
+    }
+    if (!lenient && (bad.length || missing.length)) {
+      const badMsg = (f) => { const i = inputs[f.name]; const d = i.dateInput || i;
+        return d.value && dateOutOfRange(d) ? `is not a real date: the year must be four digits, between ${DATE_MIN.slice(0, 4)} and ${DATE_MAX.slice(0, 4)}` : f.type === 'datetime' ? 'enter a valid date (the time is optional), or leave both blank' : 'enter a valid date, or leave it blank'; };
+      const fields = { ...Object.fromEntries(bad.map(f => [f.name, badMsg(f)])), ...Object.fromEntries(missing.map(f => [f.name, `${f.label || 'This field'} is required`])) };
+      // Name the field the way the form does ("Client"), not the way the database does ("client_id").
+      const names = missing.map(f => f.label).filter(Boolean);
+      const e = new Error(bad.length ? 'Check the date below — it is not a valid date.' : names.length ? `Fill in ${names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]} below.` : 'Fill in the required field below.');
+      e.labelled = true;
+      e.data = { fields };
+      throw e;
+    }
+    return data;
+  }
+  el.read = read; el.inputs = inputs; el.sections = sections;
+  // Names of the fields whose control differs from what the form opened with.
+  el.changedKeys = () => fields.filter(f => f.type !== 'section' && inputs[f.name] && rawValue(f) !== initial[f.name]).map(f => f.name);
+  return el;
+}
+
+// Client picker: search-as-you-type against /api/clients?q=, stores id in hidden value
+export function clientPicker(name, value, f = {}) {
+  // A combobox, not a div that happens to respond to clicks: arrow keys move through the matches, Enter
+  // chooses, Escape closes, and the whole thing is announced.
+  const listId = `cp-${Math.random().toString(36).slice(2, 9)}`;
+  const hidden = h('input', { type: 'hidden', name });
+  const text = h('input', {
+    type: 'text', placeholder: 'Search name, code, date of birth or exact phone…', autocomplete: 'off', required: !!f.required,
+    role: 'combobox', 'aria-expanded': 'false', 'aria-controls': listId, 'aria-autocomplete': 'list',
+  });
+  // The results sit in the flow of the form, pushing the fields under them down while open, rather than
+  // floating over those fields: on a phone the list used to cover the next field (a task's due date), so
+  // a tap on that field's date picker was swallowed — it either did nothing or chose whichever client
+  // happened to be under the finger.
+  const list = h('div', { class: 'card tight hidden client-picker-list', id: listId, role: 'listbox', style: { maxHeight: '220px', overflow: 'auto', marginTop: '.25rem' } });
+  // What the search found when it found nothing ("No matches…") is said beside the list, not inside it: a
+  // listbox holds options only.
+  const msg = h('div', { class: 'card tight hidden client-picker-list muted small', 'data-picker-message': '1', style: { marginTop: '.25rem' } });
+  const wrap = h('div', { class: 'client-picker' }, text, hidden, list, msg);
+  wrap.searchInput = text;
+  // Set from outside (a restored draft, "Start over"): the box shows who it now is, not who it was before.
+  Object.defineProperty(wrap, 'value', { get: () => hidden.value, set: (v) => {
+    const next = v || ''; if (next === hidden.value) return; hidden.value = next;
+    if (!next) { text.value = ''; return; }
+    text.value = '';
+    get(`/api/clients/${next}`, { quiet: true }).then(r => { if (hidden.value === next) text.value = `${r.client.display_name} (${r.client.client_code})`; }).catch(() => {});
+  } });
+  hidden.value = value || '';
+  if (value && f.display) text.value = f.display;
+  else if (value) get(`/api/clients/${value}`, { quiet: true }).then(r => { text.value = `${r.client.display_name} (${r.client.client_code})`; }).catch(() => {});
+
+  let timer; let options = []; let active = -1; let seq = 0;
+  const openList = (open) => { if (!open) msg.classList.add('hidden'); list.classList.toggle('hidden', !open || !options.length); text.setAttribute('aria-expanded', String(open && options.length > 0)); if (!open) { active = -1; text.removeAttribute('aria-activedescendant'); } };
+  const highlight = (i) => {
+    options.forEach((o, n) => { o.el.classList.toggle('active', n === i); o.el.setAttribute('aria-selected', String(n === i)); });
+    active = i;
+    if (options[i]) { text.setAttribute('aria-activedescendant', options[i].el.id); options[i].el.scrollIntoView({ block: 'nearest' }); }
+  };
+  const choose = (c) => {
+    // A search still in flight (typed just before choosing) must not reopen the list over the next field.
+    clearTimeout(timer); seq++;
+    hidden.value = c.id; text.value = `${c.display_name} (${c.client_code})`;
+    openList(false); wrap.dispatchEvent(new Event('change'));
+    announce(`${c.display_name} selected`);
+  };
+
+  // Nothing typed lists nobody: the list of every client used to open on focus and stay open under the form.
+  text.addEventListener('input', () => { hidden.value = ''; clearTimeout(timer); if (!text.value.trim()) { seq++; openList(false); return; } timer = setTimeout(search, 250); });
+  text.addEventListener('focus', () => { if (!hidden.value && text.value.trim()) search(); });
+  // The open list is positioned over whatever sits below the field — on a phone that is the next field
+  // down (a task's due date, for one), and it kept intercepting taps meant for that field's date picker
+  // because the "click outside" handler saw those taps as inside this picker. Close it when focus
+  // leaves, deferred so a tap on one of its options (which takes focus first) still chooses it.
+  text.addEventListener('blur', () => { setTimeout(() => { if (!wrap.contains(document.activeElement)) openList(false); }, 120); });
+  text.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (list.classList.contains('hidden')) { search(); return; }
+      e.preventDefault();
+      if (!options.length) return;
+      highlight(e.key === 'ArrowDown' ? (active + 1) % options.length : (active - 1 + options.length) % options.length);
+    } else if (e.key === 'Enter') {
+      if (active >= 0 && options[active]) { e.preventDefault(); choose(options[active].client); }
+    } else if (e.key === 'Escape') {
+      if (!list.classList.contains('hidden')) { e.preventDefault(); openList(false); }
+    }
+  });
+  document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) openList(false); });
+
+  async function search() {
+    const q = text.value.trim();
+    const mine = ++seq;
+    if (!q) {
+      clear(list); options = []; active = -1;
+      msg.textContent = 'Type a name, client code, date of birth or phone number.'; msg.classList.remove('hidden');
+      list.classList.add('hidden'); text.setAttribute('aria-expanded', 'false');
+      return;
+    }
+    try {
+      const r = await get(`/api/clients?limit=15&status=all&q=${encodeURIComponent(q)}`);
+      // An answer that arrives after the person chose someone, typed on, or left the field is not shown.
+      if (mine !== seq || document.activeElement !== text) return;
+      clear(list); options = []; active = -1; msg.classList.add('hidden');
+      if (!r.clients.length) {
+        msg.textContent = q ? 'No matches. Try a first, last or preferred name, the full phone number, date of birth or client code.' : 'Type to search';
+        msg.classList.remove('hidden');
+        announce('No matching clients');
+      } else {
+        r.clients.forEach((c, i) => {
+          const el = h('div', {
+            class: 'list-item', id: `${listId}-o${i}`, role: 'option', 'aria-selected': 'false', tabindex: '-1',
+            style: { cursor: 'pointer' },
+            onClick: () => choose(c),
+            // Keep focus on the search box while an option is pressed, so the blur-close above never
+            // hides the list between the press and the click that chooses.
+            onMousedown: (e) => e.preventDefault(),
+            onMousemove: () => highlight(i),
+          }, c.display_name, ' ', h('span', { class: 'muted small' }, c.client_code, ' · ', fmt.label(c.status)));
+          options.push({ el, client: c });
+          list.append(el);
+        });
+        announce(`${r.clients.length} matching client${r.clients.length === 1 ? '' : 's'}`);
+      }
+      openList(true);
+    } catch { /* a failed lookup leaves the previous list alone */ }
+  }
+  return wrap;
+}
+
+// A list's filter bar. On a phone it folds behind a "Filters" button (a <details>), so the list's first rows are on
+// the first screen rather than below five stacked controls (r8 L5); `on` is how many filters are in use, said on
+// the button so a filtered list never looks like the whole of it. On a wider screen it is the bar as before.
+export function filterBar(on, ...controls) {
+  const phone = typeof matchMedia === 'function' && matchMedia('(max-width: 640px)').matches;
+  return h('details', { class: 'filters-box', open: !phone, 'data-filters': '1' }, h('summary', { class: 'btn sm' }, on ? `Filters (${on} on)` : 'Filters'), h('div', { class: 'filters' }, controls));
+}
+// A column's cardLabel (optional) is what labels its cell on a phone, where each row is a card: a short name when
+// the heading is long (the county view's program columns).
+// compact: { primary(r), secondary(r), onTap(r) } -- a two-line row per record on a phone instead of every
+// column stacked as label/value pairs. The full table is still rendered for wider screens; CSS picks one.
+export function table(columns, rows, { onRow, empty = 'No records', wrap = true, rowLabel, compact } = {}) {
+  if (!rows.length) return h('div', { class: 'empty' }, empty);
+  // A clickable row opens on a click anywhere in it, and from the keyboard through a real button: the first
+  // cell's content (a name, a date) is that button, so Tab reaches one control per row and a screen reader
+  // hears a button named by what the row shows. The row itself stays a table row, so its cells are still read
+  // with their column headings (WCAG 1.3.1, 2.1.1, 4.1.2). A cell that already holds a control of its own is
+  // passed over for the next one; a row with no such cell gets an "Open" button at its end.
+  // (rowLabel is accepted but not applied: a row's name is its own visible text, WCAG 2.5.3.)
+  const cell = (c, r) => (c.render ? c.render(r) : (r[c.key] ?? '—'));
+  const rowFor = (r) => {
+    const cells = columns.map(c => h('td', { class: c.num ? 'num' : '', 'data-label': c.cardLabel ?? c.label ?? '' }, cell(c, r)));
+    if (!onRow) return h('tr', {}, cells);
+    const open = (e) => { e.stopPropagation(); onRow(r); };
+    // Text a screen reader hears: a decorative initial (aria-hidden) is not a name, and a button made of it
+    // alone had none (a resource with no picture, in the directory's list view).
+    const heard = (x) => { const c = x.cloneNode(true); c.querySelectorAll('[aria-hidden="true"]').forEach(n => n.remove()); return c.textContent.trim(); };
+    const td = cells.find(x => heard(x) && !x.querySelector(FOCUSABLE));
+    if (td) { const b = h('button', { type: 'button', class: 'row-open', onClick: open }); b.append(...td.childNodes); td.append(b); }
+    else cells[cells.length - 1].append(h('button', { type: 'button', class: 'btn sm ghost row-open-extra', onClick: open }, 'Open'));
+    return h('tr', { class: 'click', onClick: () => onRow(r) }, cells);
+  };
+  // A column with no heading (the Edit/Delete buttons, a select box) still has one for a screen reader.
+  const t = h('table', {}, h('thead', {}, h('tr', {}, columns.map(c => h('th', { class: c.num ? 'num' : '', scope: 'col' }, c.label || h('span', { class: 'sr-only' }, c.srLabel || 'Actions'))))),
+    h('tbody', {}, rows.map(rowFor)));
+  if (compact && wrap) {
+    const tap = compact.onTap || onRow;
+    const list = h('div', { class: 'compact-list' }, rows.map(r => {
+      const primary = h('div', { class: 'primary' }, compact.primary(r));
+      const secondary = compact.secondary ? h('div', { class: 'secondary small muted' }, compact.secondary(r)) : null;
+      if (!tap) return h('div', { class: 'compact-row' }, primary, secondary);
+      // A row that holds a control of its own (a to-do's done box) cannot also be a button — a control inside
+      // a control (WCAG 4.1.2). The row still opens on a tap; the keyboard gets its own "Open" button.
+      if (primary.querySelector(FOCUSABLE) || (secondary && secondary.querySelector(FOCUSABLE))) {
+        // Its name keeps the row's parts apart: "Open: Call about detox bed (Urgent)", not the title and the
+        // priority badge run together ("Open Call about detox bedUrgent", 1.23.1).
+        const [first, ...rest] = [...primary.childNodes].map(n => n.textContent.trim()).filter(Boolean);
+        const name = `Open: ${first || ''}${rest.length ? ` (${rest.join(', ')})` : ''}`;
+        primary.append(h('button', { type: 'button', class: 'btn ghost sm compact-open', onClick: (e) => { e.stopPropagation(); tap(r); } }, h('span', { class: 'sr-only' }, name), h('span', { 'aria-hidden': 'true' }, '›')));
+        return h('div', { class: 'compact-row click', onClick: () => tap(r) }, primary, secondary);
+      }
+      return h('div', { class: 'compact-row click', tabindex: '0', role: 'button', onClick: () => tap(r), onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tap(r); } } }, primary, secondary);
+    }));
+    return h('div', { class: 'table-wrap has-compact' }, t, list);
+  }
+  // Unwrapped (a small table inside a card) still scrolls inside its own frame when it is wider than a
+  // phone, rather than pushing the page sideways or being cut off (WCAG 1.4.10).
+  return wrap ? h('div', { class: 'table-wrap' }, t) : h('div', { class: 'table-scroll' }, t);
+}
+
+/**
+ * A list that shows its first page and a "Load more" button while there are more rows on the server.
+ * The list pages used to ask for 300 (the client list 200) and stop there, with nothing to say so.
+ *   first: the first page's response ({ rows|clients, total }); url: the same request without limit/offset;
+ *   key: the array in the response; limit: rows per further page; render(rows): the table (or anything)
+ *   for everything loaded so far; summary(rows, total): optional line above it that updates as rows arrive.
+ * Rows already shown are not repeated if something was added in between (offset paging shifts by one).
+ */
+export function pagedList({ first, url, key = 'rows', limit = 200, render, summary }) {
+  let rows = (first[key] || []).slice(); let total = Number(first.total ?? rows.length); let offset = rows.length;
+  const box = h('div', { 'data-paged-list': '1' });
+  const draw = (focusFrom) => {
+    clear(box);
+    if (summary) box.append(summary(rows, total));
+    box.append(render(rows));
+    if (rows.length < total) {
+      const btn = h('button', { class: 'btn', type: 'button', 'data-load-more': '1', onClick: () => more(btn) }, `Load more (${fmt.num(Math.min(limit, total - rows.length))} of ${fmt.num(total - rows.length)} remaining)`);
+      box.append(h('div', { class: 'row mt load-more' }, h('span', { class: 'muted small', 'data-shown': String(rows.length) }, `Showing ${fmt.num(rows.length)} of ${fmt.num(total)}`), btn));
+    }
+    // Keep a keyboard user where they were: on the first row that just arrived.
+    if (focusFrom !== undefined) { const r = box.querySelectorAll('tbody tr')[focusFrom]; const b = r && r.querySelector('.row-open, .row-open-extra'); if (b) b.focus({ preventScroll: true }); else if (r) { if (!r.hasAttribute('tabindex')) r.setAttribute('tabindex', '-1'); r.focus({ preventScroll: true }); } }
+  };
+  const more = async (btn) => {
+    btn.disabled = true; btn.textContent = 'Loading…';
+    try {
+      const d = await get(`${url}${url.includes('?') ? '&' : '?'}limit=${limit}&offset=${offset}`);
+      offset += (d[key] || []).length;
+      const seen = new Set(rows.map(r => r.id));
+      const from = rows.length;
+      rows = rows.concat((d[key] || []).filter(r => !r.id || !seen.has(r.id)));
+      total = Number(d.total ?? total);
+      // Nothing new came back (rows were deleted meanwhile): stop offering more rather than loop.
+      if (!(d[key] || []).length || offset >= total) total = rows.length;
+      draw(from);
+    } catch (e) { btn.disabled = false; btn.textContent = 'Load more'; toast(e.message || 'Could not load more', 'error'); }
+  };
+  draw();
+  return box;
+}
+
+// A tab strip that folds the tabs that do not fit into a "More ▾" menu instead of scrolling them off the
+// edge with nothing to say so. Re-measured on resize; the active tab is always kept in view.
+// `core`: the keys of the sections used every day. On a phone (600px or narrower) only those — and the
+// current section — stay in the strip, whatever else would fit; the rest are under More.
+// Each tab is its own address (#/client/…/notes), so the strip is navigation, not an ARIA tab widget: a
+// labelled <nav> of buttons, the current one marked aria-current="page" (WCAG 1.3.1, 4.1.2). role=tablist
+// promised arrow-key behaviour and tab panels that were never there, and could not hold the More button.
+export function tabStrip(tabs, active, onPick, { label = 'Sections', core = null } = {}) {
+  const strip = h('nav', { class: 'tabs managed', 'aria-label': label });
+  const buttons = tabs.map(([k, text]) => h('button', { class: k === active ? 'active' : '', type: 'button', 'aria-current': k === active ? 'page' : null, 'data-tab': k, onClick: () => onPick(k) }, text));
+  const menu = h('div', { class: 'tabs-menu hidden', role: 'menu' });
+  const moreBtn = h('button', { class: 'tabs-more', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false' });
+  const moreText = (n) => { clear(moreBtn).append(n === undefined ? 'More' : `More (${n})`, h('span', { 'aria-hidden': 'true' }, ' ▾')); };
+  moreText();
+  const wrap = h('div', { class: 'tabs-more-wrap' }, moreBtn, menu);
+  strip.append(...buttons, wrap);
+  const setOpen = (open) => { menu.classList.toggle('hidden', !open); moreBtn.setAttribute('aria-expanded', String(open)); if (open) (menu.querySelector('button.active') || menu.querySelector('button'))?.focus(); };
+  moreBtn.addEventListener('click', () => setOpen(menu.classList.contains('hidden')));
+  moreBtn.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); } });
+  menu.addEventListener('keydown', (e) => {
+    const items = [...menu.querySelectorAll('button')]; const i = items.indexOf(document.activeElement);
+    if (e.key === 'Escape') { e.preventDefault(); setOpen(false); moreBtn.focus(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length]?.focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
+  });
+  const onDoc = (e) => { if (!strip.isConnected) { document.removeEventListener('click', onDoc); return; } if (!wrap.contains(e.target)) setOpen(false); };
+  document.addEventListener('click', onDoc);
+  function layout() {
+    for (const b of buttons) { b.hidden = false; strip.insertBefore(b, wrap); }
+    clear(menu); wrap.hidden = false; moreText(buttons.length); // measured at its widest
+    const avail = strip.clientWidth; if (!avail) return;
+    // Everyday sections named (`core`): those (and the current one) stay, in order, on every width;
+    // everything else is under More. On a phone they wrap onto a second row rather than being measured out;
+    // on a wider screen that is somehow too narrow for them, the measuring below still applies.
+    const phone = matchMedia('(max-width: 600px)').matches;
+    strip.classList.toggle('core-wrap', !!core && phone);
+    if (core) {
+      const keep = new Set(core);
+      const overflow = buttons.map((_, i) => i).filter(i => !keep.has(tabs[i][0]) && tabs[i][0] !== active);
+      if (!overflow.length) { wrap.hidden = true; setOpen(false); return; }
+      for (const i of overflow) { buttons[i].hidden = true; menu.append(menuItem(i)); }
+      moreText(overflow.length);
+      const shown = buttons.filter(b => !b.hidden);
+      if (phone || shown.reduce((a, b) => a + b.offsetWidth + 4, 0) <= avail - (wrap.offsetWidth + 8)) return;
+      for (const b of buttons) b.hidden = false; clear(menu);
+    }
+    const widths = buttons.map(b => b.offsetWidth + 4);
+    if (widths.reduce((a, b) => a + b, 0) <= avail) { wrap.hidden = true; setOpen(false); return; }
+    const limit = avail - (wrap.offsetWidth + 8);
+    let used = 0; const overflow = [];
+    buttons.forEach((b, i) => { if (!overflow.length && used + widths[i] <= limit) used += widths[i]; else overflow.push(i); });
+    const activeIdx = buttons.findIndex(b => b.classList.contains('active'));
+    // The active tab, when it would be under More, takes the place of the last one that fits. It is already
+    // after every visible tab in the strip, so the strip still reads in order. (It used to be moved before
+    // More whether or not it had been swapped, so Overview, the first tab, was shown last, after Forms.)
+    if (overflow.includes(activeIdx) && overflow[0] > 0) { overflow[overflow.indexOf(activeIdx)] = overflow[0] - 1; }
+    // The swapped-in tab can be wider than the one it replaced (at 200% text "Assistance $" is), so check the
+    // row again and move tabs before it under More until it fits: the strip must never run past the screen
+    // (WCAG 1.4.10 reflow).
+    const shownWidth = () => widths.reduce((a, w, i) => a + (overflow.includes(i) ? 0 : w), 0);
+    while (shownWidth() > limit) {
+      const drop = buttons.map((_, i) => i).filter(i => !overflow.includes(i) && i !== activeIdx).pop();
+      if (drop === undefined) break;
+      overflow.push(drop);
+    }
+    for (const i of overflow.sort((a, b) => a - b)) { buttons[i].hidden = true; menu.append(menuItem(i)); }
+    moreText(overflow.length);
+  }
+  function menuItem(i) {
+    const b = buttons[i];
+    return h('button', { role: 'menuitem', type: 'button', class: b.classList.contains('active') ? 'active' : '', 'aria-current': b.classList.contains('active') ? 'page' : null, onClick: () => { setOpen(false); onPick(tabs[i][0]); } }, tabs[i][1]);
+  }
+  // Laid out on the next frame, not inside the observer's callback: hiding tabs there resizes the strip it
+  // observes, which browsers report as a "ResizeObserver loop" error (WebKit as a page error).
+  let queued = false;
+  const layoutSoon = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; layout(); }); };
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(layoutSoon).observe(strip);
+  else requestAnimationFrame(layout);
+  strip.relayout = layout;
+  return strip;
+}
+/**
+ * A simple row of section buttons for a page whose sections are addresses (Settings, Funding, Supervision).
+ * items: [[key, label, extraAttrs?]]; the current one is aria-current="page", not only a colour.
+ */
+export function pageTabs(items, active, onPick, { label = 'Sections', wrap: wrapRows = false } = {}) {
+  const strip = h('nav', { class: `tabs${wrapRows ? ' wrapped' : ''}`, 'aria-label': label }, items.filter(Boolean).map(([k, text, attrs]) => h('button', { ...(attrs || {}), type: 'button', class: k === active ? 'active' : '', 'aria-current': k === active ? 'page' : null, 'data-tab': k, onClick: () => onPick(k) }, text)));
+  // `wrap` (Settings, 1.15.3): a long strip wraps onto a second row instead of scrolling, so at 200% zoom
+  // (640 CSS px) no tab sits past the right-hand edge where nothing shows it is there (WCAG 1.4.10).
+  if (wrapRows) return strip;
+  // A strip wider than the screen scrolls sideways. The faded edge alone did not say so: "Syringe se…" read
+  // as a cut-off label, not as more tabs. A chevron shows on the side that has more, and a tap on it scrolls
+  // that way (pointer only: Tab already scrolls each tab into view, so it is hidden from assistive tech).
+  const cue = (dir) => h('span', { class: `tabs-cue ${dir}`, 'aria-hidden': 'true', 'data-tabs-cue': dir, onClick: () => strip.scrollBy({ left: (dir === 'right' ? 1 : -1) * strip.clientWidth * 0.7, behavior: 'smooth' }) }, dir === 'right' ? '›' : '‹');
+  const right = cue('right'); const left = cue('left');
+  const wrap = h('div', { class: 'tabs-scroll' }, left, strip, right);
+  const sync = () => {
+    const over = strip.scrollWidth - strip.clientWidth > 2;
+    wrap.classList.toggle('more-right', over && strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 2);
+    wrap.classList.toggle('more-left', over && strip.scrollLeft > 2);
+  };
+  strip.addEventListener('scroll', sync, { passive: true });
+  if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => requestAnimationFrame(sync)).observe(strip); else requestAnimationFrame(sync);
+  // The current tab starts in view, not scrolled off the right-hand edge.
+  requestAnimationFrame(() => { const a = strip.querySelector('button.active'); if (a && a.offsetLeft + a.offsetWidth > strip.clientWidth) strip.scrollLeft = a.offsetLeft - 16; sync(); });
+  return wrap;
+}
+export function bars(items, { max, valueKey = 'n', labelKey = 'k', format = fmt.num, link = null, list = null } = {}) {
+  // A value can be a string such as "<11" (a suppressed small cell in the funder report): it draws no bar and
+  // is printed as sent.
+  const numOf = (i) => { const n = Number(i[valueKey]); return Number.isFinite(n) ? n : 0; };
+  const show = (v) => (Number.isFinite(Number(v)) ? format(v) : String(v ?? ''));
+  const m = max || Math.max(1, ...items.map(numOf));
+  if (!items.length) return h('div', { class: 'muted small' }, 'No data');
+  return h('div', {}, items.map(i => { const href = link && link(i) && reachable(link(i)) ? link(i) : null; const row = [h('div', { class: 'lbl', title: fmt.label(i[labelKey], list) }, fmt.label(i[labelKey], list)), h('div', { class: 'trk' }, h('div', { class: 'fil', style: { width: `${(numOf(i) / m) * 100}%` } })), h('div', { class: 'n' }, show(i[valueKey]))];
+    return href ? h('a', { class: 'bar link', href: href.startsWith('#') ? href : '#/' + href, title: 'Show these' }, row) : h('div', { class: 'bar' }, row); }));
+}
+// A sparkline is a picture of numbers: it carries them as its text alternative (WCAG 1.1.1), so a screen
+// reader hears the series and someone who cannot tell the bar heights apart can still get the values.
+export function sparkline(values, { label = 'Trend', unit = '' } = {}) {
+  const m = Math.max(1, ...values);
+  const text = values.length ? `${label}: ${values.join(', ')}${unit ? ' ' + unit : ''} (oldest first; highest ${Math.max(...values)})` : `${label}: no data`;
+  return h('div', { class: 'spark', role: 'img', 'aria-label': text, title: text }, values.map(v => h('div', { style: { height: `${(v / m) * 100}%` } })));
+}
+/**
+ * Emphasis that is not colour alone (WCAG 1.4.1): a value shown in red or amber because it needs attention
+ * also carries a symbol and says why — visibly (⚠ and a tooltip) and to a screen reader. `on` false renders
+ * the content plain. Use this, not an inline `color: var(--danger)`, for any at-risk value.
+ */
+export function flag(content, on, why, kind = 'danger') {
+  if (!on) return h('span', {}, content);
+  return h('span', { class: `flag ${kind}`, title: why }, h('span', { 'aria-hidden': 'true' }, '⚠\u00a0'), content, h('span', { class: 'sr-only' }, ` (${why})`));
+}
+// A number or bar on Home links to the page it counts only for someone who may open that page: for a
+// read-only oversight account every "Active clients ›" used to land on "Not available for your role".
+function reachable(href) {
+  const name = String(href).replace(/^#?\/?/, '').split(/[/?]/)[0];
+  const item = NAV.find(n => n.name === name);
+  return !item || !item.perm || canAny(item.perm);
+}
+export function stat(label, value, kind = '', href = null, title = 'Open') {
+  // A red or amber figure also carries ⚠ (and says "needs attention" to a screen reader): WCAG 1.4.1.
+  const alert = kind === 'danger' || kind === 'warn';
+  const body = [h('div', { class: 'v' }, alert ? h('span', { 'aria-hidden': 'true', class: 'stat-flag' }, '⚠ ') : null, value, alert ? h('span', { class: 'sr-only' }, ' (needs attention)') : null), h('div', { class: 'l' }, label)];
+  return href && reachable(href) ? h('a', { class: `card stat link ${kind}`, href: href.startsWith('#') ? href : '#/' + href, title }, body) : h('div', { class: `card stat ${kind}` }, body);
+}
+export function kv(pairs) { return h('dl', { class: 'kv' }, pairs.filter(p => p).map(([k, v]) => [h('dt', {}, k), h('dd', {}, v ?? '—')])); }
+
+// ---- Whose record is this ----
+// Navigators and clinicians see every client and add their own work to any of them, but a visit, call,
+// referral, overdose report, to-do or draft note is changed or deleted only by the person it belongs to, or by
+// someone holding records:manage-others (supervisors and administrators; server/rules/*). Where Edit and Delete
+// are hidden, these say why, in the same words on every screen.
+/** May the signed-in person change a record owned by any of `ids`? */
+export const mayChange = (...ids) => !!state.user && (ids.some(x => x && x === state.user.id) || can('records:manage-others'));
+/** The actions cell of a row whose Edit and Delete are hidden. `short`: the row's Worker column already says whose it is. */
+export const viewOnly = (name, { verb = 'Recorded by', more = '', short = false } = {}) =>
+  h('span', { class: 'small muted', 'data-view-only': '1' }, short ? `View only${more}` : `${verb} ${name || 'another worker'} — view only${more}`);
+/** At the top of a record opened read-only: who it belongs to, and who can change it. */
+export const ownedNotice = (name, { verb = 'Recorded by', noun = '' } = {}) =>
+  h('p', { class: 'banner info small', 'data-owned-notice': '1' }, `${verb} ${name || 'another worker'}. Only they or a supervisor or administrator can change it${noun ? `; you can add your own ${noun} for this client` : ''}.`);
+
+// ---- What each role is for ----
+// One summary per role, used wherever a role is chosen (New and Edit user, approving an access request, the
+// device's first account) and at the top of the Permissions dialog: what it sees, what it records, and whether
+// it can change other workers' records. Client records themselves are shared: anyone who sees a client may update
+// it, and the primary worker is told. The permissions themselves are server/auth.js PERMS.
+export const ROLE_SUMMARY = {
+  navigator: 'Navigator — sees and updates every client; reads clinical notes except SUD counseling notes · records visits, calls, referrals, admin notes and spending · changes only their own work',
+  clinician: 'Clinician — sees and updates every client, and sees the budget · records visits, calls, referrals, clinical and admin notes (no spending) · changes only their own work',
+  supervisor: 'Supervisor — sees every client and all notes · countersigns, approves time and spending · can change other workers\' records',
+  finance: 'Finance — budget, time and aggregate reports; client codes only, no client records',
+  readonly: 'Read-only — reports and de-identified lists; cannot open client records',
+  admin: 'Administrator — users, settings and audit; every client, no clinical notes · can change other workers\' records',
+};
+/** The role choices for a select, in the usual order (or only `only`): the name alone, as a closed select cut the
+ *  summary off ("Navigator — sees and updat"); roleSummary() shows the chosen one's in full under it. */
+export const roleOptions = (only = Object.keys(ROLE_SUMMARY)) => only.map(value => ({ value, label: ROLE_SUMMARY[value].split(' — ')[0] }));
+/** Under a form's role select: the chosen role's whole summary, kept in step with the choice and read with the select. */
+export function roleSummary(f, name = 'role') {
+  const sel = f.inputs && f.inputs[name]; if (!sel) return f;
+  const id = `${sel.id}-role`;
+  const box = h('div', { class: 'help', id, 'data-role-summary': '1' });
+  const paint = () => { box.textContent = ROLE_SUMMARY[sel.value] || 'Choose a role to see what it can open and change.'; };
+  sel.after(box); sel.setAttribute('aria-describedby', `${id} ${sel.getAttribute('aria-describedby') || ''}`.trim());
+  sel.addEventListener('change', paint); paint();
+  return f;
+}
+export function pageHead(title, ...actions) {
+  const r = parseHash(); const item = NAV.find(n => n.name === r.name);
+  return h('div', { class: 'topbar' }, h('div', { class: 'row', style: { gap: '.4rem' } }, h('h1', {}, title), item?.help ? helpTip(typeof item.help === 'function' ? item.help(navContext()) : item.help) : null), h('div', { class: 'row' }, actions));
+}
+// Small "?" that reveals a plain-language explanation
+export function helpTip(text) {
+  // A disclosure: the button says whether the explanation is showing (aria-expanded) and Escape puts it away.
+  const id = 'help-' + Math.random().toString(36).slice(2, 9);
+  const box = h('div', { class: 'helptip hidden', id, role: 'note' }, text);
+  const show = (on) => { box.classList.toggle('hidden', !on); btn.setAttribute('aria-expanded', String(on)); };
+  const btn = h('button', { class: 'help-btn', type: 'button', 'aria-label': 'What is this?', 'aria-expanded': 'false', 'aria-controls': id, onClick: () => show(box.classList.contains('hidden')) }, '?');
+  const wrap = h('span', { class: 'help-wrap', onKeydown: (e) => { if (e.key === 'Escape' && !box.classList.contains('hidden')) { e.stopPropagation(); show(false); btn.focus(); } } }, btn, box);
+  return wrap;
+}
+// Empty state with one obvious next step
+// The accessibility statement (public/accessibility.html; docs/accessibility/STATEMENT.md): how SUDS meets
+// WCAG 2.1 AA, what does not yet, and how to report a barrier. Linked from every screen's footer.
+// Beside it (1.24.0), the page for organizations evaluating SUDS (public/procurement.html): buyer guides, the
+// security questionnaire, the BAA/QSOA templates and how to reach the maintainer. Neither needs a session.
+export function accessibilityLink() { return h('p', { class: 'small center a11y-link' }, h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility'), ' · ', procurementLink()); }
+export function procurementLink() { return h('a', { href: 'procurement.html', 'data-procurement-link': '1' }, 'Security & procurement'); }
+// `level`: when the empty state is the whole page (Not found, Not available), its title is that page's heading.
+export function emptyState(title, text, action, { level = 0 } = {}) { return h('div', { class: 'empty-state' }, h(level ? `h${level}` : 'div', { class: 'big' }, title), h('p', { class: 'muted' }, text), action || null); }
+
+// "+ Log" quick action: the one button non-technical users need most
+/** On a client's record, the client every "+ Log" form starts with (as the `n` shortcut and the record's own buttons do: r8 M3). */
+function hereClient() {
+  const r = parseHash(); const pc = state.pageClient;
+  return r.name === 'client' && pc && pc.id === r.id ? { clientId: pc.id, clientDisplay: pc.display, onDone: pc.onDone } : { onDone: render };
+}
+export function quickActions() {
+  // One verb per action, the same words as the buttons on the pages ("Log a visit", "Make a referral").
+  const items = [
+    can('interventions:write') ? ['✚', 'Log a visit', async () => (await import('./views/interventions.js')).openInterventionForm(null, hereClient())] : null,
+    // Street outreach: the phone screen for anonymous field contacts (supplies with − count +, no client).
+    can('interventions:write') ? ['🚶', 'Street outreach contact', () => nav('outreach')] : null,
+    // An overdose or a naloxone reversal is logged in the field as often as a visit is.
+    can('overdose:write') ? ['⛑', 'Overdose or reversal', async () => (await import('./views/overdose.js')).openOverdoseForm(null, hereClient())] : null,
+    can('calls:write') ? ['☎', 'Phone call', async () => (await import('./views/calls.js')).openCallForm(null, hereClient())] : null,
+    can('calls:write') ? ['💬', 'Text message', async () => (await import('./views/calls.js')).openCallForm(null, { ...hereClient(), method: 'text' })] : null,
+    (can('notes:admin:write') || can('notes:clinical:write')) ? ['✎', 'Note', async () => (await import('./views/notes.js')).openNoteForm(null, hereClient())] : null,
+    can('tasks:write') ? ['☑', 'To-do', async () => (await import('./views/tasks.js')).openTaskForm(null, hereClient())] : null,
+    // A referral is as much a part of a field contact as the visit itself; the form asks for the client.
+    can('referrals:write') ? ['⇢', 'Make a referral', async () => (await import('./views/referrals.js')).openReferralForm(null, hereClient())] : null,
+    // A referral TO the programme (1.24.0): the intake queue, on a database that keeps it (not a device synced with an office).
+    can('intake:write') && (!state.local || !!window.SUDS_STATIC_HOST) ? ['⇠', 'Incoming referral', async () => (await import('./views/incoming.js')).openIncomingForm(null)] : null,
+    can('time:write') ? ['◷', 'Time (meeting, travel, paperwork…)', async () => (await import('./views/time.js')).openTimeForm(null, hereClient())] : null,
+    can('clients:write') ? ['👤', 'New client', async () => (await import('./views/clients.js')).openClientForm(null)] : null,
+  ].filter(Boolean);
+  if (!items.length) return null;
+  return h('button', { class: 'btn primary quick', onClick: () => { const m = modal('What would you like to record?', h('div', { class: 'quick-list' }, items.map(([ico, label, fn]) => h('button', { class: 'btn', onClick: () => { m.close(); fn(); } }, h('span', { class: 'ico', 'aria-hidden': 'true' }, ico), label)))); } }, '+ Log');
+}
+// Global client search (top bar / mobile bar)
+export function globalSearch() {
+  // It finds programs in the resource directory too (1.15.3), so it says so where the reader may see them.
+  const what = can('resources:read') ? 'Find a client or resource' : 'Find a client';
+  const listId = `gsearch-results-${Math.random().toString(36).slice(2, 7)}`;
+  // A de-identified role finds clients by code only (the server matches nothing else for it: 1.15.4).
+  // On a phone the box is about 280 px wide: the long hint was cut off mid-word ("…name, c"), hiding what may be
+  // typed (1.22.0). There it says only what to type; the box's name is still "Find a client or resource".
+  const narrow = typeof matchMedia === 'function' && matchMedia('(max-width: 600px)').matches;
+  const input = h('input', { type: 'search', placeholder: can('clients:read') ? (narrow ? 'Name, code or exact phone…' : `${what}: name, code or exact phone…`) : 'Find a client by code…', 'aria-label': what, 'aria-controls': listId, 'data-global-search': '1' });
+  const list = h('div', { class: 'card tight hidden search-results', id: listId, role: 'region', 'aria-label': 'Search results' });
+  // What was found is said out loud (WCAG 4.1.3, 1.16.0): "3 clients and 1 resource found" or "No match", in a
+  // polite live region, and Down arrow moves into the results (Up and Down move through them, Escape returns).
+  const status = h('div', { class: 'sr-only', role: 'status', 'aria-live': 'polite', 'data-search-status': '1' });
+  // A search landmark (1.24.0): the top bar is not one, so axe's "region" rule found the box outside every landmark.
+  // There is one global search on the page, so the landmark needs no name of its own.
+  const wrap = h('div', { class: 'gsearch', role: 'search' }, input, list, status);
+  let t;
+  const hits = () => [...list.querySelectorAll('a.search-hit')];
+  input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(run, 400); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { nav(`clients?status=all&q=${encodeURIComponent(input.value.trim())}`); list.classList.add('hidden'); }
+    if (e.key === 'Escape') list.classList.add('hidden');
+    if (e.key === 'ArrowDown' && !list.classList.contains('hidden') && hits().length) { e.preventDefault(); hits()[0].focus(); }
+  });
+  list.addEventListener('keydown', (e) => {
+    const all = hits(); const i = all.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' && i >= 0) { e.preventDefault(); (all[i + 1] || all[i]).focus(); }
+    else if (e.key === 'ArrowUp' && i >= 0) { e.preventDefault(); (i ? all[i - 1] : input).focus(); }
+    else if (e.key === 'Escape') { e.preventDefault(); list.classList.add('hidden'); input.focus(); }
+  });
+  document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) list.classList.add('hidden'); });
+  // Ranked (1.15.3, server ?rank=1): exact name matches first, then clients this person worked with lately,
+  // then partial and sound-alike matches, and a sound-alike is left out when anything matched better. Each
+  // result says what it is — a client, or a program in the resource directory — in words, not just an icon.
+  const kindLabel = (kind) => h('span', { class: 'result-type small muted', 'data-result-type': kind }, h('span', { 'aria-hidden': 'true' }, kind === 'client' ? '👤 ' : '🏥 '), kind === 'client' ? 'Client' : 'Resource');
+  let seq = 0;
+  async function run() {
+    // Every search is a PHI read that is audited, so do not issue one for a single letter.
+    const q = input.value.trim(); const mine = ++seq;
+    if (q.length < 2) { list.classList.add('hidden'); status.textContent = ''; return; }
+    const nameLike = q.length >= 3 && !/^[\d\-() .+]+$/.test(q) && !/^[A-Z]+\d*-\d+(-D)?$/i.test(q);
+    try {
+      const [r, res] = await Promise.all([get(`/api/clients?limit=8&status=all&rank=1&q=${encodeURIComponent(q)}`, { quiet: true }),
+        nameLike && can('resources:read') ? get(`/api/resources?limit=4&q=${encodeURIComponent(q)}`, { quiet: true }).catch(() => null) : null]);
+      if (mine !== seq) return;
+      clear(list);
+      const programs = (res && res.rows) || [];
+      if (!r.clients.length && !programs.length) list.append(h('div', { class: 'muted small' }, 'No match. Try just the start of the last name, the full phone number, date of birth or client code.'));
+      for (const c of r.clients) list.append(h('a', { class: 'list-item search-hit', href: `#/client/${c.id}`, 'data-search-kind': 'client', onClick: () => list.classList.add('hidden') }, kindLabel('client'), ' ', h('b', {}, c.display_name), ' ', h('span', { class: 'muted small' }, c.client_code, ' · ', fmt.label(c.status))));
+      for (const x of programs) list.append(h('a', { class: 'list-item search-hit', href: `#/resource/${x.id}`, 'data-search-kind': 'resource', onClick: () => list.classList.add('hidden') }, kindLabel('resource'), ' ', h('b', {}, x.name), x.organization && x.organization !== x.name ? h('span', { class: 'muted small' }, ` · ${x.organization}`) : null));
+      list.classList.remove('hidden');
+      const n = (k, one, many) => (k ? `${k} ${k === 1 ? one : many}` : null);
+      const found = [n(r.clients.length, 'client', 'clients'), n(programs.length, 'resource', 'resources')].filter(Boolean).join(' and ');
+      status.textContent = found ? `${found} found. Press the down arrow to go through them.` : 'No match.';
+    } catch {}
+  }
+  return wrap;
+}
+// Reminders due within the hour, or overdue: a count in the header, refreshed while the app is open, and
+// (only if the person switched it on under Profile) a system notification when one comes due.
+// Polled every five minutes while the tab is visible, and again when it comes back into view or gets
+// focus: a tab left open overnight used to ask once a minute all night for an answer nobody was looking at.
+// Once a minute while the page is in view (the server writes an audit entry only when the answer changes), and
+// shortly after the tab comes back into view or gets focus, or anything is saved (dueSoon). The bell's panel
+// says how old the answer is and has Refresh.
+const DUE_POLL_MS = 60000;
+let dueSoonTimer = null;
+function dueSoon() { clearTimeout(dueSoonTimer); dueSoonTimer = setTimeout(() => { if (duePoll && state.user) duePoll(true); }, 1500); }
+let dueCache = { at: 0, data: null }; const notifiedDue = new Set(); let dueTimer; let duePoll = null; let dueListening = false;
+/** After a device sync brought down new to-dos and notices: the bell asks again now, not in a minute (r8 M2). */
+export function forgetDue() { dueCache = { at: 0, data: null }; if (duePoll && state.user) duePoll(true); }
+/** The header's reminder that two-step verification is owed, once its banner has been dismissed. */
+// On a copy that syncs with the office (1.22.0): whether this device's work has reached the office, in the header
+// on every page, not only on This device. "⇅ 3 to send" when changes are waiting, "Synced 2h ago" (or "Not synced
+// yet") otherwise; it opens This device, where Sync now is. A field worker logging contacts with no signal could
+// not tell, short of opening This device, whether anything was still on the phone. Read from the device's own
+// kernel (GET /api/local/sync/status): no request leaves the device to draw it. Not on SUDS on this device (the
+// static build has no office to send to).
+export function syncChip() {
+  if (!state.local || window.SUDS_STATIC_HOST || !state.user) return null;
+  const a = h('a', { class: 'btn ghost sm sync-chip', href: '#/sync', 'data-sync-chip': 'loading' }, h('span', { 'aria-hidden': 'true' }, '⇅ '), 'Sync');
+  get('/api/local/sync/status', { quiet: true, background: true }).then((st) => {
+    const n = Number(st && st.pending) || 0;
+    const when = st && st.last_sync_at ? `Synced ${fmt.ago(st.last_sync_at)}` : 'Not synced yet';
+    a.dataset.syncChip = n ? 'pending' : st && st.last_sync_at ? 'synced' : 'never';
+    a.classList.toggle('pending', n > 0);
+    // On a phone the short form ("⇅ 3", "⇅ ✓") leaves the search box its width; the words are still read out.
+    a.replaceChildren(h('span', { 'aria-hidden': 'true' }, '⇅ '), h('span', { class: 'sync-long' }, n ? `${n} to send` : when),
+      h('span', { class: 'sync-short', 'aria-hidden': 'true' }, n ? String(n) : st && st.last_sync_at ? '✓' : 'Sync'),
+      h('span', { class: 'sr-only' }, n ? ` — ${n} change${n === 1 ? '' : 's'} on this device not sent to the office yet. ${when}. Open This device to sync` : ' — open This device to sync'));
+  }, () => { a.remove(); });
+  return a;
+}
+export function mfaLink() {
+  if (!state.mfaDue || !prefs.get('mfa_banner_collapsed') || (state.user && state.user.mfa_enabled)) return null;
+  return h('a', { class: 'btn ghost sm mfa-link', href: '#/profile?mfa=1', 'data-mfa-link': '1', title: state.mfaDue.full },
+    h('span', { 'aria-hidden': 'true' }, '🔐 '), '2-step', h('span', { class: 'sr-only' }, ` verification: set it up ${state.mfaDue.when}`));
+}
+export function dueBell() {
+  if (!can('tasks:read') || (state.user && state.user.must_change_password)) return null;
+  // A button that opens a small panel (1.15.3): what is due, when the list was last asked for, and Refresh —
+  // the count could be five minutes old with nothing to say so. Opening the panel asks again if the answer is
+  // more than a minute old.
+  const panelId = `due-panel-${Math.random().toString(36).slice(2, 7)}`;
+  const count = h('span', { class: 'bell-count hidden', 'aria-hidden': 'true' });
+  const btn = h('button', { type: 'button', class: 'btn ghost bell', 'data-due-bell': '1', 'aria-label': 'To-dos due', 'aria-expanded': 'false', 'aria-controls': panelId, title: 'To-dos due within the hour, or overdue' }, h('span', { 'aria-hidden': 'true' }, '🔔'), count);
+  const list = h('div', { 'data-due-list': '1' });
+  const updated = h('span', { class: 'small muted', 'data-due-updated': '1' }, '');
+  // Not disabled while it asks: a disabled button drops the keyboard focus (and Escape with it) onto the page.
+  let refreshing = false;
+  const refreshBtn = h('button', { type: 'button', class: 'btn sm', 'data-due-refresh': '1', onClick: async () => { if (refreshing) return; refreshing = true; refreshBtn.setAttribute('aria-busy', 'true'); try { await poll(true); announce(`To-dos due: ${(dueCache.data && dueCache.data.rows.filter(t => t.notice !== true).length) || 0}. Updated just now.`); } finally { refreshing = false; refreshBtn.removeAttribute('aria-busy'); } } }, 'Refresh');
+  const panel = h('div', { class: 'card tight bell-panel hidden', id: panelId, role: 'region', 'aria-label': 'To-dos due', 'data-due-panel': '1' },
+    list,
+    h('div', { class: 'row bell-panel-foot' }, updated, refreshBtn, h('a', { href: '#/tasks?overdue=1', 'data-due-all': '1', onClick: () => setOpen(false) }, 'All to-dos due')));
+  const wrap = h('span', { class: 'bell-wrap' }, btn, panel);
+  const ago = () => { if (!dueCache.at) return 'Not updated yet'; const m = Math.floor((Date.now() - dueCache.at) / 60000); return `Updated ${m < 1 ? 'just now' : `${m} min ago`}`; };
+  let agoTimer = null;
+  const setOpen = (on) => {
+    panel.classList.toggle('hidden', !on); btn.setAttribute('aria-expanded', String(on));
+    clearInterval(agoTimer);
+    if (on) { updated.textContent = ago(); agoTimer = setInterval(() => { if (!wrap.isConnected) { clearInterval(agoTimer); return; } updated.textContent = ago(); }, 30000); poll(); }
+  };
+  btn.addEventListener('click', () => setOpen(panel.classList.contains('hidden')));
+  wrap.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.classList.contains('hidden')) { e.stopPropagation(); setOpen(false); btn.focus(); } });
+  document.addEventListener('click', (e) => { if (wrap.isConnected && !wrap.contains(e.target) && !panel.classList.contains('hidden')) setOpen(false); });
+  // Change notices (`notice: true`) are not work that is due: they have a group of their own, first, and stay out
+  // of the due count on the badge, which says "new" when they are all there is (r8 M2).
+  const item = (t, when) => h('div', { class: 'today-item', 'data-due-item': t.notice === true ? 'notice' : 'due' },
+    h('a', { href: `#/tasks?id=${t.id}`, onClick: () => setOpen(false) }, t.title, t.client_name && t.notice !== true ? h('span', { class: 'muted small' }, ` · ${t.client_name}`) : null), when);
+  const group = (heading, rows, attr) => [h('h2', { class: 'eyebrow', [attr]: '1' }, heading), ...rows];
+  const paint = (r) => {
+    const rows = r ? r.rows : []; const notices = rows.filter(t => t.notice === true); const due = rows.filter(t => t.notice !== true);
+    const n = due.length, k = notices.length;
+    count.textContent = n ? String(n) : 'new'; count.classList.toggle('hidden', !n && !k); btn.classList.toggle('has-due', !!(n || k));
+    const changes = k ? `${k} change${k === 1 ? '' : 's'} to your clients` : '';
+    btn.setAttribute('aria-label', [n ? `${n} to-do${n === 1 ? '' : 's'} due or overdue` : 'No to-dos due', changes].filter(Boolean).join(', '));
+    updated.textContent = ago();
+    list.replaceChildren(
+      ...(k ? group(`Changes to your clients · ${k}`, notices.slice(0, 5).map(t => item(t, badge('New', 'info'))), 'data-due-notices') : []),
+      ...group('Due within the hour, or overdue', n ? due.slice(0, 8).map(t => item(t, t.overdue ? badge('Overdue', 'danger') : h('span', { class: 'small muted' }, fmt.time(t.due_at) || 'today')))
+        : [h('p', { class: 'small muted' }, 'Nothing due in the next hour, and nothing overdue.')], 'data-due-heading'),
+      // The DOM's own replaceChildren and append write a null as the text "null"; h() skips one, they do not.
+      ...(n > 8 ? [h('p', { class: 'small muted' }, `and ${n - 8} more`)] : []));
+  };
+  async function poll(force = false) {
+    if (!state.user) return;
+    if (!force && dueCache.data && Date.now() - dueCache.at < 60000) { paint(dueCache.data); return; }
+    try { const r = await get('/api/tasks/due?within=60', { quiet: true, background: true }); dueCache = { at: Date.now(), data: r }; paint(r); maybeNotify(r.rows); } catch { /* offline or no permission: the badge just stays as it was */ }
+  }
+  clearInterval(dueTimer);
+  dueTimer = setInterval(() => { if (!document.body.contains(btn)) { clearInterval(dueTimer); return; } if (document.visibilityState === 'visible') poll(true); }, DUE_POLL_MS);
+  duePoll = poll;
+  if (!dueListening) {
+    dueListening = true;
+    // Back to the tab (or the window gets focus): ask again at once, whatever the age of the last answer; a
+    // burst of focus events is one request (dueSoon).
+    const wake = () => { if (document.visibilityState === 'visible' && duePoll) dueSoon(); };
+    document.addEventListener('visibilitychange', wake); window.addEventListener('focus', wake);
+  }
+  poll();
+  return wrap;
+}
+function maybeNotify(rows) {
+  if (!prefs.get('notify_due') || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  for (const t of rows) {
+    if (notifiedDue.has(t.id)) continue;
+    notifiedDue.add(t.id);
+    try {
+      // A notice's title names the client and whoever changed the record; a desktop or lock-screen notification is
+      // seen by whoever is near the screen, so it says only that a record changed, by the client's code (r9 N7).
+      const body = t.notice === true ? (t.client_code ? `Client ${t.client_code}: open SUDS to see what changed.` : 'Open SUDS to see what changed.') : t.title + (t.client_name ? ` · ${t.client_name}` : '');
+      const n = new Notification(t.notice === true ? 'A client\'s record changed' : t.overdue ? 'Overdue to-do' : 'To-do due now', { body, tag: `suds-task-${t.id}` });
+      n.onclick = () => { window.focus(); nav(`tasks?id=${t.id}`); n.close(); };
+    } catch { /* the browser refused; the badge still shows it */ }
+  }
+}
+// The welcome, shown once per person (tour_done, a synced preference) as a card at the top of Home. It was a
+// five-step dialog over the whole of Home on first sign-in, which stood between a new worker and logging
+// their first visit; now it is one card that sits beside everything else, put away with "Got it", and
+// shown again from Help at the foot of the menu (#/dashboard?welcome=1).
+// Only the tips this person can act on (r7 L8): Finance and Read-only open no client record and log nothing with + Log.
+const logsWork = () => ['interventions:write', 'overdose:write', 'calls:write', 'notes:admin:write', 'notes:clinical:write', 'tasks:write', 'referrals:write', 'time:write', 'clients:write'].some(p => can(p));
+export function welcomeSteps() {
+  const logs = logsWork();
+  return [
+    can('clients:read') ? ['Start with Home', 'Home shows what needs attention today: to-dos due, clients you have not contacted in a while, and drafts you started on another device.']
+      : ['Start with Home', 'Home shows the program\'s figures at a glance, and links to the pages your role uses.'],
+    logs ? ['Record work with + Log', 'The blue + Log button (top of the page, or bottom-right on a phone) logs a visit, call, note, to-do, referral or time in a few taps. A visit goes on your time sheet when you tick "Also log this as a time entry".'] : null,
+    can('clients:read') ? ['Find anyone fast', 'Use the search box at the top with a last name, phone number or client code. Open a client to see their story: the Overview ends with their recent activity, and the tabs hold their visits, notes, to-dos, consents and referrals.'] : null,
+    ['Look for the ? marks', 'Every page has a ? that explains it in plain language. You cannot break anything: records are never truly deleted and every change is logged.'],
+  ].filter(Boolean);
+}
+export function welcomeIntro() {
+  return `Hi ${greetingName(state.user.display_name, state.user.username)}. SUDS keeps your program's outreach, visits, naloxone and supplies, referrals and follow-ups in one place, with the privacy that substance-use records need. ${window.SUDS_STATIC_HOST
+      // The on-device app never syncs with anything (local/sync.js): promising "shows up on the other right
+      // away" there sent people looking for their entries on a second device.
+      ? 'Everything you record stays in this browser on this device, encrypted. Download a backup regularly from This device so a cleared browser or a lost phone does not take your records with it.'
+      : state.local ? 'This copy keeps your work on this device; it reaches the office SUDS when you sync.'
+      // Finance and Read-only add nothing there (r8 L9): what they read is up to date wherever they read it.
+      : logsWork() ? 'It works the same on your phone and your computer. Anything you add on one shows up on the other right away.'
+      : 'It works the same on your phone and your computer, and every page shows the figures as they are now.'}`;
+}
+// "Your first day" (1.15.3): three things to do first, for this person's role, inside the welcome card rather
+// than a second card beside it. Each has the button that does it; using the button, or ticking the box, marks
+// it done (prefs first_day, per person). The role homes themselves are unchanged. Steps the person's
+// permissions do not allow are left out. An administrator gets none: "Finish setting up" is theirs.
+const openVisit = async () => (await import('./views/interventions.js')).openInterventionForm(null, { onDone: render });
+const openNote = async () => (await import('./views/notes.js')).openNoteForm(null, { onDone: render });
+export function firstDaySteps(role = state.user && state.user.role) {
+  const S = {
+    navigator: [
+      ['visit', 'Log your first visit', 'Who you saw, what you did and what you handed out: most visits take a minute.', 'Log a visit', openVisit, 'interventions:write'],
+      ['find', 'Find a client', 'Search by last name, phone number or client code, at the top of every page (or press /).', 'Open the client list', '#/clients', 'clients:read'],
+      ['todos', 'Check your to-dos', 'Follow-ups and reminders, the overdue ones first. The bell at the top counts what is due.', 'Open To-dos', '#/tasks', 'tasks:read']],
+    clinician: [
+      // 1.16.0: a clinician sees every client (clients:all) unless the programme holds them to their caseload.
+      state.user && state.user.caseload_restricted
+        ? ['clients', 'Open your caseload', 'The clients you are assigned to, with who needs a check-in first.', 'Open the client list', '#/clients?sort=last_contact', 'clients:read']
+        : ['clients', 'Open the client list', 'Every client in the program, longest without contact first; filter by worker to see your own.', 'Open the client list', '#/clients?sort=last_contact', 'clients:read'],
+      ['note', 'Write a clinical note', 'SOAP, DAP or narrative, saved as a draft as you type; sign it when it is complete.', 'Write a note', openNote, 'notes:clinical:write'],
+      ['notes', 'Look over unsigned notes', 'Drafts you have not signed yet, and notes waiting for you.', 'Open Notes', '#/notes', 'notes:admin:read']],
+    supervisor: [
+      ['supervision', 'Open Supervision', 'Notes to countersign, drafts your team has not finished, and time to approve.', 'Open Supervision', '#/supervision', ['notes:cosign', 'time:approve', 'assignments:manage']],
+      ['clients', 'Look over the caseload', 'Every client, longest without contact first.', 'Open the client list', '#/clients?sort=last_contact', 'clients:read'],
+      ['funder', 'See the funder report', 'People served, admissions and discharges for a period, and which file to send.', 'Open the funder report', '#/funder', 'reports:read']],
+    finance: [
+      ['budget', 'Check funds and budget lines', 'Each grant, what is allocated and what has been spent against it.', 'Open Funding & spending', '#/budget', 'budget:read'],
+      ['time', 'Approve submitted time', 'Staff hours submitted for the period, to approve or return.', 'Open Supervision', '#/supervision', 'time:approve'],
+      ['funder', 'Run the funder report', 'The report for a month, quarter or fiscal year, and which file to send.', 'Open the funder report', '#/funder', 'reports:read']],
+    readonly: [
+      ['funder', 'Open the funder report', 'Counts of people and services for a period that has ended, never who they are.', 'Open the funder report', '#/funder', 'reports:read'],
+      ['reports', 'Look at the program reports', 'Summaries and monthly trends for any date range.', 'Open Reports', '#/reports', 'reports:read'],
+      ['resources', 'Browse the resource directory', 'The programs and partners clients are referred to.', 'Open the directory', '#/resources', 'resources:read']],
+  };
+  const any = (p) => (Array.isArray(p) ? p.some(x => can(x)) : can(p));
+  // An administrator already has Home's "Finish setting up" list, which is their first day; no second one.
+  if (role === 'admin') return [];
+  return (S[role] || S.navigator).filter(x => any(x[5]));
+}
+function firstDayList() {
+  const steps = firstDaySteps(); if (!steps.length) return null;
+  const done = () => prefs.get('first_day', null) || {};
+  const mark = (key, on) => prefs.set('first_day', { ...done(), [key]: !!on });
+  const count = h('span', { class: 'small muted', 'data-first-day-count': '1' });
+  const paintCount = () => { const n = steps.filter(([k]) => done()[k]).length; count.textContent = n === steps.length ? 'All done' : `${n} of ${steps.length} done`; };
+  const list = h('ol', { class: 'first-day' }, steps.map(([key, title, why, label, action]) => {
+    const id = `first-day-${key}`;
+    const box = h('input', { type: 'checkbox', id, 'data-first-day-step': key, checked: !!done()[key], onChange: (e) => { mark(key, e.target.checked); paintCount(); } });
+    const go = () => { mark(key, true); box.checked = true; paintCount(); };
+    return h('li', {}, h('div', { class: 'first-day-row' }, h('label', { class: 'check', for: id, style: { marginTop: 0 } }, box, h('b', {}, title)),
+      typeof action === 'string' ? h('a', { class: 'btn sm', href: action, 'data-first-day-go': key, onClick: go }, label) : h('button', { class: 'btn sm', type: 'button', 'data-first-day-go': key, onClick: () => { go(); action(); } }, label)),
+    h('div', { class: 'small muted' }, why));
+  }));
+  paintCount();
+  return h('div', { 'data-first-day': state.user.role }, h('div', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'baseline' } }, h('h3', {}, 'Your first day'), count), list);
+}
+/** Home's welcome card, or null once put away (unless asked for again from Help). */
+export function welcomeCard({ force = false, experienced = false } = {}) {
+  if (paused || (!force && prefs.get('tour_done'))) return null;
+  // Put away for good (prefs tour_done follows the person to every device), from Got it or the × in the corner (1.23.0:
+  // on a phone the card is below today's work, and the × is where people look to close a card).
+  const dismiss = () => {
+    prefs.set('tour_done', true);
+    // Focus goes to the page's heading, not to nothing, when the card it was in goes away.
+    const h1 = document.querySelector('.main h1'); card.remove();
+    if (h1) { if (!h1.hasAttribute('tabindex')) h1.setAttribute('tabindex', '-1'); try { h1.focus({ preventScroll: true }); } catch {} }
+  };
+  const card = h('section', { class: 'card mb welcome-card', 'data-welcome': '1', 'aria-labelledby': 'welcome-title' },
+    h('div', { class: 'card-head' }, h('h2', { id: 'welcome-title' }, 'Welcome to SUDS'),
+      h('button', { type: 'button', class: 'btn ghost sm welcome-close', 'data-welcome-dismiss': '1', 'aria-label': 'Dismiss the welcome', title: 'Dismiss the welcome', onClick: dismiss }, h('span', { 'aria-hidden': 'true' }, '×'))),
+    h('p', { 'data-welcome-intro': '1' }, welcomeIntro()),
+    experienced ? null : firstDayList(),
+    h('details', { class: 'welcome-tips' }, h('summary', {}, 'A few things that help'),
+      h('ul', { class: 'welcome-steps' }, welcomeSteps().map(([t, text]) => h('li', {}, h('b', {}, t), ' — ', text)))),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn primary', type: 'button', 'data-welcome-done': '1', onClick: dismiss }, 'Got it'),
+      h('span', { class: 'small muted' }, 'You can open this again from Help at the foot of the menu.')));
+  return card;
+}
+export async function downloadCsv(path) {
+  if (state.local && window.SUDS_LOCAL) { const r = await window.SUDS_LOCAL.handle('GET', path, undefined, {}); if (r.status >= 400) { toast('Download failed', 'error'); return; } const name = (/filename="([^"]+)"/.exec(r.headers['content-disposition'] || '') || [])[1] || 'download'; 
+    const blob = new Blob([r.body], { type: r.headers['content-type'] || 'application/octet-stream' }); const u = URL.createObjectURL(blob); const a = h('a', { href: u, download: name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 5000); return; }
+  const a = h('a', { href: path, download: '' }); document.body.append(a); a.click(); a.remove();
+}
+
+// A promise nobody caught (a click handler that awaited a request and did not try/catch) used to fail
+// silently: the button did nothing, the console said why, and nobody reads the console on a phone.
+window.addEventListener('unhandledrejection', (e) => {
+  const err = e.reason;
+  const msg = (err && (err.message || (typeof err === 'string' ? err : ''))) || 'Something went wrong. Try again.';
+  try { toast(msg, 'error'); } catch { /* the toast host is not on the page yet */ }
+});
+
+// ---------- routing ----------
+const routes = {};
+// `loading`: what the page says while it is being worked out, for the pages that take a moment (the reports):
+// a sentence saying what is happening, not a bare "Loading…".
+const loadingText = {};
+export function route(name, loader) { routes[name] = loader; }
+/**
+ * Pages whose module is loaded the first time one of them is opened (main.js). Until then each name has a
+ * stand-in that imports the module, whose own route() call replaces the stand-in, and then shows the page.
+ * A module that cannot be fetched is shown as the page's error; with no signal, as the plain offline page (offlinePage).
+ */
+export function lazyRoute(names, load) {
+  for (const name of names) {
+    if (routes[name]) continue;
+    const stub = async (r) => {
+      await load();
+      // The page's own progress text (loadingFor) is registered by the module just loaded: show it now, so
+      // the first opening says what it is working out too, not only later ones.
+      const boot = loadingText[name] && document.querySelector('#main > .boot');
+      if (boot) { let t = null; try { t = loadingText[name](r); } catch {} if (t) { boot.textContent = t; boot.setAttribute('role', 'status'); boot.dataset.loading = '1'; } }
+      if (routes[name] === stub) throw new Error(`The ${name} page is missing from this version of SUDS.`);
+      return routes[name](r);
+    };
+    routes[name] = stub;
+  }
+}
+export function loadingFor(name, text) { loadingText[name] = text; }
+// "Dr. Kiran Patel" is Kiran, not Dr.
+// The name is used exactly as the person typed it (a single word, all capitals, a hyphenated first
+// name — none of it is re-cased or cut), and a blank display name falls back to the username so a
+// greeting is never "Good morning, ".
+const HONORIFIC = /^(dr|mr|mrs|ms|mx|rev|fr|sr|jr|prof)\.?$/i;
+export const firstName = (n, fallback = '') => {
+  const words = String(n || '').trim().split(/\s+/).filter(Boolean);
+  const real = words.filter(w => !HONORIFIC.test(w));
+  return real[0] || words[0] || String(fallback || '').trim();
+};
+// The name a greeting uses: the display name exactly as the person typed it ("QATEST QA Engineer",
+// "Dr. Kiran Patel"), with runs of spaces collapsed. It used to be cut to a first name ("Good evening,
+// QATEST" for "QATEST QA Engineer"), which a tester read — twice — as the name being truncated; a
+// person's display name is theirs to choose, so it is shown whole. Never re-cased; a blank display name
+// falls back to the username so a greeting is never "Good morning, ".
+export const greetingName = (n, fallback = '') => {
+  const name = String(n || '').trim().split(/\s+/).filter(Boolean).join(' ');
+  return name || String(fallback || '').trim();
+};
+const canAny = (perm) => (Array.isArray(perm) ? perm.some(p => can(p)) : can(perm));
+export function parseHash() {
+  const [path, qs] = location.hash.replace(/^#\/?/, '').split('?');
+  const parts = path.split('/').filter(Boolean);
+  return { name: parts[0] || 'dashboard', id: parts[1], sub: parts[2], query: new URLSearchParams(qs || '') };
+}
+/**
+ * Where this person starts after signing in: Street outreach when they chose it as their start page (prefs
+ * start_page, set on that screen) and may still record visits, else Home.
+ */
+export function startPage() { return state.prefs && state.prefs.start_page === 'outreach' && can('interventions:write') ? 'outreach' : 'dashboard'; }
+export function nav(to) { location.hash = to.startsWith('#') ? to : '#/' + to; }
+/**
+ * Go to `to` and show it, rendering once. A changed address renders through the hashchange listener; calling
+ * render() as well (as signing in used to) drew the page twice, and Home fetched everything it shows twice.
+ */
+export function navAndRender(to) {
+  const before = location.hash;
+  nav(to);
+  if (location.hash === before) render();
+}
+
+// The menu: the pages and where each goes for a role and programme profile live in nav.js (data and pure
+// functions, checked for every role and profile by test/nav-menu.test.js); these are the wrappers with this
+// person's permissions, programme and screen.
+export { NAV };
+/** Is the menu the phone drawer (the width at which the sidebar folds away behind ☰)? */
+const PHONE_MENU = '(max-width: 900px)';
+const phoneMenu = () => typeof matchMedia === 'function' && matchMedia(PHONE_MENU).matches;
+/** What nav.js decides with: this person's permissions, the programme, and whether the menu is the phone drawer. */
+export function navContext() { return { can, moduleOn, profile: programmeProfile(), local: !!state.local, programme: state.programme || null, phone: phoneMenu() }; }
+/** A front-line worker (navigator, clinician): see nav.js isFrontline. Presentation only. */
+export function frontline() { return isFrontline(navContext()); }
+/** Someone who supervises a team: see nav.js isSupervising. Presentation only. */
+export function supervising() { return isSupervising(navContext()); }
+/** Where a NAV entry goes in this person's menu: 'main', 'more' (folded away), or null (not shown). */
+export function navPlacement(n) { return placement(n, navContext()); }
+/** The programme profile (server/programme.js): harm_reduction, treatment or part2_layer; null before sign-in. */
+export function programmeProfile() { return (state.programme && state.programme.profile) || null; }
+/** Is a module of the programme profile switched on (server/programme.js)? Unknown means off (1.24.0): until 1.24.0
+ *  an unknown programme meant every module on, so a form the server would refuse (403, module switched off) was
+ *  offered, and what was typed into it was lost on save. The programme comes with the session (GET /api/auth/me,
+ *  loadSession); signed in without it (a tab session kept by an older version), it is fetched once and the page drawn again. */
+export function moduleOn(key) {
+  const m = state.programme && state.programme.modules;
+  if (!m) { loadProgramme(); return false; }
+  return m[key] === true;
+}
+let programmeLoading = null;
+// A save refused because an administrator switched its module off after this page loaded (eval of 1.24.0, D5): the
+// programme is read again, and the page drawn again once no dialog is open, so its forms are no longer offered. The
+// refused dialog stays open with what was typed (and its draft) until the person closes it.
+function programmeChanged() {
+  get('/api/auth/me', { quiet: true }).then((me) => {
+    // Drawn again only when the modules did change: a page that reads a switched-off module must not redraw for ever.
+    if (!me || !me.programme || !state.user || JSON.stringify(me.programme.modules) === JSON.stringify((state.programme || {}).modules)) return;
+    state.programme = me.programme;
+    const root = document.getElementById('modal-root');
+    const open = () => root && root.querySelector(':scope > .modal-bg');
+    if (!open()) { render(); return; }
+    const mo = new MutationObserver(() => { if (!open()) { mo.disconnect(); render(); } });
+    mo.observe(root, { childList: true });
+  }).catch(() => { /* the next sign-in brings it */ });
+}
+function loadProgramme() {
+  if (programmeLoading || !state.user || state.mfaPending || state.signedInOffline) return;
+  programmeLoading = get('/api/auth/me', { quiet: true })
+    .then((me) => { if (me && me.programme && state.user && !state.programme) { state.programme = me.programme; render(); } })
+    .catch(() => { /* stays off; the next sign-in brings it */ })
+    .finally(() => { setTimeout(() => { programmeLoading = null; }, 30000); });
+}
+
+let current = null;
+let renderSeq = 0;
+// A view that rewrites its own address in place (the sign-in page's Log in / Sign up, #/login?mode=…) is
+// still the render that finished: replaceHash() records the rewrite so render() can tell it from a redirect.
+let replacedDuringRender = null;
+const APP_ALIASES = new Set(['getapp', 'get-app', 'app', 'phone', 'tablet', 'install']);
+/** Change the address without a new history entry or a re-render (a view switching its own panel). */
+export function replaceHash(to) {
+  const from = location.hash;
+  try { history.replaceState(history.state, '', to); } catch { return; }
+  syncHere();
+  if (activity.rendered === from) activity.rendered = location.hash; else replacedDuringRender = { from, to: location.hash };
+  activity.at = Date.now();
+}
+export async function render() {
+  const hash = location.hash;
+  busy(1);
+  try { await renderPage(); }
+  finally {
+    // A render that redirected (nav() to another address) is not the one that finished this address.
+    if (location.hash === hash) activity.rendered = hash;
+    else if (replacedDuringRender && replacedDuringRender.from === hash && replacedDuringRender.to === location.hash) activity.rendered = location.hash;
+    replacedDuringRender = null;
+    busy(-1);
+  }
+}
+async function renderPage() {
+  const app = document.getElementById('app');
+  app.removeAttribute('aria-busy'); // was set on the static pre-hydration shell in index.html
+  // A paused window stays paused: a hash change or a view's own refresh must not draw the app back over it.
+  if (paused) return;
+  showBuildStamp(!state.user);
+  if (updateArmed && !updateBlocked({ navigating: true })) { reloadForUpdate(); return; }
+  clear(document.getElementById('modal-root'));
+  const r = parseHash();
+  // A whole-screen view (sign-in, set-up, MFA) is built first and swapped in whole. Clearing #app and then
+  // awaiting the view left the screen blank for as long as the view's request took, and a second render
+  // (signing out re-renders, then the hash change renders again) blanked a sign-in page that was already
+  // showing. Only the latest render swaps in, so an older, slower one never lands on top of a newer one
+  // (two overlapping sign-in renders used to append two sign-in forms).
+  const seq = ++renderSeq;
+  // The same whole-screen view already showing (the hash went from #/ to #/login, or signing out rendered
+  // twice) is kept, not replaced: replacing it threw away whatever the person had started typing into it.
+  const screen = [r.name === 'mfa' || r.name === 'setup' ? r.name : 'login', new URLSearchParams(location.hash.split('?')[1] || '').get('mode') || '', !!state.localSetupNeeded, !!state.setupNeeded, !!state.user].join('|');
+  const show = async (pending) => {
+    const view = await pending;
+    if (seq !== renderSeq) return;
+    if (app.firstElementChild && app.firstElementChild.dataset.screen === screen) return;
+    if (view && view.dataset) view.dataset.screen = screen;
+    clear(app).append(view);
+    // The sign-in page names itself as it switches between Log in and Sign up (views/login.js).
+    if (r.name === 'mfa' || r.name === 'setup') document.title = `${TITLES[r.name]} — SUDS`;
+  };
+  // A device with no account yet opens the sign-in page on Sign up, which is its first-run set-up.
+  if (state.localSetupNeeded) { if (r.name !== 'localsetup' && r.name !== 'login') { nav('login?mode=signup'); return; } return show(routes.login(r)); }
+  if (state.setupNeeded) { if (r.name !== 'setup') { nav('setup'); return; } return show(routes.setup(r)); }
+  if (!state.user) { forgetTabSession(); return show(routes.login(r)); }
+  if (state.mfaPending && r.name !== 'mfa') { nav('mfa'); return; }
+  if (r.name === 'mfa' || r.name === 'login') return show(routes[r.name === 'mfa' ? 'mfa' : 'dashboard'](r));
+  // The device's first-run address, typed while signed in, showed its Sign up form inside the app (market evaluation of
+  // 1.23.4, D7): it goes to Home. location.replace, so Back does not land on it again.
+  if (r.name === 'localsetup') { location.replace('#/dashboard'); return; }
+  if (state.user.must_change_password && r.name !== 'profile') { nav('profile?force=1'); return; }
+  // Addresses people guess or bookmark for "SUDS on my phone" and for the list of devices were "Page not
+  // found". The phone/tablet page is a page of its own (get-app.html; /app on the office server); the
+  // devices are This device on a device copy, and Settings › Synced devices on the office server.
+  // location.replace, so Back does not land on the alias and bounce forward again.
+  if (APP_ALIASES.has(r.name)) { location.replace(state.local || window.SUDS_STATIC_HOST ? 'get-app.html' : '/app'); return; }
+  if (r.name === 'devices') { location.replace('#/' + (state.local ? 'sync' : can('users:manage') ? 'admin?tab=devices' : 'dashboard')); return; }
+  const navItem = NAV.find(n => n.name === r.name);
+  // An address that goes nowhere (a mistyped link, a page that no longer exists) says so, instead of
+  // quietly showing Home under the wrong address.
+  const loader = navItem?.perm && !canAny(navItem.perm) ? (async () => emptyState('Not available for your role', `Your account does not have access to ${navItem.label}. Ask your supervisor or administrator if you need it.`, h('button', { class: 'btn', onClick: () => nav('dashboard') }, 'Back to home'), { level: 1 }))
+    : routes[r.name] || (async () => h('div', { 'data-not-found': '1' }, emptyState('Page not found', `There is no page at "#/${r.name}". The link may be out of date.`, h('a', { class: 'btn primary', href: '#/dashboard' }, 'Go to Home'), { level: 1 })));
+  const waiting = loadingText[r.name] ? (() => { try { return loadingText[r.name](r); } catch { return null; } })() : null;
+  const main = h('main', { class: 'main', id: 'main', tabindex: '-1' }, h('div', { class: 'boot', role: waiting ? 'status' : null, 'data-loading': waiting ? '1' : null }, waiting || 'Loading…'));
+  const side = sidebar(r);
+  const qa = quickActions();
+  const layout = h('div', { class: 'layout' }, mobileBar(r, side), side, h('div', { class: 'content' }, h('div', { class: 'appbar' }, can('clients:read') ? globalSearch() : h('div', { class: 'grow' }), syncChip(), queueChip(), dueBell(), mfaLink(), qa), main), qa ? h('div', { class: 'fab' }, qa.cloneNode(true)) : null);
+  if (qa) layout.querySelector('.fab button')?.addEventListener('click', () => qa.click());
+  const focusWas = focusKey(document.activeElement, app);
+  clear(app).append(layout);
+  // A hash change keeps the old scroll position, so leaving a long list for another page landed the
+  // reader part-way down it, with the new page's header and alerts scrolled off the top.
+  if (!current || current.name !== r.name || current.id !== r.id) window.scrollTo(0, 0);
+  const lost = () => !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
+  try { const view = await loader(r); clear(main).append(view); if (state.local && r.name === 'sync') main.append(deviceErrorsCard()); }
+  catch (e) {
+    // No signal: a plain page that says so (the browser's "Failed to fetch dynamically imported module …" told
+    // nobody anything); any other failure keeps its own message.
+    if (networkFailure(e)) clear(main).append(offlinePage());
+    else clear(main).append(h('h1', {}, 'This page could not be shown'), h('div', { class: 'banner danger', role: 'alert' }, e.message));
+  }
+  if (seq !== renderSeq) return;
+  setPageTitle(r, navItem);
+  // Moving to another page left focus on nothing (the link that was pressed is gone with the old page), so
+  // a keyboard or screen-reader user started again from the top of the document. Put it on the new page's
+  // heading instead — only for a real move, and only when focus was not already placed by the view.
+  if (current && (current.name !== r.name || current.id !== r.id || current.sub !== r.sub) && lost()) {
+    const h1 = main.querySelector('h1') || main;
+    if (h1 !== main && !h1.hasAttribute('tabindex')) h1.setAttribute('tabindex', '-1');
+    try { h1.focus({ preventScroll: true }); } catch {}
+  } else if (focusWas && lost()) {
+    // The same page drawn again (a filter changed, a record saved, Home's refresh): focus goes back to the
+    // control it was on, not to the top of the document (WCAG 2.4.3, 3.2.2). Labels are tied by the
+    // accessibility pass first, which runs as a microtask.
+    await Promise.resolve();
+    restoreFocus(app, focusWas);
+  }
+  current = r;
+}
+// Enough about a focused control to find "the same one" in a freshly drawn page.
+function focusKey(el, root) {
+  if (!el || el === document.body || !root.contains(el) || !el.tagName) return null;
+  const lbl = (el.labels && el.labels[0] ? el.labels[0].textContent : '') || '';
+  return { tag: el.tagName.toLowerCase(), name: el.getAttribute('name') || '', aria: el.getAttribute('aria-label') || '', lbl: lbl.trim(),
+    text: /^(A|BUTTON)$/.test(el.tagName) ? (el.textContent || '').trim().slice(0, 80) : '', href: el.getAttribute('href') || '', role: el.getAttribute('role') || '' };
+}
+function restoreFocus(root, k) {
+  const same = [...root.querySelectorAll(k.tag)].filter(el => (el.getAttribute('name') || '') === k.name && (el.getAttribute('aria-label') || '') === k.aria
+    && (el.getAttribute('href') || '') === k.href && (el.getAttribute('role') || '') === k.role
+    && (!k.lbl || ((el.labels && el.labels[0] ? el.labels[0].textContent : '') || '').trim() === k.lbl)
+    && (!k.text || (el.textContent || '').trim().slice(0, 80) === k.text));
+  const el = same[0];
+  if (el && typeof el.focus === 'function') { try { el.focus({ preventScroll: true }); } catch {} }
+}
+// Every address has its own title (WCAG 2.4.2): the page, the section within it, and the programme — never a
+// client's name, which would sit in the browser's history and tab list.
+const TITLES = { client: 'Client record', caloms: 'State reporting', resource: 'Resource profile', profile: 'My profile', sync: 'This device', 'recovery-code': 'Recovery code', mfa: 'Two-step verification', setup: 'Set up SUDS', 'county-connect': 'County connections' };
+export function setPageTitle(r = parseHash(), navItem = NAV.find(n => n.name === r.name)) {
+  let page = TITLES[r.name] || navItem?.label;
+  if (!page) page = document.querySelector('.main h1')?.textContent.trim() || (document.querySelector('[data-not-found]') ? 'Page not found' : 'SUDS');
+  const section = document.querySelector('.main nav.tabs [aria-current=page]')?.textContent.replace(/\s*\(\d+\)\s*$/, '').trim();
+  const parts = [section && section !== page ? `${section} · ${page}` : page, 'SUDS'];
+  document.title = parts.join(' — ');
+}
+// The menu's links, from nav.js. Rebuilt on its own when the screen crosses the phone width (the phone menu folds a
+// little more away), so a rotated tablet does not keep the other screen's menu until the next page.
+function navMenu(r) {
+  // Sections with nothing to show (a finance account and "Connect clients") are left out, headings and all.
+  const groups = []; let cur = null; const more = [];
+  const link = (n) => h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '', 'aria-current': r.name === n.name ? 'page' : null }, h('span', { class: 'ico', 'aria-hidden': 'true' }, n.ico), n.label);
+  const c = navContext();
+  for (const n of NAV) {
+    if (n.sec) { cur = { sec: n.sec, items: [] }; groups.push(cur); continue; }
+    const where = placement(n, c);
+    if (where === 'main') cur.items.push(link(n)); else if (where === 'more') more.push({ n, a: link(n) });
+  }
+  // A supervisor's list starts with the queue of work waiting on them, straight after Home.
+  if (isSupervising(c)) { const day = groups[0].items; const i = day.findIndex(a => a.getAttribute('href') === '#/supervision'); if (i > 1) day.splice(1, 0, ...day.splice(i, 1)); }
+  // A front-line worker's (or a supervisor's) less-used pages, folded into one closed group (open while one of them is showing).
+  const moreGroup = more.length ? h('details', { class: 'nav-more', 'data-nav-more': '1', open: more.some(x => x.n.name === r.name) ? true : null },
+    h('summary', {}, 'More'), ...more.map(x => x.a)) : null;
+  return h('nav', { class: 'nav', 'aria-label': 'Main' }, groups.filter(g => g.items.length).flatMap(g => [h('div', { class: 'sec' }, g.sec), ...g.items]), moreGroup);
+}
+function sidebar(r) {
+  return h('aside', { class: 'sidebar' },
+    h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, state.org))),
+    navMenu(r),
+    h('div', { class: 'foot' }, state.local ? h('a', { href: '#/sync', class: 'badge info', style: { display: 'block', textAlign: 'center', marginBottom: '.5rem' } }, window.SUDS_STATIC_HOST ? '📱 On this device · Backup' : '📱 On this device · Sync') : null, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
+      h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#/dashboard?welcome=1', 'data-help-link': '1', title: 'Getting started with SUDS' }, 'Help'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'), h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility'), procurementLink()),
+      h('div', { class: 'small muted', 'data-build-stamp': '1', style: { marginTop: '.4rem' } }, `SUDS ${SUDS_VERSION}`)));
+}
+function mobileBar(r, side) {
+  const item = NAV.find(n => n.name === r.name) || (r.name === 'client' ? { label: 'Client' } : { label: 'SUDS' });
+  const menuBtn = h('button', { class: 'btn ghost', 'aria-label': 'Menu', 'aria-expanded': 'false', 'aria-controls': 'sidebar' }, '☰');
+  side.id = 'sidebar';
+  // Off-canvas but still in the tab order and the accessibility tree is a trap: a keyboard or screen-reader
+  // user lands on invisible links. While the drawer is closed on a phone it is inert; on a desktop it is
+  // always a real sidebar.
+  const phone = matchMedia(PHONE_MENU);
+  const syncInert = () => { const closed = phone.matches && !side.classList.contains('open'); side.inert = closed; if (closed) side.setAttribute('aria-hidden', 'true'); else side.removeAttribute('aria-hidden'); };
+  const setOpen = (open) => { side.classList.toggle('open', open); document.body.classList.toggle('nav-open', open); menuBtn.setAttribute('aria-expanded', String(open)); syncInert(); if (open) side.querySelector('a')?.focus(); else menuBtn.focus(); };
+  const toggle = () => setOpen(!side.classList.contains('open'));
+  menuBtn.addEventListener('click', toggle);
+  side.addEventListener('click', (e) => { if (e.target.closest('a')) setOpen(false); });
+  side.addEventListener('keydown', (e) => { if (e.key === 'Escape' && side.classList.contains('open')) setOpen(false); });
+  // The layout is rebuilt on every route change; keep exactly one media listener, for the current sidebar.
+  if (mobileBar.onChange) phone.removeEventListener('change', mobileBar.onChange);
+  const onChange = () => { syncInert(); const menu = side.querySelector('nav.nav'); if (menu) menu.replaceWith(navMenu(r)); };
+  mobileBar.onChange = onChange; phone.addEventListener('change', onChange);
+  syncInert();
+  // The build stamp sits under the page title on a phone: the sidebar foot is below the fold with the menu open.
+  return h('div', { class: 'mobilebar' }, menuBtn, h('div', { class: 'mobilebar-title' }, h('b', {}, item.label), h('span', { class: 'mobilebar-stamp', 'data-build-stamp': '1' }, `SUDS ${SUDS_VERSION}`)), can('clients:read') ? h('a', { href: '#/clients', class: 'btn ghost mobilebar-clients', 'data-mobile-clients': '1' }, h('span', { 'aria-hidden': 'true' }, '👤'), 'Clients') : h('span', { class: 'mobilebar-spacer', 'aria-hidden': 'true' }));
+}
+function toggleTheme() { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const next = cur === 'dark' ? 'light' : 'dark'; prefs.set('theme', next); applyTheme(); }
+try { const cached = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); if (cached.theme) document.documentElement.dataset.theme = cached.theme; } catch {}
+
+// `idle`: signed out for inactivity, when what was being typed is kept for a while (DRAFT_KEEP_SIGNED_OUT_MS);
+// choosing Sign out clears it from memory at once.
+export async function logout({ idle = false } = {}) { await prefs.flush(); try { await post('/api/auth/logout', {}); } catch {} state.user = null; state.mfaPending = false; document.querySelectorAll('#banners [data-banner="mfa-required"]').forEach(b => b.remove());
+  if (idle) noteSignedOut(); else dropDrafts();
+  // nav() to a new address renders through the hash change; rendering here as well drew the sign-in page twice.
+  document.querySelectorAll('#banners [data-resume-draft]').forEach(b => b.remove());
+  const from = location.hash; nav('login'); if (location.hash === from) render(); }
+
+// ---------- keyboard shortcuts (1.15.3) ----------
+// "/" finds a client, "n" logs a visit, "?" lists the shortcuts, and Ctrl+Enter (⌘+Enter on a Mac) saves the
+// open form. The three single keys work only while focus is not in a text field, select or editable area and
+// no dialog is open, and anyone can switch them off under My profile (prefs `shortcuts_off`; on by default):
+// WCAG 2.1.4 Character Key Shortcuts, since speech input can send a lone letter by accident. Ctrl+Enter has a
+// modifier and is always on; it presses the open dialog's own submit button (or that of the form that has
+// focus), so it does exactly what the button would, checks included.
+export const SHORTCUTS = [['/', 'Find a client (the search box at the top)'], ['n', 'Log a visit'], ['?', 'Show these shortcuts'], ['Ctrl + Enter (⌘ + Enter on a Mac)', 'Save the form that is open']];
+export function shortcutsOn() { return prefs.get('shortcuts_off', false) !== true; }
+export function openShortcutsHelp() {
+  return modal('Keyboard shortcuts', h('div', { 'data-shortcuts-help': '1' },
+    h('table', { class: 'table' }, h('thead', {}, h('tr', {}, h('th', { scope: 'col' }, 'Key'), h('th', { scope: 'col' }, 'What it does'))),
+      h('tbody', {}, SHORTCUTS.map(([k, what]) => h('tr', {}, h('td', {}, h('kbd', {}, k)), h('td', {}, what))))),
+    h('p', { class: 'small muted mt' }, shortcutsOn()
+      ? 'The single keys (/, n and ?) work when you are not typing in a field. Switch them off under My profile if they get in your way, for example with speech recognition.'
+      : 'The single keys (/, n and ?) are switched off for you under My profile. Ctrl + Enter always works.')));
+}
+const typingIn = (el) => !!el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
+document.addEventListener('keydown', (e) => {
+  if (!state.user || e.defaultPrevented) return;
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+    const top = [...document.querySelectorAll('#modal-root > .modal-bg')].pop();
+    const formEl = top ? top.querySelector('form') : (document.activeElement && document.activeElement.closest && document.activeElement.closest('form'));
+    const submit = formEl && [...formEl.querySelectorAll('button[type=submit]')].filter(b => !b.disabled && b.offsetParent).pop();
+    if (submit) { e.preventDefault(); submit.click(); }
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey || !shortcutsOn() || typingIn(e.target) || document.querySelector('#modal-root > .modal-bg')) return;
+  if (e.key === '/') {
+    const box = [...document.querySelectorAll('.gsearch input[type=search]')].find(i => i.offsetParent);
+    if (box) { e.preventDefault(); box.focus(); box.select(); }
+  } else if (e.key === 'n' || e.key === 'N') {
+    if (!can('interventions:write') || e.key === 'N') return;
+    // On a client's record it is a visit for that client (1.16.0), as the record's own + Log a visit is.
+    e.preventDefault(); import('./views/interventions.js').then(m => m.openInterventionForm(null, hereClient()));
+  } else if (e.key === '?') { e.preventDefault(); openShortcutsHelp(); }
+});
+
+// ---------- session / idle ----------
+let lastActivity = Date.now(); let idleTimer;
+function touch() { lastActivity = Date.now(); }
+['click', 'keydown', 'mousemove', 'scroll', 'touchstart'].forEach(ev => document.addEventListener(ev, () => { lastActivity = Date.now(); }, { passive: true }));
+function startIdleWatch() {
+  clearInterval(idleTimer);
+  idleTimer = setInterval(() => {
+    if (!state.user) { noteSignedOut(); expireSignedOutDrafts(); return; }
+    const idleMs = Date.now() - lastActivity; const limit = state.idleMinutes * 60000;
+    let w = document.getElementById('idle-warn');
+    // WCAG 2.2.1: warned a minute ahead, with one obvious way to stay — a button (any key or tap works too).
+    // Announced as an alert; focus is left where it is so nothing being typed is interrupted.
+    if (idleMs > limit - 60000 && !w) {
+      w = h('div', { id: 'idle-warn', class: 'idle-warn', role: 'alert' },
+        h('span', {}, 'You will be signed out in 1 minute due to inactivity. Tap the screen, move the mouse or press a key to stay signed in. '),
+        h('button', { class: 'btn sm', type: 'button', 'data-stay-signed-in': '1', onClick: () => { lastActivity = Date.now(); w.remove(); get('/api/auth/me').catch(() => {}); announce('You are still signed in.'); } }, 'Stay signed in'));
+      document.body.append(w);
+    }
+    if (idleMs <= limit - 60000 && w) w.remove();
+    if (idleMs > limit) {
+      if (w) w.remove();
+      // Anything half-typed is kept in memory for a while, so say so rather than letting it look like lost work.
+      const kept = drafts.size;
+      logout({ idle: true });
+      toast(kept ? `Signed out due to inactivity. What you had typed is kept for ${DRAFT_KEEP_SIGNED_OUT_MS / 60000} minutes — sign in again and reopen the form.` : 'Signed out due to inactivity', 'error');
+    }
+  }, 5000);
+}
+
+export async function loadSession() {
+  if (state.local) { try { const st = await get('/api/local/status', { quiet: true }); state.localSetupNeeded = st.users === 0; } catch { state.localSetupNeeded = false; } if (state.localSetupNeeded) { state.user = null; return; } }
+  else { try { const st = await get('/api/setup/status', { quiet: true }); state.setupNeeded = !!st.needed; } catch { state.setupNeeded = false; } if (state.setupNeeded) { state.user = null; return; } }
+  try {
+    const me = await get('/api/auth/me', { quiet: true });
+    state.user = me.user; state.org = me.org_name; state.mfaPending = me.mfaPending; state.idleMinutes = me.idle_minutes || 15; state.programme = me.programme || null;
+    // The fund a new visit is pre-filled with (the worker's own default, else the programme's).
+    state.defaultFundId = me.default_fund_id || null;
+    await Promise.all([loadRefData(), prefs.load()]);
+    keepTabSession(me); state.signedInOffline = false;
+    // Drafts typed by someone else in this tab are not theirs to see; this person's own kept drafts come back.
+    claimDrafts();
+    if (!state.mfaPending && !state.user.must_change_password) offerKeptDrafts();
+    // Two-step verification is required of this role but not set up yet. There is a grace period, after which
+    // the server refuses every request until it is done -- so say when that is, and where to do it, instead of
+    // a vague "please enroll" that reads as advisory right up until the day everything stops working.
+    state.mfaDue = null;
+    // A passkey (fingerprint sign-in, docs/FINGERPRINT.md) is two-step verification of its own, while fingerprint
+    // sign-in is allowed (passkey_mfa, the server's own rule: auth.mfaDeadline); switched off, it no longer counts.
+    if (state.user.mfa_required && !state.user.mfa_enabled && !state.user.passkey_mfa && !state.mfaPending && !state.local) {
+      const due = state.user.mfa_setup_deadline ? fmt.parse(state.user.mfa_setup_deadline) : null;
+      const when = due ? (due.getTime() < Date.now() ? 'now' : `by ${fmt.date(state.user.mfa_setup_deadline)}`) : 'now';
+      // One line on every screen (a paragraph took a third of a phone's screen above every page): the
+      // deadline stays visible, the consequence is said to a screen reader in the same line and announced
+      // once, and "Set up" goes straight to enrolment.
+      const full = `Your role requires two-step verification. Set it up ${when} — after that, SUDS will not let you in until it is done.`;
+      // Once dismissed, the bar (about 50 px above every page on a phone) becomes a small "2-step" link in the
+      // header, kept for this person on every device (a preference), until two-step verification is set up.
+      state.mfaDue = { when, full };
+      const collapse = () => { prefs.set('mfa_banner_collapsed', true); prefs.flush(); const bar = document.querySelector('.appbar'); if (bar && !bar.querySelector('[data-mfa-link]')) bar.insertBefore(mfaLink(), bar.querySelector('.bell-wrap')?.nextSibling || null); };
+      const el = prefs.get('mfa_banner_collapsed') ? null : banner(`Two-step verification required ${when}.`, 'warn', { id: 'mfa-required', compact: true, announceText: full, onDismiss: collapse });
+      if (el) {
+        // On a phone the words shorten to one line beside Set up, and still say by when (r7 L10).
+        el.firstChild.replaceChildren(h('span', { class: 'mfa-long' }, 'Two-step verification required'), h('span', { class: 'mfa-short' }, '2-step due'), ` ${when}.`,
+          h('span', { class: 'sr-only' }, ' After that, SUDS will not let you in until it is done.'));
+        el.insertBefore(h('a', { href: '#/profile?mfa=1', class: 'btn sm primary', 'data-mfa-setup': '1' }, 'Set up'), el.lastChild);
+      }
+    }
+    // Set up (or no longer owed): the bar and the header link go now, not at the next reload (r9 M3).
+    if (!state.mfaDue) document.querySelectorAll('#banners [data-banner="mfa-required"], [data-mfa-link]').forEach(b => b.remove());
+    // A passkey in the authenticator allow-list's grace period (docs/FINGERPRINT.md "Grace period"): on every page
+    // from sign-in on, when it stops and what to do before then. Dismissed, it comes back as one line next time.
+    document.querySelectorAll('#banners [data-banner="passkey-grace"]').forEach(b => b.remove());
+    if (state.user.passkey_grace && !state.mfaPending && !state.local) {
+      const g = state.user.passkey_grace;
+      const el = banner(passkeyGraceText(g), 'warn', { id: 'passkey-grace', short: `Your passkey stops working on ${fmt.date(g.until)}.` });
+      if (el) el.insertBefore(h('a', { href: '#/profile', class: 'btn sm', 'data-passkey-grace-link': '1' }, 'My profile'), el.lastChild);
+    }
+  } catch (e) {
+    // No signal at all (a reload in the street): who was signed in in this tab, if anyone (keepTabSession).
+    if (e && e.offline && await restoreTabSession()) return;
+    state.user = null; state.signedInOffline = false;
+  }
+}
+/** Re-read the signed-in user's permission snapshot without signing out (an administrator may have
+ *  changed it mid-session). On failure the stale snapshot stays; the server enforces regardless. */
+// { rerender: false } updates the snapshot without redrawing the page (which would close an open dialog): an
+// administrator's change to their own permissions, whose dialog stays open and redraws the page when it closes.
+export async function refreshPermissions({ rerender = true } = {}) {
+  try {
+    const me = await get('/api/me', { quiet: true });
+    state.user = { ...state.user, role: me.role || state.user.role, permissions: me.permissions, denied_permissions: me.denied_permissions, caseload_restricted: me.caseload_restricted };
+    if (rerender) render();
+  } catch { /* stay on the stale snapshot; the server still enforces */ }
+}
+export async function loadRefData() {
+  // Not fatal: an account that must change its password first is refused nearly everything, and the one
+  // page it may use has to render regardless.
+  if (!state.constants) { try { state.constants = await get('/api/meta/constants', { quiet: true }); } catch { state.constants = state.constants || {}; } }
+  // Until the password is changed the server refuses everything else (403): not asked for, so the forced
+  // change page does not fire a string of refusals. loadSession() calls this again once it is changed.
+  if (state.user && state.user.must_change_password) { state.users = []; state.funds = []; state.allFunds = []; return; }
+  try { state.users = (await get('/api/users', { quiet: true })).users; } catch { state.users = []; }
+  // Every funding source, inactive ones too (allFunds), so a record charged to one that has since been
+  // deactivated still shows it; state.funds is what new records are offered.
+  if (can('budget:read')) { try { state.allFunds = (await get('/api/budget/funds?all=1', { quiet: true })).funds; state.funds = state.allFunds.filter(x => x.is_active); } catch { state.funds = []; state.allFunds = []; } }
+}
+
+// ---------- boot (called from main.js after all views are registered) ----------
+window.__suds = { downloadCsv: (...a) => downloadCsv(...a) };
+// Stamped by scripts/build-local.js from package.json. The two kernel assets are requested with it as a
+// version query so the browser may keep them for good (server/http.js serves `?v=` as immutable) while a
+// new release, with a new version, is a new URL. public/sw.js caches the same URLs for offline starts.
+const SUDS_VERSION = '1.24.1';
+
+// ---------- build stamp ----------
+// Which build is this? A tester reporting "still broken" after a release needs to be able to say, and so
+// does whoever reads their report. Shown on the sign-in and start-up screens (fixed, small) and at the foot
+// of the sidebar once signed in.
+let stampEl = null;
+function showBuildStamp(visible) {
+  if (!stampEl) {
+    stampEl = h('div', { class: 'small muted', 'data-build-stamp': '1', 'aria-label': `SUDS version ${SUDS_VERSION}`, style: { position: 'fixed', left: '.5rem', bottom: '.35rem', fontSize: '11px', opacity: '.7', pointerEvents: 'none', zIndex: '1' } }, `SUDS ${SUDS_VERSION}`);
+    document.body.append(stampEl);
+  }
+  stampEl.hidden = !visible;
+}
+
+// ---------- error beacon ----------
+// A script error on someone's phone was invisible to everyone but them. Uncaught errors, unhandled
+// rejections and 5xx answers are reported without PHI: the message cut to 300 characters with long digit
+// runs masked, the stack reduced to its top five file:line frames, the route without its query, the build
+// and the browser family. Office mode sends them to the server's application log
+// (server/routes/client-errors.js); a device keeps the last 50 here, listed on its Sync page.
+const DEVICE_ERRORS_KEY = 'suds.errors';
+let errorWindow = { start: 0, n: 0 };
+const maskDigits = (s) => String(s == null ? '' : s).replace(/\d{5,}/g, (m) => '#'.repeat(Math.min(m.length, 8)));
+function browserFamily() {
+  const ua = navigator.userAgent || '';
+  const m = /(Edg|OPR|SamsungBrowser|CriOS|FxiOS|Firefox|Chrome|Version)\/(\d+)/.exec(ua);
+  const name = m ? `${({ Edg: 'Edge', OPR: 'Opera', CriOS: 'Chrome', FxiOS: 'Firefox', Version: 'Safari' })[m[1]] || m[1]} ${m[2]}` : 'unknown';
+  const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad|iPod/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'other';
+  return `${name} / ${os}`;
+}
+function stackFrames(stack) {
+  const out = [];
+  for (const line of String(stack || '').split('\n')) {
+    const m = /([\w.-]+\.m?js)(?:\?[^:)\s]*)?:(\d+)(?::\d+)?/.exec(line);
+    if (m) out.push(`${m[1]}:${m[2]}`);
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+export function reportClientError({ kind = 'error', message = '', stack = '', status } = {}) {
+  try {
+    const now = Date.now();
+    if (now - errorWindow.start > 60_000) errorWindow = { start: now, n: 0 };
+    if (++errorWindow.n > 10) return; // a loop throwing on every frame is one report, not thousands
+    const entry = { kind, message: maskDigits(message).slice(0, 300), stack: stackFrames(stack), route: maskDigits(location.hash.split('?')[0]).slice(0, 80), version: SUDS_VERSION, browser: browserFamily(), ...(status ? { status } : {}) };
+    if (state.local || isLocalMode()) {
+      let list = []; try { list = JSON.parse(localStorage.getItem(DEVICE_ERRORS_KEY) || '[]'); if (!Array.isArray(list)) list = []; } catch {}
+      list.push({ ...entry, at: new Date().toISOString() });
+      try { localStorage.setItem(DEVICE_ERRORS_KEY, JSON.stringify(list.slice(-50))); } catch {}
+      return;
+    }
+    if (!state.user) return; // the office only takes reports from a signed-in session
+    fetch('/api/client-errors', { method: 'POST', credentials: 'same-origin', keepalive: true, headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds', 'X-Background': '1' }, body: JSON.stringify(entry) }).catch(() => {});
+  } catch { /* reporting an error must never cause one */ }
+}
+window.addEventListener('error', (e) => { if (e && e.message && !/ResizeObserver loop/.test(e.message)) reportClientError({ kind: 'error', message: e.message, stack: e.error && e.error.stack }); });
+// A request that failed and was not caught carries the server's own words, which can name what was being
+// saved: only its status is reported.
+window.addEventListener('unhandledrejection', (e) => { const r = e && e.reason; const fromApi = r && (r.status || r.offline); reportClientError({ kind: 'rejection', message: fromApi ? `request failed (${r.offline ? 'offline' : r.status})` : (r && r.message ? r.message : String(r)), stack: r && r.stack }); });
+/** The Sync page's "Errors on this device" card: what went wrong here, readable out loud to whoever supports it. */
+function deviceErrorsCard() {
+  let list = []; try { list = JSON.parse(localStorage.getItem(DEVICE_ERRORS_KEY) || '[]'); if (!Array.isArray(list)) list = []; } catch {}
+  const card = h('div', { class: 'card mt', 'data-device-errors': String(list.length) }, h('h2', {}, 'Errors on this device'));
+  if (!list.length) { card.append(h('p', { class: 'small muted' }, `None recorded. (SUDS ${SUDS_VERSION})`)); return card; }
+  card.append(
+    h('p', { class: 'small muted' }, 'The most recent problems SUDS ran into on this device, newest first. They hold no client information; if someone supporting SUDS asks, read them out.'),
+    h('ol', { class: 'small' }, list.slice().reverse().map(e => h('li', {}, `${fmt.dt(e.at)} — ${e.message}${e.stack && e.stack.length ? ` (${e.stack.join(', ')})` : ''}${e.route ? ` · ${e.route}` : ''} · SUDS ${e.version} · ${e.browser}`))),
+    h('div', { class: 'btn-row' }, h('button', { class: 'btn sm', type: 'button', onClick: () => { try { localStorage.removeItem(DEVICE_ERRORS_KEY); } catch {} card.replaceWith(deviceErrorsCard()); } }, 'Clear this list')));
+  return card;
+}
+
+// ---------- a new version is ready ----------
+// A release reaches an open page two ways: a new service worker takes control (controllerchange), or
+// version.json — fetched past every cache on start and whenever the page comes back into view — names a
+// different version (workers installed by 1.9.0 still fill their shell from the HTTP cache, so a page can
+// start on old files for a while after a deploy). Either way the page is never reloaded under someone:
+// with a dialog open, a form half-filled or a write (a sync) in flight it says so and waits for them;
+// otherwise it reloads the next time the page is hidden or the person moves to another page.
+let localWritesInFlight = 0;
+let updateArmed = false;
+document.addEventListener('input', (e) => { const f = e.target && e.target.closest && e.target.closest('form'); if (f) f.dataset.dirty = '1'; }, true);
+function updateBlocked({ navigating = false } = {}) {
+  if (localWritesInFlight > 0) return true;
+  if (navigating) return false; // leaving the page discards its dialogs and forms anyway (drafts are kept)
+  return !!(document.querySelector('.modal-bg') || document.querySelector('form[data-dirty]'));
+}
+function updateBanner() {
+  const el = banner('A new version of SUDS is ready.', 'info', { id: 'update-ready' });
+  if (el) el.firstChild.append(' ', h('button', { class: 'btn sm primary', type: 'button', 'data-update-reload': '1', onClick: () => location.reload() }, 'Reload'));
+}
+// One automatic reload per release: if the page comes back still on the old files (a 1.9.0 worker serving
+// its HTTP-cached copy for a few minutes), it says so with the banner instead of reloading on every move.
+const UPDATE_TRIED = 'suds-update-tried';
+let updateTarget = '';
+function reloadForUpdate() { try { sessionStorage.setItem(UPDATE_TRIED, updateTarget); } catch {} location.reload(); }
+function newVersionReady(target) {
+  updateBanner();
+  if (updateArmed || paused) return;
+  try { if (sessionStorage.getItem(UPDATE_TRIED) === target) return; } catch {}
+  updateArmed = true; updateTarget = target;
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && updateArmed && !paused && !updateBlocked()) reloadForUpdate(); });
+}
+async function checkVersion() {
+  if (navigator.onLine === false) return; // nothing to learn, and a failed fetch is noise in the console
+  try {
+    const r = await fetch(new URL('version.json', location.href), { cache: 'no-store' });
+    if (!r.ok) return;
+    const v = (await r.json()).version;
+    if (v && v !== SUDS_VERSION) newVersionReady(`version:${v}`);
+  } catch { /* offline, or a server without the file: nothing to say */ }
+}
+
+// ---------- local mode: the kernel, and the window that owns it ----------
+// "Use SUDS here instead" reloads the page with this set, so taking the database back always starts from a
+// fresh document: nothing from the copy this page held before it was paused can survive to be saved.
+const TAKEOVER_FLAG = 'suds-local-takeover';
+async function startLocalKernel(force) {
+  const k = await import(`./local/kernel.js?v=${SUDS_VERSION}`);
+  await k.start({
+    wasmUrl: new URL(`./local/sql-wasm.wasm?v=${SUDS_VERSION}`, location.href).href,
+    // A publication release's audit runs in this Web Worker, off the page's thread (local/audit-runner.js).
+    auditWorkerUrl: new URL(`./local/audit-worker.js?v=${SUDS_VERSION}`, location.href).href,
+    force,
+    onLockLost: showPausedScreen,
+    // A device that has stopped being able to save is not a console message; the person using it needs
+    // to know before they type anything else in.
+    onSaveError: (err) => {
+      const full = String(err && err.name) === 'QuotaExceededError';
+      reportClientError({ kind: 'error', message: `save failed: ${err && err.name}` });
+      banner(full
+        ? (window.SUDS_STATIC_HOST ? 'This device is out of storage space, so nothing is being saved. Download a backup now (This device), then free up space on the device.' : 'This device is out of storage space, so nothing is being saved. Sync with the office, then remove sample data or attachments to free space.')
+        : (window.SUDS_STATIC_HOST ? 'This device has stopped saving your work. Download a backup from This device as soon as you can.' : 'This device has stopped saving your work. Sync with the office as soon as you can.'), 'error');
+    },
+  });
+}
+// Another window on this device took the database over (local/shims/sqlite.js). This page has stopped: it
+// says why — truthfully about whether its last changes were written out first — and offers to take it
+// back. Dialogs are closed first (what was typed in a form that keeps drafts is kept as one, in this
+// window), and `paused` keeps any later render — a hash change, the dashboard's refresh — from drawing
+// the app back over this screen.
+let paused = false;
+function showPausedScreen(info) {
+  if (paused) return; paused = true;
+  const savedFirst = !!(info && info.savedFirst);
+  document.querySelectorAll('form').forEach(f => { try { f.saveDraft && f.saveDraft(); } catch {} });
+  clear(document.getElementById('modal-root'));
+  document.body.classList.remove('nav-open');
+  const app = document.getElementById('app');
+  clear(app);
+  app.append(
+    h('div', { class: 'boot error', 'data-paused': savedFirst ? 'saved' : 'unsaved' }, 'SUDS is now open in another window on this device, so this one has been paused. ',
+      savedFirst ? 'Your work here was saved first.' : 'Changes made here in the last moment before that may need to be re-entered.'),
+    h('div', { class: 'btn-row center mt' },
+      h('button', { class: 'btn primary', type: 'button', onClick: () => { try { sessionStorage.setItem(TAKEOVER_FLAG, '1'); } catch {} location.reload(); } }, 'Use SUDS here instead'),
+    ),
+  );
+}
+export async function boot(force = false) {
+  state.local = isLocalMode();
+  skipLink();
+  showBuildStamp(true);
+  if (state.local) {
+    document.getElementById('app').innerHTML = '<div class="boot">Starting SUDS on this device…</div>';
+    try { if (sessionStorage.getItem(TAKEOVER_FLAG)) { sessionStorage.removeItem(TAKEOVER_FLAG); force = true; } } catch {}
+    try {
+      await startLocalKernel(force);
+    } catch (e) {
+      // Two specific failures need their own explanation rather than a raw message.
+      const alreadyOpen = e && e.code === 'SUDS_ALREADY_OPEN';
+      const msg = alreadyOpen
+        ? 'SUDS is open in another tab or window on this device.'
+        : e && e.code === 'SUDS_KEY_LOST'
+          ? e.message
+          : 'Could not start SUDS on this device: ' + (e && e.message);
+      if (!alreadyOpen) { console.error(e); reportClientError({ kind: 'error', message: msg, stack: e && e.stack }); }
+      const app = document.getElementById('app');
+      app.removeAttribute('aria-busy');
+      clear(app);
+      // This is the one screen a locked-out or broken device can reach without a kernel — reset has to work
+      // here directly. SUDS_ALREADY_OPEN gets its own recovery instead: that device and its data are fine,
+      // just open elsewhere, so wiping it would be the wrong tool. Every other window lands here, including
+      // one that has gone quiet (a phone freezes background tabs; they wake up) and a duplicated tab; only
+      // a reload of the holding tab itself gets in without asking. The person decides: use SUDS here,
+      // which asks the other window to write out and step aside, or go back to it.
+      app.append(
+        h('div', { class: 'boot error' }, msg),
+        alreadyOpen ? h('div', {},
+          h('p', { class: 'muted center' }, e.stale
+            ? 'The other window has not responded for a while (a phone pauses tabs in the background). You can use SUDS here instead — the other window will be stopped so nothing is written twice.'
+            : 'You can use it here instead — the other window will be paused so nothing is written twice.'),
+          h('div', { class: 'btn-row center mt' },
+            h('button', { class: 'btn primary', type: 'button', onClick: () => boot(true) }, 'Use SUDS in this window'),
+            h('button', { class: 'btn', type: 'button', onClick: () => boot() }, 'Try again'),
+          ),
+        ) : offerDeviceReset(),
+      );
+      return;
+    }
+    // Anything written and not yet saved is saved on the way out: pagehide for a close or navigation,
+    // visibilitychange for a phone switching apps (where pagehide may never come), freeze for a background
+    // tab the browser is about to suspend. An urgent flush issues the IndexedDB write synchronously and
+    // commits it without waiting for any callback, so the browser finishes it even as the page goes; the
+    // next document of this tab waits for this one's lock before reading (local/shims/sqlite.js).
+    const flushNow = () => { try { window.SUDS_LOCAL && window.SUDS_LOCAL.flush({ urgent: true }).catch(() => {}); } catch {} };
+    window.addEventListener('pagehide', flushNow);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushNow(); });
+    document.addEventListener('freeze', flushNow);
+    // Redeploying the site (new files at the same origin) never touches this device's IndexedDB/localStorage
+    // — the sign-in session, the account, and every client record already survive that on their own. What
+    // does not survive on its own is the browser treating this storage as "best-effort": under disk pressure
+    // it can be evicted with no warning, silently taking the whole device's data with it. Asking for the
+    // persistent-storage grant is the one thing actually in the app's control here; the browser still decides
+    // (based on things like whether the person installed/bookmarked the app), so this is best-effort itself.
+    try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
+    // "Add to Home Screen" installs whatever the manifest's start_url says, and the shared manifest points at
+    // the office login -- so a phone set up here, installed the way the login screen tells people to, opened
+    // to a server sign-in with its own caseload nowhere in sight. The on-device manifest starts back here.
+    try { const link = document.querySelector('link[rel="manifest"]'); if (link) link.href = 'manifest-local.webmanifest'; localStorage.setItem('suds.localUsed', '1'); } catch {}
+  }
+  // Registered in local mode too: the worker caches the kernel and the shell, so a device set up for local
+  // mode (or the on-device app installed to a home screen) starts with no connection at all (H4).
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    try {
+      // A newer worker taking control means a release was published while this page was open (or this is
+      // the first load after one). The page is not reloaded on the spot — that dropped whatever was being
+      // typed — but offered, and reloaded only at a moment nothing can be lost (newVersionReady). Only when
+      // a worker was in control before: the very first registration is not an update.
+      const hadController = !!navigator.serviceWorker.controller;
+      // A new worker is only news if it brings a different release than the one this page is running: the
+      // first open after a deploy already runs the new files, and offering to reload into them again was noise.
+      navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) checkVersion(); });
+      navigator.serviceWorker.register('sw.js').then(r => r && r.update && r.update()).catch(() => {});
+    } catch {}
+  }
+  checkVersion();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkVersion(); });
+  await loadSession();
+  // Opened with no page in the address (the home-screen icon, a bookmark of the site): the person's start page.
+  if (state.user && !state.mfaPending && /^#?\/?$/.test(location.hash) && startPage() !== 'dashboard') { try { history.replaceState(history.state, '', `#/${startPage()}`); } catch {} }
+  startIdleWatch();
+  window.addEventListener('hashchange', render);
+  render();
+}
