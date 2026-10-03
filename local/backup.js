@@ -138,13 +138,19 @@ export function daysSince(fromIso, now = Date.now()) {
  * backup (a daily backup made at 17:00 is due again the next morning, not at 17:00 the next day), or when none
  * was ever made; overdue a day after that, which is when Home warns. `next_due` is the local date it falls due.
  */
-export function scheduleState(lastIso, everyDays = DEFAULT_EVERY_DAYS, now = Date.now()) {
+// `sinceIso`: when scheduled backups were turned on. With no backup made yet the first one is due that day, and overdue
+// only from the next (it read "overdue" a minute after being turned on; market evaluation of 1.24.0, D7).
+export function scheduleState(lastIso, everyDays = DEFAULT_EVERY_DAYS, now = Date.now(), sinceIso = null) {
   const every = SCHEDULES.includes(Number(everyDays)) ? Number(everyDays) : DEFAULT_EVERY_DAYS;
   const days = daysSince(lastIso, now);
-  if (days === null) return { every_days: every, days: null, due: true, overdue: true, next_due: null };
-  const t = new Date(Date.parse(lastIso)); const next = new Date(t.getFullYear(), t.getMonth(), t.getDate() + every);
   const p = (n) => String(n).padStart(2, '0');
-  return { every_days: every, days, due: days >= every, overdue: days > every, next_due: `${next.getFullYear()}-${p(next.getMonth() + 1)}-${p(next.getDate())}` };
+  const ymd = (d) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  if (days === null) {
+    const since = daysSince(sinceIso, now);
+    return { every_days: every, days: null, due: true, overdue: since === null || since >= 1, next_due: since === null ? null : ymd(new Date(Date.parse(sinceIso))) };
+  }
+  const t = new Date(Date.parse(lastIso)); const next = new Date(t.getFullYear(), t.getMonth(), t.getDate() + every);
+  return { every_days: every, days, due: days >= every, overdue: days > every, next_due: ymd(next) };
 }
 
 // suds-device-backup-2026-10-01.sudsbackup (a download) or suds-device-backup-2026-10-01-153012.sudsbackup

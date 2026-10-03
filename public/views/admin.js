@@ -657,9 +657,9 @@ route('admin', async (r) => {
         // The public "Security & procurement" page (public/procurement.html, 1.24.0): what an organization evaluating
         // SUDS reads before it has an account. Blank fields say "Not yet published by the maintainer"; nothing is invented.
         ...(state.local ? [] : [
-          { type: 'section', label: 'Security & procurement page', hint: 'contact, legal entity, pricing, service levels', collapsible: true, heading: true, open: r.query.get('section') === 'procurement' },
+          { type: 'section', label: 'Security & procurement page', hint: 'your office\'s published terms: contact, legal entity, pricing, service levels', collapsible: true, heading: true, open: r.query.get('section') === 'procurement' },
           { name: 'procurement_legal_entity', label: 'Legal entity (who signs a BAA or QSOA)', value: s.procurement_legal_entity || '', maxLen: 200, span: true,
-            help: 'These six fields are shown to anyone, without signing in, on the Security & procurement page (procurement.html) linked from the sign-in page. A blank one shows "Not yet published by the maintainer". Never put client information here.' },
+            help: 'This is your office\'s own page: what you enter is published as your program\'s terms, for the agencies and buyers who deal with you (you sign the BAA or QSOA, not the SUDS maintainer). These six fields are shown to anyone, without signing in, on the Security & procurement page (procurement.html) linked from this server\'s sign-in page. A field left blank shows what the SUDS maintainer published, if anything, else "Not yet published by the maintainer". Never put client information here.' },
           { name: 'procurement_contact_name', label: 'Contact name or team', value: s.procurement_contact_name || '', maxLen: 200 },
           { name: 'procurement_contact_email', label: 'Contact email', type: 'email', value: s.procurement_contact_email || '', maxLen: 200 },
           { name: 'procurement_contact_url', label: 'Contact web page (https://…)', type: 'url', value: s.procurement_contact_url || '', maxLen: 200, span: true },
