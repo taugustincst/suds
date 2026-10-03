@@ -38,7 +38,7 @@ if ($r.code -ne 0) { Fail "suds.exe version exited $($r.code): $($r.out)" }
 if ($r.out -notmatch [regex]::Escape("SUDS $Version")) { Fail "suds.exe version printed '$($r.out.Trim())', not SUDS $Version" }
 $v = (& $exe version --json) | ConvertFrom-Json
 if ($v.node -notmatch '^22\.') { Fail "suds.exe runs Node $($v.node), not the pinned Node 22" }
-$r = Suds @('help'); if ($r.code -ne 0 -or $r.out -notmatch 'service install') { Fail "suds help did not list the commands: $($r.out)" }
+$r = Suds @('help'); if ($r.code -ne 0 -or $r.out -notmatch 'Windows service') { Fail "suds help did not list the commands: $($r.out)" }
 $r = Suds @('service', '--help'); if ($r.code -ne 0 -or $r.out -notmatch 'NT SERVICE\\SUDS') { Fail "suds service --help: $($r.out)" }
 $r = Suds @('no-such-command'); if ($r.code -ne 2) { Fail "an unknown command exited $($r.code), not 2" }
 $r = Suds @('compliance-check'); if ($r.code -ne 5 -or $r.out -notmatch 'Linux servers only') { Fail "suds compliance-check on Windows exited $($r.code): $($r.out)" }

@@ -263,10 +263,11 @@ function pack(stage, out, { mtime = commitDate() } = {}) {
 async function build(o) {
   const pins = readPins();
   if (!o.nodeZip || !o.winsw || !o.postject) throw new BuildError('Give --node-zip, --winsw and --postject (the pinned downloads; their URLs: node scripts/build-windows.js --pins)');
-  if (process.version !== pins.nodeVersion) throw new BuildError(`Build with Node ${pins.nodeVersion}, the version suds.exe is made from (this is ${process.version}): the SEA blob must come from the same Node release as node.exe.`);
+  // The inputs first: a file that is not the pinned one stops the build before anything is made from it.
   const nodeZip = fs.readFileSync(o.nodeZip); verifyPinned(nodeZip, pins.nodeWinSha256, path.basename(o.nodeZip));
   const winsw = fs.readFileSync(o.winsw); verifyPinned(winsw, pins.winswSha256, path.basename(o.winsw));
   const pj = fs.readFileSync(o.postject); verifyPinned(pj, pins.postjectIntegrity, path.basename(o.postject));
+  if (process.version !== pins.nodeVersion) throw new BuildError(`Build with Node ${pins.nodeVersion}, the version suds.exe is made from (this is ${process.version}): the SEA blob must come from the same Node release as node.exe.`);
   const version = require('../package.json').version;
   const stage = o.stage || fs.mkdtempSync(path.join(os.tmpdir(), 'suds-win-'));
   fs.rmSync(stage, { recursive: true, force: true }); fs.mkdirSync(stage, { recursive: true });
@@ -318,5 +319,5 @@ async function main(argv) {
   await build(o);
 }
 
-module.exports = { readPins, verifyPinned, untgz, appFiles, pack, readmeText, noticesText, RUNTIME_SCRIPTS, SEA_FUSE, BuildError, stripSignature };
+module.exports = { build, readPins, verifyPinned, untgz, appFiles, pack, readmeText, noticesText, RUNTIME_SCRIPTS, SEA_FUSE, BuildError, stripSignature };
 if (require.main === module) main(process.argv.slice(2)).catch((e) => { console.error(e instanceof BuildError ? `[build-windows] ${e.message}` : (e && e.stack) || e); process.exit(1); });

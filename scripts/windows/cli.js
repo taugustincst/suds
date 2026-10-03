@@ -397,7 +397,8 @@ function diskFree(dir) {
 
 /** Everything `suds status` reports. `deps` lets tests replace Windows and the network. */
 async function statusReport({ dataFlag, env = process.env, platform = process.platform, exec = svc.defaultExec, fetchJson = getJson } = {}) {
-  const { dir, source } = resolveDataDir({ flag: dataFlag, env, platform });
+  // The data folder is this computer's (`platform` only says whether to ask Windows about the service).
+  const { dir, source } = resolveDataDir({ flag: dataFlag, env });
   const where = listenSettings(dir, env);
   const service = platform === 'win32' ? svc.query(exec) : { installed: false, state: 'not available (Windows only)' };
   const h = await fetchJson(`${where.probe}/api/health`);
