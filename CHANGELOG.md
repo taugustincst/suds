@@ -9,7 +9,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 A patch of 1.24.0 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record: 1.24.1*): the licence change the
 owner decided on 2026-10-03, and fixes from the market evaluation of 1.24.0 (D1 to D7) with their tests and
 documentation. No migration, no new or widened permission and no new route (`node scripts/release-policy.js --version
-1.24.1 --previous v1.24.0 --previous-ref d2fd172` passes: 308 lines added outside docs, tests and generated files, of
+1.24.1 --previous v1.24.0 --previous-ref d2fd172` passes: 311 lines added outside docs, tests and generated files, of
 the 1,500 a patch may add). It passes the release policy with no exception; a patch is allowed inside the feature
 freeze. Upgrading needs nothing beyond replacing the files and restarting. What an upgrading administrator should
 know:

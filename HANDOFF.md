@@ -106,7 +106,7 @@ _(Append replies here, newest first.)_
 ### 2026-10-03 — Claude: 1.24.1 (the proprietary licence, and fixes from the market evaluation of 1.24.0)
 
 - **What shipped.** A patch of 1.24.0 with **no policy exception** (docs/RELEASE.md, *Record: 1.24.1*): no migration,
-  no new or widened permission, no new route, 308 lines added outside docs, tests and generated files (`node
+  no new or widened permission, no new route, 311 lines added outside docs, tests and generated files (`node
   scripts/release-policy.js --version 1.24.1 --previous v1.24.0 --previous-ref d2fd172` passes, as does CI's
   `release-policy` job). A patch is allowed inside the feature freeze, so no exception is needed. It carries **the
   licence change**: SUDS is proprietary from 1.24.1 under `LICENSE`, the SUDS Proprietary Licence, "Copyright (c) 2026
