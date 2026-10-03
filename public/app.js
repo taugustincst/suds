@@ -182,7 +182,7 @@ async function apiCall(method, path, body, opts) {
     // The enrolment deadline passed (possibly mid-session): go to enrolment, rather than failing every page.
     if (r.status === 403 && data && data.mfaSetupRequired && !location.hash.startsWith('#/profile')) location.hash = '#/profile?mfa=1';
     if (r.status === 409 && data && data.frozen) showPausedScreen();
-    if (r.status === 403 && data && data.module_off) programmeChanged();
+    if (r.status === 403 && data && data.module_off && method !== 'GET') programmeChanged();
     if (r.status >= 400) throw apiError(r.status, data, path);
     return data;
   }
@@ -205,7 +205,7 @@ async function apiCall(method, path, body, opts) {
   if (res.status === 401 && state.user && !opts.quiet) { if (data && data.mfaRequired) { location.hash = '#/mfa'; } else { state.user = null; render(); toast('Session expired. Please sign in again.', 'error'); } }
   if (res.status === 403 && data && data.passwordChangeRequired) { location.hash = '#/profile?force=1'; }
   if (res.status === 403 && data && data.mfaSetupRequired && !location.hash.startsWith('#/profile')) { location.hash = '#/profile?mfa=1'; }
-  if (res.status === 403 && data && data.module_off) programmeChanged();
+  if (res.status === 403 && data && data.module_off && method !== 'GET') programmeChanged();
   if (!res.ok) throw apiError(res.status, data, path);
   return data;
 }
@@ -1996,7 +1996,8 @@ let programmeLoading = null;
 // refused dialog stays open with what was typed (and its draft) until the person closes it.
 function programmeChanged() {
   get('/api/auth/me', { quiet: true }).then((me) => {
-    if (!me || !me.programme || !state.user) return;
+    // Drawn again only when the modules did change: a page that reads a switched-off module must not redraw for ever.
+    if (!me || !me.programme || !state.user || JSON.stringify(me.programme.modules) === JSON.stringify((state.programme || {}).modules)) return;
     state.programme = me.programme;
     const root = document.getElementById('modal-root');
     const open = () => root && root.querySelector(':scope > .modal-bg');
