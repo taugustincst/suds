@@ -191,6 +191,48 @@ test('accept into an existing client found by the duplicate check: only records 
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE client_id=?`, existing.data.id).n, 0);
 });
 
+// Review of the 1.24.0 tree: an accepted referral is a client's record. A worker held to their caseload saw the name,
+// date of birth, phone, reason, notes, attempts and client code of every accepted referral in the queue, clients they
+// could not open included. Now they see an accepted one only when its client is on their caseload; open ones stay
+// the shared desk's, and the counts name nobody.
+test('a caseload-scoped worker sees an accepted referral only when its client is on their caseload', async () => {
+  const theirs = await nav.post('/api/clients', { first_name: 'Ozren', last_name: 'Offcaseload', dob: '1971-02-03', confirm_duplicate: true });
+  assert.equal(theirs.status, 201);
+  const mine = await nav.post('/api/clients', { first_name: 'Pavla', last_name: 'Oncaseload', dob: '1972-03-04', confirm_duplicate: true });
+  await sup.post(`/api/clients/${mine.data.id}/assignments`, { user_id: scopedUser.id, role_on_case: 'secondary' });
+  const hidden = await make(nav, { first_name: 'Ozren', last_name: 'Offcaseload', dob: '1971-02-03', phone: '555-0144', notes: 'Hidden accepted note' });
+  const shown = await make(nav, { first_name: 'Pavla', last_name: 'Oncaseload', dob: '1972-03-04' });
+  const open = await make(nav, { first_name: 'Quinn', last_name: 'Stillopen', urgency: 'routine' });
+  assert.equal((await nav.post(`/api/incoming-referrals/${hidden}/attempts`, { method: 'phone', outcome: 'reached' })).status, 201);
+  assert.equal((await nav.post(`/api/incoming-referrals/${hidden}/accept`, { client_id: theirs.data.id })).status, 200);
+  assert.equal((await nav.post(`/api/incoming-referrals/${shown}/accept`, { client_id: mine.data.id })).status, 200);
+  const all = await scoped.get('/api/incoming-referrals?status=all&limit=500');
+  assert.equal(all.status, 200);
+  const ids = all.data.rows.map(r => r.id);
+  assert.ok(!ids.includes(hidden), 'an accepted referral of a client off the caseload is not listed');
+  assert.ok(ids.includes(shown), 'one whose client is on the caseload is');
+  assert.ok(ids.includes(open), 'an open referral is the shared desk\'s');
+  assert.equal(all.data.total, all.data.rows.length, 'the total counts only what may be seen');
+  const text = JSON.stringify(all.data);
+  for (const s of ['Offcaseload', '555-0144', 'Hidden accepted note', theirs.data.client_code || 'no-code']) assert.ok(!text.includes(s), `${s} is not in the list`);
+  assert.ok(!(await scoped.get('/api/incoming-referrals?status=accepted&limit=500')).data.rows.some(r => r.client_id === theirs.data.id));
+  assert.ok(!(await scoped.get('/api/incoming-referrals?status=all&q=Offcaseload')).data.rows.length, 'nor found by surname');
+  const one = await scoped.get(`/api/incoming-referrals/${hidden}`);
+  assert.equal(one.status, 403, 'refused like the client record itself');
+  assert.match(one.data.error, /not on your caseload/);
+  assert.ok(!JSON.stringify(one.data).includes('Offcaseload'));
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='authz.denied' AND client_id=? AND user_id=?`, theirs.data.id, scopedUser.id), 'the refusal is audited');
+  assert.equal((await scoped.get(`/api/incoming-referrals/${hidden}/matches`)).status, 403);
+  assert.equal((await scoped.get(`/api/incoming-referrals/${shown}`)).status, 200, 'their own client\'s referral opens');
+  assert.equal((await scoped.get(`/api/incoming-referrals/${open}`)).status, 200, 'and an open one');
+  assert.equal((await nav.get(`/api/incoming-referrals/${hidden}`)).status, 200, 'a worker who sees every client sees it');
+  assert.ok((await nav.get('/api/incoming-referrals?status=all&limit=500')).data.rows.some(r => r.id === hidden));
+  // The counts name nobody, so they are the programme's whole queue for everyone.
+  const sum = await scoped.get('/api/incoming-referrals/summary');
+  assert.equal(sum.status, 200);
+  assert.ok(!JSON.stringify(sum.data).match(/Offcaseload|Ozren|client_id|client_code/));
+});
+
 test('accept into a new client made from the referral\'s details', async () => {
   const id = await make(clin, { first_name: 'Nadia', last_name: 'Brandnewclient', dob: '1990-01-30', phone: '555-0111' });
   // The worker opens New client prefilled from the referral (views/incoming.js), saves it, and the referral is linked.

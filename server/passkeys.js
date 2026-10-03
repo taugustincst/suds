@@ -358,12 +358,16 @@ function loginOptions(ctx) {
 function loginFinish(ctx, { credential }) {
   requirePolicy('signin');
   const rp = relyingParty(ctx);
-  const A = auth(); const app = require('./app'); const limit = config.loginRateLimit;
-  if (app.rateLimited(`login:${ctx.ip}`, limit)) throw new HttpError(429, 'Too many sign-in attempts. Try again later.');
-  if (ctx.headers['x-sync-client']) throw badRequest('A device syncs with a username and password');
+  const A = auth();
   const second = !!(ctx.user && ctx.session && ctx.session.mfa_pending);
+  // Failures count per credential (the second step: per account) from this address, and per address whatever the
+  // credential, as at password sign-in (auth.signInLimiter; pen test of 1.23.6, L2).
+  const credId = credential && typeof credential === 'object' && typeof credential.id === 'string' ? credential.id.slice(0, 256) : '';
+  const limiter = A.signInLimiter(ctx.ip, second ? `account:${ctx.user.id}` : `passkey:${credId}`);
+  if (limiter.limited()) throw new HttpError(429, 'Too many sign-in attempts. Try again later.');
+  if (ctx.headers['x-sync-client']) throw badRequest('A device syncs with a username and password');
   const failedAttempt = (who, reason, message, status = 401) => {
-    app.rateLimit(`login:${ctx.ip}`, limit, 15 * 60_000);
+    limiter.fail();
     audit.log({ user: who, action: second ? 'auth.mfa.failed' : 'auth.login.failed', ip: ctx.ip, success: false, details: { method: 'passkey', reason } });
     throw new HttpError(status, message, { passkeyError: reason });
   };

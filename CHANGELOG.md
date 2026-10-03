@@ -29,6 +29,35 @@ Fixes from an owner-authorised white-box pen test of 1.23.6. No migration, permi
   Test data that relied on mismatched purposes was corrected. Before you upgrade, check whether your consents state
   their purpose in other words: from this release, a referral on such a consent needs a supervisor's override or a
   new consent.
+* **M1, widened after review — everyday purposes are covered** (review of the combined 1.24.0 tree: the first version
+  refused everyday flows). A **referral's purpose is what it is for**, from the provider's directory category
+  (`disclosure.referralPurpose`: "Referral for housing services", "Referral for outpatient treatment"; "Referral for
+  services" for *other*), and the accounting row records it. A consent naming Hope Housing for "Housing assistance",
+  "Linkage to housing and benefits", "Case management" or "Coordinate services" now covers a referral to Hope Housing
+  (it was refused with 409). **Treatment** is also named by medication, prescriber, primary care / PCP, doctor,
+  physician, therapy, recovery services and discharge planning and, for a person's disclosure, by coordinate, case
+  management, discharge, follow-up, appointment and counseling. Case management, care coordination, coordinating
+  services and service linkage are **broad coordination purposes**: they cover a referral or coordination for
+  services (treatment, housing, employment, school, benefits, family support), never payment, operations, a court,
+  research, marketing or the media. The **TPO consent** (or one stating TPO) covers any purpose not plainly outside
+  TPO, so "Coordinate care with primary care doctor", "Discharge planning", "Medication management with prescriber"
+  and "Follow-up appointment" go on it. An explicit **non-TPO list** — housing, employment, court / legal / probation /
+  law enforcement, school, benefits eligibility, research, marketing, media, family or personal — wins over every
+  other word and still needs a consent that names it: **a TPO consent alone no longer covers a referral to a housing,
+  shelter, sober-living, employment, legal-aid, benefits or family-support provider** (it did when every referral was
+  "Referral for services"); record a consent naming that purpose, or a supervisor overrides. The sample data's TPO
+  consents now name the housing, shelter and legal-aid referrals they make. One rule still serves every path: the FHIR
+  API reads it with its own words only, so no coordination word, coordination consent or patient's request widens an
+  automated feed, the clinical words count there only in a purpose naming nothing outside TPO, and "Referral to
+  housing" no longer covers `TREAT` (stricter). "Billing and payment processing only" still covers no treatment
+  referral. A **device's referral** on a consent that names the agency but not this purpose is now **kept at the
+  office** with its accounting row (audited `purpose_unconfirmed: true`), flagged to the device (`sync.conflict`,
+  flagged `disclosure_purpose`) and given a supervisor's high-priority review task, instead of being refused and
+  living only on the device; any other refusal is unchanged. A **secure referral link** withheld because its consent
+  no longer covers the referral's purpose is audited as `purpose_not_covered` (it said `consent_not_valid`), and the
+  referral's link list now says, for each link a provider could still open, why it would be withheld. Links made
+  before are held to the same rule. docs/compliance/PART2.md *Purpose match* and docs/integration/FHIR.md describe it;
+  `test/purpose-matrix.test.js` is the table of cases.
 * **M2 — an office deletion stands.** A device's push with a fresh `updated_at` could bring back a row the office had
   deleted and remove its tombstone. Sync push (`server/rules/push.js`) now refuses any row whose tombstone is on file,
   whatever the device's clock says. It is reported to the device as a permanent rejection (`deleted at the office`),
@@ -63,7 +92,12 @@ the office's NAT address; and a device's sync sign-in can no longer manage the a
   sign-in from it, right passwords included. Failures now count per username from an address (`LOGIN_RATE_LIMIT`,
   default 20, as before) and per address whatever the username (`LOGIN_IP_RATE_LIMIT`, default ten times that, 200),
   as the backstop against spraying; account lockout is unchanged, and a username nobody has is counted exactly like
-  one that exists.
+  one that exists. The same two limits now cover every other place a password or passkey is tried
+  (`auth.signInLimiter`): the password given again to sign or approve, or to change it or turn two-step verification
+  off, counts per account from the address, and fingerprint sign-in per passkey (its second step per account), each
+  with the per-address ceiling behind it. These had still counted per address alone, so one person's 20 wrong signing
+  passwords refused every colleague's signature and sign-in from the same address. Settings › Security status's
+  hardening checklist says so.
 * **L4 — paging.** A `limit` or `offset` that is not a number answered 500 on every list route; it is now a 400 that
   says which (`limit must be a whole number`), absent or empty takes the default, and a fraction is rounded down
   (`server/validate.js` `paging`, now also used by the supplies ledger). A non-numeric `hours` on
@@ -122,6 +156,8 @@ Feature work for 1.24.0, on its own branch; it goes through the release gate aft
 * **Merge** keeps the entry already there and folds the new one into it (`POST /api/time/:id/merge`): its description is added on a new line (once, when they say the same thing); when both have a start time and the ranges overlap, the kept entry covers both (09:00–10:00 and 09:30–10:30 become 09:00–10:30, 90 minutes, never the 120 of the two added), or keeps its own times if you choose; a client, fund or visit link it lacked is taken from the other. The time counts once on the time list, the approval queue, the funder report's staff hours and the summaries. Approved time is never merged into (or merged away): a supervisor reopens it first. Audited as `time_entry.merge`, naming ids and field names only.
 * **Start time.** A time entry may say when it started (*Start time (optional)*, HH:MM); the time list shows the range under the date. Without one, only the same minutes and description can match.
 * **A device's entry is never refused for this.** A device cannot answer the question, so its pushed entry lands and is marked **Possible duplicate** of the earlier one (`time_entries.duplicate_of`, set by the office only); the device is told (a flagged warning, audited as `sync.conflict` flagged `duplicate`). The mark shows on the time list and, for an entry waiting for approval, on the Supervision page's staff-time queue with the other entry's hours, where **Merge** combines the pair and **Not a duplicate** clears the mark (`POST /api/time/:id/not-duplicate`, also for an approver without `time:write`).
+* **The mark is the office's.** Sync never carries `duplicate_of`, so clearing it on a device that syncs with an office would only clear the device's copy and come back at the next pull: there **Not a duplicate** is refused (403, `rulingAtOffice`, "is done on the office SUDS"), as an approval is, and the time list and queue say *Not a duplicate? Clear the mark on the office SUDS.* instead of the button. SUDS on this device, with no office, clears its own. **Merge** works on such a device: it is an edit of the entry kept and a deletion of the other, which sync carries, and the office ends with no mark (`test/time-duplicates.test.js`, `test/kernel-sync-parity.test.js`).
+* **A deleted entry leaves no mark behind.** A visit's own time entry, deleted with the visit or when the visit's duration was cleared, was removed without clearing the marks pointing at it, so the other entry kept *Possible duplicate* and its Merge answered 404. Those deletes now clear the marks first, as every other path that deletes an entry does (`server/routes/interventions.js`). The retention purge and a client merge keep time entries (the purge only removes their client link), so they leave no mark dangling.
 * Schema: migration 68 adds `time_entries.start_time` and `time_entries.duplicate_of` (no data about people). API: `docs/API.md` *Possible duplicate time*. Audit actions `time_entry.duplicate.warn`, `.override`, `.dismiss` and `time_entry.merge` are catalogued in `docs/security/LOGGING-AND-AUDIT.md`. Tests: `test/time-duplicates.test.js`; the browser script `ux13` asks, cancels, saves anyway, merges, checks the approved lock and merges a device's duplicate from the queue, with axe on the question, the time list and the queue.
 
 ### A sign reminder opens its draft (built for 1.24.0, not yet released)
@@ -193,9 +229,14 @@ person or their family). It goes through the release gate after the stabilisatio
   `grantProblem` refuses them to a de-identified role), marked sensitive, editable per person on the Permissions page
   like the others. Working the queue needs both (a denied read leaves nothing to write). Accepting also needs
   *Open client records* (`clients:read`), and a new client *Edit client records*.
-- **Visibility (decided):** everyone with `intake:read` sees the whole queue, a caseload-scoped worker included: a
+- **Visibility (decided):** everyone with `intake:read` sees every open referral, a caseload-scoped worker included: a
   referred person is nobody's client yet, and intake is a shared desk. An accepted referral's client is reached as every
-  client is (accepting into an existing record needs one the worker may open, else 403 and `authz.denied`).
+  client is (accepting into an existing record needs one the worker may open, else 403 and `authz.denied`). An
+  accepted referral is the client's: a worker held to their caseload lists it, finds it by surname and opens it (with
+  its attempts and its duplicate check) only when that client is on their caseload, and is otherwise refused 403 ("This
+  client is not on your caseload", audited `authz.denied`) as for the client itself. Before the review of the 1.24.0
+  tree the queue showed such a worker the name, date of birth, phone, reason, notes, attempts and client code of every
+  accepted referral. The counts on Home, the queue's header and Supervision name nobody and still cover the whole queue.
 - **Part 2 / HIPAA (decided):** receiving a referral is not a disclosure, so it writes no accounting row. SUDS builds **no
   send-back to the referrer** (no "let the referrer know"): telling them the person became a client would be a
   disclosure, made under the person's consent on their Consents tab like any other.

@@ -80,7 +80,9 @@ test('on a device that syncs with an office, rulings are refused up front: appro
   // Sync never carries a ruling to the office (server/rules/shared.js officeRuling), so making one on the device
   // would look done and be undone at the next sync. The routes say so instead.
   for (const [p, body] of [['/api/time/any-id/approve', { decision: 'approved' }], ['/api/time/approve-batch', { ids: ['any-id'], decision: 'approved' }],
-    ['/api/budget/expenditures/any-id/approve', { status: 'approved' }], ['/api/notes/any-id/cosign', {}]]) {
+    ['/api/budget/expenditures/any-id/approve', { status: 'approved' }], ['/api/notes/any-id/cosign', {}],
+    // The office's possible-duplicate mark (1.24.0): sync does not carry clearing it, so it is cleared at the office.
+    ['/api/time/any-id/not-duplicate', {}]]) {
     const r = await device('POST', p, body);
     assert.equal(r.status, 403, `${p}: ${JSON.stringify(r.data)}`);
     assert.equal(r.data.rulingAtOffice, true, p);

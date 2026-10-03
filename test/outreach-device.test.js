@@ -41,3 +41,13 @@ test('offline on the device: an outreach contact draws the device\'s stock down 
   ok(await call('PUT', '/api/me/prefs', { start_page: 'outreach' }), 200, 'start page');
   assert.equal(ok(await call('GET', '/api/me/prefs'), 200, 'prefs').prefs.start_page, 'outreach');
 });
+
+// Possible duplicate time (1.24.0, review of the 1.24.0 tree): on a device that syncs with an office the mark is the
+// office's and clearing it is refused there (test/kernel-sync-parity.test.js); SUDS on this device has no office, so
+// it clears its own marks.
+test('on SUDS on this device, "Not a duplicate" is answered here, not sent to an office', async () => {
+  const day = require('../server/routes/budget').localDate();
+  const id = ok(await call('POST', '/api/time', { work_date: day, minutes: 30, category: 'admin', description: 'Device paperwork' }), 201, 'time').id;
+  const r = ok(await call('POST', `/api/time/${id}/not-duplicate`, {}), 200, 'not a duplicate');
+  assert.equal(r.ok, true); assert.equal(r.unchanged, true, 'nothing was marked');
+});

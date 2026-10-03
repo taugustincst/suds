@@ -2,9 +2,11 @@
 // The rules for referrals. A referral that shares information is a disclosure, whichever way it reaches the
 // office: a warm hand-off made offline, a pending referral progressed on the phone, or a shared one re-pointed
 // at another agency passes the same gate as PUT /api/referrals/:id and is accounted here
-// (routes/referrals.js pushDisclosure). A refusal is for good (the device shows it) and audited, by reason code.
+// (routes/referrals.js pushDisclosure). A refusal is for good (the device keeps its copy and shows why) and audited, by
+// reason code. A consent that names the agency but was given for another purpose is not a refusal (1.24.0): the
+// referral was made, so it is kept and accounted, flagged to the device, and put before a supervisor as a review task.
 const db = require('../db');
-const { define, refuse } = require('./core');
+const { define, refuse, flag } = require('./core');
 const { ownedBy } = require('./shared');
 const FU = require('./follow-ups');
 
@@ -56,7 +58,9 @@ module.exports = define({
       return r;
     }
     c.referralDisclosure = gate;
-    return null;
+    // The consent names the agency but was given for another purpose: the referral was made, so it is kept and
+    // accounted rather than lost, the device is told, and a supervisor reviews it (afterApply).
+    return gate && gate.flagged ? flag(gate.flagged, { code: 'disclosure_purpose' }) : null;
   },
   // Every referral has a follow-up date (one by urgency when the worker set none), and its to-do follows the date
   // once the push has landed (server/rules/follow-ups.js), as over REST (routes/referrals.js).
@@ -70,5 +74,9 @@ module.exports = define({
     if (!gate) return;
     gate.account('device');
     for (const id of gate.deviceIds) c.session.state.referrals.accountedByOffice.add(id);
+    if (gate.flagged) {
+      const code = db.one(`SELECT client_code FROM clients WHERE id=?`, row.client_id)?.client_code || '';
+      require('../routes/clients').reviewTask(c.user, row.client_id, `Review a referral synced from a device for ${code}: the consent it cites was given for another purpose. Confirm the basis, or record a consent for this purpose.`);
+    }
   },
 });

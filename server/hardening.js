@@ -110,7 +110,7 @@ function items() {
     const lim = config.loginRateLimit;
     const sane = Number.isFinite(lim) && lim > 0 && lim <= 100;
     add({ id: 'login_rate_limit', title: 'Limit sign-in attempts', done: sane, where: 'server',
-      why: sane ? `${lim} sign-in attempts per address per 15 minutes, and an account locks for ${config.lockout.minutes} minutes after ${config.lockout.maxAttempts} wrong passwords.` : `LOGIN_RATE_LIMIT is ${lim}, which lets one address guess passwords far faster than an office needs. Ask IT to set it to 20 (the default), or up to 100 for a large office behind one address.`,
+      why: sane ? `${lim} failed attempts per account (or passkey) from one address per 15 minutes — at sign-in, and for the password given again to sign, approve or change it — and ${config.loginIpRateLimit} per address whatever the account; an account locks for ${config.lockout.minutes} minutes after ${config.lockout.maxAttempts} wrong passwords.` : `LOGIN_RATE_LIMIT is ${lim}, which lets one address guess passwords far faster than an office needs. Ask IT to set it to 20 (the default), or up to 100 for a large office behind one address.`,
       status: `${lim} per 15 min`, action: { label: 'Open Security status', href: '#/admin?tab=security' } });
   }
 

@@ -273,3 +273,49 @@ test('a pushed duplicate a supervisor reviews can be cleared as not a duplicate'
   assert.equal((await C.nav.del(`/api/time/${first}`)).status, 200);
   assert.equal(row(id).duplicate_of, null);
 });
+
+// Review of the 1.24.0 tree: "Not a duplicate" clears only the office's mark, which sync never carries, so it is the
+// office's to do (refused on a device that syncs: test/kernel-sync-parity.test.js). A merge made on such a device is
+// an ordinary edit of the entry kept and a deletion of the other, which sync does carry: the office ends with the
+// device's merged entry, the other gone, and no mark, and the device is not told its merged entry "may duplicate"
+// the entry its own push deletes.
+test('a merge made on a device reaches the office as the edit and the deletion it is, with no mark left', async () => {
+  const day = nextDay();
+  const kept = await logged(C.nav, { work_date: day, start_time: '16:00', minutes: 60, description: 'Street outreach' });
+  const fromId = randomUUID();
+  const pushed = { id: fromId, user_id: U.nav, work_date: day, start_time: '16:30', minutes: 60, category: 'admin', description_enc: 'Street outreach, again', status: 'draft', updated_at: iso() };
+  assert.equal((await C.nav.post('/api/sync/push', { device_now: iso(), tables: { time_entries: [pushed] } })).data.rejected.length, 0);
+  assert.equal(row(fromId).duplicate_of, kept);
+  // On the device: POST /api/time/:kept/merge { from_id } -- the kept entry now spans 16:00-17:30, the other is deleted.
+  const k = row(kept); const later = iso(Date.now() + 5000);
+  const merged = { id: kept, user_id: U.nav, work_date: day, start_time: '16:00', minutes: 90, category: k.category, description_enc: 'Street outreach\nStreet outreach, again', status: k.status, updated_at: later };
+  const p = await C.nav.post('/api/sync/push', { device_now: later, tables: { time_entries: [merged] }, tombstones: [{ table_name: 'time_entries', id: fromId, deleted_at: later }] });
+  assert.equal(p.status, 200, JSON.stringify(p.data));
+  assert.equal(p.data.rejected.length, 0, JSON.stringify(p.data.rejected));
+  assert.ok(!(p.data.warnings || []).some(w => w.id === kept), `no "may duplicate" for the merged entry: ${JSON.stringify(p.data.warnings)}`);
+  assert.equal(row(fromId), null, 'the other entry is gone at the office');
+  assert.equal(row(kept).minutes, 90);
+  assert.equal(row(kept).duplicate_of, null, 'and nothing is marked');
+  assert.ok(!H.db.one(`SELECT 1 FROM audit_log WHERE action='sync.conflict' AND entity_id=? AND details LIKE '%"flagged":"duplicate"%'`, kept), 'no false duplicate flag in the audit trail');
+});
+
+// Review of the 1.24.0 tree: a visit's own time entry, deleted with the visit or when its duration is cleared, left a
+// mark pointing at it on the entry it was a possible duplicate of: "Possible duplicate" stayed, and Merge answered 404.
+test('a visit\'s time entry deleted with the visit, or when its duration is cleared, leaves no mark pointing at it', async () => {
+  const cl = await C.nav.post('/api/clients', { first_name: 'Visit', last_name: 'Timemark', confirm_duplicate: true });
+  assert.equal(cl.status, 201, JSON.stringify(cl.data));
+  for (const how of ['delete', 'zero']) {
+    const day = nextDay();
+    const v = await C.nav.post('/api/interventions', { client_id: cl.data.id, type: 'outreach', occurred_at: `${day}T17:00:00.000Z`, service_date: day, duration_minutes: 30, log_time: true });
+    assert.equal(v.status, 201, JSON.stringify(v.data));
+    const te = H.db.one(`SELECT * FROM time_entries WHERE intervention_id=?`, v.data.id);
+    assert.ok(te, 'the visit logged its time');
+    // An entry pushed from a device, marked as a possible duplicate of the visit's entry.
+    const other = randomUUID();
+    H.db.run(`INSERT INTO time_entries(id,user_id,work_date,minutes,category,duplicate_of) VALUES(?,?,?,?,?,?)`, other, U.nav, te.work_date, 30, 'admin', te.id);
+    const r = how === 'delete' ? await C.nav.del(`/api/interventions/${v.data.id}`) : await C.nav.put(`/api/interventions/${v.data.id}`, { duration_minutes: 0 });
+    assert.equal(r.status, 200, `${how}: ${JSON.stringify(r.data)}`);
+    assert.equal(row(te.id), null, `${how}: the visit's entry is gone`);
+    assert.equal(row(other).duplicate_of, null, `${how}: no mark points at it`);
+  }
+});

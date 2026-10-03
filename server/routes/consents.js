@@ -59,16 +59,19 @@ module.exports = (r) => {
       .map(n => ({ ...n, notes: n.notes_enc ? decrypt(n.notes_enc) : null, notes_enc: undefined }));
     // For a referral to a provider (?resource_id=): which consents name it — by its name or organisation,
     // with the same matching the referral gate uses (disclosure.consentNamesRecipient) — whether each covers a
-    // referral's purpose (covers_referral: disclosure.consentCoversPurpose), and, when exactly one live consent
+    // referral's purpose (covers_referral: disclosure.consentCoversPurpose with disclosure.referralPurpose), and, when exactly one live consent
     // does both, that one as the suggestion the referral form pre-selects.
     let suggested;
     const resourceId = ctx.query.get('resource_id');
     if (resourceId) {
-      const res = db.one(`SELECT name, organization FROM resources WHERE id=?`, resourceId);
+      const res = db.one(`SELECT name, organization, category FROM resources WHERE id=?`, resourceId);
       const names = res ? disclosure.recipientNames([res.name, res.organization].filter(Boolean)) : [];
+      // A referral's purpose is what the provider is for (disclosure.referralPurpose): a housing consent covers a
+      // referral to a housing provider.
+      const purpose = disclosure.referralPurpose(res);
       for (const c of consents) {
         c.names_resource = !!names.length && disclosure.consentNamesRecipient(c, names);
-        c.covers_referral = disclosure.consentCoversPurpose(c, disclosure.REFERRAL_PURPOSE);
+        c.covers_referral = disclosure.consentCoversPurpose(c, purpose);
       }
       const live = consents.filter(c => c.names_resource && c.covers_referral && c.can_disclose);
       suggested = live.length === 1 ? live[0].id : null;

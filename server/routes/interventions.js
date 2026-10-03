@@ -60,11 +60,20 @@ function syncExpenditure(ctx, row) {
 // supervisor approving hours nobody had actually worked. Only while the entry is still unapproved —
 // approved or rejected time has been ruled on and is not rewritten behind the approver's back.
 // Audited as the caller's (time_entry.update), as syncExpenditure is.
+/**
+ * Delete a visit's own time entry. An entry deleted is no longer anyone's possible duplicate (1.24.0): a mark left
+ * pointing at it kept "Possible duplicate" on the other entry, whose Merge then answered 404 (review of the 1.24.0
+ * tree), so the marks go first, as on every other path that deletes one (rules/time_entries.js clearMarksTo).
+ */
+function dropTimeEntry(id) {
+  require('../rules/time_entries').clearMarksTo(id);
+  db.run(`DELETE FROM time_entries WHERE id=?`, id); db.tombstone('time_entries', id);
+}
 function syncTimeEntry(ctx, row, prev) {
   if (row.duration_minutes === prev.duration_minutes && row.occurred_at === prev.occurred_at && !row._service_date) return;
   const te = db.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
   if (!te || (te.status !== 'draft' && te.status !== 'submitted')) return;
-  if (!(row.duration_minutes > 0)) { db.run(`DELETE FROM time_entries WHERE id=?`, te.id); db.tombstone('time_entries', te.id); return; }
+  if (!(row.duration_minutes > 0)) { dropTimeEntry(te.id); return; }
   db.run(`UPDATE time_entries SET minutes=?, work_date=?, updated_at=? WHERE id=?`, row.duration_minutes, serviceDate(row), db.now(), te.id);
   audit.log({ user: ctx.user, action: 'time_entry.update', entity: 'time_entry', entityId: te.id, clientId: te.client_id || null, ip: ctx.ip, details: { intervention_id: row.id, fields: ['minutes', 'work_date'] } });
 }
@@ -244,7 +253,7 @@ module.exports = (r) => {
       // The visit's automatic time entry: gone with the visit while nobody has approved it; once approved
       // it is part of a signed-off time sheet, so it is detached and marked instead of silently rewritten.
       const te = db.one(`SELECT * FROM time_entries WHERE intervention_id=?`, row.id);
-      if (te && (te.status === 'draft' || te.status === 'submitted')) { db.run(`DELETE FROM time_entries WHERE id=?`, te.id); db.tombstone('time_entries', te.id); }
+      if (te && (te.status === 'draft' || te.status === 'submitted')) dropTimeEntry(te.id);
       else if (te) db.run(`UPDATE time_entries SET intervention_id=NULL, description_enc=?, updated_at=? WHERE id=?`, encrypt(`${te.description_enc ? decrypt(te.description_enc) : ''} (the visit this was logged from was deleted)`.trim()), db.now(), te.id);
       // What this visit drew from the shelf goes back: a deleted visit handed nothing out. Its lines go
       // with it (ON DELETE CASCADE), so the stock is put back before the row is deleted.

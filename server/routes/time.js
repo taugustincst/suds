@@ -235,7 +235,11 @@ module.exports = (r) => {
   // ---- not a duplicate (1.24.0) ----
   // Clears the "possible duplicate" mark a device's push left (or a match the worker could not see). The worker, a
   // manager (time:all) or an approver (time:approve) may: it changes no hours, so approved time may be cleared too.
+  // The mark (duplicate_of) is the office's and sync never carries it (rules/time_entries.js), so on a device that
+  // syncs with an office clearing it would look done and come back at the next pull: it is refused there, as a
+  // ruling is (shared.js assertRulingHere). SUDS on this device, which has no office, clears its own.
   r.post('/api/time/:id/not-duplicate', auth.requireAuth, auth.requirePerm('time:write', 'time:approve'), (ctx) => {
+    require('../rules/shared').assertRulingHere('Clearing a possible-duplicate mark');
     const row = db.one(`SELECT * FROM time_entries WHERE id=?`, ctx.params.id);
     if (!row) throw notFound('Time entry not found');
     reach(ctx, row);
