@@ -4,6 +4,28 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Fixed
+
+From the market evaluation of 1.24.0 (no migration, route or permission):
+
+- `npm run try` and `suds try`: the sample accounts are never required to set up two-step verification, so a tester is
+  no longer locked out (403, two-step setup required) once the 3-day grace period has passed. Office servers are unchanged.
+- After the setup wizard switches HTTPS on, the hardening checklist, Security status and HSTS see it at once; they said
+  HTTPS was off until the server was restarted.
+- Passwords: a common word with one or two extra letters ("Summer2026!!x", "Welcome2026!x") is refused as too common,
+  on an office server and on SUDS on this device alike.
+- The referral form, for a consent that names the provider but was given for another purpose (a TPO consent and a
+  housing referral), says so and offers a consent for this purpose or a supervisor override; it said no consent named it.
+- A save refused because an administrator switched its module off reads the programme again: once the dialog is closed
+  the page no longer offers that module's forms. What was typed is kept, as before.
+- A sign reminder cannot be marked done by the worker it is for while their drafts on that record are unsigned (over
+  REST and sync push); it closes itself when they are signed. The supervisor who sent it, or anyone who countersigns
+  notes, can still close it. To-dos and Home say why instead of asking "Mark done anyway?".
+- SUDS on this device: the scheduled-backup reminder says the first backup is due today, not overdue, on the day
+  scheduled backups are turned on.
+- Settings › Security & procurement page says it is the office's own published terms, and what a blank field shows.
+- The Windows smoke test in CI completes the setup wizard against the running service (HTTPS on) and signs in.
+
 ## 1.24.0 — 2026-10-03
 
 A feature release (migrations 68, 69 and 70; new permissions `intake:read` and `intake:write`; 22 new routes:
