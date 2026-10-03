@@ -483,6 +483,26 @@ const phone = await session('mrivera', 'Navigator2026!!', { width: 390, height: 
   const urgent = (await api('GET', `/api/tasks?client_id=${c.id}&limit=50`)).data.rows.filter(t => t.priority === 'urgent');
   eq(urgent.length, 1, 'an urgent safety follow-up to-do was created');
 
+  // An administrator switches Assessments off while this page is open (eval of 1.24.0, D5): a form opened before
+  // is refused on save and stays open; once it is closed the page is drawn again without the add buttons.
+  {
+    const a = await session('admin', 'AdminPassw0rd!x');
+    eq((await a.api('PUT', '/api/admin/settings', { module_assessments: '0' })).status, 200, 'an administrator switches Assessments off');
+    await (await until(() => page.$('[data-add-outcome=phq9]'))).click();
+    await page.waitForSelector('.modal select[name=q0]');
+    for (let i = 0; i < 9; i++) await page.selectOption(`.modal select[name=q${i}]`, '0');
+    await page.click('.modal button[type=submit]');
+    const off = await until(() => page.$('.modal [data-form-error-near]:not(.hidden)'));
+    ok(off && /switched off/.test(await off.textContent()), 'the save is refused: the module is switched off', off && await off.textContent());
+    eq(await page.$eval('.modal select[name=q0]', e => e.value), '0', 'and the form stays open with what was chosen');
+    await closeModal(page);
+    ok(await until(() => page.$('[data-module-off=assessments]')), 'closed, the page is drawn again with the switched-off notice');
+    ok(!(await page.$('[data-add-outcome=phq9]')) && !(await page.$('[data-add-asam]')), 'and no form to add an assessment');
+    eq((await a.api('PUT', '/api/admin/settings', { module_assessments: null })).status, 200, 'switched back on');
+    await a.close();
+    await page.reload(); await page.waitForSelector('.layout'); await settle(page);
+  }
+
   // The Overview sums it up
   await go(page, `client/${c.id}/overview`);
   const card = await until(() => page.$('[data-clinical-card]'));

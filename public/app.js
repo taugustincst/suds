@@ -182,6 +182,7 @@ async function apiCall(method, path, body, opts) {
     // The enrolment deadline passed (possibly mid-session): go to enrolment, rather than failing every page.
     if (r.status === 403 && data && data.mfaSetupRequired && !location.hash.startsWith('#/profile')) location.hash = '#/profile?mfa=1';
     if (r.status === 409 && data && data.frozen) showPausedScreen();
+    if (r.status === 403 && data && data.module_off) programmeChanged();
     if (r.status >= 400) throw apiError(r.status, data, path);
     return data;
   }
@@ -204,6 +205,7 @@ async function apiCall(method, path, body, opts) {
   if (res.status === 401 && state.user && !opts.quiet) { if (data && data.mfaRequired) { location.hash = '#/mfa'; } else { state.user = null; render(); toast('Session expired. Please sign in again.', 'error'); } }
   if (res.status === 403 && data && data.passwordChangeRequired) { location.hash = '#/profile?force=1'; }
   if (res.status === 403 && data && data.mfaSetupRequired && !location.hash.startsWith('#/profile')) { location.hash = '#/profile?mfa=1'; }
+  if (res.status === 403 && data && data.module_off) programmeChanged();
   if (!res.ok) throw apiError(res.status, data, path);
   return data;
 }
@@ -1989,6 +1991,20 @@ export function moduleOn(key) {
   return m[key] === true;
 }
 let programmeLoading = null;
+// A save refused because an administrator switched its module off after this page loaded (eval of 1.24.0, D5): the
+// programme is read again, and the page drawn again once no dialog is open, so its forms are no longer offered. The
+// refused dialog stays open with what was typed (and its draft) until the person closes it.
+function programmeChanged() {
+  get('/api/auth/me', { quiet: true }).then((me) => {
+    if (!me || !me.programme || !state.user) return;
+    state.programme = me.programme;
+    const root = document.getElementById('modal-root');
+    const open = () => root && root.querySelector(':scope > .modal-bg');
+    if (!open()) { render(); return; }
+    const mo = new MutationObserver(() => { if (!open()) { mo.disconnect(); render(); } });
+    mo.observe(root, { childList: true });
+  }).catch(() => { /* the next sign-in brings it */ });
+}
 function loadProgramme() {
   if (programmeLoading || !state.user || state.mfaPending || state.signedInOffline) return;
   programmeLoading = get('/api/auth/me', { quiet: true })
