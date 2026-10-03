@@ -40,7 +40,17 @@ function client() {
   async function req(method, path, body, extra = {}) {
     const h = { 'Content-Type': 'application/json', 'X-Requested-With': 'suds', ...headers, ...extra };
     if (cookie && extra.Cookie === undefined) h.Cookie = cookie; if (h.Cookie === '') delete h.Cookie;
-    const res = await fetch(base + path, { method, headers: h, body: body === undefined ? undefined : (typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)) });
+    const send = () => fetch(base + path, { method, headers: h, body: body === undefined ? undefined : (typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body)) });
+    // A pooled keep-alive connection the server closed as idle, at the moment it was reused: a test that holds the
+    // event loop for about the keep-alive time (county-fuzz's CSV sweeps, ~64 s of synchronous work against the
+    // server's 65 s) can lose that race (CI: "fetch failed" on the next request). The server had not received the
+    // request, so it is sent once more, on a new connection; any other failure is the test's.
+    let res;
+    try { res = await send(); } catch (e) {
+      const code = e && e.cause && e.cause.code;
+      if (!['UND_ERR_SOCKET', 'ECONNRESET', 'EPIPE'].includes(code)) { if (code) e.message += ` (${code})`; throw e; }
+      res = await send();
+    }
     const sc = res.headers.get('set-cookie'); if (sc) cookie = sc.split(';')[0];
     const ct = res.headers.get('content-type') || '';
     const data = ct.includes('json') ? await res.json() : await res.text();
