@@ -310,20 +310,21 @@ try {
     const remName = (((await s.api('GET', `/api/tasks/${rem.data && rem.data.id}`)).data || {}).row || {}).client_name;
     ok(remName, 'N4: the reminder\'s client has a name this reader sees', remName);
     eq(remRow, `Finish and sign your draft notes · ${remName}`, 'N4: Home names the reminder\'s client once');
-    // 1.23.5 (N7): ticking it on Home while a draft of hers is unsigned on that record asks first; Cancel leaves it open.
+    // 1.23.5 (N7): ticking it on Home while a draft of hers is unsigned on that record is stopped and says why (1.24.1, D6:
+    // the server refuses it too); OK leaves it open.
     const n7 = await s.api('POST', '/api/notes', { client_id: mine.id, kind: 'admin', content: 'Draft still to sign.', occurred_at: new Date().toISOString() });
     eq(n7.status, 201, 'N7: the navigator has a draft on the reminder\'s record', n7.data);
     const n7left = ((await s.api('GET', `/api/notes?client_id=${mine.id}&status=draft&mine=1&limit=1`)).data || {}).total;
     await s.go('dashboard?_=n7'); await settle(s.page);
     await s.page.click(`[data-today-task="${rem.data.id}"] input[type=checkbox]`);
-    ok(await until(() => s.page.$('.modal-bg')), 'N7: ticking the reminder on Home asks first');
-    eq((await s.page.textContent('.modal-bg:last-child .modal p')).trim(), `You still have ${n7left} unsigned draft note${n7left === 1 ? '' : 's'} on this record. Mark the reminder done anyway?`, 'N7: saying how many drafts are unsigned there');
-    await s.page.locator('.modal-bg').last().locator('button', { hasText: /^Cancel$/ }).click();
-    ok(await until(async () => !(await s.page.$('.modal-bg'))), 'N7: Cancel closes the question');
+    ok(await until(() => s.page.$('.modal-bg')), 'N7: ticking the reminder on Home says why it stays open');
+    eq((await s.page.textContent('.modal-bg:last-child .modal p')).trim(), `You still have ${n7left} unsigned draft note${n7left === 1 ? '' : 's'} on this record. This reminder closes itself once they are signed.`, 'N7: saying how many drafts are unsigned there');
+    await s.page.locator('.modal-bg').last().locator('button', { hasText: /^OK$/ }).click();
+    ok(await until(async () => !(await s.page.$('.modal-bg'))), 'N7: OK closes it');
     eq(await s.page.$eval(`[data-today-task="${rem.data.id}"] input[type=checkbox]`, e => e.checked), false, 'N7: the box is unticked');
     eq((((await s.api('GET', `/api/tasks/${rem.data.id}`)).data || {}).row || {}).status, 'open', 'N7: and the reminder is still open');
-    // Closed here (as its own reminder), so the steps below tick ordinary to-dos and are not asked.
-    eq((await s.api('PUT', `/api/tasks/${rem.data.id}`, { status: 'done' })).status, 200, 'the reminder is closed for the steps below');
+    // Closed here by its maker, so the steps below tick ordinary to-dos and are not asked.
+    eq((await admin.api('PUT', `/api/tasks/${rem.data.id}`, { status: 'done' })).status, 200, 'the reminder is closed for the steps below');
     eq((await s.api('POST', '/api/tasks', { title: 'Call the shelter about a bed', due_at: new Date().toISOString().slice(0, 10) })).status, 201, 'and an ordinary to-do due today takes its place on Home');
     // 1.23.5 (D3): the To-dos list's "Assigned to me" and "Overdue" say whether they are on (aria-pressed), and show it
     // with a check mark, not by colour alone.

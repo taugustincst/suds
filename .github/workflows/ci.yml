@@ -437,7 +437,7 @@ jobs:
           node scripts/build-windows.js --node-zip "$env:RUNNER_TEMP\node-$env:NODE22_VERSION-win-x64.zip" --winsw "$env:RUNNER_TEMP\WinSW-x64.exe" --postject "$env:RUNNER_TEMP\postject-$env:POSTJECT_VERSION.tgz" --out dist
           if ($LASTEXITCODE -ne 0) { Write-Output "::error::scripts/build-windows.js failed"; exit 1 }
           Write-Output "::notice::CI builds of the Windows server zip are unsigned (Windows SmartScreen will warn). Release builds are signed when the WINDOWS_CERT_PFX_BASE64 and WINDOWS_CERT_PASSWORD secrets exist (docs/RELEASE.md)."
-      - name: Smoke test (version, try, status, the Windows service, logs)
+      - name: Smoke test (version, try, status, the Windows service, logs, the setup wizard)
         shell: pwsh
         working-directory: src
         run: |

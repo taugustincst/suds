@@ -248,7 +248,7 @@ export async function backupReminderCard() {
     step = [backupButton(done), ' ', h('a', { href: '#/sync', 'data-backup-schedule-link': '1' }, 'Set up scheduled backups')];
   }
   const card = h('div', { class: 'banner warn mb', role: 'status', 'data-backup-reminder': '1', 'data-backup-overdue': b.overdue ? '1' : '0' },
-    h('div', {}, h('b', {}, `Last backup: ${ago(st.last_backup_at)}. `), b.passphrase_kept ? (b.overdue ? 'Your scheduled backup is overdue. ' : 'Your scheduled backup is due. ') : 'Your records are kept only in this browser. ', ...step),
+    h('div', {}, h('b', {}, `Last backup: ${ago(st.last_backup_at)}. `), b.passphrase_kept ? (b.overdue ? 'Your scheduled backup is overdue. ' : 'Your scheduled backup is due today. ') : 'Your records are kept only in this browser. ', ...step),
     h('button', { type: 'button', class: 'btn ghost sm', 'aria-label': 'Dismiss until tomorrow', 'data-backup-reminder-dismiss': '1', onClick: () => { try { localStorage.setItem(REMINDER_KEY, today()); } catch {} card.remove(); } }, '✕'));
   return card;
 }

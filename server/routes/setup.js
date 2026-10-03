@@ -140,6 +140,9 @@ module.exports = (r) => {
     try {
       desc = await listener.relisten({ host, port, certPath: tls === 'selfsigned' ? path.join(config.dataDir, 'certs', 'suds.crt') : (config.tls.cert || ''), keyPath: tls === 'selfsigned' ? path.join(config.dataDir, 'certs', 'suds.key') : (config.tls.key || '') });
       config.saveServerJson({ setupComplete: true, host, port: desc.port, tls, localModeEnabled: localMode, completedAt: new Date().toISOString() });
+      // The listener now serves HTTPS in place: config.tls (read once at start) says so too, or the hardening
+      // checklist, Security status and HSTS would say HTTPS is off until a restart (as Network & devices does).
+      if (tls === 'selfsigned') Object.assign(config.tls, { cert: path.join(config.dataDir, 'certs', 'suds.crt'), key: path.join(config.dataDir, 'certs', 'suds.key'), mode: tls });
     } catch (e) {
       config.saveServerJson({ setupComplete: true, host: '127.0.0.1', port: config.port, tls: 'none', localModeEnabled: localMode, completedAt: new Date().toISOString() });
       throw new HttpError(500, `Could not start on the network: ${e.message}. Setup saved with local-only access; change this later in Settings → Network & devices.`);

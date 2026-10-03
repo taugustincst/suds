@@ -5,8 +5,8 @@
 // characters over and over ("Aa1!Aa1!Aa1!"). Pen test of 1.23.6, L1. A short list kept here on purpose: no
 // package, no download, nothing to update. It is not a substitute for length, only a floor under it.
 
-// Lower-case letters only. A password is refused when, once its leading and trailing digits and symbols are
-// set aside, what is left is one of these (once or repeated), allowing the usual look-alike substitutions.
+// Lower-case letters only. A password is refused when, once its leading and trailing digits and symbols (and up to
+// two other letters) are set aside, what is left is one of these (once or repeated), allowing the usual look-alikes.
 const COMMON = [
   'password', 'passwort', 'passwd', 'pass', 'welcome', 'letmein', 'changeme', 'secret', 'login', 'default', 'temp',
   'temporary', 'test', 'testing', 'guest', 'user', 'admin', 'administrator', 'root', 'master', 'hello', 'helloworld',
@@ -20,7 +20,10 @@ const COMMON = [
 const LOOKALIKE = { a: 'a@4', b: 'b8', e: 'e3', g: 'g9', i: 'i1!|', l: 'l1|', o: 'o0', s: 's5$', t: 't7+', z: 'z2' };
 const esc = (c) => c.replace(/[\\^$.*+?()[\]{}|-]/g, '\\$&');
 const wordPattern = (w) => [...w].map(c => `[${[...(LOOKALIKE[c] || c)].map(esc).join('')}]`).join('');
-const COMMON_RE = new RegExp(`^[^a-z]*(?:${COMMON.map(w => `(?:${wordPattern(w)})+`).join('|')})[^a-z]*$`);
+// The word may also have up to two other letters before or after it, in all ("Summer2026!!x", "xWelcome2026!"):
+// one extra letter is not what makes a password hard to guess (eval of 1.24.0, D3).
+const W = `(?:${COMMON.map(w => `(?:${wordPattern(w)})+`).join('|')})`, X = '[^a-z]*', L = '[a-z][^a-z]*';
+const COMMON_RE = new RegExp(`^${X}(?:(?:${L}){0,2}${W}|${W}(?:${X}[a-z]){1,2}|${L}${W}${X}[a-z])${X}$`);
 // For "does it contain the name": the look-alikes read back as letters.
 const UNLEET = { '@': 'a', 4: 'a', 8: 'b', 3: 'e', 9: 'g', 1: 'i', '!': 'i', '|': 'i', 0: 'o', 5: 's', $: 's', 7: 't', '+': 't' };
 const unleet = (s) => s.replace(/[@483916!|05$7+]/g, c => UNLEET[c]);

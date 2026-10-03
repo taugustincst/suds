@@ -795,8 +795,8 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
   const keepCount = () => Math.min(backup.MAX_KEEP, Math.max(backup.MIN_KEEP, Number(db.getSetting('backup_keep', String(backup.DEFAULT_KEEP))) || backup.DEFAULT_KEEP));
   function backupInfo() {
     const last = db.getSetting('last_backup_at', null);
-    const st = backup.scheduleState(last, Number(db.getSetting('backup_every_days', String(backup.DEFAULT_EVERY_DAYS))));
     const k = theVault && theVault.backup_key;
+    const st = backup.scheduleState(last, Number(db.getSetting('backup_every_days', String(backup.DEFAULT_EVERY_DAYS))), Date.now(), k ? k.created_at : null);
     const checkAt = db.getSetting('backup_check_at', null);
     return { ...st, last_at: last, last_to: db.getSetting('last_backup_to', null), keep: keepCount(), schedule_chosen: db.getSetting('backup_every_days', null) !== null,
       passphrase_kept: !!k, passphrase_since: k ? k.created_at : null,

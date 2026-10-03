@@ -55,6 +55,16 @@ function storedSignReminder(existing) {
   let text; try { text = require('../crypto').decrypt(existing.description_enc); } catch { return false; }
   return require('./notes').isSignReminder(existing, text);
 }
+// Marking a sign reminder done while its assignee's drafts on that record are still unsigned (market evaluation of
+// 1.24.0, D6; N7 before it): the reminder closes itself when they are signed (rules/notes.js closeSignReminders), so its
+// assignee may not tick it off first. Its maker, or someone who may send one (notes:cosign), still may.
+const SIGN_REMINDER_OPEN = 'This reminder closes itself once your draft notes on this client\'s record are signed. Sign them first, or ask the supervisor who sent it to close it.';
+const draftsLeft = (e) => require('../db').one(`SELECT COUNT(*) n FROM notes WHERE author_id=? AND client_id IS ? AND status='draft' AND deleted_at IS NULL`, e.assigned_to, e.client_id).n;
+function closesUnsignedReminder(row, c) {
+  const e = c.existing;
+  if (!e || row.status !== 'done' || e.status === 'done' || e.created_by === c.user.id || require('./notes').maySendSignReminder(c.user)) return false;
+  return storedSignReminder(e) && draftsLeft(e) > 0;
+}
 const SIGN_REMINDER_MOVED = 'Only the supervisor who sent this reminder, or someone who countersigns notes, can give it to someone else or move it to another client';
 
 // ---- the draft a sign reminder opens (released in 1.24.0) ----
@@ -132,6 +142,7 @@ module.exports = define({
     // someone who may send one, changes who or which record it is about (market evaluation of 1.23.3, N1).
     if (c.existing && c.existing.created_by !== c.user.id && c.changed().some(k => k === 'assigned_to' || k === 'client_id')
       && !require('./notes').maySendSignReminder(c.user) && storedSignReminder(c.existing)) return notPermitted(SIGN_REMINDER_MOVED);
+    if (closesUnsignedReminder(row, c)) return refuse('a sign reminder closes when the drafts are signed', { status: 409, message: SIGN_REMINDER_OPEN });
     // The draft it opens (released in 1.24.0): set only by such a supervisor, and only to the assignee's own draft there.
     const link = noteLinkRefusal(row, c); if (link) return link;
     if (c.existing) return null;

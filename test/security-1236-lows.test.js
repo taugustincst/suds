@@ -30,6 +30,11 @@ test('L1: the password policy refuses the username, the person\'s name and very 
   for (const pw of ['Rivera-Family-1!', 'M@ria-Spring-1984', 'River-Maria-2026!']) assert.match(auth.passwordProblem(pw, who), /name/, pw);
   for (const pw of ['Password2026!', 'P@ssw0rd2026!', 'Summer2026!!', 'Qwerty123456!', 'Welcome2026!!', '!Letmein12345', 'PasswordPassword1!', 'Admin1234567!'])
     assert.match(auth.passwordProblem(pw, {}) || '', /too common/, pw);
+  // One or two extra letters do not make a common word uncommon (eval of 1.24.0, D3); a real word that only
+  // starts with a listed one still passes.
+  for (const pw of ['Summer2026!!x', 'Welcome2026!x', 'Password2026!x', 'P@ssw0rd2026!a', 'Qwerty123456!x', 'xSummer2026!!', 'aWelcome2026!b'])
+    assert.match(auth.passwordProblem(pw, {}) || '', /too common/, pw);
+  for (const pw of ['Navigator2026!!', 'Summertime-Lamp-4!', 'xxSummer2026!!x', 'Passwordless-9!x']) assert.equal(auth.passwordProblem(pw, {}), null, pw);
   assert.match(auth.passwordProblem('Aa1!Aa1!Aa1!', {}), /too few different characters/);
   // A name part shorter than 3 characters is not looked for (it would refuse half of every dictionary).
   assert.equal(auth.passwordProblem('Rotating-Lamp-77!', { username: 'jo', display_name: 'Jo Li' }), null);

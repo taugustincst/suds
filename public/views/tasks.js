@@ -21,7 +21,8 @@ const REMINDER_FIXED = 'Only the supervisor who sent this reminder, or someone w
 /**
  * Before a supervisor's sign reminder is ticked done by the person it is for (1.23.5): with drafts of theirs still unsigned
  * on its client's record it asks first, and Cancel leaves it open (a reminder ticked done that way was closed with the work
- * it asks for undone; market evaluation of 1.23.3, N7). True to go ahead. The UI only: the server still lets it be done.
+ * it asks for undone; market evaluation of 1.23.3, N7). True to go ahead. Since 1.24.1 the server refuses it (rules/tasks.js,
+ * eval of 1.24.0, D6) unless the person may send reminders themselves, so anyone else is told why and the box goes back.
  */
 export async function confirmReminderDone(t) {
   // Home's rows are short (no details, no sign_reminder mark): the to-do itself says whether it is a reminder.
@@ -30,6 +31,7 @@ export async function confirmReminderDone(t) {
   let n = 0;
   try { n = (await get(`/api/notes?client_id=${encodeURIComponent(t.client_id)}&status=draft&mine=1&limit=1`, { quiet: true })).total || 0; } catch { return true; }
   if (!n) return true;
+  if (!can('notes:cosign')) { await confirmDialog('Sign your drafts first', `You still have ${n} unsigned draft note${n === 1 ? '' : 's'} on this record. This reminder closes itself once they are signed.`, { okText: 'OK', cancelText: null }); return false; }
   return confirmDialog('Mark the reminder done?', `You still have ${n} unsigned draft note${n === 1 ? '' : 's'} on this record. Mark the reminder done anyway?`, { okText: 'Mark done' });
 }
 export function openTaskForm(values, { clientId, clientDisplay, onDone } = {}) {
@@ -242,12 +244,13 @@ export function taskTable(rows, { showClient = true, onChange, bulk = false, min
     // Several to-dos at once is exactly where a stray tap does the most damage, so say how many first.
     // Supervisors' reminders to sign notes among them are named, so they are not closed by accident (review of 1.23.5).
     const reminders = rows.filter(t => selected.has(t.id) && t.sign_reminder && t.assigned_to === state.user.id).length;
-    const also = reminders ? ` ${reminders === 1 ? 'One of them is a reminder' : `${reminders} of them are reminders`} to finish and sign your draft notes; marking it done does not sign them.` : '';
+    const also = reminders ? ` ${reminders === 1 ? 'One of them is a reminder' : `${reminders} of them are reminders`} to finish and sign your draft notes; it stays open until they are signed.` : '';
     if (!(await confirmDialog('Mark selected done', `Mark ${ids.length} to-do${ids.length === 1 ? '' : 's'} as done?${also}`, { okText: `Mark ${ids.length} done` }))) return;
     markBtn.disabled = true;
     const results = await Promise.allSettled(ids.map(id => put(`/api/tasks/${id}`, { status: 'done' })));
     const failed = results.filter(x => x.status === 'rejected').length;
-    toast(failed ? `${ids.length - failed} of ${ids.length} marked done — ${failed} failed. Check your connection and try again.` : `${ids.length} marked done`, failed ? 'error' : 'ok');
+    const why = (results.find(x => x.status === 'rejected' && x.reason && x.reason.status === 409) || {}).reason;
+    toast(failed ? `${ids.length - failed} of ${ids.length} marked done — ${failed} failed. ${why ? why.message : 'Check your connection and try again.'}` : `${ids.length} marked done`, failed ? 'error' : 'ok');
     onChange && onChange();
   } }, 'Mark selected done');
   const selectAll = h('input', { type: 'checkbox', 'aria-label': 'Select all' });

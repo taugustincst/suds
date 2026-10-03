@@ -34,6 +34,11 @@ const stored = () => new Promise((res) => {
 test('the schedule: due once the chosen number of calendar days has begun, overdue a day later', () => {
   const s = B.scheduleState(null, 1);
   assert.deepStrictEqual([s.due, s.overdue, s.days], [true, true, null], 'never backed up: due and overdue');
+  // Turned on a minute ago with no backup yet: due today, not overdue (eval of 1.24.0, D7); overdue from the next day.
+  const on = new Date(2026, 9, 1, 17, 0).toISOString();
+  const fresh = B.scheduleState(null, 1, at(new Date(2026, 9, 1, 17, 1)), on);
+  assert.deepStrictEqual([fresh.due, fresh.overdue, fresh.next_due], [true, false, '2026-10-01']);
+  assert.equal(B.scheduleState(null, 1, at(new Date(2026, 9, 2, 8, 0)), on).overdue, true);
   const evening = new Date(2026, 9, 1, 17, 0).toISOString();
   assert.equal(B.scheduleState(evening, 1, at(new Date(2026, 9, 1, 23, 0))).due, false, 'daily: not again the same day');
   const next = B.scheduleState(evening, 1, at(new Date(2026, 9, 2, 8, 0)));

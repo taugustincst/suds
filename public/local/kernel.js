@@ -14151,6 +14151,13 @@ var require_tasks = __commonJS({
       }
       return require_notes().isSignReminder(existing, text);
     }
+    var SIGN_REMINDER_OPEN = "This reminder closes itself once your draft notes on this client's record are signed. Sign them first, or ask the supervisor who sent it to close it.";
+    var draftsLeft = (e) => require_db().one(`SELECT COUNT(*) n FROM notes WHERE author_id=? AND client_id IS ? AND status='draft' AND deleted_at IS NULL`, e.assigned_to, e.client_id).n;
+    function closesUnsignedReminder(row, c) {
+      const e = c.existing;
+      if (!e || row.status !== "done" || e.status === "done" || e.created_by === c.user.id || require_notes().maySendSignReminder(c.user)) return false;
+      return storedSignReminder(e) && draftsLeft(e) > 0;
+    }
     var SIGN_REMINDER_MOVED = "Only the supervisor who sent this reminder, or someone who countersigns notes, can give it to someone else or move it to another client";
     var NOTE_LINK_REFUSED = "Only a supervisor who countersigns notes can link a reminder to a draft";
     function detailsAfter(row, existing) {
@@ -14214,6 +14221,7 @@ var require_tasks = __commonJS({
         if (c.existing && c.existing.created_by !== c.user.id && addsSignReminder(row, c.existing)) return notPermitted("Only whoever made this to-do can make it a reminder to sign notes");
         if (addsSignReminder(row, c.existing) && !require_notes().maySendSignReminder(c.user)) return notPermitted(SIGN_REMINDER_REFUSED);
         if (c.existing && c.existing.created_by !== c.user.id && c.changed().some((k) => k === "assigned_to" || k === "client_id") && !require_notes().maySendSignReminder(c.user) && storedSignReminder(c.existing)) return notPermitted(SIGN_REMINDER_MOVED);
+        if (closesUnsignedReminder(row, c)) return refuse("a sign reminder closes when the drafts are signed", { status: 409, message: SIGN_REMINDER_OPEN });
         const link = noteLinkRefusal(row, c);
         if (link) return link;
         if (c.existing) return null;
@@ -49707,6 +49715,7 @@ var require_setup = __commonJS({
         try {
           desc = await listener.relisten({ host, port, certPath: tls === "selfsigned" ? path.join(config2.dataDir, "certs", "suds.crt") : config2.tls.cert || "", keyPath: tls === "selfsigned" ? path.join(config2.dataDir, "certs", "suds.key") : config2.tls.key || "" });
           config2.saveServerJson({ setupComplete: true, host, port: desc.port, tls, localModeEnabled: localMode, completedAt: (/* @__PURE__ */ new Date()).toISOString() });
+          if (tls === "selfsigned") Object.assign(config2.tls, { cert: path.join(config2.dataDir, "certs", "suds.crt"), key: path.join(config2.dataDir, "certs", "suds.key"), mode: tls });
         } catch (e) {
           config2.saveServerJson({ setupComplete: true, host: "127.0.0.1", port: config2.port, tls: "none", localModeEnabled: localMode, completedAt: (/* @__PURE__ */ new Date()).toISOString() });
           throw new HttpError3(500, `Could not start on the network: ${e.message}. Setup saved with local-only access; change this later in Settings \u2192 Network & devices.`);
@@ -51812,7 +51821,10 @@ var require_password_strength = __commonJS({
     var LOOKALIKE = { a: "a@4", b: "b8", e: "e3", g: "g9", i: "i1!|", l: "l1|", o: "o0", s: "s5$", t: "t7+", z: "z2" };
     var esc = (c) => c.replace(/[\\^$.*+?()[\]{}|-]/g, "\\$&");
     var wordPattern = (w) => [...w].map((c) => `[${[...LOOKALIKE[c] || c].map(esc).join("")}]`).join("");
-    var COMMON_RE = new RegExp(`^[^a-z]*(?:${COMMON.map((w) => `(?:${wordPattern(w)})+`).join("|")})[^a-z]*$`);
+    var W = `(?:${COMMON.map((w) => `(?:${wordPattern(w)})+`).join("|")})`;
+    var X = "[^a-z]*";
+    var L = "[a-z][^a-z]*";
+    var COMMON_RE = new RegExp(`^${X}(?:(?:${L}){0,2}${W}|${W}(?:${X}[a-z]){1,2}|${L}${W}${X}[a-z])${X}$`);
     var UNLEET = { "@": "a", 4: "a", 8: "b", 3: "e", 9: "g", 1: "i", "!": "i", "|": "i", 0: "o", 5: "s", $: "s", 7: "t", "+": "t" };
     var unleet = (s) => s.replace(/[@483916!|05$7+]/g, (c) => UNLEET[c]);
     function namesOf({ username, display_name } = {}) {
@@ -55686,14 +55698,18 @@ function daysSince(fromIso, now2 = Date.now()) {
   if (!Number.isFinite(t)) return null;
   return Math.max(0, Math.round(localDay(now2) - localDay(t)));
 }
-function scheduleState(lastIso, everyDays = DEFAULT_EVERY_DAYS, now2 = Date.now()) {
+function scheduleState(lastIso, everyDays = DEFAULT_EVERY_DAYS, now2 = Date.now(), sinceIso = null) {
   const every = SCHEDULES.includes(Number(everyDays)) ? Number(everyDays) : DEFAULT_EVERY_DAYS;
   const days = daysSince(lastIso, now2);
-  if (days === null) return { every_days: every, days: null, due: true, overdue: true, next_due: null };
+  const p = (n) => String(n).padStart(2, "0");
+  const ymd = (d) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  if (days === null) {
+    const since = daysSince(sinceIso, now2);
+    return { every_days: every, days: null, due: true, overdue: since === null || since >= 1, next_due: since === null ? null : ymd(new Date(Date.parse(sinceIso))) };
+  }
   const t = new Date(Date.parse(lastIso));
   const next = new Date(t.getFullYear(), t.getMonth(), t.getDate() + every);
-  const p = (n) => String(n).padStart(2, "0");
-  return { every_days: every, days, due: days >= every, overdue: days > every, next_due: `${next.getFullYear()}-${p(next.getMonth() + 1)}-${p(next.getDate())}` };
+  return { every_days: every, days, due: days >= every, overdue: days > every, next_due: ymd(next) };
 }
 var FILE_RE = /^suds-device-backup-(\d{4}-\d{2}-\d{2})(?:-(\d{6}))?\.sudsbackup$/;
 function fileName(iso) {
@@ -56898,8 +56914,8 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
   const keepCount = () => Math.min(MAX_KEEP, Math.max(MIN_KEEP, Number(import_db2.default.getSetting("backup_keep", String(DEFAULT_KEEP))) || DEFAULT_KEEP));
   function backupInfo() {
     const last = import_db2.default.getSetting("last_backup_at", null);
-    const st = scheduleState(last, Number(import_db2.default.getSetting("backup_every_days", String(DEFAULT_EVERY_DAYS))));
     const k = theVault && theVault.backup_key;
+    const st = scheduleState(last, Number(import_db2.default.getSetting("backup_every_days", String(DEFAULT_EVERY_DAYS))), Date.now(), k ? k.created_at : null);
     const checkAt = import_db2.default.getSetting("backup_check_at", null);
     return {
       ...st,

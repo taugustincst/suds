@@ -1,7 +1,8 @@
 # Smoke test of the SUDS Windows server zip, run by CI (.github/workflows/ci.yml, windows-exe) on windows-latest,
 # where the runner is an administrator. -Dir is the unzipped suds-<version>-windows-x64.zip. It runs what county IT
 # runs (docs/WINDOWS-SERVER.md): suds version, suds try (signs in with a sample account), suds status --json, the
-# Windows service (install, start, health, a clean stop, uninstall) and suds logs. Every failure is one ::error::
+# Windows service (install, start, health, a clean stop, uninstall), suds logs, and the setup wizard completed over
+# HTTP against the running service (HTTPS on), then a sign-in over HTTPS. Every failure is one ::error::
 # annotation, readable on the run's page without opening the log. Not part of the zip.
 param(
   [Parameter(Mandatory = $true)] [string] $Dir,
@@ -129,6 +130,23 @@ foreach ($f in Get-ChildItem (Join-Path $data 'logs') -Recurse -File) { if ((Get
 Step 'suds backup (elevated, while the service runs)'
 $r = Suds @('backup'); Write-Output $r.out
 if ($r.code -ne 0 -or $r.out -notmatch 'Encrypted backup written') { Fail "suds backup exited $($r.code): $($r.out)" }
+
+Step 'The setup wizard under NT SERVICE\SUDS (HTTPS on: a self-signed certificate), then sign in over HTTPS'
+$wport = FreePort; $hdr = @{ 'X-Requested-With' = 'suds' }; $pw = 'Lantern-Orbit-73!'
+$body = @{ org_name = 'Smoke Test Program'; admin_username = 'smokeadmin'; admin_display_name = 'Smoke Admin'; admin_password = $pw; network = 'local'; port = $wport; https = $true } | ConvertTo-Json
+try { $done = Invoke-RestMethod 'http://127.0.0.1:8080/api/setup/complete' -Method Post -Body $body -ContentType 'application/json' -Headers $hdr -TimeoutSec 120 }
+catch { Fail "the setup wizard failed under the service: $($_.Exception.Message) $($_.ErrorDetails.Message)" }
+if (-not $done.ok -or -not $done.listener.tls -or $done.listener.port -ne $wport) { Fail "the setup wizard did not move to HTTPS on port ${wport}: $($done | ConvertTo-Json -Compress)" }
+if (-not (Test-Path (Join-Path $data 'certs\suds.crt'))) { Fail 'the wizard did not write its self-signed certificate into the data folder' }
+$wbase = "https://127.0.0.1:$wport"
+$body = @{ username = 'smokeadmin'; password = $pw } | ConvertTo-Json
+$login = Invoke-RestMethod "$wbase/api/auth/login" -Method Post -Body $body -ContentType 'application/json' -Headers $hdr -SessionVariable ws -SkipCertificateCheck
+if ($login.user.role -ne 'admin') { Fail "signing in as the wizard's administrator gave $($login | ConvertTo-Json -Compress)" }
+$https = (Invoke-RestMethod "$wbase/api/admin/security/hardening" -WebSession $ws -Headers $hdr -SkipCertificateCheck).items | Where-Object { $_.id -eq 'https' }
+if ($https.status -ne 'served by SUDS') { Fail "the hardening checklist says HTTPS is '$($https.status)' after the wizard switched it on" }
+$r = Suds @('status', '--json'); $st = $r.out | ConvertFrom-Json
+if ($st.server.scheme -ne 'https' -or -not $st.server.reachable) { Fail "suds status does not find the server on HTTPS after the wizard: $($st.server | ConvertTo-Json -Compress)" }
+Write-Output "Setup complete under the service; signed in as smokeadmin at $wbase."
 
 Step 'The Event Log (Application, source SUDS)'
 try { Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'SUDS' } -MaxEvents 10 | Format-Table -AutoSize TimeCreated, Id, LevelDisplayName, Message | Out-String -Width 200 | Write-Output }

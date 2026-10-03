@@ -152,6 +152,9 @@ function tryEnv(dataDir, port, base = process.env) {
   return Object.assign(env, {
     SUDS_ENV: 'development', SUDS_DATA_DIR: dataDir, HOST, PORT: String(port),
     SUDS_ADMIN_PASSWORD: SAMPLE_PASSWORD, SEED_PASSWORD: SAMPLE_PASSWORD,
+    // Fictional data on this computer only: two-step verification is never required of the sample accounts, so a
+    // tester is not locked out once the grace period from the day the accounts were made has passed.
+    MFA_REQUIRED_ROLES: '',
   });
 }
 
@@ -245,6 +248,7 @@ function banner(info, { command = 'npm run try', defaultDir = DEFAULT_DIR, dataO
     '  do not type real client information into it.',
     '  Licence: evaluation for up to 90 days, with fictional data only (LICENSE, section 2:',
     '  https://github.com/taugustincst/suds/blob/main/LICENSE).',
+    '  Two-step verification is not required here (an office server requires it).',
     '',
     `  Data folder: ${info.dataDir}`,
     '  Only this computer can open it (127.0.0.1); nothing on the network can.',
