@@ -7,13 +7,14 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 ### Licence
 
 - **SUDS is now proprietary** (owner decision of 2026-10-03): licensed under the SUDS Proprietary Licence in
-  `LICENSE`, "Copyright (c) 2026 AugustInnovations. All rights reserved." Anyone may evaluate an unmodified copy
+  `LICENSE`, "Copyright (c) 2026 AugustInnovations LLC. All rights reserved." Anyone may evaluate an unmodified copy
   from the official repository, its releases, the GitHub Pages site or the Windows zip for up to 90 days, with
-  fictional or test data only; production use, real client records, modification and redistribution need a signed
-  licence agreement. **Versions 1.24.0 and earlier were published under the MIT License and stay MIT for those
+  fictional or test data only. **SUDS on this device stays free for real use**, real records included, at its
+  official GitHub Pages address (section 2A). Production use of the office server, modification and redistribution
+  need a signed licence agreement. **Versions 1.24.0 and earlier were published under the MIT License and stay MIT for those
   copies.** Third-party components keep their own licences, listed in the new `NOTICE` (also in the Windows zip's
-  `app\`). `package.json` says `SEE LICENSE IN LICENSE`; the SBOM names the licence `LicenseRef-SUDS-Proprietary`
-  with AugustInnovations as supplier; `npm run try`, `suds try` and the Windows README point to the evaluation terms; the procurement page, the README and the market and security documents no longer call
+  `app\`, and in the Pages build as `NOTICE.txt` beside `LICENSE.txt`, which the release site check expects). `package.json` says `SEE LICENSE IN LICENSE`; the SBOM names the licence `LicenseRef-SUDS-Proprietary`
+  with AugustInnovations LLC as supplier; `npm run try`, `suds try` and the Windows README point to the evaluation terms; the procurement page, the README and the market and security documents no longer call
   SUDS open source or MIT.
 
 ## 1.24.0 — 2026-10-03

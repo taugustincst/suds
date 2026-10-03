@@ -11,10 +11,11 @@ several CBOs, implementation packaged as forward-deployed services, and support 
 
 ## What is (and is not) being sold
 
-- **Evaluation is free; production needs a licence agreement.** SUDS is proprietary software of
-  AugustInnovations ([LICENSE](../../../LICENSE)). Anyone may evaluate an unmodified copy for up to 90 days with
-  fictional data, without paying. Production use and real client records need a licence agreement signed by
-  AugustInnovations; its price is **[owner to decide]** and not yet published (the Pricing line of the
+- **SUDS on this device is free; the office server needs a licence agreement after evaluation.** SUDS is
+  proprietary software of AugustInnovations LLC ([LICENSE](../../../LICENSE)). Anyone may use SUDS on this device
+  at its official GitHub Pages address free of charge, real records included (section 2A), and may evaluate the
+  office server for up to 90 days with fictional data, without paying. Production use of the office server needs a
+  licence agreement signed by AugustInnovations LLC; its price is **[owner to decide]** and not yet published (the Pricing line of the
   procurement page, `public/procurement.json`, is blank). Copies of 1.24.0 and earlier keep their MIT rights.
 - **What is also paid for is services**: getting a programme running, supporting it, and (planned) running the
   server for programmes that cannot. Each is priced as a **flat annual amount per programme**, not per user, so

@@ -31,6 +31,10 @@ function copyDir(src, dest) {
 // job can rebuild exactly these files from the tag with scripts/release-site-check.js, which needs no npm package:
 // this, static-site-security.js and server/csp.js load only Node's own modules).
 const OFFICE_ONLY_PAGES = ['referral-link.html', 'referral-link.js'];
+// The licence and the third-party notices travel with the site (1.24.1): it redistributes MIT and BSD packages
+// (public/local/), whose licences require their notices with every copy. From the tree the build runs in, so the
+// release site check (the tag's own copy of this file) expects the tag's LICENSE and NOTICE.
+const LEGAL_FILES = [['LICENSE', 'LICENSE.txt'], ['NOTICE', 'NOTICE.txt']];
 const LOCAL_BOOT_JS = ['window.SUDS_FORCE_LOCAL = true;', 'window.SUDS_STATIC_HOST = true;', ''].join('\n');
 function stageShell(outDir) {
   // One flag, set before main.js is even requested, so the very first render already knows: nothing here
@@ -41,6 +45,10 @@ function stageShell(outDir) {
   // device, and the first-run set-up asks the person to confirm where their records are kept. Nothing is
   // drawn on screen because of it.
   fs.writeFileSync(path.join(outDir, 'local-boot.js'), LOCAL_BOOT_JS);
+  for (const [from, to] of LEGAL_FILES) {
+    if (!fs.existsSync(path.join(root, from))) throw new Error(`build-static-site: ${from} is missing beside scripts/ (the site must carry it)`);
+    fs.copyFileSync(path.join(root, from), path.join(outDir, to));
+  }
   // Pages only an office server can answer are left out: a secure referral link (1.17.0) is opened against the
   // office that made it, and on this build could only ever say that the link is not valid. Done here, not in
   // copyDir, so scripts/release-site-check.js, which rebuilds with stageShell, leaves them out the same way.
@@ -88,7 +96,7 @@ function stageShell(outDir) {
   if (!/'get-app\.html'/.test(sw)) throw new Error('build-static-site: sw.js must list get-app.html in its shell');
   fs.writeFileSync(swPath, sw.replace(shellMarker, `const SHELL = ['./', 'index.html', 'local-boot.js', '${FRAME_GUARD_FILE}',`));
 }
-module.exports = { stageShell, copyDir, LOCAL_BOOT_JS, OFFICE_ONLY_PAGES };
+module.exports = { stageShell, copyDir, LOCAL_BOOT_JS, OFFICE_ONLY_PAGES, LEGAL_FILES };
 if (require.main !== module) return;
 
 // The kernel this ships has to be current, or the static site would carry a stale build of server logic.
@@ -97,7 +105,7 @@ const outDir = path.resolve(root, process.argv[2] || '_site');
 fs.rmSync(outDir, { recursive: true, force: true });
 const count = copyDir(path.join(root, 'public'), outDir);
 stageShell(outDir);
-console.log(`[suds] static site written to ${path.relative(root, outDir)}/ (${count + 2} files, always-local)`);
+console.log(`[suds] static site written to ${path.relative(root, outDir)}/ (${count + 4} files, always-local)`);
 
 // Provider pictures for the starter directories. A browser cannot fetch them from the providers' own
 // websites (those sites send no CORS headers), so "Download provider pictures" on this build reads copies

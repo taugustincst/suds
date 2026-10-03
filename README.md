@@ -22,8 +22,9 @@ list and assessments, structured clinical notes, CalOMS Tx (extract not yet veri
 dictionary), a FHIR R4 feed and a county EHR encounter hand-off. A programme whose EHR stays the clinical record
 can choose **Part 2 compliance module (beside an EHR)** instead: the consent, disclosure and breach work leads,
 with patients and encounters imported from the EHR ([docs/integration/EHR-PART2-LAYER.md](docs/integration/EHR-PART2-LAYER.md)). SUDS is **not** an EHR, does not create Drug
-Medi-Cal claims, and has no eMAR or e-prescribing. It is proprietary software of AugustInnovations ([LICENSE](LICENSE)), source available for evaluation, that the
-programme (or its IT partner, or its county) runs under a signed licence agreement; it is not a hosted service. Positioning, buyer guides, hosting models, the pilot kit
+Medi-Cal claims, and has no eMAR or e-prescribing. It is proprietary software of AugustInnovations LLC ([LICENSE](LICENSE)), with its source visible: SUDS on this
+device is free to use at its official GitHub Pages address, and the office server, after a 90-day evaluation, runs
+under a signed licence agreement; it is not a hosted service. Positioning, buyer guides, hosting models, the pilot kit
 and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:
 [docs/architecture/README.md](docs/architecture/README.md).
 
@@ -299,4 +300,4 @@ The browser regression suite (`scripts/ui/run-all.sh`) seeds a throwaway server 
 
 ## License
 
-Proprietary: Copyright (c) 2026 AugustInnovations. All rights reserved. The source is visible for evaluation; anyone may evaluate an unmodified copy for up to 90 days with fictional data only, and production use, real client records, modification and redistribution need a signed licence agreement ([LICENSE](LICENSE)). Versions 1.24.0 and earlier were published under the MIT License, and copies of them keep those rights. Third-party components keep their own licences ([NOTICE](NOTICE)). Report security vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes. This software supports but does not by itself provide HIPAA compliance; see [docs/HIPAA.md](docs/HIPAA.md) for the shared-responsibility model.
+Proprietary: Copyright (c) 2026 AugustInnovations LLC. All rights reserved. The source is visible. SUDS on this device may be used free of charge, real records included, at its official GitHub Pages address (LICENSE section 2A); anyone may evaluate an unmodified copy of the rest, the office server included, for up to 90 days with fictional data only; and production use of the office server, modification and redistribution need a signed licence agreement ([LICENSE](LICENSE)). Versions 1.24.0 and earlier were published under the MIT License, and copies of them keep those rights. Third-party components keep their own licences ([NOTICE](NOTICE), also shipped in the Pages build and the Windows zip). Report security vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes. This software supports but does not by itself provide HIPAA compliance; see [docs/HIPAA.md](docs/HIPAA.md) for the shared-responsibility model.

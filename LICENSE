@@ -1,6 +1,6 @@
 SUDS Proprietary Licence
 
-Copyright (c) 2026 AugustInnovations. All rights reserved.
+Copyright (c) 2026 AugustInnovations LLC. All rights reserved.
 
 This text was written for the copyright holder in plain English. It is not legal advice to anyone. If you are
 unsure what it lets you do, ask your own lawyer, or ask the copyright holder for a written licence agreement.
@@ -9,7 +9,7 @@ unsure what it lets you do, ask your own lawyer, or ask the copyright holder for
 
 "The software" means SUDS: the source code, the web app, the office server, the Windows server zip, the
 documentation and every other file in this repository, except the third-party components described in
-section 5. "The copyright holder" (or "licensor") means AugustInnovations. "You" means the person or
+section 5. "The copyright holder" (or "licensor") means AugustInnovations LLC. "You" means the person or
 organisation using the software.
 
 2. Evaluation grant
@@ -23,9 +23,23 @@ with fictional or test data.
 During the evaluation you may not enter, import or keep any real client or patient records or any protected
 health information (PHI), and you may not use the software in production or to deliver services to anyone.
 
+2A. SUDS on this device
+
+Anyone may use the "SUDS on this device" web app, as published by the copyright holder at its official GitHub
+Pages address (https://taugustincst.github.io/suds/), free of charge, for real use, including keeping real
+records on their own device. This is not limited to evaluation, to 90 days or to fictional data.
+
+This permission covers only using the app at that official address. It does not allow copying, modifying,
+re-hosting or redistributing the app or any of its files, and it does not allow using the office server,
+suds.exe or the source code beyond the evaluation grant in section 2.
+
+The records you enter stay yours. They are kept on your device, and the copyright holder receives none of
+them.
+
 3. Everything else needs a signed agreement
 
-Any other use needs a separate written licence agreement signed by the copyright holder. That includes:
+Except as section 2A allows, any other use needs a separate written licence agreement signed by the copyright
+holder. That includes:
 
   * production use, or any use to record or support real services;
   * use with real client or patient information, including PHI;

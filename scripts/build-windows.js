@@ -224,7 +224,7 @@ function noticesText(pins, nodeLicense) {
   const rule = '-'.repeat(78);
   return [
     'THIRD-PARTY NOTICES for the SUDS Windows server', '',
-    'SUDS itself is proprietary (Copyright (c) 2026 AugustInnovations): app\\LICENSE.',
+    'SUDS itself is proprietary (Copyright (c) 2026 AugustInnovations LLC): app\\LICENSE.',
     'The third-party components built into its web app are listed in app\\NOTICE.', '',
     rule, `Node.js ${pins.nodeVersion} (suds.exe is node.exe from https://nodejs.org/dist/${pins.nodeVersion}/,`,
     `node-${pins.nodeVersion}-win-x64.zip, SHA-256 ${pins.nodeWinSha256}, with the SUDS bootstrap injected).`,

@@ -191,7 +191,7 @@ jobs:
           cd "$RUNNER_TEMP"
           git init -q --bare tag.git
           git --git-dir=tag.git fetch -q --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "${GITHUB_SHA}"
-          mkdir tag && git --git-dir=tag.git archive "${GITHUB_SHA}" public server/csp.js scripts/build-static-site.js scripts/static-site-security.js scripts/release-site-check.js scripts/pages-version-check.js | tar -x -C tag
+          mkdir tag && git --git-dir=tag.git archive "${GITHUB_SHA}" public LICENSE NOTICE server/csp.js scripts/build-static-site.js scripts/static-site-security.js scripts/release-site-check.js scripts/pages-version-check.js | tar -x -C tag
           node tag/scripts/release-site-check.js tag site
       # Again after the approval (1.17.1; H1), with the tag's own check: gh-pages may have moved on meanwhile.
       - name: Still not older than the web app gh-pages serves

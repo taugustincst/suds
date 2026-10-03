@@ -280,8 +280,9 @@ records ([docs/architecture/](../architecture/README.md)) are written so a new m
 support is business-hours ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)).
 
 **"The source is public — why pay?"**
-Being able to see the code is not a licence to use it: evaluation is free for 90 days with fictional data, and
-production use needs a licence agreement ([LICENSE](../../LICENSE); price **[owner to decide]**). Programmes and
+Being able to see the code is not a licence to use it. SUDS on this device is free at its official address, real
+records included; the office server may be evaluated free for 90 days with fictional data, and production use of
+it needs a licence agreement ([LICENSE](../../LICENSE); price **[owner to decide]**). Programmes and
 counties also pay, if they choose, for the people around it:
 implementation delivered alongside your team (discovery, deployment, data migration, training, reporting setup),
 business-hours support and (when offered) hosting. The current hypothesis is flat annual amounts per programme

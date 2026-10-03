@@ -53,9 +53,10 @@ test('only an administrator may publish them, and each value is checked', async 
   assert.match(a.details, /procurement_contact_name/);
 });
 
-test('the static build ships public/procurement.json with every fact blank and one repository URL', () => {
+test('the static build ships public/procurement.json with the licensor\'s legal entity, every other fact blank, and one repository URL', () => {
   const j = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'public', 'procurement.json'), 'utf8'));
-  for (const f of FIELDS) assert.equal(j[f], '', `${f} is blank: the owner supplies it`);
+  assert.equal(j.legal_entity, 'AugustInnovations LLC', 'the licensor (LICENSE, owner decision of 2026-10-03)');
+  for (const f of FIELDS.filter((x) => x !== 'legal_entity')) assert.equal(j[f], '', `${f} is blank: the owner supplies it`);
   assert.match(j.repository_url, /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/);
   assert.match(j.default_branch, /^[\w./-]+$/);
   // Every document the page links to exists on the default branch's tree (here: this checkout).

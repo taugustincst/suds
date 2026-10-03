@@ -35,7 +35,7 @@ on-device app and later installs an office server re-enters (or imports, `IMPORT
 
 ## Owner decision, 2026-10-03: SUDS is proprietary
 
-From 1.24.1 SUDS is licensed under the SUDS Proprietary Licence (`LICENSE`, AugustInnovations): evaluation of an unmodified copy for 90 days with fictional data; production use, both ways of running it, needs a signed agreement. 1.24.0 and earlier stay MIT for those copies.
+From 1.24.1 SUDS is licensed under the SUDS Proprietary Licence (`LICENSE`, AugustInnovations LLC): SUDS on this device stays free for real use at its official GitHub Pages address (section 2A; the not-a-demo rule stands); the office server may be evaluated for 90 days with fictional data, and then needs a signed agreement. 1.24.0 and earlier stay MIT for those copies.
 
 ## Owner decision, 2026-10-03: a Windows server executable
 

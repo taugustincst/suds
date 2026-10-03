@@ -325,7 +325,7 @@ function generate({ ref } = {}) {
       component: {
         type: 'application', 'bom-ref': APP, name: 'suds', version, purl: APP, licenses: sudsLicenses(pkg.license), description: pkg.description,
         // The licensor, from the first proprietary version (an older version's SBOM regenerates unchanged).
-        ...(/^SEE LICENSE IN /i.test(String(pkg.license || '')) ? { supplier: { name: 'AugustInnovations' }, copyright: 'Copyright (c) 2026 AugustInnovations. All rights reserved.' } : {}),
+        ...(/^SEE LICENSE IN /i.test(String(pkg.license || '')) ? { supplier: { name: 'AugustInnovations LLC' }, copyright: 'Copyright (c) 2026 AugustInnovations LLC. All rights reserved.' } : {}),
         externalReferences: [{ type: 'vcs', url: 'https://github.com/taugustincst/suds' }],
       },
       properties: [

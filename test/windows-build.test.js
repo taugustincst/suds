@@ -117,7 +117,7 @@ test('README-WINDOWS.txt and THIRD-PARTY-NOTICES.txt: the five steps, the folder
   assert.match(r, /app\\LICENSE/); assert.match(r, /90 days with fictional data/); assert.doesNotMatch(r, /SUDS[^\r\n]*MIT/);
   const n = W.noticesText(pins, 'Node.js is licensed for use as follows:\n\nCopyright Node.js contributors.\n');
   assert.match(n, /Node\.js v22\.\d+\.\d+/); assert.ok(n.includes(pins.nodeWinSha256)); assert.ok(n.includes(pins.winswSha256));
-  assert.match(n, /SUDS itself is proprietary \(Copyright \(c\) 2026 AugustInnovations\): app\\LICENSE/); assert.match(n, /app\\NOTICE/);
+  assert.match(n, /SUDS itself is proprietary \(Copyright \(c\) 2026 AugustInnovations LLC\): app\\LICENSE/); assert.match(n, /app\\NOTICE/);
   assert.match(n, /Copyright Node\.js contributors/); assert.match(n, /MIT License\r\n\r\nCopyright \(c\) 2008-2020 Kohsuke Kawaguchi/);
 });
 

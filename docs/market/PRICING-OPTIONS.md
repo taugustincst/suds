@@ -12,8 +12,9 @@ that, what each one actually charges for, and what the owner must decide.
 ## First principles
 
 1. **The code is proprietary and visible for evaluation** (owner decision of 2026-10-03; [LICENSE](../../LICENSE)).
-   Anyone may evaluate it free for 90 days with fictional data; production use needs a licence agreement signed
-   by AugustInnovations, so a per-user price or a site licence can now be a licence to the code as well as the
+   SUDS on this device is free for real use at its official address (LICENSE section 2A); anyone may evaluate the
+   office server free for 90 days with fictional data, and its production use needs a licence agreement signed
+   by AugustInnovations LLC, so a per-user price or a site licence can now be a licence to the code as well as the
    price of a **service**: support, updates applied, hosting (when offered), the AI copilot's operation, an SLA,
    reporting setup, a named contact. Copies of 1.24.0 and earlier keep the MIT rights they were released with.
    County IT values being able to keep running it without the vendor: a production agreement should say what
