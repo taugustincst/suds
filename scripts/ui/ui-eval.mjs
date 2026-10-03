@@ -237,7 +237,11 @@ try {
     // Fallback: the linked draft signed or deleted while other drafts are left: the reminder stays open, loses its link,
     // and opens the client's drafts list again ("Open <client>'s notes" alone).
     {
-      const cl = (await nav.api('GET', '/api/clients?limit=5&status=active')).data.clients[0];
+      // A client of her own with no other drafts: the first active client of the list varies with the run's order,
+      // and the sample data's drafts on it kept the reminder open at the end ("the last draft deleted").
+      const made = await nav.api('POST', '/api/clients', { first_name: 'Fallback', last_name: `Draftless${Date.now() % 100000}`, no_episode: true });
+      eq(made.status, 201, 'a client with no drafts for the fallback', made.data);
+      const cl = made.data;
       const mk = async (text) => (await nav.api('POST', '/api/notes', { client_id: cl.id, kind: 'admin', content: text, occurred_at: new Date().toISOString() })).data.id;
       const d1 = await mk('UI eval: the linked draft.'); const d2 = await mk('UI eval: another draft.');
       const navId = (await nav.api('GET', '/api/auth/me')).data.user.id;
