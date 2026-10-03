@@ -63,7 +63,12 @@ the office's NAT address; and a device's sync sign-in can no longer manage the a
   sign-in from it, right passwords included. Failures now count per username from an address (`LOGIN_RATE_LIMIT`,
   default 20, as before) and per address whatever the username (`LOGIN_IP_RATE_LIMIT`, default ten times that, 200),
   as the backstop against spraying; account lockout is unchanged, and a username nobody has is counted exactly like
-  one that exists.
+  one that exists. The same two limits now cover every other place a password or passkey is tried
+  (`auth.signInLimiter`): the password given again to sign or approve, or to change it or turn two-step verification
+  off, counts per account from the address, and fingerprint sign-in per passkey (its second step per account), each
+  with the per-address ceiling behind it. These had still counted per address alone, so one person's 20 wrong signing
+  passwords refused every colleague's signature and sign-in from the same address. Settings › Security status's
+  hardening checklist says so.
 * **L4 — paging.** A `limit` or `offset` that is not a number answered 500 on every list route; it is now a 400 that
   says which (`limit must be a whole number`), absent or empty takes the default, and a fraction is rounded down
   (`server/validate.js` `paging`, now also used by the supplies ledger). A non-numeric `hours` on

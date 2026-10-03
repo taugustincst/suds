@@ -2,25 +2,25 @@
 const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
-const { rateLimit, rateLimited } = require('../app');
+const { rateLimit } = require('../app');
 const { HttpError, badRequest, unauthorized } = require('../http');
 const { validate } = require('../validate');
 const { hashPasswordAsync, verifyPasswordAsync, generateTotpSecret, otpauthUrl, encrypt } = require('../crypto');
 
 module.exports = (r) => {
   r.post('/api/auth/login', async (ctx) => {
-    const config = require('../config');
     const { username, password } = validate(ctx.body, { username: { type: 'string', required: true, maxLen: 100 }, password: { type: 'string', required: true, maxLen: 500 } });
     // Failed sign-ins are counted per username from this address, and per address whatever the username with a
     // much higher ceiling (spraying). Keyed on the address alone (up to 1.23.6), one person's wrong guesses
     // locked everyone behind the office's NAT address out, right passwords included (pen test of 1.23.6, L2).
     // A name that does not exist is counted exactly like one that does, so the answer says nothing about which.
-    const userKey = `login-user:${ctx.ip}|${username.trim().toLowerCase()}`, ipKey = `login-ip:${ctx.ip}`;
-    if (rateLimited(userKey, config.loginRateLimit) || rateLimited(ipKey, config.loginIpRateLimit)) throw new HttpError(429, 'Too many login attempts. Try again later.');
+    // (auth.signInLimiter, which the passwords given in a session and fingerprint sign-in use too.)
+    const limiter = auth.signInLimiter(ctx.ip, `user:${username.trim().toLowerCase()}`);
+    if (limiter.limited()) throw new HttpError(429, 'Too many login attempts. Try again later.');
     let result;
     // Only a failed attempt counts: successful sign-ins are what an office does.
     try { result = await auth.login({ username, password, ctx }); }
-    catch (e) { rateLimit(userKey, config.loginRateLimit, 15 * 60_000); rateLimit(ipKey, config.loginIpRateLimit, 15 * 60_000); throw e; }
+    catch (e) { limiter.fail(); throw e; }
     ctx.res.setHeader('Set-Cookie', auth.cookieHeader(result.token));
     // Sync clients (local-mode devices) authenticate with a bearer token instead of the cookie
     const out = { user: result.user, mfaPending: result.mfaPending, mfaMethods: result.mfaMethods, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline };

@@ -28226,22 +28226,20 @@ var require_auth = __commonJS({
     var db3 = require_db();
     var auth3 = require_auth2();
     var audit3 = require_audit();
-    var { rateLimit, rateLimited } = require_app2();
+    var { rateLimit } = require_app2();
     var { HttpError: HttpError3, badRequest, unauthorized } = require_http();
     var { validate } = require_validate();
     var { hashPasswordAsync, verifyPasswordAsync, generateTotpSecret, otpauthUrl, encrypt: encrypt3 } = require_crypto();
     module.exports = (r) => {
       r.post("/api/auth/login", async (ctx) => {
-        const config2 = require_config();
         const { username, password } = validate(ctx.body, { username: { type: "string", required: true, maxLen: 100 }, password: { type: "string", required: true, maxLen: 500 } });
-        const userKey = `login-user:${ctx.ip}|${username.trim().toLowerCase()}`, ipKey = `login-ip:${ctx.ip}`;
-        if (rateLimited(userKey, config2.loginRateLimit) || rateLimited(ipKey, config2.loginIpRateLimit)) throw new HttpError3(429, "Too many login attempts. Try again later.");
+        const limiter = auth3.signInLimiter(ctx.ip, `user:${username.trim().toLowerCase()}`);
+        if (limiter.limited()) throw new HttpError3(429, "Too many login attempts. Try again later.");
         let result;
         try {
           result = await auth3.login({ username, password, ctx });
         } catch (e) {
-          rateLimit(userKey, config2.loginRateLimit, 15 * 6e4);
-          rateLimit(ipKey, config2.loginIpRateLimit, 15 * 6e4);
+          limiter.fail();
           throw e;
         }
         ctx.res.setHeader("Set-Cookie", auth3.cookieHeader(result.token));
@@ -49118,7 +49116,7 @@ var require_hardening = __commonJS({
           title: "Limit sign-in attempts",
           done: sane,
           where: "server",
-          why: sane ? `${lim} sign-in attempts per address per 15 minutes, and an account locks for ${config2.lockout.minutes} minutes after ${config2.lockout.maxAttempts} wrong passwords.` : `LOGIN_RATE_LIMIT is ${lim}, which lets one address guess passwords far faster than an office needs. Ask IT to set it to 20 (the default), or up to 100 for a large office behind one address.`,
+          why: sane ? `${lim} failed attempts per account (or passkey) from one address per 15 minutes \u2014 at sign-in, and for the password given again to sign, approve or change it \u2014 and ${config2.loginIpRateLimit} per address whatever the account; an account locks for ${config2.lockout.minutes} minutes after ${config2.lockout.maxAttempts} wrong passwords.` : `LOGIN_RATE_LIMIT is ${lim}, which lets one address guess passwords far faster than an office needs. Ask IT to set it to 20 (the default), or up to 100 for a large office behind one address.`,
           status: `${lim} per 15 min`,
           action: { label: "Open Security status", href: "#/admin?tab=security" }
         });
@@ -52297,11 +52295,10 @@ var require_auth2 = __commonJS({
       }
       const strongHow = (st2) => st2.passkey && st2.totp ? "Confirm with your fingerprint or enter the code from your authenticator app" : st2.passkey ? "Confirm with your fingerprint" : st2.totp ? "Enter the code from your authenticator app" : "Set up fingerprint sign-in or two-step verification under My profile, then try again";
       const checkPassword = async () => {
-        const limit2 = config2.loginRateLimit;
-        const app = require_app2();
-        if (app.rateLimited(`login:${ctx.ip}`, limit2)) throw new HttpError3(429, "Too many attempts. Try again later.");
+        const limiter = signInLimiter(ctx.ip, `account:${u.id}`);
+        if (limiter.limited()) throw new HttpError3(429, "Too many attempts. Try again later.");
         if (!await verifyPasswordAsync(password, u.password_hash)) {
-          app.rateLimit(`login:${ctx.ip}`, limit2, 15 * 6e4);
+          limiter.fail();
           const locked = recordPasswordFailure(u);
           failed(locked ? { reason: "locked after failures" } : void 0, locked ? "Password verification failed. The account is now locked after too many failed attempts." : "Password verification failed");
         }
@@ -52358,6 +52355,17 @@ var require_auth2 = __commonJS({
       }
       return verifySigner(ctx, body, { action, purpose, bind });
     }
+    function signInLimiter(ip, who) {
+      const app = require_app2();
+      const whoKey = `login-${who}@${ip}`, ipKey = `login-ip:${ip}`;
+      return {
+        limited: () => app.rateLimited(whoKey, config2.loginRateLimit) || app.rateLimited(ipKey, config2.loginIpRateLimit),
+        fail: () => {
+          app.rateLimit(whoKey, config2.loginRateLimit, 15 * 6e4);
+          app.rateLimit(ipKey, config2.loginIpRateLimit, 15 * 6e4);
+        }
+      };
+    }
     var LOCKED_MESSAGE = "Account locked after too many failed attempts. Try again later or contact an administrator.";
     async function confirmPassword(ctx, password, { action, message = "Password is incorrect" }) {
       const u = db3.one(`SELECT id, password_hash, failed_attempts, locked_until FROM users WHERE id=?`, ctx.user.id);
@@ -52365,14 +52373,13 @@ var require_auth2 = __commonJS({
         audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: "locked" } });
         throw new HttpError3(423, LOCKED_MESSAGE);
       }
-      const app = require_app2();
-      const limit2 = config2.loginRateLimit;
-      if (app.rateLimited(`login:${ctx.ip}`, limit2)) {
+      const limiter = signInLimiter(ctx.ip, `account:${u.id}`);
+      if (limiter.limited()) {
         audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: "rate limited" } });
         throw new HttpError3(429, "Too many attempts. Try again later.");
       }
       if (await verifyPasswordAsync(password, u.password_hash)) return;
-      app.rateLimit(`login:${ctx.ip}`, limit2, 15 * 6e4);
+      limiter.fail();
       const locked = recordPasswordFailure(u);
       clearReauth(ctx);
       audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: "wrong password", ...locked ? { locked: true } : {} } });
@@ -52669,6 +52676,7 @@ var require_auth2 = __commonJS({
       return require_password_strength().weakness(pw, who);
     }
     module.exports = {
+      signInLimiter,
       assertSyncSessionReach,
       auditUsername,
       policy,

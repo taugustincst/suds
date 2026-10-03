@@ -432,11 +432,10 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 
   // is refused (not a failed attempt: nothing was guessed).
   const strongHow = (st) => (st.passkey && st.totp ? 'Confirm with your fingerprint or enter the code from your authenticator app' : st.passkey ? 'Confirm with your fingerprint' : st.totp ? 'Enter the code from your authenticator app' : 'Set up fingerprint sign-in or two-step verification under My profile, then try again');
   const checkPassword = async () => {
-    const limit = config.loginRateLimit;
-    const app = require('./app');
-    if (app.rateLimited(`login:${ctx.ip}`, limit)) throw new HttpError(429, 'Too many attempts. Try again later.');
+    const limiter = signInLimiter(ctx.ip, `account:${u.id}`);
+    if (limiter.limited()) throw new HttpError(429, 'Too many attempts. Try again later.');
     if (!(await verifyPasswordAsync(password, u.password_hash))) {
-      app.rateLimit(`login:${ctx.ip}`, limit, 15 * 60_000);
+      limiter.fail();
       const locked = recordPasswordFailure(u);
       failed(locked ? { reason: 'locked after failures' } : undefined, locked ? 'Password verification failed. The account is now locked after too many failed attempts.' : 'Password verification failed');
     }
@@ -507,6 +506,22 @@ async function verifyApprover(ctx, body, { action, purpose, bind }) {
   }
   return verifySigner(ctx, body, { action, purpose, bind });
 }
+/**
+ * The sign-in rate limit (pen test of 1.23.6, L2), for every place a password or passkey is tried: failures count per
+ * `who` from an address (LOGIN_RATE_LIMIT) — a username at sign-in (`user:<name>`), the signed-in account for a
+ * signature's or a password change's password (`account:<id>`), a passkey's credential at fingerprint sign-in
+ * (`passkey:<id>`) — and per address whatever the who (LOGIN_IP_RATE_LIMIT, the backstop against spraying). Keyed on
+ * the address alone (up to 1.23.6, and for these re-authentications until 1.24.0), one person's wrong guesses refused
+ * everyone behind an office's NAT address. Only failures are counted (`fail`); `limited` counts nothing.
+ */
+function signInLimiter(ip, who) {
+  const app = require('./app');
+  const whoKey = `login-${who}@${ip}`, ipKey = `login-ip:${ip}`;
+  return {
+    limited: () => app.rateLimited(whoKey, config.loginRateLimit) || app.rateLimited(ipKey, config.loginIpRateLimit),
+    fail: () => { app.rateLimit(whoKey, config.loginRateLimit, 15 * 60_000); app.rateLimit(ipKey, config.loginIpRateLimit, 15 * 60_000); },
+  };
+}
 const LOCKED_MESSAGE = 'Account locked after too many failed attempts. Try again later or contact an administrator.';
 /**
  * The password of the person already signed in, given again to change it or to turn two-step verification
@@ -521,13 +536,13 @@ async function confirmPassword(ctx, password, { action, message = 'Password is i
     audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'locked' } });
     throw new HttpError(423, LOCKED_MESSAGE);
   }
-  const app = require('./app'); const limit = config.loginRateLimit;
-  if (app.rateLimited(`login:${ctx.ip}`, limit)) {
+  const limiter = signInLimiter(ctx.ip, `account:${u.id}`);
+  if (limiter.limited()) {
     audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'rate limited' } });
     throw new HttpError(429, 'Too many attempts. Try again later.');
   }
   if (await verifyPasswordAsync(password, u.password_hash)) return;
-  app.rateLimit(`login:${ctx.ip}`, limit, 15 * 60_000);
+  limiter.fail();
   const locked = recordPasswordFailure(u);
   clearReauth(ctx);
   audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'wrong password', ...(locked ? { locked: true } : {}) } });
@@ -922,6 +937,6 @@ function passwordProblem(pw, who = {}) {
   return require('./password-strength').weakness(pw, who);
 }
 
-module.exports = { assertSyncSessionReach, auditUsername, policy, PERMS, WIDENED_1_16, asBefore1_16, hasPerm, rolePerms, effectivePerms, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
+module.exports = { signInLimiter, assertSyncSessionReach, auditUsername, policy, PERMS, WIDENED_1_16, asBefore1_16, hasPerm, rolePerms, effectivePerms, activeAssignment, requirePerm, requireAuth, mfaDeadline, canAccessClient, assertClientAccess, caseloadFilter, caseloadRestricted, reportRunAllowed, submissionRunAllowed,
   userManagerIds, lockoutProblem, LOCKOUT_MESSAGE,
   createSession, passkeyStepOwed, markReauth, noteSsoProof, takeSsoProof, reauthStatus, verifySigner, verifyApprover, passkeyCount, mfaMethods, hasLocalPassword, clearReauth, confirmPassword, confirmCode, useTotp, isLocked, recordPasswordFailure, clearFailures, cookieHeader, revokeSession, revokeAllForUser, resolveSession, login, verifyMfa, publicUser, passwordPolicy, passwordProblem, COOKIE };

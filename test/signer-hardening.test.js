@@ -107,3 +107,44 @@ test('wrong authenticator codes at signing count toward the account lockout', as
   assert.ok(H.db.one(`SELECT locked_until FROM users WHERE id=?`, u.id).locked_until, 'the fifth wrong code locks the account');
   assert.equal((await c.post(`/api/notes/${id}/sign`, { code: totp(setup.data.secret, step(1)) })).status, 423);
 });
+
+// Pen test of 1.23.6, L2, finished in 1.24.0: the password given again inside a session (to sign, to change it) and
+// fingerprint sign-in counted their failures per address alone, so one person's wrong guesses refused every
+// colleague's signature behind the same NAT address. They now count per account (a passkey: per credential) from the
+// address, with the per-address ceiling (LOGIN_IP_RATE_LIMIT) behind it, as POST /api/auth/login does.
+test('one person\'s failed signing passwords do not block a colleague at the same address (L2)', async () => {
+  const config = require('../server/config'); const app = require('../server/app');
+  const was = [config.loginRateLimit, config.loginIpRateLimit];
+  const a = await staff('l2signa'); const b = await staff('l2signb');
+  const reset = () => { app.rateLimitReset('login-ip:127.0.0.1'); for (const x of [a, b]) app.rateLimitReset(`login-account:${x.u.id}@127.0.0.1`); };
+  config.loginRateLimit = 3; config.loginIpRateLimit = 8; reset();
+  try {
+    const noteA = await draft(a.c); const noteB = await draft(b.c);
+    for (let i = 0; i < 3; i++) assert.equal((await a.c.post(`/api/notes/${noteA}/sign`, { password: 'Wrong-guess-1!' })).status, 403);
+    assert.equal((await a.c.post(`/api/notes/${noteA}/sign`, { password: PW })).status, 429, 'the guesser is limited');
+    assert.equal((await b.c.post(`/api/notes/${noteB}/sign`, { password: PW })).status, 200, 'a colleague at the same address still signs');
+    assert.equal((await H.client().post('/api/auth/login', { username: 'l2signb', password: PW })).status, 200, 'and signs in');
+    // The password given to change it is the same check (auth.confirmPassword).
+    for (let i = 0; i < 3; i++) assert.equal((await b.c.post('/api/auth/password', { current_password: 'Wrong-guess-1!', new_password: 'Brand-Fresh-Passw0rd!' })).status, 401);
+    assert.equal((await b.c.post('/api/auth/password', { current_password: PW, new_password: 'Brand-Fresh-Passw0rd!' })).status, 429, 'the change is limited for that account');
+    // Six failures from this address so far; the per-address ceiling (8) is still the backstop against spraying.
+    const c = await staff('l2signc'); const noteC = await draft(c.c);
+    for (let i = 0; i < 2; i++) assert.equal((await c.c.post(`/api/notes/${noteC}/sign`, { password: 'Wrong-guess-1!' })).status, 403);
+    assert.equal((await c.c.post(`/api/notes/${noteC}/sign`, { password: PW })).status, 429, 'past the per-address ceiling every attempt from it waits');
+    app.rateLimitReset(`login-account:${c.u.id}@127.0.0.1`);
+  } finally { [config.loginRateLimit, config.loginIpRateLimit] = was; reset(); }
+});
+
+test('fingerprint sign-in failures count per passkey from an address, not per address alone (L2)', async () => {
+  const config = require('../server/config'); const app = require('../server/app');
+  const was = [config.loginRateLimit, config.loginIpRateLimit];
+  const reset = () => { app.rateLimitReset('login-ip:127.0.0.1'); for (const id of ['l2-cred-a', 'l2-cred-b']) app.rateLimitReset(`login-passkey:${id}@127.0.0.1`); };
+  config.loginRateLimit = 3; config.loginIpRateLimit = 8; reset();
+  const bogus = (id) => ({ id, rawId: id, type: 'public-key', response: { clientDataJSON: 'e30', authenticatorData: 'AA', signature: 'AA' } });
+  try {
+    for (let i = 0; i < 3; i++) assert.notEqual((await H.client().post('/api/auth/passkeys/login', { credential: bogus('l2-cred-a') })).status, 429);
+    assert.equal((await H.client().post('/api/auth/passkeys/login', { credential: bogus('l2-cred-a') })).status, 429, 'that credential is limited');
+    assert.notEqual((await H.client().post('/api/auth/passkeys/login', { credential: bogus('l2-cred-b') })).status, 429, 'another passkey from the same address is not');
+    assert.equal((await H.client().post('/api/auth/login', { username: 'admin', password: 'AdminPassw0rd!x' })).status, 200, 'nor is a password sign-in');
+  } finally { [config.loginRateLimit, config.loginIpRateLimit] = was; reset(); }
+});

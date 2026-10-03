@@ -582,7 +582,7 @@ test('a brand-new account can get as far as the change-password page', async () 
 test('only failed sign-ins count against an address', async () => {
   // Regression: twenty successful sign-ins from one address (an office behind one router) locked everyone out.
   const config = require('../server/config'); const was = config.loginRateLimit; config.loginRateLimit = 3;
-  require('../server/app').rateLimitReset('login:127.0.0.1'); // earlier tests in this file fail sign-ins on purpose
+  require('../server/app').rateLimitReset('login-ip:127.0.0.1'); // earlier tests in this file fail sign-ins on purpose
   try {
     for (let i = 0; i < 5; i++) assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'StaffPassw0rd!x' })).status, 200, `sign-in ${i + 1} is fine`);
     for (let i = 0; i < 3; i++) assert.equal((await H.client().post('/api/auth/login', { username: 'nav1', password: 'wrong-' + i })).status, 401);
@@ -590,7 +590,7 @@ test('only failed sign-ins count against an address', async () => {
   } finally { config.loginRateLimit = was; resetLoginBuckets(); }
 });
 
-const resetLoginBuckets = () => { const app = require('../server/app'); app.rateLimitReset('login-ip:127.0.0.1'); for (const u of ['nav1', 'l2guessed', 'l2other', 'nobody-here']) app.rateLimitReset(`login-user:127.0.0.1|${u}`); };
+const resetLoginBuckets = () => { const app = require('../server/app'); app.rateLimitReset('login-ip:127.0.0.1'); for (const u of ['nav1', 'l2guessed', 'l2other', 'nobody-here']) app.rateLimitReset(`login-user:${u}@127.0.0.1`); };
 test('one person guessing from an address does not lock everyone else there out (pen test L2)', async () => {
   // Regression: the per-address bucket refused every sign-in from a NAT'd office once anyone there failed 20 times.
   const config = require('../server/config'); const was = [config.loginRateLimit, config.loginIpRateLimit];
