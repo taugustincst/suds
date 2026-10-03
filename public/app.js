@@ -555,8 +555,6 @@ export function modal(title, content, { wide = false, onClose = null } = {}) {
         }
       } catch { /* no history API */ }
     }
-    // Keep what its forms hold now: once the dialog is gone they no longer save (form(), above).
-    box.querySelectorAll('form').forEach(f => { try { f.saveDraft && f.saveDraft(); } catch { /* nothing to keep */ } });
     bg.remove(); syncInertBehindDialogs(); // now, not at the observer's turn: focus goes back to the page below
     document.removeEventListener('keydown', onKey);
     if (opener && document.contains(opener) && typeof opener.focus === 'function') { try { opener.focus(); } catch { /* the element may have been replaced by a re-render */ } }
@@ -807,12 +805,16 @@ function claimDrafts() {
   if (draftOwner !== uid) { draftMap.clear(); draftOwner = uid; }
   return true;
 }
+// How many times each draft has been cleared (saved, discarded, started over): a form built before the latest
+// clearing of its key never writes that draft again. A dialog closed part-way used to keep listening, and a late
+// change event from it put back the draft that the next dialog of the same kind had just saved and cleared.
+const draftGen = new Map();
 const drafts = {
   get size() { return claimDrafts() ? draftMap.size : 0; },
   has: (k) => claimDrafts() && draftMap.has(k),
   get: (k) => (claimDrafts() ? draftMap.get(k) : undefined),
   set(k, v) { if (claimDrafts()) draftMap.set(k, { ...v, __at: Date.now() }); },
-  delete(k) { draftMap.delete(k); document.querySelectorAll(`[data-resume-draft="${CSS.escape(k)}"]`).forEach(b => b.remove()); },
+  delete(k) { draftMap.delete(k); draftGen.set(k, (draftGen.get(k) || 0) + 1); document.querySelectorAll(`[data-resume-draft="${CSS.escape(k)}"]`).forEach(b => b.remove()); },
 };
 export function discardDraft(key) { drafts.delete(key); }
 export function hasDraft(key) { return drafts.has(key); }
@@ -911,6 +913,9 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   // Whose form this is: a save still queued when they sign out must not land in the next person's drafts.
   const formOwner = state.user && state.user.id; const formEpoch = draftEpoch;
   const mine = () => !!state.user && state.user.id === formOwner && draftEpoch === formEpoch;
+  // The clearing of this draft the form was built after (drafts.delete, above); its own Start over moves it on.
+  let myGen = draftKey ? (draftGen.get(draftKey) || 0) : 0;
+  const stale = () => !!draftKey && (draftGen.get(draftKey) || 0) !== myGen;
   const grid = h('div', { class: 'form-grid' });
   let target = grid;
   for (const f of fields) {
@@ -1059,7 +1064,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     } finally { submitBtn.disabled = false; }
   } }, restored ? h('div', { class: 'banner', role: 'status' },
     h('span', {}, 'Restored what you had already typed.'),
-    h('button', { class: 'btn ghost sm', type: 'button', onClick: (e) => { drafts.delete(draftKey); e.target.closest('.banner').remove(); for (const f of fields) { const i = inputs[f.name]; if (!i) continue; if (i.type === 'checkbox') i.checked = false; else i.value = ''; } } }, 'Start over'))
+    h('button', { class: 'btn ghost sm', type: 'button', onClick: (e) => { drafts.delete(draftKey); myGen = draftGen.get(draftKey) || 0; e.target.closest('.banner').remove(); for (const f of fields) { const i = inputs[f.name]; if (!i) continue; if (i.type === 'checkbox') i.checked = false; else i.value = ''; } } }, 'Start over'))
     : asking ? h('div', { class: 'banner info', role: 'status', 'data-resume-question': draftKey },
       h('span', {}, `${resume} You started it${kept.__at ? ` at ${fmt.time(new Date(kept.__at).toISOString())}` : ''} and it was not saved.`),
       h('span', { class: 'row', style: { gap: '.4rem' } },
@@ -1071,7 +1076,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
           const first = el.querySelector('input:not([type=hidden]),select,textarea'); if (first) first.focus();
         } }, 'Resume'),
         h('button', { class: 'btn sm', type: 'button', 'data-resume-answer': 'discard', onClick: (e) => {
-          asking = false; drafts.delete(draftKey); e.target.closest('.banner').remove();
+          asking = false; drafts.delete(draftKey); myGen = draftGen.get(draftKey) || 0; e.target.closest('.banner').remove();
           const first = el.querySelector('input:not([type=hidden]),select,textarea'); if (first) first.focus();
         } }, 'Discard'))) : null,
     errBox, grid, extra || null, errNear, h('div', { class: 'btn-row' }, onCancel ? h('button', { class: 'btn', type: 'button', onClick: onCancel }, cancelText) : null, submitBtn));
@@ -1085,14 +1090,12 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     // A field mid-typing an incomplete date/time is expected while drafting — read() now rejects that
     // rather than silently mangling it, so the autosave tick here just skips this round instead of
     // erroring; the field firms up (or clears) before the next tick or before the person tries to submit.
-    // A form no longer on the page (its dialog closed: the close kept its draft, below) never writes again: a late
-    // change event or queued save from it used to put back a draft that the next dialog had just saved and cleared.
-    const save = (onlyIfSomething) => { if (submitted || asking || !mine() || !el.isConnected) return; try { const d = draftNow(); if (!onlyIfSomething || typedSomething(d)) drafts.set(draftKey, d); } catch { /* firms up or gets fixed before submit */ } };
+    const save = (onlyIfSomething) => { if (submitted || asking || !mine() || stale()) return; try { const d = draftNow(); if (!onlyIfSomething || typedSomething(d)) drafts.set(draftKey, d); } catch { /* firms up or gets fixed before submit */ } };
     el.addEventListener('input', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => save(true), 400); });
     el.addEventListener('change', () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => save(false), 400); });
   }
   // Keep what is typed right now as a draft (the paused screen closes every dialog; see showPausedScreen).
-  el.saveDraft = () => { if (draftKey && !submitted && !asking && mine()) { clearTimeout(saveTimer); try { const d = draftNow(); if (typedSomething(d)) drafts.set(draftKey, d); } catch {} } };
+  el.saveDraft = () => { if (draftKey && !submitted && !asking && mine() && !stale()) { clearTimeout(saveTimer); try { const d = draftNow(); if (typedSomething(d)) drafts.set(draftKey, d); } catch {} } };
   // A view's own parts of the draft (el.draftExtras), restored as soon as the view hands them over.
   let extras = null;
   Object.defineProperty(el, 'draftExtras', { get: () => extras, set: (x) => { extras = x; if (restored && restored.__extra && x && x.restore) { try { x.restore(restored.__extra); } catch { /* the fields are back; the rest is lost */ } } } });
@@ -2026,8 +2029,6 @@ async function renderPage() {
   // A paused window stays paused: a hash change or a view's own refresh must not draw the app back over it.
   if (paused) return;
   showBuildStamp(!state.user);
-  // The forms about to be replaced keep what they hold now: once off the page they no longer save (form()).
-  document.querySelectorAll('form').forEach(f => { try { f.saveDraft && f.saveDraft(); } catch { /* nothing to keep */ } });
   if (updateArmed && !updateBlocked({ navigating: true })) { reloadForUpdate(); return; }
   clear(document.getElementById('modal-root'));
   const r = parseHash();
