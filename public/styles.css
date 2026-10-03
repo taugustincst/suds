@@ -363,6 +363,10 @@ a.bar.link:hover .lbl { color: var(--primary); text-decoration: underline; } a.b
   .table-wrap td[data-label]:not([data-label=""])::before { content: attr(data-label); flex: 0 0 34%; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .02em; padding-top: .1rem; }
   .table-wrap td:empty { display: none; }
 }
+/* Settings › Security status: a long unbroken value (the audit anchor directory, a key id, the mono "Where" column)
+   wraps instead of widening its table into a scrolling region at phone width (axe: scrollable-region-focusable). */
+[data-security-status] td { overflow-wrap: anywhere; }
+[data-security-status] td > * { min-width: 0; overflow-wrap: anywhere; }
 
 /* ---------- accessibility and persistent messages ---------- */
 /* Visually hidden but still announced by a screen reader. */
