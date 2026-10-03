@@ -158,7 +158,7 @@ test('lockout guard: two administrators demoting each other at once, with passwo
   const a = H.makeUser('race_a', 'admin'); const b = H.makeUser('race_b', 'admin');
   const ca = await signIn(a); const cb = await signIn(b);
   await onlyAdmins([a.id, b.id], async () => {
-    const pw = 'Race-Condition-Pass-2026!';
+    const pw = 'Copper-Condition-2026!';
     const [ra, rb] = await Promise.all([ca.put(`/api/users/${b.id}`, { role: 'navigator', password: pw }), cb.put(`/api/users/${a.id}`, { role: 'navigator', password: pw })]);
     const admins = H.db.one(`SELECT COUNT(*) n FROM users WHERE id IN (?,?) AND role='admin' AND is_active=1`, a.id, b.id).n;
     assert.equal(admins, 1, `one administrator is left (${ra.status}, ${rb.status})`);

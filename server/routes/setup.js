@@ -88,8 +88,8 @@ module.exports = (r) => {
       main_fund_settlement_hiaa: { type: 'string', enum: [...C.SETTLEMENT_HIAA.map(x => x.code), 'none'] },
       // port omitted → 'auto' (standard port with fallback)
     });
-    const errs = auth.passwordPolicy(v.admin_password);
-    if (errs.length) throw badRequest('Password must contain ' + errs.join(', '), { fields: { admin_password: errs.join(', ') } });
+    const pwProblem = auth.passwordProblem(v.admin_password, { username: v.admin_username, display_name: v.admin_display_name });
+    if (pwProblem) throw badRequest(pwProblem, { fields: { admin_password: pwProblem } });
 
     // 1. keys: if they came from dev key files rather than the environment, consolidate them into keys.json
     if (config.keySource !== 'env' && !fs.existsSync(config.keysJsonPath)) {

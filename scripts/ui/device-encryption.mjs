@@ -10,7 +10,7 @@ import { makeChecks, until, settle, saved, signInAgain, passRecoveryCode } from 
 
 const base = process.env.SUDS_STATIC_URL || 'http://127.0.0.1:8878';
 const { ok, eq, fail, finish } = makeChecks('device-encryption');
-const PW = 'Navigator2026!!'; const PW2 = 'Second-Person-2026!';
+const PW = 'Navigator2026!!'; const PW2 = 'Maple-Thunder-2026!';
 const browser = await chromium.launch();
 const errors = [];
 const watch = (page, tag) => {

@@ -162,11 +162,15 @@ module.exports = (r) => {
     return { ok: true, warnings: calDischarge && calDischarge.extracted_at ? ['The CalOMS discharge record for this episode had already been sent to DHCS; correct it through the county\'s CalOMS process.'] : [] };
   });
 
-  // Program-wide view: who was admitted and discharged in a period, and who is waiting.
+  // Program-wide view: who was admitted and discharged in a period, and who is waiting. ?client_id= narrows it
+  // to one client's episodes, within the caseload as everything here is (accepted and ignored up to 1.23.6:
+  // pen test L7).
   r.get('/api/episodes', auth.requireAuth, auth.requirePerm('episodes:read', 'episodes:write'), (ctx) => {
     const { limit, offset } = paging(ctx.query, { limit: 100, max: 500 });
     const cf = auth.caseloadFilter(ctx.user, 'e.client_id');
-    const where = [cf.sql]; const params = [...cf.params];
+    const clientId = ctx.query.get('client_id') || null;
+    const byClient = clientId ? { sql: 'e.client_id=?', params: [clientId] } : { sql: '1=1', params: [] };
+    const where = [cf.sql, byClient.sql]; const params = [...cf.params, ...byClient.params];
     const status = ctx.query.get('status'); if (status && status !== 'all') { where.push('e.status=?'); params.push(status); }
     if (ctx.query.get('from')) { where.push('e.opened_at >= ?'); params.push(ctx.query.get('from')); }
     if (ctx.query.get('to')) { where.push('e.opened_at <= ?'); params.push(ctx.query.get('to')); }
@@ -176,11 +180,11 @@ module.exports = (r) => {
     // Counts for the whole period, not just the page: admissions (opened in the period) by where they stand
     // now, and discharges (closed in the period, whenever opened) by reason — what a funder asks for.
     const opened = db.one(`SELECT COUNT(*) n, SUM(e.status='open') open, SUM(e.status='closed') closed FROM episodes e JOIN clients c ON c.id=e.client_id ${w}`, ...params);
-    const dWhere = [cf.sql, `e.status='closed'`]; const dParams = [...cf.params];
+    const dWhere = [cf.sql, byClient.sql, `e.status='closed'`]; const dParams = [...cf.params, ...byClient.params];
     if (ctx.query.get('from')) { dWhere.push('e.closed_at >= ?'); dParams.push(ctx.query.get('from')); }
     if (ctx.query.get('to')) { dWhere.push('e.closed_at <= ?'); dParams.push(ctx.query.get('to')); }
     const byReason = db.all(`SELECT COALESCE(e.discharge_reason,'not_recorded') k, COUNT(*) n FROM episodes e JOIN clients c ON c.id=e.client_id WHERE ${dWhere.join(' AND ')} GROUP BY 1 ORDER BY n DESC, k`, ...dParams);
-    audit.log({ user: ctx.user, action: 'episode.list', ip: ctx.ip, details: { count: rows.length } });
+    audit.log({ user: ctx.user, action: 'episode.list', clientId: clientId || undefined, ip: ctx.ip, details: { count: rows.length } });
     return { rows, total: opened.n, limit, offset,
       summary: { opened: opened.n, still_open: opened.open || 0, since_closed: opened.closed || 0, discharged: byReason.reduce((s, x) => s + x.n, 0), discharges_by_reason: byReason } };
   });

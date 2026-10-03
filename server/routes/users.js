@@ -122,9 +122,12 @@ module.exports = (r) => {
   r.post('/api/users', auth.requireAuth, auth.requirePerm('users:manage'), async (ctx) => {
     const v = validate(ctx.body, shape);
     if (db.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw badRequest('Username already exists');
-    const temp = v.password || (randomToken(10) + 'Aa1!');
-    const errs = auth.passwordPolicy(temp);
-    if (errs.length) throw badRequest('Password must contain ' + errs.join(', '));
+    const who = { username: v.username, display_name: v.display_name };
+    // A generated one is random, so a second draw is all it ever takes in the rare case it trips the policy.
+    let temp = v.password;
+    for (let i = 0; !temp && i < 10; i++) { const t = randomToken(10) + 'Aa1!'; if (!auth.passwordProblem(t, who)) temp = t; }
+    const pwProblem = auth.passwordProblem(temp, who);
+    if (pwProblem) throw badRequest(pwProblem, { fields: { password: pwProblem } });
     const id = uuid();
     if (v.supervisor_id && !db.one(`SELECT 1 FROM users WHERE id=? AND role IN ('supervisor','admin')`, v.supervisor_id)) throw badRequest('The supervisor must be a supervisor or administrator account');
     if (v.default_fund_id && !db.one(`SELECT 1 FROM funding_sources WHERE id=? AND is_active=1`, v.default_fund_id)) throw badRequest('The default fund must be an active funding source');
@@ -152,8 +155,8 @@ module.exports = (r) => {
     // so two administrators demoting each other at once cannot both pass the check (review of the self-edit change).
     let passwordHash = null;
     if (v.password) {
-      const errs = auth.passwordPolicy(v.password);
-      if (errs.length) throw badRequest('Password must contain ' + errs.join(', '));
+      const pwProblem = auth.passwordProblem(v.password, { username: v.username ?? u.username, display_name: v.display_name ?? u.display_name });
+      if (pwProblem) throw badRequest(pwProblem, { fields: { password: pwProblem } });
       passwordHash = await hashPasswordAsync(v.password);
       // Read again after the wait: another request may have changed the account meanwhile.
       u = db.one(`SELECT * FROM users WHERE id=?`, ctx.params.id);

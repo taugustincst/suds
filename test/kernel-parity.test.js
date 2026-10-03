@@ -75,9 +75,9 @@ async function flow(call) {
 }
 test('the browser kernel (sql.js and the shims) answers a representative flow exactly as the office server does', async () => {
   // SUDS on this device: the first Sign up creates the device's account, then it signs in.
-  const signup = await kernelCall('POST', '/api/local/signup', { display_name: 'Parity Admin', username: 'parity', password: 'ParityPassw0rd!x', role: 'admin', storage_ack: true });
+  const signup = await kernelCall('POST', '/api/local/signup', { display_name: 'Parity Admin', username: 'parity', password: 'Orchid-Lamp-77!x', role: 'admin', storage_ack: true });
   assert.equal(signup.status, 200, JSON.stringify(signup.data));
-  const login = await kernelCall('POST', '/api/auth/login', { username: 'parity', password: 'ParityPassw0rd!x' });
+  const login = await kernelCall('POST', '/api/auth/login', { username: 'parity', password: 'Orchid-Lamp-77!x' });
   assert.equal(login.status, 200, JSON.stringify(login.data));
   const device = await flow(kernelCall);
 
@@ -162,25 +162,25 @@ test('the device kernel enforces permission grants and denies exactly like the o
   // Device: first account if this test runs alone, otherwise the earlier test's admin. (Signup does not
   // sign in, so an explicit login follows either way; the kernel keeps the session token in memory and
   // re-login switches which user subsequent handle() calls act as.)
-  const su = await kernelCall('POST', '/api/local/signup', { display_name: 'Perm Admin', username: 'permadmin', password: 'PermAdminPassw0rd!x', role: 'admin', storage_ack: true });
-  const deviceAdmin = su.status === 200 ? { username: 'permadmin', password: 'PermAdminPassw0rd!x' } : { username: 'parity', password: 'ParityPassw0rd!x' };
+  const su = await kernelCall('POST', '/api/local/signup', { display_name: 'Perm Admin', username: 'permadmin', password: 'Cobalt-Meadow-9!x', role: 'admin', storage_ack: true });
+  const deviceAdmin = su.status === 200 ? { username: 'permadmin', password: 'Cobalt-Meadow-9!x' } : { username: 'parity', password: 'Orchid-Lamp-77!x' };
   assert.equal((await kernelCall('POST', '/api/auth/login', deviceAdmin)).status, 200, 'device admin login');
   // Office: the test server's admin.
   const admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x');
 
   // A navigator on each side. Accounts created via POST /api/users must change their password before
   // doing anything else (must_change_password=1), so both navigators change it first, identically.
-  const navBody = { username: 'permnav', display_name: 'Perm Nav', role: 'navigator', password: 'PermNavPassw0rd!x' };
+  const navBody = { username: 'permnav', display_name: 'Perm Nav', role: 'navigator', password: 'Cobalt-River-9!x' };
   const dNav = await kernelCall('POST', '/api/users', navBody);
   assert.equal(dNav.status, 201, `device create navigator: ${JSON.stringify(dNav.data)}`);
   const oNav = await admin.post('/api/users', navBody);
   assert.equal(oNav.status, 201, `office create navigator: ${JSON.stringify(oNav.data)}`);
-  const navOffice = H.client(); await navOffice.login('permnav', 'PermNavPassw0rd!x');
-  assert.equal((await kernelCall('POST', '/api/auth/login', { username: 'permnav', password: 'PermNavPassw0rd!x' })).status, 200, 'device navigator login');
-  const pwBody = { current_password: 'PermNavPassw0rd!x', new_password: 'PermNavPassw0rd!y' };
+  const navOffice = H.client(); await navOffice.login('permnav', 'Cobalt-River-9!x');
+  assert.equal((await kernelCall('POST', '/api/auth/login', { username: 'permnav', password: 'Cobalt-River-9!x' })).status, 200, 'device navigator login');
+  const pwBody = { current_password: 'Cobalt-River-9!x', new_password: 'Cobalt-River-9!y' };
   assert.equal((await navOffice.post('/api/auth/password', pwBody)).status, 200, 'office password change');
   assert.equal((await kernelCall('POST', '/api/auth/password', pwBody)).status, 200, 'device password change');
-  const navCreds = { username: 'permnav', password: 'PermNavPassw0rd!y' };
+  const navCreds = { username: 'permnav', password: 'Cobalt-River-9!y' };
 
   // The break-glass queue is closed to the navigator before the grant, on both sides.
   await step('break-glass before grant',

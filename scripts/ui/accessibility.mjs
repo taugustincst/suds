@@ -302,7 +302,7 @@ async function prepareOffice() {
   const must = (r, what) => { ok(r.status >= 200 && r.status < 300, `${P}: ${what}`, r.status >= 300 ? r : undefined); return r.data || {}; };
   // An access request waiting for an administrator (Settings → Users & permissions), sent the way Sign up sends it.
   await page.goto(office + '/#/login'); await page.waitForSelector('input[name=username]');
-  must(await api(page, 'POST', '/api/auth/signup', { display_name: 'Riley Request', username: `riley${Date.now().toString(36)}`, password: 'Request2026!!x', reason: 'New outreach worker' }), 'an access request is waiting');
+  must(await api(page, 'POST', '/api/auth/signup', { display_name: 'Riley Request', username: `riley${Date.now().toString(36)}`, password: 'Lantern2026!!x', reason: 'New outreach worker' }), 'an access request is waiting');
   const ids = new Set();
   const as = async (user, pw) => { if (await page.$('.layout')) { await page.evaluate(async () => (await import('./app.js')).logout()); await page.waitForSelector('input[name=username]'); } await signIn(page, office, user, pw); };
   for (const [user, pw] of ROLES) { await as(user, pw); const id = await firstId(page, '/api/clients?limit=1', 'clients'); if (id) { ids.add(id); prepared.firstClient[user] = id; } }
@@ -941,7 +941,7 @@ async function inactiveRun() {
       const r = await api(page, 'POST', '/api/resources', { name: names.resource, category: 'residential' });
       ok(r.status === 201 && (await api(page, 'DELETE', `/api/resources/${r.data.id}`)).status === 200, `${W}: a resource is deactivated`);
       names.resourceId = r.data.id;
-      const u = await api(page, 'POST', '/api/users', { username: `gone${tag}`, display_name: names.user, role: 'navigator', password: 'GoneWorker2026!!x' });
+      const u = await api(page, 'POST', '/api/users', { username: `gone${tag}`, display_name: names.user, role: 'navigator', password: 'Lantern2026!!x' });
       ok(u.status === 201 && (await api(page, 'PUT', `/api/users/${u.data.id}`, { is_active: false })).status === 200, `${W}: a user is deactivated`, u.data);
       const c = await api(page, 'POST', '/api/clients', { first_name: 'Ina', last_name: names.client, status: 'inactive', no_episode: true, confirm_duplicate: true });
       ok(c.status === 201, `${W}: an inactive client exists`, c.data);

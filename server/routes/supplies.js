@@ -15,7 +15,7 @@ const config = require('../config');
 const S = require('../supplies');
 const N = require('../supply-names');
 const { badRequest, notFound, HttpError } = require('../http');
-const { validate } = require('../validate');
+const { validate, paging } = require('../validate');
 const { uuid } = require('../crypto');
 
 const QTY = { type: 'number', integer: true, min: 1, max: S.MAX_QTY };
@@ -117,7 +117,7 @@ module.exports = (r) => {
     if (q.get('from')) { where.push('l.occurred_on >= ?'); p.push(q.get('from')); }
     if (q.get('to')) { where.push('l.occurred_on <= ?'); p.push(q.get('to')); }
     if (q.get('flagged') === '1') where.push('l.flagged=1');
-    const limit = Math.min(500, Math.max(1, Number(q.get('limit') || 100))); const offset = Math.max(0, Number(q.get('offset') || 0));
+    const { limit, offset } = paging(q, { limit: 100, max: 500 });
     const rows = db.all(`SELECT l.*, i.name AS item_name, i.unit, s.name AS site_name, u.display_name AS user_name, f.name AS fund_name FROM supply_ledger l
       JOIN supply_items i ON i.id=l.item_id JOIN supply_sites s ON s.id=l.site_id LEFT JOIN users u ON u.id=l.user_id LEFT JOIN funding_sources f ON f.id=l.funding_source_id
       WHERE ${where.join(' AND ')} ORDER BY l.occurred_on DESC, l.created_at DESC, l.id LIMIT ? OFFSET ?`, ...p, limit, offset);

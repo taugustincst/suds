@@ -9,13 +9,18 @@ const { hashPasswordAsync, verifyPasswordAsync, generateTotpSecret, otpauthUrl, 
 
 module.exports = (r) => {
   r.post('/api/auth/login', async (ctx) => {
-    const limit = require('../config').loginRateLimit;
-    if (rateLimited(`login:${ctx.ip}`, limit)) throw new HttpError(429, 'Too many login attempts. Try again later.');
+    const config = require('../config');
     const { username, password } = validate(ctx.body, { username: { type: 'string', required: true, maxLen: 100 }, password: { type: 'string', required: true, maxLen: 500 } });
+    // Failed sign-ins are counted per username from this address, and per address whatever the username with a
+    // much higher ceiling (spraying). Keyed on the address alone (up to 1.23.6), one person's wrong guesses
+    // locked everyone behind the office's NAT address out, right passwords included (pen test of 1.23.6, L2).
+    // A name that does not exist is counted exactly like one that does, so the answer says nothing about which.
+    const userKey = `login-user:${ctx.ip}|${username.trim().toLowerCase()}`, ipKey = `login-ip:${ctx.ip}`;
+    if (rateLimited(userKey, config.loginRateLimit) || rateLimited(ipKey, config.loginIpRateLimit)) throw new HttpError(429, 'Too many login attempts. Try again later.');
     let result;
-    // Only a failed attempt counts against the address: successful sign-ins are what an office does.
+    // Only a failed attempt counts: successful sign-ins are what an office does.
     try { result = await auth.login({ username, password, ctx }); }
-    catch (e) { rateLimit(`login:${ctx.ip}`, limit, 15 * 60_000); throw e; }
+    catch (e) { rateLimit(userKey, config.loginRateLimit, 15 * 60_000); rateLimit(ipKey, config.loginIpRateLimit, 15 * 60_000); throw e; }
     ctx.res.setHeader('Set-Cookie', auth.cookieHeader(result.token));
     // Sync clients (local-mode devices) authenticate with a bearer token instead of the cookie
     const out = { user: result.user, mfaPending: result.mfaPending, mfaMethods: result.mfaMethods, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline };
@@ -47,8 +52,8 @@ module.exports = (r) => {
       password: { type: 'string', required: true, maxLen: 500 },
       reason: { type: 'string', maxLen: 200 },
     });
-    const errs = auth.passwordPolicy(v.password);
-    if (errs.length) throw badRequest('Password must contain ' + errs.join(', '));
+    const pwProblem = auth.passwordProblem(v.password, { username: v.username, display_name: v.display_name });
+    if (pwProblem) throw badRequest(pwProblem, { fields: { password: pwProblem } });
     // Hashed whether or not the name is free, so neither the answer nor its timing says which it was.
     const hash = await hashPasswordAsync(v.password);
     const taken = !!db.one(`SELECT 1 FROM users WHERE username=?`, v.username);
@@ -116,8 +121,8 @@ module.exports = (r) => {
     // The sign-in's protections (limit, failure count, lockout, audit): auth.confirmPassword.
     await auth.confirmPassword(ctx, current_password, { action: 'auth.password.change.failed', message: 'Current password is incorrect' });
     auth.clearFailures(u.id);
-    const errs = auth.passwordPolicy(new_password);
-    if (errs.length) throw badRequest('Password must contain ' + errs.join(', '));
+    const pwProblem = auth.passwordProblem(new_password, u);
+    if (pwProblem) throw badRequest(pwProblem, { fields: { new_password: pwProblem } });
     if (await verifyPasswordAsync(new_password, u.password_hash)) throw badRequest('New password must differ from the current password');
     db.run(`UPDATE users SET password_hash=?, must_change_password=0, password_changed_at=?, updated_at=? WHERE id=?`, await hashPasswordAsync(new_password), db.now(), db.now(), u.id);
     // revoke other sessions

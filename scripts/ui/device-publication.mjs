@@ -26,7 +26,7 @@ await page.goto(base + '/?local=1#/');
 await until(async () => (await page.$('input[name=username]')) || (await page.$('.boot.error')), { timeout: 20000 });
 ok(await page.$('input[name=username]'), 'the device kernel booted and offered first-run setup');
 await page.fill('input[name=display_name]', 'Device Admin'); await page.fill('input[name=username]', 'devadmin');
-await page.fill('input[name=password]', 'DeviceAdmin2026!!'); await page.fill('input[name=confirm]', 'DeviceAdmin2026!!');
+await page.fill('input[name=password]', 'Orchid2026!!x'); await page.fill('input[name=confirm]', 'Orchid2026!!x');
 await page.selectOption('select[name=role]', 'admin');
 await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 15000 }); await passRecoveryCode(page);
 for (let i = 0; i < 5; i++) { const b = await page.$('.modal button.primary'); if (!b) break; await b.click(); await settle(page); }

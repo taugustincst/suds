@@ -58,9 +58,21 @@ function validate(body, shape, { partial = false, existing = null } = {}) {
   return out;
 }
 
+/**
+ * ?limit= and ?offset= of a list route. Absent or empty: the default. Anything but a number is a 400 that says
+ * so: up to 1.23.6 "?limit=abc" reached SQLite's LIMIT as NaN and every list route answered 500 (pen test L4).
+ * A fraction is rounded down; the limit is kept between 1 and the route's maximum, the offset at 0 or more.
+ */
 function paging(query, defaults = { limit: 50, max: 500 }) {
-  const limit = Math.min(defaults.max, Math.max(1, Number(query.get('limit') || defaults.limit)));
-  const offset = Math.max(0, Number(query.get('offset') || 0));
+  const read = (name, dflt) => {
+    const raw = query.get(name);
+    if (raw === null || raw.trim() === '') return dflt;
+    const n = Number(raw.trim());
+    if (!Number.isFinite(n)) throw badRequest(`${name} must be a whole number`, { fields: { [name]: 'must be an integer' } });
+    return Math.floor(n);
+  };
+  const limit = Math.min(defaults.max, Math.max(1, read('limit', defaults.limit)));
+  const offset = Math.max(0, read('offset', 0));
   return { limit, offset };
 }
 

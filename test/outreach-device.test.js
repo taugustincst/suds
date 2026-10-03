@@ -14,8 +14,8 @@ const call = (...a) => kernelCaller(L)(...a);
 const ok = (r, s, what) => { assert.equal(r.status, s, `${what}: ${JSON.stringify(r.data).slice(0, 300)}`); return r.data; };
 
 test('offline on the device: an outreach contact draws the device\'s stock down and is counted', async () => {
-  ok(await call('POST', '/api/local/signup', { display_name: 'Field Worker', username: 'field', password: 'FieldPassw0rd!x', role: 'admin', storage_ack: true }), 200, 'sign up');
-  ok(await call('POST', '/api/auth/login', { username: 'field', password: 'FieldPassw0rd!x' }), 200, 'sign in');
+  ok(await call('POST', '/api/local/signup', { display_name: 'Field Worker', username: 'field', password: 'Orchid-Lamp-77!x', role: 'admin', storage_ack: true }), 200, 'sign up');
+  ok(await call('POST', '/api/auth/login', { username: 'field', password: 'Orchid-Lamp-77!x' }), 200, 'sign in');
   const cat0 = ok(await call('GET', '/api/supplies/catalog'), 200, 'catalog');
   const site = cat0.site_id;
   const items = {};

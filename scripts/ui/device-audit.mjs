@@ -25,6 +25,13 @@ async function officeLogin(username, password, secret) {
   if (d.mfaPending) { if (!secret) throw new Error('office login for ' + username + ' needs a code'); await officeJson(sess, 'POST', '/api/auth/mfa/verify', { code: await nextCode(secret) }); }
   return sess;
 }
+// A browser's sign-in (a cookie, no X-Sync-Client): account management, such as enrolling in two-step verification, is
+// refused to a device's sync session (1.24, pen test of 1.23.6, L6), so the person does it here, as in a browser.
+async function officeBrowserLogin(username, password) {
+  const r = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds' }, body: JSON.stringify({ username, password }) });
+  const cookie = (r.headers.get('set-cookie') || '').split(';')[0]; if (r.status !== 200 || !cookie) throw new Error('office browser login failed: ' + r.status);
+  return { H: { 'Content-Type': 'application/json', 'X-Requested-With': 'suds', Cookie: cookie } };
+}
 const officeJson = (sess, method, path, body) => fetch(base + path, { method, headers: sess.H, body: body === undefined ? undefined : JSON.stringify(body) }).then(async r => ({ status: r.status, data: await r.json().catch(() => null) }));
 // The server accepts each authenticator code once, and never one older than the last it accepted (1.12.1,
 // server/auth.js useTotp). Like a person waiting for the app to show a new code: the next unused time-step,
@@ -136,7 +143,7 @@ try {
   ok(await page.$('.layout'), 'and stays signed in on the device');
 
   // ---- H3: an office account with two-step verification asks for the code inline ----
-  const dchen = await officeLogin('dchen', 'Navigator2026!!');
+  const dchen = await officeBrowserLogin('dchen', 'Navigator2026!!');
   const setup = await officeJson(dchen, 'POST', '/api/auth/mfa/setup');
   ok(setup.data && setup.data.secret, 'the office account enrols in two-step verification for the test', setup);
   const enabled = await officeJson(dchen, 'POST', '/api/auth/mfa/enable', { code: await nextCode(setup.data.secret) });

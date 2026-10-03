@@ -41,6 +41,46 @@ Fixes from an owner-authorised white-box pen test of 1.23.6. No migration, permi
   Signed notes cannot be edited; add an addendum instead"), so the device shows it on the sync screen and stops
   resending it. A signed note sent back unchanged (for example, asking for a review) still lands.
 
+### Security: the Low findings of the white-box pen test of 1.23.6
+
+No migration and no new permission. What an administrator should know: passwords that pass the character rule but
+contain the username or the person's name, or are a very common password dressed up ("Summer2026!!", "P@ssw0rd2026!"),
+are now refused wherever a password is set; failed sign-ins are limited per username from an address (with a much
+higher per-address ceiling, `LOGIN_IP_RATE_LIMIT`), so one person's wrong guesses no longer lock out everyone behind
+the office's NAT address; and a device's sync sign-in can no longer manage the account.
+
+* **L1 — password policy.** Besides 12+ characters with upper and lower case, a number and a symbol, a password must
+  not contain the username (or its part before an @) or a part of the person's name (3 characters or more; a part of
+  exactly 3 only as a word of its own), must not be one of a short built-in list of very common passwords and keyboard
+  patterns with digits and symbols around them (look-alike characters such as `@` for `a` and `0` for `o` included),
+  and must use at least 5 different characters (`server/password-strength.js`, `auth.passwordProblem`). It applies to
+  office sign-up, the set-up wizard, an administrator creating or resetting an account (a generated temporary password
+  is drawn again in the rare case it would trip it), a password change, `npm run create-admin`, and on SUDS on this
+  device to the first account, sign-up and recovery. The refusal says which rule, under the password field too.
+  Existing passwords are not affected until they are next changed. On SUDS on this device, *Try it with sample data*
+  now creates its "sample" account with the password `Look-Around-2026` (the old one contained the username).
+* **L2 — sign-in limit.** `POST /api/auth/login` counted failures per source address only, and past 20 refused every
+  sign-in from it, right passwords included. Failures now count per username from an address (`LOGIN_RATE_LIMIT`,
+  default 20, as before) and per address whatever the username (`LOGIN_IP_RATE_LIMIT`, default ten times that, 200),
+  as the backstop against spraying; account lockout is unchanged, and a username nobody has is counted exactly like
+  one that exists.
+* **L4 — paging.** A `limit` or `offset` that is not a number answered 500 on every list route; it is now a 400 that
+  says which (`limit must be a whole number`), absent or empty takes the default, and a fraction is rounded down
+  (`server/validate.js` `paging`, now also used by the supplies ledger). A non-numeric `hours` on
+  `/api/notes/handoffs` takes the default instead of a 500, and the sync pull's `limit` can no longer be negative.
+* **L5 — audit tail.** The audit chain's head is sealed, and its first anchor written (reason `first-start`), at the
+  office server's start whenever none exists yet, instead of waiting for the first housekeeping pass: until then the
+  newest entries of a new install could be deleted without a trace. A database with no audit entry gets one first
+  (`audit.started`). docs/security/LOGGING-AND-AUDIT.md now says that tail-truncation detection depends on the hourly
+  housekeeping running.
+* **L6 — sync sessions.** Every device's sync session, not only a field device's, now reaches under `/api/auth/`
+  only signing in, the second step and signing out: changing the password, two-step verification (whose first step
+  returned a new secret), passkeys, `/api/auth/me` and the session list and ending other sessions answer 403
+  (`syncSession: true`, "use a web browser"). A whole device's session still reaches the rest of the API.
+* **L7 — `client_id` filters.** `GET /api/episodes` and `GET /api/notes/handoffs` accepted `client_id` and ignored
+  it; it now narrows them to that client, within the caller's caseload as before (a client off the caseload gives an
+  empty list, as the generic list routes do). docs/API.md says so.
+
 ### Scheduled backups for SUDS on this device (built for 1.24.0, not yet released)
 
 Built on a feature branch for 1.24.0, which comes no earlier than 2026-10-29 and through the release gate; nothing

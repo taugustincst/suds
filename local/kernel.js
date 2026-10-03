@@ -256,8 +256,8 @@ async function tryRecovery(code) {
 /** The shape of a recovery request, checked before any code is tried: a mistake here costs no attempt. */
 function recoveryRequestProblem(b) {
   if (typeof b.password !== 'string' || !b.password) return { message: 'Choose a new password.', extra: { fields: { password: 'Required' } } };
-  const errs = auth.passwordPolicy(b.password);
-  if (errs.length) return { message: 'Password must contain ' + errs.join(', '), extra: { fields: { password: 'Must contain ' + errs.join(', ') } } };
+  const pwProblem = auth.passwordProblem(b.password, { username: typeof b.username === 'string' ? b.username : undefined, display_name: typeof b.display_name === 'string' ? b.display_name : undefined });
+  if (pwProblem) return { message: pwProblem, extra: { fields: { password: pwProblem } } };
   if (b.username !== undefined && b.username !== null && b.username !== '' && (typeof b.username !== 'string' || b.username.length > 60 || !/^[a-zA-Z0-9._@-]+$/.test(b.username.trim()))) return { message: 'A username is letters, numbers and . _ @ - only.', extra: { fields: { username: 'Letters, numbers and . _ @ - only' } } };
   return null;
 }
@@ -510,7 +510,7 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
     // The on-device app keeps records nowhere else. The person confirms they have read where that is
     // before the first record can exist (the set-up form's checkbox); said once, there, not as a banner.
     if (sync.isStaticHost() && !v.storage_ack) throw new HttpError(400, 'Confirm that you understand where your records are kept before creating the account.', { storageAckRequired: true });
-    const errs = auth.passwordPolicy(v.password); if (errs.length) throw new HttpError(400, 'Password must contain ' + errs.join(', '));
+    const pwProblem = auth.passwordProblem(v.password, { username: v.username, display_name: v.display_name }); if (pwProblem) throw new HttpError(400, pwProblem, { fields: { password: pwProblem } });
     const { hashPassword, uuid } = require('../server/crypto.js');
     const id = uuid();
     db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, id, v.username, hashPassword(v.password), v.display_name, v.role || 'navigator', db.now());
@@ -535,7 +535,7 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
     // device administrator gives them another role (PUT /api/local/accounts/:id) — a sign-up asking to be
     // an administrator, or anything else, is refused rather than quietly granted or quietly ignored.
     if (v.role && v.role !== 'navigator') throw new HttpError(403, 'A new account on this device starts as a navigator. The person who manages this device can change its role afterwards.', { roleNotAllowed: true });
-    const errs = auth.passwordPolicy(v.password); if (errs.length) throw new HttpError(400, 'Password must contain ' + errs.join(', '));
+    const pwProblem = auth.passwordProblem(v.password, { username: v.username, display_name: v.display_name }); if (pwProblem) throw new HttpError(400, pwProblem, { fields: { password: pwProblem } });
     if (db.one(`SELECT 1 FROM users WHERE username=?`, v.username)) throw new HttpError(400, 'That username cannot be used here. Choose another.');
     const { hashPassword, uuid } = require('../server/crypto.js');
     const id = uuid();
