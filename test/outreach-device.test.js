@@ -28,7 +28,7 @@ test('offline on the device: an outreach contact draws the device\'s stock down 
   ok(await call('POST', '/api/interventions', { type: 'naloxone_distribution', occurred_at: at, location: 'street', modality: 'in_person', supply_site_id: site, supplies: [{ item_id: items.kit, quantity: 2 }, { item_id: items.syr, quantity: 10 }], summary: 'Back next week' }), 201, 'contact');
   ok(await call('POST', '/api/interventions', { type: 'outreach', occurred_at: at, location: 'shelter', modality: 'in_person', supply_site_id: site, supplies: [{ item_id: items.wound, quantity: 1 }] }), 201, 'contact');
   assert.equal(await stock(items.kit), 28); assert.equal(await stock(items.syr), 20); assert.equal(await stock(items.wound), 29);
-  const s = ok(await call('GET', '/api/outreach/shift'), 200, 'shift');
+  const s = ok(await call('GET', `/api/outreach/shift?since=${encodeURIComponent(new Date(Date.parse(at) - 60000).toISOString())}`), 200, 'shift');
   assert.equal(s.contacts, 2); assert.equal(s.naloxone_kits, 2);
   assert.deepEqual(Object.fromEntries(s.supplies.map(x => [x.item, x.quantity])), { 'Naloxone kit': 2, 'Syringe 1 mL': 10, 'Wound care kit': 1 });
   const day = require('../server/routes/budget').localDate(); const from = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);

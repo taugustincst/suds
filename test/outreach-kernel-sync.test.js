@@ -37,7 +37,7 @@ test('a contact logged offline on the device reaches the office at the next sync
   const at = new Date(Date.now() - 20 * 60000).toISOString();
   const c = ok(await device('POST', '/api/interventions', { type: 'naloxone_distribution', occurred_at: at, location: 'street', modality: 'in_person', supply_site_id: cat.site_id,
     supplies: [{ item_id: kit, quantity: 3 }, { item_id: strips, quantity: 6 }], summary: 'By the library steps' }), 201, 'contact on the device');
-  const shiftDevice = ok(await device('GET', '/api/outreach/shift'), 200, 'shift on the device');
+  const shiftDevice = ok(await device('GET', `/api/outreach/shift?since=${encodeURIComponent(new Date(Date.parse(at) - 60000).toISOString())}`), 200, 'shift on the device');
   assert.equal(shiftDevice.contacts, 1); assert.equal(shiftDevice.naloxone_kits, 3);
   assert.equal(onHand(kit), 40, 'the office has not heard of it yet');
   const s2 = await sync();
