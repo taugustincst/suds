@@ -18,7 +18,7 @@ before(async () => {
 });
 after(async () => { if (cleanup) cleanup(); });
 
-const PW = 'Owner-Device-2026!'; const NAV_PW = 'Navigator-Two-2026!';
+const PW = 'Lantern-Harbor-2026!'; const NAV_PW = 'Copper-Window-2026!';
 const PASS = 'a backup passphrase for the folder';
 const expect = (r, status, what) => { assert.equal(r.status, status, `${what}: ${JSON.stringify(r.data)}`); return r.data; };
 const signIn = async (username, password) => expect(await call('POST', '/api/auth/login', { username, password }), 200, `sign in as ${username}`);
