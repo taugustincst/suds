@@ -1,6 +1,6 @@
 'use strict';
 // The security settings an office server ships with off, unset or merely defaulted, as a checklist an administrator
-// can work through (built for 1.24.0): Home's "Finish setting up" card shows the recommended ones not yet done, and
+// can work through (released in 1.24.0): Home's "Finish setting up" card shows the recommended ones not yet done, and
 // Settings → Security status lists them all. Every item is computed from the configuration in force, never ticked by
 // hand, so it ticks itself off the moment the setting is saved (or the server is restarted with the environment
 // variable set) and comes back if someone turns it off again. Office server only (server/routes/security.js, which

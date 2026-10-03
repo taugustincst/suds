@@ -2,7 +2,7 @@
 
 This document covers who might attack SUDS, how, what stops them, and what is left. It is for a county security reviewer, a penetration tester, and the next maintainer.
 
-**Version.** It describes 1.23.0, with the county surface and SUDS Server modelled in full (the review and the fuzz tests behind [The county surface](#the-county-surface) and [SUDS Server: the installed host](#suds-server-the-installed-host) are released in 1.21.0). 1.21.0 added four attack surfaces, modelled in [What 1.21.0 adds](#what-1210-adds): county publication releases (the combined figures differenced against programmes' own releases), field devices (a device's scope enforced at the office), the authenticator allow-list (attestation and FIDO Metadata Service verification) and version 2 of the county file (award amounts). 1.22.0 adds no new surface but changes four of these, summarised in [What 1.22.0 changes](#what-1220-changes) and marked in the rows: the field scope follows the account, not the device id; a publication release needs each named programme's recorded consent, and a withdrawn one can be corrected; the allow-list stops a refused passkey after a grace period; and a county file is version 2 only when the county is known to read it. 1.23.0 adds one small surface and changes how two writes are made, summarised in [What 1.23.0 changes](#what-1230-changes): the office app keeps street-outreach contacts that name nobody in the browser while there is no signal, each with an id derived from the account and its Idempotency-Key; a follow-up to-do is made, moved or cancelled by one rule at both doors (the REST routes and sync push); and a worker can ask an administrator for a field device. What changed in 1.17.0, 1.18.0 (the county view, the county connection, SUDS Server), 1.19.0 (passkeys), 1.20.0 (county-entered figures), 1.21.0, 1.22.0 and 1.23.0 is marked with the release.
+**Version.** It describes 1.24.0, with the county surface and SUDS Server modelled in full (the review and the fuzz tests behind [The county surface](#the-county-surface) and [SUDS Server: the installed host](#suds-server-the-installed-host) are released in 1.21.0). 1.21.0 added four attack surfaces, modelled in [What 1.21.0 adds](#what-1210-adds): county publication releases (the combined figures differenced against programmes' own releases), field devices (a device's scope enforced at the office), the authenticator allow-list (attestation and FIDO Metadata Service verification) and version 2 of the county file (award amounts). 1.22.0 adds no new surface but changes four of these, summarised in [What 1.22.0 changes](#what-1220-changes) and marked in the rows: the field scope follows the account, not the device id; a publication release needs each named programme's recorded consent, and a withdrawn one can be corrected; the allow-list stops a refused passkey after a grace period; and a county file is version 2 only when the county is known to read it. 1.23.0 adds one small surface and changes how two writes are made, summarised in [What 1.23.0 changes](#what-1230-changes): the office app keeps street-outreach contacts that name nobody in the browser while there is no signal, each with an id derived from the account and its Idempotency-Key; a follow-up to-do is made, moved or cancelled by one rule at both doors (the REST routes and sync push); and a worker can ask an administrator for a field device. 1.24.0 fixes the findings of an owner-authorised white-box penetration test of 1.23.6 and adds two surfaces, summarised in [What 1.24.0 changes](#what-1240-changes): an office-only intake queue for referrals to the programme, and the office server for Windows (`suds.exe`), whose build brings three pinned inputs into the supply chain. What changed in 1.17.0, 1.18.0 (the county view, the county connection, SUDS Server), 1.19.0 (passkeys), 1.20.0 (county-entered figures), 1.21.0, 1.22.0, 1.23.0 and 1.24.0 is marked with the release.
 
 **Who wrote it.** The SUDS project wrote it, from the code and from its own review rounds. **It is not an independent assessment.** No third-party penetration test or audit has been done (see [Residual risks](#residual-risks)).
 
@@ -110,7 +110,7 @@ Related documents:
 | A revoked person keeps the data | Deactivation queues a wipe. Revoke or wipe applies at the next contact. A narrowing of rights removes rows at the next sync. A device offline longer than the tombstones are kept is rebuilt from the office | `server/devices.js`, `server/routes/sync.js`; `test/sync-scope-change.test.js`, `test/devices.test.js` |
 | Unsynced work lost on a shared device | A row with unsent changes is never deleted (1.16.3 M2) | `local/sync.js`; `test/shared-device-drop.test.js` |
 | Framing, or another site on a shared Pages origin | The frame guard and the CSP are carried in the pages. The service worker is scoped to its own path. A dedicated origin is recommended ([QUESTIONNAIRE.md](QUESTIONNAIRE.md) #45a) | `scripts/static-site-security.js`; `test/static-site-csp.test.js`, `test/sw-phi.test.js` |
-| Altered code served to the on-device app | The `Web app` workflow publishes only from an approved release tag, checked byte for byte against the tag's own build (1.16.4 M2). **1.16.4 to 1.23.6 did not go through it**: they were pushed to `gh-pages` directly, with no tag (published without a tag: [QUESTIONNAIRE.md](QUESTIONNAIRE.md) #39), so the same check must be run against the commit by hand. Counties can self-host the build | `scripts/release-site-check.js`, `.github/workflows/web-app.yml`; `test/release-site-check.test.js` |
+| Altered code served to the on-device app | The `Web app` workflow publishes only from an approved release tag, checked byte for byte against the tag's own build (1.16.4 M2). **1.16.4 to 1.24.0 did not go through it**: they were pushed to `gh-pages` directly, with no tag (published without a tag: [QUESTIONNAIRE.md](QUESTIONNAIRE.md) #39), so the same check must be run against the commit by hand. Counties can self-host the build | `scripts/release-site-check.js`, `.github/workflows/web-app.yml`; `test/release-site-check.test.js` |
 
 ### Data at rest, keys and audit
 
@@ -308,13 +308,77 @@ to permissions that already existed.
   team, with `referrals:read` and `tasks:write`), one open reminder per referral, never to a closed account; navigators
   and finance are refused.
 
+### What 1.24.0 changes
+
+The fixes of an owner-authorised white-box penetration test of 1.23.6, made with the source (not an independent test:
+the one in [PEN-TEST-SCOPE.md](PEN-TEST-SCOPE.md) is still owed), and two new surfaces. Each fix has its tests
+(`test/pentest-1236.test.js`, `test/purpose-matrix.test.js`, `test/security-1236-lows.test.js`,
+`test/audit-head-at-start.test.js`).
+
+- **M1: a disclosure outside the purpose its consent was given for** (42 CFR 2.31(a)(4)). A referral "for treatment"
+  went out on a consent "for billing and payment processing only". `requireBasis` (`server/disclosure.js`) now
+  compares the disclosure's purpose with the consent's by one rule, the FHIR API's, at every path: referrals (REST,
+  the outcome route, a device's push), manual disclosures, secure referral links (re-checked when a provider opens
+  one), identified exports, the SPARS file and the county EHR hand-off. A referral's purpose is its provider's
+  directory category. The TPO consent covers what is not plainly outside TPO; the non-TPO list (housing, employment,
+  court and legal, school, benefits, research, marketing, media, family) always needs a consent that names it; a broad
+  coordination consent covers referrals for services, never payment, operations, a court, research or the media. An
+  automated feed (FHIR) reads the purpose by its own words only, so no coordination word or patient's request widens
+  it. A mismatch is refused (409) unless a supervisor overrides it with a written justification kept with the
+  accounting row (`purpose_override: true` in the audit). A device's referral on a consent that names the agency but
+  not this purpose is kept at the office with its accounting row, flagged to the device and given to a supervisor to
+  review, since the agency was already told.
+- **M2: a device's push bringing back what the office deleted.** A push with a fresh `updated_at` could undo an office
+  deletion and remove its tombstone. Sync push (`server/rules/push.js`) now refuses any row whose tombstone is on file,
+  whatever the device's clock says, as a permanent rejection the device acts on by removing its copy; each refusal is
+  audited (`sync.resurrect_refused`, the table and id only).
+- **L3: a push that edits a signed note** was counted as applied while the office kept what was signed; it is now
+  rejected with the REST route's message, so the device stops resending it.
+- **L1, L2: guessing passwords.** Passwords that contain the username or the person's name, or are a common password
+  dressed up, are refused wherever one is set (`server/password-strength.js`). Failed sign-ins count per username (or
+  per account, for the password given again to sign, approve or confirm; per passkey for fingerprint sign-in; SSO
+  re-authentication per account) from an address, under a per-address ceiling (`auth.signInLimiter`,
+  `LOGIN_RATE_LIMIT`, `LOGIN_IP_RATE_LIMIT`), so a guesser is held back without one person's mistakes locking out an
+  office behind one address; account lockout is unchanged.
+- **L5: the audit log's newest entries before the first seal.** The head is now sealed and first anchored at the
+  office server's start whenever none exists, instead of at the first housekeeping. Detecting a truncated tail still
+  depends on the hourly housekeeping running ([LOGGING-AND-AUDIT.md](LOGGING-AND-AUDIT.md)).
+- **L6: a device's sync session managing the account.** Every sync session, not only a field device's, now reaches
+  under `/api/auth/` only signing in, the second step and signing out; a stolen device's session cannot change the
+  password, two-step verification, passkeys or sessions (403).
+- **L4, L7: input handling.** A non-numeric `limit` or `offset` is a 400, not a 500; the `client_id` filters of
+  `GET /api/episodes` and `GET /api/notes/handoffs`, accepted and ignored, now filter, within the caller's caseload.
+- **Incoming referrals** (`server/incoming-referrals.js`, migration 70, `intake:read` and `intake:write`). People
+  referred to the programme are not clients yet, so an open referral is visible to everyone holding `intake:read`, a
+  caseload-scoped worker included (intake is a shared desk: a decision recorded in the CHANGELOG); an accepted one is
+  the client's and scoped as the client is (403 and `authz.denied` otherwise). Neither permission can be granted to a
+  de-identified role (`permissions.js` `grantProblem`). The queue is office-only: its tables are never synchronised
+  (`server/sync-tables.js` `server_only`), so a device never holds the names of people nobody has met, and a device
+  that syncs with an office refuses the routes. The person's details and the referrer's contact details are `_enc`
+  with a blind index for the surname; the audit records ids, statuses and field names, never a value. Receiving a
+  referral is not a disclosure, and SUDS sends nothing back to the referrer.
+- **The office server on Windows** (`suds.exe`, owner decision of 2026-10-03; [../WINDOWS-SERVER.md](../WINDOWS-SERVER.md)).
+  The executable is the pinned official `node.exe` with a small bootstrap, running the commit's `app\`; its inputs are
+  pinned by hash (*Release pipeline and supply chain*, below). `suds service install` runs the server as the virtual
+  account `NT SERVICE\SUDS`, not LocalSystem, and limits the data folder to Administrators, SYSTEM and that account;
+  the temporary password printed at the first start never reaches the service wrapper's logs. `suds update --from`
+  checks a zip against its `.sha256` and keeps the previous `app\`. Until the owner adds a code-signing certificate,
+  the zip is published unsigned, so a county checks it against its SHA-256 from a second channel; there is no
+  compliance check on Windows, and the host's hardening is the county's.
+- **Also in 1.24.0, with no new trust boundary:** possible duplicate time (migration 68; a match a worker may not read
+  never blocks the save and is never shown), a sign reminder that opens its draft (migration 69; the link is set only
+  by someone who may send the reminder, to the assignee's own draft on that client), a departed author's drafts handed
+  on (`records:manage-others`; a signed note is refused; sync cannot change a note's author), scheduled backups on SUDS
+  on this device (the key derived from the passphrase sealed in the device's vault, never the passphrase), and the
+  public `GET /api/procurement`, which serves without a session only the six published contact and terms values.
+
 ### Release pipeline and supply chain
 
 | Threat | Mitigation | Code / test |
 | --- | --- | --- |
-| A malicious npm package in the server | There are none: the server uses Node built-ins only, which the SBOM script checks ([../evidence/sbom-1.23.0.cdx.json](../evidence/sbom-1.23.0.cdx.json)) | `scripts/sbom.js`; `test/sbom.test.js` |
+| A malicious npm package in the server | There are none: the server uses Node built-ins only, which the SBOM script checks ([../evidence/sbom-1.24.0.cdx.json](../evidence/sbom-1.24.0.cdx.json)) | `scripts/sbom.js`; `test/sbom.test.js` |
 | A malicious build tool changes the kernel | Few build tools, pinned by lockfile. The kernel is committed and CI rebuilds and compares it. esbuild and sql.js are updated by hand | `ci.yml` drift step, `scripts/kernel-build-options.js`; `test/kernel-parity.test.js` |
-| Releasing untested or unapproved code | The gate requires every required job to be green on the exact commit, on `main`, from a `v*` tag matching the version, and runs `main`'s copy of the gate scripts. The owner approves the `release` environment. **Not in force for 1.16.3 to 1.23.6**, which were published without a tag and without the gate (recorded policy exceptions; [QUESTIONNAIRE.md](QUESTIONNAIRE.md) #36, #39) | `scripts/release-gate.js`, `scripts/release-policy.js`; `test/release-gate.test.js`, `test/release-policy.test.js` |
+| Releasing untested or unapproved code | The gate requires every required job to be green on the exact commit, on `main`, from a `v*` tag matching the version, and runs `main`'s copy of the gate scripts. The owner approves the `release` environment. **Not in force for 1.16.3 to 1.24.0**, which were published without a tag and without the gate (recorded policy exceptions; [QUESTIONNAIRE.md](QUESTIONNAIRE.md) #36, #39) | `scripts/release-gate.js`, `scripts/release-policy.js`; `test/release-gate.test.js`, `test/release-policy.test.js` |
 | A backport released from the wrong line (1.17.0) | The gate accepts a commit on `origin/maint/X.Y` only for a patch of a minor older than `main`'s, measures it against the previous tag on its own line, and does not mark it Latest or publish the web app | `scripts/release-gate.js`, `scripts/release-policy.js`, `web-app.yml`; `test/release-gate.test.js`, `test/release-policy.test.js` |
 | An edit silently changes what a released migration does (1.17.0) | The migration check fingerprints the helpers and `schema.sql` definitions each released migration depends on and fails unless a change is acknowledged with a reason | `scripts/migration-order.js`; `test/migration-order.test.js`, `test/migrations.test.js` |
 | A substituted Node.js, WinSW or postject in the Windows server zip (owner decision of 2026-10-03; [../WINDOWS-SERVER.md](../WINDOWS-SERVER.md)) | All three are build-time inputs pinned by hash in `ci.yml`'s `windows-exe` job (and the same in `release.yml`): the Node.js win-x64 zip by the SHA-256 from Node's signed `SHASUMS256.txt.asc`, WinSW-x64.exe v2.12.0 by SHA-256, postject 1.0.0-alpha.6 by the npm registry's SHA-512 integrity. `scripts/build-windows.js` checks them again and stops on a mismatch before anything is made. postject is not installed or run through npm/npx: only its API file (Node built-ins) is loaded from the checked tarball, so no other package is fetched. The signing job holds the certificate secrets and runs only signtool; the build job, which runs postject, has no secret. The runtime stays dependency-free: `suds.exe` is the pinned `node.exe` and `app\` is the commit | `scripts/build-windows.js` `readPins`, `verifyPinned`; `test/windows-build.test.js`; `test/workflow-yaml.test.js`; SBOM (`scripts/sbom.js`) |

@@ -1,5 +1,5 @@
 'use strict';
-// Incoming referrals (built for 1.24.0; server/incoming-referrals.js, server/routes/incoming-referrals.js): the intake
+// Incoming referrals (released in 1.24.0; server/incoming-referrals.js, server/routes/incoming-referrals.js): the intake
 // queue of people referred to the programme. Who may see and work it (intake:read / intake:write), validation, the
 // workflow (new -> contacting -> accepted / declined / unable to reach / referred elsewhere, and reopen), accepting into
 // an existing client (found by the duplicate check, one the worker may open) or a new one, time to first contact, the

@@ -715,7 +715,7 @@ async function deviceRun(cfg) {
   await page.click('[data-recovery-new]'); await page.waitForSelector('.modal input[name=password]'); await settle(page);
   await axe(page, `device ${cfg.id} dialog: make a new recovery code`);
   await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal')), { timeout: 5000 });
-  // Scheduled backups (built for 1.24.0, not yet released): the set-up dialog, This device with them on, Home
+  // Scheduled backups (released in 1.24.0): the set-up dialog, This device with them on, Home
   // with a backup due, and the restore check with its result.
   await page.click('[data-backup-schedule-setup]'); await page.waitForSelector('.modal input[name=passphrase]'); await settle(page);
   await axe(page, `device ${cfg.id} dialog: set up scheduled backups`);

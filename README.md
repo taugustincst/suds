@@ -27,7 +27,30 @@ partner, or its county) runs; it is not a hosted service. Positioning, buyer gui
 and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:
 [docs/architecture/README.md](docs/architecture/README.md).
 
-## What's new in 1.18.0 to 1.23.0
+## What's new in 1.18.0 to 1.24.0
+
+**1.24.0**
+
+* **Security fixes from a white-box penetration test of 1.23.6** (owner-authorised; released at once under a recorded
+  security exception, [docs/RELEASE.md](docs/RELEASE.md), *Record: 1.24.0*): a consent now has to cover what a
+  disclosure is **for**, not only who receives it (42 CFR 2.31(a)(4)): **a TPO consent alone no longer covers a
+  referral for housing, employment, legal aid, benefits or family support**, which needs a consent that names that
+  purpose or a supervisor's override ([docs/compliance/PART2.md](docs/compliance/PART2.md)); a record deleted at the
+  office stays deleted whatever a phone sends; stronger passwords; sign-in limits per person, so one person's mistakes
+  no longer lock out a whole office; and a phone's sync sign-in can no longer change the account.
+* **Incoming referrals** ([docs/USER_GUIDE.md](docs/USER_GUIDE.md)): a queue for people referred **to** your
+  programme by a hospital, a jail, a detox, probation or a court, another provider, or the person or their family,
+  with each attempt to reach them, the time to first contact, and **Accept** into a new or existing client. Home and
+  Supervision show the queue in numbers. Office server only; never kept on a phone.
+* **Possible duplicate time**: time that looks already logged is asked about before it is saved, with **Merge**.
+  A supervisor's *Finish and sign* reminder opens the draft it is about. A departed worker's drafts can be handed on.
+* **Scheduled backups on SUDS on this device**, to a folder chosen once or as one download on Home, with a restore
+  check ([docs/WEB_APP.md](docs/WEB_APP.md)).
+* **For organisations choosing SUDS**: a Security & procurement page linked from the sign-in page, and a hardening
+  checklist on an administrator's Home and in Settings › Security status that ticks itself off as each setting is made.
+* **Windows**: `npm run try` runs SUDS with sample data on one computer, and the office server runs on Windows as
+  `suds.exe` with a Windows service ([docs/WINDOWS-SERVER.md](docs/WINDOWS-SERVER.md)). Upgrading runs migrations 68
+  to 70 on start.
 
 **1.23.0**
 

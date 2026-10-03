@@ -1,5 +1,5 @@
 'use strict';
-// Duplicate time entries (built for 1.24.0; server/rules/time_entries.js duplicatesOf, server/routes/time.js).
+// Duplicate time entries (released in 1.24.0; server/rules/time_entries.js duplicatesOf, server/routes/time.js).
 // A save that looks like time already logged -- the same worker and day, with overlapping times or the same minutes
 // and description -- is answered 409 { duplicate, candidates } instead of saved: the form offers Merge, Save anyway
 // or Cancel. Save anyway (save_anyway: true) saves and audits the override; Merge (POST /api/time/:id/merge) keeps

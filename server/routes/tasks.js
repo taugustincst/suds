@@ -63,7 +63,7 @@ module.exports = (r) => {
     },
     // A task title ("Call about detox bed") says what a named person is being treated for, and its details
     // say more: both are encrypted. The API keeps the plain field names `title` and `description`.
-    // A sign reminder's link to its draft (built for 1.24.0) is dropped when it names no live draft of the assignee's on
+    // A sign reminder's link to its draft (released in 1.24.0) is dropped when it names no live draft of the assignee's on
     // the to-do's client (server/rules/tasks.js dropNoteLink), as sync push drops it; who may set one is the rules'.
     beforeInsert: (ctx, v) => { if (!v.assigned_to) v.assigned_to = ctx.user.id; if (v.status === 'done' && !v.completed_at) v.completed_at = db.now(); dropNoteLink(v, null, ctx.user.id); encFields(v); },
     beforeUpdate: (ctx, v, row) => { if (v.status === 'done' && !row.completed_at && !v.completed_at) v.completed_at = db.now(); if (v.status && v.status !== 'done') v.completed_at = null; dropNoteLink(v, row, ctx.user.id); encFields(v); },

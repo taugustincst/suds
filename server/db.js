@@ -842,7 +842,7 @@ const migrations = [
     d.exec('CREATE INDEX IF NOT EXISTS idx_tasks_call ON tasks(call_id)');
     d.exec('CREATE INDEX IF NOT EXISTS idx_tasks_intervention ON tasks(intervention_id)');
   },
-  // 68: duplicate time entries (built for 1.24.0; server/rules/time_entries.js duplicatesOf, docs/USER_GUIDE.md
+  // 68: duplicate time entries (released in 1.24.0; server/rules/time_entries.js duplicatesOf, docs/USER_GUIDE.md
   //     "Possible duplicate time"). time_entries.start_time (optional HH:MM, NULL for every existing entry: none
   //     had one) and time_entries.duplicate_of (the entry a device's pushed entry may duplicate, for review; NULL
   //     for every existing entry: nothing was flagged before). Self-contained and idempotent, so it can be
@@ -851,12 +851,12 @@ const migrations = [
     addColumn(d, 'time_entries', 'start_time', 'TEXT');
     addColumn(d, 'time_entries', 'duplicate_of', 'TEXT');
   },
-  // 69: a supervisor's "finish and sign" reminder opens the draft it is about (built for 1.24.0; server/rules/tasks.js
+  // 69: a supervisor's "finish and sign" reminder opens the draft it is about (released in 1.24.0; server/rules/tasks.js
   //     noteLink, docs/USER_GUIDE.md "Reminders to sign notes"). tasks.note_id, NULL for every existing to-do (a
   //     reminder made before keeps opening the client's drafts list). No index: it is read only with the to-do.
   //     Depends on nothing but tasks; self-contained and idempotent, so it can be renumbered.
   (d) => { addColumn(d, 'tasks', 'note_id', 'TEXT'); },
-  // 70: incoming referrals (built for 1.24.0; server/incoming-referrals.js, docs/USER_GUIDE.md "Incoming referrals"):
+  // 70: incoming referrals (released in 1.24.0; server/incoming-referrals.js, docs/USER_GUIDE.md "Incoming referrals"):
   //     incoming_referrals (a referral to the programme from a hospital, a jail, a detox, probation, another provider,
   //     the person or their family, worked in the intake queue) and incoming_referral_attempts (each attempt to reach the
   //     person), with every index schema.sql declares on them. New tables: nothing to backfill. Office server only

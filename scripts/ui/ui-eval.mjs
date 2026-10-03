@@ -11,7 +11,7 @@
 //   7. the funder report's three downloads each say what they are for;
 //   8. (1.23.5) a sign reminder's Assigned to and Client are fixed for its assignee, with why, and ticking it done with
 //      drafts still unsigned asks first.
-//   9. (built for 1.24.0) a reminder sent about one draft opens that draft: "Open the draft" on the to-do, its phone row
+//   9. (released in 1.24.0) a reminder sent about one draft opens that draft: "Open the draft" on the to-do, its phone row
 //      and Home's title, with "Open <client>'s notes" beside it and alone once the linked draft is gone.
 // Each page it changes is checked with axe (WCAG 2.1 A/AA) as well.
 import { chromium } from 'playwright';
@@ -109,7 +109,7 @@ try {
     ok(task && /on this client's record/.test(task.description) && !(one.client_code && task.description.includes(one.client_code)), 'its details say "this client\'s record", not the name and code', task && task.description);
     ok(task && /once they are all signed/.test(task.description), 'and says it closes once they are all signed', task && task.description);
     eq(task && task.sign_reminder, true, 'the office marks it a sign reminder (its maker countersigns notes)');
-    // Built for 1.24.0: it is linked to the draft it was sent from.
+    // Released in 1.24.0: it is linked to the draft it was sent from.
     eq(task && task.note_id, one.id, 'Remind author links the reminder to that draft (note_id)');
 
     // Remind all overdue authors: confirmation, de-duplicated, one per note.
@@ -126,7 +126,7 @@ try {
     eq(await sup.page.$eval('[data-remind-all]', b => b.dataset.remindAll), '0', 'afterwards every overdue note has its reminder');
     const after = await openReminders(sup);
     for (const d of overdue) eq(after.filter(x => x === pair(d)).length, 1, `exactly one open reminder for overdue note ${d.id.slice(0, 8)}'s author and client`);
-    // Built for 1.24.0: each reminder Remind all sent opens the oldest overdue draft of that author on that client.
+    // Released in 1.24.0: each reminder Remind all sent opens the oldest overdue draft of that author on that client.
     const sentAll = ((await sup.api('GET', '/api/tasks?status=open&limit=1000')).data.rows || []).filter(t => t.sign_reminder && `${t.client_id} ${t.assigned_to}` !== pair(one) && overdue.some(d => pair(d) === `${t.client_id} ${t.assigned_to}`));
     eq(sentAll.length, expected, 'Remind all sent one linked reminder per author and client');
     for (const t of sentAll) {
@@ -160,7 +160,7 @@ try {
       ok(await nav.page.$('[data-my-drafts] a[data-all-notes]'), 'and "Show all notes"');
       await axe(nav.page, 'a client\'s Notes tab on the reader\'s drafts');
       // ---------------------------------------------------------------------------------------------------- 9
-      // Built for 1.24.0: the reminder names the draft (note_id) and opens it. On the to-do itself, "Open the draft" first
+      // Released in 1.24.0: the reminder names the draft (note_id) and opens it. On the to-do itself, "Open the draft" first
       // and "Open <client>'s notes" beside it; the note opens as the Notes list opens it (Edit draft, Sign & lock).
       {
         ok(navReminder.note_id, 'her reminder is linked to a draft', navReminder.note_id);

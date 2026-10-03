@@ -4,13 +4,13 @@
 
 ## Name of Product/Version
 
-SUDS — SUD Navigator Services Tracker, SUDS 1.23.0 (this revision; see *Revisions* below).
+SUDS — SUD Navigator Services Tracker, SUDS 1.24.0 (this revision; see *Revisions* below).
 
 **The conformance levels in the tables were established on SUDS 1.11.0** (1.10.2 with the accessibility changes
 that accompanied the first version of this report), by every method under *Evaluation Methods Used*. They have not
 been re-established since by manual review or by any assistive technology. The screens added in later releases,
-1.21.0's, 1.22.0's and 1.23.0's included, are covered by the automated audit (axe) and scripted checks only. *Revisions* lists
-1.21.0's, 1.22.0's and 1.23.0's new screens and what was and was not done for them. The 1.11.0 evaluation covered the whole product as it was then,
+1.21.0's, 1.22.0's, 1.23.0's and 1.24.0's included, are covered by the automated audit (axe) and scripted checks only. *Revisions* lists
+1.21.0's, 1.22.0's, 1.23.0's and 1.24.0's new screens and what was and was not done for them. The 1.11.0 evaluation covered the whole product as it was then,
 including the clinical documentation (problem list, care plan, six-dimension assessment
 (ASAM-aligned) and outcome measures), CalOMS Tx state reporting, the FHIR interface settings, the security evidence pages and the
 42 CFR Part 2 controls that release adds. Both ways SUDS is run are covered: the **office server** (the web application an
@@ -19,7 +19,7 @@ static site, keeping its records in the browser).
 
 ## Report Date
 
-25 September 2026 (the evaluation of 1.11.0); revised 1 October 2026 for 1.21.0, 1.22.0 and 1.23.0 (see *Revisions*).
+25 September 2026 (the evaluation of 1.11.0); revised 1 October 2026 for 1.21.0, 1.22.0 and 1.23.0, and 3 October 2026 for 1.24.0 (see *Revisions*).
 
 ## Product Description
 
@@ -101,12 +101,29 @@ shown in the application as **Accessibility** (`accessibility.html`).
   sensory characteristics, consistent navigation and identification, error suggestion and prevention, input
   purpose, content on hover or focus, non-text contrast of form fields and focus rings, which were measured
   from the colour tokens in both themes).
-* **Still not done, as of 1.23.0 (1 October 2026):** testing with screen readers (NVDA, JAWS, VoiceOver,
+* **Still not done, as of 1.24.0 (3 October 2026):** testing with screen readers (NVDA, JAWS, VoiceOver,
   TalkBack) and with speech recognition by their users. It was planned for the release after SUDS 1.11.0 and has
   not happened in any release since. It is an **owner item**: it needs people who use these tools, or an
   accessibility tester, which automated work cannot replace. Findings will be added to this report when it is done.
 
 ## Revisions
+
+**3 October 2026: revised for SUDS 1.24.0.** This revision changes no conformance level. 1.24.0 added screens: the
+intake queue (*Incoming referrals*, `#/incoming`), a referral with its attempts and its accept and close forms, and
+the *+ Incoming referral* form; the *possible duplicate time* question inside the time form, with **Merge**, **Save
+anyway** and **Cancel**, and the *Possible duplicate* mark on the time list and the supervision queue; **Open the
+draft** on a sign reminder; *Draft notes left by departed workers* under Settings › Move a caseload; scheduled backups
+on SUDS on this device (the set-up dialog, This device, Home's backup button, the restore check); the public
+*Security & procurement* page (`procurement.html`) and the hardening checklist on Home and in Settings › Security
+status; and, from the persona test of 1.23.6, a module's switched-off tab shown read only with a notice, a save error
+repeated beside a long form's Save button with the focus moved there, and the global search box inside a search
+landmark (it was outside every landmark: axe "region"). Each is audited with the same axe rules: the queue, a
+referral and its form in `scripts/ui/incoming-referrals.mjs` and the accessibility script; the duplicate-time
+question, the time list and the queue in `scripts/ui/ux13.mjs`; the reminder's **Open the draft** in
+`scripts/ui/ui-eval.mjs`; the scheduled-backup dialogs, This device and Home in the accessibility script and
+`scripts/ui/signup.mjs`; `procurement.html` on both builds in the accessibility script, with the links to it from the
+sign-in page and the menu. Each script fails on any finding. Not done for them, as for 1.21.0's to 1.23.0's: the manual
+review, and any screen-reader or speech-recognition testing, which is still pending.
 
 **1 October 2026: revised for SUDS 1.23.0.** This revision changes no conformance level. 1.23.0 changed and added
 screens frontline workers use every day: the menu built by role and programme (Street outreach in the main menu of

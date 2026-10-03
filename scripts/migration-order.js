@@ -101,7 +101,7 @@ function compareMigrations(prev, next) {
 const DEPENDENCY_CHANGES = [
   {
     dependency: 'db.js#safeSchema', fingerprint: '36b1137458a877b0',
-    reason: 'Built for 1.24.0 (npm run try, Windows): schema.sql is read through readSchemaFile(), which turns CRLF line '
+    reason: 'Released in 1.24.0 (npm run try, Windows): schema.sql is read through readSchemaFile(), which turns CRLF line '
       + 'endings into LF. A checkout on Windows can have CRLF (Git for Windows\' core.autocrlf, now overridden by '
       + '.gitattributes), and the migrations that take a table from the text match "\\n);" and split on "\\n". For the LF '
       + 'file every install has, the text is byte for byte what it was, so every released migration runs as released; '
@@ -109,7 +109,7 @@ const DEPENDENCY_CHANGES = [
   },
   {
     dependency: 'schema.sql:table:tasks', fingerprint: 'dda5000495391d67',
-    reason: 'Built for 1.24.0 (migration 69, a sign reminder opens its draft) adds one nullable column, note_id TEXT, '
+    reason: 'Released in 1.24.0 (migration 69, a sign reminder opens its draft) adds one nullable column, note_id TEXT, '
       + 'with no REFERENCES and no index, on top of 1.23.0\'s call_id and intervention_id (the entry below). Additive: a '
       + 'database that runs migration 19 or 24 now builds tasks with note_id already there (every row NULL), migration 69 '
       + 'adds it only when missing (addColumn), and test/migrations.test.js upgrades the 1.6.1 fixture and the release '

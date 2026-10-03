@@ -162,7 +162,7 @@ route('supervision', async (r) => {
   // An author whose account is deactivated (left, or a caseload moved on) is not reminded: nobody would read it (1.23.5).
   const gone = (r) => r.author_active === 0;
   const remindable = (r) => mayRemind && r.author_id && r.author_id !== state.user.id && !gone(r);
-  // `r` is the draft the reminder opens (built for 1.24.0: tasks.note_id, server/rules/tasks.js): the row's own draft for
+  // `r` is the draft the reminder opens (released in 1.24.0: tasks.note_id, server/rules/tasks.js): the row's own draft for
   // Remind author, the oldest overdue one of that author's on that client for Remind all. The reminder still covers every
   // draft of theirs there and closes as before; the link only takes the worker straight to that one.
   const remind = (r) => post('/api/tasks', {
@@ -171,7 +171,7 @@ route('supervision', async (r) => {
     // is about the client, not one note (market evaluation of 1.23.2, D3); the last line stays SIGN_REMINDER. The to-do
     // is on the client's record, and every list shows its client beside the title, so neither names them again (Home
     // read "…for Park, Danielle (DEMO-0007) · Park, Danielle"; market evaluation of 1.23.3, N4). It opens the draft `r`
-    // (built for 1.24.0), so it says which one.
+    // (released in 1.24.0), so it says which one.
     title: 'Finish and sign your draft notes',
     description: `${state.user.display_name} asked you to finish and sign your draft notes on this client's record${r.overdue ? ' (at least one is overdue)' : ''}, starting with the one you began on ${fmt.date(r.created_at)}: Open the draft opens it. This reminder is closed for you once they are all signed.\n${SIGN_REMINDER}`,
     due_at: fmt.today(), priority: r.overdue ? 'high' : 'normal',

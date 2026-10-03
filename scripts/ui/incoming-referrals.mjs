@@ -1,4 +1,4 @@
-// Incoming referrals (built for 1.24.0; public/views/incoming.js), in a browser, as the seed's navigator:
+// Incoming referrals (released in 1.24.0; public/views/incoming.js), in a browser, as the seed's navigator:
 //   1. + Incoming referral on the queue records one, and opens it;
 //   2. it is on Home ("new referral", to the queue's New filter) and in the queue;
 //   3. Log an attempt moves it to Contacting and sets the time to first contact;

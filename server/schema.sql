@@ -666,7 +666,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   -- moves it and clearing the date cancels it, while it is still as SUDS made it
   call_id TEXT REFERENCES calls(id) ON DELETE SET NULL,
   intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL,
-  -- the draft a supervisor's "finish and sign" reminder opens (built for 1.24.0, server/rules/tasks.js noteLink): the
+  -- the draft a supervisor's "finish and sign" reminder opens (released in 1.24.0, server/rules/tasks.js noteLink): the
   -- assignee's own draft on this to-do's client. No REFERENCES: notes are never deleted (a deleted draft keeps its row
   -- with deleted_at), and a device that does not hold the note must still store the reminder; a link to a note that is
   -- not a live draft is dropped by the office, and the reminder falls back to the client's drafts list.

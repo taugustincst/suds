@@ -106,7 +106,7 @@ export function restoreBackupButton({ link = false } = {}) {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Scheduled backups (built for 1.24.0, not yet released; docs/WEB_APP.md, "Scheduled backups"). The device
+// Scheduled backups (released in 1.24.0; docs/WEB_APP.md, "Scheduled backups"). The device
 // administrator chooses how often and a backup passphrase once; the kernel keeps the key made from it sealed
 // with the device key, and makes each due backup with it (local/kernel.js /api/local/backup/run). Where the
 // browser has the File System Access API (Chrome, Edge on a computer), the file goes to a folder chosen once,

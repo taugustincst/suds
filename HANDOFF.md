@@ -11,25 +11,26 @@ Replies go under "Claude → Muse" below, newest first.
   release gate has never run for anything after 1.16.2, everything that measures from "the previous release"
   measures from `v1.16.2`, and the maintaining assistant has no path to publish but a direct `gh-pages` push. Once
   the tags are pushed, the assistant does not push `gh-pages` directly again (docs/RELEASE.md, *Stabilisation (from
-  1.23.1)*). 1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5 and 1.23.6 were stamped before the push, so their tags are in
-  it.
+  1.23.1)*). 1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5, 1.23.6 and 1.24.0 were stamped before the push, so their tags
+  are in it.
 - **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2, 1.23.3, 1.23.4,
-  1.23.5 and 1.23.6 are on `main`, and 1.23.6 is live, but none is tagged: the owner tags all sixteen, in one push.**
-  Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the checks, the sixteen `git tag -a` commands and
-  `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1 v1.23.2 v1.23.3 v1.23.4 v1.23.5 v1.23.6`,
+  1.23.5, 1.23.6 and 1.24.0 are on `main`, and 1.24.0 is live, but none is tagged: the owner tags all seventeen, in one
+  push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the checks, the seventeen `git tag -a` commands and
+  `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1 v1.23.2 v1.23.3 v1.23.4 v1.23.5 v1.23.6 v1.24.0`,
   what each tag's runs do (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`,
-  `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0` and `v1.23.0` each need *Run workflow* with a `policy_exception`;
-  the gates of `v1.23.1` to `v1.23.6` pass with none, and only `v1.23.6`'s `Web app` run is approved: it publishes
-  1.23.6; 1.23.6 carries an owner-approved exception the gate does not see, which the owner adds to its release notes
-  by hand), and the SHA-256 of each release zip, rebuilt from its commit (reproducible: the same method matches the
-  published `v1.15.4` and `v1.16.2` checksums; 1.23.6's is recorded by a commit after its stamp). After the releases,
-  the owner records each checksum in its release notes and in the CHANGELOG on `main`, the second channel SUDS
-  Server's `upgrade.sh --release-sha256` needs. Push the tags while `main` says 1.23.6, or add a newer stamped
-  version's tag to the same push. `v1.20.0`, `v1.21.0`, `v1.22.0` and `v1.23.0` each go on the commit after their
-  `Release X.Y.Z` that adds its SBOM; `v1.23.1` to `v1.23.6`, patches with no SBOM of their own, go on
-  `Release 1.23.1`, `Release 1.23.2`, `Release 1.23.3`, `Release 1.23.4`, `Release 1.23.5` and `Release 1.23.6`
-  themselves. The assistant cannot push tags (its environment's proxy refuses them; docs/RELEASE.md, *Handing a
-  release to the owner*). Never push tags from an assistant's clone, and never an older tag alone.
+  `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0`, `v1.23.0` and `v1.24.0` each need *Run workflow* with a
+  `policy_exception` (1.24.0's is its recorded security exception); the gates of `v1.23.1` to `v1.23.6` pass with none,
+  and only `v1.24.0`'s `Web app` run is approved: it republishes the 1.24.0 build already live; 1.23.6 carries an
+  owner-approved exception the gate does not see, which the owner adds to its release notes by hand), and the SHA-256
+  of each release zip, rebuilt from its commit (reproducible: the same method matches the published `v1.15.4` and
+  `v1.16.2` checksums; 1.24.0's is recorded by a commit after its SBOM commit). After the releases, the owner records
+  each checksum in its release notes and in the CHANGELOG on `main`, the second channel SUDS Server's `upgrade.sh
+  --release-sha256` needs. Push the tags while `main` says 1.24.0, or add a newer stamped version's tag to the same
+  push. `v1.20.0`, `v1.21.0`, `v1.22.0`, `v1.23.0` and `v1.24.0` each go on the commit after their `Release X.Y.Z`
+  that adds its SBOM; `v1.23.1` to `v1.23.6`, patches with no SBOM of their own, go on `Release 1.23.1`, `Release
+  1.23.2`, `Release 1.23.3`, `Release 1.23.4`, `Release 1.23.5` and `Release 1.23.6` themselves. The assistant cannot
+  push tags (its environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the owner*). Never push
+  tags from an assistant's clone, and never an older tag alone.
 - The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here
   once its tag is pushed.
 
@@ -71,13 +72,82 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
-### 2026-10-02 — Claude: incoming referrals (built for 1.24.0, branch `feature/1.24-incoming-referrals`, not released)
+### 2026-10-03 — Claude: 1.24.0 (the white-box pen-test fixes under a security exception, incoming referrals, suds.exe)
 
-An intake queue for referrals TO the program (ER/hospital, jail/re-entry, detox, probation/court, other providers,
-self, family): `#/incoming`, Home's "N new referrals", a Supervision card with time to first contact, `intake:read` /
-`intake:write`, migration 70 (`incoming_referrals`, `incoming_referral_attempts`; office-only, never synchronised).
-No send-back to the referrer (that would be a disclosure). The browser suite is **60 scripts** now
-(`incoming-referrals.mjs` added). CHANGELOG *Unreleased* has the details.
+- **What shipped.** A feature release two days after 1.23.0, inside its 28 days and the feature freeze, **under a
+  recorded security exception** (docs/RELEASE.md, *Record: 1.24.0*; a row in the exceptions table; the line
+  `Security exception: …` in the CHANGELOG section and the *Record*, which `scripts/release-policy-ci.js` reads). The
+  owner authorised a white-box penetration test of 1.23.6 and, told the freeze held 1.24.0 until 2026-10-29,
+  instructed "Lift the freeze and release" (2026-10-02). Its fixes: **M1** a disclosure's purpose is checked against
+  the consent's at every disclosure path by one rule, the FHIR API's (`server/disclosure.js`), widened after the
+  review of the combined tree with the non-TPO list and broad coordination consents; **M2** an office deletion stands
+  against a sync push (`sync.resurrect_refused`); **L3** a push editing a signed note is refused; **L1** password
+  strength (`server/password-strength.js`); **L2** sign-in limits per username and per account under a per-address
+  ceiling (`LOGIN_IP_RATE_LIMIT`), for sign-in and also for signing re-authentication, password confirmation,
+  passkeys and SSO (`auth.signInLimiter`); **L4** paging answers 400; **L5** the audit head sealed at the first start;
+  **L6** sync sessions kept away from account management; **L7** the `client_id` filters apply. With them, the
+  feature work done for 1.24.0 during the freeze, each stream reviewed on its branch and the combined tree reviewed
+  again: incoming referrals (migration **70**, new permissions **`intake:read`** and **`intake:write`**), possible
+  duplicate time (migration **68**), a sign reminder that opens its draft (migration **69**), scheduled backups on
+  SUDS on this device, the Security & procurement page and the hardening checklist, the clinical guards from the
+  persona test of 1.23.6 (module-gated forms, drafts for long clinical forms, visible save errors, Add to waitlist
+  always visible, the search landmark, a departed author's drafts handed on, `note.reassign`), the draft fix (a dialog
+  closed part-way cannot put back a saved draft), `npm run try` and Windows compatibility, and **`suds.exe`**, the
+  office server for Windows with its Windows service and management commands. 22 new routes (CHANGELOG 1.24.0). The
+  browser suite is **60 scripts**. Two-commit stamp: "Release 1.24.0", then its SBOM
+  (`docs/evidence/sbom-1.24.0.cdx.json`); `v1.24.0` goes on the second, in the one push of seventeen tags (*Release
+  waiting*, above). The authorship figures (935 of 954, QUESTIONNAIRE #36a) were counted at `ed3fcb9`, the last
+  commit before the documentation pass and the stamp.
+- **Upgrade notes.** Migrations 68 to 70 run on start. **A TPO consent alone no longer covers a referral to a
+  housing, shelter, sober-living, employment, legal-aid, benefits or family-support provider, or a court**: those
+  need a consent that names the purpose, or a supervisor's override with a written justification; check how your
+  consents word their purpose before upgrading (docs/compliance/PART2.md, *Purpose match*). **Passwords** that
+  contain the username or the person's name, or are a common password dressed up, are refused when next set.
+  **Sign-in limits** count per username or account from an address, under a per-address ceiling
+  (`LOGIN_IP_RATE_LIMIT`, default 200). **A device's sync sign-in** can no longer change the password, two-step
+  verification, passkeys or sessions: people use a web browser for that. **Incoming referrals** are seen while open by
+  everyone with `intake:read`, caseload-scoped workers included, and once accepted only by those who may open the
+  client; the queue is office-only. **`suds.exe`**: each release carries `suds-<version>-windows-x64.zip`, unsigned
+  until the code-signing secrets exist (docs/WINDOWS-SERVER.md).
+- **Owner decisions taken** (each recorded where it applies):
+  - *The freeze lifted with a security exception*: 1.24.0 is released now, on the owner's instruction of 2026-10-02,
+    under *Stabilisation* point 2's one exception, a security fix, recorded on its `Security exception:` line; its tag
+    needs *Run workflow* with `policy_exception` (the gate refuses it on the feature interval). The next feature
+    release, 1.25.0, comes no earlier than 2026-10-31. 1.23.x is the previous minor: security fixes only, from
+    `maint/1.23`, for 30 days after 1.24.0's release date; none of the pen-test fixes is backported to it.
+  - *The Windows server executable* (2026-10-03, "The server should be launched in an exe ... to simplify it for
+    county IT"): `suds.exe`, its Windows service (WinSW, `NT SERVICE\SUDS`) and the `suds` management commands, which
+    reverses 1.9.3's rule against launchers for a Windows server executable only (docs/PLATFORM.md, CLAUDE.md); no
+    other native build comes back.
+  - *postject vendored by hash, not npx*: postject 1.0.0-alpha.6 is used as a library from its registry tarball,
+    checked against its SHA-512 in `ci.yml`; with the Node.js win-x64 zip and WinSW, pinned by hash and listed in the
+    SBOM. No npm install and no `npx` in the build.
+  - *`windows-exe` is not in `REQUIRED_JOBS`*: it runs on every push and a red run fails CI, but the release gate's
+    list of required jobs does not include it (nor the `windows` job of `npm run try`).
+  - Carried from the streams: incoming referrals are a shared desk while open, never synchronised, with no send-back
+    to the referrer; a device's referral on a consent that names the agency but not this purpose is kept at the
+    office and flagged for a supervisor; the procurement page's contact, pricing and SLA lines stay blank until the
+    owner publishes them.
+- **Open items (for the owner):**
+  - **Push the owed tags**: seventeen, in one push (docs/evidence/RELEASE-HANDOFF.md), *Run workflow* with
+    `policy_exception` on `v1.24.0`, and approve only its `Web app` run.
+  - **The code-signing certificate**: add `WINDOWS_CERT_PFX_BASE64` and `WINDOWS_CERT_PASSWORD` to the repository's
+    secrets so `release.yml`'s `windows-sign` signs `suds.exe`; until then it is published unsigned with a notice.
+  - **The independent penetration test**: the white-box test of 1.23.6 was not independent; the county's or a third
+    party's test against docs/security/PEN-TEST-SCOPE.md (now with a *Windows server* row) is still owed.
+  - **The CalOMS analyst**: the CalOMS Tx layout and code sets are still not verified against the DHCS data
+    dictionary; someone who knows it has to check them before any submission (docs/compliance/CALOMS.md).
+  - **Procurement contact details**: the legal entity, contact, email, web page, pricing and SLA in
+    `public/procurement.json` (SUDS on this device) and, on an office, under Settings › Program › Security &
+    procurement page; each reads *Not yet published by the maintainer* until filled.
+  - **1.23.6's exception note**: once its release exists, `gh release edit v1.23.6 --notes-file` to put its
+    owner-approved exception at the top of its notes (docs/evidence/RELEASE-HANDOFF.md, step 3).
+  - Carried: record each zip's SHA-256 on `main` once its release job has run; make `maint/1.23` from `v1.23.6` once
+    the tags exist; the repository settings (docs/RELEASE.md, *Owner: repository settings*); device-id reuse of an
+    administrator-whole device (THREAT-MODEL residual risk 20); 1.21.0 publication releases cannot be corrected; the
+    installer on real VMs and on RHEL 9; **screen-reader testing** of the screens 1.21.0 to 1.24.0 added or changed
+    (the intake queue, the duplicate-time question, scheduled backups, the procurement page) is still pending
+    (docs/accessibility/ACR-WCAG21.md); the automated axe audits cover them.
 
 ### 2026-10-02 — Claude: 1.23.6 (administrators can change their own permissions, role and account; an owner-approved exception)
 

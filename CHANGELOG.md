@@ -4,9 +4,64 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+## 1.24.0 — 2026-10-03
+
+A feature release (migrations 68, 69 and 70; new permissions `intake:read` and `intake:write`; 22 new routes:
+the incoming-referrals queue under `/api/incoming-referrals`, `POST /api/time/:id/merge` and `…/not-duplicate`,
+`GET /api/notes/departed-drafts`, `POST /api/notes/:id/reassign` and `POST /api/notes/reassign-drafts`,
+`GET /api/procurement` (public) and `GET /api/admin/security/hardening`, and on SUDS on this device the scheduled-backup
+routes under `/api/local/backup/`), released inside 1.23.0's 28 days under the one exception *Stabilisation* allows, a
+security fix (docs/RELEASE.md, *Record: 1.24.0*). It carries the fixes for an owner-authorised white-box penetration
+test of 1.23.6 (two Medium findings, M1 and M2, and seven Low, L1 to L7), which the owner chose to release at once
+rather than after the feature freeze, together with the feature work done for 1.24.0 during the freeze: incoming
+referrals (an intake queue), possible duplicate time, a sign reminder that opens its draft, scheduled backups on SUDS
+on this device, the Security & procurement page and the administrator's hardening checklist, the clinical guards from
+the persona test of 1.23.6, `npm run try` and Windows compatibility, and, by owner decision of 2026-10-03, the office
+server for Windows as `suds.exe` with a Windows service.
+
+Security exception: fixes for the owner-authorised white-box pen test of 1.23.6 (M1 consent purpose limitation under 42 CFR 2.31(a)(4), M2 a sync push undoing an office deletion, and seven Low findings), released inside 1.23.0's 28 days on the owner's instruction of 2026-10-02 to lift the freeze
+
+**Advisory:** the findings were made on 1.23.6, and SUDS 1.23.6 and earlier are affected. Upgrade to 1.24.0; no
+1.23.x patch carries these fixes.
+
+Upgrading runs migrations 68 to 70 on start: `time_entries.start_time` and `time_entries.duplicate_of`, `tasks.note_id`,
+and the two office-only tables `incoming_referrals` and `incoming_referral_attempts` (docs/security/DATA-INVENTORY.md,
+*Schema versions*). The two new permissions are granted to navigators, clinicians, supervisors and administrators, and
+never to finance or read-only. What an upgrading administrator should know:
+
+* **A consent now has to cover the purpose of a disclosure, not only name its recipient** (M1). One rule
+  (`server/disclosure.js`, the same as the FHIR API's) reads a referral's purpose from the provider's directory
+  category. The TPO consent still covers treatment, payment and operations, and any purpose not plainly outside them,
+  but **a TPO consent alone no longer covers a referral to a housing, shelter, sober-living, employment, legal-aid,
+  benefits or family-support provider**, or to a court: those are on the non-TPO list and need a consent that names the
+  purpose, or a supervisor's override with a written justification (kept with the accounting row). A consent for case
+  management or coordinating services covers referrals for services. Before upgrading, look at how your consents word
+  their purpose (docs/compliance/PART2.md, *Purpose match*).
+* **The password policy is stricter** (L1): a password that contains the username or a part of the person's name, or
+  is a very common password dressed up, is refused wherever a password is set. Existing passwords keep working until
+  they are next changed.
+* **Sign-in limits count per username and per account** (L2): failed sign-ins count per username from an address
+  (`LOGIN_RATE_LIMIT`, 20) under a per-address ceiling (`LOGIN_IP_RATE_LIMIT`, new, default 200), and the same limits
+  now cover the password given again to sign, approve or confirm, fingerprint sign-in (per passkey) and single sign-on,
+  so one person's wrong guesses no longer lock out everyone behind the office's address.
+* **A device's sync sign-in no longer reaches account management** (L6): changing the password, two-step verification,
+  passkeys, `/api/auth/me` and the session list answer 403 to it; people manage their account in a web browser.
+* **Incoming referrals are visible to everyone with `intake:read`, caseload-scoped workers included, while they are
+  open**: a referred person is nobody's client yet, and intake is a shared desk. An accepted referral belongs to its
+  client and is seen only by those who may open that client. The queue is office-only and never synchronised to a
+  device. Deny `intake:read` per person where that is not wanted.
+* **The office server can run on Windows as `suds.exe`** (docs/WINDOWS-SERVER.md), from `suds-1.24.0-windows-x64.zip`
+  attached to the release, with a Windows service under the virtual account `NT SERVICE\SUDS`. It is unsigned until
+  the owner provides a code-signing certificate. Nothing changes for a Linux or SUDS Server install.
+
+The other changes for an administrator: an office deletion now stands against a device's push (M2,
+`sync.resurrect_refused`), a push that edits a signed note is refused (L3), a non-numeric `limit` or `offset` is a 400
+(L4), the audit head is sealed at the first start (L5), and `client_id` now filters `GET /api/episodes` and
+`GET /api/notes/handoffs` (L7).
+
 ### Security
 
-Fixes from an owner-authorised white-box pen test of 1.23.6. No migration, permission or route is added.
+Released in 1.24.0. Fixes from an owner-authorised white-box pen test of 1.23.6. No migration, permission or route is added.
 
 * **M1 — the disclosure gate now checks purpose.** A consent covers the purpose it states, as well as the recipient
   it names: a referral "for treatment services" was accepted on a consent given for "billing and payment processing
@@ -72,7 +127,7 @@ Fixes from an owner-authorised white-box pen test of 1.23.6. No migration, permi
 
 ### Security: the Low findings of the white-box pen test of 1.23.6
 
-No migration and no new permission. What an administrator should know: passwords that pass the character rule but
+Released in 1.24.0. No migration and no new permission. What an administrator should know: passwords that pass the character rule but
 contain the username or the person's name, or are a very common password dressed up ("Summer2026!!", "P@ssw0rd2026!"),
 are now refused wherever a password is set; failed sign-ins are limited per username from an address (with a much
 higher per-address ceiling, `LOGIN_IP_RATE_LIMIT`), so one person's wrong guesses no longer lock out everyone behind
@@ -120,10 +175,9 @@ the office's NAT address; and a device's sync sign-in can no longer manage the a
   per-address ceiling (`LOGIN_IP_RATE_LIMIT`), and SSO re-authentication for signing per account from the address
   (`server/routes/oidc.js`, `test/oidc.test.js`).
 
-### Scheduled backups for SUDS on this device (built for 1.24.0, not yet released)
+### Scheduled backups for SUDS on this device
 
-Built on a feature branch for 1.24.0, which comes no earlier than 2026-10-29 and through the release gate; nothing
-here is in a release yet. The 1.23.1 market evaluation rated device-only use 2.75/5 because its backups were
+Released in 1.24.0. The 1.23.1 market evaluation rated device-only use 2.75/5 because its backups were
 manual: a programme on SUDS on this device lost everything if nobody remembered to download a file before the
 browser's storage went.
 
@@ -151,9 +205,9 @@ browser's storage went.
   drives a folder browser, a browser that must be asked again and one with no folder API; `accessibility.mjs`
   audits the new dialogs, This device and Home.
 
-### Possible duplicate time (built for 1.24.0, not yet released)
+### Possible duplicate time
 
-Feature work for 1.24.0, on its own branch; it goes through the release gate after the stabilisation period (not before 2026-10-29).
+Released in 1.24.0. Migration 68; new routes `POST /api/time/:id/merge` and `POST /api/time/:id/not-duplicate`.
 
 #### Added: possible duplicate time
 
@@ -165,10 +219,9 @@ Feature work for 1.24.0, on its own branch; it goes through the release gate aft
 * **A deleted entry leaves no mark behind.** A visit's own time entry, deleted with the visit or when the visit's duration was cleared, was removed without clearing the marks pointing at it, so the other entry kept *Possible duplicate* and its Merge answered 404. Those deletes now clear the marks first, as every other path that deletes an entry does (`server/routes/interventions.js`). The retention purge and a client merge keep time entries (the purge only removes their client link), so they leave no mark dangling.
 * Schema: migration 68 adds `time_entries.start_time` and `time_entries.duplicate_of` (no data about people). API: `docs/API.md` *Possible duplicate time*. Audit actions `time_entry.duplicate.warn`, `.override`, `.dismiss` and `time_entry.merge` are catalogued in `docs/security/LOGGING-AND-AUDIT.md`. Tests: `test/time-duplicates.test.js`; the browser script `ux13` asks, cancels, saves anyway, merges, checks the approved lock and merges a device's duplicate from the queue, with axe on the question, the time list and the queue.
 
-### A sign reminder opens its draft (built for 1.24.0, not yet released)
+### A sign reminder opens its draft
 
-Feature work for 1.24.0, on its own branch (`feature/1.24-todo-note-link`); it goes through the release gate after the
-stabilisation period (not before 2026-10-29). Nothing here is in a release yet.
+Released in 1.24.0. Migration 69; no new permission or route.
 
 #### Added: a "finish and sign" reminder opens the draft it is about
 
@@ -196,7 +249,7 @@ stabilisation period (not before 2026-10-29). Nothing here is in a release yet.
   otherwise, and may clear the link.
 - Schema: **migration 69** adds `tasks.note_id` (an id, no data about people; no `REFERENCES`, so a device that does
   not hold the note still stores the reminder). It follows migration 68 (possible duplicate time, above). `scripts/migration-order.js`
-  acknowledges the new `tasks` definition (migrations 19 and 24 read it). No new route, permission or audit action:
+  acknowledges the new `tasks` definition (the migrations numbered 19 and 24 read it). No new route, permission or audit action:
   setting the link is a `task.create`/`task.update` (with `note_id` in its `fields`), and dropping it when the linked
   draft is signed or deleted is part of that `note.sign`/`note.delete`.
 - Tests: `test/todo-note-link.test.js` (a supervisor sets it; a navigator, the assignee and wrong client or author are
@@ -205,11 +258,11 @@ stabilisation period (not before 2026-10-29). Nothing here is in a release yet.
   script `ui-eval` (Remind author and Remind all set the link, **Open the draft** on the to-do, Home's title and a phone
   row, the fallback after the linked draft is deleted, with axe on each).
 
-### Incoming referrals: an intake queue for referrals to the program (built for 1.24.0, not yet released)
+### Incoming referrals: an intake queue for referrals to the program
 
-Feature work for 1.24.0, on its own branch (`feature/1.24-incoming-referrals`), from the persona tests (county buyers:
-SUDS tracks referrals *out*, not referrals *in* from the ER, jail, detox, probation and courts, other providers, the
-person or their family). It goes through the release gate after the stabilisation period. Nothing here is in a release yet.
+Released in 1.24.0. Migration 70; new permissions `intake:read` and `intake:write`. From the persona tests (county
+buyers: SUDS tracked referrals *out*, not referrals *in* from the ER, jail, detox, probation and courts, other
+providers, the person or their family).
 
 #### Added
 
@@ -267,13 +320,12 @@ person or their family). It goes through the release gate after the stabilisatio
   `test/role-expansion.test.js`; the browser script `incoming-referrals` (record one, Home and the queue, an attempt, accept
   into a new client; with it the suite is now 60 scripts) and the accessibility audit of the queue, a referral and its form.
 
-### Security & procurement page and hardening checklist (built for 1.24.0, not yet released)
+### Security & procurement page and hardening checklist
 
-Feature work for 1.24.0, on its own branch (`feature/1.24-procurement-hardening`), from the live persona tests ("zero
-procurement surface in the live app — no BAA, pricing, SLA, or vendor contact anywhere a buyer can find"; "MFA and
-hardening ship unset with nothing prompting the admin to turn them on"). It goes through the release gate after the
-stabilisation period. Nothing here is in a release yet. No migration and no schema change: the new values are
-settings rows.
+Released in 1.24.0. From the live persona tests ("zero procurement surface in the live app — no BAA, pricing, SLA, or
+vendor contact anywhere a buyer can find"; "MFA and hardening ship unset with nothing prompting the admin to turn them
+on"). No migration and no schema change: the new values are settings rows. New routes `GET /api/procurement` and
+`GET /api/admin/security/hardening`.
 
 #### Added: a Security & procurement page for organizations evaluating SUDS
 
@@ -322,9 +374,9 @@ settings rows.
 - Added: **Settings › Security status** starts with a **Hardening checklist** card listing every item, done or not,
   with which are server settings for IT.
 
-### Fixes from the persona test of 1.23.6 (built for 1.24.0, not yet released)
+### Fixes from the persona test of 1.23.6
 
-Fixes from the persona test of 1.23.6, for 1.24.0. No migration and no new permission name.
+Released in 1.24.0. Fixes from the persona test of 1.23.6. No migration and no new permission name.
 
 - **Assessments and the care plan no longer lose work when the module is off.** The six-dimension assessment, the
   screenings, the problem list and the care plan's goals and steps were offered on a client's record even while their
@@ -351,10 +403,17 @@ Fixes from the persona test of 1.23.6, for 1.24.0. No migration and no new permi
   push cannot change a note's author at all. Each move is audited as the new action `note.reassign` (the old and new
   author's ids, no title or text); a reminder to sign the old author's drafts on that record is cancelled once none
   is left.
+- **A dialog closed part-way can no longer put back a saved draft.** A form left listening after its dialog closed
+  could write its draft again after the next dialog of the same kind had saved and cleared it, so the next new
+  assessment opened with the one just saved (clinical audit). Each clearing of a draft (saved, discarded, started
+  over) is now counted, and a form built before the latest clearing of its draft writes nothing more; a form's own
+  **Start over** keeps drafting, and the visit form keeps an unsent visit's draft (`public/app.js`).
 - **Accessibility:** the global search box is now in a search landmark (axe "region").
 
 
-### Testing SUDS on your own computer: `npm run try` (built for 1.24.0, not yet released)
+### Testing SUDS on your own computer: `npm run try`
+
+Released in 1.24.0. No migration, permission or route.
 
 #### Added: `npm run try`
 
@@ -390,9 +449,9 @@ Then it runs the OS-sensitive tests: crypto, keys, backups, audit, the instance 
 not on the release gate's list of required jobs, but a red run fails CI. No migration, permission or route is
 added.
 
-### The office server on Windows: `suds.exe` and the Windows service (built for 1.24.0, not yet released)
+### The office server on Windows: `suds.exe` and the Windows service
 
-By owner decision of 2026-10-03 ("The server should be launched in an exe ... to simplify it for county IT";
+Released in 1.24.0. By owner decision of 2026-10-03 ("The server should be launched in an exe ... to simplify it for county IT";
 docs/PLATFORM.md), each release also carries **`suds-<version>-windows-x64.zip`** and its `.sha256`. No migration,
 permission or route is added. The guide for county IT is **docs/WINDOWS-SERVER.md**.
 

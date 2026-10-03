@@ -153,7 +153,7 @@ restored saves nothing more before it reloads. A wrong passphrase, a file that i
 tampered or damaged file, and a backup from a newer SUDS are all refused before anything changes. Backups and
 restores are audited (`device.backup.created`, `device.restore`).
 
-## Scheduled backups (built for 1.24.0, not yet released)
+## Scheduled backups (released in 1.24.0)
 
 A device whose records exist nowhere else should not depend on someone remembering to download a file. Under
 **This device → Keep your records safe → Scheduled backups** the device's manager chooses how often SUDS backs up

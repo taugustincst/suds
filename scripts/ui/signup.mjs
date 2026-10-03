@@ -5,7 +5,7 @@
 //    the storage confirmation; a second person signs up on the same device and sees only their own
 //    clients; the device administrator turns sign-ups off; backup -> erase -> restore brings the records
 //    back, a wrong passphrase and a tampered file are refused; Home's backup reminder.
-//  * scheduled backups (built for 1.24.0, not yet released): written to a folder by themselves (File System Access,
+//  * scheduled backups (released in 1.24.0): written to a folder by themselves (File System Access,
 //    keeping the newest N), one click when the browser must be asked again, one download button where there is no
 //    folder API; the restore drill; the audit.
 import { chromium } from 'playwright';
@@ -314,7 +314,7 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
   await ctx.close();
 }
 
-// ================= scheduled backups on the on-device app (built for 1.24.0, not yet released) =================
+// ================= scheduled backups on the on-device app (released in 1.24.0) =================
 // Three browsers: one that writes to a folder by itself (Chromium's File System Access API, the folder picker
 // answered with a folder in the origin-private file system, which is a real directory handle), one where the
 // browser must be asked again for the folder, and one with no folder API at all (Safari, Firefox, iPhone), where

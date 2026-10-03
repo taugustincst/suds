@@ -37,7 +37,7 @@ const SETTING_KEYS = ['org_name', 'caseload_restriction', 'county_name', 'progra
   // The programme profile and its module switches (server/programme.js): presentation, not permissions.
   ...require('../programme').SETTING_KEYS,
   // The public "Security & procurement" page's contact, legal entity, pricing stance and SLA (server/procurement.js;
-  // built for 1.24.0). Blank until an administrator publishes them; GET /api/procurement serves them without a session.
+  // released in 1.24.0). Blank until an administrator publishes them; GET /api/procurement serves them without a session.
   ...require('../procurement').SETTING_KEYS];
 const ROLES = ['admin', 'supervisor', 'clinician', 'navigator', 'finance', 'readonly'];
 const listener = require('../listener');

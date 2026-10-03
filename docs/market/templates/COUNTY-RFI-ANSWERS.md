@@ -85,6 +85,12 @@ bridges to OIDC; SCIM 2.0 provisioning; password sign-in can be switched off exc
 administrators. Evidence: [../../security/IDENTITY.md](../../security/IDENTITY.md); `server/oidc.js`,
 `server/scim.js`; `test/oidc.test.js`, `test/scim.test.js`.
 
+**Q. Passwords and sign-in limits?** 12 or more characters with complexity; from 1.24.0 a password that contains the
+username or the person's name, or is a common password with digits and symbols added, is refused. Lockout after 5
+failures; failed sign-ins also count per username from an address under a per-address ceiling
+(`LOGIN_RATE_LIMIT`, `LOGIN_IP_RATE_LIMIT`), and the same limits cover signing, approving and fingerprint sign-in.
+Evidence: [../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #20; `test/security-1236-lows.test.js`.
+
 **Q. MFA?** TOTP for every role by default, enforced after a grace period (3 days by default); the IdP's MFA
 claim can be trusted instead if the county turns that on. Evidence:
 [../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #19; `test/mfa-grace.test.js`.
@@ -147,16 +153,19 @@ Zero runtime dependencies: the server uses only Node.js built-ins; a production 
 Build-time tooling is listed separately. A CycloneDX SBOM per release, reproducible from the commit. Dependabot
 for build tooling, the container base and CI actions. Evidence:
 [../../security/VULNERABILITY-MANAGEMENT.md](../../security/VULNERABILITY-MANAGEMENT.md);
-[../../evidence/sbom-1.23.0.cdx.json](../../evidence/sbom-1.23.0.cdx.json) (`node scripts/sbom.js`,
+[../../evidence/sbom-1.24.0.cdx.json](../../evidence/sbom-1.24.0.cdx.json) (`node scripts/sbom.js`,
 `test/sbom.test.js`).
 
 **Q. Release integrity: how does the county know the build it runs is the released code?** **Releases 1.16.3 to
-1.23.6 were published without a tag**, without a GitHub Release and without the release gate's approval. The owner
+1.24.0 were published without a tag**, without a GitHub Release and without the release gate's approval. The owner
 had each put on GitHub Pages by a direct push to `gh-pages`, and each is recorded in the exceptions table
 ([../../RELEASE.md](../../RELEASE.md), *The exceptions in one place*); 1.23.1 to 1.23.5, the first releases under the
 stabilisation commitments, broke none of the release policy, but were published that way because the tags were still
 owed (*Record: 1.23.1* to *Record: 1.23.5*). 1.23.6 was published the same way; it ships with an owner-approved policy exception that is not a security fix (an
-administrator may change their own permissions, role and account during the feature freeze; *Record: 1.23.6*). Once
+administrator may change their own permissions, role and account during the feature freeze; *Record: 1.23.6*). 1.24.0
+was published the same way: a feature release two days after 1.23.0, under the one exception the stabilisation
+allows, a security fix (the fixes of an owner-authorised white-box penetration test of 1.23.6), recorded on its
+`Security exception:` line (*Record: 1.24.0*). Once
 the owner has pushed the tags, every release goes through the release gate ([../../RELEASE.md](../../RELEASE.md)). For
 these versions there is no tag or published zip to check against, and SUDS Server's `upgrade.sh` cannot download them. Verify against the commit instead. Each
 commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
@@ -165,12 +174,15 @@ published web app byte for byte against the commit's build. The steps are in
 [../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #39. Releases are not signed. **[owner to
 complete]: push the owed tags, then turn on the release protections (RELEASE.md, *Owner: repository settings*).**
 
-**Q. Penetration testing?** **None has been done. [owner to complete]: an independent penetration test and its
-remediation.** A scope for a county-commissioned test is in
+**Q. Penetration testing?** **No independent test has been done. [owner to complete]: an independent penetration
+test and its remediation.** The owner authorised a white-box penetration test of 1.23.6, made with the source; its
+two Medium findings (a consent's purpose not checked at a disclosure; a device's sync push bringing back a row the
+office had deleted) and seven Low ones are fixed in 1.24.0 with tests (CHANGELOG 1.24.0). It is not independent. A scope for a county-commissioned test is in
 [../../security/PEN-TEST-SCOPE.md](../../security/PEN-TEST-SCOPE.md). It covers the county view's import, read API
 and push endpoint, and the areas 1.21.0 added and 1.22.0 changed: county publication (differencing, consent and corrected releases),
 field devices and participant codes (the scope bound to the account), the authenticator allow-list and metadata upload
-(with its grace period), the version 2 county file (award amounts) and the SUDS Server upgrade hand-over. The project's own reviews
+(with its grace period), the version 2 county file (award amounts), the SUDS Server upgrade hand-over and, from
+1.24.0, the Windows server. The project's own reviews
 and the attack classes fixed are in [../../security/THREAT-MODEL.md](../../security/THREAT-MODEL.md).
 
 **Q. How are vulnerabilities reported and fixed?** Privately through GitHub's private vulnerability reporting on

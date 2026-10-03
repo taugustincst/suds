@@ -49,7 +49,16 @@ falls off the list; navigators, peers and clinicians in a street programme find 
 and on a phone Home opens on **To-dos for today**; an outreach worker who loses signal can keep saving contacts that
 name nobody, which are sent by themselves later and counted once; a worker can ask for their phone to be set up for
 the field; and supervisors see, oldest first, the referrals still waiting to hear what happened, with **Remind
-worker** and **Record outcome** ([docs/USER_GUIDE.md](../USER_GUIDE.md)). Your staff's permissions do not change. A referral network partner organisations join (beyond the
+worker** and **Record outcome** ([docs/USER_GUIDE.md](../USER_GUIDE.md)). 1.24.0 adds an **intake queue** for the people
+referred to your programme by a hospital, a jail, a detox, probation or a court, another provider or a family: each
+attempt to reach them, the time to first contact, and **Accept** into a client; time that may already be logged is
+asked about before it is saved; a supervisor's reminder to finish a note opens that note; and SUDS on this device can
+back itself up on a schedule. It also changes one thing your staff will notice: **a consent now has to cover what a
+disclosure is for**, so a referral to a housing, employment, legal-aid, benefits or family-support provider needs a
+consent that names that purpose (a general treatment, payment and operations consent no longer covers it), or a
+supervisor's override; and passwords that contain a person's name or a common word are refused when next changed
+([docs/compliance/PART2.md](../compliance/PART2.md), *Purpose match*). Navigators, clinicians and supervisors get two
+new permissions for the intake queue; finance and read-only do not. A referral network partner organisations join (beyond the
 1.17.0 one-time secure links) is planned and not scheduled ([STRATEGY.md](STRATEGY.md)). Choose SUDS for what it does
 today.
 

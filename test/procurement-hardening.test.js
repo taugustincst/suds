@@ -1,5 +1,5 @@
 'use strict';
-// Built for 1.24.0: the public "Security & procurement" page's published facts (GET /api/procurement, the
+// Released in 1.24.0: the public "Security & procurement" page's published facts (GET /api/procurement, the
 // procurement_* settings) and the administrator's hardening checklist (GET /api/admin/security/hardening).
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');

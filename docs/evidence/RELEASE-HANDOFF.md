@@ -1,4 +1,4 @@
-# Release hand-off: tags v1.16.3 to v1.23.6
+# Release hand-off: tags v1.16.3 to v1.24.0
 
 > **The one owner action: run step 1, then step 2's tag commands and its one `git push`.** It is what unblocks:
 >
@@ -12,16 +12,18 @@
 >   *Backports*), which measures from `v1.16.2` until then. CI's `release-policy` job measures from the commits in
 >   the table below meanwhile, and from the tags once they exist.
 >
-> **1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5 and 1.23.6 were stamped before the push**, so their tags go in the same
-> push, as the eleventh to the sixteenth: `v1.23.6` is the newest tag, its run is the one that is Latest and publishes
-> the site, and 1.23.1 to 1.23.5 ship without a policy exception, so their gates pass with no `policy_exception`
-> (*Run workflow* is not needed for them). 1.23.6 ships with an owner-approved exception that is not a security fix
-> (an administrator may change their own access; *Record: 1.23.6*), but adds no migration, permission name or route,
-> so its gate passes with no `policy_exception` too; the owner states the exception in its release notes by hand
-> (step 3).
+> **1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5, 1.23.6 and 1.24.0 were stamped before the push**, so their tags go in the
+> same push, as the eleventh to the seventeenth: `v1.24.0` is the newest tag, its run is the one that is Latest and
+> publishes the site, and 1.23.1 to 1.23.5 ship without a policy exception, so their gates pass with no
+> `policy_exception` (*Run workflow* is not needed for them). 1.23.6 ships with an owner-approved exception that is not
+> a security fix (an administrator may change their own access; *Record: 1.23.6*), but adds no migration, permission
+> name or route, so its gate passes with no `policy_exception` too; the owner states the exception in its release notes
+> by hand (step 3). 1.24.0 is a feature release two days after 1.23.0 under a recorded security exception (the fixes
+> of the owner-authorised white-box pen test of 1.23.6; *Record: 1.24.0*): its gate is refused on the feature
+> interval, so it needs *Run workflow* with `policy_exception`, like `v1.17.0` to `v1.23.0`.
 
-Sixteen versions are on `main` and released (1.23.6 is what GitHub Pages serves) but **none is tagged**: 1.16.3 and
-1.16.4 went out with 1.17.0; 1.16.4 to 1.23.6 were published to GitHub
+Seventeen versions are on `main` and released (1.24.0 is what GitHub Pages serves) but **none is tagged**: 1.16.3 and
+1.16.4 went out with 1.17.0; 1.16.4 to 1.24.0 were published to GitHub
 Pages by a direct push to `gh-pages` at the owner's request, with no tag, no GitHub Release and no approval in the
 `release` environment ([../RELEASE.md](../RELEASE.md), the *Record* entries and the exceptions table). 1.23.1, the
 first release under *Stabilisation*, passed the patch rules with no exception; only its publication went round the
@@ -31,8 +33,10 @@ and went out the same way for the same reason (*Record: 1.23.3*). 1.23.4 passed 
 too, and went out the same way for the same reason (*Record: 1.23.4*). 1.23.5 passed the patch rules with no
 exception too, and went out the same way for the same reason (*Record: 1.23.5*). 1.23.6 passed the patch rules
 mechanically but shipped with an owner-approved exception, recorded by hand because no check sees it, and went out
-the same way as the others, because the tags were still owed (*Record: 1.23.6*). Once the tags are pushed, no release goes to
-`gh-pages` directly again.
+the same way as the others, because the tags were still owed (*Record: 1.23.6*). 1.24.0 is a feature release inside
+1.23.0's 28 days and the feature freeze, under the security exception *Stabilisation* point 2 allows, recorded on its
+`Security exception:` line, which CI's `release-policy` job reads; it goes out the same way, because the tags are
+still owed (*Record: 1.24.0*). Once the tags are pushed, no release goes to `gh-pages` directly again.
 Until the tags exist, everything that measures from "the previous release" measures from `v1.16.2`: the release policy, `scripts/migration-order.js`,
 *Backports* step B, and SUDS Server upgrades, which download `suds-vX.Y.Z.zip` from a GitHub Release that does not
 exist yet (`deploy/linux/lib.sh` `stage_release`).
@@ -44,15 +48,17 @@ download against a channel other than the download (`upgrade.sh --release-sha256
 clone of their own.
 
 Prepared on branch `docs/1191-stamp-pass` from `3dc20dc`, 30 September 2026, and carried into 1.20.0, 1.21.0, 1.22.0,
-1.23.0, 1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5 and 1.23.6. The 1.23.1 row was filled in by a commit after its stamp
+1.23.0, 1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5, 1.23.6 and 1.24.0. The 1.23.1 row was filled in by a commit after its stamp
 (`3c36e67`), as 1.23.0's was after its SBOM commit (`fd042a9`): a commit cannot hold its own hash, nor the checksum of
 a zip built from it. 1.23.1 to 1.23.6 are patches, so they have no SBOM commit (they keep `sbom-1.23.0`) and each tag
 goes on its stamp, "Release 1.23.1" (`3bff36f`), "Release 1.23.2" (`a45c716`, its row filled by `9924b6a`), "Release
 1.23.3" (`c02a261`, its row filled by `e86d5b0`), "Release 1.23.4" (`598d08b`, its row filled by `2496ef4`), "Release
-1.23.5" (`382278a`, its row filled by `c326dde`) and "Release 1.23.6", itself. The 1.23.6 row was filled in the same
-way, by a commit after its stamp (`57bf2df`); step 1 still finds each by its subject.
+1.23.5" (`382278a`, its row filled by `c326dde`) and "Release 1.23.6" (`57bf2df`), itself; step 1 still finds each by
+its subject. 1.24.0 is a minor, so it is two commits, as 1.23.0 was: "Release 1.24.0" and "SBOM of the 1.24.0 stamp"
+after it, and its tag goes on the second. Its row holds placeholders until a commit after the SBOM commit fills them;
+step 1 finds the commit by its subject.
 
-## The sixteen releases
+## The seventeen releases
 
 | Tag | Commit (stamp, "Release X.Y.Z") | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
 | --- | --- | --- | --- |
@@ -72,6 +78,7 @@ way, by a commit after its stamp (`57bf2df`); step 1 still finds each by its sub
 | `v1.23.4` | `598d08bc250c996a6cb737f2febe12c41e931110` ("Release 1.23.4": `git log -1 --format=%H --grep='^Release 1.23.4$' origin/main`) | 2026-10-01 | `48a312aa4b0c22654e90920c0f236ff0e6a39da0628bd0ade855f835c603387f` |
 | `v1.23.5` | `382278ab2feb27992e222f3330c8c02f5d0aa579` ("Release 1.23.5": `git log -1 --format=%H --grep='^Release 1.23.5$' origin/main`) | 2026-10-02 | `100d8e8d144a5fcf370278d8fcb5a5606fd1b008bcc61da1c25dbb6c2f8b56be` |
 | `v1.23.6` | `57bf2df5668a51c2b8614996085feb356a414800` ("Release 1.23.6": `git log -1 --format=%H --grep='^Release 1.23.6$' origin/main`) | 2026-10-02 | `3cdfe0ea70c96b833126e3da96a20a00b5f3358c098f5abf8544da9b9a98a74a` |
+| `v1.24.0` | the commit after `Release 1.24.0`, which adds its SBOM (`<1.24.0 release commit>`: `git log -1 --format=%H --grep='^SBOM of the 1.24.0 stamp' origin/main`) | 2026-10-03 | `<filled after the release>`; rebuild it with the command below |
 
 **How the checksums were made, and why they can be trusted before the release exists.** The release job builds
 the zip with `git archive --format=zip --prefix="suds-vX.Y.Z/" -o suds-vX.Y.Z.zip <commit>` and hashes it with
@@ -97,8 +104,9 @@ git archive --format=zip --prefix=suds-v1.23.2/ -o suds-v1.23.2.zip a45c716091a0
 git archive --format=zip --prefix=suds-v1.23.3/ -o suds-v1.23.3.zip c02a261de66277d7b86ccab19dfa0755be9e7db6 && sha256sum suds-v1.23.3.zip
 git archive --format=zip --prefix=suds-v1.23.4/ -o suds-v1.23.4.zip 598d08bc250c996a6cb737f2febe12c41e931110 && sha256sum suds-v1.23.4.zip
 git archive --format=zip --prefix=suds-v1.23.5/ -o suds-v1.23.5.zip 382278ab2feb27992e222f3330c8c02f5d0aa579 && sha256sum suds-v1.23.5.zip
-R1236=$(git log -1 --format=%H --grep='^Release 1.23.6$' origin/main)
-git archive --format=zip --prefix=suds-v1.23.6/ -o suds-v1.23.6.zip "$R1236" && sha256sum suds-v1.23.6.zip
+git archive --format=zip --prefix=suds-v1.23.6/ -o suds-v1.23.6.zip 57bf2df5668a51c2b8614996085feb356a414800 && sha256sum suds-v1.23.6.zip
+R124=$(git log -1 --format=%H --grep='^SBOM of the 1.24.0 stamp' origin/main)
+git archive --format=zip --prefix=suds-v1.24.0/ -o suds-v1.24.0.zip "$R124" && sha256sum suds-v1.24.0.zip
 ```
 
 ## 1. Check (the owner, from any clone)
@@ -115,16 +123,17 @@ R1233=$(git log -1 --format=%H --grep='^Release 1.23.3$' origin/main)
 R1234=$(git log -1 --format=%H --grep='^Release 1.23.4$' origin/main)
 R1235=$(git log -1 --format=%H --grep='^Release 1.23.5$' origin/main)
 R1236=$(git log -1 --format=%H --grep='^Release 1.23.6$' origin/main)
-for c in fc5e9d7 6491308 485548c ab90c2f 39e397e 3dc20dc $R120 $R121 $R122 $R123 $R1231 $R1232 $R1233 $R1234 $R1235 $R1236; do
+R124=$(git log -1 --format=%H --grep='^SBOM of the 1.24.0 stamp' origin/main)
+for c in fc5e9d7 6491308 485548c ab90c2f 39e397e 3dc20dc $R120 $R121 $R122 $R123 $R1231 $R1232 $R1233 $R1234 $R1235 $R1236 $R124; do
   git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
 done
-git show -s --format='%h %s' fc5e9d7 6491308 485548c ab90c2f 39e397e 3dc20dc $R120 $R121 $R122 $R123 $R1231 $R1232 $R1233 $R1234 $R1235 $R1236   # six "Release X.Y.Z", the SBOM commits of 1.20.0, 1.21.0, 1.22.0 and 1.23.0, then "Release 1.23.1" to "Release 1.23.6"
-git show origin/main:package.json | grep '"version"'                            # 1.23.6: see "Before 1.23.7 or 1.24.0", below
-for c in fc5e9d7 6491308 485548c ab90c2f 39e397e 3dc20dc $R120 $R121 $R122 $R123 $R1231 $R1232 $R1233 $R1234 $R1235 $R1236; do gh run list --workflow ci.yml --commit $c --event push --limit 1; done   # each: completed, success
+git show -s --format='%h %s' fc5e9d7 6491308 485548c ab90c2f 39e397e 3dc20dc $R120 $R121 $R122 $R123 $R1231 $R1232 $R1233 $R1234 $R1235 $R1236 $R124   # six "Release X.Y.Z", the SBOM commits of 1.20.0, 1.21.0, 1.22.0 and 1.23.0, "Release 1.23.1" to "Release 1.23.6", then the SBOM commit of 1.24.0
+git show origin/main:package.json | grep '"version"'                            # 1.24.0: see "Before 1.24.1", below
+for c in fc5e9d7 6491308 485548c ab90c2f 39e397e 3dc20dc $R120 $R121 $R122 $R123 $R1231 $R1232 $R1233 $R1234 $R1235 $R1236 $R124; do gh run list --workflow ci.yml --commit $c --event push --limit 1; done   # each: completed, success
 git ls-remote --tags origin | grep -E 'refs/tags/v1\.1[6-9]\.'                  # only v1.16.0 to v1.16.2 so far
 ```
 
-## 2. Tag, and push all sixteen at once
+## 2. Tag, and push all seventeen at once
 
 ```bash
 git tag -a v1.16.3 fc5e9d7fc42af0da8ce2032462ef3c7860e2f576 -m "SUDS 1.16.3"
@@ -143,26 +152,27 @@ git tag -a v1.23.3 "$R1233" -m "SUDS 1.23.3"
 git tag -a v1.23.4 "$R1234" -m "SUDS 1.23.4"
 git tag -a v1.23.5 "$R1235" -m "SUDS 1.23.5"
 git tag -a v1.23.6 "$R1236" -m "SUDS 1.23.6"
-git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1 v1.23.2 v1.23.3 v1.23.4 v1.23.5 v1.23.6
+git tag -a v1.24.0 "$R124" -m "SUDS 1.24.0"
+git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1 v1.23.2 v1.23.3 v1.23.4 v1.23.5 v1.23.6 v1.24.0
 ```
 
 **One push, never an older tag alone.** A `v1.16.x` tag pushed on its own would be the newest tag there is: its own
 `release.yml` would make it the Latest release and start its own `web-app.yml`, which has no newest-release check and
-would put the 1.16 site over 1.23.5; the 1.16 kernel refuses the databases 1.17.0 and later migrated, and everyone
-using SUDS on this device would be locked out. With all sixteen in one push, `v1.23.6` is the newest tag from the
+would put the 1.16 site over 1.24.0; the 1.16 kernel refuses the databases 1.17.0 and later migrated, and everyone
+using SUDS on this device would be locked out. With all seventeen in one push, `v1.24.0` is the newest tag from the
 start.
 
-**Before 1.23.7 or 1.24.0.** Push the tags while `main`'s `package.json` still says 1.23.6. 1.23.1, 1.23.2,
-1.23.3, 1.23.4, 1.23.5 and 1.23.6 were stamped before the push, so their tags are in it, `v1.23.6` is the newest
-release, and its run is the one that is Latest and publishes the site; the runs of `v1.23.0` to `v1.23.5` are not
-Latest and start no `Web app` run. If a 1.23.7 is stamped first, its tag joins the same push in the same places as
-`v1.23.6`'s (the table row on its stamp, an `R1237` line and `$R1237` in both check loops, its `git tag -a` line, the
-end of the push, a step-3 row that is Latest, with `v1.23.6`'s changed to "Not Latest; no `Web app` run"). 1.24.0
-cannot be stamped first: the feature freeze holds it until 2026-10-29
-(docs/RELEASE.md, *Stabilisation (from 1.23.1)*). The stabilisation commitment holds meanwhile: once the owner has
-pushed these tags, the maintaining assistant does not push `gh-pages` directly again; until then, any direct push of a
-stamped, CI-green build (1.23.6's included, if it has to go live first, as 1.23.1's to 1.23.5's did) is recorded in
-that version's *Record* and in the exceptions table.
+**Before 1.24.1.** Push the tags while `main`'s `package.json` still says 1.24.0. 1.23.1 to 1.23.6 and 1.24.0 were
+stamped before the push, so their tags are in it, `v1.24.0` is the newest release, and its run is the one that is
+Latest and publishes the site; the runs of `v1.23.0` to `v1.23.6` are not Latest and start no `Web app` run. If a
+1.24.1 is stamped first, its tag joins the same push in the same places as `v1.24.0`'s (the table row on its stamp, an
+`R1241` line and `$R1241` in both check loops, its `git tag -a` line, the end of the push, a step-3 row that is Latest,
+with `v1.24.0`'s changed to "Not Latest; no `Web app` run"); a patch has no SBOM commit, so its tag goes on "Release
+1.24.1" itself. The next feature release, 1.25.0, cannot be stamped first: it comes no earlier than 2026-10-31, 28 days
+after 1.24.0 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*). The stabilisation commitment holds meanwhile: once the
+owner has pushed these tags, the maintaining assistant does not push `gh-pages` directly again; until then, any direct
+push of a stamped, CI-green build (1.24.0's included, if it has to go live first, as 1.23.1's to 1.23.6's did) is
+recorded in that version's *Record* and in the exceptions table.
 
 ## 3. What each tag's runs do, and what to approve
 
@@ -173,8 +183,8 @@ second approval.
 
 | Tag | Its gate (main's scripts) | Latest? Web app? | What the owner does |
 | --- | --- | --- | --- |
-| `v1.16.3`, `v1.16.4` | **Refused**: older than `main`'s version, from a `release.yml` that predates `--latest-out` (`olderReleaseProblem`, since 1.17.1). The tags alone do their job: the policy, migration order and *Backports* measure from them | Their workflow would mark them Latest and start a `Web app` run for 1.16.x | Nothing. A GitHub Release for either is optional: *Run workflow* on the tag with `policy_exception`, approve its release job, **reject its `Web app` run**, then `gh release edit v1.23.6 --latest` |
-| `v1.17.0` | **Refused on the feature interval**: 28 days from `v1.16.0` (until 2026-10-27 03:16 UTC), the recorded exception | Not Latest (`main` says 1.23.6); no `Web app` run | *Run workflow* on `v1.17.0` with `policy_exception` = the recorded reason (*Record: 1.17.0*); approve the release job |
+| `v1.16.3`, `v1.16.4` | **Refused**: older than `main`'s version, from a `release.yml` that predates `--latest-out` (`olderReleaseProblem`, since 1.17.1). The tags alone do their job: the policy, migration order and *Backports* measure from them | Their workflow would mark them Latest and start a `Web app` run for 1.16.x | Nothing. A GitHub Release for either is optional: *Run workflow* on the tag with `policy_exception`, approve its release job, **reject its `Web app` run**, then `gh release edit v1.24.0 --latest` |
+| `v1.17.0` | **Refused on the feature interval**: 28 days from `v1.16.0` (until 2026-10-27 03:16 UTC), the recorded exception | Not Latest (`main` says 1.24.0); no `Web app` run | *Run workflow* on `v1.17.0` with `policy_exception` = the recorded reason (*Record: 1.17.0*); approve the release job |
 | `v1.17.1` | **Refused on the patch size** (more than 1,500 counted lines), the recorded exception | Not Latest; no `Web app` run | *Run workflow* on `v1.17.1` with `policy_exception` (*Record: 1.17.1*); approve |
 | `v1.18.0` | **Refused on the feature interval**: the previous feature tag `v1.17.0` is minutes old (an annotated tag's own date counts) | Not Latest; no `Web app` run | *Run workflow* on `v1.18.0` with `policy_exception` (*Record: 1.18.0*); approve |
 | `v1.19.0` | **Refused on the feature interval** (`v1.18.0` is minutes old) | Not Latest; no `Web app` run | *Run workflow* on `v1.19.0` with `policy_exception` (*Record: 1.19.0*); approve |
@@ -187,9 +197,10 @@ second approval.
 | `v1.23.3` | **Passes**: a patch of `v1.23.2` with no migration, permission or route, within the size limit (*Record: 1.23.3*) | Not Latest; no `Web app` run | Nothing to dispatch: the tag push runs it. Approve the release job |
 | `v1.23.4` | **Passes**: a patch of `v1.23.3` with no migration, permission or route, within the size limit (*Record: 1.23.4*) | Not Latest; no `Web app` run | Nothing to dispatch: the tag push runs it. Approve the release job |
 | `v1.23.5` | **Passes**: a patch of `v1.23.4` with no migration, permission or route, within the size limit (*Record: 1.23.5*) | Not Latest; no `Web app` run | Nothing to dispatch: the tag push runs it. Approve the release job |
-| `v1.23.6` | **Passes**: a patch of `v1.23.5` with no migration, permission name or route, within the size limit. It carries an owner-approved exception the check does not see, an administrator changing their own access (*Record: 1.23.6*), so the gate writes nothing about it in the notes | **Latest**, and it starts a `Web app` run: the newest tag, and newer than the `version.json` `gh-pages` serves (1.23.5) | Nothing to dispatch: the tag push runs it. Approve the release job; **approve its `Web app` run**, which publishes 1.23.6 to GitHub Pages; then add the exception to the top of its release notes (below) |
+| `v1.23.6` | **Passes**: a patch of `v1.23.5` with no migration, permission name or route, within the size limit. It carries an owner-approved exception the check does not see, an administrator changing their own access (*Record: 1.23.6*), so the gate writes nothing about it in the notes | Not Latest; no `Web app` run | Nothing to dispatch: the tag push runs it. Approve the release job; then add the exception to the top of its release notes (below) |
+| `v1.24.0` | **Refused on the feature interval** (`v1.23.0` is minutes old): a feature release two days after 1.23.0, under the recorded security exception (*Record: 1.24.0*) | **Latest**, and it starts a `Web app` run: the newest tag, and not older than the `version.json` `gh-pages` serves (1.24.0: a republish). Its run also builds the Windows server zip (`windows-exe`, then `windows-sign`, unsigned while the certificate secrets are not set) and attaches it with its checksum | *Run workflow* on `v1.24.0` with `policy_exception` (*Record: 1.24.0*); approve the release job; **approve its `Web app` run**, which republishes the 1.24.0 build already live |
 
-**Reject every other `Web app` run** waiting in the `release` environment: any run on a tag other than `v1.23.6` is
+**Reject every other `Web app` run** waiting in the `release` environment: any run on a tag other than `v1.24.0` is
 a republish of an older build (a rollback of the public site). Since 1.17.1 `web-app.yml` refuses a tag that is not
 the newest and a version older than what `gh-pages` serves, but the 1.16.x copies have no such check.
 
@@ -204,6 +215,7 @@ owner's own words do as well; the reason is printed at the top of the GitHub Rel
 * `v1.21.0`: "Feature release inside 1.20.0's 28 days (county publication releases, field devices, authenticator allow-list, county award amounts and reminders), approved by the owner (implement all five, resolve all known issues); published to Pages before its tag."
 * `v1.22.0`: "Feature release inside 1.21.0's 28 days (day-to-day fixes for frontline workers, field scope bound to the account, county publication consent and corrected releases, allow-list grace period), approved by the owner (implement all recommendations for SUDS workers); published to Pages before its tag."
 * `v1.23.0`: "Feature release inside 1.22.0's 28 days (follow-up to-dos that follow edits, the worker-first menu and phone Home, street outreach with no signal and field-device requests, the supervisor's referral reminders), approved by the owner (implement all recommendations for SUDS workers); published to Pages before its tag."
+* `v1.24.0`: "Security exception: fixes for the owner-authorised white-box pen test of 1.23.6 (M1 consent purpose limitation under 42 CFR 2.31(a)(4), M2 a sync push undoing an office deletion, and seven Low findings), released inside 1.23.0's 28 days on the owner's instruction of 2026-10-02 to lift the freeze; published to Pages before its tag."
 
 `v1.23.6` needs no `policy_exception` (its gate passes), but its exception is stated at the top of its notes as the
 others' are, by hand, once its release job has run (`gh release view v1.23.6 --json body --jq .body > notes.md`, put
@@ -211,8 +223,8 @@ the line first, then `gh release edit v1.23.6 --notes-file notes.md`):
 
 * `v1.23.6`: "Owner-approved policy exception, not a security fix: during the feature freeze an administrator may change their own permissions, role and account (a widened permission in a patch, Stabilisation points 1 and 2). No migration, permission name or route; safeguards: the lockout guard, a confirmation before each change to one's own access, self: true in the audit, and a per-user deny on an administrator now advisory (docs/RELEASE.md, Record: 1.23.6)."
 
-Afterwards: `gh release list` shows sixteen new releases with `v1.23.6` Latest; the public URL's `version.json`
-reads 1.23.6; `gh release view v1.23.6 --json author --jq .author.login` prints `github-actions[bot]`.
+Afterwards: `gh release list` shows seventeen new releases with `v1.24.0` Latest; the public URL's `version.json`
+reads 1.24.0; `gh release view v1.24.0 --json author --jq .author.login` prints `github-actions[bot]`.
 
 ## 4. Publish each checksum in the second channel
 
@@ -225,7 +237,7 @@ printf '\nSHA-256 of suds-vX.Y.Z.zip: %s\n' <hex> >> notes.md && gh release edit
 ```
 
 and add the same line, `SHA-256 of suds-vX.Y.Z.zip: <hex>`, to the top of that version's section in `CHANGELOG.md` on
-`main` (one commit for all sixteen, through a pull request once `main` is protected). An operator then passes the value
+`main` (one commit for all seventeen, through a pull request once `main` is protected). An operator then passes the value
 to `upgrade.sh --release-sha256=<hex>` after checking the two agree; a zip replaced on the release page cannot also
 change `main`'s history. (Until immutable releases are on, step 5 of *Owner: repository settings*, a release's files
 can still be replaced; the CHANGELOG line is what exposes it.)
@@ -233,7 +245,7 @@ can still be replaced; the CHANGELOG line is what exposes it.)
 ## 5. After the tags
 
 * Remove the *Release waiting* entry in HANDOFF.md.
-* Make `maint/1.22` from `v1.22.0` for 1.22.x security backports during 1.22's 30 days (*Backports*, step B; the
+* Make `maint/1.23` from `v1.23.6` for 1.23.x security backports during 1.23's 30 days (*Backports*, step B; the
   same for an older line, which only matters if a fix for it is still wanted).
-* Regenerate the SBOM from the tag if you like (`node scripts/sbom.js --ref v1.23.0 --out docs/evidence/sbom-1.23.0.cdx.json`):
+* Regenerate the SBOM from the tag if you like (`node scripts/sbom.js --ref v1.24.0 --out docs/evidence/sbom-1.24.0.cdx.json`):
   it records the same commit and must come out byte-identical.

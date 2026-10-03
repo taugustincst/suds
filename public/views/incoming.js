@@ -1,4 +1,4 @@
-// Incoming referrals (built for 1.24.0): the intake queue of people referred TO the programme by a hospital, a jail,
+// Incoming referrals (released in 1.24.0): the intake queue of people referred TO the programme by a hospital, a jail,
 // a detox, probation or a court, another provider, themselves or their family (server/incoming-referrals.js).
 //   #/incoming            the queue, with filters by status, assignee and urgency, and a search by surname
 //   #/incoming/<id>       one referral: its details, the attempts to reach the person, and the actions

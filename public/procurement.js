@@ -1,4 +1,4 @@
-// The "Security and procurement" page (procurement.html; built for 1.24.0), for organizations evaluating SUDS. No
+// The "Security and procurement" page (procurement.html; released in 1.24.0), for organizations evaluating SUDS. No
 // session needed, and it works on both builds:
 //  - the document links point at the SUDS repository's docs on its default branch (the static build does not ship
 //    docs/, and the office server does not serve them), from the one repository_url in procurement.json;

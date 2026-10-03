@@ -57,7 +57,7 @@ function storedSignReminder(existing) {
 }
 const SIGN_REMINDER_MOVED = 'Only the supervisor who sent this reminder, or someone who countersigns notes, can give it to someone else or move it to another client';
 
-// ---- the draft a sign reminder opens (built for 1.24.0) ----
+// ---- the draft a sign reminder opens (released in 1.24.0) ----
 // tasks.note_id: the one draft a supervisor's "finish and sign" reminder is about, so the worker's to-do opens it
 // ("Open the draft", public/views/tasks.js). The reminder still covers all the author's drafts on that client and closes
 // as in 1.23.3, once the last of them is signed or deleted (rules/notes.js closeSignReminders); the link is a shortcut.
@@ -112,7 +112,7 @@ module.exports = define({
     client_id: { type: 'string' }, assigned_to: { type: 'string' }, title: { type: 'string', required: true, maxLen: 200 }, description: { type: 'string', maxLen: 2000 },
     due_at: { type: 'datetime' }, priority: { type: 'string', enum: ['low', 'normal', 'high', 'urgent'] }, status: { type: 'string', enum: ['open', 'in_progress', 'done', 'cancelled'] },
     is_milestone: { type: 'boolean' }, completed_at: { type: 'datetime' },
-    // The draft a sign reminder opens (built for 1.24.0): a field, so a supervisor's Remind sets it over REST and a
+    // The draft a sign reminder opens (released in 1.24.0): a field, so a supervisor's Remind sets it over REST and a
     // device carries it in a push; who may set it, and to what, is noteLinkRefusal's, and dropNoteLink's at both doors.
     note_id: { type: 'string', maxLen: 64 },
   },
@@ -132,7 +132,7 @@ module.exports = define({
     // someone who may send one, changes who or which record it is about (market evaluation of 1.23.3, N1).
     if (c.existing && c.existing.created_by !== c.user.id && c.changed().some(k => k === 'assigned_to' || k === 'client_id')
       && !require('./notes').maySendSignReminder(c.user) && storedSignReminder(c.existing)) return notPermitted(SIGN_REMINDER_MOVED);
-    // The draft it opens (built for 1.24.0): set only by such a supervisor, and only to the assignee's own draft there.
+    // The draft it opens (released in 1.24.0): set only by such a supervisor, and only to the assignee's own draft there.
     const link = noteLinkRefusal(row, c); if (link) return link;
     if (c.existing) return null;
     // A notice a device raised for an edit made on it is that device's copy: the office raises its own when the edit

@@ -1,5 +1,5 @@
 'use strict';
-// Built for 1.24.0: a supervisor's "finish and sign" reminder opens the draft it is about (tasks.note_id, migration 69,
+// Released in 1.24.0: a supervisor's "finish and sign" reminder opens the draft it is about (tasks.note_id, migration 69,
 // server/rules/tasks.js noteLinkRefusal / dropNoteLink). The link names the to-do's assignee's own live draft on the
 // to-do's client; only a holder of notes:cosign sets or changes it, on a sign reminder, over REST and sync push alike; a
 // link to a note that is not a live draft is dropped, not refused. Closing is 1.23.3's: the reminder closes when the

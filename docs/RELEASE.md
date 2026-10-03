@@ -45,14 +45,20 @@ a stabilisation release, 1.23.1, and these commitments, which hold until this se
 1. **Feature freeze.** The next feature release, 1.24.0, comes **no earlier than 2026-10-29**, 28 days after 1.23.0
    (released 2026-10-01), and only through the release gate: a `v1.24.0` tag the owner pushes, `release.yml`'s gate,
    verify and approved release job. Until then only patch releases (1.23.x): defect and security fixes, no schema
-   migration, no new or widened permission, no new route, at most 1,500 counted lines.
+   migration, no new or widened permission, no new route, at most 1,500 counted lines. **The owner lifted the freeze
+   for 1.24.0** ("Lift the freeze and release", 2026-10-02) to release the fixes of an owner-authorised white-box
+   penetration test of 1.23.6, under point 2's one exception, a security fix: 1.24.0 is stamped 2026-10-03, two days
+   after 1.23.0, with its `Security exception:` line (*Record: 1.24.0*). The next feature release, 1.25.0, comes no
+   earlier than 2026-10-31, 28 days after 1.24.0, and only through the release gate.
 2. **No further policy exceptions, except a security fix.** A release that breaks the cadence or the patch rules is
    made only to ship a security fix that cannot wait, and its CHANGELOG section or its *Record* says so on a line of
    its own, `Security exception: <reason>`, which the CI check below reads. An owner's wish for a feature sooner is
    not an exception any more: it waits for the next feature release.
-3. **1.23.x is the supported line.** It gets every defect and security fix as a patch until 1.24.0 is released; after
-   that, security fixes only, for **30 days after 1.24.0's release date** (so at least until 2026-11-28), from
-   `maint/1.23` (*Supported versions* and *Backports*, below). 1.22.x and older get nothing more: upgrade to 1.23.x.
+3. **1.23.x was the supported line until 1.24.0.** It got every defect and security fix as a patch until 1.24.0 was
+   released; from then, security fixes only, for **30 days after 1.24.0's release date** (1.24.0 is stamped
+   2026-10-03, so plan as if they run to 2026-11-02; the freeze's lifting moved this from at least 2026-11-28), from
+   `maint/1.23` (*Supported versions* and *Backports*, below). 1.24.x is the supported line now; 1.22.x and older get
+   nothing more.
 4. **Every release is tagged by the owner and published by `release.yml`.** The owner pushes the `vX.Y.Z` tag; the
    GitHub Release, its zip and checksum come from `release.yml`, and GitHub Pages is updated by the `Web app` run that
    release starts, approved in the `release` environment. **Once the owner has pushed the owed tags
@@ -196,13 +202,49 @@ requires. It did: the tags were still owed when CI passed on `57bf2df` (2026-10-
 attempt), so `57bf2df` was pushed to `main` and its static build to `gh-pages` directly ("Deploy 57bf2df (SUDS
 1.23.6)"; `release-site-check` found the 73 built files the commit's, byte for byte).
 
+**Record: 1.24.0 ships under a security exception.** 1.24.0 is a feature release stamped 2026-10-03, two days after
+1.23.0 (2026-10-01), inside its 28 days and inside the feature freeze of *Stabilisation* point 1, which held 1.24.0
+until 2026-10-29. It is released under the one exception point 2 allows, a security fix: the owner authorised a
+white-box penetration test of 1.23.6, whose findings were two Medium (M1, a consent's purpose not checked at a
+disclosure, against 42 CFR 2.31(a)(4); M2, a device's sync push bringing back a row the office had deleted) and seven
+Low (L1 password strength, L2 sign-in limits keyed on the address alone, L3 a push editing a signed note counted as
+applied, L4 paging answering 500, L5 the audit head not sealed until the first housekeeping, L6 a sync session
+reaching account management, L7 `client_id` filters ignored), and, told that the freeze held 1.24.0 until
+2026-10-29, instructed on 2026-10-02 "Lift the freeze and release". The exception, on the line
+`scripts/release-policy-ci.js` reads:
+
+Security exception: fixes for the owner-authorised white-box pen test of 1.23.6 (M1 consent purpose limitation under 42 CFR 2.31(a)(4), M2 a sync push undoing an office deletion, and seven Low findings), released inside 1.23.0's 28 days on the owner's instruction of 2026-10-02 to lift the freeze
+
+The exception is for the timing of a minor. The fixes were made and reviewed on the combined 1.24.0 tree (M1's purpose
+rule was widened after its review there, so that everyday referrals still pass), so 1.24.0 also carries the feature
+work done for it during the freeze, each stream reviewed on its branch and the combined tree reviewed again before the
+stamp: incoming referrals (migration 70; the new permissions `intake:read` and `intake:write`), possible duplicate
+time (migration 68), a sign reminder that opens its draft (migration 69), scheduled backups on SUDS on this device, the
+Security & procurement page and the hardening checklist, the clinical guards and the draft fix from the persona test of
+1.23.6 (with a departed author's drafts handed on, `note.reassign`), `npm run try` and Windows compatibility, and
+`suds.exe`, the office server for Windows with its Windows service and management commands, by the owner's decision of
+2026-10-03, which reverses 1.9.3's rule against launchers for a Windows server executable only (docs/PLATFORM.md); its
+CI job, `windows-exe`, is not in the release gate's required jobs. 22 routes are added (the CHANGELOG section lists
+them). With the line recorded, CI's `release-policy` job passes on the stamp (a minor two days after 1.23.0, allowed by
+the security exception); without it the job fails. Like 1.23.0, 1.24.0 is released as two commits, the stamp and its
+SBOM (*Stamp checklist*); the second is the one CI passes, that goes to `main`, and that the owner tags: `v1.24.0`
+goes in the same push as the sixteen tags owed before it (step 2 of
+[evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), it is the newest tag, and its `release.yml` run is the
+Latest release, attaches the Windows server zip (unsigned until the owner adds the code-signing secrets,
+`WINDOWS_CERT_PFX_BASE64` and `WINDOWS_CERT_PASSWORD`) and starts the `Web app` run. Its gate is refused on the
+feature interval (`v1.23.0` is minutes old), so the owner runs the workflow again on `v1.24.0` with `policy_exception`
+set to this exception, which the release job prints at the top of its notes. If 1.24.0 has to go live before the owner
+has pushed the tags, the direct `gh-pages` push is said here and in the exceptions table, as point 4 requires. The
+independent penetration test (docs/security/PEN-TEST-SCOPE.md) is still owed: this white-box test, authorised by
+the owner, was not an independent one and does not replace it.
+
 ### Supported versions
 
 | Line | Gets | For how long |
 | --- | --- | --- |
-| **The latest minor** (today 1.23.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
-| **The previous minor** (today 1.22.x, until 30 days after 1.23.0's release date: the date of its tag. `v1.23.0` is not pushed yet (*Record: 1.23.0*; [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), so its 30 days have not started; 1.23.0 goes to GitHub Pages with its stamp on 2026-10-01, and a programme should plan as if they run from then, to 2026-10-31) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.22` is made from `v1.22.0`'s line once the tags exist) | **30 days** after the next minor's release date, then none |
-| Anything older (today 1.21.x and before: once 1.23.0 was released, 1.21.x stopped being the previous minor, whatever was left of its 30 days after 1.22.0; 1.20.x stopped when 1.22.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
+| **The latest minor** (today 1.24.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
+| **The previous minor** (today 1.23.x, until 30 days after 1.24.0's release date: the date of its tag. `v1.24.0` is not pushed yet (*Record: 1.24.0*; [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), so its 30 days have not started; 1.24.0 goes to GitHub Pages with its stamp on 2026-10-03, and a programme should plan as if they run from then, to 2026-11-02) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.23` is made from `v1.23.6`'s line once the tags exist) | **30 days** after the next minor's release date, then none |
+| Anything older (today 1.22.x and before: once 1.24.0 was released, 1.22.x stopped being the previous minor, whatever was left of its 30 days after 1.23.0; 1.21.x stopped when 1.23.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's
 CHANGELOG section, naming the affected versions (as 1.15.4 did); programmes with a support agreement are told
@@ -349,6 +391,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.23.4 | none of the policy (a patch within the patch rules: no migration, permission or route, 111 lines); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner asked for the 1.23.3 evaluation's defects to be resolved and the release published with a full marketability evaluation; the tags owed since 1.16.3 were not yet pushed, so the gate could not publish it (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.4*, above) |
 | 1.23.5 | none of the policy (a patch within the patch rules: no migration, permission or route, 91 lines); released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages` | the owner asked for every identified bug to be fixed and the release pushed; the tags owed since 1.16.3 were not yet pushed, so the gate could not publish it (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.5*, above) |
 | 1.23.6 | a widened permission in a patch during the feature freeze, and an exception that is not a security fix (*Stabilisation*, points 1 and 2): an administrator may change their own permissions, role and account. The release-policy check passes (no migration, permission name or route; 224 lines), so the exception is recorded by hand | the owner asked that an administrator be able to change all permissions, their own included, and chose to ship it in 1.23.6 rather than wait for 1.24.0; safeguards: the lockout guard, a confirmation before each change to one's own access, `self: true` in the audit, and a deny on an administrator now advisory. Released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages`, because the tags owed since 1.16.3 were not yet pushed (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.6*, above) |
+| 1.24.0 | monthly limit and the feature freeze (*Stabilisation*, point 1: a feature release two days after 1.23.0, migrations 68, 69 and 70, the permissions `intake:read` and `intake:write`, 22 routes), under the security exception point 2 allows; the gate refuses it on the feature interval, so its tag needs *Run workflow* with `policy_exception` | the fixes of the owner-authorised white-box pen test of 1.23.6 (M1, M2 and seven Low findings), released at once on the owner's instruction to lift the freeze, with the feature work done for 1.24.0 and `suds.exe` (owner decision of 2026-10-03); `Security exception:` recorded, so CI's `release-policy` job passes | owner (a request, no workflow record; *Record: 1.24.0*, above) |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as
@@ -459,18 +502,17 @@ change: 1.16.0 is the previous feature release) and for any 1.16.x patch (whose 
 `v1.16.2`: 1.16.3 and 1.16.4 alone count 1,137 of the 1,500 lines), `scripts/migration-order.js`'s baseline, and
 *Backports* step B, whose `git rev-parse 'v1.16.4^{commit}'` fails without the tag.
 
-**Now sixteen tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.23.6). 1.17.1,
-1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2, 1.23.3, 1.23.4 and 1.23.5 were published the same
-way, and 1.23.6 was stamped before the owner pushed them, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`,
+**Now seventeen tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.24.0). 1.17.1,
+1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5 and 1.23.6 were published the
+same way, and 1.24.0 was stamped before the owner pushed them, so the tags owed are `v1.16.3`, `v1.16.4`, `v1.17.0`,
 `v1.17.1`, `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0`, `v1.23.0`, `v1.23.1`, `v1.23.2`, `v1.23.3`,
-`v1.23.4`, `v1.23.5` and `v1.23.6`, pushed together while `main` says 1.23.6. The hand-off has the checks, the tag
-commands, the one push, what each tag's runs do (the 1.16.x gates refuse, the eight from `v1.17.0` to `v1.23.0` need
-a *Run workflow* with `policy_exception`, the gates of `v1.23.1` to `v1.23.6` pass, and only `v1.23.6`'s `Web app` run
-is approved: it publishes 1.23.6; 1.23.6's gate passes although it carries the owner-approved exception of *Record:
-1.23.6*, which the owner adds to its release notes by hand), and the SHA-256 each release zip will have, rebuilt from
-each commit (1.23.6's is recorded by a later commit on `main`). The paragraphs below are the reasoning of 1.17.0's
-time, for three
-tags; the rule they set, never an older tag alone, is unchanged.
+`v1.23.4`, `v1.23.5`, `v1.23.6` and `v1.24.0`, pushed together while `main` says 1.24.0. The hand-off has the checks,
+the tag commands, the one push, what each tag's runs do (the 1.16.x gates refuse, the eight from `v1.17.0` to
+`v1.23.0` and `v1.24.0` need a *Run workflow* with `policy_exception`, the gates of `v1.23.1` to `v1.23.6` pass, and
+only `v1.24.0`'s `Web app` run is approved: it publishes 1.24.0; 1.23.6's gate passes although it carries the
+owner-approved exception of *Record: 1.23.6*, which the owner adds to its release notes by hand), and the SHA-256 each
+release zip will have, rebuilt from each commit (1.24.0's is recorded by a later commit on `main`). The paragraphs
+below are the reasoning of 1.17.0's time, for three tags; the rule they set, never an older tag alone, is unchanged.
 
 **Tag 1.16.3, 1.16.4 and 1.17.0 in one push, never 1.16.x alone** (engineering review of 1.17.0, H1). 1.17.0 is on
 `gh-pages` with no tag, so a `v1.16.4` pushed on its own is the newest release tag there is. Its own `release.yml`

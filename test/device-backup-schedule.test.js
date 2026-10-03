@@ -1,5 +1,5 @@
 'use strict';
-// Scheduled backups on SUDS on this device (built for 1.24.0, not yet released; docs/WEB_APP.md, "Scheduled
+// Scheduled backups on SUDS on this device (released in 1.24.0; docs/WEB_APP.md, "Scheduled
 // backups"). The schedule and file-name helpers in local/backup.js, a file made with the kept key opening with the
 // passphrase like any backup, and the kernel's routes (test/fixtures/kernel-harness.js): the passphrase's key kept
 // sealed in the vault and never in the database, a backup or the audit log; a file the page could not write not

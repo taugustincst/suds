@@ -68,7 +68,7 @@ const SOURCES = [['referral_id', 'referral', 'referrals:read', '/api/referrals/'
 // isSignReminder) had no note id until 1.24.0 (below), but it is about the author's drafts on its client's
 // record: it opens the client's Notes tab showing the reader's own drafts. It used to open only as Edit to-do, with no way
 // to the notes it asks for (market evaluation of 1.23.2, D2).
-// Built for 1.24.0: a reminder a supervisor sent about one draft carries its id (tasks.note_id, set only to the assignee's
+// Released in 1.24.0: a reminder a supervisor sent about one draft carries its id (tasks.note_id, set only to the assignee's
 // own draft on that client, server/rules/tasks.js) and offers "Open the draft", which opens that note as the Notes list
 // does (notes.js openNote: Edit draft, Sign & lock; the office's access checks as ever). "Open <client>'s notes" stays:
 // beside it on the to-do itself, and alone for a reminder with no link (made before, or its draft since signed or

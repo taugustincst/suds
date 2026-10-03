@@ -1,11 +1,11 @@
 # SUDS go-to-market strategy
 
 **Status: the owner's strategy, written down and assessed, 29 September 2026; its *Built vs planned* table is current to
-1.23.6.** It replaces nothing in the rest of this pack until a row below says it is done. Everything described as
+1.24.0.** It replaces nothing in the rest of this pack until a row below says it is done. Everything described as
 *planned* is not in a released version of SUDS. It was first written at 1.17.0, whose features are **released in
-1.17.0**. Under *Stabilisation* ([docs/RELEASE.md](../RELEASE.md)) the next feature release, 1.24.0, comes no earlier
-than 2026-10-29 and only through the release gate; `test/release-wording.test.js` keeps these lines honest at each
-stamp.
+1.17.0**. Under *Stabilisation* ([docs/RELEASE.md](../RELEASE.md)) 1.24.0 came early, under its one security exception (the
+fixes of an owner-authorised white-box penetration test of 1.23.6), and the next feature release comes no earlier than
+2026-10-31 and only through the release gate; `test/release-wording.test.js` keeps these lines honest at each stamp.
 
 The strategy has three parts:
 
@@ -311,7 +311,7 @@ vehicle for a consulting practice.
 
 | Step | What | Gate to the next step |
 | --- | --- | --- |
-| **0. Now (freeze to 2026-10-29)** | The organisational items in [README.md](README.md): entity, insurance, counsel review (now including the AI provider BAA/QSOA), repository settings in force, pen test commissioned, official templates requested, one county conversation | Counsel has the templates; repository controls in force |
+| **0. Now (no feature release before 2026-10-31)** | The organisational items in [README.md](README.md): entity, insurance, counsel review (now including the AI provider BAA/QSOA), repository settings in force, pen test commissioned, official templates requested, one county conversation | Counsel has the templates; repository controls in force |
 | **1. 1.17.0** | released in 1.17.0: the AI copilot as specified above, with the least-privilege default, the client revision history and publication for most of the refused band; the street-outreach screen, settlement outcomes, the Part 2 layer profile, CalOMS automation and one-time referral links (off by default) | Released and tagged; the copilot's outbound payload reviewed |
 | **2. First pilots with the FDE service** | Two or three CBOs under one county sponsor, delivered as paid implementation ([PILOT-KIT.md](PILOT-KIT.md), *County pilot with the FDE service*) | One accepted funder submission; measured time to a signed note; measured support and implementation hours |
 | **3. County settlement view** | The funder-facing view for the sponsoring county, from the CBOs' exact submissions | County template in hand; counsel's view on the data flow |
@@ -327,7 +327,7 @@ until counsel and one pilot have looked at it.
 
 ## Built vs planned, exactly
 
-| Capability | State on 2 October 2026 (1.23.6) |
+| Capability | State on 3 October 2026 (1.24.0) |
 | --- | --- |
 | Outreach, anonymous contacts, supplies, funder reporting, settlement report and DHCS/county layouts | **Built** (layouts not checked against current official templates) |
 | Local mode (offline copy, office sync) | **Built**, off by default; the wizard recommends it for harm reduction |
@@ -355,6 +355,7 @@ until counsel and one pilot have looked at it.
 | *Finish and sign* reminders that their recipient cannot move to a colleague or another client, Home that keeps the keyboard focus through a re-layout, **View in Done** that shows the to-do just done first, clearer reminder and delete wording, and no tick box on a colleague's to-do you may not mark done | **Released in 1.23.4** ([CHANGELOG](../../CHANGELOG.md)); a patch: no migration, no permission, no route |
 | **Delete call** (and **Delete text**) on a phone, a *Finish and sign* reminder whose **Assigned to** and **Client** are shown fixed to its recipient, To-dos toggles whose state is not shown by colour alone, an audit entry of its own for a reminder closed by signing, a caseload transfer that reports the reminders it cancelled, no **Remind author** for an inactive author, and a question before a sign reminder is ticked done with drafts left | **Released in 1.23.5** ([CHANGELOG](../../CHANGELOG.md)); a patch: no migration, no permission, no route |
 | An administrator may change their own permissions, role and account, confirmed first and audited with `self: true`, with a lockout guard that keeps an active administrator who can manage users | **Released in 1.23.6** ([CHANGELOG](../../CHANGELOG.md)); a patch with no migration, permission name or route, shipped under an owner-approved policy exception that is not a security fix: it widens what an administrator may do during the feature freeze ([docs/RELEASE.md](../RELEASE.md), *Record: 1.23.6*) |
+| The fixes of an owner-authorised white-box penetration test of 1.23.6 (a consent's purpose checked at every disclosure, an office deletion that stands against a sync push, stronger passwords, sign-in limits per person, and five more), an intake queue for referrals to the programme, possible duplicate time, a sign reminder that opens its draft, scheduled backups on SUDS on this device, the Security & procurement page and the hardening checklist, and the office server for Windows (`suds.exe`) | **Released in 1.24.0** ([CHANGELOG](../../CHANGELOG.md)); a feature release inside 1.23.0's 28 days under the recorded security exception ([docs/RELEASE.md](../RELEASE.md), *Record: 1.24.0*): migrations 68 to 70, the `intake:read` and `intake:write` permissions. The white-box test was not independent: the independent penetration test is still owed |
 | One-time secure referral links to organisations not on SUDS, with an invitation | **Released in 1.17.0**; off by default; counsel reviews the design before a programme switches it on |
 | A cross-organisation referral network (organisations that join and accept referrals in SUDS) | **Planned**, not scheduled |
 | Inbound FHIR referrals | **Design placeholder** ([docs/integration/FHIR.md](../integration/FHIR.md)) |

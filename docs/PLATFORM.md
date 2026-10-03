@@ -14,7 +14,7 @@ Both are the same web application, and both are production:
 | For | A programme whose staff share records | A person (or a few people sharing one device) with no office server |
 | System of record | The office server's database | That browser on that device (`WEB_APP.md`, *Where your records live*) |
 | Accounts | **Sign up** requests an account; an administrator approves it with a role (or creates it) | **Sign up** creates an account on the device; the first one manages it |
-| Protection against loss | Scheduled server backups | Device backups the person downloads, with a reminder on Home; built for 1.24.0, not yet released: scheduled backups, written to a chosen folder by themselves where the browser allows it, otherwise one download button on Home (`WEB_APP.md`, *Scheduled backups*) |
+| Protection against loss | Scheduled server backups | Device backups the person downloads, with a reminder on Home; since 1.24.0, scheduled backups, written to a chosen folder by themselves where the browser allows it, otherwise one download button on Home (`WEB_APP.md`, *Scheduled backups*) |
 | Sync between devices | Every device sees the same server | None; records never leave the device |
 
 Either way, SUDS does not bill: no 837 or Drug Medi-Cal claims. Billed services are handed to the county EHR
@@ -76,7 +76,7 @@ changes point 3 below for the office server only:
    `data/server.json`; `LOCAL_MODE_ENABLED` overrides it either way.
 5. **The GitHub Pages build is SUDS on this device** (`docs/WEB_APP.md`), the production web app for people
    without an office server. Its records live only in the browser that holds them, encrypted, and are
-   protected by the device backups its users download (built for 1.24.0, not yet released: or that SUDS writes on a
+   protected by the device backups its users download (or, since 1.24.0, that SUDS writes on a
    schedule, to a folder chosen once where the browser has the File System Access API, otherwise as one download
    button on Home; `WEB_APP.md`, *Scheduled backups*); the first-run Sign up states this once and asks the
    person to confirm it. It never syncs with an office server: its **This device** page says so and sends

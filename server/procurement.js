@@ -1,5 +1,5 @@
 'use strict';
-// "Security & procurement" (public/procurement.html, built for 1.24.0): the page an organization evaluating SUDS
+// "Security & procurement" (public/procurement.html, released in 1.24.0): the page an organization evaluating SUDS
 // reaches from the sign-in page with no account. The facts only the maintainer can state (who to contact, the legal
 // entity that signs a BAA/QSOA, the pricing stance, the support SLA) are never invented by SUDS: on an office server
 // an administrator enters them under Settings → Program → Security & procurement page (these settings keys); on SUDS

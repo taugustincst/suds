@@ -15,7 +15,7 @@
 //      20. "Your first day" in the welcome card, per role (none for an administrator: "Finish setting up");
 //      21. the inline help on the Part 2 consent form and the supply adjustments, and the funder report's own;
 //      22. 200% browser zoom (640×400 CSS px at device scale 2): no sideways scroll and no tab past the edge.
-//   1.24.0 (built, not yet released): time that may already be logged (overlapping, same worker and day) is asked about
+//   1.24.0 (released): time that may already be logged (overlapping, same worker and day) is asked about
 //          in the time form (Merge / Save anyway / Cancel); approved time is not merged into; a device's pushed
 //          duplicate lands, marked on the time list and the approval queue, where it is merged.
 // Pages it changes are checked with axe (WCAG 2.1 A/AA).

@@ -7434,7 +7434,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   -- moves it and clearing the date cancels it, while it is still as SUDS made it
   call_id TEXT REFERENCES calls(id) ON DELETE SET NULL,
   intervention_id TEXT REFERENCES interventions(id) ON DELETE SET NULL,
-  -- the draft a supervisor's "finish and sign" reminder opens (built for 1.24.0, server/rules/tasks.js noteLink): the
+  -- the draft a supervisor's "finish and sign" reminder opens (released in 1.24.0, server/rules/tasks.js noteLink): the
   -- assignee's own draft on this to-do's client. No REFERENCES: notes are never deleted (a deleted draft keeps its row
   -- with deleted_at), and a device that does not hold the note must still store the reminder; a link to a note that is
   -- not a live draft is dropped by the office, and the reminder falls back to the client's drafts list.
@@ -14204,7 +14204,7 @@ var require_tasks = __commonJS({
         status: { type: "string", enum: ["open", "in_progress", "done", "cancelled"] },
         is_milestone: { type: "boolean" },
         completed_at: { type: "datetime" },
-        // The draft a sign reminder opens (built for 1.24.0): a field, so a supervisor's Remind sets it over REST and a
+        // The draft a sign reminder opens (released in 1.24.0): a field, so a supervisor's Remind sets it over REST and a
         // device carries it in a push; who may set it, and to what, is noteLinkRefusal's, and dropNoteLink's at both doors.
         note_id: { type: "string", maxLen: 64 }
       },
@@ -25163,7 +25163,7 @@ var require_admin = __commonJS({
       // The programme profile and its module switches (server/programme.js): presentation, not permissions.
       ...require_programme().SETTING_KEYS,
       // The public "Security & procurement" page's contact, legal entity, pricing stance and SLA (server/procurement.js;
-      // built for 1.24.0). Blank until an administrator publishes them; GET /api/procurement serves them without a session.
+      // released in 1.24.0). Blank until an administrator publishes them; GET /api/procurement serves them without a session.
       ...require_procurement().SETTING_KEYS
     ];
     var ROLES = ["admin", "supervisor", "clinician", "navigator", "finance", "readonly"];
@@ -44140,7 +44140,7 @@ var require_tasks2 = __commonJS({
         },
         // A task title ("Call about detox bed") says what a named person is being treated for, and its details
         // say more: both are encrypted. The API keeps the plain field names `title` and `description`.
-        // A sign reminder's link to its draft (built for 1.24.0) is dropped when it names no live draft of the assignee's on
+        // A sign reminder's link to its draft (released in 1.24.0) is dropped when it names no live draft of the assignee's on
         // the to-do's client (server/rules/tasks.js dropNoteLink), as sync push drops it; who may set one is the rules'.
         beforeInsert: (ctx, v) => {
           if (!v.assigned_to) v.assigned_to = ctx.user.id;
@@ -54327,7 +54327,7 @@ var require_db = __commonJS({
         d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_call ON tasks(call_id)");
         d.exec("CREATE INDEX IF NOT EXISTS idx_tasks_intervention ON tasks(intervention_id)");
       },
-      // 68: duplicate time entries (built for 1.24.0; server/rules/time_entries.js duplicatesOf, docs/USER_GUIDE.md
+      // 68: duplicate time entries (released in 1.24.0; server/rules/time_entries.js duplicatesOf, docs/USER_GUIDE.md
       //     "Possible duplicate time"). time_entries.start_time (optional HH:MM, NULL for every existing entry: none
       //     had one) and time_entries.duplicate_of (the entry a device's pushed entry may duplicate, for review; NULL
       //     for every existing entry: nothing was flagged before). Self-contained and idempotent, so it can be
@@ -54336,14 +54336,14 @@ var require_db = __commonJS({
         addColumn(d, "time_entries", "start_time", "TEXT");
         addColumn(d, "time_entries", "duplicate_of", "TEXT");
       },
-      // 69: a supervisor's "finish and sign" reminder opens the draft it is about (built for 1.24.0; server/rules/tasks.js
+      // 69: a supervisor's "finish and sign" reminder opens the draft it is about (released in 1.24.0; server/rules/tasks.js
       //     noteLink, docs/USER_GUIDE.md "Reminders to sign notes"). tasks.note_id, NULL for every existing to-do (a
       //     reminder made before keeps opening the client's drafts list). No index: it is read only with the to-do.
       //     Depends on nothing but tasks; self-contained and idempotent, so it can be renumbered.
       (d) => {
         addColumn(d, "tasks", "note_id", "TEXT");
       },
-      // 70: incoming referrals (built for 1.24.0; server/incoming-referrals.js, docs/USER_GUIDE.md "Incoming referrals"):
+      // 70: incoming referrals (released in 1.24.0; server/incoming-referrals.js, docs/USER_GUIDE.md "Incoming referrals"):
       //     incoming_referrals (a referral to the programme from a hospital, a jail, a detox, probation, another provider,
       //     the person or their family, worked in the intake queue) and incoming_referral_attempts (each attempt to reach the
       //     person), with every index schema.sql declares on them. New tables: nothing to backfill. Office server only
