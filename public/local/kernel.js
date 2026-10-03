@@ -52995,7 +52995,8 @@ var require_disclosure = __commonJS({
       "service linkage",
       "linked to care"
     ];
-    var COORDINATION = ["referral", "referrals", "refer", "referred", "coordinate", "coordinates", "coordinating", "coordination", "care coordination", "coordination of care", "case management", "case manager", "linkage", "service linkage"];
+    var BROAD_COORDINATION = ["coordinate", "coordinates", "coordinating", "coordination", "care coordination", "coordination of care", "case management", "case manager", "linkage", "service linkage"];
+    var COORDINATION = ["referral", "referrals", "refer", "referred", ...BROAD_COORDINATION];
     var PATIENT_REQUEST = [/\bat (my|his|her|their) (own )?request\b/, /\bat the request of the (patient|client|individual)\b/, /\b(patient|client|individual)( s)? (own )?request\b/];
     function patientRequested(text) {
       const t = normalise(text);
@@ -53018,6 +53019,7 @@ var require_disclosure = __commonJS({
       }
       if (!out2.outside.size && (has(p, CLEAR_TREATMENT) || broad && (has(p, BROAD_TREATMENT) || /\bcoordinat/.test(raw)))) out2.codes.add("TREAT");
       out2.coordination = has(p, COORDINATION) || /\bcoordinat/.test(raw);
+      out2.broadCoordination = !out2.outside.size && (has(p, BROAD_COORDINATION) || /\bcoordinat/.test(raw));
       return out2;
     }
     function purposeCodes(text) {
@@ -53037,7 +53039,7 @@ var require_disclosure = __commonJS({
       if (patientRequested(consentPurpose)) return true;
       const d = classifyPurpose(purpose);
       const c = classifyPurpose(consentPurpose);
-      if (c.coordination && !c.outside.size && d.coordination && !d.codes.has("HPAYMT") && !d.codes.has("HOPERAT") && [...d.outside].every((k) => NON_TPO[k].service)) return true;
+      if (c.broadCoordination && d.coordination && !d.codes.has("HPAYMT") && !d.codes.has("HOPERAT") && [...d.outside].every((k) => NON_TPO[k].service)) return true;
       if (![...d.outside].every((k) => c.outside.has(k))) return false;
       if (type === "part2_tpo" || c.tpo) return true;
       if (d.codes.size) return [...d.codes].every((code) => c.codes.has(code));

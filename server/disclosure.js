@@ -230,7 +230,8 @@ function isInternalRecipient(recipient) {
 //     treatment includes "the referral of a patient for health care from one health care provider to another" and
 //     "the coordination or management of health care and related services", 45 CFR §164.501);
 //   * whether it is a coordination purpose (COORDINATION: a referral, case management, care coordination, service
-//     linkage, coordinating services).
+//     linkage, coordinating services) and, for a consent, a broad one (BROAD_COORDINATION: the coordination words
+//     but a bare referral -- a consent "for referral to treatment" says what the referral is for).
 // A consent covers a disclosure's purpose when (consentCoversPurpose):
 //   1. its purpose is "at the request of the patient" — the statement §2.31(a)(4) allows when the patient asks for
 //      the disclosure and states no other — and the disclosure is a person's (the FHIR API never reads it so); or
@@ -295,15 +296,18 @@ const CLEAR_TREATMENT = ['medication', 'medications', 'prescriber', 'prescribers
 // The everyday words of coordinating care: treatment for a person's disclosure, in a purpose naming nothing outside TPO.
 const BROAD_TREATMENT = ['coordinate', 'coordinates', 'coordinating', 'coordination', 'case management', 'case manager', 'discharge', 'follow up', 'followup', 'appointment', 'appointments',
   'counseling', 'counselling', 'counselor', 'counsellor', 'refer', 'referred', 'linkage', 'service linkage', 'linked to care'];
-// A referral or coordination purpose (rule 2).
-const COORDINATION = ['referral', 'referrals', 'refer', 'referred', 'coordinate', 'coordinates', 'coordinating', 'coordination', 'care coordination', 'coordination of care', 'case management', 'case manager', 'linkage', 'service linkage'];
+// A referral or coordination purpose (rule 2). A consent is a broad coordination consent only by the words that say
+// coordinating (BROAD_COORDINATION): one "for referral to treatment" names what it is for, and covers only that.
+const BROAD_COORDINATION = ['coordinate', 'coordinates', 'coordinating', 'coordination', 'care coordination', 'coordination of care', 'case management', 'case manager', 'linkage', 'service linkage'];
+const COORDINATION = ['referral', 'referrals', 'refer', 'referred', ...BROAD_COORDINATION];
 const PATIENT_REQUEST = [/\bat (my|his|her|their) (own )?request\b/, /\bat the request of the (patient|client|individual)\b/, /\b(patient|client|individual)( s)? (own )?request\b/];
 /** Does this purpose wording say only that the disclosure is at the patient's request (§2.31(a)(4))? */
 function patientRequested(text) { const t = normalise(text); return PATIENT_REQUEST.some(re => re.test(t)); }
 const has = (p, words) => words.some(w => p.includes(` ${normalise(w)} `));
 /**
  * How a purpose wording reads (the rule above): { outside: the NON_TPO categories it names, codes: the purposes of
- * use it names (all three for TPO wording), tpo, coordination }. `broad`: count the everyday words of coordinating
+ * use it names (all three for TPO wording), tpo, coordination (a referral or coordination purpose), broadCoordination
+ * (a coordination purpose naming nothing outside TPO, rule 2) }. `broad`: count the everyday words of coordinating
  * care as treatment (a person's disclosure; never the FHIR API).
  */
 function classifyPurpose(text, { broad = true } = {}) {
@@ -323,6 +327,7 @@ function classifyPurpose(text, { broad = true } = {}) {
   }
   if (!out.outside.size && (has(p, CLEAR_TREATMENT) || (broad && (has(p, BROAD_TREATMENT) || /\bcoordinat/.test(raw))))) out.codes.add('TREAT');
   out.coordination = has(p, COORDINATION) || /\bcoordinat/.test(raw);
+  out.broadCoordination = !out.outside.size && (has(p, BROAD_COORDINATION) || /\bcoordinat/.test(raw));
   return out;
 }
 /** The purposes of use (FHIR_PURPOSES codes) a purpose wording names for the FHIR API; TPO wording names all three. */
@@ -351,7 +356,7 @@ function consentCoversPurpose({ type, purpose: consentPurpose }, purpose) {
   if (patientRequested(consentPurpose)) return true; // 1
   const d = classifyPurpose(purpose); const c = classifyPurpose(consentPurpose);
   // 2. A broad coordination consent covers a referral or coordination for services.
-  if (c.coordination && !c.outside.size && d.coordination && !d.codes.has('HPAYMT') && !d.codes.has('HOPERAT') && [...d.outside].every(k => NON_TPO[k].service)) return true;
+  if (c.broadCoordination && d.coordination && !d.codes.has('HPAYMT') && !d.codes.has('HOPERAT') && [...d.outside].every(k => NON_TPO[k].service)) return true;
   // 3. What the disclosure names outside TPO, the consent must name too.
   if (![...d.outside].every(k => c.outside.has(k))) return false;
   if (type === 'part2_tpo' || c.tpo) return true; // 3a

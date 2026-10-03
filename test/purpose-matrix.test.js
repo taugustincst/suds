@@ -23,6 +23,9 @@ const MATRIX = [
   ['part2_disclosure', 'Service linkage', 'Referral for employment services', true],
   ['part2_disclosure', 'Case management', 'Referral for outpatient treatment', true],
   ['part2_disclosure', 'Housing assistance', 'Referral for outpatient treatment', false],
+  ['part2_disclosure', 'Referral for treatment', HOUSING_REF, false], // it says what the referral is for
+  ['part2_disclosure', 'Referral for treatment', 'Referral for outpatient treatment', true],
+  ['part2_disclosure', 'Referral and care coordination', HOUSING_REF, true],
   ['part2_disclosure', 'Employment services', HOUSING_REF, false],
   // ...but a coordination consent never stands for a court, research, marketing, payment or operations.
   ['part2_disclosure', 'Case management', 'Referral for legal services', false],

@@ -186,7 +186,8 @@ a disclosure when:
 2. it is a **broad coordination consent** ("Case management", "Care coordination", "Coordinate services", "Service
    linkage": a coordination purpose naming nothing outside TPO) and the disclosure is a referral or coordination for
    services — treatment, or housing, employment, school, benefits or family support — never payment, operations, a
-   court or legal matter, research, marketing or the media;
+   court or legal matter, research, marketing or the media. A consent "for referral to treatment" is not one: it says
+   what the referral is for, and covers treatment referrals only;
 3. otherwise everything the disclosure names outside TPO, the consent names too (a TPO consent included), and then:
    the single TPO consent, or a consent stating TPO, covers any purpose **not plainly outside TPO** ("Coordinate care
    with primary care doctor", "Discharge planning", "Medication management with prescriber", "Follow-up appointment");

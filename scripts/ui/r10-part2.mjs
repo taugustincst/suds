@@ -181,7 +181,18 @@ try {
   await nav.page.waitForSelector(`.modal [data-secure-link="${ref.data.id}"]`);
   ok(/T\. Nguyen, Harbor Clinic intake scheduled the client: Tuesday 10am/.test(await nav.page.textContent('.modal')), 'the worker sees who answered and what');
   ok(await nav.page.$('.modal [data-revoke-link]'), 'and can withdraw the link');
+  ok(!(await nav.page.$('.modal [data-link-withheld]')), 'a link its consent still covers says nothing is withheld');
   await nav.page.keyboard.press('Escape'); await settle(nav.page);
+  // The directory now lists the provider as housing: the consent, given for treatment, no longer covers what the
+  // referral is for, and the worker is told why the link would be withheld (review of the 1.24.0 tree).
+  eq((await admin.api('PUT', `/api/resources/${res.data.id}`, { category: 'housing' })).status, 200, 'the provider is recategorised as housing');
+  await nav.page.click(`[data-secure-link-open="${ref.data.id}"]`);
+  await nav.page.waitForSelector(`.modal [data-secure-link="${ref.data.id}"]`);
+  ok(await nav.page.$('.modal [data-link-withheld="purpose_not_covered"]'), 'the link list says the link is withheld for its purpose');
+  ok(/consent was not given for what this referral is for/.test(await nav.page.textContent('.modal [data-link-withheld]')), 'in plain words');
+  await axe(nav.page, 'the secure link dialog with a withheld link');
+  await nav.page.keyboard.press('Escape'); await settle(nav.page);
+  eq((await admin.api('PUT', `/api/resources/${res.data.id}`, { category: 'outpatient' })).status, 200, 'and back to outpatient');
   const acc = await nav.api('GET', `/api/clients/${cl.data.id}/disclosures/accounting`);
   ok((acc.data.disclosures || []).some(d => d.source === 'referral_link'), 'the disclosure is in the client\'s accounting');
 
