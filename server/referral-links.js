@@ -51,7 +51,7 @@ function newCode() { const n = require('node:crypto').randomInt(0, 1000000); ret
 function newReference() { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; const b = require('node:crypto').randomBytes(6); return 'R-' + [...b].map(x => A[x % A.length]).join(''); }
 const dec = (v) => { if (!v) return null; try { return decrypt(v); } catch { return null; } };
 
-function resourceOf(resourceId) { return db.one(`SELECT id, name, organization FROM resources WHERE id=?`, resourceId); }
+function resourceOf(resourceId) { return db.one(`SELECT id, name, organization, category FROM resources WHERE id=?`, resourceId); }
 function resourceNames(r) { return r ? [r.name, r.organization].filter(Boolean) : []; }
 
 /** The invitation shown on every link: where an organisation learns about receiving referrals through SUDS. */
@@ -69,8 +69,21 @@ function present(l) {
     revoked_at: l.revoked_at, created_at: l.created_at, created_by_name: l.created_by_name || null, accounted: !!l.disclosure_id };
 }
 
+/**
+ * The links made for a referral. A packet link the provider could still open says, as `withheld`, why it would show
+ * them the contact notice instead of the referral (stillCovered's reason: purpose_not_covered, recipient_not_covered,
+ * consent_not_valid, restriction, creator_inactive, creator_no_access, client_removed, referral_closed), so the worker
+ * sees it on the referral before the provider calls.
+ */
 function listFor(referralId) {
-  return db.all(`SELECT l.*, u.display_name AS created_by_name FROM referral_links l JOIN users u ON u.id=l.created_by WHERE l.referral_id=? ORDER BY l.created_at DESC`, referralId).map(present);
+  return db.all(`SELECT l.*, u.display_name AS created_by_name FROM referral_links l JOIN users u ON u.id=l.created_by WHERE l.referral_id=? ORDER BY l.created_at DESC`, referralId).map(l => {
+    const out = present(l);
+    if (l.kind === 'packet' && ['sent', 'opened', 'acknowledged'].includes(out.status)) {
+      const cover = stillCovered(l, db.one(`SELECT * FROM users WHERE id=?`, l.created_by));
+      if (!cover.ok) out.withheld = cover.reason;
+    }
+    return out;
+  });
 }
 
 /**
@@ -92,7 +105,7 @@ function create({ referral, user, ip, v }) {
   if (kind === 'packet') {
     // The client's consent must name this provider (or its organisation), carry the §2.31 elements and be live.
     // Only consent: a medical emergency or a court order is not something to send as a link to be opened later.
-    const basis = disclosure.requireBasis(referral.client_id, { basis: 'consent', consent_id: v.consent_id || referral.consent_id, recipient: resourceNames(res), purpose: disclosure.REFERRAL_PURPOSE, allowed: ['consent'],
+    const basis = disclosure.requireBasis(referral.client_id, { basis: 'consent', consent_id: v.consent_id || referral.consent_id, recipient: resourceNames(res), purpose: disclosure.referralPurpose(res), allowed: ['consent'],
       restriction_reviewed: v.restriction_reviewed, user });
     consentId = basis.consent.id;
     const c = db.one(`SELECT first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc, participant_code_enc FROM clients WHERE id=?`, referral.client_id);
@@ -227,10 +240,17 @@ function stillCovered(link, creator) {
   if (!res) return { ok: false, reason: 'recipient_not_covered' };
   const restrictedSince = db.one(`SELECT 1 FROM patient_requests WHERE client_id=? AND kind='restriction' AND status='fulfilled' AND updated_at > ?`, link.client_id, link.created_at);
   if (restrictedSince) return { ok: false, reason: 'restriction' };
+  // The purpose is what the provider is for, as the directory says now (a referral is re-pointed by a new link, never
+  // this one). A link made before the purpose check, or before a referral's purpose came from its provider, is held
+  // to it like any other: nothing is grandfathered.
+  const purpose = disclosure.referralPurpose(live || null);
   try {
-    const basis = disclosure.requireBasis(link.client_id, { basis: 'consent', consent_id: link.consent_id, recipient: res.names, purpose: disclosure.REFERRAL_PURPOSE, allowed: ['consent'], restriction_reviewed: true, user: creator });
-    return { ok: true, basis, res };
-  } catch (e) { return { ok: false, reason: e && e.extra && e.extra.recipientNotCovered ? 'recipient_not_covered' : 'consent_not_valid' }; }
+    const basis = disclosure.requireBasis(link.client_id, { basis: 'consent', consent_id: link.consent_id, recipient: res.names, purpose, allowed: ['consent'], restriction_reviewed: true, user: creator });
+    return { ok: true, basis, res, purpose };
+  } catch (e) {
+    const x = (e && e.extra) || {};
+    return { ok: false, reason: x.recipientNotCovered ? 'recipient_not_covered' : x.purposeNotCovered ? 'purpose_not_covered' : 'consent_not_valid' };
+  }
 }
 
 /**
@@ -281,7 +301,7 @@ function open({ token, code, claim, ip }) {
       newClaim = randomToken(32);
       // First open: the information leaves now, so it is accounted now, as the worker's disclosure.
       const parts = ['name', packet.client.preferred_name ? 'preferred name' : null, packet.client.dob ? 'date of birth' : null, packet.client.phone ? 'phone' : null, packet.reason ? 'reason for referral' : null, 'urgency'].filter(Boolean);
-      const did = disclosure.record({ clientId: link.client_id, consentId: cover.basis.consent.id, recipient: cover.res.name, purpose: disclosure.REFERRAL_PURPOSE,
+      const did = disclosure.record({ clientId: link.client_id, consentId: cover.basis.consent.id, recipient: cover.res.name, purpose: cover.purpose,
         what: `Secure referral link ${link.reference}: ${parts.join(', ')}`, method: 'secure referral link', basis: 'consent', source: 'referral_link', sourceRef: link.id, user: creator, ip });
       bump({ sql: ', claim_hash=?, disclosure_id=?', params: [hashClaim(link.id, newClaim), did] });
     } else bump();

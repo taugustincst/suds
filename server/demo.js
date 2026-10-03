@@ -225,9 +225,11 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
       }
       // Consents & disclosures
       const consentId = track('consents', uuid());
-      // The 2024 single TPO consent, naming each agency this client was referred to (§2.31(a)(4)(iii)).
+      // The 2024 single TPO consent, naming each agency this client was referred to (§2.31(a)(4)(iii)), and stating
+      // the referrals outside treatment, payment and operations the sample makes (housing, shelter, legal aid): a TPO
+      // consent alone does not cover those (server/disclosure.js NON_TPO).
       const consentRecipient = `${referredTo.join(', ')} and my other treating providers`;
-      db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref_enc,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, 'part2_tpo', encrypt(consentRecipient), encrypt('Treatment, payment and health care operations'), encrypt('Referral summary, diagnosis, MAT status'), day(115 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), encrypt('Consent binder, tab ' + (i + 1)), c.worker);
+      db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,revocation_right_given,refusal_consequences_given,signer_relationship,discloser,rule_version,document_ref_enc,created_by) VALUES(?,?,?,?,?,?,?,?,1,1,1,1,'patient','Sample County Behavioral Health','2024',?,?)`, consentId, c.id, 'part2_tpo', encrypt(consentRecipient), encrypt('Treatment, payment and health care operations, and referrals for housing, shelter and legal aid'), encrypt('Referral summary, diagnosis, MAT status'), day(115 + i), day(i === 3 ? 5 : i === 5 ? -10 : -300 + i * 20), encrypt('Consent binder, tab ' + (i + 1)), c.worker);
       // The referrals rest on it (1.23.1): each one that told the agency who the client is cites the consent and has
       // its accounting row, as one made in SUDS does (server/routes/referrals.js recordDisclosure). Without them,
       // editing an open sample referral asked for a consent. Signed before the oldest referral (110 days back).
@@ -235,7 +237,7 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
         const shared = r[5] !== 'pending' || r[12] === 1;
         db.run(`INSERT INTO referrals(id,client_id,resource_id,user_id,referred_at,status,urgency,appointment_at,admitted_at,closed_at,outcome_enc,barrier_enc,warm_handoff,follow_up_due,notes_enc,consent_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, ...r, shared ? consentId : null);
         if (shared) db.run(`INSERT INTO disclosures(id,client_id,consent_id,recipient_enc,purpose_enc,what_enc,method,disclosed_at,disclosed_by,basis,source,source_ref) VALUES(?,?,?,?,?,?,?,?,?,?,'referral',?)`, track('disclosures', uuid()), c.id, consentId,
-          encrypt(RESOURCES[rids.indexOf(r[2])][0]), encrypt('Referral for services'), encrypt('Referral information (name, contact details and presenting need)'), r[12] === 1 ? 'warm handoff' : 'referral', r[4], c.worker, 'consent', r[0]);
+          encrypt(RESOURCES[rids.indexOf(r[2])][0]), encrypt(require('./disclosure').referralPurpose({ category: RESOURCES[rids.indexOf(r[2])][1] })), encrypt('Referral information (name, contact details and presenting need)'), r[12] === 1 ? 'warm handoff' : 'referral', r[4], c.worker, 'consent', r[0]);
       }
       // The §2.22 notice was given to most sample clients; a few are left without one so the reminder shows.
       if (i % 4 !== 1) db.run(`INSERT INTO part2_notices(id,client_id,given_at,method,notice_version,acknowledged,given_by) VALUES(?,?,?,?,?,?,?)`, track('part2_notices', uuid()), c.id, day(60 + i), 'in_person_paper', '1', 1, c.worker);

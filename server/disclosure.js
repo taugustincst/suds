@@ -215,35 +215,119 @@ function isInternalRecipient(recipient) {
 // disclosure can take — a referral, a manual disclosure, an identified export, the county EHR hand-off, a secure
 // referral link and the FHIR API (consentCovers below) — so no human path is looser about purpose than the
 // automated one (pen test of 1.23.6, M1: a referral for treatment went out on a consent "for billing and payment
-// processing only"). A consent's purpose and a disclosure's purpose are both free text; they are compared by
-// what they say, normalised:
-//   * a purpose of use (treatment, payment, health care operations: FHIR_PURPOSES) is recognised by its words,
-//     and a purpose that names one or more must have every one of them covered by the consent — the single TPO
-//     consent (part2_tpo) and a consent that says "TPO" (or treatment, payment and operations) cover all three;
-//     any other consent covers those its own purpose names (consentCoversPurposeOfUse, the FHIR rule itself).
-//     A referral is treatment (HIPAA's definition of treatment includes "the referral of a patient for health
-//     care from one health care provider to another", 45 CFR §164.501), so a consent "for referral" covers it;
-//   * a purpose that names none of them (housing, a court case, a family member) is covered only by a consent
-//     whose purpose states it: the two share a word that says what the purpose is (purposeWords);
-//   * a consent whose purpose is "at the request of the patient" — the statement §2.31(a)(4) allows when the
-//     patient asks for the disclosure and states no other purpose — covers whatever the worker discloses to the
-//     recipient it names, at the patient's request. Only a person can act on a patient's request: the FHIR API
-//     does not read it as covering an automated feed, so that path stays the stricter;
-//   * anything else is refused, with the consent's purpose in the message; a supervisor or administrator may
-//     override with a written justification, which is kept with the disclosure record and audited (requireBasis).
-// The purpose a referral discloses for, as its accounting row records it.
+// processing only"). A consent's purpose and a disclosure's purpose are both free text; each is read the same way
+// (classifyPurpose), normalised:
+//   * what it names OUTSIDE treatment, payment and health care operations (NON_TPO: housing, employment, school,
+//     benefits eligibility, court / legal / probation / law enforcement, research, marketing, media, family or
+//     personal). That list wins over everything else: a disclosure for one of these needs a consent whose purpose
+//     names it too, a TPO consent included;
+//   * the purposes of use it names (treatment, payment, health care operations: FHIR_PURPOSES), by their words.
+//     Treatment is also named by plainly clinical words (CLEAR_TREATMENT: medication, prescriber, primary care, a
+//     doctor, therapy, recovery services, discharge planning) and, for a person's disclosure, by the everyday words
+//     of coordinating care (BROAD_TREATMENT: coordinate, case management, discharge, follow-up, appointment,
+//     counseling, a referral, service linkage) — both only in a purpose that names nothing outside TPO, so "follow
+//     up with probation" or "benefits counseling" is not treatment. A referral is treatment (HIPAA's definition of
+//     treatment includes "the referral of a patient for health care from one health care provider to another" and
+//     "the coordination or management of health care and related services", 45 CFR §164.501);
+//   * whether it is a coordination purpose (COORDINATION: a referral, case management, care coordination, service
+//     linkage, coordinating services).
+// A consent covers a disclosure's purpose when (consentCoversPurpose):
+//   1. its purpose is "at the request of the patient" — the statement §2.31(a)(4) allows when the patient asks for
+//      the disclosure and states no other — and the disclosure is a person's (the FHIR API never reads it so); or
+//   2. it is a broad coordination consent (a coordination purpose naming nothing outside TPO: "Case management",
+//      "Coordinate services") and the disclosure is a referral or coordination for services — treatment, or one of
+//      the services outside TPO a referral can be for (housing, employment, school, benefits, family support), never
+//      payment, operations, a court, research, marketing or the media; or
+//   3. everything the disclosure names outside TPO, the consent names too, and then:
+//      a. the consent is the single TPO consent (part2_tpo) or states TPO ("TPO", or treatment, payment and
+//         operations): it covers any purpose not plainly outside TPO, so "Coordinate care with primary care doctor",
+//         "Discharge planning" or "Follow-up appointment" go on it;
+//      b. a disclosure naming purposes of use needs each named by the consent (consentCoversPurposeOfUse for the
+//         FHIR words, the same with the everyday words for a person);
+//      c. a disclosure naming only purposes outside TPO is covered (3 already found them in the consent);
+//      d. a disclosure naming nothing the lists know ("Apply for an ID card") is covered by a consent sharing a word
+//         that says what it is (purposeWords).
+// Anything else is refused, with the consent's purpose in the message; a supervisor or administrator may override
+// with a written justification, which is kept with the disclosure record and audited (requireBasis). The FHIR API
+// uses the same reading with the FHIR words only (consentCoversPurposeOfUse): the everyday words, a coordination
+// consent and a patient's request never widen an automated feed, and the clinical words count there only in a
+// consent naming nothing outside TPO, so the feed is no looser than before except where a consent plainly says
+// treatment. The table of cases is test/purpose-matrix.test.js.
+//
+// A referral's purpose is what it is for: the receiving provider's directory category (referralPurpose), so a
+// referral to a housing provider is "Referral for housing services" and is covered by a consent for housing
+// assistance, and one to an outpatient programme is "Referral for outpatient treatment". REFERRAL_PURPOSE is the
+// purpose of a referral to a provider with no category.
 const REFERRAL_PURPOSE = 'Referral for services';
+const REFERRAL_FOR = {
+  detox_withdrawal_mgmt: 'withdrawal management (detox) treatment', residential: 'residential treatment', inpatient: 'inpatient treatment',
+  partial_hospitalization: 'partial hospitalization treatment', intensive_outpatient: 'intensive outpatient treatment', outpatient: 'outpatient treatment',
+  mat_otp: 'medication treatment (MAT, opioid treatment program)', mat_obot: 'medication treatment (MAT, office-based)', sober_living: 'sober living housing',
+  housing: 'housing services', shelter: 'shelter (housing)', mental_health: 'mental health treatment', primary_care: 'primary care', harm_reduction: 'harm reduction services',
+  syringe_services: 'syringe services (harm reduction)', naloxone: 'naloxone (overdose prevention)', crisis_line: 'crisis services', transportation: 'transportation to services',
+  employment: 'employment services', legal: 'legal services', food: 'food assistance', benefits: 'benefits enrollment', peer_support: 'peer support recovery services',
+  recovery_community: 'recovery services (recovery community)', family_support: 'family support services', pregnancy_parenting: 'pregnancy and parenting services',
+  veterans: 'veterans services', other: 'services',
+};
+/** The purpose a referral discloses for: what the receiving provider is for (its directory category, or a resource row or id). */
+function referralPurpose(resource) {
+  const r = resource && typeof resource === 'object' ? resource : resource ? db.one(`SELECT category FROM resources WHERE id=?`, resource) : null;
+  const what = r && REFERRAL_FOR[r.category];
+  return what ? `Referral for ${what}` : REFERRAL_PURPOSE;
+}
+// Purposes plainly outside treatment, payment and health care operations. `service`: a referral for services can be
+// for it (a broad coordination consent covers that referral, rule 2 above); the others always need a consent that
+// names them. Phrases that are treatment though they contain one of these words are read as treatment first.
+const NON_TPO = {
+  housing: { service: true, words: ['housing', 'shelter', 'shelters', 'sober living', 'recovery residence', 'rent', 'rental', 'landlord', 'apartment', 'homeless', 'homelessness', 'unhoused', 'eviction'] },
+  employment: { service: true, words: ['employment', 'employer', 'employers', 'job', 'jobs', 'vocational', 'workforce', 'career', 'hiring'] },
+  school: { service: true, words: ['school', 'schools', 'education', 'educational', 'college', 'university', 'teacher', 'teachers', 'student'] },
+  benefits: { service: true, words: ['benefit', 'benefits', 'benefits eligibility', 'calfresh', 'snap', 'ssi', 'ssdi', 'calworks', 'tanf', 'general relief', 'wic', 'food stamps', 'public assistance'] },
+  family: { service: true, words: ['family', 'families', 'relative', 'relatives', 'parent', 'parents', 'mother', 'father', 'spouse', 'husband', 'wife', 'sister', 'brother', 'son', 'daughter', 'child', 'children', 'friend', 'friends', 'personal'] },
+  legal: { service: false, words: ['court', 'courts', 'judge', 'legal', 'lawyer', 'attorney', 'probation', 'parole', 'law enforcement', 'police', 'sheriff', 'prosecutor', 'district attorney', 'public defender', 'criminal', 'custody', 'lawsuit', 'litigation', 'subpoena', 'jail', 'prison'] },
+  research: { service: false, words: ['research', 'study', 'studies'] },
+  marketing: { service: false, words: ['marketing', 'advertising', 'fundraising', 'promotion', 'promotional'] },
+  media: { service: false, words: ['media', 'press', 'news', 'journalist', 'reporter', 'publicity'] },
+};
+const TREATMENT_PHRASES = ['family medicine', 'family practice', 'family physician', 'family doctor', 'family therapy', 'family counseling', 'family counselling', 'family program', 'student health', 'jail health', 'medi cal'];
+// Plainly clinical words: treatment for FHIR as for a person, in a purpose naming nothing outside TPO.
+const CLEAR_TREATMENT = ['medication', 'medications', 'prescriber', 'prescribers', 'prescribing', 'primary care', 'pcp', 'doctor', 'doctors', 'physician', 'physicians', 'therapy', 'recovery services', 'discharge planning'];
+// The everyday words of coordinating care: treatment for a person's disclosure, in a purpose naming nothing outside TPO.
+const BROAD_TREATMENT = ['coordinate', 'coordinates', 'coordinating', 'coordination', 'case management', 'case manager', 'discharge', 'follow up', 'followup', 'appointment', 'appointments',
+  'counseling', 'counselling', 'counselor', 'counsellor', 'refer', 'referred', 'linkage', 'service linkage', 'linked to care'];
+// A referral or coordination purpose (rule 2).
+const COORDINATION = ['referral', 'referrals', 'refer', 'referred', 'coordinate', 'coordinates', 'coordinating', 'coordination', 'care coordination', 'coordination of care', 'case management', 'case manager', 'linkage', 'service linkage'];
 const PATIENT_REQUEST = [/\bat (my|his|her|their) (own )?request\b/, /\bat the request of the (patient|client|individual)\b/, /\b(patient|client|individual)( s)? (own )?request\b/];
 /** Does this purpose wording say only that the disclosure is at the patient's request (§2.31(a)(4))? */
 function patientRequested(text) { const t = normalise(text); return PATIENT_REQUEST.some(re => re.test(t)); }
-/** The purposes of use (FHIR_PURPOSES codes) a purpose wording names; TPO wording names all three. */
-function purposeCodes(text) {
-  if (!normalise(text)) return [];
-  if (isTpo(text)) return Object.keys(FHIR_PURPOSES);
-  const p = ` ${normalise(text)} `;
-  return Object.keys(FHIR_PURPOSES).filter(code => FHIR_PURPOSES[code].words.some(w => p.includes(` ${normalise(w)} `)));
+const has = (p, words) => words.some(w => p.includes(` ${normalise(w)} `));
+/**
+ * How a purpose wording reads (the rule above): { outside: the NON_TPO categories it names, codes: the purposes of
+ * use it names (all three for TPO wording), tpo, coordination }. `broad`: count the everyday words of coordinating
+ * care as treatment (a person's disclosure; never the FHIR API).
+ */
+function classifyPurpose(text, { broad = true } = {}) {
+  const raw = normalise(text);
+  const out = { outside: new Set(), codes: new Set(), tpo: false, coordination: false };
+  if (!raw) return out;
+  const p = ` ${raw} `;
+  let rest = p; for (const ph of TREATMENT_PHRASES) rest = rest.split(` ${normalise(ph)} `).join(' treatment ');
+  for (const [k, cat] of Object.entries(NON_TPO)) if (has(rest, cat.words)) out.outside.add(k);
+  out.tpo = isTpo(text);
+  // In a purpose naming something outside TPO, a referral or coordination word is how, not why: a referral for
+  // housing is a housing purpose, not treatment (for the FHIR API too, which this makes no looser).
+  const mechanism = new Set(COORDINATION.map(normalise));
+  for (const code of Object.keys(FHIR_PURPOSES)) {
+    const words = out.outside.size ? FHIR_PURPOSES[code].words.filter(w => !mechanism.has(normalise(w))) : FHIR_PURPOSES[code].words;
+    if (out.tpo || has(p, words)) out.codes.add(code);
+  }
+  if (!out.outside.size && (has(p, CLEAR_TREATMENT) || (broad && (has(p, BROAD_TREATMENT) || /\bcoordinat/.test(raw))))) out.codes.add('TREAT');
+  out.coordination = has(p, COORDINATION) || /\bcoordinat/.test(raw);
+  return out;
 }
-/** Does a consent of this type and purpose wording cover this purpose of use? (FHIR and the human paths alike) */
+/** The purposes of use (FHIR_PURPOSES codes) a purpose wording names for the FHIR API; TPO wording names all three. */
+function purposeCodes(text) { return [...classifyPurpose(text, { broad: false }).codes]; }
+/** Does a consent of this type and purpose wording cover this purpose of use? (the FHIR API; rule 3a/3b with the FHIR words) */
 function consentCoversPurposeOfUse({ type, purpose }, code) {
   if (!FHIR_PURPOSES[code]) return false;
   if (type === 'part2_tpo') return true; // treatment, payment and operations are what a TPO consent is for
@@ -259,15 +343,21 @@ function purposeWords(text) {
   return new Set(normalise(text).split(' ').filter(w => w.length > 2 && !PURPOSE_FILLER.has(w)).map(w => (w.length > 4 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w)));
 }
 /**
- * Does a consent (its type and plain purpose wording) cover a disclosure made for `purpose` (plain text)?
+ * Does a consent (its type and plain purpose wording) cover a disclosure a person makes for `purpose` (plain text)?
  * The rule is described above ("purposes").
  */
 function consentCoversPurpose({ type, purpose: consentPurpose }, purpose) {
   if (!normalise(purpose)) return false;
-  if (patientRequested(consentPurpose)) return true;
-  const wanted = purposeCodes(purpose);
-  if (wanted.length) return wanted.every(code => consentCoversPurposeOfUse({ type, purpose: consentPurpose }, code));
-  const theirs = purposeWords(consentPurpose);
+  if (patientRequested(consentPurpose)) return true; // 1
+  const d = classifyPurpose(purpose); const c = classifyPurpose(consentPurpose);
+  // 2. A broad coordination consent covers a referral or coordination for services.
+  if (c.coordination && !c.outside.size && d.coordination && !d.codes.has('HPAYMT') && !d.codes.has('HOPERAT') && [...d.outside].every(k => NON_TPO[k].service)) return true;
+  // 3. What the disclosure names outside TPO, the consent must name too.
+  if (![...d.outside].every(k => c.outside.has(k))) return false;
+  if (type === 'part2_tpo' || c.tpo) return true; // 3a
+  if (d.codes.size) return [...d.codes].every(code => c.codes.has(code)); // 3b
+  if (d.outside.size) return true; // 3c
+  const theirs = purposeWords(consentPurpose); // 3d
   return [...purposeWords(purpose)].some(w => theirs.has(w));
 }
 
@@ -320,8 +410,11 @@ function requireAgreement(basis, agreementId, recipient) {
  *   recipient: who receives it — a name, or every name it goes by (a referral's resource name and
  *     organisation). Required for the consent and agreement bases.
  *   agreement_id: the registered agreement a qsoa / research / audit_evaluation disclosure rests on.
- *   purpose: why it is disclosed, in words (a referral: REFERRAL_PURPOSE). Required for the consent basis: the
- *     consent must cover it (consentCoversPurpose).
+ *   purpose: why it is disclosed, in words (a referral: referralPurpose, what its provider is for). Required for the
+ *     consent basis: the consent must cover it (consentCoversPurpose).
+ *   flag_purpose: a disclosure that has already happened, reported by a device's push (routes/referrals.js
+ *     pushDisclosure): a purpose the consent does not cover is not refused but returned as purpose_unconfirmed, for
+ *     the caller to keep the record and put it before a supervisor. Every other check still refuses.
  *   recipient_override: a supervisor's decision that a consent covers a disclosure it does not match in a way
  *     SUDS can read — a recipient it does not name exactly (a class, a misspelling), or a purpose its wording
  *     does not state — disclosures:override and a written justification. The one override for both: the
@@ -334,7 +427,7 @@ function requireAgreement(basis, agreementId, recipient) {
  *     a court order that expressly covers them.
  *   restriction_reviewed: the worker has checked the client's agreed restrictions, when there are any.
  */
-function requireBasis(clientId, { consent_id, basis, justification, user, court_order_id, legal_proceeding, counseling_notes, restriction_reviewed, recipient, purpose, agreement_id, recipient_override, allowed } = {}) {
+function requireBasis(clientId, { consent_id, basis, justification, user, court_order_id, legal_proceeding, counseling_notes, restriction_reviewed, recipient, purpose, agreement_id, recipient_override, allowed, flag_purpose } = {}) {
   const b = basis || 'consent';
   if (!BASES.includes(b)) throw badRequest(`"${b}" is not a lawful basis for disclosure`);
   if (allowed && !allowed.includes(b)) throw badRequest(`A referral can only be made with the client's consent, in a medical emergency, under a court order, or on a supervisor's justified override — not on a "${b.replace(/_/g, ' ')}" basis. Record that disclosure on the client's Consents tab instead.`);
@@ -350,7 +443,7 @@ function requireBasis(clientId, { consent_id, basis, justification, user, court_
   if (notes && !['consent', 'court_order'].includes(b)) throw badRequest('SUD counseling notes may only be disclosed under a consent given for counseling notes alone (§2.31(b)), or a court order that expressly covers them.');
   const why = String(justification || '').trim();
 
-  let consent = null; let order = null; let agreement = null; let override = false; let purposeOverride = false;
+  let consent = null; let order = null; let agreement = null; let override = false; let purposeOverride = false; let purposeUnconfirmed = false;
   if (b === 'consent') {
     consent = activeConsent(clientId, consent_id, { elements: false });
     if (!consent) throw badRequest('A valid, unexpired consent must be selected before information can be shared. Record the consent first, or choose another lawful basis.');
@@ -384,12 +477,15 @@ function requireBasis(clientId, { consent_id, basis, justification, user, court_
     if (!stated) throw badRequest('Say what the disclosure is for (its purpose): the consent is checked against it.');
     const consentPurpose = dec(consent.purpose_enc);
     if (!consentCoversPurpose({ type: consent.type, purpose: consentPurpose }, stated)) {
-      if (!recipient_override) {
-        throw new HttpError(409, `This consent was given for "${consentPurpose}", which does not cover this disclosure's purpose ("${stated}"). Choose a consent given for this purpose, record a new one, or ask a supervisor to override with a written justification.`, { consentPurpose, purposeNotCovered: true });
+      if (!recipient_override && flag_purpose) purposeUnconfirmed = true;
+      else {
+        if (!recipient_override) {
+          throw new HttpError(409, `This consent was given for "${consentPurpose}", which does not cover this disclosure's purpose ("${stated}"). Choose a consent given for this purpose, record a new one, or ask a supervisor to override with a written justification.`, { consentPurpose, purposeNotCovered: true });
+        }
+        if (!canOverride) throw forbidden('Only a supervisor or administrator can rely on a consent for a purpose it does not state');
+        if (why.length < MIN_JUSTIFICATION) throw badRequest(`Relying on a consent for a purpose it does not state needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.`);
+        purposeOverride = true;
       }
-      if (!canOverride) throw forbidden('Only a supervisor or administrator can rely on a consent for a purpose it does not state');
-      if (why.length < MIN_JUSTIFICATION) throw badRequest(`Relying on a consent for a purpose it does not state needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.`);
-      purposeOverride = true;
     }
   }
   if (b === 'court_order') {
@@ -411,7 +507,7 @@ function requireBasis(clientId, { consent_id, basis, justification, user, court_
         : `A ${b === 'crime_on_premises' ? 'report of a crime on the premises or against staff (§2.12(c)(5))' : 'mandated report of suspected child abuse or neglect (§2.12(c)(6))'} needs a written justification of at least ${MIN_JUSTIFICATION} characters: what happened, and what was reported to whom.`);
   }
   const kept = (override || purposeOverride) ? overrideJustification({ recipient: override ? dec(consent.recipient_enc) : null, purpose: purposeOverride ? dec(consent.purpose_enc) : null }, why) : (why || null);
-  return { basis: b, consent, court_order: order, agreement, justification: kept, legal_proceeding: proceeding, counseling_notes: notes, recipient_override: override, purpose_override: purposeOverride };
+  return { basis: b, consent, court_order: order, agreement, justification: kept, legal_proceeding: proceeding, counseling_notes: notes, recipient_override: override, purpose_override: purposeOverride, purpose_unconfirmed: purposeUnconfirmed };
 }
 
 // What a supervisor's consent override keeps with the disclosure: which mismatch it overrode, then why. A device's
@@ -486,7 +582,7 @@ function requireRestrictionReview(clientIds, restriction_reviewed) {
 }
 
 /** Write the disclosure row. Caller has already established the basis. */
-function record({ id: givenId = null, clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, purposeOverride = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = 'consent', justification = null, source = 'manual', sourceRef = null, disclosedAt = null, user, ip }) {
+function record({ id: givenId = null, clientId, consentId = null, courtOrderId = null, agreementId = null, recipientOverride = false, purposeOverride = false, purposeUnconfirmed = false, legalProceeding = false, counselingNotes = false, recipient, purpose, what, method = null, basis = 'consent', justification = null, source = 'manual', sourceRef = null, disclosedAt = null, user, ip }) {
   // givenId: a device's own accounting row for the same disclosure (a referral made offline), so the office's
   // row replaces it rather than standing beside it (server/routes/referrals.js pushDisclosure).
   const id = givenId || uuid();
@@ -498,7 +594,7 @@ function record({ id: givenId = null, clientId, consentId = null, courtOrderId =
   // The audit trail records that a disclosure happened and under what authority — never to whom or what,
   // which is PHI and lives only in the encrypted columns above.
   audit.log({ user, action: 'disclosure.record', entity: 'disclosure', entityId: id, clientId, ip, details: { basis, source, consent_id: consentId || undefined, court_order_id: courtOrderId || undefined, agreement_id: agreementId || undefined,
-    recipient_override: recipientOverride ? true : undefined, purpose_override: purposeOverride ? true : undefined, justified: justification ? true : undefined,
+    recipient_override: recipientOverride ? true : undefined, purpose_override: purposeOverride ? true : undefined, purpose_unconfirmed: purposeUnconfirmed ? true : undefined, justified: justification ? true : undefined,
     legal_proceeding: legalProceeding ? true : undefined, counseling_notes: counselingNotes ? true : undefined, notice: noticeVersion || undefined } });
   return id;
 }
@@ -686,7 +782,7 @@ function recordFhir({ perClient, recipient, purposeOfUse, sourceRef, user, ip })
   return perClient.size;
 }
 
-module.exports = { BASES, EXPORT_BASES, REFERRAL_PURPOSE, SYSTEM_BASES, STATE_REPORTING, NEEDS_JUSTIFICATION, OVERRIDE_BASES, REFERRAL_BASES, AGREEMENT_KINDS, LEGACY_CONSENT_CUTOFF, MIN_JUSTIFICATION, part2Program, notice, fileNotice,
+module.exports = { BASES, EXPORT_BASES, REFERRAL_PURPOSE, referralPurpose, classifyPurpose, NON_TPO, SYSTEM_BASES, STATE_REPORTING, NEEDS_JUSTIFICATION, OVERRIDE_BASES, REFERRAL_BASES, AGREEMENT_KINDS, LEGACY_CONSENT_CUTOFF, MIN_JUSTIFICATION, part2Program, notice, fileNotice,
   disclosingConsentTypes, fileConsentTypes, activeConsent, courtOrderProblems, agreedRestrictions, missingPart2Elements, missingLegacyElements, consentElementProblems, consentValues,
   normalise, recipientNames, consentNamesRecipient, purposeCodes, consentCoversPurposeOfUse, consentCoversPurpose, patientRequested, overrideJustification, parseOverride, isInternalRecipient, agreementProblems, agreementNames, requireAgreement, fileConsentFor,
   requireBasis, requireExportBasis, requireRestrictionReview, record, recordStateReport, present, accounting, FHIR_PURPOSES, FHIR_CONSENT_TYPES, fhirConsentTypes, consentCovers, consentPurposeCodes, fhirCoverage, recordFhir,

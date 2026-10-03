@@ -280,6 +280,17 @@ export function referralTable(rows, { showClient = true, onChange } = {}) {
         h('div', { class: 'compact-actions' }, actions(r))] } });
 }
 // ---- secure referral links (1.17.0; server/referral-links.js, docs/security/REFERRAL-LINKS.md) ----
+// Why a packet link would show the provider only "contact the program" now (server/referral-links.js stillCovered).
+const WITHHELD = {
+  purpose_not_covered: 'The client\'s consent was not given for what this referral is for, so the provider will not see the referral. Record a consent for this purpose, then send a new link.',
+  recipient_not_covered: 'The client\'s consent does not name this provider, so the provider will not see the referral. Record a consent naming them, then send a new link.',
+  consent_not_valid: 'The consent this link relies on was revoked, has expired or is incomplete, so the provider will not see the referral.',
+  restriction: 'The client agreed a restriction on sharing after this link was sent, so the provider will not see the referral.',
+  creator_inactive: 'The worker who sent this link can no longer share information, so the provider will not see the referral.',
+  creator_no_access: 'The worker who sent this link can no longer open this client, so the provider will not see the referral.',
+  client_removed: 'The client\'s record was removed or merged, so the provider will not see the referral.',
+  referral_closed: 'The referral is closed, so the provider will not see it.',
+};
 const LINK_STATUS = { sent: ['Sent, not opened', 'info'], opened: ['Opened', 'ok'], acknowledged: ['Answered', 'ok'], expired: ['Expired', 'warn'], revoked: ['Withdrawn', 'warn'], locked: ['Locked (wrong codes)', 'danger'] };
 const ACK_LABEL = { received: 'received it', accepted: 'accepted the client', scheduled: 'scheduled the client', declined: 'declined', unable_to_reach: 'could not reach the client' };
 /**
@@ -331,7 +342,8 @@ export async function openSecureLinkDialog(r, onChange) {
     links.rows.length ? table([
       { label: 'Sent', render: l => fmt.dt(l.created_at) }, { label: 'What', render: l => (l.kind === 'packet' ? 'Referral' : 'Contact notice') },
       { label: 'Reference', render: l => h('span', { class: 'mono' }, l.reference) },
-      { label: 'Status', render: l => h('div', {}, badge(...(LINK_STATUS[l.status] || [l.status, 'info'])), l.ack_status ? h('div', { class: 'small' }, `${l.ack_by || 'They'} ${ACK_LABEL[l.ack_status] || l.ack_status}${l.ack_note ? `: ${l.ack_note}` : ''}`) : null) },
+      { label: 'Status', render: l => h('div', {}, badge(...(LINK_STATUS[l.status] || [l.status, 'info'])), l.ack_status ? h('div', { class: 'small' }, `${l.ack_by || 'They'} ${ACK_LABEL[l.ack_status] || l.ack_status}${l.ack_note ? `: ${l.ack_note}` : ''}`) : null,
+        l.withheld ? h('div', { class: 'small', 'data-link-withheld': l.withheld }, badge('Withheld', 'danger'), ' ', WITHHELD[l.withheld] || WITHHELD.consent_not_valid) : null) },
       { label: '', render: l => (['sent', 'opened', 'acknowledged'].includes(l.status) ? h('button', { class: 'btn sm ghost', 'data-revoke-link': l.id, 'aria-label': `Withdraw link ${l.reference}`, onClick: () => revoke(l) }, 'Withdraw') : null) },
     ], links.rows, { rowLabel: l => `Link ${l.reference}` }) : null,
     f));
