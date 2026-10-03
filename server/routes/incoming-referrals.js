@@ -24,6 +24,21 @@ function load(id) {
   if (!row) throw notFound('Referral not found');
   return row;
 }
+/**
+ * An open referral is nobody's client yet, so the whole queue sees it (intake is a shared desk). An accepted one has
+ * become a client's record: a person held to their caseload sees it only when that client is on it, as they would the
+ * client (review of the 1.24.0 tree: the queue showed the name, date of birth, phone, reasons, notes and attempts of
+ * every accepted referral, the client's id and code included, to a navigator who could not open the client).
+ * visibleFilter is the same rule as SQL, for the list.
+ */
+function visibleFilter(user) {
+  if (!auth.hasPerm(user, 'clients:read')) return { sql: 'client_id IS NULL', params: [] }; // canAccessClient opens no client for them
+  const f = auth.caseloadFilter(user, 'client_id');
+  return f.sql === '1=1' ? f : { sql: `(client_id IS NULL OR ${f.sql})`, params: f.params };
+}
+function assertVisible(ctx, row) {
+  if (row.client_id) auth.assertClientAccess(ctx, row.client_id);
+}
 function assertOpen(row) {
   if (!IR.OPEN.includes(row.status)) throw conflict(row.status === 'accepted' ? 'This referral was accepted and is closed' : 'This referral is closed. Reopen it first.');
 }
@@ -73,6 +88,7 @@ module.exports = (r) => {
     else if (assignee) { where.push('assigned_to=?'); params.push(assignee); }
     if (urgency) { if (!IR.URGENCY.includes(urgency)) throw badRequest('Unknown urgency'); where.push('urgency=?'); params.push(urgency); }
     if (q) { where.push(`(last_name_idx=? OR referring_org LIKE ? ESCAPE '\\')`); params.push(blindIndex(q), `%${q.replace(/[\\%_]/g, (c) => '\\' + c)}%`); }
+    const seen = visibleFilter(ctx.user); if (seen.sql !== '1=1') { where.push(seen.sql); params.push(...seen.params); }
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     // Open: the urgent first, then the longest waiting. Otherwise the newest first.
     const order = status === 'open' || status === 'new' || status === 'contacting'
@@ -105,6 +121,7 @@ module.exports = (r) => {
 
   r.get('/api/incoming-referrals/:id', ...read, (ctx) => {
     const row = load(ctx.params.id);
+    assertVisible(ctx, row);
     audit.log({ user: ctx.user, action: 'incoming_referral.read', entity: 'incoming_referral', entityId: row.id, clientId: row.client_id || undefined, ip: ctx.ip, details: { status: row.status } });
     return { row: IR.present(row), attempts: IR.attempts(row.id), may: { write: auth.hasPerm(ctx.user, 'intake:write'), link: auth.hasPerm(ctx.user, 'clients:read'), create_client: auth.hasPerm(ctx.user, 'clients:write') } };
   });
@@ -152,6 +169,7 @@ module.exports = (r) => {
   // records the caller may open are shown, and none they may not is counted, as at intake (server/routes/clients.js).
   r.get('/api/incoming-referrals/:id/matches', ...write, auth.requirePerm('clients:read'), (ctx) => {
     const row = load(ctx.params.id);
+    assertVisible(ctx, row);
     const C = require('./clients');
     if (!require('../app').rateLimit(`duplicate-check:${ctx.user.id}`, C.DUPLICATE_CHECKS, C.DUPLICATE_CHECK_WINDOW_MS)) {
       audit.log({ user: ctx.user, action: 'client.duplicate_check', ip: ctx.ip, success: false, details: { reason: 'rate limited', source: 'incoming_referral' } });

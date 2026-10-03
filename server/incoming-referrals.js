@@ -10,10 +10,12 @@
 //                                                                 referred_elsewhere
 //   A closed referral other than an accepted one can be reopened (a decline recorded by mistake).
 //
-// Who sees what: intake:read sees the whole queue. A referred person is nobody's client yet, so there is no caseload
-// to scope the queue by; intake is a shared desk, and a programme that wants someone kept out of it denies them
-// intake:read. Once accepted, the client record is reached as every client record is (caseload scoping and all):
-// accepting into an existing record needs that record to be one the person may open.
+// Who sees what: intake:read sees every open referral. A referred person is nobody's client yet, so there is no caseload
+// to scope an open referral by; intake is a shared desk, and a programme that wants someone kept out of it denies them
+// intake:read. Once accepted, the referral is the client's: a person held to their caseload lists and opens it only
+// when that client is on their caseload (routes/incoming-referrals.js visibleFilter; 403 otherwise, as for the client),
+// and the client record is reached as every client record is: accepting into an existing record needs that record to
+// be one the person may open. The counts (summary) name nobody and cover the whole queue.
 //
 // Part 2 / HIPAA: receiving a referral is not a disclosure (nothing leaves the programme), so nothing here goes through
 // server/disclosure.js. Nothing is ever sent back to the referrer either: telling a hospital or a court that the person

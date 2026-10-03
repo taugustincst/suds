@@ -11163,7 +11163,7 @@ var require_permissions = __commonJS({
       ["supplies:receive", "Receive supply deliveries", "Record stock that arrived at a site."],
       ["county:view", "See the county view", "For a county that funds programmes: the signed submissions they send, side by side and summed for a period, and its Excel or CSV file. Exact aggregate figures for authorised county staff, not for publication; never a client. Administrators, supervisors and finance by default."],
       ["county:manage", "Manage county submissions", "Register the programmes whose signed submissions the county accepts (each by its public key), import their files and withdraw one. Administrators by default."],
-      ["intake:read", "See incoming referrals", "The intake queue: every referral to the program from a hospital, jail, detox, probation or court, another provider, the person or their family, with the person's name, contact details and needs, before they are a client. Not limited to a caseload. Navigators, clinicians, supervisors and administrators by default."],
+      ["intake:read", "See incoming referrals", "The intake queue: every referral to the program from a hospital, jail, detox, probation or court, another provider, the person or their family, with the person's name, contact details and needs, before they are a client. Open referrals are not limited to a caseload; an accepted one is shown only to those who may open its client. Navigators, clinicians, supervisors and administrators by default."],
       ["intake:write", "Work incoming referrals", "Record a referral to the program, log attempts to reach the person, assign it, and accept it (linking or creating the client record) or close it as declined, unable to reach or referred elsewhere. Navigators, clinicians, supervisors and administrators by default."],
       ["ai:draft", "Use the AI documentation copilot", "Ask the AI copilot for a draft (progress note sections, assessment narratives, care plan and CalOMS suggestions) from text they give it, with identifiers replaced before it is sent. Only while an administrator has recorded the agreement with the provider and switched the copilot on. Clinicians, supervisors and navigators by default."]
     ];
@@ -42563,6 +42563,14 @@ var require_incoming_referrals2 = __commonJS({
       if (!row) throw notFound("Referral not found");
       return row;
     }
+    function visibleFilter(user) {
+      if (!auth3.hasPerm(user, "clients:read")) return { sql: "client_id IS NULL", params: [] };
+      const f = auth3.caseloadFilter(user, "client_id");
+      return f.sql === "1=1" ? f : { sql: `(client_id IS NULL OR ${f.sql})`, params: f.params };
+    }
+    function assertVisible(ctx, row) {
+      if (row.client_id) auth3.assertClientAccess(ctx, row.client_id);
+    }
     function assertOpen(row) {
       if (!IR.OPEN.includes(row.status)) throw conflict(row.status === "accepted" ? "This referral was accepted and is closed" : "This referral is closed. Reopen it first.");
     }
@@ -42619,6 +42627,11 @@ var require_incoming_referrals2 = __commonJS({
           where.push(`(last_name_idx=? OR referring_org LIKE ? ESCAPE '\\')`);
           params.push(blindIndex2(q), `%${q.replace(/[\\%_]/g, (c) => "\\" + c)}%`);
         }
+        const seen2 = visibleFilter(ctx.user);
+        if (seen2.sql !== "1=1") {
+          where.push(seen2.sql);
+          params.push(...seen2.params);
+        }
         const w = where.length ? `WHERE ${where.join(" AND ")}` : "";
         const order = status === "open" || status === "new" || status === "contacting" ? `CASE urgency WHEN 'urgent' THEN 0 WHEN 'soon' THEN 1 ELSE 2 END, received_at` : `COALESCE(closed_at, received_at) DESC`;
         const rows = db3.all(`SELECT * FROM incoming_referrals ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, limit2, offset);
@@ -42644,6 +42657,7 @@ var require_incoming_referrals2 = __commonJS({
       });
       r.get("/api/incoming-referrals/:id", ...read, (ctx) => {
         const row = load(ctx.params.id);
+        assertVisible(ctx, row);
         audit3.log({ user: ctx.user, action: "incoming_referral.read", entity: "incoming_referral", entityId: row.id, clientId: row.client_id || void 0, ip: ctx.ip, details: { status: row.status } });
         return { row: IR.present(row), attempts: IR.attempts(row.id), may: { write: auth3.hasPerm(ctx.user, "intake:write"), link: auth3.hasPerm(ctx.user, "clients:read"), create_client: auth3.hasPerm(ctx.user, "clients:write") } };
       });
@@ -42683,6 +42697,7 @@ var require_incoming_referrals2 = __commonJS({
       });
       r.get("/api/incoming-referrals/:id/matches", ...write, auth3.requirePerm("clients:read"), (ctx) => {
         const row = load(ctx.params.id);
+        assertVisible(ctx, row);
         const C = require_clients();
         if (!require_app2().rateLimit(`duplicate-check:${ctx.user.id}`, C.DUPLICATE_CHECKS, C.DUPLICATE_CHECK_WINDOW_MS)) {
           audit3.log({ user: ctx.user, action: "client.duplicate_check", ip: ctx.ip, success: false, details: { reason: "rate limited", source: "incoming_referral" } });

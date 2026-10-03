@@ -125,8 +125,8 @@ function passkeyCount(userId) {
 // too but has nothing to show until it registers a programme; its Send to the county file needs reports:funder.
 // intake:read and intake:write (1.24.0, server/incoming-referrals.js) are the intake queue: referrals TO the programme
 // from a hospital, a jail, a detox, probation or a court, another provider, the person or their family. intake:read sees
-// the whole queue (a referred person is nobody's client yet, so there is no caseload to scope it by: intake is a shared
-// desk), intake:write records referrals, logs attempts to reach the person, assigns them and accepts or closes them.
+// every open referral (a referred person is nobody's client yet, so there is no caseload to scope it by: intake is a
+// shared desk) and an accepted one only when it may open its client (caseload scoping), intake:write records referrals, logs attempts to reach the person, assigns them and accepts or closes them.
 // Held by the roles that take people on: navigators, clinicians, supervisors and administrators; never finance or
 // read-only, whose roles identify nobody (permissions.js grantProblem refuses the grant). Accepting a referral into a
 // client also needs clients:read (an existing record the person may open) or clients:write (a new one).

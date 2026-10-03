@@ -198,9 +198,14 @@ person or their family). It goes through the release gate after the stabilisatio
   `grantProblem` refuses them to a de-identified role), marked sensitive, editable per person on the Permissions page
   like the others. Working the queue needs both (a denied read leaves nothing to write). Accepting also needs
   *Open client records* (`clients:read`), and a new client *Edit client records*.
-- **Visibility (decided):** everyone with `intake:read` sees the whole queue, a caseload-scoped worker included: a
+- **Visibility (decided):** everyone with `intake:read` sees every open referral, a caseload-scoped worker included: a
   referred person is nobody's client yet, and intake is a shared desk. An accepted referral's client is reached as every
-  client is (accepting into an existing record needs one the worker may open, else 403 and `authz.denied`).
+  client is (accepting into an existing record needs one the worker may open, else 403 and `authz.denied`). An
+  accepted referral is the client's: a worker held to their caseload lists it, finds it by surname and opens it (with
+  its attempts and its duplicate check) only when that client is on their caseload, and is otherwise refused 403 ("This
+  client is not on your caseload", audited `authz.denied`) as for the client itself. Before the review of the 1.24.0
+  tree the queue showed such a worker the name, date of birth, phone, reason, notes, attempts and client code of every
+  accepted referral. The counts on Home, the queue's header and Supervision name nobody and still cover the whole queue.
 - **Part 2 / HIPAA (decided):** receiving a referral is not a disclosure, so it writes no accounting row. SUDS builds **no
   send-back to the referrer** (no "let the referrer know"): telling them the person became a client would be a
   disclosure, made under the person's consent on their Consents tab like any other.
