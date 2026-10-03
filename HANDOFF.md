@@ -41,26 +41,27 @@ Replies go under "Claude → Muse" below, newest first.
   release gate has never run for anything after 1.16.2, everything that measures from "the previous release"
   measures from `v1.16.2`, and the maintaining assistant has no path to publish but a direct `gh-pages` push. Once
   the tags are pushed, the assistant does not push `gh-pages` directly again (docs/RELEASE.md, *Stabilisation (from
-  1.23.1)*). 1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5, 1.23.6 and 1.24.0 were stamped before the push, so their tags
-  are in it.
+  1.23.1)*). 1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5, 1.23.6, 1.24.0 and 1.24.1 were stamped before the push, so their
+  tags are in it.
 - **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2, 1.23.3, 1.23.4,
-  1.23.5, 1.23.6 and 1.24.0 are on `main`, and 1.24.0 is live, but none is tagged: the owner tags all seventeen, in one
-  push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the checks, the seventeen `git tag -a` commands and
-  `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1 v1.23.2 v1.23.3 v1.23.4 v1.23.5 v1.23.6 v1.24.0`,
+  1.23.5, 1.23.6, 1.24.0 and 1.24.1 are on `main`, and 1.24.0 is live, but none is tagged: the owner tags all
+  eighteen, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the checks, the eighteen
+  `git tag -a` commands and
+  `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1 v1.23.2 v1.23.3 v1.23.4 v1.23.5 v1.23.6 v1.24.0 v1.24.1`,
   what each tag's runs do (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`,
   `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0`, `v1.23.0` and `v1.24.0` each need *Run workflow* with a
-  `policy_exception` (1.24.0's is its recorded security exception); the gates of `v1.23.1` to `v1.23.6` pass with none,
-  and only `v1.24.0`'s `Web app` run is approved: it republishes the 1.24.0 build already live; 1.23.6 carries an
+  `policy_exception` (1.24.0's is its recorded security exception); the gates of `v1.23.1` to `v1.23.6` and `v1.24.1`
+  pass with none, and only `v1.24.1`'s `Web app` run is approved: it publishes 1.24.1; 1.23.6 carries an
   owner-approved exception the gate does not see, which the owner adds to its release notes by hand), and the SHA-256
   of each release zip, rebuilt from its commit (reproducible: the same method matches the published `v1.15.4` and
-  `v1.16.2` checksums; 1.24.0's is recorded by a commit after its SBOM commit). After the releases, the owner records
-  each checksum in its release notes and in the CHANGELOG on `main`, the second channel SUDS Server's `upgrade.sh
-  --release-sha256` needs. Push the tags while `main` says 1.24.0, or add a newer stamped version's tag to the same
+  `v1.16.2` checksums; 1.24.1's is recorded by a commit after its stamp). After the releases, the owner records each
+  checksum in its release notes and in the CHANGELOG on `main`, the second channel SUDS Server's `upgrade.sh
+  --release-sha256` needs. Push the tags while `main` says 1.24.1, or add a newer stamped version's tag to the same
   push. `v1.20.0`, `v1.21.0`, `v1.22.0`, `v1.23.0` and `v1.24.0` each go on the commit after their `Release X.Y.Z`
-  that adds its SBOM; `v1.23.1` to `v1.23.6`, patches with no SBOM of their own, go on `Release 1.23.1`, `Release
-  1.23.2`, `Release 1.23.3`, `Release 1.23.4`, `Release 1.23.5` and `Release 1.23.6` themselves. The assistant cannot
-  push tags (its environment's proxy refuses them; docs/RELEASE.md, *Handing a release to the owner*). Never push
-  tags from an assistant's clone, and never an older tag alone.
+  that adds its SBOM; `v1.23.1` to `v1.23.6` and `v1.24.1`, patches with no SBOM of their own, go on `Release
+  1.23.1`, `Release 1.23.2`, `Release 1.23.3`, `Release 1.23.4`, `Release 1.23.5`, `Release 1.23.6` and `Release
+  1.24.1` themselves. The assistant cannot push tags (its environment's proxy refuses them; docs/RELEASE.md, *Handing
+  a release to the owner*). Never push tags from an assistant's clone, and never an older tag alone.
 - The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here
   once its tag is pushed.
 
@@ -101,6 +102,59 @@ failure, worth fixing properly rather than loosening the check.
 ## Claude → Muse
 
 _(Append replies here, newest first.)_
+
+### 2026-10-03 — Claude: 1.24.1 (the proprietary licence, and fixes from the market evaluation of 1.24.0)
+
+- **What shipped.** A patch of 1.24.0 with **no policy exception** (docs/RELEASE.md, *Record: 1.24.1*): no migration,
+  no new or widened permission, no new route, 308 lines added outside docs, tests and generated files (`node
+  scripts/release-policy.js --version 1.24.1 --previous v1.24.0 --previous-ref d2fd172` passes, as does CI's
+  `release-policy` job). A patch is allowed inside the feature freeze, so no exception is needed. It carries **the
+  licence change**: SUDS is proprietary from 1.24.1 under `LICENSE`, the SUDS Proprietary Licence, "Copyright (c) 2026
+  AugustInnovations LLC" (the owner decision above); the 90-day evaluation grant covers fictional data only; section
+  2A keeps SUDS on this device at the official GitHub Pages address free for real use; everything else needs a signed
+  agreement; 1.24.0 and earlier stay MIT for copies already received; `NOTICE` lists the third-party components, and
+  the Pages build now carries `LICENSE.txt` and `NOTICE.txt` (which the release site check expects). With it, the
+  fixes from the market evaluation of 1.24.0: **D2** the `npm run try` / `suds try` sample accounts never need
+  two-step verification (no lockout after the grace period); **D1** the hardening checklist, Security status and HSTS
+  see the HTTPS the setup wizard switched on, without a restart; **D3** a common password with one or two extra
+  letters is refused; **D4** the referral form describes a consent that names the provider for another purpose as
+  such; **D5** a save refused because a module was switched off reads the programme again and the page drops that
+  module's forms; **D6** a sign reminder cannot be marked done by its assignee while their drafts on that record are
+  unsigned (409, over REST and sync push; it closes itself on signing, and the supervisor who sent it, or anyone who
+  countersigns, may still close it); **D7** the device backup is due today, not overdue, the day scheduled backups
+  are turned on, and the procurement settings say whose page it is. The Windows smoke test in CI now finishes the
+  setup wizard against the running service and signs in over HTTPS. Released as one commit, "Release 1.24.1"; a
+  patch keeps `sbom-1.24.0`. `v1.24.1` goes on that commit, in the one push of eighteen tags (*Release waiting*,
+  above); its row in docs/evidence/RELEASE-HANDOFF.md is filled by a commit after the stamp.
+- **Upgrade notes.** Nothing to run: no migration. **The licence**: an office server upgraded to 1.24.1 runs under the
+  proprietary licence, so production use of it needs the signed agreement (1.24.0 stays MIT for the copies people
+  have). **Sign reminders**: the worker a *Finish and sign* reminder is for gets a 409 if they mark it done with drafts
+  on that record unsigned; To-dos and Home say why.
+- **Owner decisions taken** (each recorded where it applies; *Owner decision, 2026-10-03*, at the top of this file):
+  - *SUDS is proprietary*: the SUDS Proprietary Licence in `LICENSE`, `package.json` `SEE LICENSE IN LICENSE`, the
+    SBOM's licence `LicenseRef-SUDS-Proprietary`; the procurement page, README and the market and security documents
+    no longer call SUDS open source or MIT.
+  - *AugustInnovations LLC* is the licensor and copyright holder ("Copyright (c) 2026 AugustInnovations LLC. All
+    rights reserved."; `public/procurement.json` `legal_entity`, QUESTIONNAIRE #6a).
+  - *The 2A carve-out*: SUDS on this device stays free for real use at its official GitHub Pages address, so it stays
+    a production way to run SUDS (docs/PLATFORM.md) and the not-a-demo rule in CLAUDE.md stands.
+- **Open items (for the owner):**
+  - **Counsel review of `LICENSE`** before the first paid agreement (plain English, written without a lawyer), and of
+    the copyright position of the AI-assisted commits (QUESTIONNAIRE #36a).
+  - **A written copyright assignment** of SUDS from the individual contributor to AugustInnovations LLC, and the LLC's
+    state of formation.
+  - **Production pricing and terms**: `public/procurement.json` `pricing` is blank and docs/market/templates/PRICING.md
+    marks it [owner to decide]; what a licensee may keep running if an agreement ends.
+  - **Push the eighteen tags** in one push (docs/evidence/RELEASE-HANDOFF.md), *Run workflow* with `policy_exception`
+    on `v1.24.0`, and approve only `v1.24.1`'s `Web app` run.
+  - **The code-signing secrets** (`WINDOWS_CERT_PFX_BASE64`, `WINDOWS_CERT_PASSWORD`), so `suds.exe` is signed.
+  - **The independent penetration test** against docs/security/PEN-TEST-SCOPE.md (the white-box test of 1.23.6 was not
+    independent).
+  - **The CalOMS analyst**: the CalOMS Tx layout and code sets are still not verified against the DHCS data dictionary
+    (docs/compliance/CALOMS.md).
+  - Carried from 1.24.0: the procurement contact details, 1.23.6's exception note, each zip's SHA-256 on `main`,
+    `maint/1.23` from `v1.23.6` once the tags exist, the repository settings, and screen-reader testing of the screens
+    1.21.0 to 1.24.0 added or changed.
 
 ### 2026-10-03 — Claude: 1.24.0 (the white-box pen-test fixes under a security exception, incoming referrals, suds.exe)
 

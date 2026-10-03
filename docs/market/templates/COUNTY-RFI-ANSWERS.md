@@ -165,9 +165,10 @@ owed (*Record: 1.23.1* to *Record: 1.23.5*). 1.23.6 was published the same way; 
 administrator may change their own permissions, role and account during the feature freeze; *Record: 1.23.6*). 1.24.0
 was published the same way: a feature release two days after 1.23.0, under the one exception the stabilisation
 allows, a security fix (the fixes of an owner-authorised white-box penetration test of 1.23.6), recorded on its
-`Security exception:` line (*Record: 1.24.0*). Once
+`Security exception:` line (*Record: 1.24.0*). 1.24.1 waits for the owner's tag, in the same push as the owed ones,
+and goes through the release gate; it is a patch with no policy exception (*Record: 1.24.1*). Once
 the owner has pushed the tags, every release goes through the release gate ([../../RELEASE.md](../../RELEASE.md)). For
-these versions there is no tag or published zip to check against, and SUDS Server's `upgrade.sh` cannot download them. Verify against the commit instead. Each
+these versions, and 1.24.1 until its tag is pushed, there is no tag or published zip to check against, and SUDS Server's `upgrade.sh` cannot download them. Verify against the commit instead. Each
 commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
 release zip, which anyone can rebuild with `git archive` and compare. `scripts/release-site-check.js` checks a
 published web app byte for byte against the commit's build. The steps are in

@@ -28,7 +28,20 @@ under a signed licence agreement; it is not a hosted service. Positioning, buyer
 and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:
 [docs/architecture/README.md](docs/architecture/README.md).
 
-## What's new in 1.18.0 to 1.24.0
+## What's new in 1.18.0 to 1.24.1
+
+**1.24.1**
+
+* **A new licence** ([LICENSE](LICENSE)): SUDS is proprietary software of AugustInnovations LLC from 1.24.1. SUDS on
+  this device stays free for real use at its official GitHub Pages address; anyone may evaluate the office server for
+  90 days with fictional data, and running it in production needs a signed licence agreement. 1.24.0 and earlier stay
+  MIT for the copies already received; third-party licences are in [NOTICE](NOTICE).
+* **Fixes from the market evaluation of 1.24.0**: `npm run try` no longer locks the sample accounts out with two-step
+  verification; Security status sees the HTTPS the setup wizard switched on without a restart; a common password with
+  an extra letter or two is refused; the referral form says when a consent names the provider but for another
+  purpose; a module switched off while you work takes its forms away after the refused save; a *Finish and sign*
+  reminder can no longer be marked done by its worker while their drafts are unsigned (it closes itself once they are
+  signed); and a device's first scheduled backup is due today, not overdue. No migration.
 
 **1.24.0**
 

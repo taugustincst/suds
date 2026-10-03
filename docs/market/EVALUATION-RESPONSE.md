@@ -6,8 +6,8 @@ months of compliance and security work, **C** cut the EHR-adjacent framing and r
 
 **The owner chose B and C together**: commit to the work, and aim it at the workflow SUDS does best —
 outreach, naloxone and supply distribution, and grant reporting for harm-reduction and prevention programmes.
-This page answers each point with its status through 1.24.0, the latest release, and where the evidence is (what
-1.17.0 to 1.24.0 added is also listed in [STRATEGY.md](STRATEGY.md), *Built vs planned, exactly*; 1.20.0 added
+This page answers each point with its status through 1.24.1, the latest release, and where the evidence is (what
+1.17.0 to 1.24.1 added is also listed in [STRATEGY.md](STRATEGY.md), *Built vs planned, exactly*; 1.20.0 added
 county-entered figures for grantees not on SUDS, the installer fixes from a real install in a container, and the
 county-contract kit; 1.21.0 added screened county publication releases, field devices that hold only a field
 worker's own recent caseload, participant codes first for outreach, an authenticator allow-list for passkeys, award
@@ -26,7 +26,8 @@ owner-approved policy exception that is not a security fix, recorded in [RELEASE
 1.24.0, a feature release under the stabilisation's one security exception, fixed the findings of an owner-authorised
 white-box penetration test of 1.23.6 and added an intake queue for referrals to the programme, possible duplicate
 time, scheduled device backups, a Security & procurement page with a hardening checklist, and the office server for
-Windows, *Record: 1.24.0*).
+Windows, *Record: 1.24.0*; 1.24.1, a patch with no exception, made SUDS proprietary under the owner's licence, with
+SUDS on this device free for real use, and fixed what the market evaluation of 1.24.0 found, *Record: 1.24.1*).
 "Addressed in software"
 means the capability exists and is tested; it does not mean an auditor, a regulator or counsel has confirmed it.
 Organisational items that software cannot close are marked **open**.

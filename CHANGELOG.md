@@ -4,6 +4,31 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+## 1.24.1 — 2026-10-03
+
+A patch of 1.24.0 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record: 1.24.1*): the licence change the
+owner decided on 2026-10-03, and fixes from the market evaluation of 1.24.0 (D1 to D7) with their tests and
+documentation. No migration, no new or widened permission and no new route (`node scripts/release-policy.js --version
+1.24.1 --previous v1.24.0 --previous-ref d2fd172` passes: 308 lines added outside docs, tests and generated files, of
+the 1,500 a patch may add). It passes the release policy with no exception; a patch is allowed inside the feature
+freeze. Upgrading needs nothing beyond replacing the files and restarting. What an upgrading administrator should
+know:
+
+* **The licence changes with this release.** 1.24.1 and later are proprietary software of AugustInnovations LLC under
+  the SUDS Proprietary Licence (`LICENSE`); versions 1.24.0 and earlier stay under the MIT License for the copies
+  already received, so a programme running 1.24.0 keeps its MIT rights to that copy. An office server upgraded to
+  1.24.1 runs under the new licence: anyone may evaluate it for up to 90 days with fictional or test data only, and
+  running it in production, with real client records, or beyond 90 days needs a licence agreement signed by
+  AugustInnovations LLC (as do modifying, redistributing or hosting it for others), so a programme should have that
+  agreement before it upgrades a production office server. **SUDS on this device stays free
+  for real use**, real records included, at its official GitHub Pages address (section 2A). Third-party components
+  keep their own licences, listed in `NOTICE`.
+* **A sign reminder now refuses "done" while drafts are unsigned.** The worker a *Finish and sign* reminder is for can
+  no longer mark it done while their draft notes on that client's record are unsigned: the office answers **409**,
+  over REST and a device's sync push alike, and To-dos and Home say why instead of asking "Mark done anyway?". The
+  reminder closes itself when the drafts are signed; the supervisor who sent it, or anyone who countersigns notes, can
+  still close it.
+
 ### Licence
 
 - **SUDS is now proprietary** (owner decision of 2026-10-03): licensed under the SUDS Proprietary Licence in

@@ -1,7 +1,7 @@
 # SUDS go-to-market strategy
 
 **Status: the owner's strategy, written down and assessed, 29 September 2026; its *Built vs planned* table is current to
-1.24.0.** It replaces nothing in the rest of this pack until a row below says it is done. Everything described as
+1.24.1.** It replaces nothing in the rest of this pack until a row below says it is done. Everything described as
 *planned* is not in a released version of SUDS. It was first written at 1.17.0, whose features are **released in
 1.17.0**. Under *Stabilisation* ([docs/RELEASE.md](../RELEASE.md)) 1.24.0 came early, under its one security exception (the
 fixes of an owner-authorised white-box penetration test of 1.23.6), and the next feature release comes no earlier than
@@ -327,7 +327,7 @@ until counsel and one pilot have looked at it.
 
 ## Built vs planned, exactly
 
-| Capability | State on 3 October 2026 (1.24.0) |
+| Capability | State on 3 October 2026 (1.24.1) |
 | --- | --- |
 | Outreach, anonymous contacts, supplies, funder reporting, settlement report and DHCS/county layouts | **Built** (layouts not checked against current official templates) |
 | Local mode (offline copy, office sync) | **Built**, off by default; the wizard recommends it for harm reduction |
@@ -356,6 +356,7 @@ until counsel and one pilot have looked at it.
 | **Delete call** (and **Delete text**) on a phone, a *Finish and sign* reminder whose **Assigned to** and **Client** are shown fixed to its recipient, To-dos toggles whose state is not shown by colour alone, an audit entry of its own for a reminder closed by signing, a caseload transfer that reports the reminders it cancelled, no **Remind author** for an inactive author, and a question before a sign reminder is ticked done with drafts left | **Released in 1.23.5** ([CHANGELOG](../../CHANGELOG.md)); a patch: no migration, no permission, no route |
 | An administrator may change their own permissions, role and account, confirmed first and audited with `self: true`, with a lockout guard that keeps an active administrator who can manage users | **Released in 1.23.6** ([CHANGELOG](../../CHANGELOG.md)); a patch with no migration, permission name or route, shipped under an owner-approved policy exception that is not a security fix: it widens what an administrator may do during the feature freeze ([docs/RELEASE.md](../RELEASE.md), *Record: 1.23.6*) |
 | The fixes of an owner-authorised white-box penetration test of 1.23.6 (a consent's purpose checked at every disclosure, an office deletion that stands against a sync push, stronger passwords, sign-in limits per person, and five more), an intake queue for referrals to the programme, possible duplicate time, a sign reminder that opens its draft, scheduled backups on SUDS on this device, the Security & procurement page and the hardening checklist, and the office server for Windows (`suds.exe`) | **Released in 1.24.0** ([CHANGELOG](../../CHANGELOG.md)); a feature release inside 1.23.0's 28 days under the recorded security exception ([docs/RELEASE.md](../RELEASE.md), *Record: 1.24.0*): migrations 68 to 70, the `intake:read` and `intake:write` permissions. The white-box test was not independent: the independent penetration test is still owed |
+| The proprietary licence (AugustInnovations LLC; SUDS on this device free for real use under section 2A; 1.24.0 and earlier stay MIT), and the fixes from the market evaluation of 1.24.0: no two-step lockout in `npm run try`, HTTPS seen at once after the setup wizard, a common password with extra letters refused, clearer referral consent wording, a switched-off module's forms gone after a refused save, a sign reminder its worker cannot close while drafts are unsigned, and a device backup due today rather than overdue | **Released in 1.24.1** ([CHANGELOG](../../CHANGELOG.md)); a patch: no migration, no permission, no route, and no policy exception ([docs/RELEASE.md](../RELEASE.md), *Record: 1.24.1*) |
 | One-time secure referral links to organisations not on SUDS, with an invitation | **Released in 1.17.0**; off by default; counsel reviews the design before a programme switches it on |
 | A cross-organisation referral network (organisations that join and accept referrals in SUDS) | **Planned**, not scheduled |
 | Inbound FHIR referrals | **Design placeholder** ([docs/integration/FHIR.md](../integration/FHIR.md)) |
