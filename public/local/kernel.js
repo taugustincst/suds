@@ -44540,7 +44540,7 @@ var require_oidc2 = __commonJS({
       r.get("/api/auth/oidc/status", () => ({ enabled: config2.oidc.enabled, label: config2.oidc.label }));
       r.get("/api/auth/oidc/start", async (ctx) => {
         if (!config2.oidc.enabled) throw notFound();
-        if (!rateLimit(`login:${ctx.ip}`, config2.isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
+        if (!rateLimit(`oidc-ip:${ctx.ip}`, config2.loginIpRateLimit, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
         let started;
         const t = mfaTrust();
         try {
@@ -44557,7 +44557,7 @@ var require_oidc2 = __commonJS({
         auth3.requireAuth(ctx);
         const u = db3.one(`SELECT oidc_subject FROM users WHERE id=?`, ctx.user.id);
         if (!u || !u.oidc_subject) throw badRequest("Your account is not linked to single sign-on. Sign with your password instead.");
-        if (!rateLimit(`login:${ctx.ip}`, config2.isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
+        if (!rateLimit(`oidc-reauth-${ctx.user.id}@${ctx.ip}`, config2.loginRateLimit, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
         const t = mfaTrust();
         let started;
         try {
@@ -44573,7 +44573,7 @@ var require_oidc2 = __commonJS({
         if (!config2.oidc.enabled) throw notFound();
         const saved = oidc.readState(ctx.cookies[oidc.COOKIE]);
         if (saved && saved.purpose === "reauth") {
-          if (!rateLimit(`login:${ctx.ip}`, config2.isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
+          if (!rateLimit(`oidc-reauth-${saved.uid}@${ctx.ip}`, config2.loginRateLimit, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
           return finishReauth(ctx, saved);
         }
         const fail = (reason, detail) => {
@@ -44582,7 +44582,7 @@ var require_oidc2 = __commonJS({
           redirect(ctx.res, `/#/login?oidc_error=${encodeURIComponent(reason)}`);
         };
         if (ctx.query.get("error")) return fail("provider_denied");
-        if (!rateLimit(`login:${ctx.ip}`, config2.isTest ? 1e5 : 20, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
+        if (!rateLimit(`oidc-ip:${ctx.ip}`, config2.loginIpRateLimit, 15 * 6e4)) throw new HttpError3(429, "Too many sign-in attempts. Try again later.");
         let claims;
         try {
           claims = await oidc.completeAuth({ code: ctx.query.get("code") || "", state: ctx.query.get("state") || "", cookieToken: ctx.cookies[oidc.COOKIE] });

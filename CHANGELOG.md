@@ -115,6 +115,11 @@ the office's NAT address; and a device's sync sign-in can no longer manage the a
   it; it now narrows them to that client, within the caller's caseload as before (a client off the caseload gives an
   empty list, as the generic list routes do). docs/API.md says so.
 
+- Fixed: single sign-on sign-ins from one address shared one bucket of 20 attempts in 15 minutes, every attempt counted, so
+  a 20-person office signing in through its identity provider in the morning was refused. They now count against the
+  per-address ceiling (`LOGIN_IP_RATE_LIMIT`), and SSO re-authentication for signing per account from the address
+  (`server/routes/oidc.js`, `test/oidc.test.js`).
+
 ### Scheduled backups for SUDS on this device (built for 1.24.0, not yet released)
 
 Built on a feature branch for 1.24.0, which comes no earlier than 2026-10-29 and through the release gate; nothing

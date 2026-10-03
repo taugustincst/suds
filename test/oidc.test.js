@@ -228,3 +228,16 @@ test('start and callback are not offered when OIDC is not configured', async () 
     assert.equal((await (await fetch(`${base}/api/auth/oidc/status`)).json()).enabled, false);
   } finally { config.oidc.enabled = true; }
 });
+
+test('a whole office signing in through SSO from one address is held only by the address ceiling, not one account\'s 20 (1.24.0)', async () => {
+  const was = { per: config.loginRateLimit, ip: config.loginIpRateLimit };
+  config.loginRateLimit = 20; config.loginIpRateLimit = 45; // the tests above have started some sign-ins already
+  try {
+    // Twenty-five people's sign-ins from one router: each starts at the provider, none is refused.
+    for (let i = 0; i < 25; i++) assert.equal((await fetch(`${base}/api/auth/oidc/start`, { redirect: 'manual' })).status, 302, `sign-in ${i + 1}`);
+    // The address's ceiling still holds a flood back.
+    let refused = 0;
+    for (let i = 0; i < 30; i++) if ((await fetch(`${base}/api/auth/oidc/start`, { redirect: 'manual' })).status === 429) refused++;
+    assert.ok(refused > 0, 'past the address ceiling, sign-ins are refused');
+  } finally { config.loginRateLimit = was.per; config.loginIpRateLimit = was.ip; }
+});

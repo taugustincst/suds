@@ -86,7 +86,9 @@ module.exports = (r) => {
 
   r.get('/api/auth/oidc/start', async (ctx) => {
     if (!config.oidc.enabled) throw notFound();
-    if (!rateLimit(`login:${ctx.ip}`, config.isTest ? 100000 : 20, 15 * 60_000)) throw new HttpError(429, 'Too many sign-in attempts. Try again later.');
+    // Every sign-in from the office starts here, so the address's ceiling, not the 20 a single account gets (1.24.0):
+    // one address is often a whole office behind its router.
+    if (!rateLimit(`oidc-ip:${ctx.ip}`, config.loginIpRateLimit, 15 * 60_000)) throw new HttpError(429, 'Too many sign-in attempts. Try again later.');
     let started;
     const t = mfaTrust();
     try { started = await oidc.startAuth({ acrValues: t.trusted ? t.acrValues : [] }); }
@@ -103,7 +105,7 @@ module.exports = (r) => {
     auth.requireAuth(ctx);
     const u = db.one(`SELECT oidc_subject FROM users WHERE id=?`, ctx.user.id);
     if (!u || !u.oidc_subject) throw badRequest('Your account is not linked to single sign-on. Sign with your password instead.');
-    if (!rateLimit(`login:${ctx.ip}`, config.isTest ? 100000 : 20, 15 * 60_000)) throw new HttpError(429, 'Too many sign-in attempts. Try again later.');
+    if (!rateLimit(`oidc-reauth-${ctx.user.id}@${ctx.ip}`, config.loginRateLimit, 15 * 60_000)) throw new HttpError(429, 'Too many sign-in attempts. Try again later.');
     const t = mfaTrust();
     let started;
     try { started = await oidc.startAuth({ acrValues: t.trusted ? t.acrValues : [], reauth: { sid: sha256(ctx.session.id), uid: ctx.user.id, ret: safeReturn(ctx.body && ctx.body.return) } }); }
@@ -119,7 +121,7 @@ module.exports = (r) => {
     if (!config.oidc.enabled) throw notFound();
     const saved = oidc.readState(ctx.cookies[oidc.COOKIE]);
     if (saved && saved.purpose === 'reauth') {
-      if (!rateLimit(`login:${ctx.ip}`, config.isTest ? 100000 : 20, 15 * 60_000)) throw new HttpError(429, 'Too many sign-in attempts. Try again later.');
+      if (!rateLimit(`oidc-reauth-${saved.uid}@${ctx.ip}`, config.loginRateLimit, 15 * 60_000)) throw new HttpError(429, 'Too many sign-in attempts. Try again later.');
       return finishReauth(ctx, saved);
     }
     const fail = (reason, detail) => {
@@ -128,7 +130,7 @@ module.exports = (r) => {
       redirect(ctx.res, `/#/login?oidc_error=${encodeURIComponent(reason)}`);
     };
     if (ctx.query.get('error')) return fail('provider_denied');
-    if (!rateLimit(`login:${ctx.ip}`, config.isTest ? 100000 : 20, 15 * 60_000)) throw new HttpError(429, 'Too many sign-in attempts. Try again later.');
+    if (!rateLimit(`oidc-ip:${ctx.ip}`, config.loginIpRateLimit, 15 * 60_000)) throw new HttpError(429, 'Too many sign-in attempts. Try again later.');
     let claims;
     try {
       claims = await oidc.completeAuth({ code: ctx.query.get('code') || '', state: ctx.query.get('state') || '', cookieToken: ctx.cookies[oidc.COOKIE] });
