@@ -1,0 +1,1787 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:c8c6c3f5-9210-5dab-9813-c9425924ab16",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-10-03T00:00:00Z",
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "scripts/sbom.js",
+          "description": "SUDS SBOM generator (Node built-ins and git only)"
+        }
+      ]
+    },
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:github/taugustincst/suds@v1.24.0",
+      "name": "suds",
+      "version": "1.24.0",
+      "purl": "pkg:github/taugustincst/suds@v1.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "description": "SUD Navigator Services Tracker — operations for harm-reduction and prevention programmes: outreach, visits, naloxone and supplies, referrals and grant reporting, with HIPAA and 42 CFR Part 2 privacy",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/taugustincst/suds"
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "suds:source",
+        "value": "git commit abd80af66358a1b19f05423973de121c3cd7d96b"
+      },
+      {
+        "name": "suds:source-commit",
+        "value": "abd80af66358a1b19f05423973de121c3cd7d96b"
+      },
+      {
+        "name": "suds:timestamp-is",
+        "value": "the date of the 1.24.0 section of CHANGELOG.md (the version stamp's date; a release's date is its tag's)"
+      },
+      {
+        "name": "suds:scopes",
+        "value": "required = shipped and used at run time; optional = one deployment shape only; excluded = development, build, test or CI tooling that never ships"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "platform",
+      "bom-ref": "pkg:generic/node@22.23.3",
+      "name": "node",
+      "version": "22.23.3",
+      "scope": "required",
+      "description": "Node.js runtime. The office server needs nothing else: no npm package is installed to run it. The operator supplies and patches Node; this is the release CI and the release workflow test on.",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "purl": "pkg:generic/node@22.23.3",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://nodejs.org/dist/v22.23.3/node-v22.23.3-linux-x64.tar.xz",
+          "comment": "The hash is of this file, pinned in .github/workflows/ci.yml"
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:engines",
+          "value": ">=22.13"
+        },
+        {
+          "name": "suds:hash-of",
+          "value": "node-v22.23.3-linux-x64.tar.xz"
+        },
+        {
+          "name": "suds:builtins-used-by-server",
+          "value": "node:async_hooks, node:child_process, node:crypto, node:dgram, node:dns, node:fs, node:http, node:https, node:os, node:path, node:sqlite, node:url, node:worker_threads, node:zlib"
+        },
+        {
+          "name": "suds:embedded-sqlite",
+          "value": "node:sqlite embeds SQLite; its version is the Node release's own (node -p process.versions.sqlite)"
+        }
+      ]
+    },
+    {
+      "type": "platform",
+      "bom-ref": "pkg:generic/node@22.23.3?os=windows&arch=x64",
+      "name": "node",
+      "version": "22.23.3",
+      "scope": "optional",
+      "purl": "pkg:generic/node@22.23.3?os=windows&arch=x64",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "description": "Node.js for Windows: suds.exe in suds-1.24.0-windows-x64.zip is this release's node.exe, its signature removed and the SUDS bootstrap injected (Node's single executable applications; scripts/build-windows.js).",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://nodejs.org/dist/v22.23.3/node-v22.23.3-win-x64.zip",
+          "comment": "The hash is of this file, pinned in .github/workflows/ci.yml (windows-exe)"
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:hash-of",
+          "value": "node-v22.23.3-win-x64.zip"
+        },
+        {
+          "name": "suds:shipped-in",
+          "value": "suds-1.24.0-windows-x64.zip (suds.exe)"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "bom-ref": "pkg:github/winsw/winsw@v2.12.0",
+      "name": "winsw",
+      "version": "2.12.0",
+      "scope": "optional",
+      "purl": "pkg:github/winsw/winsw@v2.12.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "description": "WinSW, the Windows service wrapper: suds-service.exe in suds-1.24.0-windows-x64.zip, unchanged (WinSW-x64.exe of the release). Runs the SUDS service and restarts it on failure.",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe",
+          "comment": "The hash is of this file, pinned in .github/workflows/ci.yml (windows-exe)"
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:hash-of",
+          "value": "WinSW-x64.exe"
+        },
+        {
+          "name": "suds:shipped-in",
+          "value": "suds-1.24.0-windows-x64.zip (suds-service.exe)"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/postject@1.0.0-alpha.6",
+      "name": "postject",
+      "version": "1.0.0-alpha.6",
+      "scope": "excluded",
+      "purl": "pkg:npm/postject@1.0.0-alpha.6",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "6fd11bf21d9e56a344f1e76f29dc2a92b63a3bb900c2623c91c9c1bf535272895825ba39f57505d27a05abe9716c2d72376d1b982d160446c30b91ffec049bd0"
+        }
+      ],
+      "description": "Build tool: injects the SEA bootstrap into suds.exe in CI (scripts/build-windows.js loads its API file from the pinned registry tarball). Not in package.json, not shipped.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:hash-of",
+          "value": "the npm registry tarball (pinned in .github/workflows/ci.yml, windows-exe)"
+        }
+      ]
+    },
+    {
+      "type": "container",
+      "bom-ref": "pkg:docker/node@22.22-alpine",
+      "name": "node",
+      "version": "22.22-alpine",
+      "scope": "optional",
+      "purl": "pkg:docker/node@22.22-alpine",
+      "description": "Base image of the Dockerfile (the container deployment only). Pinned to a minor line by tag, not by digest: a rebuild takes that line's newest patch release.",
+      "properties": [
+        {
+          "name": "suds:pinned-by",
+          "value": "tag"
+        },
+        {
+          "name": "suds:source",
+          "value": "Dockerfile"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "bom-ref": "suds:server/",
+      "name": "suds-server",
+      "version": "1.24.0",
+      "scope": "required",
+      "description": "The office server: Node.js built-ins only. Also bundled into the browser kernel.",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:path",
+          "value": "server/"
+        },
+        {
+          "name": "suds:files",
+          "value": "219"
+        },
+        {
+          "name": "suds:tree-sha256",
+          "value": "e00e8369a5b0aa3056a8b2fb2063a3a1e585a7effa13aa5cb335128e5027dcc1"
+        },
+        {
+          "name": "suds:tree-method",
+          "value": "SHA-256 of the sorted lines \"<sha256>  <path>\\n\" for every tracked file under server/ (the last line of: git ls-files -z server | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum)"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "bom-ref": "suds:public/",
+      "name": "suds-web-app",
+      "version": "1.24.0",
+      "scope": "required",
+      "description": "The web app (vanilla ES modules, no build step), served by the office server and published as SUDS on this device. The files listed individually are included in this tree too.",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:path",
+          "value": "public/"
+        },
+        {
+          "name": "suds:files",
+          "value": "77"
+        },
+        {
+          "name": "suds:tree-sha256",
+          "value": "72a337d0f2f6a4a926674bb7a2e2c5de784d04c0a9f9a1449ba00ddd52654d65"
+        },
+        {
+          "name": "suds:tree-method",
+          "value": "SHA-256 of the sorted lines \"<sha256>  <path>\\n\" for every tracked file under public/ (the last line of: git ls-files -z public | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum)"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "bom-ref": "suds:scripts/",
+      "name": "suds-scripts",
+      "version": "1.24.0",
+      "scope": "required",
+      "description": "Operator and maintainer scripts (backup, key rotation, recovery drill, evidence verification, release checks, build) and the browser test suite (scripts/ui/). The Dockerfile copies this directory.",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:path",
+          "value": "scripts/"
+        },
+        {
+          "name": "suds:files",
+          "value": "117"
+        },
+        {
+          "name": "suds:tree-sha256",
+          "value": "9b22b45837eb0c9a52445dc25cf1b329d30d3fab28e2cce1c6693ae0982a2610"
+        },
+        {
+          "name": "suds:tree-method",
+          "value": "SHA-256 of the sorted lines \"<sha256>  <path>\\n\" for every tracked file under scripts/ (the last line of: git ls-files -z scripts | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum)"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:public/local/kernel.js",
+      "name": "public/local/kernel.js",
+      "version": "1.24.0",
+      "scope": "required",
+      "description": "The browser kernel: local/ and server/ bundled by esbuild (scripts/build-local.js, scripts/kernel-build-options.js), with the npm packages listed as bundled in it. Committed; CI fails if it differs from a fresh build.",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0e87f1eba810ec5fdb850e47dbd482777d7922fc3df50a7052e467f3b45b199f"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "def2219b5367804748317657fe5f85285da6572f5ea1dbe2c7ccb1b5fddb50e75d39b6214a00554e7708434b15392c172f0ecf553f9e5924ebac77f2fd26bd10"
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:origin",
+          "value": "generated"
+        },
+        {
+          "name": "suds:bytes",
+          "value": "3261161"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:public/local/kernel.js.gz",
+      "name": "public/local/kernel.js.gz",
+      "version": "1.24.0",
+      "scope": "required",
+      "description": "gzip (level 9) copy of kernel.js, served with Content-Encoding.",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "b0b7f2094387a0dd2e120bd20ce5b8eb5759c97f15834a2547324362d22b9c30"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "fd946c76eedece82aa0af3f8fc9414269146f5c5de722762bce386cff30e746a7eb467ee0a6fe5da5dc4584d54d50aae29ffb181a7e1dc89dc8e7b1202c16683"
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:origin",
+          "value": "generated"
+        },
+        {
+          "name": "suds:bytes",
+          "value": "800854"
+        },
+        {
+          "name": "suds:compressed-copy-of",
+          "value": "public/local/kernel.js"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:public/local/kernel.js.br",
+      "name": "public/local/kernel.js.br",
+      "version": "1.24.0",
+      "scope": "required",
+      "description": "Brotli (quality 11) copy of kernel.js, served with Content-Encoding.",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "42c11309b77a6ec72acd29098b4d317e50ef0ce3de076f3d211d9fbded4d27f4"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "21e124f654a297257946bd5a50c3e0146fbab2687697882d6b7613d6476bb6c732f37a92971d512cdd5f8ab5177615cdef1267247899accfc579ee9e7bb45f33"
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:origin",
+          "value": "generated"
+        },
+        {
+          "name": "suds:bytes",
+          "value": "595536"
+        },
+        {
+          "name": "suds:compressed-copy-of",
+          "value": "public/local/kernel.js"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:public/local/sql-wasm.wasm",
+      "name": "public/local/sql-wasm.wasm",
+      "version": "1.24.0",
+      "scope": "required",
+      "description": "Copied unchanged from the sql.js package (dist/sql-wasm.wasm) by scripts/build-local.js; SQLite compiled to WebAssembly.",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "083460b3e9d428ebbbbaa03918ba55da33d810e0fb3470d4b5d8677b462b2c2b"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "75a9d85dfe0727cfe5d02512f4ee2adceb5f512db949733316602c42bb48655e961176918c31c7bf81731bd6482dfb3ff6bc659e981566074cde85315912e322"
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:origin",
+          "value": "vendored"
+        },
+        {
+          "name": "suds:bytes",
+          "value": "652953"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:public/local/sql-wasm.wasm.gz",
+      "name": "public/local/sql-wasm.wasm.gz",
+      "version": "1.24.0",
+      "scope": "required",
+      "description": "gzip (level 9) copy of sql-wasm.wasm.",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "d5837b4fcedf80ff272b68db93b82841625035ca1f0aa7bd189bd4dc67bb7007"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "2a664f58dd93eb85dee7e1e6d26b67e4f638abe557303b9ecac9e089c77b7f3ef18523d9d8db4716d4a5f91c3e41523add877b1ec746f2baba47785b88e93f6a"
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:origin",
+          "value": "generated"
+        },
+        {
+          "name": "suds:bytes",
+          "value": "319744"
+        },
+        {
+          "name": "suds:compressed-copy-of",
+          "value": "public/local/sql-wasm.wasm"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:public/local/sql-wasm.wasm.br",
+      "name": "public/local/sql-wasm.wasm.br",
+      "version": "1.24.0",
+      "scope": "required",
+      "description": "Brotli (quality 11) copy of sql-wasm.wasm.",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "777ba67496830392259139d88b37d0e1c379ed1afcaf12fef7c7e7aff0262c63"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "654b5a72e64b98e14f289a445194514bc324313152425904b87d22c696314345997afd4c9b3241f5e1e85ce1bc7fe3ba1a7b38f7feb7d9d2903bbb328e24b63f"
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:origin",
+          "value": "generated"
+        },
+        {
+          "name": "suds:bytes",
+          "value": "275852"
+        },
+        {
+          "name": "suds:compressed-copy-of",
+          "value": "public/local/sql-wasm.wasm"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:public/qr.js",
+      "name": "public/qr.js",
+      "version": "1.24.0",
+      "scope": "required",
+      "description": "QR code encoder written for SUDS (two-step verification enrolment), no third-party code: the secret never goes to a QR service.",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "0947088f9eb0119f611bfac0bb1d8f7745fcb40457bb1310ea89b27810e779af"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "2ead4b485e480ea949248143d4eeb0555ee9136e8ad3ec531631e51288f20dcb412aaaa411ce2f172dfe3dc481a53ef620c651df74154f0bd97559ba5f1383b2"
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:origin",
+          "value": "first-party"
+        },
+        {
+          "name": "suds:bytes",
+          "value": "7693"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "file:server/schema-text.js",
+      "name": "server/schema-text.js",
+      "version": "1.24.0",
+      "scope": "required",
+      "description": "server/schema.sql as a JavaScript string for the browser kernel (scripts/gen-schema-text.js); CI fails if it drifts.",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "7563c7198cca4d5d5296563e19fb9059ccf463e6a553c360253053a2f774ad6f"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "c0cc14ef94df2a2e00426b416a0adf8c6dce10cc6dfd6678a84744935c931954ba4cc3fffd938d7e358f42193ec5fa988c9a43543d3046179dc64b41db2dff87"
+        }
+      ],
+      "properties": [
+        {
+          "name": "suds:origin",
+          "value": "generated"
+        },
+        {
+          "name": "suds:bytes",
+          "value": "118749"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40noble/ciphers@1.0.0",
+      "name": "@noble/ciphers",
+      "version": "1.0.0",
+      "scope": "required",
+      "purl": "pkg:npm/%40noble/ciphers@1.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "c07e441ce98b8b4ac46b3a613db79c0339a3775d88ebf62ffd288776403d2d2c9cb1093b46eb93a7b6a6e7fa3adaa62bd1149c13b3dcf627171816ecafa71eb0"
+        }
+      ],
+      "description": "Bundled into the browser kernel (public/local/kernel.js). A devDependency in package.json because it is used only to build the kernel; its code ships inside it.",
+      "properties": [
+        {
+          "name": "suds:bundled-in",
+          "value": "public/local/kernel.js"
+        },
+        {
+          "name": "suds:hash-of",
+          "value": "the npm registry tarball (package-lock.json integrity)"
+        },
+        {
+          "name": "suds:declared-in",
+          "value": "package.json devDependencies"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40noble/hashes@1.5.0",
+      "name": "@noble/hashes",
+      "version": "1.5.0",
+      "scope": "required",
+      "purl": "pkg:npm/%40noble/hashes@1.5.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "d63ea44056fb411aeeede28ddd90ef45c3f5debba0c1dc59a828db8805597c8270823d80eb95264f84e00115c69578274643912d30d3aced7d644aedefe41780"
+        }
+      ],
+      "description": "Bundled into the browser kernel (public/local/kernel.js). A devDependency in package.json because it is used only to build the kernel; its code ships inside it.",
+      "properties": [
+        {
+          "name": "suds:bundled-in",
+          "value": "public/local/kernel.js"
+        },
+        {
+          "name": "suds:hash-of",
+          "value": "the npm registry tarball (package-lock.json integrity)"
+        },
+        {
+          "name": "suds:declared-in",
+          "value": "package.json devDependencies"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/base64-js@1.5.1",
+      "name": "base64-js",
+      "version": "1.5.1",
+      "scope": "required",
+      "purl": "pkg:npm/base64-js@1.5.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "00aa5a6251e7f2de1255b3870b2f9be7e28a82f478bebb03f2f6efadb890269b3b7ca0d3923903af2ea38b4ad42630b49336cd78f2f0cf1abc8b2a68e35a9e58"
+        }
+      ],
+      "description": "Bundled into the browser kernel (public/local/kernel.js). A devDependency in package.json because it is used only to build the kernel; its code ships inside it.",
+      "properties": [
+        {
+          "name": "suds:bundled-in",
+          "value": "public/local/kernel.js"
+        },
+        {
+          "name": "suds:hash-of",
+          "value": "the npm registry tarball (package-lock.json integrity)"
+        },
+        {
+          "name": "suds:declared-in",
+          "value": "package-lock.json (dependency of a bundled package)"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/buffer@6.0.3",
+      "name": "buffer",
+      "version": "6.0.3",
+      "scope": "required",
+      "purl": "pkg:npm/buffer@6.0.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "153882a4dc6dc226591c465b71b4c87198c44552029fdcaafe90c591397de7f031cc3d6768172d37b60eebcae233f80b48363bb1dacc6f2f21a1f00362ebaa38"
+        }
+      ],
+      "description": "Bundled into the browser kernel (public/local/kernel.js). A devDependency in package.json because it is used only to build the kernel; its code ships inside it.",
+      "properties": [
+        {
+          "name": "suds:bundled-in",
+          "value": "public/local/kernel.js"
+        },
+        {
+          "name": "suds:hash-of",
+          "value": "the npm registry tarball (package-lock.json integrity)"
+        },
+        {
+          "name": "suds:declared-in",
+          "value": "package.json devDependencies"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/fflate@0.8.2",
+      "name": "fflate",
+      "version": "0.8.2",
+      "scope": "required",
+      "purl": "pkg:npm/fflate@0.8.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "70f254e3b39a02809b834a41bf3b20a533e19a1a88e5e26387f248bbcb4f8f9abe4fb88bbd6fc901852a984eca381e11d59c8487305a210a50a5aadd045e73f0"
+        }
+      ],
+      "description": "Bundled into the browser kernel (public/local/kernel.js). A devDependency in package.json because it is used only to build the kernel; its code ships inside it.",
+      "properties": [
+        {
+          "name": "suds:bundled-in",
+          "value": "public/local/kernel.js"
+        },
+        {
+          "name": "suds:hash-of",
+          "value": "the npm registry tarball (package-lock.json integrity)"
+        },
+        {
+          "name": "suds:declared-in",
+          "value": "package.json devDependencies"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/ieee754@1.2.1",
+      "name": "ieee754",
+      "version": "1.2.1",
+      "scope": "required",
+      "purl": "pkg:npm/ieee754@1.2.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "75ccaa843bd7d42e3a95765c56a0a92be16d31141574830debf0dfe63b36ce8b94b2a1bb23ab05c62b480beeca60adbd29d5ce2c776ef732f8b059e85509ea68"
+        }
+      ],
+      "description": "Bundled into the browser kernel (public/local/kernel.js). A devDependency in package.json because it is used only to build the kernel; its code ships inside it.",
+      "properties": [
+        {
+          "name": "suds:bundled-in",
+          "value": "public/local/kernel.js"
+        },
+        {
+          "name": "suds:hash-of",
+          "value": "the npm registry tarball (package-lock.json integrity)"
+        },
+        {
+          "name": "suds:declared-in",
+          "value": "package-lock.json (dependency of a bundled package)"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/sql.js@1.11.0",
+      "name": "sql.js",
+      "version": "1.11.0",
+      "scope": "required",
+      "purl": "pkg:npm/sql.js@1.11.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "1ac2d40d4def84ea35e0f779304d32dad7b8f494326f2e87ba80ae69d7af115f821a04d48e6611ae6ec1ee5851cb33a0ae67169aca547f28cd6fab0e004a9db0"
+        }
+      ],
+      "description": "SQLite for the browser: its JavaScript is bundled in kernel.js and its WebAssembly is public/local/sql-wasm.wasm.",
+      "properties": [
+        {
+          "name": "suds:bundled-in",
+          "value": "public/local/kernel.js"
+        },
+        {
+          "name": "suds:hash-of",
+          "value": "the npm registry tarball (package-lock.json integrity)"
+        },
+        {
+          "name": "suds:declared-in",
+          "value": "package.json devDependencies"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/sqlite@3.45.2",
+      "name": "sqlite",
+      "version": "3.45.2",
+      "scope": "required",
+      "purl": "pkg:generic/sqlite@3.45.2",
+      "licenses": [
+        {
+          "license": {
+            "name": "blessing (public domain)"
+          }
+        }
+      ],
+      "description": "SQLite compiled into public/local/sql-wasm.wasm by the sql.js project (the browser kernel's database).",
+      "properties": [
+        {
+          "name": "suds:source-id",
+          "value": "2024-03-12 11:06:23 d8cd6d49b46a395b13955387d05e9e1a2a47e54fb99f3c9b59835bbefad6af77"
+        },
+        {
+          "name": "suds:embedded-in",
+          "value": "public/local/sql-wasm.wasm"
+        },
+        {
+          "name": "suds:found-by",
+          "value": "the version and source id strings in the wasm bytes"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/aix-ppc64@0.24.0",
+      "name": "@esbuild/aix-ppc64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/aix-ppc64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5ad29d14cee5b38ef390a1c5573333f28a4cecb91cb08a7d6a60d40480168ab83bd1133bd564528dd20b3ec63952fd43e3666951f68f20b0e57da72d1e0b1193"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/android-arm@0.24.0",
+      "name": "@esbuild/android-arm",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/android-arm@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "6ab02d4cfa3be9f27f20291759eb4b09cf44c041ca69ec9ae2f32b45e5651085020149dc1fb3386e1310f8cf557fe14539925d4cd317341ad6c16f8e5d6a527b"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/android-arm64@0.24.0",
+      "name": "@esbuild/android-arm64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/android-arm64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "56c9b8f7bc4533bb5320f60af5b353609c85fe5b0fe7dd107355b125d941ea58c26dd64a53d498f22efe2229f8932855fca579276ace2ac0506c1efb01becbff"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/android-x64@0.24.0",
+      "name": "@esbuild/android-x64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/android-x64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "b7c1abbe716488863ba5aee632025dee9f29f2aa98233d4d62202829cef9672bfbdcbdc3656fbea183121cf45aadca2d4cab92b3a9b785339ae42287692d364d"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/darwin-arm64@0.24.0",
+      "name": "@esbuild/darwin-arm64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/darwin-arm64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "08ac83a516cad615f0bfbf6ca1e4c93476f91221ba72ddde7ddfc54cf77339675b6597c68696dca88a620f4fafc26a6ed304c82fded944f66ef2f52de3a9c14b"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/darwin-x64@0.24.0",
+      "name": "@esbuild/darwin-x64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/darwin-x64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "ae0b73e9f964564879f287783f04d1ab16ca1fd70e8da5c23198160fdd3924ece314a5beec489439b7ddfca6aff80e86cae77a59993dc3ec6ee902f2b5d8b638"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/freebsd-arm64@0.24.0",
+      "name": "@esbuild/freebsd-arm64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/freebsd-arm64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "e8cb5dab99c7820c1f0cd2c01e43e5c8b0691392fa870b2e5d95fc5cd9879e8f49b8bdbe6e0d815f9b519308f27e7eac29bc594eaebcb2e3a3816a8289cbcf5c"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/freebsd-x64@0.24.0",
+      "name": "@esbuild/freebsd-x64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/freebsd-x64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "0f71fec61dffce98685fc724e12d91c4a47a8079470d75f339fe9fffd75b16dfcd4410c8137dfe7156b8f4a8a5e16523c4c196d19218058b5a1826b6f8eb10c1"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/linux-arm@0.24.0",
+      "name": "@esbuild/linux-arm",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/linux-arm@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "8092888b6223468e46e869716fc7770f36179717448f6365922c4fb2a78f4993212ee76a3e1b59e0152ba48b938c9617c6f17d9e3aa5faf463076a1a0bd5e907"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/linux-arm64@0.24.0",
+      "name": "@esbuild/linux-arm64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/linux-arm64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "4c38a33d74ce784dde68c911629732dcb6ab220d77752f7058745dc18467ce5c25037ef4acd759a9b729d164f2c95fe4db34b17e4a39dbe0bb8d4e45f537e3d6"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/linux-ia32@0.24.0",
+      "name": "@esbuild/linux-ia32",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/linux-ia32@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "2b8d22a752c0700d1bc8bd394db090e32278b30be76f31ec7119948a5ae63fd026effff45233eb7a1e25a58cef4e14f642ec3ae8c8631bfff6d26aee7e6e3498"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/linux-loong64@0.24.0",
+      "name": "@esbuild/linux-loong64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/linux-loong64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "d26b30ad83fff5a8be094d01cc17cf319f11566dd118037f96638c816e1a15448e4018c0df550ff0cafa0c38564ae3308fb8da58e4f4a745a867a8de1e1ac3ee"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/linux-mips64el@0.24.0",
+      "name": "@esbuild/linux-mips64el",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/linux-mips64el@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "8482af5e6d3fdf0ff9f910ed089797a8c646908dace283141a3dff8ccd10ce18080125ab18ee7f465cc0ce6e67361fdac07134035f61fc2bc741ee8568136b44"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/linux-ppc64@0.24.0",
+      "name": "@esbuild/linux-ppc64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/linux-ppc64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "1dc661e4136ad1a0b9d94a28709c5a28e45f14e0d65d9c6d05a69936e3773d45f73280ec0a1b19aa8a738b952ea5184f1d2107a2da22a6daa292337f07bee661"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/linux-riscv64@0.24.0",
+      "name": "@esbuild/linux-riscv64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/linux-riscv64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "6c487b74c9ff877431791d8a4f2d4352ccd08d4ac81cf64ac8ee9a3755f80429e17d886e42a79d1da6b933149003fd3a8f71a9888945192b32d5cec67fda5a77"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/linux-s390x@0.24.0",
+      "name": "@esbuild/linux-s390x",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/linux-s390x@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "65c43afaa464c3551c6463f2ac28871e49816a3f528820fc3aa779e7a1e574ff909695087b65a09f77a14065683cebd9bed1e6f073f1f9b1f6d1cf69bdb917de"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/linux-x64@0.24.0",
+      "name": "@esbuild/linux-x64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/linux-x64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "bdbbadb05a90f9fa32df04926e68c15d7209e8f2f7b1c82126833ccc22f5e36706699280742647c9ff81a6efcc997f734fd434cc505529bdfa31ae45cdf6bcc4"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/netbsd-x64@0.24.0",
+      "name": "@esbuild/netbsd-x64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/netbsd-x64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "86343447fba590ef1f09816c1b4159a07fa95a04d30eb7aaa6a63b527427b6768abfde6e3f9896dfe7428719f1ec2dedad0414e344be3a05a1515c028d514bbe"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/openbsd-arm64@0.24.0",
+      "name": "@esbuild/openbsd-arm64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/openbsd-arm64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "303f6ecf390f41b61e87070de7cdf2c774eee4cf042284c3fad520285f7cd9660bf4f7f9acacbd96d803d1e520b3ca6f2a79a2cf18d76722edd33e830b7ad15e"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/openbsd-x64@0.24.0",
+      "name": "@esbuild/openbsd-x64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/openbsd-x64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "e22af4698d4d1948480b585da02cebd7ee5be379b0f7db8dc15ce122ad4e63741c1303c33b707b58d5c1cda298e4db1fd7e375d62d5e39f15cabe0ff80e4b5e5"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/sunos-x64@0.24.0",
+      "name": "@esbuild/sunos-x64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/sunos-x64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "8d5cddcec6cce71ae8b47f96e5fd6cf89b54cb551682353409fe3032f7df4c1f26eb03f9fe4c742a268b1e56c93be74c82dc4a57c450fc9bed94571d675cc23c"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/win32-arm64@0.24.0",
+      "name": "@esbuild/win32-arm64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/win32-arm64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "88a73c180b25cd1a41cad3b6fda377776c9bdb3f174d57cd5743e31a50b12a8e5281698d5f1f3623f437686d6d15f4be0368a054263ded327cb67630a5458b08"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/win32-ia32@0.24.0",
+      "name": "@esbuild/win32-ia32",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/win32-ia32@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "bd05b7e8a66895f22e7427139da4e998b436e076b5463ca0068dfdfda2e43369268e45a6646109e469fd979ffbb735c0e3640622859b2027e0e8a2cb908c3acb"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild/win32-x64@0.24.0",
+      "name": "@esbuild/win32-x64",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/%40esbuild/win32-x64@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "ec80053eb8d240826b1ac2ba7e5c20ecd166c01a124f2177ae5ec87f484d505414e22953b043cbe86b8cb94f417c8595546b919ee22276448c0be7343adbbc20"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        },
+        {
+          "name": "suds:optional",
+          "value": "platform-specific binary; npm installs only the one for the machine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/esbuild@0.24.0",
+      "name": "esbuild",
+      "version": "0.24.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/esbuild@0.24.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "16e2cf7af0a1183b2181289c8e2b12a2853471e9a9fec19747ce350f92c7301ee64d53a6b041dc031687de2acbe77fbc60321e54d404c928780da614fe2b8fa9"
+        }
+      ],
+      "description": "Build tool: bundles the browser kernel on a maintainer's machine or in CI. Never shipped or run by an installation.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "build"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/axe-core@4.13.0",
+      "name": "axe-core",
+      "version": "4.13.0",
+      "scope": "excluded",
+      "purl": "pkg:npm/axe-core@4.13.0",
+      "description": "Test-only: installed by CI with --no-save for the browser suite (scripts/ui/run-all.sh), never in package.json or package-lock.json, never shipped.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "test"
+        },
+        {
+          "name": "suds:locked",
+          "value": "false: the version is pinned in .github/workflows/ci.yml, the hash is not"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/playwright@1.56.1",
+      "name": "playwright",
+      "version": "1.56.1",
+      "scope": "excluded",
+      "purl": "pkg:npm/playwright@1.56.1",
+      "description": "Test-only: installed by CI with --no-save for the browser suite (scripts/ui/run-all.sh), never in package.json or package-lock.json, never shipped.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "test"
+        },
+        {
+          "name": "suds:locked",
+          "value": "false: the version is pinned in .github/workflows/ci.yml, the hash is not"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "bom-ref": "pkg:github/actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      "name": "actions/download-artifact",
+      "version": "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      "scope": "excluded",
+      "purl": "pkg:github/actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c",
+      "description": "GitHub Action used by a release workflow (pinned to a full commit SHA). Runs on GitHub's runners; never shipped.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "ci"
+        },
+        {
+          "name": "suds:workflow",
+          "value": ".github/workflows/web-app.yml"
+        },
+        {
+          "name": "suds:tag-comment",
+          "value": "v8.0.1"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "bom-ref": "pkg:github/actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      "name": "actions/upload-artifact",
+      "version": "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      "scope": "excluded",
+      "purl": "pkg:github/actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+      "description": "GitHub Action used by a release workflow (pinned to a full commit SHA). Runs on GitHub's runners; never shipped.",
+      "properties": [
+        {
+          "name": "suds:role",
+          "value": "ci"
+        },
+        {
+          "name": "suds:workflow",
+          "value": ".github/workflows/web-app.yml"
+        },
+        {
+          "name": "suds:tag-comment",
+          "value": "v7.0.1"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "file:public/local/kernel.js",
+      "dependsOn": [
+        "pkg:npm/%40noble/ciphers@1.0.0",
+        "pkg:npm/%40noble/hashes@1.5.0",
+        "pkg:npm/base64-js@1.5.1",
+        "pkg:npm/buffer@6.0.3",
+        "pkg:npm/fflate@0.8.2",
+        "pkg:npm/ieee754@1.2.1",
+        "pkg:npm/sql.js@1.11.0"
+      ]
+    },
+    {
+      "ref": "file:public/local/sql-wasm.wasm",
+      "dependsOn": [
+        "pkg:generic/sqlite@3.45.2",
+        "pkg:npm/sql.js@1.11.0"
+      ]
+    },
+    {
+      "ref": "pkg:github/taugustincst/suds@v1.24.0",
+      "dependsOn": [
+        "pkg:docker/node@22.22-alpine",
+        "pkg:generic/node@22.23.3",
+        "pkg:generic/node@22.23.3?os=windows&arch=x64",
+        "pkg:github/winsw/winsw@v2.12.0",
+        "suds:public/",
+        "suds:scripts/",
+        "suds:server/"
+      ]
+    },
+    {
+      "ref": "suds:public/",
+      "dependsOn": [
+        "file:public/local/kernel.js",
+        "file:public/local/kernel.js.br",
+        "file:public/local/kernel.js.gz",
+        "file:public/local/sql-wasm.wasm",
+        "file:public/local/sql-wasm.wasm.br",
+        "file:public/local/sql-wasm.wasm.gz",
+        "file:public/qr.js"
+      ]
+    },
+    {
+      "ref": "suds:server/",
+      "dependsOn": [
+        "file:server/schema-text.js"
+      ]
+    }
+  ]
+}
