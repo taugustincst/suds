@@ -27,7 +27,7 @@ SUDS_ENV=production npm start        # Windows PowerShell: $env:SUDS_ENV='produc
 
 Leave that window open (closing it stops SUDS) and open the address it prints — normally **http://127.0.0.1:8080** — in your browser: the **setup wizard** appears.
 
-For anything other staff depend on, run SUDS as a service instead so it survives a closed window and a reboot: systemd on Linux, NSSM on Windows, or Docker, as [DEPLOYMENT.md](DEPLOYMENT.md) describes. The data folder and the wizard's settings carry over unchanged. (The double-click launchers that older versions shipped were removed in 1.9.3.)
+For anything other staff depend on, run SUDS as a service instead so it survives a closed window and a reboot: systemd on Linux (or SUDS Server, [SELF-HOSTING.md](SELF-HOSTING.md)), Docker, as [DEPLOYMENT.md](DEPLOYMENT.md) describes, or on **Windows the Windows server zip**: unzip `suds-<version>-windows-x64.zip`, then `suds service install` and `suds service start` in an elevated terminal. It needs no Node.js install ([WINDOWS-SERVER.md](WINDOWS-SERVER.md)). The data folder and the wizard's settings carry over unchanged. (The double-click launchers that older versions shipped were removed in 1.9.3.)
 
 ## Step 4 — Setup wizard (first run only)
 The wizard asks for:

@@ -390,6 +390,49 @@ Then it runs the OS-sensitive tests: crypto, keys, backups, audit, the instance 
 not on the release gate's list of required jobs, but a red run fails CI. No migration, permission or route is
 added.
 
+### The office server on Windows: `suds.exe` and the Windows service (built for 1.24.0, not yet released)
+
+By owner decision of 2026-10-03 ("The server should be launched in an exe ... to simplify it for county IT";
+docs/PLATFORM.md), each release also carries **`suds-<version>-windows-x64.zip`** and its `.sha256`. No migration,
+permission or route is added. The guide for county IT is **docs/WINDOWS-SERVER.md**.
+
+* **`suds.exe`** is the pinned official Node.js 22 `node.exe` with a small bootstrap injected (Node's single
+  executable applications; `scripts/windows/sea-main.js`). It finds **`app\`** beside it and runs the office server
+  from there, so an update replaces `app\`. Nothing else is installed. The server still has no npm dependency.
+* **The `suds` command line** (`scripts/windows/cli.js`) wraps the existing server and scripts. `suds` (or a
+  double-click) starts the server and opens the setup wizard on a first run, the sign-in page afterwards.
+  `start`/`serve` starts it without a browser. `try` is the fictional-data test copy (`scripts/try-local.js`).
+  `status [--json]` shows the version, service state and account, health, port, folders, last backup, disk space and
+  the last update check, with no network. `service install|uninstall|start|stop|restart|status`.
+  `logs [--follow] [--lines N] [--errors] [--service]`. `backup`, `dr-drill`, `create-admin`, `reset-admin`,
+  `verify-audit-export`, `update --check | --from <zip>` (checked against its `.sha256`, backup first, `app\` kept
+  as `app.previous`), `open`, `version`. `compliance-check` says the host check is Linux-only and exits 5. Every
+  command has `--help`, the exit codes are documented (0 to 5), and errors are one sentence with the next step.
+* **The Windows service** is WinSW v2.12.0 (MIT), bundled as `suds-service.exe`. `suds service install` writes
+  `suds-service.xml`: service *SUDS*, run as the virtual account **`NT SERVICE\SUDS`** (not LocalSystem), automatic
+  delayed start, restart on failure (10 s, 30 s, then 60 s), 30 s to stop. Stop sends Ctrl+C, which reaches the
+  server's clean shutdown (verified in CI: the instance lock is released and the database closed). The wrapper's
+  logs roll at 10 MB under `<data>\logs\service`. Install also sets the data folder (`C:\ProgramData\SUDS` by
+  default) to Administrators, SYSTEM and the service account only, and registers the Application Event Log source
+  **SUDS**. WinSW logs service start and stop there, and SUDS writes event 1001 when it stops on an error as the
+  service. A temporary password printed at the first start never reaches the wrapper's log files.
+* **Built by CI only:** `scripts/build-windows.js`, and `ci.yml`'s new **`windows-exe`** job on every push. It builds,
+  unzips and smoke-tests the zip (`scripts/windows/smoke-test.ps1`: version, `try` with a sign-in, `status --json`,
+  service install/start/health/stop/restart/uninstall, `logs`, `backup`) and uploads it as the run's artifact
+  `suds-windows-x64`. Not advisory, and not in the release gate's required jobs. `release.yml` gains `windows-exe`
+  (build) and `windows-sign` (Authenticode with `WINDOWS_CERT_PFX_BASE64` / `WINDOWS_CERT_PASSWORD` when they exist,
+  otherwise unsigned with a notice), and the release job attaches the pair. `scripts/release-existing.js` accepts it
+  on an existing release only paired, and byte for byte this run's build.
+* **Supply chain:** the Node.js win-x64 zip, WinSW-x64.exe and postject 1.0.0-alpha.6 are pinned by hash in `ci.yml`
+  (postject by its registry SHA-512, used as a library from its checked tarball: no npm install, no npx). A mismatch
+  stops the build. The SBOM (`scripts/sbom.js`) lists them. The zip is deterministic (`scripts/windows/zip.js`).
+* `npm run try`'s messages and banner can name another command (`suds try`). `server/update.js` reads its
+  configuration only when asked to, so `suds update --check` does not create keys. Tests:
+  `test/windows-cli.test.js`, `test/windows-build.test.js`, and additions to the workflow, release and SBOM tests.
+  Docs: WINDOWS-SERVER.md (new), INSTALL.md, DEPLOYMENT.md (the built-in service replaces the NSSM advice),
+  PLATFORM.md, TRY-ON-WINDOWS.md (`suds try` first), RELEASE.md (*The Windows server zip*, *Signing the Windows
+  server*), README.md, the threat model and vulnerability management, CLAUDE.md.
+
 ## 1.23.6 — 2026-10-02
 
 A patch of 1.23.5 that ships **with an owner-approved policy exception** (docs/RELEASE.md, *Stabilisation (from
