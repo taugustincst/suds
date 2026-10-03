@@ -365,8 +365,14 @@ jobs:
       - name: npm run try, signed in, and stopped as Ctrl+C stops it
         shell: pwsh
         working-directory: src
-        run: node --no-warnings=ExperimentalWarning --test test/try-local.test.js
+        # Its failures are also written as one annotation (::error::), readable on the run's page without the log.
+        run: |
+          node --no-warnings=ExperimentalWarning --test test/try-local.test.js 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\try.log"
+          if ($LASTEXITCODE -ne 0) { $l = Select-String -Path "$env:RUNNER_TEMP\try.log" -Pattern 'not ok|rror|expected|actual|message|at ' | Select-Object -First 60 | ForEach-Object { $_.Line.Trim() }; Write-Output "::error::$($l -join '%0A')"; exit 1 }
       - name: The OS-sensitive tests (config, keys, crypto, backups, audit, lock, logs, migrations)
+        if: success() || failure()
         shell: pwsh
         working-directory: src
-        run: node --no-warnings=ExperimentalWarning --test test/crypto.test.js test/key-separation.test.js test/secret-files.test.js test/backup.test.js test/backup-restore-in-place.test.js test/scheduled-backup.test.js test/audit-anchor-interval.test.js test/audit-head-at-start.test.js test/audit-immutable.test.js test/audit-retention.test.js test/instance-lock.test.js test/log.test.js test/migrations.test.js test/health-probes.test.js test/rotate-index-key.test.js test/update.test.js
+        run: |
+          node --no-warnings=ExperimentalWarning --test test/crypto.test.js test/key-separation.test.js test/secret-files.test.js test/backup.test.js test/backup-restore-in-place.test.js test/scheduled-backup.test.js test/audit-anchor-interval.test.js test/audit-head-at-start.test.js test/audit-immutable.test.js test/audit-retention.test.js test/instance-lock.test.js test/log.test.js test/migrations.test.js test/health-probes.test.js test/rotate-index-key.test.js test/update.test.js 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\os.log"
+          if ($LASTEXITCODE -ne 0) { $l = Select-String -Path "$env:RUNNER_TEMP\os.log" -Pattern 'not ok|rror|expected|actual|message|at ' | Select-Object -First 60 | ForEach-Object { $_.Line.Trim() }; Write-Output "::error::$($l -join '%0A')"; exit 1 }
