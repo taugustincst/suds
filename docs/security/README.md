@@ -2,7 +2,7 @@
 
 For county IT, security and privacy reviewers. Everything here describes controls that exist in the code, with the file that implements each one, so a claim can be checked rather than taken on trust. Where SUDS relies on the county (policy, hosting, key custody, staffing) the documents say so.
 
-**What SUDS is not.** SUDS holds **no SOC 2, ISO/IEC 27001, HITRUST, StateRAMP or FedRAMP certification or attestation**, and no document here is one. It is open-source software a county runs on its own infrastructure. These documents map its controls to those frameworks so that a county (or its auditor) can assess an installation; independent attestation of a deployment requires an independent auditor examining the county's operation of it over time. See [SOC2-READINESS.md](SOC2-READINESS.md).
+**What SUDS is not.** SUDS holds **no SOC 2, ISO/IEC 27001, HITRUST, StateRAMP or FedRAMP certification or attestation**, and no document here is one. It is proprietary software, with its source visible for review ([LICENSE](../../LICENSE)), that a county runs on its own infrastructure. These documents map its controls to those frameworks so that a county (or its auditor) can assess an installation; independent attestation of a deployment requires an independent auditor examining the county's operation of it over time. See [SOC2-READINESS.md](SOC2-READINESS.md).
 
 ## What to read
 

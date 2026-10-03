@@ -249,8 +249,8 @@ vendor ever hosts.**
 **Q. Who owns the data? What happens at the end of the contract?**
 The county owns the county server's data; each CBO owns its own. Both hold their databases and keys throughout.
 Exports: CSV and Excel of every table, the county view's Excel, CSV and tidy CSV, FHIR bulk export on a CBO's
-server; the database is a standard SQLite file. The software is MIT-licensed and may be kept running without a
-contract. Any copy the vendor held for support is deleted within 30 days with a certificate. Evidence:
+server; the database is a standard SQLite file. SUDS is proprietary: what may be kept running after the
+contract ends is set by the licence agreement **[owner to decide]**. Any copy the vendor held for support is deleted within 30 days with a certificate. Evidence:
 [../PILOT-KIT.md](../PILOT-KIT.md), section 6; [DPA-DRAFT.md](DPA-DRAFT.md), section 7;
 [../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #14; the licence text is [../../../LICENSE](../../../LICENSE).
 

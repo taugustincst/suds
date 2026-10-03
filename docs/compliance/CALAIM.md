@@ -39,7 +39,7 @@ The redesign's requirements are summarised here in our own words. Check the curr
 
 ## Instrument licensing — for counsel
 
-SUDS's licence (MIT) covers SUDS's own code, not third-party instruments. Before a paid pilot, vendor and programme counsel should confirm:
+SUDS's licence ([LICENSE](../../LICENSE), proprietary) covers SUDS's own code, not third-party instruments. Before a paid pilot, vendor and programme counsel should confirm:
 
 * **DAST-10** — the author's terms cover non-commercial clinical, research and training use with credit. Confirm that the programme's use (and, for a vendor-hosted or paid offering, the vendor's) is covered, or obtain permission from the copyright holder. SUDS keeps the DAST-10 off until an administrator confirms this.
 * **ASAM Criteria and the "ASAM" name** — SUDS stores only the six dimension names and 0–4 ratings and labels the feature "six-dimension assessment (ASAM-aligned)"; it includes no Criteria text. A programme that uses The ASAM Criteria needs its own licence from ASAM. Level-of-care numbers (1.0, 2.1, 3.5…) are recorded as DHCS uses them.

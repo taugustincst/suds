@@ -32,7 +32,7 @@ test('the procurement facts are public, blank until published, and carry nothing
 
 test('only an administrator may publish them, and each value is checked', async () => {
   const body = { procurement_legal_entity: 'Example Services LLC', procurement_contact_name: 'Sales desk', procurement_contact_email: 'buyers@example.org',
-    procurement_contact_url: 'https://example.org/contact', procurement_pricing: 'Software free (MIT).\nServices quoted per programme.', procurement_sla: 'Business hours support.' };
+    procurement_contact_url: 'https://example.org/contact', procurement_pricing: 'Evaluation free for 90 days.\nServices quoted per programme.', procurement_sla: 'Business hours support.' };
   for (const c of [sup, nav, H.client()]) assert.ok([401, 403].includes((await c.put('/api/admin/settings', body)).status), 'a supervisor, a navigator or no session may not');
   assert.equal((await H.client().get('/api/procurement')).data.legal_entity, null, 'nothing was stored');
   assert.equal((await admin.put('/api/admin/settings', { procurement_contact_email: 'not an email' })).status, 400);
@@ -44,7 +44,7 @@ test('only an administrator may publish them, and each value is checked', async 
   const r = await H.client().get('/api/procurement');
   assert.equal(r.data.legal_entity, 'Example Services LLC');
   assert.equal(r.data.contact_email, 'buyers@example.org');
-  assert.equal(r.data.pricing, 'Software free (MIT).\nServices quoted per programme.', 'paragraphs kept');
+  assert.equal(r.data.pricing, 'Evaluation free for 90 days.\nServices quoted per programme.', 'paragraphs kept');
   assert.equal((await admin.get('/api/admin/settings')).data.procurement_sla, 'Business hours support.', 'the Settings form reads them back');
   // Blank clears one again.
   assert.equal((await admin.put('/api/admin/settings', { procurement_contact_name: null })).status, 200);

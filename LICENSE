@@ -1,21 +1,89 @@
-MIT License
+SUDS Proprietary Licence
 
-Copyright (c) 2026 The SUDS contributors
+Copyright (c) 2026 AugustInnovations. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This text was written for the copyright holder in plain English. It is not legal advice to anyone. If you are
+unsure what it lets you do, ask your own lawyer, or ask the copyright holder for a written licence agreement.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Who this licence is from and what it covers
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+"The software" means SUDS: the source code, the web app, the office server, the Windows server zip, the
+documentation and every other file in this repository, except the third-party components described in
+section 5. "The copyright holder" (or "licensor") means AugustInnovations. "You" means the person or
+organisation using the software.
+
+2. Evaluation grant
+
+If you obtained an unmodified copy of the software from the copyright holder - the official GitHub repository
+or its releases (https://github.com/taugustincst/suds), the GitHub Pages site the copyright holder publishes,
+or the Windows server zip (suds-<version>-windows-x64.zip) published there - you may download, install and
+run that copy, solely to evaluate it, for up to 90 days from the day you first install or open it, and only
+with fictional or test data.
+
+During the evaluation you may not enter, import or keep any real client or patient records or any protected
+health information (PHI), and you may not use the software in production or to deliver services to anyone.
+
+3. Everything else needs a signed agreement
+
+Any other use needs a separate written licence agreement signed by the copyright holder. That includes:
+
+  * production use, or any use to record or support real services;
+  * use with real client or patient information, including PHI;
+  * use beyond the 90-day evaluation period;
+  * modifying the software, or creating derivative works of it;
+  * copying or redistributing the software, or any part of it, to anyone else;
+  * sublicensing, selling, renting or lending the software; and
+  * offering the software, or its functionality, as a hosted or managed service.
+
+The price and terms of such an agreement are set by the copyright holder.
+
+4. Restrictions
+
+You may not remove, change or hide any copyright, licence or other notice in the software. You may not
+circumvent, or help anyone else circumvent, the terms of this licence. You may not reverse engineer,
+decompile or disassemble any part of the software that is not provided in source form, except to the extent
+that applicable law expressly permits it despite this limitation.
+
+The source code is visible in the public repository. Being able to see it, read it or download it gives you
+no rights beyond those this licence grants.
+
+5. Third-party components
+
+The software includes, bundles or ships beside it components written by others (listed in the NOTICE file:
+for example Node.js and WinSW in the Windows server zip, and sql.js and the other packages built into
+public/local/). Each is licensed under its own licence, and this licence does not change, limit or replace
+those licences. Their copyright notices and licence texts must be kept with every copy.
+
+6. Earlier versions
+
+SUDS versions 1.24.0 and earlier were published under the MIT License. Anyone who received a copy of one of
+those versions keeps, for that copy, the rights the MIT License gave them. This licence applies to the
+software from the first version published with it, and to every later version.
+
+7. Termination
+
+This licence ends automatically if you break any of its terms. When it ends you must stop using the software
+and delete every copy you have. Sections 4, 7, 8, 9 and 10 survive termination.
+
+8. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, ACCURACY AND NONINFRINGEMENT. THE
+SOFTWARE DOES NOT BY ITSELF MAKE ANYONE COMPLIANT WITH HIPAA, 42 CFR PART 2 OR ANY OTHER LAW.
+
+9. Limitation of liability
+
+TO THE FULLEST EXTENT THE LAW ALLOWS, IN NO EVENT SHALL THE COPYRIGHT HOLDER OR ANY CONTRIBUTOR BE LIABLE FOR
+ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER DIRECT, INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL OR
+EXEMPLARY, AND WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+DAMAGES.
+
+10. Governing law
+
+This licence is governed by the laws of the State of California, United States, without regard to its
+conflict-of-laws rules.
+
+11. Contact
+
+For a licence, contact the copyright holder through the repository: https://github.com/taugustincst/suds

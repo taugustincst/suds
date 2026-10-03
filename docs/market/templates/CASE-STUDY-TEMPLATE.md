@@ -22,7 +22,7 @@ to count (people vs services, anonymous naloxone, referrals that never closed).]
 
 ### Why they chose SUDS
 `[2–3 sentences in their words: non-billing work the EHR does not handle, grant reporting, Part 2 consent,
-cost, open source.]`
+cost, source visible for review.]`
 
 ### What they did
 `[Pilot scope, import from spreadsheets, training, go-live date, anything notable — e.g. the starter resource

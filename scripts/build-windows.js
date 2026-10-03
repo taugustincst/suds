@@ -116,7 +116,7 @@ function untgz(buf) {
 
 const git = (a) => execFileSync('git', a, { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28 }).trim();
 
-/** The app folder's files: server/, public/, the runtime scripts, package.json, LICENSE (tracked files only in a checkout). */
+/** The app folder's files: server/, public/, the runtime scripts, package.json, LICENSE, NOTICE (tracked files only in a checkout). */
 function appFiles({ list = null } = {}) {
   let tracked = list;
   if (!tracked) {
@@ -125,7 +125,7 @@ function appFiles({ list = null } = {}) {
   if (!tracked) throw new BuildError('scripts/build-windows.js builds from a git checkout (git ls-files lists what goes into app\\)');
   const set = new Set(tracked);
   const files = tracked.filter((f) => /^(server|public)\//.test(f));
-  for (const f of [...RUNTIME_SCRIPTS, 'package.json', 'LICENSE']) {
+  for (const f of [...RUNTIME_SCRIPTS, 'package.json', 'LICENSE', 'NOTICE']) {
     if (!set.has(f)) throw new BuildError(`${f} is not a tracked file: commit it, or take it out of RUNTIME_SCRIPTS`);
     files.push(f);
   }
@@ -160,6 +160,7 @@ function readmeText(version, pins) {
     'What is in this folder',
     '  suds.exe                 SUDS: the server and its command line (Node.js ' + pins.nodeVersion + ' inside).',
     '  app\\                     SUDS itself (server, web app, scripts). An update replaces this folder.',
+    '                           Proprietary: app\\LICENSE (evaluation terms) and app\\NOTICE (third-party licences).',
     '  suds-service.exe         The Windows service wrapper (WinSW ' + pins.winswVersion + ', MIT licence).',
     '  suds-service.xml         Its settings. "suds service install" writes it again.',
     '  THIRD-PARTY-NOTICES.txt  The licences of Node.js and WinSW.',
@@ -180,6 +181,8 @@ function readmeText(version, pins) {
     'Try it first, with made-up data (not for real records)',
     '  Double-click suds.exe? That starts the real server. To try SUDS with sample data instead, in a terminal here:',
     '  .\\suds try',
+    '  Evaluation is allowed for up to 90 days with fictional data only; anything else needs a signed agreement',
+    '  (app\\LICENSE, sections 2 and 3).',
     '',
     'Everyday commands',
     '  suds status               Is it running and healthy? Last backup, disk space, port, folders.',
@@ -221,7 +224,8 @@ function noticesText(pins, nodeLicense) {
   const rule = '-'.repeat(78);
   return [
     'THIRD-PARTY NOTICES for the SUDS Windows server', '',
-    'SUDS itself is MIT licensed: app\\LICENSE.', '',
+    'SUDS itself is proprietary (Copyright (c) 2026 AugustInnovations): app\\LICENSE.',
+    'The third-party components built into its web app are listed in app\\NOTICE.', '',
     rule, `Node.js ${pins.nodeVersion} (suds.exe is node.exe from https://nodejs.org/dist/${pins.nodeVersion}/,`,
     `node-${pins.nodeVersion}-win-x64.zip, SHA-256 ${pins.nodeWinSha256}, with the SUDS bootstrap injected).`,
     'Its licence, which includes the licences of the libraries built into Node.js:', rule, '', nodeLicense.replace(/\r?\n/g, '\r\n'), '',

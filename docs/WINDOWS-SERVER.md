@@ -18,7 +18,7 @@ it. Every CI run also builds one, as the run's artifact `suds-windows-x64`.
 | File | What it is |
 | --- | --- |
 | `suds.exe` | The SUDS server and its command line. It is the official `node.exe` of the pinned Node.js 22 release, with a small start-up script added (Node's *single executable applications*). |
-| `app\` | SUDS itself: `server\`, `public\` (the web app), the `scripts\` the commands run, `package.json`, `LICENSE`. An update replaces this folder. |
+| `app\` | SUDS itself: `server\`, `public\` (the web app), the `scripts\` the commands run, `package.json`, `LICENSE` (SUDS is proprietary: production use needs a signed licence agreement) and `NOTICE` (third-party licences). An update replaces this folder. |
 | `suds-service.exe` | The Windows service wrapper: [WinSW](https://github.com/winsw/winsw) v2.12.0 (MIT licence), unchanged. |
 | `suds-service.xml` | The wrapper's settings. `suds service install` writes it again. |
 | `README-WINDOWS.txt` | A one-page quick start. |

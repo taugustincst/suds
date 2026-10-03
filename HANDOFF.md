@@ -3,6 +3,33 @@
 A living note between the assistants working on SUDS. Tj's rule: keep it current, keep it honest.
 Replies go under "Claude → Muse" below, newest first.
 
+### Owner decision, 2026-10-03: SUDS is proprietary (ships in 1.24.1)
+
+- **Decision:** from 1.24.1 SUDS is licensed under the SUDS Proprietary Licence (`LICENSE`), "Copyright (c) 2026
+  AugustInnovations. All rights reserved." AugustInnovations is the licensor. **Evaluation grant:** anyone may run an
+  unmodified copy obtained from the official repository, its releases, the GitHub Pages site or the Windows zip,
+  for up to 90 days, with fictional or test data only. Production use, real client records or PHI, use beyond 90
+  days, modification, redistribution, sublicensing, hosting it as a service and derivative works need a separate
+  written agreement signed by AugustInnovations. 1.24.0 and earlier stay MIT for the copies people already have.
+  Third-party components keep their own licences (`NOTICE`, shipped in the Windows zip's `app\`).
+- **Owner: have counsel review `LICENSE` before the first paid agreement** (it is plain English written without a
+  lawyer; it is not legal advice to anyone). Ask counsel too about the copyright position of the AI-assisted
+  commits (docs/security/QUESTIONNAIRE.md #36a).
+- **Owner: confirm AugustInnovations' exact legal form** (for example an LLC, and its state), then record the
+  assignment of copyright in SUDS from the individual contributor to it, in writing; fill
+  `public/procurement.json` `legal_entity` and QUESTIONNAIRE #6a once it exists.
+- **Owner: decide the production terms** - the licence price (`public/procurement.json` `pricing` is blank;
+  docs/market/templates/PRICING.md marks it [owner to decide]) and what a licensee may keep running if an agreement
+  ends (POSITIONING.md, COUNTY-RFI-ANSWERS.md). A pilot with real records (docs/market/PILOT-KIT.md) needs a signed
+  agreement too: the evaluation grant covers fictional data only.
+- **Owner: SUDS on this device (GitHub Pages) is described as a production way to run SUDS** (docs/PLATFORM.md,
+  sign-up of device accounts for real records), but the licence lets anyone use it only for a 90-day evaluation with
+  fictional data. Decide whether the published site stays as an evaluation copy, or which agreement covers a person
+  or team using it for real records; its wording on screen was not changed: the browser suite (static-site.mjs) asserts that the
+  on-device app says nothing about demo or evaluation, by the rule in CLAUDE.md, so no evaluation line was added there.
+- **The repository is still public**, so the source stays visible (visibility grants no rights beyond `LICENSE`).
+  Making it private would need a paid GitHub plan to keep publishing GitHub Pages from it.
+
 ### Release waiting
 
 - **The one owner action that unblocks the most: push the release tags (docs/evidence/RELEASE-HANDOFF.md, steps 1
@@ -569,8 +596,8 @@ _(Append replies here, newest first.)_
   (docs/market/COUNTY-KIT.md), recovery and upgrade drills with evidence, and the documents brought up to 1.20.0 (the
   questionnaire, the evidence index, the buyer guides, the security documents and `docs/evidence/sbom-1.20.0.cdx.json`).
   `test/doc-currency.test.js` fails when they fall behind a stamped minor again.
-- **LICENSE** (MIT) names "The SUDS contributors" as the copyright holder, because `package.json` names no author.
-  **Owner:** replace the holder with the legal entity once one exists (or confirm it as is).
+- **LICENSE** (MIT) named "The SUDS contributors" as the copyright holder. Superseded on 2026-10-03: the SUDS
+  Proprietary Licence names AugustInnovations (see *Owner decision, 2026-10-03* at the top).
 - **SECURITY.md** sends reporters to GitHub's private vulnerability reporting. **Owner:** turn it on (Settings →
   Code security → *Private vulnerability reporting*; docs/RELEASE.md, *Owner: repository settings*, step 8) and
   confirm the response targets it marks `[owner to confirm]`.

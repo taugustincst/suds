@@ -2,7 +2,7 @@
 
 The critical evaluation's point 5.2 is fair: SUDS's office server is the system of record, so **every programme
 needs someone to run a server** — patch it, back it up, restore it, and pick up the phone when it stops. The
-software being free (MIT) does not make that work free. This page says who does it in each hosting model, what
+software's licence does not cover that work. This page says who does it in each hosting model, what
 must exist before the vendor can host anything, and what it costs.
 
 **Current status: SUDS is not offered as a hosted service** (true of every release so far). It is self-hosted by

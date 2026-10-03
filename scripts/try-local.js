@@ -243,6 +243,8 @@ function banner(info, { command = 'npm run try', defaultDir = DEFAULT_DIR, dataO
     '',
     '  The accounts and the clients in this copy are made up. It is for trying SUDS out:',
     '  do not type real client information into it.',
+    '  Licence: evaluation for up to 90 days, with fictional data only (LICENSE, section 2:',
+    '  https://github.com/taugustincst/suds/blob/main/LICENSE).',
     '',
     `  Data folder: ${info.dataDir}`,
     '  Only this computer can open it (127.0.0.1); nothing on the network can.',

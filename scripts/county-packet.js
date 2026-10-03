@@ -42,7 +42,8 @@ const PACKET_FILES = [
   { path: 'docs/security/BACKUP-AND-DR.md', what: 'Backup, disaster recovery and business continuity: objectives, backups, drills, restore', describes: (t) => { const m = /\*\*latest, (\d{4}-\d{2}-\d{2}), on the released (\d+\.\d+\.\d+)\*\*/.exec(t); return m ? `its latest recorded recovery drill: ${m[1]}, on SUDS ${m[2]}` : null; } },
   { path: 'docs/security/INCIDENT-RESPONSE.md', what: 'Incident response and breach notification: what SUDS records and supports; the plan and decisions are the county\'s' },
   { path: 'SECURITY.md', what: 'Security policy: supported versions and how to report a vulnerability' },
-  { path: 'LICENSE', what: 'The licence (MIT)' },
+  { path: 'LICENSE', what: 'The licence: the SUDS Proprietary Licence (evaluation terms; production use needs a signed agreement)' },
+  { path: 'NOTICE', what: 'Third-party notices: the components SUDS bundles or ships, and their licences' },
 ];
 const unwrap = (t) => t.replace(/[*_]/g, '').replace(/\s+/g, ' ');
 const minorOf = (v) => v.split('.').slice(0, 2).map(Number);

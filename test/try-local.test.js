@@ -78,6 +78,7 @@ test('npm run try: starts on 127.0.0.1 with the sample data, signs in, lists cli
     assert.ok(out.includes(`Password for all of them: ${T.SAMPLE_PASSWORD}`));
     for (const a of T.SAMPLE_ACCOUNTS) assert.match(out, new RegExp(`\\n +${a.username} +${a.role}\\n`));
     assert.match(out, /Ctrl\+C/);
+    assert.match(out, /Licence: evaluation for up to 90 days, with fictional data only/, 'the banner points to the evaluation terms');
     assert.ok(out.includes(`npm run try -- --reset --port ${port} --data-dir "${dir}"`));
     assert.doesNotMatch(out, /Temporary password/, 'the bootstrap lines of the seed are not shown: the banner gives the password');
 

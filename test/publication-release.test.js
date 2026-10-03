@@ -737,7 +737,7 @@ test('the audit stays fast with many free-text categories, and a runaway audit i
 });
 
 // ---- the algorithm-aware attacker (1.12.4): every world behind a printout, through the real release ----
-// SUDS is open source: an attacker can run the audit on every programme that could lie behind a printout and
+// SUDS's source is public: an attacker can run the audit on every programme that could lie behind a printout and
 // keep those that print the same (test/fixtures/pattern-attacker.js). Against 1.12.3, whose decisions to hide
 // more depended on counts it did not print, "served 12" beside "on MAT <11" was printed only when one person
 // was on MAT.

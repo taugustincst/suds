@@ -1,6 +1,6 @@
 # Adopting SUDS: a plan for a county CIO
 
-SUDS is small, open-source software that holds 42 CFR Part 2 records. The code is only part of what makes it
+SUDS is small software, with its source visible for review, that holds 42 CFR Part 2 records. The code is only part of what makes it
 safe to run. This page sets out the governance, pilot, release and staffing a county should have in place
 before navigators depend on it. It is written for the CIO or IT director signing off the deployment, and for
 the programme manager who will run it.

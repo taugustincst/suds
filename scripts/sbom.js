@@ -144,6 +144,9 @@ const integrityHex = (sri) => {
 };
 const npmPurl = (name, version) => `pkg:npm/${name.startsWith('@') ? '%40' + name.slice(1) : name}@${version}`;
 const licenses = (id) => (id ? [{ license: { id } }] : undefined);
+// SUDS's own licence: an SPDX id in package.json up to 1.24.0 (MIT); from 1.24.1 "SEE LICENSE IN LICENSE", the
+// SUDS Proprietary Licence (owner decision of 2026-10-03), which has no SPDX id, so CycloneDX's `name` form.
+const sudsLicenses = (l) => (/^SEE LICENSE IN /i.test(String(l || '')) ? [{ license: { name: 'LicenseRef-SUDS-Proprietary', url: 'https://github.com/taugustincst/suds/blob/main/LICENSE' } }] : licenses(l));
 
 function generate({ ref } = {}) {
   const r = reader(ref);
@@ -227,7 +230,7 @@ function generate({ ref } = {}) {
     const m = treeManifest(r, t.dir);
     const ref2 = `suds:${t.dir}/`;
     components.push({
-      type: 'application', 'bom-ref': ref2, name: t.name, version, scope: 'required', description: t.note, licenses: licenses(pkg.license),
+      type: 'application', 'bom-ref': ref2, name: t.name, version, scope: 'required', description: t.note, licenses: sudsLicenses(pkg.license),
       properties: [prop('suds:path', `${t.dir}/`), prop('suds:files', m.count), prop('suds:tree-sha256', m.sha256),
         prop('suds:tree-method', `SHA-256 of the sorted lines "<sha256>  <path>\\n" for every tracked file under ${t.dir}/ (the last line of: git ls-files -z ${t.dir} | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum)`)],
     });
@@ -320,7 +323,9 @@ function generate({ ref } = {}) {
       timestamp,
       tools: { components: [{ type: 'application', name: 'scripts/sbom.js', description: 'SUDS SBOM generator (Node built-ins and git only)' }] },
       component: {
-        type: 'application', 'bom-ref': APP, name: 'suds', version, purl: APP, licenses: licenses(pkg.license), description: pkg.description,
+        type: 'application', 'bom-ref': APP, name: 'suds', version, purl: APP, licenses: sudsLicenses(pkg.license), description: pkg.description,
+        // The licensor, from the first proprietary version (an older version's SBOM regenerates unchanged).
+        ...(/^SEE LICENSE IN /i.test(String(pkg.license || '')) ? { supplier: { name: 'AugustInnovations' }, copyright: 'Copyright (c) 2026 AugustInnovations. All rights reserved.' } : {}),
         externalReferences: [{ type: 'vcs', url: 'https://github.com/taugustincst/suds' }],
       },
       properties: [

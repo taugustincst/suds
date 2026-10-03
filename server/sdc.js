@@ -33,7 +33,7 @@
 // it, else the first that helps, else the first - and the audit runs again. When nothing visible is left to
 // hide, a table that binds it is withheld whole. Cells only ever go from shown to hidden, so it stops.
 //
-// The pattern of what is hidden is itself published, and SUDS is open source: an attacker can run this code
+// The pattern of what is hidden is itself published, and SUDS's source is public: an attacker can run this code
 // on every programme that could lie behind a printout and keep those that print the same. The checks in
 // run() ask only what the printout allows; consistent() then asks what the worlds that print the same
 // release allow, by finding such worlds and running them through run() (docs/HIPAA.md "The pattern of what

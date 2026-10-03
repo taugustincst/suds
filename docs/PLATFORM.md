@@ -33,6 +33,10 @@ A record lives in exactly one of the two. There is no sync between an on-device 
 so the "which copy is right?" question below never arises between them. A programme that starts on the
 on-device app and later installs an office server re-enters (or imports, `IMPORTS.md`) its records there.
 
+## Owner decision, 2026-10-03: SUDS is proprietary
+
+From 1.24.1 SUDS is licensed under the SUDS Proprietary Licence (`LICENSE`, AugustInnovations): evaluation of an unmodified copy for 90 days with fictional data; production use, both ways of running it, needs a signed agreement. 1.24.0 and earlier stay MIT for those copies.
+
 ## Owner decision, 2026-10-03: a Windows server executable
 
 The owner instructed: *"The server should be launched in an exe. This is to simplify it for county IT. All
