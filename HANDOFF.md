@@ -44,7 +44,7 @@ Replies go under "Claude → Muse" below, newest first.
   1.23.1)*). 1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5, 1.23.6, 1.24.0 and 1.24.1 were stamped before the push, so their
   tags are in it.
 - **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2, 1.23.3, 1.23.4,
-  1.23.5, 1.23.6, 1.24.0 and 1.24.1 are on `main`, and 1.24.0 is live, but none is tagged: the owner tags all
+  1.23.5, 1.23.6, 1.24.0 and 1.24.1 are on `main`, and 1.24.1 is live, but none is tagged: the owner tags all
   eighteen, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the checks, the eighteen
   `git tag -a` commands and
   `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1 v1.23.2 v1.23.3 v1.23.4 v1.23.5 v1.23.6 v1.24.0 v1.24.1`,

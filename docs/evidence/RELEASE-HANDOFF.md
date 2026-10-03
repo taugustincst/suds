@@ -24,8 +24,8 @@
 > 1.24.0 with no policy exception (the licence change and the fixes of the market evaluation of 1.24.0; *Record:
 > 1.24.1*), so its gate passes with no `policy_exception`.
 
-Eighteen versions are on `main` and released (1.24.0 is what GitHub Pages serves until `v1.24.1`'s `Web app` run is
-approved) but **none is tagged**: 1.16.3 and 1.16.4 went out with 1.17.0; 1.16.4 to 1.24.0 were published to GitHub
+Eighteen versions are on `main` and released (1.24.1 is what GitHub Pages serves, published by a
+direct push) but **none is tagged**: 1.16.3 and 1.16.4 went out with 1.17.0; 1.16.4 to 1.24.1 were published to GitHub
 Pages by a direct push to `gh-pages` at the owner's request, with no tag, no GitHub Release and no approval in the
 `release` environment ([../RELEASE.md](../RELEASE.md), the *Record* entries and the exceptions table). 1.23.1, the
 first release under *Stabilisation*, passed the patch rules with no exception; only its publication went round the
@@ -84,7 +84,7 @@ step 1 finds the commit by its subject.
 | `v1.23.5` | `382278ab2feb27992e222f3330c8c02f5d0aa579` ("Release 1.23.5": `git log -1 --format=%H --grep='^Release 1.23.5$' origin/main`) | 2026-10-02 | `100d8e8d144a5fcf370278d8fcb5a5606fd1b008bcc61da1c25dbb6c2f8b56be` |
 | `v1.23.6` | `57bf2df5668a51c2b8614996085feb356a414800` ("Release 1.23.6": `git log -1 --format=%H --grep='^Release 1.23.6$' origin/main`) | 2026-10-02 | `3cdfe0ea70c96b833126e3da96a20a00b5f3358c098f5abf8544da9b9a98a74a` |
 | `v1.24.0` | `d2fd17255232e46a2ca19ab36f8f6c09e0a54828` ("SBOM of the 1.24.0 stamp", after the stamp `abd80af`) | 2026-10-03 | `77b58c2066a706cded48e0deb0bfb5491c17adb8b25413559b53ff50e7aae078` |
-| `v1.24.1` | `<1.24.1 release commit>` ("Release 1.24.1": `git log -1 --format=%H --grep='^Release 1.24.1$' origin/main`) | 2026-10-03 | `<filled after the release>`; rebuild it with the command below |
+| `v1.24.1` | `d109d32cf20b6b882711ce6dd24a3886731f54f5` ("Release 1.24.1": `git log -1 --format=%H --grep='^Release 1.24.1$' origin/main`) | 2026-10-03 | `9b9592e5d8bec75d8a48f7f469e7db83bc30eee7e4b5c54a3c7f87b06d829f06` |
 
 **How the checksums were made, and why they can be trusted before the release exists.** The release job builds
 the zip with `git archive --format=zip --prefix="suds-vX.Y.Z/" -o suds-vX.Y.Z.zip <commit>` and hashes it with
@@ -208,7 +208,7 @@ second approval.
 | `v1.23.5` | **Passes**: a patch of `v1.23.4` with no migration, permission or route, within the size limit (*Record: 1.23.5*) | Not Latest; no `Web app` run | Nothing to dispatch: the tag push runs it. Approve the release job |
 | `v1.23.6` | **Passes**: a patch of `v1.23.5` with no migration, permission name or route, within the size limit. It carries an owner-approved exception the check does not see, an administrator changing their own access (*Record: 1.23.6*), so the gate writes nothing about it in the notes | Not Latest; no `Web app` run | Nothing to dispatch: the tag push runs it. Approve the release job; then add the exception to the top of its release notes (below) |
 | `v1.24.0` | **Refused on the feature interval** (`v1.23.0` is minutes old): a feature release two days after 1.23.0, under the recorded security exception (*Record: 1.24.0*) | Not Latest; no `Web app` run. Its run also builds the Windows server zip (`windows-exe`, then `windows-sign`, unsigned while the certificate secrets are not set) and attaches it with its checksum | *Run workflow* on `v1.24.0` with `policy_exception` (*Record: 1.24.0*); approve the release job |
-| `v1.24.1` | **Passes**: a patch of `v1.24.0` with no migration, permission or route, within the size limit (*Record: 1.24.1*) | **Latest**, and it starts a `Web app` run: the newest tag, and newer than the `version.json` `gh-pages` serves (1.24.0). Its run also builds and attaches the Windows server zip, unsigned while the certificate secrets are not set | Nothing to dispatch: the tag push runs it. Approve the release job; **approve its `Web app` run**, which publishes 1.24.1 to GitHub Pages |
+| `v1.24.1` | **Passes**: a patch of `v1.24.0` with no migration, permission or route, within the size limit (*Record: 1.24.1*) | **Latest**, and it starts a `Web app` run: the newest tag, and not older than the `version.json` `gh-pages` serves (1.24.1: a republish). Its run also builds and attaches the Windows server zip, unsigned while the certificate secrets are not set | Nothing to dispatch: the tag push runs it. Approve the release job; **approve its `Web app` run**, which republishes the 1.24.1 build already live |
 
 **Reject every other `Web app` run** waiting in the `release` environment: any run on a tag other than `v1.24.1` is
 a republish of an older build (a rollback of the public site). Since 1.17.1 `web-app.yml` refuses a tag that is not
