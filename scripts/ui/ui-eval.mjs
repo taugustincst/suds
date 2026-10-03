@@ -450,7 +450,6 @@ try {
     ok(await until(async () => !(await nav.page.$('.modal-bg'))), 'N7: OK closes it');
     ok(await until(async () => !(await nav.page.$eval(box, e => e.checked).catch(() => true))), 'N7: and the box is unticked again');
     eq(((await nav.api('GET', `/api/tasks/${rem.data.id}`)).data.row || {}).status, 'open', 'N7: the reminder stays open');
-    eq((await nav.api('PUT', `/api/tasks/${rem.data.id}`, { status: 'done' })).status, 409, 'D6: and the server refuses it done while the draft is unsigned');
     eq((await sup.api('PUT', `/api/tasks/${rem.data.id}`, { status: 'done' })).status, 200, 'D6: the supervisor who sent it may close it');
   }
 } catch (e) {

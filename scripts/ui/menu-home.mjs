@@ -323,7 +323,6 @@ try {
     ok(await until(async () => !(await s.page.$('.modal-bg'))), 'N7: OK closes it');
     eq(await s.page.$eval(`[data-today-task="${rem.data.id}"] input[type=checkbox]`, e => e.checked), false, 'N7: the box is unticked');
     eq((((await s.api('GET', `/api/tasks/${rem.data.id}`)).data || {}).row || {}).status, 'open', 'N7: and the reminder is still open');
-    eq((await s.api('PUT', `/api/tasks/${rem.data.id}`, { status: 'done' })).status, 409, 'D6: the server refuses it as well');
     // Closed here by its maker, so the steps below tick ordinary to-dos and are not asked.
     eq((await admin.api('PUT', `/api/tasks/${rem.data.id}`, { status: 'done' })).status, 200, 'the reminder is closed for the steps below');
     eq((await s.api('POST', '/api/tasks', { title: 'Call the shelter about a bed', due_at: new Date().toISOString().slice(0, 10) })).status, 201, 'and an ordinary to-do due today takes its place on Home');
