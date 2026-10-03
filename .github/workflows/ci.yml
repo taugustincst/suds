@@ -337,9 +337,12 @@ jobs:
     env:
       NODE22_WIN_SHA256: 2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71
     steps:
+      # --no-checkout: the files are written once, from this commit, as a fresh clone of it writes them. A checkout of the
+      # default branch first would leave every file this commit does not change as that branch wrote it, under that
+      # branch's .gitattributes (CRLF, before the rules), and the line-ending check would test the runner, not the rules.
       - name: Check out
         shell: bash
-        run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+        run: git clone --no-checkout --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}" && git config --get core.autocrlf || true
       - name: Install Node 22 (pinned version, pinned checksum)
         shell: pwsh
         run: |
