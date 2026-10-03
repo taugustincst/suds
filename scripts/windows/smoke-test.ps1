@@ -142,3 +142,4 @@ if ($LASTEXITCODE -ne 1060) { Fail "the service is still installed after uninsta
 if (-not (Test-Path (Join-Path $data 'suds.db'))) { Fail 'uninstall removed the data' }
 Write-Output ''
 Write-Output 'The Windows server zip passed its smoke test.'
+exit 0

@@ -86,6 +86,14 @@ test('the script runs on the current tree and lists what it ships', () => {
   const wasm = bom.components.find(c => c.name === 'public/local/sql-wasm.wasm');
   const sha = require('node:crypto').createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'public', 'local', 'sql-wasm.wasm'))).digest('hex');
   assert.equal(wasm.hashes.find(h => h.alg === 'SHA-256').content, sha);
+  // The Windows server zip's pinned inputs (ci.yml windows-exe): Node for Windows and WinSW ship in it, postject builds it.
+  const ci = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+  const winsw = bom.components.find(c => c.name === 'winsw');
+  assert.ok(winsw && winsw.scope === 'optional' && ci.includes(winsw.hashes[0].content), 'WinSW, with the SHA-256 ci.yml pins');
+  const nodeWin = bom.components.find(c => c.name === 'node' && c.scope === 'optional');
+  assert.ok(nodeWin && ci.includes(nodeWin.hashes[0].content), 'the Node.js win-x64 zip suds.exe is made from');
+  const pj = bom.components.find(c => c.name === 'postject');
+  assert.ok(pj && pj.scope === 'excluded' && pj.hashes[0].alg === 'SHA-512', 'postject, a build tool, by its integrity');
   // Same tree, same bytes: nothing in the output depends on the time or the machine.
   assert.equal(S.serialize(S.generate()), S.serialize(bom));
 });
