@@ -10,6 +10,30 @@ over plain HTTP and only this computer can open it. For real records, install th
 [INSTALL.md](INSTALL.md) and [DEPLOYMENT.md](DEPLOYMENT.md) describe: production settings, HTTPS, BitLocker on
 the computer that holds the data, and scheduled backups.
 
+## The easiest way: `suds try` (nothing to install)
+
+Each release has a Windows build of SUDS, `suds-<version>-windows-x64.zip`, with Node.js inside it
+([WINDOWS-SERVER.md](WINDOWS-SERVER.md)).
+
+1. Download `suds-<version>-windows-x64.zip` from the SUDS releases page on GitHub. Right-click it, choose
+   **Properties**, tick **Unblock** if it is shown, then **Extract All…**.
+2. Open the extracted folder (the one with `suds.exe` in it). Right-click an empty part of it and choose
+   **Open in Terminal**. Then type:
+   ```powershell
+   .\suds try
+   ```
+3. It prints the same banner as below: the address, the sample accounts and their password. Open the address in
+   your browser. Press **Ctrl+C** in the window to stop it. `.\suds try --reset` starts over, and
+   `.\suds try --port 8081` uses another port.
+
+The test copy keeps its data in a `data-try` folder beside `suds.exe` (or in `%LOCALAPPDATA%\SUDS\data-try` when
+that folder cannot be written), apart from any real install. If Windows SmartScreen says *Windows protected your
+PC*, the build is not code-signed: choose **More info → Run anyway**. Do not double-click `suds.exe` for testing:
+that starts the real server, with no sample data.
+
+If you have Node.js already, or want to run SUDS from its source code, use `npm run try` instead, as the rest of
+this page describes.
+
 ## 1. Install Node.js 22 LTS or later
 
 Node.js is the only thing to install. SUDS needs version **22.13 or later**.

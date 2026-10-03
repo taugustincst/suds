@@ -379,3 +379,83 @@ jobs:
         run: |
           node --no-warnings=ExperimentalWarning --test test/crypto.test.js test/key-separation.test.js test/secret-files.test.js test/backup.test.js test/backup-restore-in-place.test.js test/scheduled-backup.test.js test/audit-anchor-interval.test.js test/audit-head-at-start.test.js test/audit-immutable.test.js test/audit-retention.test.js test/instance-lock.test.js test/log.test.js test/migrations.test.js test/health-probes.test.js test/rotate-index-key.test.js test/update.test.js 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\os.log"
           if ($LASTEXITCODE -ne 0) { $l = Select-String -Path "$env:RUNNER_TEMP\os.log" -Pattern 'not ok|rror|expected|actual|message|at ' | Select-Object -First 60 | ForEach-Object { $_.Line.Trim() }; Write-Output "::error::$($l -join '%0A')"; exit 1 }
+  # The Windows server zip (owner decision of 2026-10-03; docs/PLATFORM.md, docs/WINDOWS-SERVER.md): suds.exe (the
+  # official node.exe of the pinned Node 22 with the SUDS bootstrap injected, Node's single executable applications),
+  # app\, the WinSW service wrapper, built by scripts/build-windows.js, then unzipped and smoke-tested the way county IT
+  # use it: suds version, suds try (sign in), suds status --json, the Windows service (install, start, health, a clean
+  # stop, restart, uninstall; the runner is an administrator) and suds logs (scripts/windows/smoke-test.ps1). The zip is
+  # uploaded as the run's artifact `suds-windows-x64`. Built unsigned here (no secret on a push); release.yml signs the
+  # release build when the certificate secrets exist. Not advisory, and not in the release gate's required list.
+  # Every input is pinned here and nowhere else (scripts/build-windows.js reads this env): NODE22_WIN_SHA256 is the
+  # win-x64.zip line of the same SHASUMS256.txt as NODE22_SHA256 (the windows job has the same line; bump all
+  # together); WinSW-x64.exe of the WinSW release, by SHA-256; postject's npm tarball, by its registry integrity
+  # (SHA-512), used as a build-time library only (docs/RELEASE.md, "The Windows server zip").
+  windows-exe:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      NODE22_WIN_SHA256: 2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71
+      WINSW_VERSION: v2.12.0
+      WINSW_SHA256: 05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da
+      POSTJECT_VERSION: 1.0.0-alpha.6
+      POSTJECT_INTEGRITY: sha512-b9Eb8h2eVqNE8edvKdwqkrY6O7kAwmI8kcnBv1NScolYJbo59XUF0noFq+lxbC1yN20bmC0WBEbDC5H/7ASb0A==
+    steps:
+      - name: Check out
+        shell: bash
+        run: git clone --no-checkout --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: Install Node 22 (pinned version, pinned checksum)
+        shell: pwsh
+        run: |
+          $file = "node-$env:NODE22_VERSION-win-x64.zip"
+          Set-Location $env:RUNNER_TEMP
+          curl.exe -fsSLO "https://nodejs.org/dist/$env:NODE22_VERSION/$file"
+          $have = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          if ($have -ne $env:NODE22_WIN_SHA256) { Write-Output "::error::$file does not match the SHA-256 pinned in the workflow"; exit 1 }
+          Expand-Archive $file -DestinationPath node22
+          Join-Path $env:RUNNER_TEMP "node22\node-$env:NODE22_VERSION-win-x64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Node is the pinned release, of the major .nvmrc names
+        shell: pwsh
+        working-directory: src
+        run: |
+          $want = (Get-Content .nvmrc -Raw).Trim(); $have = node -p "process.versions.node.split('.')[0]"
+          node --version
+          if ($have -ne $want) { Write-Output "::error::Node $have is running but .nvmrc pins major $want"; exit 1 }
+          if ((node --version) -ne $env:NODE22_VERSION) { Write-Output "::error::$(node --version) is running, not the pinned $env:NODE22_VERSION"; exit 1 }
+      - name: Download WinSW and postject (pinned checksums)
+        shell: pwsh
+        run: |
+          Set-Location $env:RUNNER_TEMP
+          curl.exe -fsSL -o WinSW-x64.exe "https://github.com/winsw/winsw/releases/download/$env:WINSW_VERSION/WinSW-x64.exe"
+          $have = (Get-FileHash WinSW-x64.exe -Algorithm SHA256).Hash.ToLower()
+          if ($have -ne $env:WINSW_SHA256) { Write-Output "::error::WinSW-x64.exe $env:WINSW_VERSION does not match the SHA-256 pinned in the workflow"; exit 1 }
+          curl.exe -fsSLO "https://registry.npmjs.org/postject/-/postject-$env:POSTJECT_VERSION.tgz"
+      - name: Build the Windows server zip
+        shell: pwsh
+        working-directory: src
+        # The build checks all three inputs against the pins above again (a mismatch stops it), and refuses any Node but NODE22_VERSION.
+        run: |
+          node scripts/build-windows.js --node-zip "$env:RUNNER_TEMP\node-$env:NODE22_VERSION-win-x64.zip" --winsw "$env:RUNNER_TEMP\WinSW-x64.exe" --postject "$env:RUNNER_TEMP\postject-$env:POSTJECT_VERSION.tgz" --out dist
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error::scripts/build-windows.js failed"; exit 1 }
+          Write-Output "::notice::CI builds of the Windows server zip are unsigned (Windows SmartScreen will warn). Release builds are signed when the WINDOWS_CERT_PFX_BASE64 and WINDOWS_CERT_PASSWORD secrets exist (docs/RELEASE.md)."
+      - name: Smoke test (version, try, status, the Windows service, logs)
+        shell: pwsh
+        working-directory: src
+        run: |
+          $ver = node -p "require('./package.json').version"
+          $zip = Get-Item "dist\suds-$ver-windows-x64.zip"
+          $want = ((Get-Content "$($zip.FullName).sha256" -Raw) -split '\s+')[0]
+          if ((Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLower() -ne $want) { Write-Output "::error::the zip does not match its .sha256 file"; exit 1 }
+          $dir = Join-Path $env:RUNNER_TEMP 'SUDS'
+          Expand-Archive $zip.FullName -DestinationPath $dir
+          Get-ChildItem $dir | Format-Table -AutoSize Name, Length | Out-String | Write-Output
+          ./scripts/windows/smoke-test.ps1 -Dir $dir -Version $ver
+      - name: Upload the Windows server zip (download it from this run's page, Artifacts)
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: suds-windows-x64
+          path: |
+            src/dist/*.zip
+            src/dist/*.zip.sha256
+          if-no-files-found: error
+          retention-days: 30

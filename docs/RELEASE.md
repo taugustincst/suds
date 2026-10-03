@@ -1095,6 +1095,54 @@ git add package.json package-lock.json public/local && git commit -m "Update esb
 
 The remaining kernel libraries (`@noble/*`, `fflate`, `buffer`) come as one grouped monthly Dependabot PR; check it out, run `npm run build:local`, and push the rebuilt kernel to that PR's branch so CI's drift check passes.
 
+## The Windows server zip
+
+By owner decision of 2026-10-03 (PLATFORM.md), each release also carries `suds-<version>-windows-x64.zip` and its
+`.sha256` ([WINDOWS-SERVER.md](WINDOWS-SERVER.md)). It is built only in CI, by `scripts/build-windows.js`:
+
+* **On every push**, `ci.yml`'s `windows-exe` job (windows-latest) builds it unsigned, unzips it and runs
+  `scripts/windows/smoke-test.ps1`: `suds version`, `suds try` with a sample sign-in, `suds status --json`, the
+  Windows service (install, start, health, a clean stop checked in the log and the instance lock, restart,
+  uninstall) and `suds logs`. The zip is the run's artifact **`suds-windows-x64`** (kept 30 days): open the run
+  in Actions and download it under *Artifacts*. The job is not advisory, and it is **not** in the release gate's
+  `REQUIRED_JOBS` (the release builds its own zip).
+* **On a release**, `release.yml`'s `windows-exe` job builds and stages it from the gated commit (read-only token,
+  no secret). Then `windows-sign` signs `suds.exe` and `suds-service.exe` if the certificate secrets exist, zips the
+  folder (`--pack`) and hands it on. The `release` job checks the two files against their checksum and attaches
+  them with the source zip in one `gh release create`. `scripts/release-existing.js` accepts the Windows pair on an
+  existing release only in a pair, and only byte for byte the one this run built. An unsigned build is
+  reproducible; a signed one is not, so a re-run after the signed Windows files were attached is refused with the
+  usual recovery.
+
+**The pinned inputs** are in `ci.yml`'s `windows-exe` env, and the same values are in `release.yml`'s
+`windows-exe` (`test/workflow-yaml.test.js` checks they agree). `scripts/build-windows.js` reads them from `ci.yml`
+and stops on any mismatch:
+
+| Pin | What | How to bump |
+| --- | --- | --- |
+| `NODE22_WIN_SHA256` (both Windows jobs, and `windows-sign`) | `node-<NODE22_VERSION>-win-x64.zip` | With Node 22: the `win-x64.zip` line of the signed `SHASUMS256.txt.asc` (below) |
+| `WINSW_VERSION`, `WINSW_SHA256` | `WinSW-x64.exe` of that WinSW release (v2.12.0) | Read the release notes. Then `curl -fsSLO https://github.com/winsw/winsw/releases/download/<v>/WinSW-x64.exe && sha256sum WinSW-x64.exe` |
+| `POSTJECT_VERSION`, `POSTJECT_INTEGRITY` | postject's npm tarball (1.0.0-alpha.6), a build tool only | `npm view postject@<v> dist.integrity` (the registry's SHA-512). Check that `package/dist/api.js` still needs only Node built-ins |
+
+Change a pin in `ci.yml` and `release.yml` in one commit. The windows-exe job's run is the test. The SBOM
+(`scripts/sbom.js`) picks the pins up from `ci.yml`.
+
+### Signing the Windows server
+
+Without a certificate the zip is published unsigned, with a notice in the run, and SmartScreen warns county IT. To
+sign it, the owner adds two **repository secrets** (Settings → Secrets and variables → Actions → New repository
+secret):
+
+* `WINDOWS_CERT_PFX_BASE64`: the code-signing certificate and its private key as a `.pfx`, base64-encoded
+  (PowerShell: `[Convert]::ToBase64String([IO.File]::ReadAllBytes('suds-signing.pfx')) | Set-Clipboard`).
+* `WINDOWS_CERT_PASSWORD`: the `.pfx` password.
+
+Use an OV or EV code-signing certificate issued to the publisher. An EV certificate on a hardware token or a cloud
+HSM cannot be exported to a `.pfx`: then signing needs that provider's signing tool in `windows-sign` instead. Only
+the signing step of `windows-sign` receives the secrets. It runs `signtool sign /fd SHA256 /tr
+http://timestamp.digicert.com /td SHA256` and `signtool verify /pa`, and deletes the `.pfx` afterwards. CI builds
+on push are never signed.
+
 ## Bumping the pinned Node versions
 Every CI job installs an exact Node release checked against a SHA-256 written in the workflow, not whatever
 `latest-v24.x` is that day, nor whatever Node 22 the runner image carries: the `node24` job
@@ -1114,7 +1162,9 @@ grep ' node-'$v'-win-x64.zip$' SHASUMS256.txt.asc             # Node 22 only: NO
 ```
 
 From 1.24.0 the `windows` job in `ci.yml` installs the same Node 22 release for Windows, checked against
-`NODE22_WIN_SHA256` in that job: bump it in the same commit as `NODE22_VERSION`, or that job fails on the hash.
+`NODE22_WIN_SHA256` in that job: bump it in the same commit as `NODE22_VERSION`, or that job fails on the hash. The
+same value is in `ci.yml`'s `windows-exe` job and `release.yml`'s `windows-exe` and `windows-sign` jobs (the Windows
+server zip's `suds.exe` is that `node.exe`); change all of them together.
 
 Change the two lines in one commit ("CI: Node 24 → $v"; for Node 22 in `ci.yml`, `release.yml` and `deploy/linux/pins` together — SUDS Server installs that exact release, and `test/deploy-linux.test.js` fails if the three differ);
 `test/release-gate.test.js` checks their shape, that the two workflows agree, and that Node 22's major is

@@ -185,6 +185,7 @@ The sign-in page has two options, **Log in** and **Sign up** (link straight to e
 | **Git** | `git clone https://github.com/taugustincst/suds.git` (upgrade later with `git pull`) |
 | **All releases** | https://github.com/taugustincst/suds/releases |
 | **Docker** | `docker compose up -d` |
+| **Windows server** | `suds-<version>-windows-x64.zip` from the release: unzip, then `suds service install` and `suds service start`. No Node.js to install ([docs/WINDOWS-SERVER.md](docs/WINDOWS-SERVER.md)) |
 | **SUDS Server (Linux VM)** | `sudo deploy/linux/install.sh --domain=… --admin-cidr=… --offsite=… --anchors=…`: hardened install on Ubuntu 24.04 or RHEL 9, with a weekly signed compliance check ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)) |
 
 Current release: see [CHANGELOG.md](CHANGELOG.md). Release process: [docs/RELEASE.md](docs/RELEASE.md).
@@ -192,7 +193,7 @@ Current release: see [CHANGELOG.md](CHANGELOG.md). Release process: [docs/RELEAS
 ## Install
 
 1. Install Node.js 22 LTS from https://nodejs.org.
-2. Unzip SUDS somewhere permanent and start the server: `npm start` for a first look, or as a service (systemd / NSSM) or with Docker for anything staff depend on.
+2. Unzip SUDS somewhere permanent and start the server: `npm start` for a first look, or as a service (systemd) or with Docker for anything staff depend on. On Windows, use the Windows server zip instead (no Node.js needed): `suds service install`, then `suds service start` ([docs/WINDOWS-SERVER.md](docs/WINDOWS-SERVER.md)).
 3. Open the address the server prints in a browser: the **setup wizard** asks you to name the program, create your administrator account, choose whether phones, tablets and other computers on the office network may connect, and whether staff may keep an offline copy on their devices (recommended: No). SUDS generates its encryption keys and an HTTPS certificate for you and shows a QR code for the office address.
 
 Full walkthrough: [docs/INSTALL.md](docs/INSTALL.md); service and reverse-proxy settings: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). A county or CBO with a Linux VM installs **SUDS Server** instead — one command, hardened, and checked weekly against the policy by `npm run compliance-check`: [docs/SELF-HOSTING.md](docs/SELF-HOSTING.md), including what that does and does not make compliant. Everything the wizard sets can later be changed under **Administration → Network & devices / Settings / System & backups**.
@@ -223,7 +224,7 @@ Without seeding, the first start creates the administrator `guest` (or `SUDS_ADM
 
 ## Production for IT teams
 
-The wizard route above is production mode (`SUDS_ENV=production`) with keys in `data/keys.json` and a self-signed certificate — right for an evaluation or a single workstation, not for a system other staff depend on. A county deployment runs SUDS as a service (systemd or NSSM) behind the county's own certificate or reverse proxy, with environment variables, or in Docker (`docker compose up -d`, includes a Caddy TLS proxy configured by `Caddyfile`): see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), including its key rotation runbook. Environment variables always override the wizard's settings. Release downloads ship with `.sha256` checksum files.
+The wizard route above is production mode (`SUDS_ENV=production`) with keys in `data/keys.json` and a self-signed certificate — right for an evaluation or a single workstation, not for a system other staff depend on. A county deployment runs SUDS as a service (systemd, or the Windows service of the Windows server zip) behind the county's own certificate or reverse proxy, with environment variables, or in Docker (`docker compose up -d`, includes a Caddy TLS proxy configured by `Caddyfile`): see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md), including its key rotation runbook. Environment variables always override the wizard's settings. Release downloads ship with `.sha256` checksum files.
 
 ## What it tracks
 

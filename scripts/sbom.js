@@ -20,6 +20,10 @@
 //   * the npm packages whose code is inside the kernel, read from esbuild's `// node_modules/<package>/` module
 //     comments in kernel.js, with version, licence and hash from package-lock.json (the registry tarball's
 //     SHA-512), and the SQLite release compiled into sql-wasm.wasm (its source id, read from the wasm bytes);
+//   * the Windows server zip's inputs, when ci.yml's windows-exe job pins them (owner decision of 2026-10-03;
+//     docs/WINDOWS-SERVER.md): the Node.js win-x64 zip suds.exe is made from and WinSW (suds-service.exe), both
+//     shipped in suds-<version>-windows-x64.zip (scope "optional": that deployment only), with their pinned SHA-256;
+//     and postject, the build-time tool that injects the bootstrap (scope "excluded"), with its pinned integrity;
 //   * separately, scope "excluded": the build tooling in package-lock.json that never ships (esbuild and its
 //     platform binaries), the test-only tools CI installs with --no-save (Playwright, axe-core; version from
 //     ci.yml, not locked), and the GitHub Actions the workflows use (pinned by commit).
@@ -174,6 +178,38 @@ function generate({ ref } = {}) {
     ],
   });
   depend(APP, nodeRef);
+  // --- The Windows server zip's pinned inputs (ci.yml windows-exe; absent before 1.24) ---
+  const winJob = (ci.match(/\n {2}windows-exe:\n[\s\S]*?(?=\n {2}[\w-]+:\n|$)/) || [])[0] || '';
+  const pin = (k) => (winJob.match(new RegExp(`\\n {6}${k}: (\\S+)`)) || [])[1];
+  if (winJob && pin('NODE22_WIN_SHA256') && pin('WINSW_SHA256') && pin('POSTJECT_INTEGRITY')) {
+    const winZip = `suds-${version}-windows-x64.zip`;
+    const nodeWin = `pkg:generic/node@${nodeVersion}?os=windows&arch=x64`;
+    components.push({
+      type: 'platform', 'bom-ref': nodeWin, name: 'node', version: nodeVersion, scope: 'optional', purl: nodeWin, licenses: licenses('MIT'),
+      description: `Node.js for Windows: suds.exe in ${winZip} is this release's node.exe, its signature removed and the SUDS bootstrap injected (Node's single executable applications; scripts/build-windows.js).`,
+      hashes: [{ alg: 'SHA-256', content: pin('NODE22_WIN_SHA256') }],
+      externalReferences: [{ type: 'distribution', url: `https://nodejs.org/dist/v${nodeVersion}/node-v${nodeVersion}-win-x64.zip`, comment: 'The hash is of this file, pinned in .github/workflows/ci.yml (windows-exe)' }],
+      properties: [prop('suds:hash-of', `node-v${nodeVersion}-win-x64.zip`), prop('suds:shipped-in', `${winZip} (suds.exe)`)],
+    });
+    depend(APP, nodeWin);
+    const wv = String(pin('WINSW_VERSION') || '').replace(/^v/, '');
+    const winsw = `pkg:github/winsw/winsw@v${wv}`;
+    components.push({
+      type: 'application', 'bom-ref': winsw, name: 'winsw', version: wv, scope: 'optional', purl: winsw, licenses: licenses('MIT'),
+      description: `WinSW, the Windows service wrapper: suds-service.exe in ${winZip}, unchanged (WinSW-x64.exe of the release). Runs the SUDS service and restarts it on failure.`,
+      hashes: [{ alg: 'SHA-256', content: pin('WINSW_SHA256') }],
+      externalReferences: [{ type: 'distribution', url: `https://github.com/winsw/winsw/releases/download/v${wv}/WinSW-x64.exe`, comment: 'The hash is of this file, pinned in .github/workflows/ci.yml (windows-exe)' }],
+      properties: [prop('suds:hash-of', 'WinSW-x64.exe'), prop('suds:shipped-in', `${winZip} (suds-service.exe)`)],
+    });
+    depend(APP, winsw);
+    const pv = pin('POSTJECT_VERSION'); const ph = integrityHex(pin('POSTJECT_INTEGRITY'));
+    const pjRef = npmPurl('postject', pv);
+    components.push({
+      type: 'library', 'bom-ref': pjRef, name: 'postject', version: pv, scope: 'excluded', purl: pjRef, licenses: licenses('MIT'), ...(ph ? { hashes: [ph] } : {}),
+      description: 'Build tool: injects the SEA bootstrap into suds.exe in CI (scripts/build-windows.js loads its API file from the pinned registry tarball). Not in package.json, not shipped.',
+      properties: [prop('suds:role', 'build'), prop('suds:hash-of', 'the npm registry tarball (pinned in .github/workflows/ci.yml, windows-exe)')],
+    });
+  }
   const base = (dockerfile.match(/^FROM\s+(\S+)/m) || [])[1];
   if (base) {
     const [img, tag = 'latest'] = base.split(':');

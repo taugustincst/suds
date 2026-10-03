@@ -51,7 +51,9 @@ test('release.yml runs the gate before building anything, and the node24 job is 
   // Read as data (scripts/workflow-yaml.js; test/workflow-yaml.test.js has the rest of the structural checks).
   const Y = require('../scripts/workflow-yaml');
   for (const j of REQUIRED_JOBS) assert.ok(Y.parse(ci).jobs[j], `ci.yml has a ${j} job`);
-  assert.ok(![...Y.steps(Y.parse(ci)), ...Y.steps(Y.parse(rel))].some(([, s]) => s.uses), 'no marketplace (or any) actions');
+  // No marketplace action: only GitHub's own artifact actions, in the jobs that hand on the Windows server zip
+  // (test/workflow-yaml.test.js lists each use).
+  for (const [job, s] of [...Y.steps(Y.parse(ci)), ...Y.steps(Y.parse(rel))]) if (s.uses) assert.match(`${job} ${s.uses}`, /^(windows-exe|windows-sign|release) actions\/(upload|download)-artifact@[0-9a-f]{40}$/);
 });
 
 test('RELEASE.md gives the browser suite\'s real size, wherever it gives one', () => {

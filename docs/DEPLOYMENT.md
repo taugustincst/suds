@@ -195,9 +195,9 @@ Release downloads carry a checksum beside them (`suds-v<version>.zip.sha256`); c
 
 ### Windows Server
 
-Run under a service wrapper (NSSM or `sc.exe`) with the same environment variables, and terminate TLS with IIS (ARR reverse proxy to `127.0.0.1:8080`). Set `X-Forwarded-For` (ARR appends the client address, which is what SUDS reads) so audit logs record client IPs.
+Use the **Windows server zip**, `suds-<version>-windows-x64.zip` on each release ([WINDOWS-SERVER.md](WINDOWS-SERVER.md)). It needs no Node.js install. `suds service install` installs the built-in service *SUDS* (WinSW, as `NT SERVICE\SUDS`, automatic delayed start, restart on failure, logs under the data folder, events in the Application log). `suds status`, `suds logs` and `suds backup` manage it. The data folder is `C:\ProgramData\SUDS`, and the environment variables below go in `C:\ProgramData\SUDS\.env`. This replaces the earlier advice to wrap `npm start` in NSSM. For TLS, use `TLS_CERT_PATH`/`TLS_KEY_PATH`, or terminate it with IIS (ARR reverse proxy to `127.0.0.1:8080`) and set `TRUST_PROXY=1`. ARR appends the client address to `X-Forwarded-For`, which is what SUDS reads, so audit logs record client IPs.
 
-The double-click launchers that used to live in `launchers/` were removed in 1.9.3 (PLATFORM.md). A county deployment runs under systemd (above), NSSM or Docker.
+The double-click launchers that used to live in `launchers/` were removed in 1.9.3 (PLATFORM.md). A county deployment runs under systemd (above), the Windows service, or Docker.
 
 ### Files written by the setup wizard
 

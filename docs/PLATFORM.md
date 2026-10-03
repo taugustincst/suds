@@ -33,6 +33,25 @@ A record lives in exactly one of the two. There is no sync between an on-device 
 so the "which copy is right?" question below never arises between them. A programme that starts on the
 on-device app and later installs an office server re-enters (or imports, `IMPORTS.md`) its records there.
 
+## Owner decision, 2026-10-03: a Windows server executable
+
+The owner instructed: *"The server should be launched in an exe. This is to simplify it for county IT. All
+appropriate server management tools, logging and services should be easy to use and understand."* This
+changes point 3 below for the office server only:
+
+* SUDS ships **`suds-<version>-windows-x64.zip`**: `suds.exe` (the pinned official Node.js 22 `node.exe` with the
+  SUDS bootstrap injected, Node's single executable applications), `app\` (this tree's server, web app and
+  runtime scripts), and the WinSW service wrapper. `suds.exe` starts the office server, installs it as the
+  Windows service *SUDS* (as `NT SERVICE\SUDS`), and wraps the existing tools: status, logs, backup, the recovery
+  drill, admin recovery, updates ([WINDOWS-SERVER.md](WINDOWS-SERVER.md)).
+* It is **built by CI only** (`ci.yml` `windows-exe`; `release.yml` `windows-exe` and `windows-sign`), from inputs
+  pinned by hash, by `scripts/build-windows.js`. No one builds it by hand, and no other native build step exists.
+* It is the **same office server**, the system of record, with the same database, keys, audit log and backups as a
+  Linux install. It is not a client: the web app is still the only client.
+* The **zero-runtime-dependency rule is unchanged**: the server still requires only Node built-ins; postject and
+  WinSW are build inputs, and WinSW (MIT) is shipped unchanged beside the server, not loaded by it.
+* **The Android/iOS apps and the desktop launchers stay removed.**
+
 ## The policy
 
 1. **On an office server, the web application it serves is the only supported client and the system of
@@ -45,8 +64,9 @@ on-device app and later installs an office server re-enters (or imports, `IMPORT
 3. **The native Android and iOS apps and the desktop launchers were deprecated in 1.9.0 and removed in
    1.9.3** (roadmap below). `mobile/`, `launchers/`, their workflows and `scripts/android-keystore.sh` are
    gone from the tree; the code stays in git history (any tag up to `v1.9.2`), so the decision is
-   reversible. Nothing builds, ships or advertises them: the release workflow attaches only the server zip,
-   the office server does not host or serve an APK, and the Settings page offers no upload. (Earlier
+   reversible. Nothing builds, ships or advertises them: the office server does not host or serve an APK, and
+   the Settings page offers no upload. The release workflow attaches the server zip and, since the owner
+   decision of 2026-10-03 below, the Windows server zip, which is a way to run the office server, not a client. (Earlier
    editions of this page said the directories were deleted in 1.9.0; they were not, until 1.9.3.)
 4. **Browser "local mode" remains** as the web app's offline capability, under the rules in the next
    section. It is the same code the web app runs, held in a browser profile, and it syncs with the office

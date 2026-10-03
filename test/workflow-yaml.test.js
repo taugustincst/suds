@@ -80,23 +80,36 @@ test('every workflow parses, and every job runs on a hosted runner with named st
     const w = wf(f);
     assert.equal(typeof w.name, 'string', `${f}: a name`);
     for (const [name, job] of Object.entries(w.jobs)) {
-      // ci.yml's windows job is the one exception: the path a Windows tester takes (docs/TRY-ON-WINDOWS.md).
-      assert.equal(job['runs-on'], f === 'ci.yml' && name === 'windows' ? 'windows-latest' : 'ubuntu-latest', `${f} ${name}`);
+      // The Windows jobs are the exceptions: ci.yml's windows job (the path a Windows tester takes, docs/TRY-ON-WINDOWS.md),
+      // and the Windows server zip's build in ci.yml and release.yml, and its signing (docs/WINDOWS-SERVER.md).
+      const windows = (f === 'ci.yml' && ['windows', 'windows-exe'].includes(name)) || (f === 'release.yml' && ['windows-exe', 'windows-sign'].includes(name));
+      assert.equal(job['runs-on'], windows ? 'windows-latest' : 'ubuntu-latest', `${f} ${name}`);
       assert.ok(Array.isArray(job.steps) && job.steps.length, `${f} ${name}: steps`);
       for (const s of job.steps) assert.ok(s.run || s.uses, `${f} ${name}: a step runs something`);
     }
   }
 });
 
-test('the only actions are GitHub\'s own, pinned to a full commit SHA, and only in web-app.yml', () => {
-  // The Actions policy allows only actions created by GitHub (docs/RELEASE.md, step 4).
-  for (const f of fs.readdirSync(DIR).filter((x) => x.endsWith('.yml'))) {
+test('the only actions are GitHub\'s own artifact actions, pinned to a full commit SHA, in the jobs that hand files on', () => {
+  // The Actions policy allows only actions created by GitHub (docs/RELEASE.md, step 4). web-app.yml hands the built
+  // site to its publish job; the Windows server zip is handed from its build to its signing and to the release job, and
+  // CI's build is uploaded for the owner to download (owner decision of 2026-10-03).
+  const used = [];
+  for (const f of fs.readdirSync(DIR).filter((x) => x.endsWith('.yml')).sort()) {
     for (const [job, s] of Y.steps(wf(f))) {
       if (!s.uses) continue;
-      assert.equal(f, 'web-app.yml', `${f} ${job}: no action outside web-app.yml`);
       assert.match(s.uses, /^actions\/(upload|download)-artifact@[0-9a-f]{40}$/, `${f} ${job}: ${s.uses}`);
+      used.push(`${f} ${job} ${s.uses.split('@')[0].slice(8)}`);
     }
   }
+  assert.deepEqual(used, [
+    'ci.yml windows-exe upload-artifact',
+    'release.yml windows-exe upload-artifact', 'release.yml windows-sign download-artifact', 'release.yml windows-sign upload-artifact', 'release.yml release download-artifact',
+    'web-app.yml build upload-artifact', 'web-app.yml publish download-artifact',
+  ]);
+  // One pinned commit per action across the workflows: a bump changes every use.
+  const pins = new Map();
+  for (const f of fs.readdirSync(DIR).filter((x) => x.endsWith('.yml'))) for (const [, s] of Y.steps(wf(f))) if (s.uses) { const [a, sha] = s.uses.split('@'); assert.equal(pins.get(a) || sha, sha, `${a} is pinned to one commit everywhere`); pins.set(a, sha); }
 });
 
 test('write scopes: only the release job and the web-app publish job, both in the `release` environment', () => {
@@ -153,6 +166,52 @@ test('ci.yml: the windows job runs npm run try and the OS-sensitive tests on the
   assert.ok(!/npm (ci|install)/.test(runs), 'no npm install: the doc says none is needed');
 });
 
+test('ci.yml: windows-exe builds the Windows server zip from pinned inputs, smoke-tests it and uploads it; not advisory, not a required job', () => {
+  const ci = wf('ci.yml');
+  const job = ci.jobs['windows-exe'];
+  assert.equal(job['runs-on'], 'windows-latest');
+  assert.ok(!job['continue-on-error'], 'a red Windows build fails CI');
+  assert.ok(!REQUIRED_JOBS.includes('windows-exe'), 'not in the release gate\'s required list (the release builds the zip itself)');
+  assert.equal(job.permissions, undefined, 'the top-level read-only token');
+  assert.equal(job.env.NODE22_WIN_SHA256, ci.jobs.windows.env.NODE22_WIN_SHA256, 'the same node win-x64.zip pin as the windows job');
+  assert.match(job.env.WINSW_VERSION, /^v\d+\.\d+\.\d+$/); assert.match(job.env.WINSW_SHA256, /^[0-9a-f]{64}$/);
+  assert.match(job.env.POSTJECT_VERSION, /^\d+\.\d+\.\d+(-[\w.]+)?$/); assert.match(job.env.POSTJECT_INTEGRITY, /^sha512-[A-Za-z0-9+/]{86}==$/);
+  const runs = job.steps.map((s) => s.run || '').join('\n');
+  assert.match(runs, /-ne \$env:NODE22_WIN_SHA256/); assert.match(runs, /-ne \$env:WINSW_SHA256/, 'WinSW checked against its pin at download');
+  assert.match(runs, /node scripts\/build-windows\.js --node-zip [^\n]* --winsw [^\n]* --postject [^\n]* --out dist/);
+  assert.match(runs, /\.\/scripts\/windows\/smoke-test\.ps1 -Dir \$dir -Version \$ver/);
+  assert.ok(!/npm (ci|install)|npx /.test(runs), 'no npm install and no npx: postject is used from its pinned tarball');
+  assert.ok(!/secrets\./.test(JSON.stringify(job)), 'no secret on a push: CI builds are unsigned');
+  const up = job.steps.find((s) => s.uses);
+  assert.equal(up.with.name, 'suds-windows-x64');
+  assert.match(up.with.path, /src\/dist\/\*\.zip\n/); assert.equal(up.with['if-no-files-found'], 'error');
+  for (const f of ['scripts/build-windows.js', 'scripts/windows/smoke-test.ps1']) assert.ok(fs.existsSync(path.join(__dirname, '..', f)), f);
+  // The smoke test covers what the owner asked for.
+  const smoke = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'windows', 'smoke-test.ps1'), 'utf8');
+  for (const cmd of ["@('version')", "'try', '--port'", "@('status', '--json')", "@('service', 'install')", "@('service', 'start')", "@('service', 'stop')", "@('service', 'uninstall')", "@('logs', '--lines', '5')", '/api/auth/login', 'shutting down']) assert.ok(smoke.includes(cmd), `smoke test: ${cmd}`);
+});
+
+test('release.yml: the Windows zip is built from the gated commit with ci.yml\'s pins, signed apart from the build, and attached by the release job', () => {
+  const ci = wf('ci.yml'); const rel = wf('release.yml');
+  const b = rel.jobs['windows-exe']; const sg = rel.jobs['windows-sign'];
+  assert.equal(b.needs, 'gate'); assert.equal(sg.needs, 'windows-exe');
+  assert.deepEqual(b.permissions, { contents: 'read' }); assert.deepEqual(sg.permissions, { contents: 'read' });
+  assert.equal(b.environment, undefined); assert.equal(sg.environment, undefined);
+  for (const k of ['NODE22_WIN_SHA256', 'WINSW_VERSION', 'WINSW_SHA256', 'POSTJECT_VERSION', 'POSTJECT_INTEGRITY']) assert.equal(b.env[k], ci.jobs['windows-exe'].env[k], `release.yml windows-exe pins ${k} as ci.yml does`);
+  assert.equal(sg.env.NODE22_WIN_SHA256, ci.jobs['windows-exe'].env.NODE22_WIN_SHA256);
+  assert.ok(!/secrets\./.test(JSON.stringify(b)), 'the build job (which runs postject) has no secret');
+  // The certificate reaches the signing step only, and that step runs signtool, not the repository's code or npm.
+  const withSecrets = sg.steps.filter((s) => /secrets\./.test(JSON.stringify(s)));
+  assert.equal(withSecrets.length, 1);
+  assert.deepEqual(Object.keys(withSecrets[0].env).sort(), ['WINDOWS_CERT_PASSWORD', 'WINDOWS_CERT_PFX_BASE64']);
+  assert.ok(!/\bnode\b|\bnpm\b|\bnpx\b|scripts[\\/]/.test(withSecrets[0].run), 'the signing step runs no node, npm or repository script');
+  assert.match(withSecrets[0].run, /signtool[^\n]* sign \/fd SHA256 [^\n]*\/tr http[^\n]* \/td SHA256/, 'signed with SHA-256 and timestamped');
+  assert.match(withSecrets[0].run, /::notice::No code-signing certificate/, 'without the secrets: unsigned, with a notice');
+  assert.match(sg.steps.map((s) => s.run || '').join('\n'), /node scripts\/build-windows\.js --pack/);
+  assert.deepEqual(rel.jobs.release.needs, ['gate', 'verify', 'windows-sign']);
+  assert.ok(rel.jobs.release.steps.some((s) => (s.uses || '').startsWith('actions/download-artifact@') && s.with.name === 'suds-windows-x64'));
+});
+
 test('ci.yml: release-policy runs the policy on every push, from the tags or the hand-off commit, and is not advisory', () => {
   const job = wf('ci.yml').jobs['release-policy'];
   assert.ok(job, 'ci.yml has a release-policy job');
@@ -168,11 +227,11 @@ test('ci.yml: release-policy runs the policy on every push, from the tags or the
 
 test('release.yml: gate, then verify, then the release job, which alone waits for approval', () => {
   const { jobs } = wf('release.yml');
-  assert.deepEqual(Object.keys(jobs), ['gate', 'verify', 'release']);
+  assert.deepEqual(Object.keys(jobs), ['gate', 'verify', 'windows-exe', 'windows-sign', 'release']);
   assert.equal(jobs.gate.environment, undefined);
   assert.equal(jobs.verify.environment, undefined);
   assert.equal(jobs.verify.needs, 'gate');
-  assert.deepEqual(jobs.release.needs, ['gate', 'verify']);
+  assert.deepEqual(jobs.release.needs, ['gate', 'verify', 'windows-sign']);
   assert.equal(jobs.release.environment, 'release');
   assert.deepEqual(Object.keys(jobs.gate.outputs).sort(), ['latest', 'main_sha', 'policy_notes']);
   assert.equal(jobs.release.env.LATEST, '${{ needs.gate.outputs.latest }}');

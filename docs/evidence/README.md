@@ -108,7 +108,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 - **Documents:** [VULNERABILITY-MANAGEMENT.md](../security/VULNERABILITY-MANAGEMENT.md); [`SECURITY.md`](../../SECURITY.md) (how to report); the SBOM ([sbom-1.23.0.cdx.json](sbom-1.23.0.cdx.json)); `.github/dependabot.yml`.
 - **Tests:** `sbom` (the server requires only Node built-ins; the committed SBOM equals a fresh run), `kernel-parity`.
-- **CI:** `test` (the kernel and schema must match their sources); Node pinned by SHA-256.
+- **CI:** `test` (the kernel and schema must match their sources); Node pinned by SHA-256. `windows-exe` builds the Windows server zip from inputs pinned by hash (Node.js win-x64, WinSW, postject) and smoke-tests it; the SBOM lists them (`windows-cli`, `windows-build` tests).
 - **Status:** The server has zero runtime npm packages, and the SBOM is published. The security policy is `SECURITY.md`. **Owner-pending:** CodeQL and secret scanning (repository settings), turning on private vulnerability reporting and confirming `SECURITY.md`'s response targets, and a penetration test. SAST and DAST are not in CI.
 
 ### Secure development, change control and releases

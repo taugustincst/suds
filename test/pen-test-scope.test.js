@@ -152,6 +152,7 @@ const MAP = [
   ['A backport released from the wrong line', ['Release and publish pipeline']],
   ['An edit silently changes what a released migration does', ['Release and publish pipeline', 'SUDS Server upgrade hand-over']],
   ['A forged GitHub Release for the owner\'s tag', ['Release and publish pipeline']],
+  ['A substituted Node.js, WinSW or postject in the Windows server zip', ['Release and publish pipeline', 'Windows server']],
   ['A dependency steals the write token', ['Release and publish pipeline']],
   ['Replacing a published zip, or republishing an old build', ['Release and publish pipeline']],
   ['An owner setting switched off unnoticed', ['Release and publish pipeline']],
