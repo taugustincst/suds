@@ -55,6 +55,28 @@ test('an empty release of the bot\'s gets its files; a draft of the bot\'s is pu
   assert.match(E.judge({ tag: TAG, release: rel({ isDraft: true }), identical: { [ZIP]: true, [SUM]: true }, afterPublish: true }).problems[0], /still a draft after publishing/);
 });
 
+test('the Windows server zip pair: attached with the source zip, compared when this run built it, never alone', () => {
+  const [WZ, WS] = E.windowsAssetNames(TAG);
+  assert.deepEqual([WZ, WS], ['suds-1.16.4-windows-x64.zip', 'suds-1.16.4-windows-x64.zip.sha256']);
+  const all = rel({ assets: [{ name: ZIP }, { name: SUM }, { name: WZ }, { name: WS }] });
+  const same = { [ZIP]: true, [SUM]: true, [WZ]: true, [WS]: true };
+  // The gate builds the source zip only: the Windows pair is accepted when paired, not compared.
+  assert.deepEqual(E.judge({ tag: TAG, release: all, identical: { [ZIP]: true, [SUM]: true } }), { action: 'none', publishDraft: false, problems: [] });
+  // The release job built it: compared byte for byte, like the source zip.
+  assert.deepEqual(E.judge({ tag: TAG, release: all, identical: same, windows: true }).problems, []);
+  assert.match(E.judge({ tag: TAG, release: all, identical: { ...same, [WZ]: false }, windows: true }).problems[0], /suds-1\.16\.4-windows-x64\.zip .* not byte for byte the Windows server zip this run built/);
+  assert.match(E.judge({ tag: TAG, release: rel({ assets: [{ name: ZIP }, { name: SUM }, { name: WZ }] }), identical: same }).problems[0], /windows-x64\.zip without its pair/);
+  // Missing Windows files are uploaded (only those), and their absence after publishing is a problem.
+  const old = E.judge({ tag: TAG, release: rel(), identical: same, windows: true });
+  assert.deepEqual(old, { action: 'upload', publishDraft: false, problems: [] });
+  assert.deepEqual(E.missingAssets({ tag: TAG, release: rel(), windows: true }), [WZ, WS]);
+  assert.deepEqual(E.missingAssets({ tag: TAG, release: null, windows: true }), [ZIP, SUM, WZ, WS]);
+  assert.deepEqual(E.missingAssets({ tag: TAG, release: rel(), windows: false }), []);
+  assert.match(E.judge({ tag: TAG, release: rel(), identical: same, windows: true, afterPublish: true }).problems[0], /missing its files after publishing/);
+  // Any other file is still refused.
+  assert.match(E.judge({ tag: TAG, release: rel({ assets: [{ name: ZIP }, { name: SUM }, { name: 'suds-1.16.4-windows-arm64.zip' }] }), identical: same }).problems[0], /never attaches: suds-1\.16\.4-windows-arm64\.zip/);
+});
+
 test('the refusal says how to recover: delete the release but not the tag, or release the next patch', () => {
   const r = E.recovery(TAG);
   assert.match(r, /gh release delete v1\.16\.4 --yes`, without --cleanup-tag/);
@@ -109,7 +131,10 @@ test('release.yml checks an existing release in the gate, before the approval, a
   assert.match(job, /--after-publish/, 'and once more after publishing');
   // What the check decided is all the publish step does; a draft is published only after the check.
   assert.match(job, /ACTION: \$\{\{ steps\.existing\.outputs\.action \}\}/);
-  assert.match(job, /case "\$\{ACTION\}" in\n\s+create\)\n[^\n]*\n\s+gh release create "\$ver" [^\n]*--verify-tag[^\n]*;;\n\s+upload\) gh release upload "\$ver" "suds-\$ver\.zip" "suds-\$ver\.zip\.sha256" ;;\n\s+none\) echo/);
+  // The source zip pair and the Windows server zip pair are created together (an immutable release takes no file after
+  // it is published); an upload sends only what the check found missing.
+  assert.match(job, /case "\$\{ACTION\}" in\n\s+create\)\n(?:[^\n]*\n)+?\s+gh release create "\$ver" "suds-\$ver\.zip" "suds-\$ver\.zip\.sha256" "suds-\$\{ver#v\}-windows-x64\.zip" "suds-\$\{ver#v\}-windows-x64\.zip\.sha256" --verify-tag[^\n]*;;\n(?:\s+#[^\n]*\n)*\s+upload\) gh release upload "\$ver" \$\{MISSING\} ;;\n\s+none\) echo/);
+  assert.match(job, /MISSING: \$\{\{ steps\.existing\.outputs\.missing \}\}/);
   assert.match(job, /if \[ "\$\{PUBLISH_DRAFT\}" = "true" \]; then gh release edit "\$ver" --draft=false "\$latest_flag"; fi/);
   assert.ok(!/--clobber/.test(y));
 });
@@ -118,7 +143,7 @@ test('release.yml: npm and the tests run in a read-only job; the job with the wr
   const y = wf('release.yml');
   assert.match(y, /\npermissions:\n {2}contents: read\njobs:/, 'read-only at the top');
   const gate = y.slice(y.indexOf('\n  gate:'), y.indexOf('\n  verify:'));
-  const verify = y.slice(y.indexOf('\n  verify:'), y.indexOf('\n  release:'));
+  const verify = y.slice(y.indexOf('\n  verify:'), y.indexOf('\n  windows-exe:'));
   const job = y.slice(y.indexOf('\n  release:'));
   assert.match(gate, /\n {4}permissions:\n {6}contents: read\n {6}actions: read\n/);
   assert.match(verify, /\n {4}needs: gate\n/);
@@ -126,7 +151,7 @@ test('release.yml: npm and the tests run in a read-only job; the job with the wr
   assert.ok(!/environment:|secrets\.|GH_TOKEN/.test(verify.replace(/^\s*#.*$/gm, '')), 'no environment, secret or gh token');
   for (const s of ['run: npm ci --no-audit --no-fund', 'run: npm test', 'npm run build:local', 'git diff --exit-code -- public/local server/schema-text.js public/sw.js']) assert.ok(verify.includes(s), `verify: ${s}`);
   assert.match(verify, /git checkout --quiet "\$\{GITHUB_SHA\}"/, 'the gated commit');
-  assert.match(job, /\n {4}needs: \[gate, verify\]\n/);
+  assert.match(job, /\n {4}needs: \[gate, verify, windows-sign\]\n/);
   assert.match(job, /\n {4}environment: release\n/);
   assert.match(job, /\n {4}permissions:\n {6}contents: write\n(?: {6}#[^\n]*\n)* {6}actions: write\n/);
   const code = job.replace(/^\s*#.*$/gm, '');

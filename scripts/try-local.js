@@ -21,7 +21,8 @@
 // stop on every system: on Windows a child process cannot be sent a Ctrl+C, only killed.
 //
 // run({ port, reset, dataDir }) is the same start without the command line, for anything else that starts SUDS
-// this way: it resolves once the server is listening, with what banner() prints. It changes this process's
+// this way (`suds try` in the Windows server exe, scripts/windows/cli.js, passes its own `command` name for the
+// messages): it resolves once the server is listening, with what banner() prints. It changes this process's
 // working directory and environment and starts the server in it, so it can be called once per process.
 const fs = require('node:fs');
 const path = require('node:path');
@@ -48,6 +49,12 @@ const SAMPLE_ACCOUNTS = [
 const ADMIN_USERNAME = 'guest'; // server/bootstrap.js DEFAULT_ADMIN_USERNAME (SUDS_ADMIN_USERNAME is set aside below)
 
 class TryError extends Error {}
+
+/** How a person types this command with `extra` options: `npm run try -- --port 8081`, or `suds try --port 8081`. */
+function commandLine(command, extra) {
+  if (!extra.length) return command;
+  return command === 'npm run try' ? `${command} -- ${extra.join(' ')}` : `${command} ${extra.join(' ')}`;
+}
 
 /** Why this Node.js cannot run SUDS, or null. Plain syntax: it has to run on an old Node to say so. */
 function nodeVersionProblem(version = process.versions.node) {
@@ -175,14 +182,14 @@ function waitForListener(timeoutMs = 60000) {
  * Throws TryError (a message for a person) for anything they can fix: an old Node, a busy port, a folder that is
  * not this script's.
  */
-async function run({ port = DEFAULT_PORT, reset: doReset = false, dataDir = DEFAULT_DIR } = {}) {
+async function run({ port = DEFAULT_PORT, reset: doReset = false, dataDir = DEFAULT_DIR, command = 'npm run try' } = {}) {
   const problem = nodeVersionProblem(); if (problem) throw new TryError(problem);
   port = checkPort(port);
   dataDir = path.resolve(dataDir);
   let wasReset = false;
   if (doReset) wasReset = reset(dataDir);
   const kind = folderKind(dataDir);
-  if (kind === 'other') throw new TryError(`${dataDir} already holds files that "npm run try" did not make, so it will not use it (it could be a real install's data). Choose an empty folder with --data-dir, or leave the option out to use data-try.`);
+  if (kind === 'other') throw new TryError(`${dataDir} already holds files that "${command}" did not make, so it will not use it (it could be a real install's data). Choose an empty folder with --data-dir, or leave the option out to use data-try.`);
   if (kind === 'try') {
     const pid = runningPid(dataDir);
     if (pid) throw new TryError(`SUDS is already running from ${dataDir} (process ${pid}). Use the address printed in that window, or stop it there with Ctrl+C first.`);
@@ -191,7 +198,7 @@ async function run({ port = DEFAULT_PORT, reset: doReset = false, dataDir = DEFA
   if (busy) {
     const why = busy === 'EADDRINUSE' ? `Port ${port} is already in use on this computer (another program, or SUDS already running in another window).`
       : busy === 'EACCES' ? `This computer does not allow a program to use port ${port}.` : `Port ${port} cannot be used (${busy}).`;
-    throw new TryError(`${why}\nPick another port, for example:  npm run try -- --port ${port === 8081 ? 8082 : 8081}`);
+    throw new TryError(`${why}\nPick another port, for example:  ${commandLine(command, ['--port', String(port === 8081 ? 8082 : 8081)])}`);
   }
 
   const created = kind !== 'try';
@@ -217,11 +224,11 @@ async function run({ port = DEFAULT_PORT, reset: doReset = false, dataDir = DEFA
 }
 
 /** What a person needs once it is running. */
-function banner(info) {
+function banner(info, { command = 'npm run try', defaultDir = DEFAULT_DIR, dataOption = '--data-dir' } = {}) {
   const opts = [];
   if (info.port !== DEFAULT_PORT) opts.push(`--port ${info.port}`);
-  if (info.dataDir !== DEFAULT_DIR) opts.push(`--data-dir "${info.dataDir}"`);
-  const cmd = (extra) => { const a = [...extra, ...opts]; return `npm run try${a.length ? ` -- ${a.join(' ')}` : ''}`; };
+  if (info.dataDir !== defaultDir) opts.push(`${dataOption} "${info.dataDir}"`);
+  const cmd = (extra) => commandLine(command, [...extra, ...opts]);
   const w = Math.max(...info.accounts.map((a) => a.username.length));
   return [
     '',
@@ -269,5 +276,5 @@ async function main(argv = process.argv.slice(2)) {
   }
 }
 
-module.exports = { run, reset, banner, parseArgs, nodeVersionProblem, folderKind, tryEnv, DEFAULT_DIR, DEFAULT_PORT, SAMPLE_PASSWORD, SAMPLE_ACCOUNTS, MARKER, TryError };
+module.exports = { run, reset, banner, parseArgs, nodeVersionProblem, folderKind, tryEnv, runningPid, waitForListener, commandLine, DEFAULT_DIR, DEFAULT_PORT, SAMPLE_PASSWORD, SAMPLE_ACCOUNTS, MARKER, TryError };
 if (require.main === module) main();
