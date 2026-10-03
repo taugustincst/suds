@@ -323,3 +323,59 @@ jobs:
       - name: Release policy against the newest release (tag or hand-off commit)
         working-directory: src
         run: node scripts/release-policy-ci.js --fetch
+  # Windows (1.24): the path a tester takes on a Windows 11 PC (docs/TRY-ON-WINDOWS.md), on windows-latest with the
+  # pinned Node 22. The checkout goes through Git for Windows (core.autocrlf), so .gitattributes is tested too. No
+  # npm install, because the doc tells a tester none is needed. `npm run try` is started on a free port in a temporary
+  # data folder, signs in with a sample account, lists clients and is stopped the way Ctrl+C does
+  # (test/try-local.test.js). Then the OS-sensitive part of npm test runs: config and keys, crypto, backups, the audit
+  # chain and its anchors, the instance lock, logs, migrations, health. Not in the release gate's required list, and
+  # not advisory: a red job fails the run, as release-policy does. The same smoke test runs on Linux in npm test.
+  # NODE22_WIN_SHA256 is the win-x64.zip line of the same SHASUMS256.txt as NODE22_SHA256: bump both together.
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      NODE22_WIN_SHA256: 2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71
+    steps:
+      # --no-checkout: the files are written once, from this commit, as a fresh clone of it writes them. A checkout of the
+      # default branch first would leave every file this commit does not change as that branch wrote it, under that
+      # branch's .gitattributes (CRLF, before the rules), and the line-ending check would test the runner, not the rules.
+      - name: Check out
+        shell: bash
+        run: git clone --no-checkout --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}" && git config --get core.autocrlf || true
+      - name: Install Node 22 (pinned version, pinned checksum)
+        shell: pwsh
+        run: |
+          $file = "node-$env:NODE22_VERSION-win-x64.zip"
+          Set-Location $env:RUNNER_TEMP
+          curl.exe -fsSLO "https://nodejs.org/dist/$env:NODE22_VERSION/$file"
+          $have = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+          if ($have -ne $env:NODE22_WIN_SHA256) { Write-Output "::error::$file does not match the SHA-256 pinned in the workflow"; exit 1 }
+          Expand-Archive $file -DestinationPath node22
+          Join-Path $env:RUNNER_TEMP "node22\node-$env:NODE22_VERSION-win-x64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Node is the pinned release, of the major .nvmrc names
+        shell: pwsh
+        working-directory: src
+        run: |
+          $want = (Get-Content .nvmrc -Raw).Trim(); $have = node -p "process.versions.node.split('.')[0]"
+          node --version
+          if ($have -ne $want) { Write-Output "::error::Node $have is running but .nvmrc pins major $want"; exit 1 }
+          if ((node --version) -ne $env:NODE22_VERSION) { Write-Output "::error::$(node --version) is running, not the pinned $env:NODE22_VERSION"; exit 1 }
+      - name: npm run try starts through npm's Windows script shell
+        shell: pwsh
+        working-directory: src
+        run: npm run try -- --help
+      - name: npm run try, signed in, and stopped as Ctrl+C stops it
+        shell: pwsh
+        working-directory: src
+        # Its failures are also written as one annotation (::error::), readable on the run's page without the log.
+        run: |
+          node --no-warnings=ExperimentalWarning --test test/try-local.test.js 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\try.log"
+          if ($LASTEXITCODE -ne 0) { $l = Select-String -Path "$env:RUNNER_TEMP\try.log" -Pattern 'not ok|rror|expected|actual|message|at ' | Select-Object -First 60 | ForEach-Object { $_.Line.Trim() }; Write-Output "::error::$($l -join '%0A')"; exit 1 }
+      - name: The OS-sensitive tests (config, keys, crypto, backups, audit, lock, logs, migrations)
+        if: success() || failure()
+        shell: pwsh
+        working-directory: src
+        run: |
+          node --no-warnings=ExperimentalWarning --test test/crypto.test.js test/key-separation.test.js test/secret-files.test.js test/backup.test.js test/backup-restore-in-place.test.js test/scheduled-backup.test.js test/audit-anchor-interval.test.js test/audit-head-at-start.test.js test/audit-immutable.test.js test/audit-retention.test.js test/instance-lock.test.js test/log.test.js test/migrations.test.js test/health-probes.test.js test/rotate-index-key.test.js test/update.test.js 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\os.log"
+          if ($LASTEXITCODE -ne 0) { $l = Select-String -Path "$env:RUNNER_TEMP\os.log" -Pattern 'not ok|rror|expected|actual|message|at ' | Select-Object -First 60 | ForEach-Object { $_.Line.Trim() }; Write-Output "::error::$($l -join '%0A')"; exit 1 }

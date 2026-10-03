@@ -203,6 +203,10 @@ Full walkthrough: [docs/INSTALL.md](docs/INSTALL.md); service and reverse-proxy 
 
 **No server at all — SUDS on this device:** the same web app is published on GitHub Pages and runs entirely in the browser, keeping each person's records encrypted on their own device, with device backups and a backup reminder. It is republished only when a release is cut, so it always serves a released version. Details, including exactly where the records live and what that means: [docs/WEB_APP.md](docs/WEB_APP.md).
 
+## Try it on your own computer
+
+To test SUDS on a Windows 11 PC (or a Mac or Linux machine) with fictional sample data, install Node.js 22 LTS, download and extract SUDS, and run `npm run try` in its folder. It prints the address and the sample sign-ins. You do not need `npm install`. This is for testing only, not for real client records. Step by step: [docs/TRY-ON-WINDOWS.md](docs/TRY-ON-WINDOWS.md).
+
 ## Quick start (development)
 
 ```bash
@@ -267,7 +271,7 @@ npm test
 
 Runs unit tests (crypto, TOTP, importers) and API integration tests (auth, lockout, MFA, RBAC, caseload scoping, encryption at rest, note signing, consents, budget, imports, intake, audit chain).
 
-The browser regression suite (`scripts/ui/run-all.sh`) seeds a throwaway server and drives Chromium through the desktop screens, the navigator workflow, browser local mode, two-way sync, spreadsheet import/export and sample data. CI runs it on every push; locally it needs `npm i --no-save playwright && npx playwright install chromium`. CI's required jobs — the ones the release gate checks before anything is published ([docs/RELEASE.md](docs/RELEASE.md#release-gate)) — are `test`, `thorough`, `thorough-sdc` (the full-size disclosure sweeps, `npm run test:thorough`), `browser`, `node24` (`npm test` on Node 24) and `dr-drill`. Two jobs are advisory: a WebKit smoke subset (`SUDS_BROWSER=webkit SCRIPTS="static-site qa-retest" scripts/ui/run-all.sh`, after `npx playwright install --with-deps webkit`), and `release-state`, which compares what the release documents say with origin's tags, `main` and GitHub Pages (`node scripts/release-state.js`; [docs/RELEASE.md](docs/RELEASE.md), stamp checklist). No CI job replaces the real-device checklist in [docs/ADOPTION.md](docs/ADOPTION.md).
+The browser regression suite (`scripts/ui/run-all.sh`) seeds a throwaway server and drives Chromium through the desktop screens, the navigator workflow, browser local mode, two-way sync, spreadsheet import/export and sample data. CI runs it on every push; locally it needs `npm i --no-save playwright && npx playwright install chromium`. CI's required jobs — the ones the release gate checks before anything is published ([docs/RELEASE.md](docs/RELEASE.md#release-gate)) — are `test`, `thorough`, `thorough-sdc` (the full-size disclosure sweeps, `npm run test:thorough`), `browser`, `node24` (`npm test` on Node 24) and `dr-drill`. Two jobs are advisory: a WebKit smoke subset (`SUDS_BROWSER=webkit SCRIPTS="static-site qa-retest" scripts/ui/run-all.sh`, after `npx playwright install --with-deps webkit`), and `release-state`, which compares what the release documents say with origin's tags, `main` and GitHub Pages (`node scripts/release-state.js`; [docs/RELEASE.md](docs/RELEASE.md), stamp checklist). A `windows` job runs `npm run try` and the OS-sensitive tests on `windows-latest` ([docs/TRY-ON-WINDOWS.md](docs/TRY-ON-WINDOWS.md)); like `release-policy` it is not on the release gate's list, but a red run fails CI. No CI job replaces the real-device checklist in [docs/ADOPTION.md](docs/ADOPTION.md).
 
 ## License
 

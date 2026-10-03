@@ -116,10 +116,20 @@ setInterval(housekeeping, 3600_000).unref();
 // (server/scheduled-backup.js snapshotIfDue). This is what brings the recovery point down to minutes.
 setInterval(() => { require('./scheduled-backup').snapshotIfDue().catch((e) => console.error('[suds] snapshot', e && e.message || e)); }, 60_000).unref();
 
-let stopping = false;
-for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {
-  if (stopping) process.exit(0);
-  stopping = true;
+// Ctrl+C in a terminal reaches every process in the foreground group, and npm (or node --watch) also passes the
+// signal on to its child, so the server often receives the same Ctrl+C twice within a few milliseconds. Exiting
+// at once on the second skipped the clean stop below (the log flush, the database close). A second signal is a
+// request to stop NOW only when it comes after STOP_REPEAT_MS: someone pressing Ctrl+C again because the first
+// seems stuck.
+// On Windows, closing the console window is delivered as SIGHUP, and the process is ended about ten seconds
+// later whatever it does: stop cleanly then too, so the instance lock and the log are not left half-written.
+// Not on Linux or macOS, where `nohup npm start &` relies on SIGHUP being ignored.
+const STOP_REPEAT_MS = 2000;
+let stopping = false; let stopAt = 0;
+const stopSignals = process.platform === 'win32' ? ['SIGINT', 'SIGTERM', 'SIGHUP'] : ['SIGINT', 'SIGTERM'];
+for (const sig of stopSignals) process.on(sig, () => {
+  if (stopping) { if (Date.now() - stopAt > STOP_REPEAT_MS) process.exit(0); return; }
+  stopping = true; stopAt = Date.now();
   console.log('[suds] shutting down…');
   // Flush the log file before exiting, so the last lines (often the reason for the stop) are not lost.
   // The hour's count of refused referral-link opens (and county connection calls) goes into the audit log before the database closes.

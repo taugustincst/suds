@@ -1110,7 +1110,11 @@ v=v24.x.y                                                     # or v22.x.y: the 
 curl -fsSLO https://nodejs.org/dist/$v/SHASUMS256.txt.asc     # clearsigned: the checksums and their signature
 gpg --verify SHASUMS256.txt.asc                               # release keys: github.com/nodejs/release-keys
 grep ' node-'$v'-linux-x64.tar.xz$' SHASUMS256.txt.asc        # the hash for NODE24_SHA256 / NODE22_SHA256
+grep ' node-'$v'-win-x64.zip$' SHASUMS256.txt.asc             # Node 22 only: NODE22_WIN_SHA256 (ci.yml, windows job)
 ```
+
+From 1.24.0 the `windows` job in `ci.yml` installs the same Node 22 release for Windows, checked against
+`NODE22_WIN_SHA256` in that job: bump it in the same commit as `NODE22_VERSION`, or that job fails on the hash.
 
 Change the two lines in one commit ("CI: Node 24 → $v"; for Node 22 in `ci.yml`, `release.yml` and `deploy/linux/pins` together — SUDS Server installs that exact release, and `test/deploy-linux.test.js` fails if the three differ);
 `test/release-gate.test.js` checks their shape, that the two workflows agree, and that Node 22's major is

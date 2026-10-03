@@ -80,7 +80,8 @@ test('every workflow parses, and every job runs on a hosted runner with named st
     const w = wf(f);
     assert.equal(typeof w.name, 'string', `${f}: a name`);
     for (const [name, job] of Object.entries(w.jobs)) {
-      assert.equal(job['runs-on'], 'ubuntu-latest', `${f} ${name}`);
+      // ci.yml's windows job is the one exception: the path a Windows tester takes (docs/TRY-ON-WINDOWS.md).
+      assert.equal(job['runs-on'], f === 'ci.yml' && name === 'windows' ? 'windows-latest' : 'ubuntu-latest', `${f} ${name}`);
       assert.ok(Array.isArray(job.steps) && job.steps.length, `${f} ${name}: steps`);
       for (const s of job.steps) assert.ok(s.run || s.uses, `${f} ${name}: a step runs something`);
     }
@@ -134,6 +135,22 @@ test('ci.yml: every job the release gate requires exists and is not advisory; on
   // without a commit: advisory, and never a required job.
   assert.deepEqual(Object.keys(jobs).filter((j) => jobs[j]['continue-on-error']), ['webkit', 'release-state']);
   assert.ok(!REQUIRED_JOBS.includes('release-state'));
+});
+
+test('ci.yml: the windows job runs npm run try and the OS-sensitive tests on the pinned Node 22, with no npm install, and is not advisory', () => {
+  const ci = wf('ci.yml');
+  const job = ci.jobs.windows;
+  assert.equal(job['runs-on'], 'windows-latest');
+  assert.ok(!job['continue-on-error'], 'a red Windows run fails CI');
+  const runs = job.steps.map((s) => s.run || '').join('\n');
+  assert.match(runs, /nodejs\.org\/dist\/\$env:NODE22_VERSION\/\$file/, 'the release ci.yml pins for every Node 22 job');
+  assert.match(runs, /Get-FileHash \$file -Algorithm SHA256/); assert.match(runs, /-ne \$env:NODE22_WIN_SHA256/, 'checked against a pinned SHA-256');
+  assert.match(job.env.NODE22_WIN_SHA256, /^[0-9a-f]{64}$/);
+  assert.match(runs, /\(node --version\) -ne \$env:NODE22_VERSION/, 'and runs on it');
+  assert.match(runs, /--test test\/try-local\.test\.js/);
+  for (const t of ['crypto', 'backup', 'audit-anchor-interval', 'instance-lock', 'migrations', 'secret-files']) assert.ok(runs.includes(`test/${t}.test.js`), t);
+  for (const t of runs.match(/test\/[a-z0-9-]+\.test\.js/g)) assert.ok(fs.existsSync(path.join(__dirname, '..', t)), `${t} exists`);
+  assert.ok(!/npm (ci|install)/.test(runs), 'no npm install: the doc says none is needed');
 });
 
 test('ci.yml: release-policy runs the policy on every push, from the tags or the hand-off commit, and is not advisory', () => {
