@@ -93,6 +93,8 @@ ok(await page.$('.layout'), 'the administrator signs in over HTTPS at the new ad
   const mods = (me.programme && me.programme.modules) || { careplan: true };
   eq(['careplan', 'assessments', 'caloms', 'fhir', 'handoff'].some(k => mods[k]), false, 'with every clinical module switched off');
   eq(mods.publication, true, 'and publication releases on, as a new install starts');
+  const https = ((await page.evaluate(() => fetch('/api/admin/security/hardening', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()))).items || []).find(i => i.id === 'https');
+  eq(https && https.status, 'served by SUDS', 'the hardening checklist sees the HTTPS the wizard just switched on, without a restart');
   const funds = await page.evaluate(() => fetch('/api/budget/funds', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()));
   const main = (funds.funds || []).find(f => f.name === 'County opioid settlement allocation');
   ok(main, 'the main funding source named in the wizard exists', JSON.stringify(funds).slice(0, 200));
