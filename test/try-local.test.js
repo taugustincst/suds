@@ -151,6 +151,15 @@ test('npm run try never uses or deletes a folder it did not make, and says when 
   } finally { fs.rmSync(parent, { recursive: true, force: true }); }
 });
 
+test('files read byte for byte are checked out with LF line endings (.gitattributes), on Windows too', () => {
+  // Git for Windows converts text files to CRLF unless .gitattributes says otherwise; the windows CI job's checkout
+  // goes through it, so there this checks the rule, not just the file.
+  for (const f of ['server/schema.sql', 'server/schema-text.js', 'test/fixtures/schema-v4.sql', 'package.json', 'scripts/try-local.js', 'deploy/linux/install.sh']) {
+    assert.ok(!fs.readFileSync(path.join(ROOT, f), 'utf8').includes('\r\n'), `${f} has CRLF line endings`);
+  }
+  assert.match(fs.readFileSync(path.join(ROOT, '.gitattributes'), 'utf8'), /^\* text=auto eol=lf$/m);
+});
+
 test('try-local: options, the Node version check, and the settings it sets aside', () => {
   assert.deepEqual(T.parseArgs([]), { port: 8080, reset: false, dataDir: T.DEFAULT_DIR, help: false });
   assert.equal(T.DEFAULT_DIR, path.join(ROOT, 'data-try'));

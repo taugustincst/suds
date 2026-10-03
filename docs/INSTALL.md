@@ -2,6 +2,8 @@
 
 This guide is for the person who will host SUDS on an office computer or small server. It covers the server and its setup wizard; staff then use SUDS in a browser (there is no app to install — see [PLATFORM.md](PLATFORM.md)). Allow about 15 minutes. IT teams running it as a service behind a reverse proxy should read [DEPLOYMENT.md](DEPLOYMENT.md) as well; a county or CBO with a Linux VM should use **SUDS Server** instead ([SELF-HOSTING.md](SELF-HOSTING.md): one hardened install command and a weekly compliance check). This guide stays the right one for a small office running SUDS on one workstation.
 
+To test SUDS on your own computer first, with fictional sample data and nothing to configure, see [TRY-ON-WINDOWS.md](TRY-ON-WINDOWS.md) (`npm run try`). That copy is for testing only and must not hold real client records. This guide is for a real install.
+
 ## What you need
 * A Windows or Mac computer that stays on during working hours (a county workstation or a small server). Laptops that leave the building are **not** appropriate hosts for PHI.
 * Node.js 22 or newer (free). It is the only thing to install.

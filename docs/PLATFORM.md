@@ -20,6 +20,10 @@ Both are the same web application, and both are production:
 Either way, SUDS does not bill: no 837 or Drug Medi-Cal claims. Billed services are handed to the county EHR
 (`docs/SCOPE.md`); CalOMS Tx state reporting is collected and extracted in SUDS (`docs/compliance/CALOMS.md`).
 
+To test SUDS on one computer before choosing (Windows 11, macOS or Linux), `npm run try` starts the office
+server in development mode with fictional sample data. It runs only on that computer, and it is not a third way
+to run SUDS, because it must not hold real records ([TRY-ON-WINDOWS.md](TRY-ON-WINDOWS.md)).
+
 The AI documentation copilot, released in 1.17.0 ([AI-COPILOT.md](AI-COPILOT.md), [market/STRATEGY.md](market/STRATEGY.md)), is office-server
 only: it is off by default,
 runs from the office server after the programme records a BAA and QSOA with the AI provider, and is never offered

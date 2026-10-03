@@ -307,6 +307,43 @@ Fixes from the persona test of 1.23.6, for 1.24.0. No migration and no new permi
   is left.
 - **Accessibility:** the global search box is now in a search landmark (axe "region").
 
+
+### Testing SUDS on your own computer: `npm run try` (built for 1.24.0, not yet released)
+
+#### Added: `npm run try`
+
+`npm run try` starts SUDS on one computer for testing, with the fictional sample data. It works on Windows 11,
+macOS and Linux, and needs only Node.js 22.13 or later (no `npm install`). It is the office server in development
+mode, reachable only from that computer (127.0.0.1). It keeps its data in its own `data-try/` folder and sets
+aside the environment and any `.env`, so it never uses a real install's data, keys or settings. It prints the
+address, the sample sign-ins and how to stop it (Ctrl+C). `--reset` starts over and deletes only that folder. It
+refuses to use or delete a folder it did not create. `--port` chooses another port, with a clear message when the
+port is taken. The steps for a Windows tester are in [docs/TRY-ON-WINDOWS.md](docs/TRY-ON-WINDOWS.md), linked from
+README, INSTALL.md and PLATFORM.md. This copy is for testing only and must not hold real client records.
+`scripts/try-local.js` exports `run({ port, reset, dataDir })` for other launchers.
+
+#### Fixed: Windows compatibility
+
+* `npm run dev` works in Command Prompt and PowerShell. It was `SUDS_ENV=development node …`, which only a POSIX
+  shell runs. It is now `node scripts/dev.js`.
+* `npm run update` can start npm on Windows. It runs npm through `npm_execpath`, because Node cannot start
+  `npm.cmd` with `execFile`.
+* `.gitattributes` gives LF line endings in every checkout, so a clone made with Git for Windows has the same
+  bytes as a Linux one. `server/db.js` also reads `schema.sql` with LF line endings whatever the file has.
+* Stopping: when Ctrl+C reaches the server twice (from the terminal and from npm), the clean stop finishes. It
+  closes the database, flushes the log and releases the instance lock. Before, the second signal ended the
+  process at once. On Windows, closing the console window (SIGHUP) now also stops the server cleanly. On Linux and
+  macOS SIGHUP stays ignored, as `nohup` needs.
+
+#### CI
+
+A new `windows` job runs on `windows-latest` with the pinned Node 22, checked against a pinned SHA-256
+(`NODE22_WIN_SHA256`). It runs `npm run try` in a temporary folder, signs in with a sample account, lists clients
+and stops the server the way Ctrl+C does (`test/try-local.test.js`; the same test runs on Linux in `npm test`).
+Then it runs the OS-sensitive tests: crypto, keys, backups, audit, the instance lock, logs and migrations. It is
+not on the release gate's list of required jobs, but a red run fails CI. No migration, permission or route is
+added.
+
 ## 1.23.6 — 2026-10-02
 
 A patch of 1.23.5 that ships **with an owner-approved policy exception** (docs/RELEASE.md, *Stabilisation (from
