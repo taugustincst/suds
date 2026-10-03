@@ -29,6 +29,35 @@ Fixes from an owner-authorised white-box pen test of 1.23.6. No migration, permi
   Test data that relied on mismatched purposes was corrected. Before you upgrade, check whether your consents state
   their purpose in other words: from this release, a referral on such a consent needs a supervisor's override or a
   new consent.
+* **M1, widened after review — everyday purposes are covered** (review of the combined 1.24.0 tree: the first version
+  refused everyday flows). A **referral's purpose is what it is for**, from the provider's directory category
+  (`disclosure.referralPurpose`: "Referral for housing services", "Referral for outpatient treatment"; "Referral for
+  services" for *other*), and the accounting row records it. A consent naming Hope Housing for "Housing assistance",
+  "Linkage to housing and benefits", "Case management" or "Coordinate services" now covers a referral to Hope Housing
+  (it was refused with 409). **Treatment** is also named by medication, prescriber, primary care / PCP, doctor,
+  physician, therapy, recovery services and discharge planning and, for a person's disclosure, by coordinate, case
+  management, discharge, follow-up, appointment and counseling. Case management, care coordination, coordinating
+  services and service linkage are **broad coordination purposes**: they cover a referral or coordination for
+  services (treatment, housing, employment, school, benefits, family support), never payment, operations, a court,
+  research, marketing or the media. The **TPO consent** (or one stating TPO) covers any purpose not plainly outside
+  TPO, so "Coordinate care with primary care doctor", "Discharge planning", "Medication management with prescriber"
+  and "Follow-up appointment" go on it. An explicit **non-TPO list** — housing, employment, court / legal / probation /
+  law enforcement, school, benefits eligibility, research, marketing, media, family or personal — wins over every
+  other word and still needs a consent that names it: **a TPO consent alone no longer covers a referral to a housing,
+  shelter, sober-living, employment, legal-aid, benefits or family-support provider** (it did when every referral was
+  "Referral for services"); record a consent naming that purpose, or a supervisor overrides. The sample data's TPO
+  consents now name the housing, shelter and legal-aid referrals they make. One rule still serves every path: the FHIR
+  API reads it with its own words only, so no coordination word, coordination consent or patient's request widens an
+  automated feed, the clinical words count there only in a purpose naming nothing outside TPO, and "Referral to
+  housing" no longer covers `TREAT` (stricter). "Billing and payment processing only" still covers no treatment
+  referral. A **device's referral** on a consent that names the agency but not this purpose is now **kept at the
+  office** with its accounting row (audited `purpose_unconfirmed: true`), flagged to the device (`sync.conflict`,
+  flagged `disclosure_purpose`) and given a supervisor's high-priority review task, instead of being refused and
+  living only on the device; any other refusal is unchanged. A **secure referral link** withheld because its consent
+  no longer covers the referral's purpose is audited as `purpose_not_covered` (it said `consent_not_valid`), and the
+  referral's link list now says, for each link a provider could still open, why it would be withheld. Links made
+  before are held to the same rule. docs/compliance/PART2.md *Purpose match* and docs/integration/FHIR.md describe it;
+  `test/purpose-matrix.test.js` is the table of cases.
 * **M2 — an office deletion stands.** A device's push with a fresh `updated_at` could bring back a row the office had
   deleted and remove its tombstone. Sync push (`server/rules/push.js`) now refuses any row whose tombstone is on file,
   whatever the device's clock says. It is reported to the device as a permanent rejection (`deleted at the office`),

@@ -2,7 +2,9 @@
 // The rules for referrals. A referral that shares information is a disclosure, whichever way it reaches the
 // office: a warm hand-off made offline, a pending referral progressed on the phone, or a shared one re-pointed
 // at another agency passes the same gate as PUT /api/referrals/:id and is accounted here
-// (routes/referrals.js pushDisclosure). A refusal is for good (the device shows it) and audited, by reason code.
+// (routes/referrals.js pushDisclosure). A refusal is for good (the device keeps its copy and shows why) and audited, by
+// reason code. A consent that names the agency but was given for another purpose is not a refusal (1.24.0): the
+// referral was made, so it is kept and accounted, flagged to the device, and put before a supervisor as a review task.
 const db = require('../db');
 const { define, refuse, flag } = require('./core');
 const { ownedBy } = require('./shared');
