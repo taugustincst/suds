@@ -108,11 +108,18 @@ test('npm run try: starts on 127.0.0.1 with the sample data, signs in, lists cli
     assert.ok(!fs.existsSync(path.join(dir, '.suds.lock')), 'a clean stop releases the instance lock');
     assert.ok(!fs.existsSync(path.join(dir, 'suds.db-wal')), 'and closes the database (its write-ahead log folded in)');
 
+    // Weeks into an evaluation, long past the two-step grace period, the sample accounts still work.
+    { const { DatabaseSync } = require('node:sqlite'); const d = new DatabaseSync(path.join(dir, 'suds.db'));
+      d.prepare("UPDATE users SET created_at = ? WHERE username = 'mrivera'").run(new Date(Date.now() - 30 * 86400000).toISOString()); d.close(); }
+
     // Started again: the same data, not seeded twice. Ctrl+C arriving twice at once still stops cleanly.
     const run2 = start(['--port', String(port), '--data-dir', dir]);
     await run2.ready;
     assert.equal(JSON.parse(fs.readFileSync(path.join(dir, T.MARKER), 'utf8')).seeded_at, seededAt);
     assert.doesNotMatch(run2.output(), /Created the data folder/);
+    const old = await api(base, 'POST', '/api/auth/login', { username: 'mrivera', password: T.SAMPLE_PASSWORD });
+    assert.equal(old.status, 200);
+    assert.equal((await api(base, 'GET', '/api/clients', undefined, old.cookie)).status, 200, 'no mfaSetupRequired on the try copy');
     ctrlC(run2.child, { twice: true });
     const ex2 = await run2.exited;
     assert.equal(ex2.code, 0, run2.output());
@@ -184,6 +191,7 @@ test('try-local: options, the Node version check, and the settings it sets aside
   assert.equal(env.PATH, '/bin');
   assert.equal(env.SUDS_ENV, 'development'); assert.equal(env.SUDS_DATA_DIR, '/x/data-try'); assert.equal(env.HOST, '127.0.0.1'); assert.equal(env.PORT, '8123');
   assert.equal(env.SEED_PASSWORD, T.SAMPLE_PASSWORD);
+  assert.equal(T.tryEnv('/x', 1, { MFA_REQUIRED_ROLES: 'admin' }).MFA_REQUIRED_ROLES, '', 'two-step verification is not required of the sample accounts');
   for (const k of ['SUDS_DB_PATH', 'SUDS_ENCRYPTION_KEY_FILE', 'AUDIT_ANCHOR_DIR', 'TLS_CERT_PATH', 'CREDENTIALS_DIRECTORY', 'LOCAL_MODE_ENABLED', 'OIDC_ISSUER']) assert.equal(env[k], undefined, k);
 });
 
