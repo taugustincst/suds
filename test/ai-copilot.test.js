@@ -302,13 +302,13 @@ test('care plan: from this client\'s assessment (de-identified) and notes; anoth
 test('CalOMS: suggestions checked against the code sets; identifying elements are never asked for', async () => {
   fresh();
   reply = () => okJson({ suggestions: [
-    { field: 'primary_drug', value: '21', evidence: 'fentanyl' }, { field: 'primary_route', value: '9', evidence: 'bad code' },
+    { field: 'primary_drug', value: '99903', evidence: 'fentanyl' }, { field: 'primary_route', value: '9', evidence: 'bad code' },
     { field: 'race', value: '01, 19, 77', evidence: 'said' }, { field: 'primary_days_used', value: '2', evidence: 'twice' }, { field: 'prior_episodes', value: '-3', evidence: 'x' },
     { field: 'primary_drug', value: '01', evidence: 'duplicate' }], gaps: [] });
   const r = await clin.post('/api/ai/draft/caloms', { client_id: clientId, record_type: 'admission', source_text: SESSION });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   const by = Object.fromEntries(r.data.suggestions.map(s => [s.field, s.value]));
-  assert.deepEqual(by, { primary_drug: '21', race: ['01', '19'], primary_days_used: 2 });
+  assert.deepEqual(by, { primary_drug: '99903', race: ['01', '19'], primary_days_used: 2 });
   assert.equal(r.data.dropped, 3);
   const schema = calls[calls.length - 1].body.output_config.format.schema;
   const fields = schema.properties.suggestions.items.properties.field.enum;
