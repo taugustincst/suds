@@ -35,6 +35,7 @@
     const v = text(office[f]) || text(cfg[f]);
     dd.dataset.published = v ? '1' : '0';
     if (!v) { dd.textContent = BLANK; dd.classList.add('muted'); continue; }
+    dd.classList.remove('muted');
     if (f === 'contact_email' && /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/.test(v)) dd.replaceChildren(link(`mailto:${v}`, v));
     else if (f === 'contact_url' && /^https:\/\/[^\s<>"]+$/.test(v)) dd.replaceChildren(link(v, v));
     else dd.textContent = v;

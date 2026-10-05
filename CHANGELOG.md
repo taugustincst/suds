@@ -4,6 +4,40 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+## 1.24.3 — 2026-10-05
+
+A patch of 1.24.2 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*): every defect, bottleneck and UI finding from
+the owner-commissioned full evaluation of live 1.24.1, with their tests. No migration, no new or widened
+permission and no new route (`node scripts/release-policy.js --version 1.24.3 --previous v1.24.2 --previous-ref
+544c204` passes: 123 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It
+passes the release policy with no exception; a patch is allowed inside the feature freeze. Upgrading needs
+nothing beyond replacing the files and restarting.
+
+* **Time entry is keyboard-first.** The native time control's segments rejected typed input (setting 10:30 took
+  ~45 arrow-key presses), and a half-filled control saved the entry with no start time and no warning. Start
+  time is now a text box that understands "14:30", "2:30p", "930" and "1430"; anything it cannot parse is
+  refused by field, never silently saved.
+* **Consent dates accept typing.** The expiry date picker is now a text box ("10/5/2026", "2026-10-05",
+  "20261005") beside the calendar button; the calendar still opens the native picker. The consent table's
+  Expires column shows event-based expiry ("until end of treatment") instead of "—".
+* **The procurement page no longer shows blanks as empty.** Unpublished Contact-and-terms fields read "Not yet
+  published by the maintainer", in the HTML itself so it shows with JavaScript off too.
+* **The menus differ by role.** Navigator and clinician menus were identical. Incoming referrals is now in a
+  navigator's main menu on a computer; Supplies and Overdose & reversals fold under More for a clinician; the
+  Resource directory is under More for front-line workers.
+* **The client tab strip keeps a stable order.** Module tabs (Problems, Care plan, Assessments, SUPRT-A) used to
+  appear and disappear as the record's counts changed, shifting the strip mid-flow; they now show whenever the
+  programme uses the module and the reader may open them.
+* **The sign-in page's "Security & procurement" and Accessibility links open in a new tab**, so a device ("SUDS
+  on this device") keeps its session — the device locks on every reload by design, and a same-tab visit to the
+  procurement page used to land back on the unlock screen.
+* **Also:** "Approve staff time" is now labelled "Go to time approval" (approval happens on the Supervision
+  page); Supervision no longer claims every overdue note has a reminder when none can be sent (own drafts,
+  inactive authors); sample data uses local wall-clock times instead of UTC (no more 3:00 AM appointments in
+  PDT).
+* **Release hygiene:** 1.24.2's release commit left `SUDS_VERSION`, `version.json` and the service-worker stamp
+  at 1.24.1; this release re-stamps all of them (`npm run build:local`, `npm run gen:schema`).
+
 ## 1.24.2 — 2026-10-05
 
 A patch of 1.24.1 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*): defect fixes with their tests. No migration,

@@ -65,6 +65,14 @@ test('a front-line worker\'s phone menu has at most 12 top-level entries; Street
     const clinician = x.c.can('notes:clinical:write');
     assert.equal(m.main.includes('notes'), !x.c.phone || clinician, `${label(x)}: Notes in the main list on a computer${clinician ? ' and on a clinician\'s phone' : ', under More on a navigator\'s phone'}`);
     if (x.c.phone && clinician && x.c.profile !== 'part2_layer') assert.ok(m.more.includes('supplies') && !m.main.includes('supplies'), `${label(x)}: Supplies under More on a clinician's phone`);
+    // 1.24.3: the two front-line roles see different menus — a navigator's day is intake and the street,
+    // a clinician's is notes. Incoming referrals is main-list for a navigator on a computer; Supplies and
+    // Overdose & reversals fold into More for a clinician; the Resource directory is More for both.
+    const shownAll = new Set([...m.main, ...m.more]);
+    if (shownAll.has('incoming')) assert.equal(m.main.includes('incoming'), !clinician && !x.c.phone && x.c.profile !== 'harm_reduction', `${label(x)}: Incoming referrals in the main list for a navigator on a computer, under More otherwise`);
+    if (shownAll.has('supplies')) assert.equal(m.more.includes('supplies'), clinician, `${label(x)}: Supplies under More for a clinician, in the main list for a navigator`);
+    if (shownAll.has('overdose')) assert.equal(m.more.includes('overdose'), clinician, `${label(x)}: Overdose & reversals under More for a clinician, in the main list for a navigator`);
+    if (shownAll.has('resources')) assert.ok(m.more.includes('resources') && !m.main.includes('resources'), `${label(x)}: Resource directory under More for front-line`);
     assert.equal(m.main[0], 'dashboard', 'Home first');
   }
 });
@@ -83,7 +91,7 @@ test('the other roles keep their menus: a supervisor led by Supervision, everyon
   for (const x of contexts().filter(y => !M.isFrontline(y.c) && y.c.phone)) assert.deepEqual(M.menuFor(x.c), M.menuFor({ ...x.c, phone: false }), label(x));
 });
 
-test('placementFor: a profile or phone key wins over the default, and an absent mark is the main list', () => {
+test('placementFor: a profile, phone or clinician key wins over the default, and an absent mark is the main list', () => {
   const f = { harm_reduction: 'more', phone: 'more', '*': 'main' };
   assert.equal(M.placementFor(undefined, {}), 'main');
   assert.equal(M.placementFor('more', {}), 'more');
@@ -91,4 +99,10 @@ test('placementFor: a profile or phone key wins over the default, and an absent 
   assert.equal(M.placementFor(f, { profile: 'harm_reduction', phone: false }), 'more');
   assert.equal(M.placementFor(f, { profile: 'treatment', phone: true }), 'more');
   assert.equal(M.placementFor({ phone: 'more' }, { profile: 'treatment', phone: false }), 'main');
+  // 1.24.3: the clinician key, for a clinician on any screen (after the clinician_phone and phone keys).
+  assert.equal(M.placementFor({ clinician: 'more' }, { clinician: true }), 'more');
+  assert.equal(M.placementFor({ clinician: 'more' }, { clinician: false }), 'main');
+  assert.equal(M.placementFor({ clinician: 'more' }, { phone: true, clinician: true }), 'more');
+  assert.equal(M.placementFor({ phone: 'more', clinician: 'more' }, { phone: true, clinician: false }), 'more');
+  assert.equal(M.placementFor({ phone: 'more', clinician: 'more' }, { phone: false, clinician: false }), 'main');
 });

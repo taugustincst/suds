@@ -46,16 +46,17 @@ route('client', async (r) => {
   // always in the strip; everything else is under its More menu, on every screen (up to 18 tabs used to fill
   // a desktop strip). Timeline is not a tab of its own: the Overview ends with the recent activity, and
   // "All activity" opens the whole of it at the same address as before (client/:id/timeline).
-  // A module's tab (care plan, assessments, SUPRT-A) shows when the programme uses the module and this record
-  // has something in it or the reader may add to it; an address that names one still opens it, to read.
-  const n = (k) => Number((c.counts && c.counts[k]) || 0);
-  const moduleTab = (mod, k, label, readable, writable, count) => (tab === k || (moduleOn(mod) && readable && (writable || count > 0)) ? [k, label] : null);
+  // A module's tab (care plan, assessments, SUPRT-A) shows whenever the programme uses the module and the
+  // reader may open it — not only once the record has something in it — so the strip keeps a stable order as
+  // the record grows (1.24.3: tabs appearing mid-flow as counts changed disoriented). An empty tab says so and,
+  // for a reader who may not add, who does. An address that names one still opens it, to read.
+  const moduleTab = (mod, k, label, readable) => (tab === k || (moduleOn(mod) && readable) ? [k, label] : null);
   const tabs = [['overview', 'Overview'], ['interventions', `Visits (${c.counts.interventions})`], ['notes', `Notes (${c.counts.notes})`], ['tasks', `To-dos (${c.counts.open_tasks})`], ['consents', 'Consents'], ['referrals', `Referrals (${c.counts.referrals})`],
     ['calls', `Calls (${c.counts.calls})`],
-    moduleTab('careplan', 'problems', 'Problems', can('careplan:read'), can('careplan:write'), n('problems')),
-    moduleTab('careplan', 'careplan', 'Care plan', can('careplan:read'), can('careplan:write'), n('goals')),
-    moduleTab('assessments', 'assessments', 'Assessments', can('assessments:read'), can('assessments:write'), n('assessments')),
-    moduleTab('suprt', 'suprt', 'SUPRT-A', can('clients:read'), can('clients:write'), n('suprt')),
+    moduleTab('careplan', 'problems', 'Problems', can('careplan:read')),
+    moduleTab('careplan', 'careplan', 'Care plan', can('careplan:read')),
+    moduleTab('assessments', 'assessments', 'Assessments', can('assessments:read')),
+    moduleTab('suprt', 'suprt', 'SUPRT-A', can('clients:read')),
     ['forms', `Forms (${c.counts.forms || 0})`], ['episodes', 'Episodes'], ['requests', 'Requests'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team'],
     // The record's own changes, before and after (1.17.0): for its care team and supervisors (server/client-revisions.js).
     (c.history && c.history.read) || tab === 'history' ? ['history', 'History'] : null,
@@ -308,7 +309,7 @@ ${a.notice ? `<p style="border:1px solid #000;padding:.4rem"><b>Protected by 42 
         revokedRefs ? h('div', { class: 'banner warn span', role: 'status', style: { gridColumn: '1 / -1' } },
           'A consent on this client has been revoked. Any referral that relied on it is flagged — stop sharing information under it and close those referrals out.') : null,
         h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Consents & releases'), can('consents:write') ? h('button', { class: 'btn sm primary', onClick: addConsent }, '+ Consent') : null),
-          table([{ label: 'Type', render: x => consentTypeLabel(x.type) }, { label: 'Recipient', key: 'recipient' }, { label: 'Purpose', key: 'purpose' }, { label: 'Information', render: x => consentCategoriesLabel(x.info_categories) }, { label: 'Signed', render: x => fmt.date(x.signed_at) }, { label: 'Expires', render: x => x.expires_at ? flag(fmt.date(x.expires_at), Date.parse(x.expires_at) < Date.now(), 'expired') : '—' }, { label: 'Status', render: x => h('span', {}, x.revoked_at ? badge('Revoked', 'danger') : (x.expires_at && Date.parse(x.expires_at) < Date.now()) ? badge('Expired', 'warn') : badge('Active', 'ok'), x.legacy_elements && !x.revoked_at ? h('span', { title: 'Recorded before the 2024 §2.31 element list: renew it on the current form when you next can' }, ' ', badge('Pre-2024 form', 'warn')) : null, x.incomplete && x.incomplete.length && !x.revoked_at ? h('div', { class: 'small', 'data-consent-incomplete': x.id }, badge('Cannot authorise a disclosure', 'danger'), ` It does not record ${x.incomplete.join('; ')}. Record a new consent.`) : null) },
+          table([{ label: 'Type', render: x => consentTypeLabel(x.type) }, { label: 'Recipient', key: 'recipient' }, { label: 'Purpose', key: 'purpose' }, { label: 'Information', render: x => consentCategoriesLabel(x.info_categories) }, { label: 'Signed', render: x => fmt.date(x.signed_at) }, { label: 'Expires', render: x => x.expires_at ? flag(fmt.date(x.expires_at), Date.parse(x.expires_at) < Date.now(), 'expired') : (x.expires_event ? `until ${x.expires_event}` : '—') }, { label: 'Status', render: x => h('span', {}, x.revoked_at ? badge('Revoked', 'danger') : (x.expires_at && Date.parse(x.expires_at) < Date.now()) ? badge('Expired', 'warn') : badge('Active', 'ok'), x.legacy_elements && !x.revoked_at ? h('span', { title: 'Recorded before the 2024 §2.31 element list: renew it on the current form when you next can' }, ' ', badge('Pre-2024 form', 'warn')) : null, x.incomplete && x.incomplete.length && !x.revoked_at ? h('div', { class: 'small', 'data-consent-incomplete': x.id }, badge('Cannot authorise a disclosure', 'danger'), ` It does not record ${x.incomplete.join('; ')}. Record a new consent.`) : null) },
             { label: '', render: x => h('button', { class: 'btn sm ghost', 'data-consent-pdf': x.id, onClick: () => (state.local ? downloadCsv(`/api/consents/${x.id}/pdf`) : window.open(`/api/consents/${x.id}/pdf`, '_blank', 'noopener')) }, 'Print') },
             { label: '', render: x => !x.revoked_at && can('consents:write') ? h('button', { class: 'btn sm ghost', onClick: async () => { const reason = await confirmDialog('Revoke consent', 'Record that the client revoked this consent?', { danger: true, okText: 'Revoke', requireReason: true }); if (reason) { try { await post(`/api/consents/${x.id}/revoke`, { reason }); toast('Consent revoked — any referral that relied on it is now flagged', 'ok'); refresh(); } catch (e) { toast(e.message, 'error'); } } } }, 'Revoke') : null }], d.consents, { empty: 'No consents on file. SUD records cannot be shared without written consent.' })),
         h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Accounting of disclosures'), h('div', { class: 'row' }, h('button', { class: 'btn sm', 'data-print-accounting': '1', onClick: printAccounting }, 'Print accounting'), can('consents:write') ? h('button', { class: 'btn sm primary', onClick: addDisclosure }, '+ Disclosure') : null)),

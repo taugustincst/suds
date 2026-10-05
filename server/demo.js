@@ -98,9 +98,11 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
   // Never later than now: "today at 17:00" is in the future until 17:00, and a record stamped in the future is
   // invisible to every sync pull until its time comes (the pull sends rows up to the server's own clock).
   // Calendar dates (day) may lie ahead: a consent's expiry, a to-do's due date.
-  const at = (off, hour = 10) => { const x = new Date(Date.now() - off * 86400000); x.setUTCHours(hour, Math.floor(rand() * 4) * 15, 0, 0); return x; };
+  // Local wall-clock hours, not UTC: the sample data should read as ordinary appointment times
+  // (10:00–10:45) wherever the demo runs, not 3:00 AM in PDT (1.24.3).
+  const at = (off, hour = 10) => { const x = new Date(Date.now() - off * 86400000); x.setHours(hour, Math.floor(rand() * 4) * 15, 0, 0); return x; };
   const d = (off, hour = 10) => new Date(Math.min(at(off, hour).getTime(), Date.now() - 60000)).toISOString();
-  const day = (off) => at(off).toISOString().slice(0, 10);
+  const day = (off) => { const x = at(off); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
   const nowIso = db.now();
 
   db.transaction(() => {

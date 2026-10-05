@@ -69,7 +69,7 @@ export function openTimeForm(values, { clientId, clientDisplay, onDone } = {}) {
   const seed = values || (defaultFund && can('budget:read') ? { funding_source_id: defaultFund } : {});
   const f = form([
     { name: 'work_date', label: 'Date', type: 'date', required: true, value: values?.work_date || fmt.today() }, { name: 'minutes', label: 'Minutes', type: 'number', min: 1, max: 1440, step: 1, required: true },
-    { name: 'start_time', label: 'Start time (optional)', type: 'time', help: 'When it started. With the minutes, it lets SUDS notice time logged twice.' },
+    { name: 'start_time', label: 'Start time (optional)', type: 'time', help: 'When it started — just type it, e.g. 14:30 or 2:30p. With the minutes, it lets SUDS notice time logged twice.' },
     { name: 'category', label: 'Category', type: 'select', list: 'TIME_CATEGORIES', value: 'direct_service', noBlank: true, required: true },
     { name: 'client_id', label: 'Client (optional)', type: 'client', value: clientId || values?.client_id, display: clientDisplay },
     can('budget:read') ? { name: 'funding_source_id', label: 'Charge to fund', type: 'fund' } : null, { name: 'billable', label: 'Billable', type: 'checkbox' },
@@ -108,7 +108,7 @@ function overlapHint(f) {
   f.querySelector('[data-field="minutes"]').closest('.form-grid').append(hint);
   let seq = 0;
   const check = async () => {
-    const mine = ++seq; const day = f.inputs.work_date.value; const client = f.inputs.client_id?.value || '';
+    const mine = ++seq; const workDateInput = f.inputs.work_date; const day = (workDateInput && typeof workDateInput.parsedDate === 'function' ? workDateInput.parsedDate() : workDateInput && workDateInput.value) || ''; const client = f.inputs.client_id?.value || '';
     const worker = f.inputs.user_id?.value || state.user.id;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) { hint.classList.add('hidden'); return; }
     let rows = [];
@@ -214,7 +214,7 @@ route('time', async (r) => {
         try { const res = await post('/api/time/submit-period', { from, to }); toast(res.submitted ? `${res.submitted} entr${res.submitted === 1 ? 'y' : 'ies'} submitted` : 'Nothing was waiting to be submitted', res.submitted ? 'ok' : ''); refresh(); }
         catch (e) { toast(e.message, 'error'); }
       } }, 'Submit period for approval') : null,
-      can('time:approve') ? h('button', { class: 'btn', onClick: () => nav('supervision') }, 'Approve staff time') : null,
+      can('time:approve') ? h('button', { class: 'btn', onClick: () => nav('supervision'), title: 'Approval happens on the Supervision page' }, 'Go to time approval') : null,
       can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/time?from=${from}&to=${to}&format=xlsx`) }, 'Export to Excel') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('button', { class: 'btn', onClick: () => nav(`time?from=${fromI.value}&to=${toI.value}`) }, 'Apply'),
       h('button', { class: 'btn ghost sm', onClick: () => { const d = new Date(); const day = d.getDay(); const mon = new Date(d); mon.setDate(d.getDate() - ((day + 6) % 7)); nav(`time?from=${mon.toISOString().slice(0, 10)}&to=${fmt.today()}`); } }, 'This week'),

@@ -114,11 +114,13 @@ export function consentFormPanel(clientId, { onDone, onCancel, close, discloser,
   // in one step; a supervisor or administrator can save the form as filled in as that usual consent.
   const quick = h('div', { class: 'row mb', 'data-consent-quick': '1', style: { flexWrap: 'wrap', gap: '.5rem' } });
   const val = (n) => f.querySelector(`[name=${n}]`);
+  // A date field's ISO value ("YYYY-MM-DD"), "" when blank: the date box takes typed "M/D/YYYY" too.
+  const dateVal = (n) => { const i = val(n); return (i && typeof i.parsedDate === 'function' ? i.parsedDate() : i && i.value) || ''; };
   const setVal = (n, v) => { const i = val(n); if (i && v !== undefined && v !== null) i.value = v; };
   // A usual consent saved before 1.14.0 kept its scope as free text; it fills the note (the ticks are its categories).
   const fillCoverage = (t) => {
     setVal('scope_note', t.scope || ''); setVal('expires_event', t.expires_event || '');
-    if (t.expires_days) { const from = Date.parse(val('signed_at').value || fmt.today()) || Date.now(); setVal('expires_at', new Date(from + t.expires_days * 86400000).toISOString().slice(0, 10)); }
+    if (t.expires_days) { const from = Date.parse(dateVal('signed_at') || fmt.today()) || Date.now(); setVal('expires_at', new Date(from + t.expires_days * 86400000).toISOString().slice(0, 10)); }
     for (const code of INFO_CATEGORIES()) { const box = val(`cat_${code}`); if (box) box.checked = (t.info_categories || []).includes(code); }
   };
   const useTemplate = (t) => {
@@ -140,7 +142,7 @@ export function consentFormPanel(clientId, { onDone, onCancel, close, discloser,
     if (preset) { if (template) applyPreset(template); return; }
     if (template) quick.append(h('button', { class: 'btn sm', type: 'button', 'data-use-template': '1', onClick: () => useTemplate(template) }, 'Fill in the program\'s usual consent'));
     if (can('disclosures:override')) quick.append(h('button', { class: 'btn sm ghost', type: 'button', 'data-save-template': '1', onClick: async () => {
-      const signed = Date.parse(val('signed_at').value || ''); const expires = Date.parse(val('expires_at').value || '');
+      const signed = Date.parse(dateVal('signed_at')); const expires = Date.parse(dateVal('expires_at'));
       const body = { type: val('type').value, recipient: val('recipient').value || undefined, purpose: val('purpose').value || undefined, scope: val('scope_note').value || undefined, expires_event: val('expires_event').value || undefined,
         expires_days: Number.isFinite(signed) && Number.isFinite(expires) && expires > signed ? Math.round((expires - signed) / 86400000) : undefined,
         info_categories: INFO_CATEGORIES().filter(code => val(`cat_${code}`)?.checked) };

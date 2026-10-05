@@ -856,16 +856,58 @@ function datePickButton(input, label) {
   return h('button', { type: 'button', class: 'btn sm date-pick', 'data-date-pick': input.name, 'aria-label': `Choose ${label ? label.replace(/\s*\*$/, '') : 'the date'} from a calendar`, title: 'Open the calendar',
     onClick: () => { try { if (typeof input.showPicker === 'function') { input.focus(); input.showPicker(); } else input.focus(); } catch { input.focus(); } } }, '📅');
 }
+// Typed time/date parsing lives in public/input-parsers.js (pure, unit-tested).
+// Re-exported here so the form builder and views keep one import surface.
+import { parseTime, parseDate, fmtMDY } from './input-parsers.js';
+export { parseTime, parseDate, fmtMDY };
+// A time-of-day box: plain text, not a native <input type="time">. The native control's segments
+// reject typed input in several browsers (a tester needed ~45 arrow-key presses to enter 10:30), and
+// a half-filled native control reports value "" while still looking filled in — the time-log form
+// then saved the entry with no start time and no warning. This box takes what people type and firms
+// up to the normalized "HH:MM" on blur; read() refuses anything it cannot parse, by field, instead
+// of saving it. `.parsedTime()` is "" when blank, the normalized "HH:MM" when parseable, and null
+// when the text is not a time. A blank stays blank: the time is optional.
+function timeBox(name, ariaLabel, value) {
+  const i = h('input', { type: 'text', name, class: 'time-box', 'data-time-box': '1', inputmode: 'numeric', autocomplete: 'off', spellcheck: 'false',
+    placeholder: 'HH:MM, e.g. 14:30', maxlength: 8, value: value == null ? '' : String(value), 'aria-label': ariaLabel });
+  i.addEventListener('blur', () => { const p = parseTime(i.value); if (p && p !== i.value) i.value = p; });
+  i.parsedTime = () => { const t = i.value.trim(); return t === '' ? '' : parseTime(t); };
+  return i;
+}
+// A date box: a text field that takes typed dates ("10/5/2026") plus the calendar button, which drives
+// a hidden native date input (showPicker needs a real date control). The native control's segments
+// reject normally-typed dates with separators, so typing goes through the text field; the picker path
+// is unchanged, and the field's min/max still shape the picker. read() refuses anything unparseable
+// or out of range, by field, instead of saving it. `.parsedDate()` is "" when blank, the ISO date when
+// parseable, and null when the text is not a date.
+function dateBox(f, v) {
+  const iso = v ? String(v).slice(0, 10) : '';
+  const text = h('input', { type: 'text', name: f.name, class: 'date-box', inputmode: 'numeric', autocomplete: 'off', spellcheck: 'false',
+    placeholder: 'M/D/YYYY', maxlength: 10, value: fmtMDY(iso),
+    'aria-label': `${f.label} — date, type as month/day/year` });
+  const native = h('input', { type: 'date', class: 'date-native', tabindex: '-1', 'aria-hidden': 'true', min: f.min || DATE_MIN, max: f.max || DATE_MAX, value: iso });
+  const syncNative = () => { const p = parseDate(text.value); if (p) native.value = p; };
+  text.addEventListener('input', syncNative);
+  text.addEventListener('change', () => { const p = parseDate(text.value); if (p && text.value.trim() !== fmtMDY(p)) text.value = fmtMDY(p); syncNative(); });
+  native.addEventListener('change', () => { if (native.value) text.value = fmtMDY(native.value); text.focus(); });
+  text.parsedDate = () => { const t = text.value.trim(); return t === '' ? '' : parseDate(t); };
+  // The calendar button beside the field drives the hidden native control.
+  const btn = datePickButton(native, f.label);
+  btn.dataset.datePick = f.name;
+  text.dateNative = native;
+  text.pickButton = btn;
+  return text;
+}
 // Only the overall range is enforced here: a field's own narrower min/max (a date of birth not in the
 // future) shapes the picker, and an existing record outside it must still be editable.
 const dateOutOfRange = (i) => !!i.value && (!/^\d{4}-\d{2}-\d{2}$/.test(i.value) || i.value < DATE_MIN || i.value > DATE_MAX);
 function dateTimePair(f, v) {
   const dateI = h('input', { type: 'date', name: f.name, required: !!f.required, 'aria-label': `${f.label} — date`, min: f.min || DATE_MIN, max: f.max || DATE_MAX });
-  const timeI = h('input', { type: 'time', name: `${f.name}_time`, 'aria-label': `${f.label} — time (optional)` });
+  const timeI = timeBox(`${f.name}_time`, `${f.label} — time (optional)`);
   const wrap = h('div', { class: 'dt-pair' }, dateI, datePickButton(dateI, f.label), timeI);
   wrap.dateInput = dateI; wrap.timeInput = timeI;
   Object.defineProperty(wrap, 'value', {
-    get: () => dateI.value ? (timeI.value ? `${dateI.value}T${timeI.value}` : dateI.value) : '',
+    get: () => { if (!dateI.value) return ''; const p = timeI.parsedTime(); return p ? `${dateI.value}T${p}` : dateI.value; },
     set: (x) => {
       const s = x == null ? '' : String(x);
       if (!s) { dateI.value = ''; timeI.value = ''; return; }
@@ -941,7 +983,8 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       case 'textarea': input = h('textarea', { name: f.name, required: !!f.required, rows: f.rows || 4, placeholder: f.placeholder || '' }, v || ''); break;
       case 'checkbox': input = h('input', { type: 'checkbox', name: f.name, checked: !!(v === 1 || v === true || v === '1') }); break;
       case 'datetime': input = dateTimePair(f, v); break;
-      case 'date': input = h('input', { type: 'date', name: f.name, required: !!f.required, value: v ? String(v).slice(0, 10) : '', min: f.min || DATE_MIN, max: f.max || DATE_MAX }); break;
+      case 'time': input = timeBox(f.name, `${f.label} — time, e.g. 14:30`, v); break;
+      case 'date': input = dateBox(f, v); break;
       case 'number': input = h('input', { type: 'number', name: f.name, required: !!f.required, value: v ?? '', min: f.min, max: f.max, step: f.step ?? 'any', placeholder: f.placeholder || '' }); break;
       case 'client': input = clientPicker(f.name, v, f); break;
       case 'user': input = h('select', { name: f.name, required: !!f.required }, h('option', { value: '' }, f.placeholder || '—'), state.users.filter(u => u.is_active !== 0 && (!f.exceptRoles || !f.exceptRoles.includes(u.role) || u.id === v)).map(u => h('option', { value: u.id, selected: u.id === v }, `${u.display_name} (${fmt.label(u.role)})`))); break;
@@ -967,7 +1010,7 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
     }
     const errEl = h('div', { class: 'err', id: errId, role: 'alert' });
     const wrap = h('div', { class: `field ${f.span ? 'span' : ''}`, 'data-field': f.name },
-      f.type === 'checkbox' ? h('label', { class: 'check', for: fieldId }, input, f.label) : [h('label', { for: fieldId }, f.label, f.required ? ' *' : ''), fieldLink(f), f.type === 'date' ? h('div', { class: 'date-with-pick' }, input, datePickButton(input, f.label)) : input],
+      f.type === 'checkbox' ? h('label', { class: 'check', for: fieldId }, input, f.label) : [h('label', { for: fieldId }, f.label, f.required ? ' *' : ''), fieldLink(f), f.type === 'date' ? h('div', { class: 'date-with-pick' }, input, input.dateNative, input.pickButton) : input],
       f.quick && (f.type === 'date' || f.type === 'datetime') ? quickDates(f, input) : null,
       f.help ? h('div', { class: 'help', id: helpId }, f.help) : null, errEl);
     target.append(wrap);
@@ -1120,28 +1163,51 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
         // date typed without a time: the browser reports an empty value for a partial entry (validity
         // .badInput is set, but value is ""), so the field looked filled in and saved as nothing. Now a
         // date on its own is a valid answer, and anything the browser cannot parse is flagged by field.
+        // The time is a plain text box (timeBox): what the person typed is validated, never silently
+        // dropped the way a half-filled native time control was.
         const d = i.dateInput, t = i.timeInput;
-        if (d.validity?.badInput || t.validity?.badInput || (t.value && !d.value) || dateOutOfRange(d)) { bad.push(f); data[f.name] = null; }
+        const tParsed = typeof t.parsedTime === 'function' ? t.parsedTime() : (t.value || '');
+        const tBad = typeof t.parsedTime === 'function' ? (t.value.trim() !== '' && tParsed === null) : !!t.validity?.badInput;
+        if (d.validity?.badInput || tBad || (t.value.trim() && !d.value) || dateOutOfRange(d)) { bad.push(f); data[f.name] = null; }
         else if (!d.value) data[f.name] = null;
         // A required date & time (a visit, a call) with no time is midnight local, so it orders among
         // that day's other records; an optional one (a due date, an appointment) is kept as the calendar
         // day itself, which the server and fmt.dt already understand (a to-do due "Oct 1" is due all day).
-        else if (!t.value) data[f.name] = f.required ? new Date(`${d.value}T00:00`).toISOString() : d.value;
-        else data[f.name] = new Date(`${d.value}T${t.value}`).toISOString();
+        else if (!tParsed) data[f.name] = f.required ? new Date(`${d.value}T00:00`).toISOString() : d.value;
+        else data[f.name] = new Date(`${d.value}T${tParsed}`).toISOString();
       }
-      // A date the browser half-parsed (badInput) or a year typed into the wrong segment (0006, 20260) is
-      // refused by field rather than saved.
-      else if (f.type === 'date' && (i.validity?.badInput || dateOutOfRange(i))) { bad.push(f); data[f.name] = null; }
+      // A time typed into the text box: refused by field when it is not a time, never silently saved
+      // as nothing the way the old native time control's half-filled segments were.
+      else if (f.type === 'time') {
+        const p = typeof i.parsedTime === 'function' ? i.parsedTime() : null;
+        if (p === null) { bad.push(f); data[f.name] = null; }
+        else data[f.name] = p === '' ? null : p;
+      }
+      // A typed date ("10/5/2026", "2026-10-05") is parsed to ISO; anything unparseable or outside
+      // the overall range is refused by field rather than saved, the way the native control's badInput was.
+      else if (f.type === 'date') {
+        const p = typeof i.parsedDate === 'function' ? i.parsedDate() : null;
+        if (p === null || (p && (p < DATE_MIN || p > DATE_MAX))) { bad.push(f); data[f.name] = null; }
+        else data[f.name] = p === '' ? null : p;
+      }
       else data[f.name] = i.value === '' ? null : i.value;
       if (f.required && (data[f.name] === null || data[f.name] === undefined || data[f.name] === '') && !bad.includes(f)) missing.push(f);
     }
     if (!lenient && (bad.length || missing.length)) {
       const badMsg = (f) => { const i = inputs[f.name]; const d = i.dateInput || i;
-        return d.value && dateOutOfRange(d) ? `is not a real date: the year must be four digits, between ${DATE_MIN.slice(0, 4)} and ${DATE_MAX.slice(0, 4)}` : f.type === 'datetime' ? 'enter a valid date (the time is optional), or leave both blank' : 'enter a valid date, or leave it blank'; };
+        if (f.type === 'date') {
+          const p = typeof i.parsedDate === 'function' ? i.parsedDate() : null;
+          if (p && (p < DATE_MIN || p > DATE_MAX)) return `is not a real date: the year must be four digits, between ${DATE_MIN.slice(0, 4)} and ${DATE_MAX.slice(0, 4)}`;
+          return 'enter a valid date as M/D/YYYY, or leave it blank';
+        }
+        if (f.type === 'time') return 'enter a valid time like 14:30, or leave it blank';
+        if (d.value && dateOutOfRange(d)) return `is not a real date: the year must be four digits, between ${DATE_MIN.slice(0, 4)} and ${DATE_MAX.slice(0, 4)}`;
+        if (f.type === 'datetime' && i.timeInput && typeof i.timeInput.parsedTime === 'function' && i.timeInput.value.trim() !== '' && i.timeInput.parsedTime() === null) return 'enter a valid time like 14:30, or leave the time blank';
+        return f.type === 'datetime' ? 'enter a valid date (the time is optional), or leave both blank' : 'enter a valid date, or leave it blank'; };
       const fields = { ...Object.fromEntries(bad.map(f => [f.name, badMsg(f)])), ...Object.fromEntries(missing.map(f => [f.name, `${f.label || 'This field'} is required`])) };
       // Name the field the way the form does ("Client"), not the way the database does ("client_id").
       const names = missing.map(f => f.label).filter(Boolean);
-      const e = new Error(bad.length ? 'Check the date below — it is not a valid date.' : names.length ? `Fill in ${names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]} below.` : 'Fill in the required field below.');
+      const e = new Error(bad.length ? 'Check the highlighted field below — it is not a valid entry.' : names.length ? `Fill in ${names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]} below.` : 'Fill in the required field below.');
       e.labelled = true;
       e.data = { fields };
       throw e;
@@ -1581,8 +1647,8 @@ export function helpTip(text) {
 // WCAG 2.1 AA, what does not yet, and how to report a barrier. Linked from every screen's footer.
 // Beside it (1.24.0), the page for organizations evaluating SUDS (public/procurement.html): buyer guides, the
 // security questionnaire, the BAA/QSOA templates and how to reach the maintainer. Neither needs a session.
-export function accessibilityLink() { return h('p', { class: 'small center a11y-link' }, h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility'), ' · ', procurementLink()); }
-export function procurementLink() { return h('a', { href: 'procurement.html', 'data-procurement-link': '1' }, 'Security & procurement'); }
+export function accessibilityLink() { return h('p', { class: 'small center a11y-link' }, h('a', { href: 'accessibility.html', target: '_blank', rel: 'noopener', 'data-accessibility-statement': '1' }, 'Accessibility'), ' · ', procurementLink()); }
+export function procurementLink() { return h('a', { href: 'procurement.html', target: '_blank', rel: 'noopener', title: 'Opens in a new tab, so this screen stays signed in', 'data-procurement-link': '1' }, 'Security & procurement'); }
 // `level`: when the empty state is the whole page (Not found, Not available), its title is that page's heading.
 export function emptyState(title, text, action, { level = 0 } = {}) { return h('div', { class: 'empty-state' }, h(level ? `h${level}` : 'div', { class: 'big' }, title), h('p', { class: 'muted' }, text), action || null); }
 
@@ -2186,7 +2252,7 @@ function sidebar(r) {
     h('div', { class: 'brand' }, h('img', { src: 'favicon.svg', alt: '' }), h('div', {}, h('b', {}, 'SUDS'), h('small', {}, state.org))),
     navMenu(r),
     h('div', { class: 'foot' }, state.local ? h('a', { href: '#/sync', class: 'badge info', style: { display: 'block', textAlign: 'center', marginBottom: '.5rem' } }, window.SUDS_STATIC_HOST ? '📱 On this device · Backup' : '📱 On this device · Sync') : null, h('div', {}, h('b', {}, state.user.display_name)), h('div', { class: 'muted' }, fmt.label(state.user.role)),
-      h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#/dashboard?welcome=1', 'data-help-link': '1', title: 'Getting started with SUDS' }, 'Help'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'), h('a', { href: 'accessibility.html', 'data-accessibility-statement': '1' }, 'Accessibility'), procurementLink()),
+      h('div', { class: 'row', style: { marginTop: '.5rem' } }, h('a', { href: '#/profile' }, 'Profile'), h('a', { href: '#/dashboard?welcome=1', 'data-help-link': '1', title: 'Getting started with SUDS' }, 'Help'), h('a', { href: '#', onClick: (e) => { e.preventDefault(); logout(); } }, 'Sign out'), h('a', { href: '#', title: 'Light / dark', onClick: (e) => { e.preventDefault(); toggleTheme(); } }, 'Light/dark'), h('a', { href: 'accessibility.html', target: '_blank', rel: 'noopener', 'data-accessibility-statement': '1' }, 'Accessibility'), procurementLink()),
       h('div', { class: 'small muted', 'data-build-stamp': '1', style: { marginTop: '.4rem' } }, `SUDS ${SUDS_VERSION}`)));
 }
 function mobileBar(r, side) {
@@ -2372,7 +2438,7 @@ window.__suds = { downloadCsv: (...a) => downloadCsv(...a) };
 // Stamped by scripts/build-local.js from package.json. The two kernel assets are requested with it as a
 // version query so the browser may keep them for good (server/http.js serves `?v=` as immutable) while a
 // new release, with a new version, is a new URL. public/sw.js caches the same URLs for offline starts.
-const SUDS_VERSION = '1.24.1';
+const SUDS_VERSION = '1.24.3';
 
 // ---------- build stamp ----------
 // Which build is this? A tester reporting "still broken" after a release needs to be able to say, and so

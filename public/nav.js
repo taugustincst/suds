@@ -8,7 +8,8 @@
 //                      everyday list) or 'more' (a closed "More" group at the end of the menu). A string, or an
 //                      object keyed by programme profile and 'phone' (the menu as the phone drawer, where a short
 //                      list matters most), 'clinician_phone' (the phone drawer of someone who writes clinical
-//                      notes, notes:clinical:write), with '*' for the rest; the most specific key wins (placementFor()).
+//                      notes, notes:clinical:write), 'clinician' (a clinician on any screen: their day is notes,
+//                      not stock counts), with '*' for the rest; the most specific key wins (placementFor()).
 //                      Absent: 'main'. Street outreach is in the everyday list wherever the profile shows it (1.23.0:
 //                      it was under More); the Waitlist folds into More in a harm-reduction programme, which keeps
 //                      no treatment waitlist to speak of, and Notes does on a phone, where Home's "Continue where you
@@ -41,11 +42,11 @@ export const NAV = [
   { name: 'interventions', team: true, label: 'Visits', ico: '✚', perm: 'interventions:read', help: 'Every visit: the face-to-face or phone services you provide — outreach, screenings, warm handoffs, naloxone, transport and more.' },
   { name: 'calls', team: true, label: 'Calls & texts', ico: '☎', perm: 'calls:read', help: 'Phone calls and text messages with clients, families and providers — including ones that went to voicemail or got no reply.' },
   { name: 'notes', team: true, front: { phone: 'more', clinician_phone: 'main' }, label: 'Notes', ico: '✎', perm: 'notes:admin:read', help: 'Written documentation. Drafts save automatically and can be finished on any device; sign when complete.' },
-  { name: 'supplies', hideIn: ['part2_layer'], front: { clinician_phone: 'more' }, label: 'Supplies', ico: '📦', perm: 'supplies:read', help: 'Naloxone, test strips, syringes and other harm-reduction supplies on hand at each site, by lot and expiry, with every delivery, move and count. A visit takes what it hands out off the stock automatically, the batch that expires soonest first.' },
+  { name: 'supplies', hideIn: ['part2_layer'], front: { clinician: 'more' }, label: 'Supplies', ico: '📦', perm: 'supplies:read', help: 'Naloxone, test strips, syringes and other harm-reduction supplies on hand at each site, by lot and expiry, with every delivery, move and count. A visit takes what it hands out off the stock automatically, the batch that expires soonest first.' },
   // Street outreach (1.17.0): the one-screen, phone-first logger for anonymous field contacts; also on + Log, and a
   // worker's start page if they choose (My profile, or the box on the screen).
   { name: 'outreach', hideIn: ['part2_layer'], label: 'Street outreach', ico: '🚶', perm: 'interventions:write', front: 'main', help: 'Log a field contact in a few taps: what kind, what you handed out, and roughly where. Anonymous, works with no connection on a device, and the supplies come off the stock.' },
-  { name: 'overdose', hideIn: ['part2_layer'], label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
+  { name: 'overdose', hideIn: ['part2_layer'], front: { clinician: 'more' }, label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
   // Group and community prevention events (1.17.0): a front-line worker finds it under More. Whoever reads reports
   // but not visits (finance, read-only) gets its activity summary alone.
   { name: 'prevention', label: 'Prevention', ico: '☂', perm: ['interventions:read', 'reports:read'], front: 'more', help: 'Group and community prevention events — presentations, trainings, community events, campaigns — with their CSAP strategy, IOM population category, hours and attendance (counts, never names), and the prevention activity summary.' },
@@ -54,9 +55,11 @@ export const NAV = [
   { sec: 'Connect clients' },
   { name: 'referrals', team: true, label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
   // Incoming referrals (1.24.0): the intake queue of people referred to the programme. A supervisor's team page; a
-  // front-line worker finds it under More (Home's "New referrals" leads to it), so the phone menu stays short.
-  { name: 'incoming', team: true, front: 'more', label: 'Incoming referrals', ico: '⇠', perm: 'intake:read', help: 'People referred to this program by a hospital, jail, detox, probation or a court, another provider, themselves or their family: try to reach them, then accept them as a client or close the referral.' },
-  { name: 'resources', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Syringe services, drop-ins, shelters, MAT and treatment programs, legal aid and the other partners you refer people to.' },
+  // navigator's everyday list on a computer (1.24.3: intake is their work) — still under More on a phone and in a
+  // harm-reduction programme (Home's "New referrals" leads to it), so the phone menu stays short, and under More
+  // for a clinician, whose day is notes.
+  { name: 'incoming', team: true, front: { phone: 'more', harm_reduction: 'more', clinician: 'more' }, label: 'Incoming referrals', ico: '⇠', perm: 'intake:read', help: 'People referred to this program by a hospital, jail, detox, probation or a court, another provider, themselves or their family: try to reach them, then accept them as a client or close the referral.' },
+  { name: 'resources', front: 'more', label: 'Resource directory', ico: '☰', perm: 'resources:read', help: 'Syringe services, drop-ins, shelters, MAT and treatment programs, legal aid and the other partners you refer people to.' },
   { sec: 'Program' },
   { name: 'reports', label: 'Reports', ico: '▤', perm: 'reports:read', front: 'more', help: 'Numbers for your funders and supervisors. Exports never include client names unless you ask.' },
   { name: 'funder', hideIn: ['part2_layer'], label: 'Funder report', ico: '▦', perm: 'reports:read', programme: true, front: 'more', help: 'Unduplicated counts — people, not services — by fiscal period and funding source, with admissions, discharges, demographics and overdose figures in the shape a grant report asks for.' },
@@ -98,7 +101,7 @@ export const isSupervising = (c) => c.can('notes:cosign') && c.can('assignments:
 export function placementFor(front, { profile = null, phone = false, clinician = false } = {}) {
   if (!front) return 'main';
   if (typeof front === 'string') return front;
-  return (phone && clinician && front.clinician_phone) || (phone && front.phone) || front[profile] || front['*'] || 'main';
+  return (phone && clinician && front.clinician_phone) || (phone && front.phone) || (clinician && front.clinician) || front[profile] || front['*'] || 'main';
 }
 /** Where a NAV entry goes in this person's menu: 'main', 'more' (folded away), or null (not shown). */
 export function placement(n, c) {

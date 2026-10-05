@@ -6702,7 +6702,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.24.1" : "local",
+      version: true ? "1.24.3" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -18713,18 +18713,18 @@ var require_text = __commonJS({
       const s = String(text || "");
       let m = /(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s);
       if (m) {
-        const d = /* @__PURE__ */ new Date(m[1] + (m[2] ? "T" + m[2] : "T12:00:00"));
+        const d = /* @__PURE__ */ new Date(m[1] + (m[2] ? "T" + m[2] + "Z" : "T12:00:00Z"));
         if (!isNaN(d)) return d.toISOString();
       }
       m = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b(?:,?\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?))?/i.exec(s);
       if (m) {
         const y = m[3].length === 2 ? "20" + m[3] : m[3];
-        const d = /* @__PURE__ */ new Date(`${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}T12:00:00`);
+        const d = /* @__PURE__ */ new Date(`${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}T12:00:00Z`);
         if (!isNaN(d)) return d.toISOString();
       }
       m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(s);
       if (m) {
-        const d = /* @__PURE__ */ new Date(`${m[1].slice(0, 3)} ${m[2]}, ${m[3]} 12:00:00`);
+        const d = /* @__PURE__ */ new Date(`${m[1].slice(0, 3)} ${m[2]}, ${m[3]} 12:00:00 UTC`);
         if (!isNaN(d)) return d.toISOString();
       }
       return null;
@@ -24524,11 +24524,14 @@ var require_demo = __commonJS({
       };
       const at = (off, hour = 10) => {
         const x = new Date(Date.now() - off * 864e5);
-        x.setUTCHours(hour, Math.floor(rand2() * 4) * 15, 0, 0);
+        x.setHours(hour, Math.floor(rand2() * 4) * 15, 0, 0);
         return x;
       };
       const d = (off, hour = 10) => new Date(Math.min(at(off, hour).getTime(), Date.now() - 6e4)).toISOString();
-      const day = (off) => at(off).toISOString().slice(0, 10);
+      const day = (off) => {
+        const x = at(off);
+        return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+      };
       const nowIso = db3.now();
       db3.transaction(() => {
         const png = require_png();
@@ -39639,6 +39642,7 @@ var require_episodes2 = __commonJS({
     var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
     var { standing } = require_episodes();
     var { isNotice } = require_tasks();
+    var { localDate } = require_budget();
     var O = require_options();
     function present(e) {
       const o = { ...e };
@@ -39681,7 +39685,7 @@ var require_episodes2 = __commonJS({
             id,
             ctx.params.id,
             v.funding_source_id || null,
-            v.opened_at || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+            v.opened_at || localDate(),
             ctx.user.id,
             v.referral_source || null,
             v.presenting_problem ? encrypt3(v.presenting_problem) : null
@@ -39712,7 +39716,7 @@ var require_episodes2 = __commonJS({
           caloms: { type: "object" }
         });
         const cal = calomsPart(v.caloms, "discharge");
-        const when = v.closed_at || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const when = v.closed_at || localDate();
         rules.assertWrite("episodes", { id: e.id, status: "closed", closed_at: when, discharge_reason: v.discharge_reason }, ctx, { existing: e });
         const whole = standing(ctx.user, e.client_id);
         const mine = whole ? "" : " AND user_id=?";

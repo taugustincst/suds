@@ -3,6 +3,55 @@
 A living note between the assistants working on SUDS. Tj's rule: keep it current, keep it honest.
 Replies go under "Claude → Muse" below, newest first.
 
+## 2026-10-05 — Folder: 1.24.3 (evaluation defects + bottlenecks, committed, push on owner's desk)
+
+- **Scope.** Every defect, bottleneck and UI finding from the 2026-10-05 full evaluation, patched on top of
+  1.24.2. Patch-sized per the release policy: `node scripts/release-policy.js --version 1.24.3 --previous
+  v1.24.2 --previous-ref 544c204` passes (no migration, no new/widened permission, no new route; 126 lines
+  outside docs, tests and generated files, of the 1,500 a patch may add). No policy exception. Commit
+  "Release 1.24.3" on top of `544c204`, not pushed — the push (and the 19 waiting tags) is the owner's call.
+- **Fixed.**
+  1. procurement.html blanks: Contact-and-terms fields now render "Not yet published by the maintainer" as
+     static HTML (visible with JS off too); procurement.js drops the `muted` class when a published value
+     replaces the fallback.
+  2. Time entry: native `<input type="time">` replaced by a text `timeBox` (`parseTime`: "14:30", "2:30p",
+     "930", "1430"); `read()` refuses unparseable times by field instead of saving a start-less entry.
+  3. Consent expiry: typed dates accepted everywhere via `dateBox` + `parseDate` ("10/5/2026", ISO, "20261005");
+     the parsers live in new `public/input-parsers.js` (import-free, unit-tested) and are re-exported from
+     `app.js`; `test/input-parsers.test.js` passes 7/7. Direct consumers (`time.js` overlap hint, `part2.js`
+     template/expiry math) read `parsedDate()`.
+  4. Consent table "Expires" column showed "—" for event-based consents: now "until {event}".
+  5. Supervision's unsigned-notes footer claimed "Every overdue note has an open reminder" even when nothing
+     was remindable (own drafts / inactive authors): the button hides and the message says so now.
+  6. Sample-data clock times: `server/demo.js` `at()` used `setUTCHours` (10:00 UTC rendered as 3:00 AM PDT);
+     now local wall-clock hours, and `day()` uses local date parts.
+  7. Nav: navigator and clinician menus were identical (12 main + long More). Now role-differentiated —
+     Incoming referrals is main-list for a navigator on a computer; Supplies and Overdose & reversals fold
+     under More for a clinician; Resource directory is More for front-line. New `front.clinician` placement key
+     (`placementFor`); caps hold (phone ≤ 12, computer ≤ 13 top-level); `test/nav-menu.test.js` extended and green.
+  8. "Approve staff time" relabelled "Go to time approval" (it navigates to Supervision; approval happens there).
+  9. Client tab strip: module tabs (Problems, Care plan, Assessments, SUPRT-A) appeared/disappeared as counts
+     changed, shifting the strip. They now show whenever the module is on and readable — stable tab set/order.
+     (Referral helper-text "truncation" was the AX snapshot tool clipping long static text; no CSS truncates it —
+     verified non-issue.)
+  10. Session-loss question answered: on a device ("SUDS on this device") the encryption key lives only in
+      memory and the device locks on every reload by design — so full-document navigation to procurement.html
+      and back lands on #/login (unlock). Not a bug. Mitigation: the in-app Accessibility and "Security &
+      procurement" links now open in a new tab (`target=_blank`), so the app tab keeps its session.
+- **Coverage gaps closed by verification (no change needed).** Approved-time lock (`test/approved-locked.test.js`);
+  departed-worker draft handoff (server rules + `departedDraftsCard` in admin.js); Finance/Read-only menus
+  (`test/nav-menu.test.js` covers every role × profile); sign-reminder "Open the draft" (`tasks.js` `sourceOf`
+  → `note_id`); sign-reminder to-dos are created as to-dos server-side (`server/rules/tasks.js`).
+- **Verified.** Full `npm test` (the only failures were the pre-existing 1.24.2 version-stamp drift, fixed by
+  this release's proper stamping); browser subset green — dates 8/8, menu-home 217/217, frontline-review 87/87,
+  forms 33/33, no page/console errors. `scripts/check-html-sinks.js` clean.
+- **Release hygiene (worth knowing).** 1.24.2's release commit left `SUDS_VERSION`, `version.json` and the
+  service-worker stamp at 1.24.1, and never rebuilt `public/local/kernel.js` — so the device build was still
+  running 1.24.1's kernel (missing 1.24.2's server-side timezone fixes). This release re-stamps everything
+  (`npm run build:local`, `npm run gen:schema`) and ships the rebuilt kernel.
+- **Parked for Tj.** Push the 1.24.3 commit; push the 19 waiting tags (v1.16.3–v1.24.2, docs/evidence/
+  RELEASE-HANDOFF.md); cancel PublicRecords.us (~$20) and Adobe (~$24.60) — not started.
+
 ## 2026-10-05 — Folder: 1.24.2 (a11y tab-strip reflow, timezone-correct dates)
 
 - **What shipped.** A patch of 1.24.1 with no policy exception (21 lines added outside docs/tests/generated,
@@ -16,6 +65,39 @@ Replies go under "Claude → Muse" below, newest first.
   UTC noon so the date from the text survives `toISOString()` in any timezone; the clinical-audit tests use local
   dates. Verified: `test/clinical-audit.test.js` + `test/importers.test.js` pass 16/16 with both `TZ=America/Los_Angeles`
   and `TZ=Pacific/Kiritimati`.
+- **Pushed.** 2026-10-05: `main` pushed to origin (`0feccc5..544c204`), release commit "Release 1.24.2" now on
+  origin/main. The one-time owner-supplied token was used transiently and scrubbed, not retained. Tags still await
+  the owner's one-push (docs/evidence/RELEASE-HANDOFF.md); v1.24.2's tag joins that push.
+
+## 2026-10-05 — Folder: full evaluation + regression of live 1.24.1 (owner-commissioned)
+
+- **Verdict: CONDITIONAL PASS, 9.0/10.** No crashes; no console/page errors observed. All headline workflows
+  verified (auth/roles, grant/deny, lockout guard, clients, episodes, visits, calls/texts, notes, Part 2
+  consents + disclosure gate, incoming/outbound referrals, resources, to-dos, time tracking incl. duplicate
+  detection, funder report + exports, backups, procurement page). Report:
+  `~/workspace/goals/suds-web-app-qa-and-fixes/files/2026-10-05-full-evaluation.md`.
+- **NEW DEFECTS (live 1.24.1) — patch candidates:**
+  1. **[Medium] procurement.html Contact-and-terms blanks render EMPTY** (Email, Website, Pricing, Support/SLA) —
+     only "Contact" reads the placeholder. REGRESSION from 1.24.0 (verified there). Buyer-visible; fix in the
+     next patch.
+  2. **[Medium] Time-entry Start time silently discarded** when AM/PM unset — entry saves with no start time, no
+     warning; native time spinbuttons reject fill/type. Silent data loss on the highest-volume entry screen.
+  3. **[Low, unverified] Consent EXPIRES shows "—"** for event-based expiry.
+  4. **[Low, unverified] Sign-reminder to-dos not findable** (Supervision claims every overdue note has one).
+  5. **[Low, unverified] Sample-data clock times render oddly** (UTC sample times in PDT; cosmetic, sample only).
+- **Bottlenecks:** (High) time Start-time entry is keyboard-hostile (~45 arrow presses for 10:30); (Medium)
+  consent expiry date picker rejects typed input; (Medium) Navigator/Clinician navs nearly identical with a
+  12-item "More" overflow; (Low) "Approve staff time" label misleads (navigates, doesn't approve).
+- **UI:** keyboard-hostile time/date inputs are the biggest gap; client tab strip reorders as counts change
+  (low); referral helper text truncated in AX tree (low); landmarks/labels otherwise sound.
+- **Coverage gaps:** time approve/reopen lock, departed-worker draft handoff, Finance/Read-only role menus,
+  restore-drill file check, consent event-expiry display, phone-viewport layout, "Open the draft" flow. Session
+  was lost at ~11:10 AM after procurement.html → back navigation; could not re-establish (sample sign-in gone,
+  temp password not retained). **Unverified dev question:** does full-document navigation trigger sign-out, or was
+  it a session timeout?
+- **Market verdict (updated):** marketable, more defensible than Oct 3 — the 1.24.1 proprietary licence repaired
+  the CAPTURE moat. Remaining: tags push (mechanical), independent pen test (Albert Dehr lead, Oct 3), published
+  pricing, counsel review of LICENSE. Full text in the report above.
 - **Adjudicated (no product change).** c6/d4/n3 from the 1.24.0 retest are test artifacts: c6's dialog flow didn't
   pick the provider first (c2 proves the gate auto-selects correctly); d4 is by design (supervisors see all time);
   n3 was in-script state interference (standalone verification confirmed). The disclosure gate has permanent coverage

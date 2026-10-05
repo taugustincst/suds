@@ -218,8 +218,10 @@ route('supervision', async (r) => {
           : mayRemind && gone(r) ? h('span', { class: 'small muted', 'data-author-inactive': r.id }, 'Author no longer active') : null) },
     ], drafts),
     mayRemind && overdue ? h('div', { class: 'btn-row' },
-      h('button', { class: 'btn', 'data-remind-all': String(overdueToRemind), onClick: remindAll }, 'Remind all overdue authors'),
-      h('span', { class: 'small muted' }, overdueUnreminded ? `${plural(overdueUnreminded, 'overdue note has', 'overdue notes have')} no open reminder yet.` : 'Every overdue note has an open reminder.')) : null)
+      overdueToRemind ? h('button', { class: 'btn', 'data-remind-all': String(overdueToRemind), onClick: remindAll }, 'Remind all overdue authors') : null,
+      h('span', { class: 'small muted' }, overdueUnreminded ? `${plural(overdueUnreminded, 'overdue note has', 'overdue notes have')} no open reminder yet.`
+        : drafts.some(r => r.overdue && remindable(r)) ? 'Every overdue note has an open reminder.'
+        : 'The overdue drafts are your own, or their authors are no longer active — there is nobody to remind; sign them from Notes.')) : null)
       : emptyState('Everything is signed', 'Draft notes left by your team would show here.')));
 
   // ---- staff time ----
