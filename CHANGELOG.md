@@ -4,17 +4,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
-## 1.25.0 — 2026-10-05
-
-A minor (the owner lifted the feature freeze): the CalOMS Tx code values are corrected against the DHCS
-*CalOMS Tx Data Dictionary*, File Version 3.0 (October 2024). The spec had been built from the Data
-Collection Guide's structure without the dictionary; the verification
-(docs/evidence/caloms-dictionary-verification.md) found only 4 of 17 code sets matching. Every code value
-in `server/caloms-spec.js` is now set from the dictionary (group-item and page cited per set and element;
-`test/caloms-dictionary.test.js` asserts them), and migration 71 remaps stored records. Ships with one
-migration, no new or widened permission and no new route.
-
-* **Dictionary-verified code sets.** Service types are ADM-4 codes 1–7; referral sources ADM-5 1–14; drug
+* **CalOMS Tx 1.25.0 (unstamped; the owner lifted the feature freeze).** Dictionary-verified code sets: service types are ADM-4 codes 1–7; referral sources ADM-5 1–14; drug
   codes are unpadded 0–20 with 99901/99903 (fentanyl and "other" are 99903); routes are 1–4 with
   99902/99903; gender is CID-3 1–6 with 99900/99903; races are zero-padded 01–19 with 99900 (at most 5);
   ethnicities are CID-16 1–6 with 99900; disabilities are 1–8 with 99900/99904 (at most 7); record codes
