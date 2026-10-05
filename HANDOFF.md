@@ -5,12 +5,16 @@ Replies go under "Claude → Muse" below, newest first.
 
 ### Release waiting
 
-- **The one owner action that unblocks the release: tag 1.24.4 and push the tag** (docs/evidence/RELEASE-HANDOFF.md,
-  steps 1 and 2). The tag starts `release.yml`: the gate, the verify, the approval in the `release` environment,
-  then the GitHub Release (marked Latest) and the `Web app` run that publishes 1.24.4 to GitHub Pages.
-- **1.24.4 is on `main`** (stamped 2026-10-05; its exact-commit CI is green), but not yet tagged: the owner tags
-  all one, in one push: `git push origin v1.24.4`. Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the
-  checks, the tag command, and what the run does.
+- **1.24.4 is live** (2026-10-05): tag `v1.24.4` at `e71c3105`, GitHub Release published and marked **Latest**,
+  zip checksum verified, and GitHub Pages serves 1.24.4 (live `version.json` confirmed). The procurement page
+  renders the published pricing; contact fields honestly read "Not yet published by the maintainer".
+- **Known workflow defect fixed on `main` (unreleased, ships with 1.25.0):** the `Web app` publish job's
+  "Still not older than the web app gh-pages serves" step ran `node tag/scripts/pages-version-check.js` from
+  the checkout directory, but `tag/` is extracted into `$RUNNER_TEMP` by the previous step — the 1.24.4 Pages
+  deploy failed with `MODULE_NOT_FOUND`. The step now `cd "$RUNNER_TEMP"` first (web-app.yml). 1.24.4 was
+  deployed manually following the workflow's own checks (tag's release-site-check passed in CI; tag's
+  pages-version-check: "gh-pages serves 1.24.1, older than 1.24.4"; pushed the build artifact to `gh-pages`).
+  This bug was latent since the 1.23.3 workflow rewrite — no 1.23.x `Web app` run had been exercised before.
 
 ## 2026-10-05 — Folder: 1.24.3 (evaluation defects + bottlenecks — pushed; release publication pending CI)
 

@@ -194,8 +194,11 @@ jobs:
           mkdir tag && git --git-dir=tag.git archive "${GITHUB_SHA}" public LICENSE NOTICE server/csp.js scripts/build-static-site.js scripts/static-site-security.js scripts/release-site-check.js scripts/pages-version-check.js | tar -x -C tag
           node tag/scripts/release-site-check.js tag site
       # Again after the approval (1.17.1; H1), with the tag's own check: gh-pages may have moved on meanwhile.
+      # `tag/` was extracted into $RUNNER_TEMP by the previous step (1.24.4: running this check from the
+      # checkout directory looked for <checkout>/tag/, which does not exist, and the publish failed).
       - name: Still not older than the web app gh-pages serves
         run: |
+          cd "$RUNNER_TEMP"
           rm -f "$RUNNER_TEMP/pages-version.json"
           if live="$(gh api -H 'Accept: application/vnd.github.raw' "repos/${GITHUB_REPOSITORY}/contents/version.json?ref=gh-pages" 2>"$RUNNER_TEMP/pages-version.err")"; then printf '%s' "$live" > "$RUNNER_TEMP/pages-version.json"
           elif grep -q 'HTTP 404' "$RUNNER_TEMP/pages-version.err"; then echo "gh-pages serves no version.json (or there is no gh-pages branch yet)."

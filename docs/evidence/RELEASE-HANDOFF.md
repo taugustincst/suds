@@ -1,19 +1,36 @@
-# Release hand-off: tags v1.24.4 to v1.24.4
+# Release record: v1.24.4 (published 2026-10-05)
 
-> **The one owner action: run step 1, then step 2's tag command and its push.** It publishes 1.24.4:
-> the tag starts `release.yml` (gate, verify, approval in the `release` environment), the release marks
-> `v1.24.4` Latest, and its `Web app` run republishes GitHub Pages. Until the tag exists, 1.24.4 has no
-> GitHub Release and no gate approval.
+> 1.24.4 is published and live. This file recorded the hand-off while the tag was still owed; the
+> completed release is recorded here. The next release (1.25.0, CalOMS corrections + UI cleanup +
+> resource pictures) gets its own hand-off when it is stamped.
 
-1.24.4 is a patch of 1.24.3 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*): the defects 1.24.3's exact-commit
-CI found, and the introductory pricing. No migration, no new or widened permission and no new route. It
-supersedes 1.24.3, whose GitHub Release is not published (the way 1.24.3 superseded 1.24.2). The 20 tags
-`v1.16.3` through `v1.24.3` were pushed on 2026-10-05 (the completed push, recorded below); this hand-off
-covers the one tag still owed.
+## Completed: v1.24.4 (2026-10-05)
 
-## The one release
+| Tag | Commit | Release run | Published |
+| --- | --- | --- | --- |
+| `v1.24.4` | `e71c3105d4926d4e22207f415916bce6e07d6676` ("Release 1.24.4") | 37385754401 (success; exact-commit CI 37381511508, all 11 jobs green) | 2026-10-05T23:05:43Z, **Latest** |
 
-| Tag | Commit (stamp, "Release X.Y.Z") | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
+- Assets: `suds-v1.24.4.zip` (SHA-256 `f3787da4bbf95b3f3cab14a8ab0542c73edf06e649a3bcab083dfbdb07d262b6`,
+  verified against the downloaded release asset with `sha256sum -c`: OK), `suds-v1.24.4.zip.sha256`,
+  `suds-1.24.4-windows-x64.zip` + `.sha256`. Content of the release zip is byte-for-byte the tag's tree
+  (only zip container timestamps differ from a local rebuild — git-archive stamps entry times from the
+  commit, and the runner's git wrote them in UTC vs the local rebuild; the release pipeline's own
+  byte-for-byte check passed).
+- Pages: the `Web app` run's publish job failed on a latent workflow bug (1.23.3 rewrite): the
+  "Still not older than the web app gh-pages serves" step ran `node tag/scripts/pages-version-check.js`
+  from the checkout directory, but the previous step extracts `tag/` into `$RUNNER_TEMP`. The tag's own
+  checks all passed (release-site-check: 80 built files byte-for-byte the tag's; pages-version-check:
+  "gh-pages serves 1.24.1, older than 1.24.4"), so the build artifact was pushed to `gh-pages` by hand
+  following the workflow's own steps. Live `version.json` reads **1.24.4**; the procurement page renders
+  the published pricing (contact fields honestly read "Not yet published by the maintainer").
+- The workflow bug is fixed on `main` (the step now `cd "$RUNNER_TEMP"` first); it ships with 1.25.0.
+  No 1.23.x `Web app` run had exercised the rewritten workflow before 1.24.4.
+
+## The one release (superseded — kept for the record)
+
+The table below was the pending hand-off; the release above is what it became.
+
+| Tag | Commit (stamp, "Release X.Y.Z") | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 |
 | --- | --- | --- | --- |
 | `v1.24.4` | `<1.24.4 release commit>` ("Release 1.24.4": `git log -1 --format=%H --grep='^Release 1.24.4$' origin/main`) | 2026-10-05 | `<filled after the release>`; rebuild it with the command below |
 
