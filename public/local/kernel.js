@@ -45691,7 +45691,7 @@ var require_sacramento_metro = __commonJS({
           "city": "Nevada City",
           "zip": "95959",
           "phone": "530-292-3478",
-          "website": null,
+          "website": "https://wsmcmed.org/",
           "hours": "Mon\u2013Fri 8:30\u20135:00",
           "summary": "Sierra Family is a federally qualified health centre serving the rural San Juan Ridge area north of Nevada City, where the nearest alternative clinic is a long drive away. They combine family medicine with behavioral health and social services in the same building, plus dental, women's health and obstetrics. Listings indicate they provide substance abuse treatment along with sexually transmitted infection testing, family planning, tuberculosis testing, hepatitis vaccines and case management. As a federally qualified health centre they serve patients regardless of ability to pay, which makes them a good fit for uninsured clients on the Ridge.",
           "services": "Family medicine; behavioral health and social services; dental; obstetrics and women's health; substance abuse treatment and case management per listings; testing and vaccines",
@@ -47752,7 +47752,7 @@ var require_sacramento_metro = __commonJS({
           "city": "Auburn",
           "zip": "95603",
           "phone": "530-888-8767",
-          "website": null,
+          "website": "https://www.sierranativealliance.org/",
           "hours": null,
           "summary": "Sierra Native Alliance is a Native-led organization serving American Indian and Alaska Native families across the Placer County area, and its Native Family Wellness programs combine outpatient recovery services with the wraparound support that keeps people in them. They provide outpatient and intensive outpatient substance use treatment for adults, plus parent education, counseling, home visitation and case management. Distinctively they offer recovery coaching and peer mentoring, housing assistance, and follow-up after discharge, so a client is not dropped the day their program ends. For a Native client who wants culturally specific care and a peer to walk alongside them, this is the referral.",
           "services": "Outpatient and intensive outpatient treatment, recovery coaching and peer mentoring, parent education, counseling, home visitation, case management, housing services, discharge planning and follow-up",
@@ -48446,31 +48446,98 @@ var require_region_pictures = __commonJS({
     function pickImageUrl(html, baseUrl) {
       const head = String(html).slice(0, 512 * 1024);
       const meta = (prop) => {
-        const m = new RegExp(`<meta[^>]+(?:property|name)=["']${prop}["'][^>]*>`, "i").exec(head);
+        const m = new RegExp(`<meta[^>]+(?:property|name|itemprop)=["']${prop}["'][^>]*>`, "i").exec(head);
         if (!m) return null;
         const c = /content=["']([^"']+)["']/i.exec(m[0]);
         return c ? c[1] : null;
       };
       const link = (rel) => {
-        const m = new RegExp(`<link[^>]+rel=["'][^"']*${rel}[^"']*["'][^>]*>`, "i").exec(head);
-        if (!m) return null;
-        const c = /href=["']([^"']+)["']/i.exec(m[0]);
-        return c ? c[1] : null;
+        const re = new RegExp(`<link[^>]+rel=["'][^"']*${rel}[^"']*["'][^>]*>`, "gi");
+        let m, best = null, bestArea = -1;
+        while (m = re.exec(head)) {
+          const c = /href=["']([^"']+)["']/i.exec(m[0]);
+          if (!c) continue;
+          const s = /sizes=["'](\d+)[xX](\d+)["']/i.exec(m[0]);
+          const area = s ? +s[1] * +s[2] : 0;
+          if (area > bestArea) {
+            best = c[1];
+            bestArea = area;
+          }
+        }
+        return best;
       };
-      const candidate = meta("og:image") || meta("og:image:secure_url") || meta("twitter:image") || link("apple-touch-icon") || link("icon");
-      if (!candidate) return null;
+      const usable = (raw) => {
+        if (!raw) return null;
+        let u;
+        try {
+          u = new URL(raw.replace(/&amp;/g, "&"), baseUrl);
+        } catch {
+          return null;
+        }
+        if (u.protocol === "http:") u.protocol = "https:";
+        if (u.protocol !== "https:") return null;
+        if (/\.(svg|ico)(\?|#|$)/i.test(u.pathname)) return null;
+        return u.href;
+      };
+      const advertised = [
+        meta("og:image"),
+        meta("og:image:secure_url"),
+        meta("twitter:image"),
+        meta("twitter:image:src"),
+        meta("image"),
+        meta("msapplication-TileImage"),
+        link("apple-touch-icon")
+      ];
+      for (const raw of advertised) {
+        const u = usable(raw);
+        if (u) return u;
+      }
+      const logo = sameOriginLogo(String(html), baseUrl);
+      if (logo) return logo;
+      return usable(link("icon"));
+    }
+    function sameOriginLogo(html, baseUrl) {
+      let host;
       try {
-        const u = new URL(candidate.replace(/&amp;/g, "&"), baseUrl);
-        return u.protocol === "https:" ? u.href : null;
+        host = new URL(baseUrl).hostname;
       } catch {
         return null;
       }
+      const srcs = [];
+      const re = /<img[^>]+src=["']([^"']+)["'][^>]*>/gi;
+      let m;
+      while ((m = re.exec(html)) && srcs.length < 200) srcs.push(m[1]);
+      const usable = (raw) => {
+        let u;
+        try {
+          u = new URL(raw.replace(/&amp;/g, "&"), baseUrl);
+        } catch {
+          return null;
+        }
+        if (u.protocol === "http:") u.protocol = "https:";
+        if (u.protocol !== "https:" || u.hostname !== host) return null;
+        if (/\.(svg|ico)(\?|#|$)/i.test(u.pathname)) return null;
+        return u.href;
+      };
+      const logoish = (u) => /(logo|brand|header-logo|site-icon|favicon)/i.test(u);
+      for (const raw of srcs) {
+        const u = usable(raw);
+        if (u && logoish(u)) return u;
+      }
+      for (const raw of srcs) {
+        const u = usable(raw);
+        if (u) return u;
+      }
+      return null;
     }
-    function fetchChecked(url, { timeoutMs, maxBytes, hops = 4 }) {
-      return outbound.fetchChecked(url, { timeoutMs, maxBytes, hops, headers: { "User-Agent": "SUDS resource directory" } });
+    var BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+    var ACCEPT_PAGE = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
+    var ACCEPT_PICTURE = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8";
+    function fetchChecked(url, { timeoutMs, maxBytes, hops = 4, accept = ACCEPT_PAGE }) {
+      return outbound.fetchChecked(url, { timeoutMs, maxBytes, hops, headers: { "User-Agent": BROWSER_UA, Accept: accept, "Accept-Language": "en-US,en;q=0.9" } });
     }
-    async function get(url, opts) {
-      return (await fetchChecked(url, opts)).buf;
+    async function get(url, opts, accept) {
+      return (await fetchChecked(url, { ...opts, accept })).buf;
     }
     function failure(e) {
       if (e && e.soft) return { ok: false, error: e.message, ...e.network ? { network: true } : {} };
@@ -48491,7 +48558,7 @@ var require_region_pictures = __commonJS({
         }
         if (!/^https:\/\//i.test(url)) return { ok: false, error: "not an https address" };
         if (budget() <= 0) return late;
-        const buf = await get(url, { timeoutMs: budget(), maxBytes: MAX_PICTURE_BYTES });
+        const buf = await get(url, { timeoutMs: budget(), maxBytes: MAX_PICTURE_BYTES }, ACCEPT_PICTURE);
         const type = sniff(buf);
         if (!type) return { ok: false, error: "not a JPEG, PNG or WebP picture" };
         return { ok: true, buf, type, url };
@@ -48508,7 +48575,7 @@ var require_region_pictures = __commonJS({
         if (!/<(html|head|meta|link)\b/i.test(text)) return { ok: false, error: "not a JPEG, PNG or WebP picture" };
         const url = pickImageUrl(text, first.url);
         if (!url) return { ok: false, error: "that page does not advertise a picture; open the picture itself and copy its address" };
-        const buf = await get(url, { timeoutMs, maxBytes: MAX_PICTURE_BYTES });
+        const buf = await get(url, { timeoutMs, maxBytes: MAX_PICTURE_BYTES }, ACCEPT_PICTURE);
         type = sniff(buf);
         if (!type) return { ok: false, error: "not a JPEG, PNG or WebP picture" };
         return { ok: true, buf, type, url };

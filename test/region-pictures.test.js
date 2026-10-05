@@ -30,8 +30,57 @@ test('the picture a site advertises is picked: og:image first, then the touch ic
   assert.equal(pictures.pickImageUrl('<meta property="og:image" content="/a.png"><link rel="apple-touch-icon" href="/b.png">', 'https://x.example.org/p/'), 'https://x.example.org/a.png');
   assert.equal(pictures.pickImageUrl('<meta content="x" name="twitter:card"><link rel="apple-touch-icon" href="icons/b.png">', 'https://x.example.org/p/'), 'https://x.example.org/p/icons/b.png');
   assert.equal(pictures.pickImageUrl('<meta property="og:image" content="https://cdn.example.org/i.jpg?a=1&amp;b=2">', 'https://x.example.org/'), 'https://cdn.example.org/i.jpg?a=1&b=2');
-  assert.equal(pictures.pickImageUrl('<meta property="og:image" content="http://x.example.org/a.png">', 'https://x.example.org/'), null, 'a plain-http picture is not taken');
+  assert.equal(pictures.pickImageUrl('<meta property="og:image" content="http://x.example.org/a.png">', 'https://x.example.org/'), 'https://x.example.org/a.png', 'a plain-http picture is upgraded to https, never fetched as http');
   assert.equal(pictures.pickImageUrl('<title>nothing</title>', 'https://x.example.org/'), null);
+  // more spellings of the social preview image
+  assert.equal(pictures.pickImageUrl('<meta name="twitter:image:src" content="/t.jpg">', 'https://x.example.org/'), 'https://x.example.org/t.jpg');
+  assert.equal(pictures.pickImageUrl('<meta itemprop="image" content="/s.jpg">', 'https://x.example.org/'), 'https://x.example.org/s.jpg');
+  assert.equal(pictures.pickImageUrl('<meta name="msapplication-TileImage" content="/m.png">', 'https://x.example.org/'), 'https://x.example.org/m.png');
+  // a vector or Windows icon is skipped so a usable candidate later in the page is tried
+  assert.equal(pictures.pickImageUrl('<link rel="icon" href="/icon.svg"><link rel="apple-touch-icon" href="/t.png">', 'https://x.example.org/'), 'https://x.example.org/t.png');
+  assert.equal(pictures.pickImageUrl('<link rel="icon" href="/favicon.ico">', 'https://x.example.org/'), null, 'an ico alone is not a picture');
+  // the largest offered icon is taken; a tiny favicon loses to the site's own body logo
+  assert.equal(pictures.pickImageUrl('<link rel="icon" href="/f16.png" sizes="16x16"><link rel="icon" href="/f32.png" sizes="32x32">', 'https://x.example.org/'), 'https://x.example.org/f32.png');
+  assert.equal(
+    pictures.pickImageUrl('<head><link rel="icon" href="/f16.png" sizes="16x16"></head><body><img src="/logo-500.png"></body>', 'https://x.example.org/'),
+    'https://x.example.org/logo-500.png', 'the body logo beats a 16-pixel favicon');
+});
+
+test('a page that advertises nothing falls back to its own logo, never someone else\'s picture', () => {
+  const page = (body) => `<html><head><title>x</title></head><body>${body}</body></html>`;
+  assert.equal(pictures.pickImageUrl(page('<img src="/wp-content/uploads/logo.png">'), 'https://x.example.org/'), 'https://x.example.org/wp-content/uploads/logo.png');
+  assert.equal(pictures.pickImageUrl(page('<img src="https://cdn.example.org/logo.png"><img src="/assets/brand-mark.jpg">'), 'https://x.example.org/'), 'https://x.example.org/assets/brand-mark.jpg', 'a hotlinked logo is not taken');
+  assert.equal(pictures.pickImageUrl(page('<img src="/photos/staff.jpg">'), 'https://x.example.org/'), 'https://x.example.org/photos/staff.jpg', 'any same-origin picture as a last resort');
+  assert.equal(pictures.pickImageUrl(page('<img src="/icon.svg">'), 'https://x.example.org/'), null, 'a vector logo is not a picture');
+  assert.equal(pictures.pickImageUrl(page('<img src="https://cdn.example.org/only.jpg">'), 'https://x.example.org/'), null, 'no same-origin image at all');
+  // an advertised picture still wins over the body logo
+  assert.equal(pictures.pickImageUrl(page('<meta property="og:image" content="/social.jpg"><img src="/logo.png">'), 'https://x.example.org/'), 'https://x.example.org/social.jpg');
+});
+
+test('requests go out looking like a browser, with an Accept header matching what is fetched', async () => {
+  const seen = [];
+  pictures._setFetchForTests(async (url, opts) => {
+    seen.push({ url: String(url), headers: opts && opts.headers, redirect: opts && opts.redirect });
+    if (String(url).endsWith('/logo.png')) return reply(200, IMAGE);
+    return reply(200, Buffer.from('<head><meta property="og:image" content="/logo.png"></head>'));
+  });
+  const out = await pictures.downloadPicture({ key: 'k', website: 'https://ua.example.org/' });
+  assert.equal(out.ok, true, JSON.stringify(out));
+  assert.equal(seen.length, 2);
+  for (const s of seen) assert.match(s.headers['User-Agent'], /Mozilla.*Chrome/, `a browser user agent for ${s.url}`);
+  assert.match(seen[0].headers.Accept, /text\/html/, 'the page is asked for as a page');
+  assert.match(seen[1].headers.Accept, /^image\//, 'the picture is asked for as a picture');
+  assert.ok(seen.every(s => s.redirect === 'manual'), 'redirects are still followed by hand, so every hop is checked');
+});
+
+test('every sacramento-metro provider has somewhere to look for a picture', () => {
+  const targets = pictures.regionTargets('sacramento-metro');
+  assert.equal(targets.length, 81);
+  for (const key of ['sierra-family-health', 'sierra-native-alliance']) {
+    const t = targets.find(t => t.key === key);
+    assert.ok(t && /^https:\/\/[^/]+/.test(t.website), `${key} has an official website`);
+  }
+  assert.ok(targets.every(t => t.key && (t.url || t.website)));
 });
 
 test('a website is read for its og:image, which is downloaded and checked to be a picture', async () => {
