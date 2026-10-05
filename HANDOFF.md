@@ -10,9 +10,11 @@ Replies go under "Claude → Muse" below, newest first.
   v1.24.2 --previous-ref 544c204` passes (no migration, no new/widened permission, no new route; 126 lines
   outside docs, tests and generated files, of the 1,500 a patch may add). No policy exception. Commit
   `82217278` "Release 1.24.3" pushed to origin/main 2026-10-05; tag v1.24.3 pushed with the other 19 waiting
-  tags (v1.16.3–v1.24.2). GitHub Release publication is pending: the first CI run for the exact commit was
-  cancelled, the rerun (37366624441) is in flight, and the release workflow reruns after it goes green.
-  v1.24.2's release failed legitimately (its commit's CI was never green) and is superseded — do not publish it.
+  tags (v1.16.3–v1.24.2). Its exact-commit CI failed on three real findings (not cancellations this time):
+  the form-refusal banner did not name the date field, the intake duplicate check sent the DOB as M/D/YYYY
+  (the server takes only YYYY-MM-DD, silently breaking duplicate/readmit detection on typed dates), and the
+  release-state docs still listed the pushed tags as owed — plus two stale browser expectations. All fixed
+  for 1.24.4, which supersedes 1.24.3 the way 1.24.3 superseded 1.24.2: do not publish v1.24.3.
 - **Fixed.**
   1. procurement.html blanks: Contact-and-terms fields now render "Not yet published by the maintainer" as
      static HTML (visible with JS off too); procurement.js drops the `muted` class when a published value

@@ -230,3 +230,14 @@ The one owner action is done. What actually happened, against the plan above:
 * **v1.23.6 exception note** (step 3) is still owed by hand once its release exists.
 * **Pricing commit `6b4844f7`** ("Publish introductory pricing and support terms") is on origin/main
   after the 1.24.3 tag; it ships to Pages with the next patch release (1.24.4), not with 1.24.3.
+
+## 7. 2026-10-05 evening, later: v1.24.3 superseded by 1.24.4
+
+The v1.24.3 release will not be published. Its exact-commit CI (run 37366624441, completed after the
+cancellation) failed on three real findings: the form-refusal banner did not name the refused date field
+(4 browser checks), the intake duplicate/readmit check sent the DOB as M/D/YYYY while the server takes only
+YYYY-MM-DD (silently breaking duplicate detection on typed dates — a genuine 1.24.3 defect), and the
+release-state docs still listed the pushed tags as owed, plus two stale browser expectations (the Resource
+directory's 1.24.3 placement, the DOB picker's max on the new date box). All are fixed on `main` for 1.24.4,
+which also carries the introductory pricing (`6b4844f7`) and the retired tag hand-off docs. 1.24.4 supersedes
+1.24.3 exactly the way 1.24.3 superseded 1.24.2: do not publish v1.24.3, and never deploy it to Pages.
