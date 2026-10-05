@@ -260,7 +260,9 @@ test('parsers read the real documents\' shapes', () => {
   const fs = require('node:fs');
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const h = RS.parseHandoff(read(RS.FILES.handoff));
-  assert.ok(h.rows.length > 0 && h.rows.every((r) => /^v\d+\.\d+\.\d+$/.test(r.tag) && r.commit.length === 40), 'the hand-off table is read');
+  assert.ok(h.rows.length + (h.pending || []).length > 0, 'the hand-off table is read');
+  assert.ok(h.rows.every((r) => /^v\d+\.\d+\.\d+$/.test(r.tag) && r.commit.length === 40), 'every completed row names a tag and its commit');
+  assert.ok((h.pending || []).every((r) => /^v\d+\.\d+\.\d+$/.test(r.tag)), 'every pending row names its tag');
   assert.equal(h.tagCommands.length, h.rows.length + h.pending.length, 'one tag command per row (a row the stamp cannot fill yet included)');
   const rel = RS.parseRelease(read(RS.FILES.release));
   assert.ok(rel.latest && rel.previous && rel.older, 'the supported-versions rows are read');

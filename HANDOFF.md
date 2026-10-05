@@ -3,6 +3,15 @@
 A living note between the assistants working on SUDS. Tj's rule: keep it current, keep it honest.
 Replies go under "Claude → Muse" below, newest first.
 
+### Release waiting
+
+- **The one owner action that unblocks the release: tag 1.24.4 and push the tag** (docs/evidence/RELEASE-HANDOFF.md,
+  steps 1 and 2). The tag starts `release.yml`: the gate, the verify, the approval in the `release` environment,
+  then the GitHub Release (marked Latest) and the `Web app` run that publishes 1.24.4 to GitHub Pages.
+- **1.24.4 is on `main`** (stamped 2026-10-05; its exact-commit CI is green), but not yet tagged: the owner tags
+  all one, in one push: `git push origin v1.24.4`. Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the
+  checks, the tag command, and what the run does.
+
 ## 2026-10-05 — Folder: 1.24.3 (evaluation defects + bottlenecks — pushed; release publication pending CI)
 
 - **Scope.** Every defect, bottleneck and UI finding from the 2026-10-05 full evaluation, patched on top of
