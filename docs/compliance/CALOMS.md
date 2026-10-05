@@ -1,13 +1,14 @@
 # CalOMS Tx reporting in SUDS
 
-> **Status: NOT VERIFIED AGAINST THE DHCS DATA DICTIONARY.** The DHCS *CalOMS Tx Data Collection Guide*
-> (Aug 2024, v3 — the San Diego DMC-ODS copy at optumsandiego.com) and the DHCS CalOMS Tx data dictionary /
-> file specification could not be retrieved when this was built (the build environment's network policy
-> blocked both hosts). The record types, the data elements and the edit checks follow the structure of the
-> guide as it is generally known; **every code value, element name, and the file layout is "to verify against
-> the current DHCS data dictionary"**. A county must check the tables below against the dictionary DHCS has
-> issued it before the first submission. All of it lives in one file, `server/caloms-spec.js`, so a
-> correction is a one-file change; the layout version (`SPEC_VERSION`) is stamped into every extract's README.
+> **Status: VERIFIED 2026-10-05 against the DHCS *CalOMS Tx Data Dictionary*, File Version 3.0
+> (October 2024) — and the spec does not pass.** The verification report is
+> [docs/evidence/caloms-dictionary-verification.md](evidence/caloms-dictionary-verification.md):
+> 4 of 17 code sets match, 5 partially match, 8 are wrong (3 completely — service types, referral
+> sources, ethnicities). The dictionary has no Y/N yes-no convention (every yes/no element is
+> numeric 1/0 with 999xx specials), two "yes/no" fields are really day counts, numeric fields lack
+> the 999xx declined/unable values, and four elements SUDS does not collect include the required
+> CID-19 Consent. **Do not submit a SUDS extract to DHCS until the spec is corrected.**
+> The DHCS dictionary copy used is the October 2024 v3.0 PDF (SHA-256 recorded in the report).
 
 ## What SUDS does and does not do
 
