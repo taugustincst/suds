@@ -41,9 +41,19 @@ export function calomsFields(cfg, type, { values = {}, provider = null, standard
     }
     const base = { name: `${P}${f.key}`, label: f.label, required, help: f.help || null, value: v ?? '' };
     if (f.set) out.push({ ...base, type: 'select', placeholder: 'Choose…', options: cfg.spec.sets[f.set].map(c => ({ value: c.code, label: `${c.label} (${c.code})` })) });
+    else if (f.type === 'int' && f.alt) {
+      // A number, or one of the dictionary's 999xx special answers: the select fills the number box, and
+      // typing a number clears the select. The stored value is always the code that is in the number box.
+      const altLabels = cfg.spec.alt_labels || {};
+      const isAlt = f.alt.map(String).includes(String(v ?? ''));
+      const altOpts = f.alt.map(code => ({ value: String(code), label: `${altLabels[code] || 'Special answer'} (${code})` }));
+      out.push({ ...base, type: 'number', min: f.min, max: Math.max(f.max, ...f.alt.map(Number)), step: 1, value: isAlt ? '' : (v ?? ''),
+        help: [`Enter ${f.min}–${f.max}`, f.help].filter(Boolean).join('; ') + ', or choose a special answer below.' });
+      out.push({ name: `${P}${f.key}__alt`, label: `${f.label} — special answer`, type: 'select', value: isAlt ? v : '', options: altOpts });
+    }
     else if (f.type === 'int') out.push({ ...base, type: 'number', min: f.min, max: f.max, step: 1 });
     else if (f.type === 'date') out.push({ ...base, type: 'date' });
-    else out.push({ ...base, maxLen: 5, placeholder: f.type === 'zip' ? '5 digits' : '' });
+    else out.push({ ...base, maxLen: 5, placeholder: f.type === 'zip' ? '5 digits, 00000, XXXXX or ZZZZZ' : '' });
   }
   return out;
 }
@@ -56,6 +66,7 @@ export function splitCaloms(cfg, type, data) {
     if (!k.startsWith(P)) { plain[k] = v; continue; }
     const key = k.slice(P.length);
     if (key === 'provider_id') { provider_id = v; continue; }
+    if (key.endsWith('__alt')) continue; // the 999xx special-answer select: its value was copied into the number box
     const m = /^(.+)__(.+)$/.exec(key);
     if (m && multi.has(m[1])) { if (v) multi.get(m[1]).push(m[2]); continue; }
     if (v !== null && v !== '' && v !== undefined) answers[key] = v;
@@ -84,6 +95,18 @@ const localDates = (msg) => String(msg || '').replace(/\b(\d{4}-\d{2}-\d{2})(T[\
 const uploadDetail = (s) => { const m = /^(\d{4}-\d{2}-\d{2})\s*(.*)$/.exec(String(s || '')); return m ? `Uploaded on ${fmt.date(m[1])}${m[2] ? ` · DHCS reference ${m[2]}` : ''}` : String(s || ''); };
 const sevBadge = (s) => badge(s === 'fatal' ? 'Fatal' : 'Warning', s === 'fatal' ? 'danger' : 'warn');
 
+/** The 999xx special-answer selects fill their number box; typing a number clears the select. */
+function wireCalomsAlt(f) {
+  if (!f || !f.inputs) return;
+  for (const [name, input] of Object.entries(f.inputs)) {
+    if (!name.endsWith('__alt')) continue;
+    const num = f.inputs[name.slice(0, -5)];
+    if (!num || !input.addEventListener) continue;
+    input.addEventListener('change', () => { if (input.value) num.value = input.value; });
+    num.addEventListener('input', () => { if (num.value !== input.value) input.value = ''; });
+  }
+}
+
 /** One episode's CalOMS records: what it has, what is wrong with each, and what it still needs. */
 export async function calomsEpisodeDialog(episode, { onChange } = {}) {
   const cfg = await calomsConfig();
@@ -100,6 +123,7 @@ export async function calomsEpisodeDialog(episode, { onChange } = {}) {
       m.close(); toast(r.warnings && r.warnings.length ? `Saved, with ${r.warnings.length} warning${r.warnings.length === 1 ? '' : 's'}` : 'CalOMS record saved', 'ok');
       box.close(); calomsEpisodeDialog(episode, { onChange }); if (onChange) onChange();
     } });
+    wireCalomsAlt(f);
     const m = modal(`CalOMS ${RECORD_LABEL[type].toLowerCase()} — episode from ${fmt.date(episode.opened_at)}`, f, { wide: true });
   };
   const rows = d.records;
@@ -324,7 +348,7 @@ route('caloms', async (r) => {
         h('li', {}, h('b', {}, 'Preview'), ' to check the file. A preview has PREVIEW / NOT FOR SUBMISSION where names go and no dates of birth, so it cannot be submitted; nobody\'s accounting of disclosures changes.'),
         h('li', {}, h('b', {}, 'Produce the submission file'), ' when the records are ready. This is the disclosure: each client in it gets a "State reporting (CalOMS)" entry in their accounting of disclosures, its records are marked as sent, and the file downloads.'),
         h('li', {}, 'Send that file to DHCS unchanged. It is kept here, identified by its SHA-256, for ', String((subs && subs.keep_days) || 90), ' days, so it can be downloaded again.')),
-      h('p', { class: 'small muted' }, 'The layout has not been verified against the current DHCS CalOMS Tx data dictionary; see the README in the zip and docs/compliance/CALOMS.md before the first submission.'),
+      h('p', { class: 'small muted' }, 'The code values were verified against the DHCS CalOMS Tx data dictionary (File Version 3.0, October 2024). The column names and file layout are SUDS\u2019s own: see the README in the zip and docs/compliance/CALOMS.md before the first submission.'),
       h('div', { class: 'row' },
         h('button', { class: 'btn', disabled: !cfg.enabled, 'data-caloms-download': '1', onClick: () => downloadCsv(`/api/caloms/extract?from=${from}&to=${to}`) }, 'Download preview (not for submission)'),
         h('button', { class: 'btn primary', disabled: !cfg.enabled, 'data-caloms-submitted': '1', onClick: async () => {

@@ -150,7 +150,8 @@ function calomsSchema(type) {
 function calomsPrompt({ type, text }) {
   const S = require('./caloms-spec');
   const lines = calomsFields(type).map(f => {
-    if (f.set) return `- ${f.key} (${f.label})${f.multi ? ' [up to 5 codes]' : ''}: ${S.SETS[f.set].map(c => `${c.code}=${c.label}`).join('; ')}`;
+    if (f.set) return `- ${f.key} (${f.label})${f.multi ? ` [up to ${f.multi_max || S.MULTI_MAX} codes]` : ''}: ${S.SETS[f.set].map(c => `${c.code}=${c.label}`).join('; ')}`;
+    if (f.alt) return `- ${f.key} (${f.label}): whole number ${f.min}-${f.max}, or one of ${f.alt.join(', ')}`;
     return `- ${f.key} (${f.label}): whole number${f.min !== undefined ? ` ${f.min}-${f.max}` : ''}`;
   });
   return {

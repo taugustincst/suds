@@ -242,9 +242,9 @@ module.exports = (r) => {
       let value = null;
       if (f.set) {
         const codes = new Set(S.SETS[f.set].map(c => c.code));
-        if (f.multi) { const vals = [...new Set(raw.split(/[\s,;]+/).filter(c => codes.has(c)))].slice(0, S.MULTI_MAX); value = vals.length ? vals : null; }
+        if (f.multi) { const vals = [...new Set(raw.split(/[\s,;]+/).filter(c => codes.has(c)))].slice(0, f.multi_max || S.MULTI_MAX); value = vals.length ? vals : null; }
         else value = codes.has(raw) ? raw : null;
-      } else if (f.type === 'int') { const n = Number(raw); value = /^\d+$/.test(raw) && n >= (f.min ?? 0) && n <= (f.max ?? 999) ? n : null; }
+      } else if (f.type === 'int') { const n = Number(raw); value = /^\d+$/.test(raw) && ((n >= (f.min ?? 0) && n <= (f.max ?? 999)) || (f.alt || []).includes(n)) ? n : null; }
       if (value === null) { dropped++; continue; }
       seen.add(f.key);
       const label = f.set ? (Array.isArray(value) ? value : [value]).map(c => S.SETS[f.set].find(y => y.code === c).label).join('; ') : String(value);

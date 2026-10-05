@@ -44,9 +44,9 @@ function config() {
   return {
     enabled: enabled(), providers: providers(), start_date: startDate(), schedule: schedule(),
     spec: {
-      version: S.SPEC_VERSION, source: S.SPEC_SOURCE, sets: S.SETS, record_types: S.RECORD_TYPES, multi_max: S.MULTI_MAX,
+      version: S.SPEC_VERSION, source: S.SPEC_SOURCE, sets: S.SETS, alt_labels: S.ALT_LABELS, record_types: S.RECORD_TYPES, multi_max: S.MULTI_MAX,
       administrative_discharge: S.ADMINISTRATIVE_DISCHARGE,
-      fields: S.FIELDS.map(f => ({ key: f.key, name: f.name, label: f.label, set: f.set || null, type: f.type || (f.set ? 'code' : 'text'), multi: !!f.multi, min: f.min, max: f.max, in: f.in, group: f.group, help: f.help || null,
+      fields: S.FIELDS.map(f => ({ key: f.key, name: f.name, label: f.label, set: f.set || null, type: f.type || (f.set ? 'code' : 'text'), multi: !!f.multi, multi_max: f.multi_max || null, min: f.min, max: f.max, alt: f.alt || null, dict: f.dict || null, in: f.in, group: f.group, help: f.help || null,
         req: typeof f.req === 'function' ? 'conditional' : f.req })),
     },
     from_suds: S.FROM_SUDS,
@@ -126,19 +126,27 @@ function check(rec, ctx) {
       if (!f.multi && Array.isArray(v)) { add(f.key, 'invalid_code', `${f.label} takes one answer`); continue; }
       const bad = vals.filter(x => !codes.includes(String(x)));
       if (bad.length) add(f.key, 'invalid_code', `${f.label}: ${bad.join(', ')} is not a valid code`);
-      if (f.multi && vals.length > S.MULTI_MAX) add(f.key, 'too_many_codes', `${f.label} takes at most ${S.MULTI_MAX} answers`);
+      if (f.multi && vals.length > (f.multi_max || S.MULTI_MAX)) add(f.key, 'too_many_codes', `${f.label} takes at most ${f.multi_max || S.MULTI_MAX} answers`);
       if (f.multi && new Set(vals).size !== vals.length) add(f.key, 'duplicate_code', `${f.label} lists the same answer twice`);
     } else if (f.type === 'int') {
       if (typeof v !== 'number' || !Number.isInteger(v)) add(f.key, 'not_a_number', `${f.label} must be a whole number`);
-      else if (v < f.min || v > f.max) add(f.key, 'out_of_range', `${f.label} must be between ${f.min} and ${f.max}`);
+      else if (v < f.min || v > f.max) {
+        // The dictionary lets several numeric elements carry a 999xx "alternative value" (declined to
+        // state, unable to answer, not sure) instead of a number — caloms-spec.js `alt`.
+        if (!(f.alt && f.alt.includes(v))) add(f.key, 'out_of_range', `${f.label} must be between ${f.min} and ${f.max}${f.alt ? `, or ${f.alt.join(' / ')}` : ''}`);
+      }
     } else if (f.type === 'date') {
       if (!validDay(v)) add(f.key, 'date_invalid', `${f.label} must be a real date (YYYY-MM-DD)`);
     } else if (f.type === 'zip') {
-      if (!/^\d{5}$/.test(v)) add(f.key, 'zip_invalid', `${f.label} must be 5 digits`);
+      // CID-8 (p.44): a five-digit ZIP, 00000 when homeless, XXXXX declined to state, ZZZZZ unable to answer.
+      if (!/^(\d{5}|XXXXX|ZZZZZ)$/.test(v)) add(f.key, 'zip_invalid', `${f.label} must be 5 digits, 00000, XXXXX or ZZZZZ`);
     }
   }
   const has = (k) => !empty(a[k]);
   const num = (k) => (typeof a[k] === 'number' ? a[k] : null);
+  // A real count, not a 999xx alternative value: cross-field arithmetic only makes sense on counts.
+  const countOf = (k) => { const v = num(k); const f = S.FIELD[k]; return (v !== null && f && v >= f.min && v <= f.max) ? v : null; };
+  const codeOf = (k) => (a[k] === undefined || a[k] === null ? null : String(a[k]));
 
   if (type === 'admission') {
     if (!ctx.dob || !validDay(ctx.dob)) add('dob', 'dob_missing', 'The client\'s date of birth is required for a CalOMS admission (add it on the client record)');
@@ -148,25 +156,39 @@ function check(rec, ctx) {
         const age = ageOn(ctx.dob, date);
         if (age > 110) add('dob', 'age_out_of_range', `Age at admission (${age}) is over 110; check the date of birth`);
         else if (age < 12) add('dob', 'age_under_12', `Age at admission is ${age}; confirm the date of birth`, 'warning');
-        for (const k of ['primary_age_first_use', 'secondary_age_first_use']) if (num(k) !== null && num(k) > age) add(k, 'first_use_after_admission', `${label(k)} (${num(k)}) is older than the client's age at admission (${age})`);
+        for (const k of ['primary_age_first_use', 'secondary_age_first_use']) if (countOf(k) !== null && countOf(k) > age) add(k, 'first_use_after_admission', `${label(k)} (${countOf(k)}) is older than the client's age at admission (${age})`);
+        // CID-17 rule 2 (p.56): cannot be a veteran when under 17 at admission.
+        if (codeOf('veteran') === '1' && age < 17) add('veteran', 'veteran_under_17', 'A client under 17 at admission cannot be a U.S. veteran');
       }
     }
-    if (a.pregnant === 'Y' && a.sex_at_birth && a.sex_at_birth !== 'F') add('pregnant', 'pregnant_not_female', 'Pregnant can only be Yes when sex at birth is Female');
-    if (a.primary_drug === '00') add('primary_drug', 'primary_drug_none', 'Primary drug cannot be None');
-    if (has('secondary_drug') && a.secondary_drug !== '00' && a.secondary_drug === a.primary_drug) add('secondary_drug', 'secondary_same_as_primary', 'Secondary drug must differ from the primary drug');
-    if (a.iv_use_30 === 'Y' && a.iv_use_12m === 'N') add('iv_use_12m', 'needle_use_inconsistent', 'Needle use in the past 30 days means needle use in the past 12 months too');
-    if (num('children_cps') !== null && num('children_under_18') !== null && num('children_cps') > num('children_under_18')) add('children_cps', 'children_cps_exceeds', 'Children living with others by protective order cannot exceed the number of children under 18');
-    for (const [k, exclusive] of [['disability', ['1', '9']], ['race', ['19']]]) {
-      const vals = Array.isArray(a[k]) ? a[k] : [];
+    // MED-6 rule 2 (p.80): pregnant cannot be Yes when gender is Male or Transgender (Trans Woman). The
+    // dictionary prints "Male (2)"; CID-3 (p.40) defines Male as 1 — the codes below follow CID-3.
+    if (codeOf('pregnant') === '1' && ['1', '4'].includes(codeOf('gender_identity'))) add('pregnant', 'pregnant_not_possible', 'Pregnant at admission cannot be Yes for this gender');
+    // ADU-1a rule 2 (p.22): None (0) is not allowed for admission records.
+    if (codeOf('primary_drug') === '0') add('primary_drug', 'primary_drug_none', 'Primary drug cannot be None on an admission');
+    if (has('secondary_drug') && codeOf('secondary_drug') !== '0' && codeOf('secondary_drug') === codeOf('primary_drug')) add('secondary_drug', 'secondary_same_as_primary', 'Secondary drug must differ from the primary drug');
+    // ADU-10/ADU-11: days of needle use in the past 30 means needle use in the past 12 months too.
+    if (countOf('iv_use_30') > 0 && codeOf('iv_use_12m') === '0') add('iv_use_12m', 'needle_use_inconsistent', 'Needle use in the past 30 days means needle use in the past 12 months too');
+    // LEG-1 rules (p.66) with the ADM-5 cross-edits (p.14): a criminal-justice referral means involvement.
+    if (codeOf('criminal_justice') === '1' && ['7', '8', '10', '12'].includes(codeOf('referral_source'))) add('criminal_justice', 'cj_status_referral_conflict', 'Criminal justice status cannot be "No criminal justice involvement" with this referral source');
+    if (codeOf('referral_source') === '8' && codeOf('criminal_justice') !== '4') add('criminal_justice', 'cj_status_ab109', 'A Post-Release Community Supervision (AB 109) referral needs criminal justice status "Post-release Community Supervision (AB 109) or on probation\u2026"');
+    if (codeOf('criminal_justice') === '99904' && !['3', '4', '5'].includes(codeOf('service_type')) && !(Array.isArray(a.disability) && a.disability.map(String).includes('7'))) add('criminal_justice', 'cj_unable_restricted', '"Client unable to answer" for criminal justice status is only allowed for a detox service or a developmentally disabled client');
+    if (countOf('children_cps') !== null && countOf('children_under_18') !== null && countOf('children_cps') > countOf('children_under_18')) add('children_cps', 'children_cps_exceeds', 'Children living with someone else by protective order cannot exceed the number of children');
+    // CID-18 rule 2 (p.57): None (1), declined (99900) and unable (99904) take no other disability codes.
+    // CID-15 rules 4-5 (p.53): Race Not Available (19) and declined (99900) take no other race codes.
+    for (const [k, exclusive] of [['disability', ['1', '99900', '99904']], ['race', ['19', '99900']]]) {
+      const vals = (Array.isArray(a[k]) ? a[k] : []).map(String);
       if (vals.length > 1 && vals.some(x => exclusive.includes(x))) add(k, 'exclusive_code_combined', `${label(k)}: "${S.SETS[S.FIELD[k].set].find(c => c.code === vals.find(x => exclusive.includes(x))).label}" cannot be combined with other answers`);
     }
     if (dateOk && ctx.episode && ctx.episode.opened_at && ctx.episode.opened_at.slice(0, 10) !== date) add('record_date', 'admission_date_differs', `Admission date differs from the episode's start (${ctx.episode.opened_at.slice(0, 10)})`, 'warning');
   }
   // Repeated measures: the same checks wherever they appear.
-  const secondaryDrug = type === 'admission' ? a.secondary_drug : (ctx.admission || {}).secondary_drug;
-  if ((secondaryDrug === '00') && num('secondary_days_used') > 0) add('secondary_days_used', 'secondary_days_without_drug', 'Days secondary drug used must be 0 or blank when there is no secondary drug');
-  if (num('jail_days_30') !== null && num('prison_days_30') !== null && num('jail_days_30') + num('prison_days_30') > 30) add('prison_days_30', 'jail_prison_over_30', 'Days in jail and in prison together cannot exceed 30');
-  if (num('hospital_nights_30') !== null && num('psych_inpatient_days_30') !== null && num('hospital_nights_30') + num('psych_inpatient_days_30') > 30) add('psych_inpatient_days_30', 'inpatient_over_30', 'Hospital nights and psychiatric inpatient days together exceed 30; check both', 'warning');
+  const secondaryDrug = type === 'admission' ? codeOf('secondary_drug') : (ctx.admission ? String(ctx.admission.secondary_drug) : null);
+  if (secondaryDrug === '0' && countOf('secondary_days_used') > 0) add('secondary_days_used', 'secondary_days_without_drug', 'Days secondary drug used must be 0 or blank when there is no secondary drug');
+  if (countOf('jail_days_30') !== null && countOf('prison_days_30') !== null && countOf('jail_days_30') + countOf('prison_days_30') > 30) add('prison_days_30', 'jail_prison_over_30', 'Days in jail and in prison together cannot exceed 30');
+  if (countOf('hospital_nights_30') !== null && countOf('psych_inpatient_days_30') !== null && countOf('hospital_nights_30') + countOf('psych_inpatient_days_30') > 30) add('psych_inpatient_days_30', 'inpatient_over_30', 'Hospital nights and psychiatric inpatient days together exceed 30; check both', 'warning');
+  // MED-4 rule 3 (p.78): any ER visit or hospital night means days with physical health problems > 0.
+  if ((countOf('er_visits_30') > 0 || countOf('hospital_nights_30') > 0) && !(countOf('physical_health_days_30') > 0)) add('physical_health_days_30', 'health_days_zero', 'Emergency room visits or hospital nights were reported, so days with physical health problems cannot be 0');
 
   if (type === 'discharge' || type === 'annual_update') {
     if (!ctx.admission) add('record_type', 'no_admission', `There is no CalOMS admission record for this episode, so this ${type === 'discharge' ? 'discharge' : 'annual update'} cannot be submitted`);
@@ -318,7 +340,7 @@ function monthsBetween(from, to) {
   while (y < ty || (y === ty && m <= tm)) { out.push(`${y}-${String(m).padStart(2, '0')}`); m++; if (m > 12) { m = 1; y++; } if (out.length > 240) break; }
   return out;
 }
-const MULTI_COLS = (f) => Array.from({ length: S.MULTI_MAX }, (_, i) => ({ key: `${f.key}_${i + 1}`, name: `${f.name}${i + 1}` }));
+const MULTI_COLS = (f) => Array.from({ length: f.multi_max || S.MULTI_MAX }, (_, i) => ({ key: `${f.key}_${i + 1}`, name: `${f.name}${i + 1}` }));
 function columnsFor(type) {
   const cols = [...S.ID_COLUMNS, { key: 'record_date', name: type === 'admission' ? 'AdmissionTransactionDate' : type === 'discharge' ? 'DischargeDate' : 'AnnualUpdateDate' }];
   for (const f of S.fieldsFor(type)) { if (f.multi) cols.push(...MULTI_COLS(f)); else cols.push({ key: f.key, name: f.name }); }
@@ -418,11 +440,11 @@ function readme({ from, to, counts, excluded, activity, generatedBy, missing, pr
     `Records held back because of fatal errors: ${excluded}. Missing or overdue records: ${missing}.`,
     'Fix them in SUDS (Reports -> State reporting -> Validation) and produce a new submission for them.',
     '',
-    'IMPORTANT: the code values and column names in these files follow SUDS\'s CalOMS Tx layout, which has',
-    'NOT been verified against the current DHCS CalOMS Tx data dictionary / file specification. Before the',
-    'first submission the county must check every code table (server/caloms-spec.js, docs/compliance/CALOMS.md)',
-    'against the dictionary DHCS has issued, and convert these CSV files to the DHCS upload format if it is',
-    'not CSV. Dates are YYYY-MM-DD; multi-answer elements (race, disability) are split into numbered columns.',
+    'IMPORTANT: the code values in these files were verified against the DHCS CalOMS Tx Data Dictionary',
+    '(File Version 3.0, October 2024) — see docs/compliance/CALOMS.md. The column names and file layout',
+    'follow SUDS\'s CalOMS Tx layout and have NOT been verified against the DHCS file specification: before',
+    'the first submission the county must convert these CSV files to the DHCS upload format if it is not',
+    'CSV. Dates are YYYY-MM-DD; multi-answer elements (race, disability) are split into numbered columns.',
     '',
     'How to submit (county process)',
     '  1. Resolve every fatal error in the SUDS validation report for the period.',
