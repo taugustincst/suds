@@ -862,6 +862,56 @@ const migrations = [
   //     person), with every index schema.sql declares on them. New tables: nothing to backfill. Office server only
   //     (never synchronised); SUDS on this device keeps its own. Self-contained and idempotent, so it can be renumbered.
   (d) => { createTablesFromSchema(d, safeSchema(), ['incoming_referrals', 'incoming_referral_attempts'], 70); },
+  // 71: CalOMS Tx dictionary verification (released in 1.25.0): remap every stored record's answers from the
+  //     old unverified codes to the DHCS Data Dictionary v3.0 values (server/caloms-spec.js). Y/N become 1/0;
+  //     service types 01-13 become ADM-4 1-7 (ASAM outpatient -> 1 Non-Residential, ASAM residential/inpatient
+  //     -> 2 Residential, ambulatory/residential/inpatient withdrawal management -> 3/4 detox, NTP -> 7, recovery
+  //     services -> 1); referral sources 01-16 become ADM-5 1-14; ethnicities 01-06 become CID-16 1-6/99900;
+  //     race 18/19 become 17/99900; disability 9 becomes 99900; gender 6/7 become 99903/99900; drug codes are
+  //     unpadded and 21/99 become 99903; route 5 becomes 99903. Answers with no dictionary counterpart are
+  //     dropped so validation flags them for the worker (psychiatric-medication/needle-use/lives-with "Yes",
+  //     which are now day counts; "Unknown" mental-illness diagnosis; the removed sex-at-birth and
+  //     MAT-planned elements). Out-of-range numbers are kept as-is so the edit checks flag them. The
+  //     service_type clear-text column is remapped the same way. Self-contained and idempotent (every mapping
+  //     is a fixed point on the new codes), so it can be renumbered.
+  (d) => {
+    const { decrypt, encrypt } = require('./crypto');
+    const SERVICE = { '01': '1', '02': '1', '03': '1', '04': '2', '05': '2', '06': '2', '07': '2', '08': '3', '09': '4', '10': '4', '11': '7', '12': '7', '13': '1' };
+    const REFERRAL = { '01': '1', '02': '2', '03': '3', '04': '4', '05': '5', '06': '13', '07': '12', '08': '9', '09': '7', '10': '7', '11': '10', '12': '10', '13': '11', '14': '10', '15': '10', '16': '3' };
+    const ETHNIC = { '01': '2', '02': '4', '03': '3', '04': '5', '05': '1', '06': '99900' };
+    const RACE = { '17': '17', '18': '17', '19': '99900' };
+    const DISAB = { '9': '99900' };
+    const GENDER = { '6': '99903', '7': '99900' };
+    const YN = { Y: '1', N: '0' };
+    const VET = { Y: '1', N: '0', D: '99900' };
+    const drug = (v) => { const s = String(v); if (s === '21' || s === '99') return '99903'; const m = /^0(\d)$/.exec(s); return m ? m[1] : s; };
+    const upd = d.prepare(`UPDATE caloms_records SET answers_enc=?, service_type=? WHERE id=?`);
+    for (const r of d.prepare(`SELECT id, service_type, answers_enc FROM caloms_records`).all()) {
+      let a = {};
+      try { a = r.answers_enc ? JSON.parse(decrypt(r.answers_enc)) : {}; } catch { continue; } // a row we cannot read is left alone
+      const mapStr = (table) => (v) => { const s = String(v); return table[s] !== undefined ? table[s] : s; };
+      const mapList = (table) => (v) => (Array.isArray(v) ? v : [v]).map(x => { const s = String(x); return table[s] !== undefined ? table[s] : s; });
+      if (a.service_type !== undefined) a.service_type = mapStr(SERVICE)(a.service_type);
+      if (a.referral_source !== undefined) a.referral_source = mapStr(REFERRAL)(a.referral_source);
+      if (a.ethnicity !== undefined) a.ethnicity = mapStr(ETHNIC)(a.ethnicity);
+      if (a.race !== undefined) a.race = mapList(RACE)(a.race);
+      if (a.disability !== undefined) a.disability = mapList(DISAB)(a.disability);
+      if (a.gender_identity !== undefined) a.gender_identity = mapStr(GENDER)(a.gender_identity);
+      for (const k of ['primary_drug', 'secondary_drug']) if (a[k] !== undefined) a[k] = drug(a[k]);
+      for (const k of ['primary_route', 'secondary_route']) if (String(a[k]) === '5') a[k] = '99903';
+      for (const k of ['calworks', 'pregnant', 'iv_use_12m', 'school_enrolled', 'job_training']) if (a[k] !== undefined) a[k] = mapStr(YN)(a[k]);
+      if (a.veteran !== undefined) a.veteran = mapStr(VET)(a.veteran);
+      if (a.mh_diagnosis !== undefined) { const s = String(a.mh_diagnosis); a.mh_diagnosis = s === 'U' ? undefined : mapStr(YN)(s); if (a.mh_diagnosis === undefined) delete a.mh_diagnosis; }
+      // Now day counts: "No" is 0 days; "Yes" has no day count, so it is dropped for the worker to re-ask.
+      for (const k of ['psych_meds', 'iv_use_30', 'lives_with_user']) {
+        if (a[k] === 'N') a[k] = 0;
+        else if (a[k] === 'Y') delete a[k];
+      }
+      delete a.mat_planned; delete a.sex_at_birth;
+      const service = r.service_type && SERVICE[String(r.service_type)] ? SERVICE[String(r.service_type)] : r.service_type;
+      upd.run(encrypt(JSON.stringify(a)), service, r.id);
+    }
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

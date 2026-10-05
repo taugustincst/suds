@@ -286,6 +286,53 @@ test('migration 46: a preferred name with no search index gets one; a written in
   for (const id of Object.values(ids)) db().run(`DELETE FROM clients WHERE id=?`, id);
 });
 
+test('migration 71: CalOMS answers are remapped from the old unverified codes to the dictionary v3.0 codes', () => {
+  const d = require('../server/db');
+  const { encrypt, decrypt, uuid } = require('../server/crypto');
+  const ep = uuid(); const id = uuid();
+  db().run(`INSERT INTO episodes(id,client_id,opened_at,opened_by) VALUES(?,?,?,?)`, ep, ids.client, '2026-09-01', ids.user);
+  const old = {
+    service_type: '04', referral_source: '08', ethnicity: '01', race: ['17', '18', '19'], disability: ['9'],
+    gender_identity: '7', primary_drug: '21', secondary_drug: '99', primary_route: '5',
+    calworks: 'Y', pregnant: 'N', iv_use_12m: 'Y', school_enrolled: 'N', job_training: 'Y',
+    veteran: 'D', mh_diagnosis: 'U', psych_meds: 'N', iv_use_30: 'Y', lives_with_user: 'N',
+    mat_planned: 'Y', sex_at_birth: 'F', arrests_30: 40,
+  };
+  db().run(`INSERT INTO caloms_records(id,client_id,episode_id,record_type,provider_id,record_date,service_type,answers_enc,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+    id, ids.client, ep, 'admission', '123456', '2026-09-01', '04', encrypt(JSON.stringify(old)), ids.user, ids.user);
+  // Run migration 71 again, as an upgrade from 70 would.
+  db().setSetting('schema_version', '70');
+  d.close(); d.open(dbPath);
+  const row = db().one(`SELECT service_type, answers_enc FROM caloms_records WHERE id=?`, id);
+  const a = JSON.parse(decrypt(row.answers_enc));
+  assert.equal(row.service_type, '2', 'the clear-text service type is remapped too');
+  assert.equal(a.service_type, '2');
+  assert.equal(a.referral_source, '9', 'DUI/DWI 08 -> 9');
+  assert.equal(a.ethnicity, '2', 'Mexican 01 -> 2');
+  assert.deepEqual(a.race, ['17', '17', '99900']);
+  assert.deepEqual(a.disability, ['99900']);
+  assert.equal(a.gender_identity, '99900', 'declined 7 -> 99900');
+  assert.equal(a.primary_drug, '99903', 'fentanyl 21 -> 99903');
+  assert.equal(a.secondary_drug, '99903', 'other 99 -> 99903');
+  assert.equal(a.primary_route, '99903', 'route other 5 -> 99903');
+  assert.equal(a.calworks, '1'); assert.equal(a.pregnant, '0'); assert.equal(a.iv_use_12m, '1');
+  assert.equal(a.school_enrolled, '0'); assert.equal(a.job_training, '1');
+  assert.equal(a.veteran, '99900');
+  assert.ok(!('mh_diagnosis' in a), '"unknown" has no counterpart and is dropped for the worker to re-ask');
+  assert.equal(a.psych_meds, 0, '"no" is 0 days');
+  assert.ok(!('iv_use_30' in a), '"yes" has no day count and is dropped');
+  assert.equal(a.lives_with_user, 0);
+  assert.ok(!('mat_planned' in a) && !('sex_at_birth' in a), 'removed elements are dropped');
+  assert.equal(a.arrests_30, 40, 'an out-of-range number is kept so the edit checks flag it');
+  assert.equal(db().getSetting('schema_version'), String(d.LATEST_SCHEMA_VERSION));
+  // A second run changes nothing.
+  db().setSetting('schema_version', '70');
+  d.close(); d.open(dbPath);
+  assert.deepEqual(JSON.parse(decrypt(db().one(`SELECT answers_enc FROM caloms_records WHERE id=?`, id).answers_enc)), a);
+  db().run(`DELETE FROM caloms_records WHERE id=?`, id);
+  db().run(`DELETE FROM episodes WHERE id=?`, ep);
+});
+
 // ---- Databases written by later releases ----
 // 1.6.1 is not the only starting point a county has: each fixture below is a database a released SUDS created
 // and wrote through its own API (test/fixtures/make-release-fixture.js: schema, the rows, indexes, triggers;
@@ -389,6 +436,10 @@ for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.
           for (const [id, v] of Object.entries(byId)) {
             const r = db().one(`SELECT "${col}" v FROM "${t}" WHERE id=?`, id);
             if (!r) continue;
+            // Migration 71 deliberately remaps CalOMS answers to the dictionary v3.0 codes (and the
+            // clear-text service_type with them): those values change by design, and are tested directly
+            // in 'migration 71' above.
+            if (t === 'caloms_records' && col === 'answers_enc') { same++; continue; }
             assert.equal(r.v === null || r.v === '' ? r.v : decrypt(r.v), v, `${t}.${col} of ${id} after the upgrade`); same++;
             if (!Object.prototype.hasOwnProperty.call(before[t] || {}, col) && v) migrated++;
           }
@@ -799,7 +850,7 @@ test('SUDS 1.23.0\'s first start on a 1.22.0 database: county consents, releases
     assert.ok(db().all(`PRAGMA table_info(tasks)`).some((c) => c.name === 'note_id' && c.type === 'TEXT' && !c.notnull && c.dflt_value === null));
     // Migration 70 (released in 1.24.0): the incoming-referrals queue, two new tables, empty after the upgrade, with
     // their indexes (the shape check above compares them with a fresh install).
-    assert.equal(m69.LATEST_SCHEMA_VERSION, 70);
+    assert.equal(m69.LATEST_SCHEMA_VERSION, 71);
     for (const t of ['incoming_referrals', 'incoming_referral_attempts']) assert.equal(db().one(`SELECT COUNT(*) n FROM ${t}`).n, 0, `${t} exists and is empty`);
     for (const i of ['idx_incoming_referrals_status', 'idx_incoming_referrals_assigned', 'idx_incoming_referrals_client', 'idx_incoming_referrals_name', 'idx_incoming_referral_attempts_referral']) assert.ok(db().one(`SELECT 1 x FROM sqlite_master WHERE type='index' AND name=?`, i), i);
     // The field scope still follows the account; the whole device stays whole.

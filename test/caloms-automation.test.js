@@ -12,12 +12,12 @@ const db = H.db;
 let admin, sup, nav, fin, navId;
 const PROVIDER = '123456'; const SATELLITE = '654321';
 const ADMISSION = {
-  admission_transaction: '1', service_type: '01', referral_source: '01', days_waited: 3, prior_episodes: 0, mat_planned: 'N', calworks: 'N',
-  sex_at_birth: 'F', gender_identity: '2', race: ['01'], ethnicity: '05', veteran: 'N', disability: ['1'], zip_code: '95814', education_grade: 12,
-  children_under_18: 1, children_cps: 0, pregnant: 'N', primary_drug: '05', primary_route: '2', primary_age_first_use: 19, secondary_drug: '00', iv_use_12m: 'N',
-  primary_days_used: 10, alcohol_days: 0, iv_use_30: 'N', employment_status: '3', paid_work_days: 0, school_enrolled: 'N', job_training: 'N', living_arrangement: '2',
-  arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 2, mh_diagnosis: 'N', mh_er_visits_30: 0,
-  psych_inpatient_days_30: 0, psych_meds: 'N', family_conflict_days_30: 1, social_support_days_30: 4, lives_with_user: 'N',
+  admission_transaction: '1', service_type: '1', referral_source: '1', days_waited: 3, prior_episodes: 0, medication: '1', calworks: '0',
+  criminal_justice: '1', gender_identity: '2', sexual_orientation: '1', race: ['01'], ethnicity: '1', veteran: '0', disability: ['1'], zip_code: '95814', education_grade: 12,
+  children_under_18: 1, children_cps: 0, pregnant: '0', consent: '1', primary_drug: '5', primary_route: '2', primary_age_first_use: 19, secondary_drug: '0', iv_use_12m: '0',
+  primary_days_used: 10, alcohol_days: 0, iv_use_30: 0, employment_status: '3', paid_work_days: 0, school_enrolled: '0', job_training: '0', living_arrangement: '2',
+  arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 2, mh_diagnosis: '0', mh_er_visits_30: 0,
+  psych_inpatient_days_30: 0, psych_meds: 0, family_conflict_days_30: 1, social_support_days_30: 4, lives_with_user: 0,
 };
 const SCHED = () => require('../server/caloms-schedule');
 const today = () => require('../server/routes/budget').localDate();

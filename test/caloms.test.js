@@ -15,15 +15,17 @@ const TODAY = day(0);
 const PROVIDER = '123456';
 
 // A complete, valid admission. Every test that wants one fatal error starts from here and breaks one thing.
+// Codes are the DHCS Data Dictionary v3.0 values (server/caloms-spec.js).
 const ADMISSION = {
-  admission_transaction: '1', service_type: '01', referral_source: '01', days_waited: 3, prior_episodes: 0, mat_planned: 'N', calworks: 'N',
-  sex_at_birth: 'F', gender_identity: '2', race: ['01'], ethnicity: '05', veteran: 'N', disability: ['1'], zip_code: '95814', education_grade: 12,
-  children_under_18: 1, children_cps: 0, pregnant: 'N', primary_drug: '05', primary_route: '2', primary_age_first_use: 19, secondary_drug: '00', iv_use_12m: 'N',
+  admission_transaction: '1', service_type: '1', referral_source: '1', days_waited: 3, prior_episodes: 0, medication: '1', calworks: '0',
+  criminal_justice: '1', gender_identity: '2', sexual_orientation: '1', race: ['01'], ethnicity: '1', veteran: '0', disability: ['1'],
+  zip_code: '95814', education_grade: 12, children_under_18: 1, children_cps: 0, pregnant: '0', consent: '1',
+  primary_drug: '5', primary_route: '2', primary_age_first_use: 19, secondary_drug: '0', iv_use_12m: '0',
 };
 const MEASURES = {
-  primary_days_used: 10, alcohol_days: 0, iv_use_30: 'N', employment_status: '3', paid_work_days: 0, school_enrolled: 'N', job_training: 'N', living_arrangement: '2',
-  arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 2, mh_diagnosis: 'N', mh_er_visits_30: 0,
-  psych_inpatient_days_30: 0, psych_meds: 'N', family_conflict_days_30: 1, social_support_days_30: 4, lives_with_user: 'N',
+  primary_days_used: 10, alcohol_days: 0, iv_use_30: 0, employment_status: '3', paid_work_days: 0, school_enrolled: '0', job_training: '0', living_arrangement: '2',
+  arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 2, mh_diagnosis: '0', mh_er_visits_30: 0,
+  psych_inpatient_days_30: 0, psych_meds: 0, family_conflict_days_30: 1, social_support_days_30: 4, lives_with_user: 0,
 };
 const admission = (over = {}) => ({ ...ADMISSION, ...MEASURES, ...over });
 
@@ -60,7 +62,8 @@ test('CalOMS is off by default, and any signed-in role can read the configuratio
   assert.equal(c.status, 200);
   assert.equal(c.data.enabled, false, 'off by default so a prevention programme is never asked');
   assert.ok(c.data.spec.fields.length > 40 && c.data.spec.sets.DRUGS.length > 10);
-  assert.match(c.data.spec.source, /to verify/i, 'the layout says it is unverified against the DHCS dictionary');
+  assert.match(c.data.spec.version, /verified against DHCS CalOMS Tx Data Dictionary v3\.0/, 'the layout says the code values are verified against the DHCS dictionary');
+  assert.match(c.data.spec.source, /not dictionary-verified/, 'and that the record layout itself is not');
 });
 
 test('only an administrator turns CalOMS on, and only with a valid provider ID', async () => {
@@ -84,14 +87,14 @@ test('with CalOMS on, an admission needs the CalOMS answers, and they are stored
   const missing = await nav.post(`/api/clients/${id}/episodes`, { opened_at: TODAY });
   assert.equal(missing.status, 400); assert.match(missing.data.error, /CalOMS admission/);
   assert.ok(!db.one(`SELECT 1 FROM episodes WHERE client_id=?`, id), 'no episode without its admission record');
-  const r = await nav.post(`/api/clients/${id}/episodes`, { opened_at: TODAY, caloms: { provider_id: PROVIDER, answers: admission({ pregnant: 'Y', race: ['01', '07'] }) } });
+  const r = await nav.post(`/api/clients/${id}/episodes`, { opened_at: TODAY, caloms: { provider_id: PROVIDER, answers: admission({ pregnant: '1', race: ['01', '07'] }) } });
   assert.equal(r.status, 201, JSON.stringify(r.data));
   const row = db.one(`SELECT * FROM caloms_records WHERE episode_id=?`, r.data.id);
-  assert.equal(row.record_type, 'admission'); assert.equal(row.record_date, TODAY); assert.equal(row.provider_id, PROVIDER); assert.equal(row.service_type, '01');
+  assert.equal(row.record_type, 'admission'); assert.equal(row.record_date, TODAY); assert.equal(row.provider_id, PROVIDER); assert.equal(row.service_type, '1');
   assert.match(row.answers_enc, /^v1:/, 'answers are encrypted');
   assert.doesNotMatch(row.answers_enc, /95814|pregnant/);
   const audits = db.all(`SELECT details FROM audit_log WHERE action='caloms.record.save' AND client_id=?`, id).map(a => a.details || '').join(' ');
-  assert.doesNotMatch(audits, /95814|pregnant|"Y"/, 'no answers in the audit trail');
+  assert.doesNotMatch(audits, /95814|pregnant/, 'no answers in the audit trail');
   const view = await nav.get(`/api/episodes/${r.data.id}/caloms`);
   assert.equal(view.status, 200);
   assert.equal(view.data.records[0].answers.zip_code, '95814');
@@ -101,7 +104,7 @@ test('with CalOMS on, an admission needs the CalOMS answers, and they are stored
 
 test('a fatal edit-check error blocks the save and names the field', async () => {
   const id = await newClient(nav);
-  const r = await nav.post(`/api/clients/${id}/episodes`, { opened_at: TODAY, caloms: { provider_id: PROVIDER, answers: admission({ sex_at_birth: 'M', pregnant: 'Y' }) } });
+  const r = await nav.post(`/api/clients/${id}/episodes`, { opened_at: TODAY, caloms: { provider_id: PROVIDER, answers: admission({ gender_identity: '1', pregnant: '1' }) } });
   assert.equal(r.status, 400);
   assert.ok(r.data.fields.caloms_pregnant, JSON.stringify(r.data));
   assert.ok(!db.one(`SELECT 1 FROM episodes WHERE client_id=?`, id), 'the admission is rolled back with its record');
@@ -113,7 +116,7 @@ test('a fatal edit-check error blocks the save and names the field', async () =>
 test('every fatal edit check fires on its own', () => {
   const C = require('../server/caloms');
   const ctx = { dob: '1990-04-02', episode: { opened_at: '2026-01-10' }, providers: [PROVIDER], today: '2026-09-25', admission: null };
-  const adm = (over = {}, rec = {}) => C.check({ record_type: 'admission', provider_id: PROVIDER, record_date: '2026-01-10', answers: { ...admission(), ...over }, ...rec }, ctx);
+  const adm = (over = {}, rec = {}, c = ctx) => C.check({ record_type: 'admission', provider_id: PROVIDER, record_date: '2026-01-10', answers: { ...admission(), ...over }, ...rec }, c);
   const fatalCodes = (issues) => issues.filter(i => i.severity === 'fatal').map(i => `${i.field}:${i.code}`);
   assert.deepEqual(fatalCodes(adm()), [], 'the fixture is clean');
   const cases = [
@@ -134,13 +137,18 @@ test('every fatal edit check fires on its own', () => {
     [C.check({ record_type: 'admission', provider_id: PROVIDER, record_date: '1989-01-10', answers: admission() }, ctx), 'dob:admission_before_birth'],
     [C.check({ record_type: 'admission', provider_id: PROVIDER, record_date: '2026-01-10', answers: admission() }, { ...ctx, dob: '1900-01-01' }), 'dob:age_out_of_range'],
     [adm({ primary_age_first_use: 50 }), 'primary_age_first_use:first_use_after_admission'],
-    [adm({ sex_at_birth: 'M', pregnant: 'Y' }), 'pregnant:pregnant_not_female'],
-    [adm({ primary_drug: '00' }), 'primary_drug:primary_drug_none'],
-    [adm({ secondary_drug: '05', secondary_route: '1', secondary_age_first_use: 20, secondary_days_used: 1 }), 'secondary_drug:secondary_same_as_primary'],
-    [adm({ secondary_drug: '02' }), 'secondary_route:required'],
-    [adm({ secondary_drug: '02', secondary_route: '1' }), 'secondary_age_first_use:required'],
+    [adm({ gender_identity: '1', pregnant: '1' }), 'pregnant:pregnant_not_possible'],
+    [adm({ gender_identity: '4', pregnant: '1' }), 'pregnant:pregnant_not_possible'],
+    [adm({ primary_drug: '0' }), 'primary_drug:primary_drug_none'],
+    [adm({ secondary_drug: '5', secondary_route: '1', secondary_age_first_use: 20, secondary_days_used: 1 }), 'secondary_drug:secondary_same_as_primary'],
+    [adm({ secondary_drug: '2' }), 'secondary_route:required'],
+    [adm({ secondary_drug: '2', secondary_route: '1' }), 'secondary_age_first_use:required'],
     [adm({ secondary_days_used: 4 }), 'secondary_days_used:secondary_days_without_drug'],
-    [adm({ iv_use_30: 'Y', iv_use_12m: 'N' }), 'iv_use_12m:needle_use_inconsistent'],
+    [adm({ iv_use_30: 5, iv_use_12m: '0' }), 'iv_use_12m:needle_use_inconsistent'],
+    [adm({ referral_source: '8', criminal_justice: '1' }), 'criminal_justice:cj_status_referral_conflict'],
+    [adm({ referral_source: '8', criminal_justice: '2' }), 'criminal_justice:cj_status_ab109'],
+    [adm({ veteran: '1' }, {}, { ...ctx, dob: '2012-01-01' }), 'veteran:veteran_under_17'],
+    [adm({ er_visits_30: 2, physical_health_days_30: 0 }), 'physical_health_days_30:health_days_zero'],
     [adm({ children_under_18: 1, children_cps: 2 }), 'children_cps:children_cps_exceeds'],
     [adm({ jail_days_30: 20, prison_days_30: 11 }), 'prison_days_30:jail_prison_over_30'],
   ];
@@ -269,7 +277,7 @@ test('the preview cannot be submitted; the submission file is produced once, acc
   const header = adm.split('\r\n')[0].split(',');
   assert.deepEqual(header.slice(0, 8), ['RecordType', 'ProviderID', 'ProviderClientID', 'ClientLastName', 'ClientFirstName', 'DateOfBirth', 'AdmissionDate', 'AdmissionTransactionDate']);
   assert.ok(header.includes('Race1') && header.includes('Race5') && header.includes('PregnantAtAdmission'));
-  assert.match(adm, new RegExp(`A,${PROVIDER},${codeOf(goodClient)},PREVIEW,NOT FOR SUBMISSION,,`), 'the clean admission is in, without the name or date of birth');
+  assert.match(adm, new RegExp(`1,${PROVIDER},${codeOf(goodClient)},PREVIEW,NOT FOR SUBMISSION,,`), 'the clean admission is in, without the name or date of birth');
   assert.doesNotMatch(adm, /Oms[a-z0-9]{5}|1990-04-02/, 'no names or dates of birth anywhere in the preview');
   assert.ok(!adm.includes(codeOf(badClient)), 'the admission with a fatal error is held back');
   assert.match(files['PREVIEW-README.txt'], /^PREVIEW - NOT FOR SUBMISSION/);
@@ -278,7 +286,7 @@ test('the preview cannot be submitted; the submission file is produced once, acc
   assert.equal(act[0], 'ProviderID,ReportMonth,Admissions,Discharges,AnnualUpdates,NoActivity');
   assert.ok(act.some(l => l.startsWith(`654321,${TODAY.slice(0, 7).replace('-', '')},0,0,0,Y`)));
   assert.ok(act.some(l => l.startsWith(`${PROVIDER},`) && l.endsWith(',N')));
-  assert.match(files['PREVIEW-README.txt'], /NOT been verified against the current DHCS CalOMS Tx data dictionary/);
+  assert.match(files['PREVIEW-README.txt'], /were verified against the DHCS CalOMS Tx Data Dictionary/);
   assert.match(files['PREVIEW-README.txt'], /held back because of fatal errors: [1-9]/);
   const C = require('../server/constants');
   assert.ok(x.headers.get('x-suds-export').includes(C.PART2_NOTICE_SHORT));
@@ -327,7 +335,7 @@ test('the preview cannot be submitted; the submission file is produced once, acc
   assert.match(got.x.headers.get('content-disposition'), new RegExp(`caloms-tx-SUBMISSION-${from}_${TODAY}-`));
   const real = unzip(got.buf);
   assert.deepEqual(Object.keys(real).sort(), ['README.txt', 'admissions.csv', 'annual_updates.csv', 'discharges.csv', 'provider_activity.csv']);
-  assert.match(real['admissions.csv'], new RegExp(`A,${PROVIDER},${codeOf(goodClient)},Oms`), 'the submission file names the client, under the provider it was accounted with');
+  assert.match(real['admissions.csv'], new RegExp(`1,${PROVIDER},${codeOf(goodClient)},Oms`), 'the submission file names the client, under the provider it was accounted with');
   assert.ok(real['README.txt'].includes(`NOTICE TO RECIPIENT (42 CFR §2.32): ${C.PART2_REDISCLOSURE_NOTICE}`), 'the README carries the §2.32 notice');
   assert.match(real['README.txt'], new RegExp(`Submission: ${sub.data.id}`));
   assert.match(db.one(`SELECT details FROM audit_log WHERE action='caloms.submission.download' ORDER BY id DESC`).details, new RegExp(sub.data.sha256));
