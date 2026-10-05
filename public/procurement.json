@@ -1,10 +1,1 @@
-{
-  "repository_url": "https://github.com/taugustincst/suds",
-  "default_branch": "main",
-  "legal_entity": "AugustInnovations LLC",
-  "contact_name": "",
-  "contact_email": "",
-  "contact_url": "",
-  "pricing": "",
-  "sla": ""
-}
+{"contact_email":"","contact_name":"","contact_url":"","default_branch":"main","legal_entity":"AugustInnovations LLC","pricing":"Introductory pricing (USD), effective October 2026. Final terms are set in a licence agreement signed by AugustInnovations LLC.\n\n90-DAY PILOT — $2,500 flat\nSingle program site. Onboarding, BAA, and CalOMS extract validation included. Credited in full toward the first annual plan.\n\nPROGRAM — $4,800 / year\nSingle site, up to 30 staff accounts. BAA, all updates, and email support included.\n\nMULTI-SITE — $12,000 / year\nUp to 5 sites, up to 150 staff accounts. Everything in Program, plus onboarding assistance.\n\nCOUNTY-WIDE — custom annual pricing\nUnlimited sites and staff. Includes onboarding, training, and a named support contact.\n\nThe GitHub Pages build stays free at its official address. Prices exclude customer infrastructure for self-hosted office servers.","repository_url":"https://github.com/taugustincst/suds","sla":"Paid plans: email support with a response within 2 business days. Security fixes ship as patches as soon as they are verified. No uptime commitment is made for office servers running on customer infrastructure; the GitHub Pages build is provided as-is."}

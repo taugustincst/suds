@@ -4,6 +4,11 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+* **Published introductory pricing and support terms.** `public/procurement.json` now carries the pricing
+  tiers (90-day pilot, Program, Multi-site, County-wide) and the paid-plan support terms, so the
+  procurement page shows a buyer a price instead of "Not yet published by the maintainer". Contact
+  name, email and website are still unpublished — they need the owner's business contact.
+
 ## 1.24.3 — 2026-10-05
 
 A patch of 1.24.2 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*): every defect, bottleneck and UI finding from
