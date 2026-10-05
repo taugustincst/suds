@@ -3,6 +3,51 @@
 A living note between the assistants working on SUDS. Tj's rule: keep it current, keep it honest.
 Replies go under "Claude → Muse" below, newest first.
 
+## 2026-10-05 — Folder: 1.24.2 (a11y tab-strip reflow, timezone-correct dates)
+
+- **What shipped.** A patch of 1.24.1 with no policy exception (21 lines added outside docs/tests/generated,
+  `node scripts/release-policy.js --version 1.24.2 --previous v1.24.1 --previous-ref 0feccc5` passes). No migration,
+  no new or widened permission, no new route. Commit `f87bc43` "Release 1.24.2", not yet pushed.
+- **Fixes.** (1) The client record tab strip could run past the viewport at 200% text size (WCAG 1.4.10 reflow,
+  pre-existing, documented 2026-09-28): the strip's `layout()` now verifies with its own box after the calculated
+  layout and folds tabs under More until the content fits — a self-correcting loop, not just better math.
+  (2) Timezone-correct dates: episode open/close default to the programme's local date (`localDate()`) instead of
+  UTC — an episode opened "today" in UTC+14 was dated tomorrow; the date-sniffing importer (`sniffDate`) now uses
+  UTC noon so the date from the text survives `toISOString()` in any timezone; the clinical-audit tests use local
+  dates. Verified: `test/clinical-audit.test.js` + `test/importers.test.js` pass 16/16 with both `TZ=America/Los_Angeles`
+  and `TZ=Pacific/Kiritimati`.
+- **Adjudicated (no product change).** c6/d4/n3 from the 1.24.0 retest are test artifacts: c6's dialog flow didn't
+  pick the provider first (c2 proves the gate auto-selects correctly); d4 is by design (supervisors see all time);
+  n3 was in-script state interference (standalone verification confirmed). The disclosure gate has permanent coverage
+  in `test/disclosure-gates.test.js`.
+- **Pre-existing failures not in scope** (fail with and without these changes, not timezone-related):
+  `test/fingerprint-review.test.js` "finding 5: offline verifier", `test/funder-report.test.js` (1 failure),
+  `test/harm-reduction-reports.test.js` NDP log. Left for a later patch.
+- **Owner action to complete the release:** push the `main` branch (commit `f87bc43`) to git. The eighteen release
+  tags (v1.16.3–v1.24.1) still await the owner's one-push (docs/evidence/RELEASE-HANDOFF.md); v1.24.2's tag joins
+  that push when the owner does it.
+
+## 2026-10-04 — Folder (Muse): taking over as primary AI dev
+- **Transition.** Owner directed 2026-10-04: I (Muse) take over development ownership as the primary AI dev.
+  Claude's branches and history stay as-is; no code moved.
+- **Repo state on takeover.** The local clone was stale and divergent: `main` sat at 1.15.3 with an unrelated
+  history to `origin/main`, plus a background-job stash (`wip-before-sync-20261001`) holding three superseded
+  files from the 1.15.3 era — my old `client.js` consent fix (superseded by Claude's broader guard, verified live
+  on the 1.16.2 retest), my `ux13.mjs` regression check + timezone fix (file has diverged; would need rework if
+  still wanted), and a declined HANDOFF.md edit (2026-09-28 UI evaluation notes; items since addressed). All
+  dropped after verification. Also reverted a staged `docs/security/PEN-TEST-SCOPE.md` that was only ever a
+  read-only checkout from the pen-test setup. Tree is now clean at `origin/main` 0feccc5 (post-1.24.1), tracking
+  `origin/main`.
+- **Working rules I inherit.** CLAUDE.md contributor notes; docs/RELEASE.md release policy — feature freeze holds
+  (1.25.0 no earlier than 2026-10-31, through the release gate; patches only until then: defect/security fixes, no
+  migration, no new/widened permission, no new route, ≤1,500 lines); never describe SUDS as open source or MIT in
+  new text (proprietary from 1.24.1); API test for every new permission/route; browser suite after UI changes;
+  HANDOFF.md stays current.
+- **Standing owner-action blockers (unchanged):** push the eighteen release tags in one push
+  (docs/evidence/RELEASE-HANDOFF.md); counsel review of LICENSE before the first paid agreement; copyright
+  assignment to AugustInnovations LLC; production pricing/terms (`public/procurement.json` still blank);
+  code-signing secrets; the independent pen test; the CalOMS analyst.
+
 ### Owner decision, 2026-10-03: SUDS is proprietary (ships in 1.24.1)
 
 - **Decision:** from 1.24.1 SUDS is licensed under the SUDS Proprietary Licence (`LICENSE`), "Copyright (c) 2026

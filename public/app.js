@@ -1429,6 +1429,18 @@ export function tabStrip(tabs, active, onPick, { label = 'Sections', core = null
     }
     for (const i of overflow.sort((a, b) => a - b)) { buttons[i].hidden = true; menu.append(menuItem(i)); }
     moreText(overflow.length);
+    // Self-correct with the strip's own box: the width math above is measured before the tabs are hidden,
+    // so a font or text-size change between measuring and hiding leaves it stale. If the strip's content
+    // still runs past its box, fold tabs under More until it fits (WCAG 1.4.10 reflow).
+    strip.offsetWidth; // the reflow, so scrollWidth below is current
+    while (strip.scrollWidth > strip.clientWidth + 1) {
+      const drop = buttons.map((_, i) => i).filter(i => !overflow.includes(i) && i !== activeIdx).pop();
+      if (drop === undefined) break;
+      overflow.push(drop);
+      buttons[drop].hidden = true; menu.append(menuItem(drop));
+      moreText(overflow.length);
+      strip.offsetWidth; // re-measure after each fold
+    }
   }
   function menuItem(i) {
     const b = buttons[i];

@@ -9,7 +9,9 @@ const assert = require('node:assert');
 const H = require('./helpers');
 
 let admin, sup, nav, navId, supId;
-const day = (offset) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
+// Local date, not UTC: the app stores work_date and checks dob against the programme's local calendar.
+// Using toISOString() (UTC) breaks when the UTC date differs from the local date (evenings in negative-offset zones).
+const day = (offset) => { const d = new Date(Date.now() + offset * 86400000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 before(async () => {
   await H.start();
   navId = H.makeCaseloadUser('canav', 'navigator').id;
@@ -126,8 +128,12 @@ test('M4: editing a visit\'s duration or date updates its unapproved time entry;
   te = H.db.one(`SELECT * FROM time_entries WHERE intervention_id=?`, v.id);
   assert.equal(te.minutes, 45, 'the draft entry follows the corrected duration');
   const newDate = day(-3);
-  await nav.put(`/api/interventions/${v.id}`, { occurred_at: `${newDate}T15:00:00.000Z` });
-  assert.equal(H.db.one(`SELECT work_date FROM time_entries WHERE intervention_id=?`, v.id).work_date, newDate, 'and the corrected date');
+  const occurredAt = `${newDate}T15:00:00.000Z`;
+  await nav.put(`/api/interventions/${v.id}`, { occurred_at: occurredAt });
+  // The work_date is the local date of the timestamp, not the UTC date: 15:00 UTC can be a different
+  // calendar day in the programme's timezone.
+  const expectedWorkDate = new Date(occurredAt).toLocaleDateString('en-CA');
+  assert.equal(H.db.one(`SELECT work_date FROM time_entries WHERE intervention_id=?`, v.id).work_date, expectedWorkDate, 'and the corrected date');
   // Submitted but not yet approved: still corrected.
   H.db.run(`UPDATE time_entries SET status='submitted', submitted_at=? WHERE id=?`, H.db.now(), te.id);
   await nav.put(`/api/interventions/${v.id}`, { duration_minutes: 50 });

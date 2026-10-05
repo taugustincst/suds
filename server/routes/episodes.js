@@ -14,6 +14,7 @@ const { validate, paging } = require('../validate');
 const { encrypt, decrypt, uuid } = require('../crypto');
 const { standing } = require('../rules/episodes');
 const { isNotice } = require('../rules/tasks');
+const { localDate } = require('./budget');
 
 const O = require('../options');
 
@@ -64,7 +65,7 @@ module.exports = (r) => {
     let calRec = null;
     db.transaction(() => {
       db.run(`INSERT INTO episodes(id,client_id,funding_source_id,opened_at,opened_by,referral_source,presenting_problem_enc) VALUES(?,?,?,?,?,?,?)`,
-        id, ctx.params.id, v.funding_source_id || null, v.opened_at || new Date().toISOString().slice(0, 10), ctx.user.id, v.referral_source || null, v.presenting_problem ? encrypt(v.presenting_problem) : null);
+        id, ctx.params.id, v.funding_source_id || null, v.opened_at || localDate(), ctx.user.id, v.referral_source || null, v.presenting_problem ? encrypt(v.presenting_problem) : null);
       // Opening an episode is the admission, so the client is active from here: a returning client should
       // not stay "closed" (that status only exists paired with a discharge, which this episode undoes) and a
       // waitlisted person has now started services. "inactive" is a different, deliberate choice (on hold,
@@ -93,7 +94,7 @@ module.exports = (r) => {
       closed_at: F.closed_at, keep_client_active: { type: 'boolean' }, caloms: { type: 'object' },
     });
     const cal = calomsPart(v.caloms, 'discharge');
-    const when = v.closed_at || new Date().toISOString().slice(0, 10);
+    const when = v.closed_at || localDate();
     // An episode cannot end before it began, and discharging is the care team's, the opener's or a supervisor's
     // (the table's rules: server/rules/episodes.js).
     rules.assertWrite('episodes', { id: e.id, status: 'closed', closed_at: when, discharge_reason: v.discharge_reason }, ctx, { existing: e });

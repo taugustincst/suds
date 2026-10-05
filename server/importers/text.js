@@ -93,11 +93,13 @@ function docxToText(buf) {
 function sniffDate(text) {
   const s = String(text || '');
   let m = /(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s);
-  if (m) { const d = new Date(m[1] + (m[2] ? 'T' + m[2] : 'T12:00:00')); if (!isNaN(d)) return d.toISOString(); }
+  // UTC noon, not local noon: the date in the text must survive toISOString() in any timezone.
+  // Local noon on Mar 4 is Mar 3 22:00 UTC in UTC+14, breaking the date.
+  if (m) { const d = new Date(m[1] + (m[2] ? 'T' + m[2] + 'Z' : 'T12:00:00Z')); if (!isNaN(d)) return d.toISOString(); }
   m = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b(?:,?\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?))?/i.exec(s);
-  if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; const d = new Date(`${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}T12:00:00`); if (!isNaN(d)) return d.toISOString(); }
+  if (m) { const y = m[3].length === 2 ? '20' + m[3] : m[3]; const d = new Date(`${y}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}T12:00:00Z`); if (!isNaN(d)) return d.toISOString(); }
   m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(s);
-  if (m) { const d = new Date(`${m[1].slice(0, 3)} ${m[2]}, ${m[3]} 12:00:00`); if (!isNaN(d)) return d.toISOString(); }
+  if (m) { const d = new Date(`${m[1].slice(0, 3)} ${m[2]}, ${m[3]} 12:00:00 UTC`); if (!isNaN(d)) return d.toISOString(); }
   return null;
 }
 

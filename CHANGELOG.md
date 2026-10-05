@@ -4,6 +4,20 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+## 1.24.2 — 2026-10-05
+
+A patch of 1.24.1 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*): defect fixes with their tests. No migration,
+no new or widened permission and no new route. A patch is allowed inside the feature freeze. Upgrading needs
+nothing beyond replacing the files and restarting.
+
+* **The client record tab strip no longer runs past the screen at 200% text size.** The strip folds tabs under
+  "More" by measuring, but the measurement could go stale between measuring and hiding (a font or text-size
+  change in between); it now verifies with the strip's own box after laying out and folds more tabs until the
+  content fits (WCAG 1.4.10 reflow).
+* **Dates are now timezone-correct.** Episode open/close default to the programme's local date instead of UTC
+  (an episode opened "today" in UTC+14 was dated tomorrow); the date-sniffing importer keeps the date from the
+  text in any timezone; the clinical-audit tests use local dates.
+
 ## 1.24.1 — 2026-10-03
 
 A patch of 1.24.0 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record: 1.24.1*): the licence change the
