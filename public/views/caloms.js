@@ -43,13 +43,14 @@ export function calomsFields(cfg, type, { values = {}, provider = null, standard
     if (f.set) out.push({ ...base, type: 'select', placeholder: 'Choose…', options: cfg.spec.sets[f.set].map(c => ({ value: c.code, label: `${c.label} (${c.code})` })) });
     else if (f.type === 'int' && f.alt) {
       // A number, or one of the dictionary's 999xx special answers: the select fills the number box, and
-      // typing a number clears the select. The stored value is always the code that is in the number box.
+      // typing a number clears the select. The number box is the stored value, so a saved special answer
+      // round-trips through it.
       const altLabels = cfg.spec.alt_labels || {};
-      const isAlt = f.alt.map(String).includes(String(v ?? ''));
       const altOpts = f.alt.map(code => ({ value: String(code), label: `${altLabels[code] || 'Special answer'} (${code})` }));
-      out.push({ ...base, type: 'number', min: f.min, max: Math.max(f.max, ...f.alt.map(Number)), step: 1, value: isAlt ? '' : (v ?? ''),
+      out.push({ ...base, type: 'number', min: f.min, max: Math.max(f.max, ...f.alt.map(Number)), step: 1,
         help: [`Enter ${f.min}–${f.max}`, f.help].filter(Boolean).join('; ') + ', or choose a special answer below.' });
-      out.push({ name: `${P}${f.key}__alt`, label: `${f.label} — special answer`, type: 'select', value: isAlt ? v : '', options: altOpts });
+      out.push({ name: `${P}${f.key}__alt`, label: `${f.label} — special answer`, type: 'select',
+        value: f.alt.map(String).includes(String(v ?? '')) ? v : '', options: altOpts });
     }
     else if (f.type === 'int') out.push({ ...base, type: 'number', min: f.min, max: f.max, step: 1 });
     else if (f.type === 'date') out.push({ ...base, type: 'date' });
