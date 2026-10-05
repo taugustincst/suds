@@ -8,7 +8,10 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 A patch of 1.24.3 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*): the defects 1.24.3's exact-commit CI
 found, and the introductory pricing. No migration, no new or widened permission and no new route. It
-supersedes 1.24.3, whose GitHub Release is not published (the way 1.24.3 superseded 1.24.2).
+supersedes 1.24.3, whose GitHub Release is not published (the way 1.24.3 superseded 1.24.2). This stamp
+supersedes the first 1.24.4 stamp (`895c6ca1`), whose exact-commit CI failed on the release-state docs:
+the hand-off is restored in its machine-readable form and the questionnaire/RFI name the one untagged
+release, 1.24.4.
 
 * **Form refusals name the date.** A refused date, time or datetime field showed the generic "Check the
   highlighted field below"; the banner now names the kind of field ("Check the highlighted date below").
