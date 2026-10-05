@@ -63,7 +63,9 @@ try {
     const sb = await sidebar(nav.page);
     // 1.23.0: Street outreach joined the main list (12 pages; test/nav-menu.test.js holds the placement per role and profile).
     ok(sb.main.length <= 12, `a navigator's sidebar shows ${sb.main.length} pages, not 19`, sb.main);
-    for (const want of ['Home', 'Clients', 'Waitlist', 'To-dos', 'Visits', 'Calls & texts', 'Supplies', 'Street outreach', 'Resource directory']) ok(sb.main.includes(want), `the navigator's sidebar has ${want}`, sb.main);
+    for (const want of ['Home', 'Clients', 'Waitlist', 'To-dos', 'Visits', 'Calls & texts', 'Supplies', 'Street outreach']) ok(sb.main.includes(want), `the navigator's sidebar has ${want}`, sb.main);
+    // 1.24.3: the Resource directory is under More for front-line workers (test/nav-menu.test.js holds the placement per role and profile).
+    ok(!sb.main.includes('Resource directory') && (sb.more || []).includes('Resource directory'), `the Resource directory is under a navigator's More, not in the everyday list`, sb);
     // The funder report is under More (1.14.0): a navigator runs it for their own caseload.
     ok(!sb.main.includes('Settings') && !(sb.more || []).includes('Settings'), 'Settings is not in a navigator\'s sidebar', sb);
     // 1.23.0: every page a navigator may open is in the menu: the programme's money and contracts under More.

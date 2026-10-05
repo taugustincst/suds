@@ -103,7 +103,10 @@ const READMIT_MIN = 8;
 function duplicateCheck(f, { getModal, onDone, extra = () => ({}) }) {
   const box = h('div', { 'data-duplicate-box': '1' });
   let confirmedDuplicate = false;
-  const read = (n) => f.querySelector(`[name="${n}"]`)?.value || undefined;
+  const read = (n) => { const el = f.querySelector(`[name="${n}"]`); if (!el) return undefined;
+    // A date box shows M/D/YYYY but the server takes YYYY-MM-DD: send the parsed ISO date, not the text.
+    if (typeof el.parsedDate === 'function') { const p = el.parsedDate(); return p ? p : undefined; }
+    return el.value || undefined; };
   // A returning client whose earlier record was discharged and is on nobody's caseload (so this worker cannot
   // open it): the server offers it for re-admission instead of a dead end, when the surname and date of birth
   // match. Nothing from the stored record is shown — not its code, nor when or why the person was discharged.

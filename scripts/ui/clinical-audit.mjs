@@ -62,7 +62,7 @@ const nav = await session('mrivera', 'Navigator2026!!');
   ok(await page.$('.modal .field[data-field=email].error'), 'a bad email is flagged under its field');
   ok(await page.$('.modal .field[data-field=phone].error'), 'so is a phone with no digits');
   ok(await page.$('.modal .field[data-field=dob].error'), 'and a birth date in the future');
-  ok(/^\d{4}-\d{2}-\d{2}$/.test(await page.$eval('.modal input[name=dob]', i => i.max)), 'the date picker itself stops at today');
+  ok(/^\d{4}-\d{2}-\d{2}$/.test(await page.$eval('.modal input[name=dob]', i => i.dateNative.max)), 'the date picker itself stops at today');
   ok(await page.$('.modal'), 'the form stays open to be corrected');
   await closeModal(page);
 

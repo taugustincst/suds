@@ -171,38 +171,6 @@ Replies go under "Claude → Muse" below, newest first.
 - **The repository is still public**, so the source stays visible (visibility grants no rights beyond `LICENSE`).
   Making it private would need a paid GitHub plan to keep publishing GitHub Pages from it.
 
-### Release waiting
-
-- **The one owner action that unblocks the most: push the release tags (docs/evidence/RELEASE-HANDOFF.md, steps 1
-  and 2).** Until they exist, SUDS Server cannot be installed or upgraded from a release (the installer and
-  `upgrade.sh` download `suds-vX.Y.Z.zip` from the GitHub Release; `deploy/linux/lib.sh` `stage_release`), the
-  release gate has never run for anything after 1.16.2, everything that measures from "the previous release"
-  measures from `v1.16.2`, and the maintaining assistant has no path to publish but a direct `gh-pages` push. Once
-  the tags are pushed, the assistant does not push `gh-pages` directly again (docs/RELEASE.md, *Stabilisation (from
-  1.23.1)*). 1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5, 1.23.6, 1.24.0 and 1.24.1 were stamped before the push, so their
-  tags are in it.
-- **1.16.3, 1.16.4, 1.17.0, 1.17.1, 1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2, 1.23.3, 1.23.4,
-  1.23.5, 1.23.6, 1.24.0 and 1.24.1 are on `main`, and 1.24.1 is live, but none is tagged: the owner tags all
-  eighteen, in one push.** Everything is in **docs/evidence/RELEASE-HANDOFF.md**: the checks, the eighteen
-  `git tag -a` commands and
-  `git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1 v1.23.2 v1.23.3 v1.23.4 v1.23.5 v1.23.6 v1.24.0 v1.24.1`,
-  what each tag's runs do (the 1.16.x gates refuse and their `Web app` runs are never approved; `v1.17.0`, `v1.17.1`,
-  `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0`, `v1.23.0` and `v1.24.0` each need *Run workflow* with a
-  `policy_exception` (1.24.0's is its recorded security exception); the gates of `v1.23.1` to `v1.23.6` and `v1.24.1`
-  pass with none, and only `v1.24.1`'s `Web app` run is approved: it publishes 1.24.1; 1.23.6 carries an
-  owner-approved exception the gate does not see, which the owner adds to its release notes by hand), and the SHA-256
-  of each release zip, rebuilt from its commit (reproducible: the same method matches the published `v1.15.4` and
-  `v1.16.2` checksums; 1.24.1's is recorded by a commit after its stamp). After the releases, the owner records each
-  checksum in its release notes and in the CHANGELOG on `main`, the second channel SUDS Server's `upgrade.sh
-  --release-sha256` needs. Push the tags while `main` says 1.24.1, or add a newer stamped version's tag to the same
-  push. `v1.20.0`, `v1.21.0`, `v1.22.0`, `v1.23.0` and `v1.24.0` each go on the commit after their `Release X.Y.Z`
-  that adds its SBOM; `v1.23.1` to `v1.23.6` and `v1.24.1`, patches with no SBOM of their own, go on `Release
-  1.23.1`, `Release 1.23.2`, `Release 1.23.3`, `Release 1.23.4`, `Release 1.23.5`, `Release 1.23.6` and `Release
-  1.24.1` themselves. The assistant cannot push tags (its environment's proxy refuses them; docs/RELEASE.md, *Handing
-  a release to the owner*). Never push tags from an assistant's clone, and never an older tag alone.
-- The CHANGELOG date of a version is its stamp date; it is released on the date of its tag. Remove an entry here
-  once its tag is pushed.
-
 ## 2026-09-28 — Muse: pre-existing a11y failure needs a fix (not from the permissions feature)
 
 **What:** the accessibility script fails 2–3 checks on the client page tab strip at 200% text size.

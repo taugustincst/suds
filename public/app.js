@@ -1207,7 +1207,10 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
       const fields = { ...Object.fromEntries(bad.map(f => [f.name, badMsg(f)])), ...Object.fromEntries(missing.map(f => [f.name, `${f.label || 'This field'} is required`])) };
       // Name the field the way the form does ("Client"), not the way the database does ("client_id").
       const names = missing.map(f => f.label).filter(Boolean);
-      const e = new Error(bad.length ? 'Check the highlighted field below — it is not a valid entry.' : names.length ? `Fill in ${names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]} below.` : 'Fill in the required field below.');
+      // When a date, time or datetime field is refused, the banner names the kind of field, so the
+      // message says what is wrong ("date") instead of only pointing at the highlight.
+      const badKinds = [...new Set(bad.map(f => f.type === 'time' ? 'time' : (f.type === 'date' || f.type === 'datetime') ? 'date' : 'field'))];
+      const e = new Error(bad.length ? `Check the highlighted ${badKinds.join(' or ')} below — it is not a valid entry.` : names.length ? `Fill in ${names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1]} below.` : 'Fill in the required field below.');
       e.labelled = true;
       e.data = { fields };
       throw e;

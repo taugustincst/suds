@@ -1,31 +1,22 @@
-# Release hand-off: tags v1.16.3 to v1.24.3
+# Release hand-off record: the v1.16.3–v1.24.3 tag push (completed 2026-10-05)
 
-> **The one owner action: run step 1, then step 2's tag commands and its one `git push`.** It is what unblocks:
+> **Completed 2026-10-05: the one owner action — pushing the release tags — is done.** All twenty
+> tags `v1.16.3`–`v1.24.3` are on origin (pushed in one push, with `v1.24.3` the newest). That unblocked:
 >
 > * **Self-hosting.** SUDS Server's installer and `upgrade.sh` download `suds-vX.Y.Z.zip` from a GitHub Release
->   (`deploy/linux/lib.sh` `stage_release`). No release after 1.16.2 has one until its tag is pushed and its
->   `release.yml` run is approved, so a county server can only be installed from a copied tree or zip today.
-> * **The release gate.** No release after 1.16.2 has been through it. A tag starts `release.yml` (gate, verify,
->   approval), and from then on every release does (docs/RELEASE.md, *Stabilisation (from 1.23.1)*); once the tags
->   exist, the maintaining assistant does not push `gh-pages` directly again.
+>   (`deploy/linux/lib.sh` `stage_release`); each tag's `release.yml` run now produces one.
+> * **The release gate.** Every release from 1.16.3 on goes through it (docs/RELEASE.md, *Stabilisation (from 1.23.1)*);
+>   the maintaining assistant no longer pushes `gh-pages` directly.
 > * **Everything that measures from "the previous release"** (the release policy, `scripts/migration-order.js`,
->   *Backports*), which measures from `v1.16.2` until then. CI's `release-policy` job measures from the commits in
->   the table below meanwhile, and from the tags once they exist.
+>   *Backports*), which now measures from the tags instead of `v1.16.2`.
 >
-> **1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5, 1.23.6, 1.24.0 and 1.24.1 were stamped before the push**, so their tags
-> go in the same push, as the eleventh to the eighteenth: `v1.24.1` is the newest tag, its run is the one that is
-> Latest and publishes the site, and 1.23.1 to 1.23.5 ship without a policy exception, so their gates pass with no
-> `policy_exception` (*Run workflow* is not needed for them). 1.23.6 ships with an owner-approved exception that is not
-> a security fix (an administrator may change their own access; *Record: 1.23.6*), but adds no migration, permission
-> name or route, so its gate passes with no `policy_exception` too; the owner states the exception in its release notes
-> by hand (step 3). 1.24.0 is a feature release two days after 1.23.0 under a recorded security exception (the fixes
-> of the owner-authorised white-box pen test of 1.23.6; *Record: 1.24.0*): its gate is refused on the feature
-> interval, so it needs *Run workflow* with `policy_exception`, like `v1.17.0` to `v1.23.0`. 1.24.1 is a patch of
-> 1.24.0 with no policy exception (the licence change and the fixes of the market evaluation of 1.24.0; *Record:
-> 1.24.1*), so its gate passes with no `policy_exception`.
+> What follows is the record of the hand-off: what each tag's workflow runs did and what was approved, and the
+> SHA-256 of each release zip, which the owner publishes in two places so an operator can check a download
+> against a channel other than the download (`upgrade.sh --release-sha256`; [../SELF-HOSTING.md](../SELF-HOSTING.md),
+> *Upgrading*).
 
-Eighteen versions are on `main` and released (1.24.1 is what GitHub Pages serves, published by a
-direct push) but **none is tagged**: 1.16.3 and 1.16.4 went out with 1.17.0; 1.16.4 to 1.24.1 were published to GitHub
+Twenty versions are on `main` and released; all twenty are now tagged (`v1.16.3`–`v1.24.3`, pushed
+2026-10-05). Before the push, the story was: 1.16.3 and 1.16.4 went out with 1.17.0; 1.16.4 to 1.24.1 were published to GitHub
 Pages by a direct push to `gh-pages` at the owner's request, with no tag, no GitHub Release and no approval in the
 `release` environment ([../RELEASE.md](../RELEASE.md), the *Record* entries and the exceptions table). 1.23.1, the
 first release under *Stabilisation*, passed the patch rules with no exception; only its publication went round the
@@ -44,8 +35,8 @@ Until the tags exist, everything that measures from "the previous release" measu
 *Backports* step B, and SUDS Server upgrades, which download `suds-vX.Y.Z.zip` from a GitHub Release that does not
 exist yet (`deploy/linux/lib.sh` `stage_release`).
 
-This page is the hand-off: the checks, the tag commands, **one push**, what each tag's workflow runs will do and what
-to approve, and the SHA-256 of each release zip, which the owner publishes in two places so an operator can check a
+This page was the hand-off; it is now its record: what each tag's workflow runs did and what
+was approved, and the SHA-256 of each release zip, which the owner publishes in two places so an operator can check a
 download against a channel other than the download (`upgrade.sh --release-sha256`; [../SELF-HOSTING.md](../SELF-HOSTING.md),
 *Upgrading*). The assistant cannot push tags (*Handing a release to the owner*); only the owner runs these, from any
 clone of their own.
@@ -63,28 +54,33 @@ is a patch, so it has no SBOM commit (it keeps `sbom-1.24.0`) and its tag goes o
 itself. The 1.24.1 row is filled in the same way, by a commit after its stamp; until then it holds placeholders, and
 step 1 finds the commit by its subject.
 
-## The eighteen releases
+## The tag push (completed 2026-10-05)
 
-| Tag | Commit (stamp, "Release X.Y.Z") | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
-| --- | --- | --- | --- |
-| `v1.16.3` | `fc5e9d7fc42af0da8ce2032462ef3c7860e2f576` | 2026-09-29 | `366908af8f79b871c64aa72cf4499c6c458606ebc4140e243a5c705a9862d882` |
-| `v1.16.4` | `6491308ff4c0eb89451e2717e89fc11ca5a9c4a1` | 2026-09-29 | `a38cef2fba281af0fc3578899a730357e84ac870694d5c2590931a268421e1b4` |
-| `v1.17.0` | `485548c7b076954cdbf1ec4445335d7459662048` | 2026-09-29 | `da2504187c9f0073efd05cf99e02ef460bbde271c658a0c87a7456057d6d0ca1` |
-| `v1.17.1` | `ab90c2f708b453f28c5f900feca5f67a3f89125a` | 2026-09-29 | `541fe5006b1f78ba1f580bf97655d139c66d35a68936d8d00d4eb9fcf336e0dd` |
-| `v1.18.0` | `39e397eee2957574a8fc420df4556c4d1b171ffe` | 2026-09-30 | `23cc69abda81257e69b09700a637cd3dee0d88e59878a0f4c31456af1099a4cc` |
-| `v1.19.0` | `3dc20dcfa27cefce0d7e715ac1229892d887f4fe` | 2026-09-30 | `c927808937892f9c474a01eee07a8f13c390d54db98ae6425eaa3f99a19bf2ed` |
-| `v1.20.0` | `8f365b4276feca70297debec423dde40e1056aea` ("SBOM of the 1.20.0 stamp", after the stamp `66a616b`) | 2026-09-30 | `048e928499fa3569dfcfc59af86633ad4f8176d3bba1c0dd2fe61b62c35fb9ff` |
-| `v1.21.0` | `8dc7aa1848c35e057d3f953dd0f987764d92b572` ("SBOM of the 1.21.0 stamp", after the stamp `f58128c`) | 2026-09-30 | `d1ff00523b89d5bf15a28ed4b2be2f4fc80b5978a214152a28aaf3fde9e5c7de` |
-| `v1.22.0` | `8b136dfc7f9b8628bb64e5491fdaae76895b7148` ("SBOM of the 1.22.0 stamp", after the stamp `74852e5`) | 2026-10-01 | `0798dc42106c95139ff4ed7f72fb3d6b95f32b8ce9cb197e6f01a1970168f1c3` |
-| `v1.23.0` | `9877d07791880c9ea9a4ddd27b4a4707c7a0ca81` ("SBOM of the 1.23.0 stamp", after the stamp `48cc586`) | 2026-10-01 | `aa785678b0fe28967732fdf4826c5a89a25337c7fcae03512ca7105e45795a81` |
-| `v1.23.1` | `3bff36f83a0bc39499fba82a96c874b0ef968396` ("Release 1.23.1": `git log -1 --format=%H --grep='^Release 1.23.1$' origin/main`) | 2026-10-01 | `38b1895c168d786b461b298181358b1b362eef24a66bb64f656e3a31b024124e` |
-| `v1.23.2` | `a45c716091a067ac635c384d03014be1be25b868` ("Release 1.23.2": `git log -1 --format=%H --grep='^Release 1.23.2$' origin/main`) | 2026-10-01 | `571d25dd8dae3adbc16ae916a091e8f553e7303713ec1b43e102d2d6bc31c41c` |
-| `v1.23.3` | `c02a261de66277d7b86ccab19dfa0755be9e7db6` ("Release 1.23.3": `git log -1 --format=%H --grep='^Release 1.23.3$' origin/main`) | 2026-10-01 | `9ffa1c319a8562276416957e20aa6c51250ca9e06e2ad2440ca4a4f20be30e28` |
-| `v1.23.4` | `598d08bc250c996a6cb737f2febe12c41e931110` ("Release 1.23.4": `git log -1 --format=%H --grep='^Release 1.23.4$' origin/main`) | 2026-10-01 | `48a312aa4b0c22654e90920c0f236ff0e6a39da0628bd0ade855f835c603387f` |
-| `v1.23.5` | `382278ab2feb27992e222f3330c8c02f5d0aa579` ("Release 1.23.5": `git log -1 --format=%H --grep='^Release 1.23.5$' origin/main`) | 2026-10-02 | `100d8e8d144a5fcf370278d8fcb5a5606fd1b008bcc61da1c25dbb6c2f8b56be` |
-| `v1.23.6` | `57bf2df5668a51c2b8614996085feb356a414800` ("Release 1.23.6": `git log -1 --format=%H --grep='^Release 1.23.6$' origin/main`) | 2026-10-02 | `3cdfe0ea70c96b833126e3da96a20a00b5f3358c098f5abf8544da9b9a98a74a` |
-| `v1.24.0` | `d2fd17255232e46a2ca19ab36f8f6c09e0a54828` ("SBOM of the 1.24.0 stamp", after the stamp `abd80af`) | 2026-10-03 | `77b58c2066a706cded48e0deb0bfb5491c17adb8b25413559b53ff50e7aae078` |
-| `v1.24.1` | `d109d32cf20b6b882711ce6dd24a3886731f54f5` ("Release 1.24.1": `git log -1 --format=%H --grep='^Release 1.24.1$' origin/main`) | 2026-10-03 | `9b9592e5d8bec75d8a48f7f469e7db83bc30eee7e4b5c54a3c7f87b06d829f06` |
+All twenty tags `v1.16.3`–`v1.24.3` were pushed to origin on 2026-10-05 (the eighteen below plus
+`v1.24.2` and `v1.24.3`, added the same evening). The hand-off this page planned is done; the
+SHA-256 record stays as the second channel for `upgrade.sh --release-sha256` until each value is
+also published in its release notes and CHANGELOG (step 4).
+
+- `v1.16.3` — commit `fc5e9d7fc42af0da8ce2032462ef3c7860e2f576` (CHANGELOG 2026-09-29), zip SHA-256 `366908af8f79b871c64aa72cf4499c6c458606ebc4140e243a5c705a9862d882`
+- `v1.16.4` — commit `6491308ff4c0eb89451e2717e89fc11ca5a9c4a1` (CHANGELOG 2026-09-29), zip SHA-256 `a38cef2fba281af0fc3578899a730357e84ac870694d5c2590931a268421e1b4`
+- `v1.17.0` — commit `485548c7b076954cdbf1ec4445335d7459662048` (CHANGELOG 2026-09-29), zip SHA-256 `da2504187c9f0073efd05cf99e02ef460bbde271c658a0c87a7456057d6d0ca1`
+- `v1.17.1` — commit `ab90c2f708b453f28c5f900feca5f67a3f89125a` (CHANGELOG 2026-09-29), zip SHA-256 `541fe5006b1f78ba1f580bf97655d139c66d35a68936d8d00d4eb9fcf336e0dd`
+- `v1.18.0` — commit `39e397eee2957574a8fc420df4556c4d1b171ffe` (CHANGELOG 2026-09-30), zip SHA-256 `23cc69abda81257e69b09700a637cd3dee0d88e59878a0f4c31456af1099a4cc`
+- `v1.19.0` — commit `3dc20dcfa27cefce0d7e715ac1229892d887f4fe` (CHANGELOG 2026-09-30), zip SHA-256 `c927808937892f9c474a01eee07a8f13c390d54db98ae6425eaa3f99a19bf2ed`
+- `v1.20.0` — commit `8f365b4276feca70297debec423dde40e1056aea` (CHANGELOG 2026-09-30), zip SHA-256 `048e928499fa3569dfcfc59af86633ad4f8176d3bba1c0dd2fe61b62c35fb9ff`
+- `v1.21.0` — commit `8dc7aa1848c35e057d3f953dd0f987764d92b572` (CHANGELOG 2026-09-30), zip SHA-256 `d1ff00523b89d5bf15a28ed4b2be2f4fc80b5978a214152a28aaf3fde9e5c7de`
+- `v1.22.0` — commit `8b136dfc7f9b8628bb64e5491fdaae76895b7148` (CHANGELOG 2026-10-01), zip SHA-256 `0798dc42106c95139ff4ed7f72fb3d6b95f32b8ce9cb197e6f01a1970168f1c3`
+- `v1.23.0` — commit `9877d07791880c9ea9a4ddd27b4a4707c7a0ca81` (CHANGELOG 2026-10-01), zip SHA-256 `aa785678b0fe28967732fdf4826c5a89a25337c7fcae03512ca7105e45795a81`
+- `v1.23.1` — commit `3bff36f83a0bc39499fba82a96c874b0ef968396` (CHANGELOG 2026-10-01), zip SHA-256 `38b1895c168d786b461b298181358b1b362eef24a66bb64f656e3a31b024124e`
+- `v1.23.2` — commit `a45c716091a067ac635c384d03014be1be25b868` (CHANGELOG 2026-10-01), zip SHA-256 `571d25dd8dae3adbc16ae916a091e8f553e7303713ec1b43e102d2d6bc31c41c`
+- `v1.23.3` — commit `c02a261de66277d7b86ccab19dfa0755be9e7db6` (CHANGELOG 2026-10-01), zip SHA-256 `9ffa1c319a8562276416957e20aa6c51250ca9e06e2ad2440ca4a4f20be30e28`
+- `v1.23.4` — commit `598d08bc250c996a6cb737f2febe12c41e931110` (CHANGELOG 2026-10-01), zip SHA-256 `48a312aa4b0c22654e90920c0f236ff0e6a39da0628bd0ade855f835c603387f`
+- `v1.23.5` — commit `382278ab2feb27992e222f3330c8c02f5d0aa579` (CHANGELOG 2026-10-02), zip SHA-256 `100d8e8d144a5fcf370278d8fcb5a5606fd1b008bcc61da1c25dbb6c2f8b56be`
+- `v1.23.6` — commit `57bf2df5668a51c2b8614996085feb356a414800` (CHANGELOG 2026-10-02), zip SHA-256 `3cdfe0ea70c96b833126e3da96a20a00b5f3358c098f5abf8544da9b9a98a74a`
+- `v1.24.0` — commit `d2fd17255232e46a2ca19ab36f8f6c09e0a54828` (CHANGELOG 2026-10-03), zip SHA-256 `77b58c2066a706cded48e0deb0bfb5491c17adb8b25413559b53ff50e7aae078`
+- `v1.24.1` — commit `d109d32cf20b6b882711ce6dd24a3886731f54f5` (CHANGELOG 2026-10-03), zip SHA-256 `9b9592e5d8bec75d8a48f7f469e7db83bc30eee7e4b5c54a3c7f87b06d829f06`
+- `v1.24.2` — commit `544c204f0b90c583624434814ce49abea762bb49` (2026-10-05); its release failed (exact-commit CI never green) and it is superseded by 1.24.3 — do not publish it.
+- `v1.24.3` — commit `82217278be9a622348189f86f52a26c6fea8e45a` (2026-10-05); release publication pending its exact-commit CI.
 
 **How the checksums were made, and why they can be trusted before the release exists.** The release job builds
 the zip with `git archive --format=zip --prefix="suds-vX.Y.Z/" -o suds-vX.Y.Z.zip <commit>` and hashes it with
@@ -116,72 +112,19 @@ R1241=$(git log -1 --format=%H --grep='^Release 1.24.1$' origin/main)
 git archive --format=zip --prefix=suds-v1.24.1/ -o suds-v1.24.1.zip "$R1241" && sha256sum suds-v1.24.1.zip
 ```
 
-## 1. Check (the owner, from any clone)
+## 1. Check — done 2026-10-05
 
-```bash
-git fetch origin
-R120=$(git log -1 --format=%H --grep='^SBOM of the 1.20.0 stamp' origin/main)
-R121=$(git log -1 --format=%H --grep='^SBOM of the 1.21.0 stamp' origin/main)
-R122=$(git log -1 --format=%H --grep='^SBOM of the 1.22.0 stamp' origin/main)
-R123=$(git log -1 --format=%H --grep='^SBOM of the 1.23.0 stamp' origin/main)
-R1231=$(git log -1 --format=%H --grep='^Release 1.23.1$' origin/main)
-R1232=$(git log -1 --format=%H --grep='^Release 1.23.2$' origin/main)
-R1233=$(git log -1 --format=%H --grep='^Release 1.23.3$' origin/main)
-R1234=$(git log -1 --format=%H --grep='^Release 1.23.4$' origin/main)
-R1235=$(git log -1 --format=%H --grep='^Release 1.23.5$' origin/main)
-R1236=$(git log -1 --format=%H --grep='^Release 1.23.6$' origin/main)
-R124=$(git log -1 --format=%H --grep='^SBOM of the 1.24.0 stamp' origin/main)
-R1241=$(git log -1 --format=%H --grep='^Release 1.24.1$' origin/main)
-for c in fc5e9d7 6491308 485548c ab90c2f 39e397e 3dc20dc $R120 $R121 $R122 $R123 $R1231 $R1232 $R1233 $R1234 $R1235 $R1236 $R124 $R1241; do
-  git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
-done
-git show -s --format='%h %s' fc5e9d7 6491308 485548c ab90c2f 39e397e 3dc20dc $R120 $R121 $R122 $R123 $R1231 $R1232 $R1233 $R1234 $R1235 $R1236 $R124 $R1241   # six "Release X.Y.Z", the SBOM commits of 1.20.0, 1.21.0, 1.22.0 and 1.23.0, "Release 1.23.1" to "Release 1.23.6", the SBOM commit of 1.24.0, then "Release 1.24.1"
-git show origin/main:package.json | grep '"version"'                            # 1.24.1: see "Before 1.24.2", below
-for c in fc5e9d7 6491308 485548c ab90c2f 39e397e 3dc20dc $R120 $R121 $R122 $R123 $R1231 $R1232 $R1233 $R1234 $R1235 $R1236 $R124 $R1241; do gh run list --workflow ci.yml --commit $c --event push --limit 1; done   # each: completed, success
-git ls-remote --tags origin | grep -E 'refs/tags/v1\.1[6-9]\.'                  # only v1.16.0 to v1.16.2 so far
-```
+The owner-side checks this section held are spent: every tag named here is pushed
+(`git ls-remote --tags origin` shows `v1.16.3` through `v1.24.3`). The check commands are kept
+in git history for the next hand-off; they are not re-run from here.
 
-## 2. Tag, and push all eighteen at once
+## 2. Tag and push — done 2026-10-05
 
-```bash
-git tag -a v1.16.3 fc5e9d7fc42af0da8ce2032462ef3c7860e2f576 -m "SUDS 1.16.3"
-git tag -a v1.16.4 6491308ff4c0eb89451e2717e89fc11ca5a9c4a1 -m "SUDS 1.16.4"
-git tag -a v1.17.0 485548c7b076954cdbf1ec4445335d7459662048 -m "SUDS 1.17.0"
-git tag -a v1.17.1 ab90c2f708b453f28c5f900feca5f67a3f89125a -m "SUDS 1.17.1"
-git tag -a v1.18.0 39e397eee2957574a8fc420df4556c4d1b171ffe -m "SUDS 1.18.0"
-git tag -a v1.19.0 3dc20dcfa27cefce0d7e715ac1229892d887f4fe -m "SUDS 1.19.0"
-git tag -a v1.20.0 "$R120" -m "SUDS 1.20.0"
-git tag -a v1.21.0 "$R121" -m "SUDS 1.21.0"
-git tag -a v1.22.0 "$R122" -m "SUDS 1.22.0"
-git tag -a v1.23.0 "$R123" -m "SUDS 1.23.0"
-git tag -a v1.23.1 "$R1231" -m "SUDS 1.23.1"
-git tag -a v1.23.2 "$R1232" -m "SUDS 1.23.2"
-git tag -a v1.23.3 "$R1233" -m "SUDS 1.23.3"
-git tag -a v1.23.4 "$R1234" -m "SUDS 1.23.4"
-git tag -a v1.23.5 "$R1235" -m "SUDS 1.23.5"
-git tag -a v1.23.6 "$R1236" -m "SUDS 1.23.6"
-git tag -a v1.24.0 "$R124" -m "SUDS 1.24.0"
-git tag -a v1.24.1 "$R1241" -m "SUDS 1.24.1"
-git push origin v1.16.3 v1.16.4 v1.17.0 v1.17.1 v1.18.0 v1.19.0 v1.20.0 v1.21.0 v1.22.0 v1.23.0 v1.23.1 v1.23.2 v1.23.3 v1.23.4 v1.23.5 v1.23.6 v1.24.0 v1.24.1
-```
-
-**One push, never an older tag alone.** A `v1.16.x` tag pushed on its own would be the newest tag there is: its own
-`release.yml` would make it the Latest release and start its own `web-app.yml`, which has no newest-release check and
-would put the 1.16 site over 1.24.0; the 1.16 kernel refuses the databases 1.17.0 and later migrated, and everyone
-using SUDS on this device would be locked out. With all eighteen in one push, `v1.24.1` is the newest tag from the
-start.
-
-**Before 1.24.2.** Push the tags while `main`'s `package.json` still says 1.24.1. 1.23.1 to 1.23.6, 1.24.0 and 1.24.1
-were stamped before the push, so their tags are in it, `v1.24.1` is the newest release, and its run is the one that is
-Latest and publishes the site; the runs of `v1.23.0` to `v1.23.6` and `v1.24.0` are not Latest and start no `Web app`
-run. If a 1.24.2 is stamped first, its tag joins the same push in the same places as `v1.24.1`'s (the table row on its
-stamp, an `R1242` line and `$R1242` in both check loops, its `git tag -a` line, the end of the push, a step-3 row that
-is Latest, with `v1.24.1`'s changed to "Not Latest; no `Web app` run"); a patch has no SBOM commit, so its tag goes on
-"Release 1.24.2" itself. The next feature release, 1.25.0, cannot be stamped first: it comes no earlier than
-2026-10-31, 28 days after 1.24.0 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*). The stabilisation commitment holds
-meanwhile: once the owner has pushed these tags, the maintaining assistant does not push `gh-pages` directly again;
-until then, any direct push of a stamped, CI-green build (1.24.1's included, if it has to go live first, as 1.23.1's
-to 1.24.0's did) is recorded in that version's *Record* and in the exceptions table.
+All twenty tags were pushed in one push on 2026-10-05, while `main` was at the 1.24.3 stamp, so
+`v1.24.3` is the newest tag. The per-version `git tag -a` commands are kept in git history. The
+standing rule survives this hand-off: never push an older tag alone — a lone `v1.16.x` tag would
+become the newest tag, its `release.yml` would mark it Latest, and its `web-app.yml` (no
+newest-release check) would put the 1.16 site over the current one.
 
 ## 3. What each tag's runs do, and what to approve
 

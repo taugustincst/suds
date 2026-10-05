@@ -270,7 +270,7 @@ release 1.24.1, it was published to GitHub Pages by a direct push to `gh-pages` 
 | Line | Gets | For how long |
 | --- | --- | --- |
 | **The latest minor** (today 1.24.x) | Every fix: defects and security, as patch releases on that line (1.24.1, a patch of 1.24.0 with no exception, *Record: 1.24.1*, is the first) | Until the next minor is released |
-| **The previous minor** (today 1.23.x, until 30 days after 1.24.0's release date: the date of its tag. `v1.24.0` is not pushed yet (*Record: 1.24.0*; [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), so its 30 days have not started; 1.24.0 goes to GitHub Pages with its stamp on 2026-10-03, and a programme should plan as if they run from then, to 2026-11-02) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.23` is made from `v1.23.6`'s line once the tags exist) | **30 days** after the next minor's release date, then none |
+| **The previous minor** (today 1.23.x, until 30 days after 1.24.0's release date: the date of its tag. `v1.24.0` was pushed 2026-10-05 ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), so its 30 days run to 2026-11-04; 1.24.0 goes to GitHub Pages with its stamp on 2026-10-03, and a programme should plan as if they run from then, to 2026-11-02) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.23` is made from `v1.23.6`'s line once the tags exist) | **30 days** after the next minor's release date, then none |
 | Anything older (today 1.22.x and before: once 1.24.0 was released, 1.22.x stopped being the previous minor, whatever was left of its 30 days after 1.23.0; 1.21.x stopped when 1.23.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's
@@ -530,12 +530,12 @@ change: 1.16.0 is the previous feature release) and for any 1.16.x patch (whose 
 `v1.16.2`: 1.16.3 and 1.16.4 alone count 1,137 of the 1,500 lines), `scripts/migration-order.js`'s baseline, and
 *Backports* step B, whose `git rev-parse 'v1.16.4^{commit}'` fails without the tag.
 
-**Now eighteen tags, in one push: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.24.1). 1.17.1,
+**Twenty tags, pushed 2026-10-05: [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)** (1.24.1). 1.17.1,
 1.18.0, 1.19.0, 1.20.0, 1.21.0, 1.22.0, 1.23.0, 1.23.1, 1.23.2, 1.23.3, 1.23.4, 1.23.5, 1.23.6 and 1.24.0 were
-published the same way, and 1.24.1 was stamped before the owner pushed them, so the tags owed are `v1.16.3`,
+published the same way, and 1.24.1 was stamped before the owner pushed them; the tags owed were `v1.16.3`,
 `v1.16.4`, `v1.17.0`, `v1.17.1`, `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0`, `v1.23.0`, `v1.23.1`,
-`v1.23.2`, `v1.23.3`, `v1.23.4`, `v1.23.5`, `v1.23.6`, `v1.24.0` and `v1.24.1`, pushed together while `main` says
-1.24.1. The hand-off has the checks, the tag commands, the one push, what each tag's runs do (the 1.16.x gates refuse,
+`v1.23.2`, `v1.23.3`, `v1.23.4`, `v1.23.5`, `v1.23.6`, `v1.24.0` and `v1.24.1` — all pushed now, plus `v1.24.2`
+and `v1.24.3` the same evening. No tags are owed. The hand-off has the checks, the tag commands, the one push, what each tag's runs do (the 1.16.x gates refuse,
 the eight from `v1.17.0` to `v1.23.0` and `v1.24.0` need a *Run workflow* with `policy_exception`, the gates of
 `v1.23.1` to `v1.23.6` and `v1.24.1` pass, and only `v1.24.1`'s `Web app` run is approved: it publishes 1.24.1;
 1.23.6's gate passes although it carries the owner-approved exception of *Record: 1.23.6*, which the owner adds to its
