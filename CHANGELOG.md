@@ -4,6 +4,24 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+## 1.24.4 — 2026-10-05
+
+A patch of 1.24.3 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*): the defects 1.24.3's exact-commit CI
+found, and the introductory pricing. No migration, no new or widened permission and no new route. It
+supersedes 1.24.3, whose GitHub Release is not published (the way 1.24.3 superseded 1.24.2).
+
+* **Form refusals name the date.** A refused date, time or datetime field showed the generic "Check the
+  highlighted field below"; the banner now names the kind of field ("Check the highlighted date below").
+* **Intake duplicate detection fixed.** The duplicate/readmit check sent the date of birth as typed
+  ("7/9/1981"); the server takes only YYYY-MM-DD, so the check silently never matched on typed dates. It
+  now sends the parsed ISO date.
+* **Published introductory pricing.** `public/procurement.json` carries the pricing tiers (90-day pilot
+  $2,500, Program $4,800/yr, Multi-site $12,000/yr, County-wide custom) and the paid-plan support terms;
+  contact name, email and website still await the owner's business contact.
+* **Tag hand-off retired.** All twenty tags `v1.16.3`–`v1.24.3` are pushed; docs/evidence/RELEASE-HANDOFF.md
+  is now the record of the push, and docs/RELEASE.md, the evidence README, the security questionnaire and
+  HANDOFF.md say so (`scripts/release-state.js` is clean).
+
 * **Published introductory pricing and support terms.** `public/procurement.json` now carries the pricing
   tiers (90-day pilot, Program, Multi-site, County-wide) and the paid-plan support terms, so the
   procurement page shows a buyer a price instead of "Not yet published by the maintainer". Contact
