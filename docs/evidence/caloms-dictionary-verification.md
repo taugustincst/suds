@@ -13,6 +13,13 @@ The three completely wrong sets are SERVICE_TYPES, REFERRAL_SOURCES and ETHNICIT
 finding is that the dictionary has no Y/N yes-no convention — every yes/no element is numeric
 (1/0) with 999xx special values.
 
+**Corrections to this report (2026-10-05, from the PDF re-check during the 1.25.0 fix):**
+- MHD-4 (p.89) is a 0–30 day count with 99904 — not `1`/`0`/`99904` as written under YES_NO below.
+- MHD-1 (p.86) is `1`/`0`/`99900`/`99904` — not `99901` as written under YES_NO_UNKNOWN below.
+- MED-5 is on p.79 (not p.78).
+- CID-15 race allows at most **5** codes (validation rule 2, p.53); only CID-18 disability allows 7.
+- The EMPLOYMENT label drift noted under MATCH is corrected to the dictionary wording in the spec.
+
 ## MATCH (4)
 
 - **ADMISSION_TRANSACTION** — dict ADM-2, p.11: `1` Initial Admission, `2` Transfer or Change in Service.

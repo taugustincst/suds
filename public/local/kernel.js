@@ -16243,86 +16243,105 @@ var require_caloms_spec = __commonJS({
   "server/caloms-spec.js"(exports, module) {
     "use strict";
     init_globals_inject();
-    var SPEC_VERSION = "SUDS CalOMS Tx layout 2026.1 (unverified against the DHCS data dictionary)";
-    var SPEC_SOURCE = "DHCS CalOMS Tx Data Collection Guide (Aug 2024, v3) \u2014 not retrieved; code values to verify against the current DHCS data dictionary";
+    var SPEC_VERSION = "SUDS CalOMS Tx layout 2026.2 (verified against DHCS CalOMS Tx Data Dictionary v3.0, Oct 2024)";
+    var SPEC_SOURCE = "DHCS CalOMS Tx Data Dictionary, File Version 3.0, October 2024 (code values); record layout per the DHCS Data Collection Guide structure (not dictionary-verified \u2014 see docs/compliance/CALOMS.md)";
     var set = (pairs) => pairs.map(([code, label]) => ({ code, label }));
     var SETS = {
-      ADMISSION_TRANSACTION: set([["1", "Initial admission"], ["2", "Transfer or change in service (same provider)"]]),
+      ADMISSION_TRANSACTION: set([["1", "Initial Admission"], ["2", "Transfer or Change in Service"]]),
+      // ADM-4 Type of Service, dictionary p.13. A client in a Narcotic Treatment Program reports here; the
+      // crosswalk on p.13 also lets an outpatient drug-free programme use code 1.
       SERVICE_TYPES: set([
-        ["01", "Outpatient (ASAM 1.0)"],
-        ["02", "Intensive outpatient (ASAM 2.1)"],
-        ["03", "Partial hospitalization (ASAM 2.5)"],
-        ["04", "Residential, clinically managed low intensity (ASAM 3.1)"],
-        ["05", "Residential, population-specific high intensity (ASAM 3.3)"],
-        ["06", "Residential, clinically managed high intensity (ASAM 3.5)"],
-        ["07", "Inpatient, medically monitored (ASAM 3.7)"],
-        ["08", "Withdrawal management, ambulatory (1-WM / 2-WM)"],
-        ["09", "Withdrawal management, residential (3.2-WM)"],
-        ["10", "Withdrawal management, inpatient (3.7-WM / 4-WM)"],
-        ["11", "Narcotic treatment program \u2014 maintenance"],
-        ["12", "Narcotic treatment program \u2014 detoxification"],
-        ["13", "Recovery services"]
+        ["1", "Non-Residential"],
+        ["2", "Residential"],
+        ["3", "Non-Residential Detox"],
+        ["4", "Residential Detox"],
+        ["5", "Non-Residential Detox Observation"],
+        ["6", "Residential Detox Observation"],
+        ["7", "Narcotic Treatment Program"]
       ]),
+      // ADM-5 Source of Referral, dictionary p.14.
       REFERRAL_SOURCES: set([
-        ["01", "Individual (self)"],
-        ["02", "Alcohol or drug treatment provider"],
-        ["03", "Other health care provider"],
-        ["04", "School"],
-        ["05", "Employer / EAP"],
-        ["06", "Other community referral"],
-        ["07", "Court or criminal justice (not DUI)"],
-        ["08", "DUI / DWI"],
-        ["09", "Probation"],
-        ["10", "Parole"],
-        ["11", "Drug court"],
-        ["12", "PC 1000 (deferred entry of judgment)"],
-        ["13", "Dependency court / child welfare services"],
-        ["14", "CalWORKs / social services"],
-        ["15", "Mental health provider"],
-        ["16", "Hospital or emergency department"]
+        ["1", "Individual, including self-referral"],
+        ["2", "Alcohol / Drug Abuse Program"],
+        ["3", "Other Health Care Provider"],
+        ["4", "School / Educational"],
+        ["5", "Employer / EAP"],
+        ["6", "12 Step Mutual Aid"],
+        ["7", "Probation or Parole"],
+        ["8", "Post-Release Community Supervision (AB 109)"],
+        ["9", "DUI / DWI"],
+        ["10", "Adult Felon Drug Court"],
+        ["11", "Dependency Drug Court"],
+        ["12", "Court / Criminal Justice"],
+        ["13", "Other Community Referral"],
+        ["14", "Child Protective Services"]
       ]),
+      // ADU-1a Primary Drug (Code), dictionary pp.21-22. Codes are NOT zero-padded. 99901 (unknown) is only
+      // allowable for an administrative discharge; 99903 (other) is specified in ADU-1b. Fentanyl has no code
+      // of its own and reports as 99903 Other.
       DRUGS: set([
-        ["00", "None"],
-        ["01", "Heroin"],
-        ["02", "Alcohol"],
-        ["03", "Barbiturates"],
-        ["04", "Other sedatives or hypnotics"],
-        ["05", "Methamphetamine"],
-        ["06", "Other amphetamines"],
-        ["07", "Other stimulants"],
-        ["08", "Cocaine / crack"],
-        ["09", "Marijuana / hashish"],
+        ["0", "None"],
+        ["1", "Heroin"],
+        ["2", "Alcohol"],
+        ["3", "Barbiturates"],
+        ["4", "Other Sedatives or Hypnotics"],
+        ["5", "Methamphetamine"],
+        ["6", "Other Amphetamines"],
+        ["7", "Other Stimulants"],
+        ["8", "Cocaine / Crack"],
+        ["9", "Marijuana / Hashish"],
         ["10", "PCP"],
-        ["11", "Other hallucinogens"],
-        ["12", "Tranquilizers (benzodiazepines)"],
-        ["13", "Other tranquilizers"],
-        ["14", "Non-prescription methadone"],
-        ["15", "Oxycodone / OxyContin"],
-        ["16", "Other opiates or synthetics"],
+        ["11", "Other Hallucinogens"],
+        ["12", "Tranquilizers (Benzodiazepine)"],
+        ["13", "Other Tranquilizers"],
+        ["14", "Non-Prescription Methadone"],
+        ["15", "OxyCodone / OxyContin"],
+        ["16", "Other Opiates or Synthetics"],
         ["17", "Inhalants"],
-        ["18", "Over-the-counter"],
-        ["19", "Ecstasy (MDMA)"],
-        ["20", "Other club drugs"],
-        ["21", "Fentanyl"],
-        ["99", "Other"]
+        ["18", "Over-the-Counter"],
+        ["19", "Ecstasy"],
+        ["20", "Other Club Drugs"],
+        ["99901", "Unknown / not sure / don\u2019t know"],
+        ["99903", "Other"]
       ]),
-      ROUTES: set([["1", "Oral"], ["2", "Smoking"], ["3", "Inhalation (nasal)"], ["4", "Injection"], ["5", "Other"]]),
-      YES_NO: set([["Y", "Yes"], ["N", "No"]]),
-      YES_NO_DECLINED: set([["Y", "Yes"], ["N", "No"], ["D", "Declined to state"]]),
-      YES_NO_UNKNOWN: set([["Y", "Yes"], ["N", "No"], ["U", "Unknown"]]),
-      SEX_AT_BIRTH: set([["M", "Male"], ["F", "Female"], ["X", "Intersex / another sex"], ["D", "Declined to state"]]),
+      // ADU-3 Primary Drug Route of Administration, dictionary p.25.
+      ROUTES: set([
+        ["1", "Oral"],
+        ["2", "Smoking"],
+        ["3", "Inhalation"],
+        ["4", "Injection (IV or intramuscular)"],
+        ["99902", "None or not applicable"],
+        ["99903", "Other"]
+      ]),
+      // CID-3 Gender, dictionary p.40. There is no separate "sex at birth" element in the dictionary.
       GENDER_IDENTITY: set([
         ["1", "Male"],
         ["2", "Female"],
-        ["3", "Transgender man / trans masculine"],
-        ["4", "Transgender woman / trans feminine"],
-        ["5", "Genderqueer / non-binary"],
-        ["6", "Another gender identity"],
-        ["7", "Declined to state"]
+        ["3", "Transgender (Trans Man)"],
+        ["4", "Transgender (Trans Woman)"],
+        ["5", "Gender Non-Conforming / Gender Queer"],
+        ["6", "Not Available"],
+        ["99900", "Client declined to state"],
+        ["99903", "Other"]
       ]),
+      // CID-20 Sexual Orientation, dictionary p.59. Value 7 ("Transgender") was retired 2024-09-24 and is skipped.
+      SEXUAL_ORIENTATION: set([
+        ["1", "Heterosexual / Straight"],
+        ["2", "Lesbian (female)"],
+        ["3", "Gay (male)"],
+        ["4", "Bisexual"],
+        ["5", "Unsure / Questioning"],
+        ["6", "Declined to state"],
+        ["8", "Pansexual"],
+        ["9", "Asexual"],
+        ["10", "Other"],
+        ["11", "Not Available"],
+        ["12", "Queer"]
+      ]),
+      // CID-15 Race, dictionary p.53. Codes ARE zero-padded; at most 5 may be indicated (validation rule 2).
       RACES: set([
-        ["01", "White"],
-        ["02", "Black or African American"],
+        ["01", "White / Caucasian"],
+        ["02", "Black / African-American"],
         ["03", "American Indian"],
         ["04", "Alaska Native"],
         ["05", "Asian Indian"],
@@ -16330,25 +16349,29 @@ var require_caloms_spec = __commonJS({
         ["07", "Chinese"],
         ["08", "Filipino"],
         ["09", "Guamanian"],
-        ["10", "Native Hawaiian"],
+        ["10", "Hawaiian"],
         ["11", "Japanese"],
         ["12", "Korean"],
         ["13", "Laotian"],
         ["14", "Samoan"],
         ["15", "Vietnamese"],
         ["16", "Other Asian"],
-        ["17", "Other Pacific Islander"],
-        ["18", "Other"],
-        ["19", "Declined to state"]
+        ["17", "Other Race"],
+        ["18", "Multi Racial"],
+        ["19", "Race Not Available"],
+        ["99900", "Client declined to state"]
       ]),
+      // CID-16 Ethnicity, dictionary p.55.
       ETHNICITIES: set([
-        ["01", "Mexican / Mexican American / Chicano"],
-        ["02", "Puerto Rican"],
-        ["03", "Cuban"],
-        ["04", "Other Hispanic or Latino"],
-        ["05", "Not Hispanic or Latino"],
-        ["06", "Declined to state"]
+        ["1", "Not Hispanic"],
+        ["2", "Mexican / Mexican American"],
+        ["3", "Cuban"],
+        ["4", "Puerto Rican"],
+        ["5", "Other Hispanic / Latino"],
+        ["6", "Hispanic or Latino Origin Not Available"],
+        ["99900", "Client declined to state"]
       ]),
+      // CID-18 Disability, dictionary p.57. Up to 7 codes, tilde-separated; 1, 99900 and 99904 are exclusive.
       DISABILITIES: set([
         ["1", "None"],
         ["2", "Visual"],
@@ -16356,102 +16379,158 @@ var require_caloms_spec = __commonJS({
         ["4", "Speech"],
         ["5", "Mobility"],
         ["6", "Mental"],
-        ["7", "Developmental"],
-        ["8", "Other"],
-        ["9", "Declined to state"]
+        ["7", "Developmentally Disabled"],
+        ["8", "Other Disability (not SUD)"],
+        ["99900", "Client declined to state"],
+        ["99904", "Client unable to answer"]
       ]),
+      // LEG-1 Criminal Justice Status, dictionary p.66.
+      CRIMINAL_JUSTICE: set([
+        ["1", "No criminal justice involvement"],
+        ["2", "Under parole supervision by CDCR (California Department of Correction & Rehabilitation)"],
+        ["3", "On parole from any other jurisdiction"],
+        ["4", "Post-release Community Supervision (AB 109) or on probation from any federal, state, or local jurisdiction"],
+        ["5", "Admitted under other diversion from any court under CA Penal Code, Section 1000"],
+        ["6", "Incarcerated"],
+        ["7", "Awaiting trial, charges or sentencing"],
+        ["99904", "Client unable to answer"]
+      ]),
+      // MED-7 Medication Prescribed as a Part of Treatment, dictionary p.81. Required for NTP clients (p.13 note).
+      MEDICATIONS: set([
+        ["1", "None"],
+        ["2", "Methadone"],
+        ["3", "LAAM"],
+        ["4", "Buprenorphine (Subutex)"],
+        ["5", "Buprenorphine (Suboxone)"],
+        ["99903", "Other (only for medications prescribed for SUD treatment, e.g. Antabuse)"]
+      ]),
+      // CID-19 Consent, dictionary p.58: a required element, strictly 1/0.
+      CONSENT: set([["1", "Yes"], ["0", "No"]]),
+      // Yes/no answers are numeric 1/0 in the dictionary, with per-element 999xx specials. There is no Y/N,
+      // D or U anywhere.
+      CALWORKS: set([["1", "Yes"], ["0", "No"], ["99901", "Not sure / don\u2019t know"]]),
+      // ADM-8, p.17
+      PREGNANT: set([["1", "Yes"], ["0", "No"], ["99901", "Not sure / don\u2019t know"]]),
+      // MED-5, p.79
+      IV_USE_12M: set([["1", "Yes"], ["0", "No"], ["99904", "Client unable to answer"]]),
+      // ADU-11, p.36
+      SCHOOL_ENROLLED: set([["1", "Yes"], ["0", "No"], ["99900", "Client declined to state"], ["99904", "Client unable to answer"]]),
+      // EMP-3 p.64, EMP-4 p.65
+      VETERAN: set([["1", "Yes"], ["0", "No"], ["99900", "Client declined to state"], ["99904", "Client unable to answer"]]),
+      // CID-17, p.56
+      MH_DIAGNOSIS: set([["1", "Yes"], ["0", "No"], ["99900", "Client declined to state"], ["99904", "Client unable to answer"]]),
+      // MHD-1, p.86
+      // EMP-1 Employment Status (labels as in the dictionary; SOC-2 Current Living Arrangements below it).
       EMPLOYMENT: set([
-        ["1", "Employed full time (35+ hours a week)"],
-        ["2", "Employed part time"],
+        ["1", "Employed Full time (35 hours or more)"],
+        ["2", "Employed Part time (less than 35 hrs.)"],
         ["3", "Unemployed, looking for work"],
-        ["4", "Unemployed, not looking for work"],
-        ["5", "Not in the labor force (student, homemaker, retired, disabled, incarcerated)"]
+        ["4", "Unemployed, not in the labor force (not seeking)"],
+        ["5", "Not in the labor force (Not seeking)"]
       ]),
-      LIVING: set([["1", "Homeless"], ["2", "Dependent living (supervised, or with family)"], ["3", "Independent living"]]),
-      // 1-3 and 5 are "standard" discharges (the client answers the discharge questions); 4, 6, 7 and 8 are
-      // "administrative" (the client is not there to ask), which carry only the discharge elements.
+      LIVING: set([["1", "Homeless"], ["2", "Dependent living"], ["3", "Independent living"]]),
+      // DIS-2 Discharge Status (labels as in the dictionary). 1-3 and 5 are "standard" discharges (all
+      // questions); 4, 6, 7 and 8 are "administrative" (minimum questions) — see ADMINISTRATIVE_DISCHARGE.
       DISCHARGE_STATUS: set([
-        ["1", "Completed treatment / recovery plan goals \u2014 referred"],
-        ["2", "Completed treatment / recovery plan goals \u2014 not referred"],
-        ["3", "Left before completion with satisfactory progress \u2014 standard questions"],
-        ["4", "Left before completion with satisfactory progress \u2014 administrative questions"],
-        ["5", "Left before completion with unsatisfactory progress \u2014 standard questions"],
-        ["6", "Left before completion with unsatisfactory progress \u2014 administrative questions"],
+        ["1", "Completed Treatment Plan & Goals / Referred / Standard (all questions)"],
+        ["2", "Completed Treatment Plan & Goals / Not Referred / Standard (all questions)"],
+        ["3", "Left Before Completion w/ Satisfactory Progress / Referred / Standard (all questions)"],
+        ["4", "Left Before Completion w/ Satisfactory Progress / Administrative (minimum questions)"],
+        ["5", "Left Before Completion w/ Unsatisfactory Progress / Referred / Standard (all questions)"],
+        ["6", "Left Before Completion w/ Unsatisfactory Progress / Administrative (minimum questions)"],
         ["7", "Death"],
         ["8", "Incarceration"]
       ])
     };
+    var ALT_LABELS = {
+      99900: "Client declined to state",
+      99901: "Not sure / don\u2019t know",
+      99902: "None or not applicable",
+      99904: "Client unable to answer"
+    };
     var ADMINISTRATIVE_DISCHARGE = ["4", "6", "7", "8"];
     var RECORD_TYPES = ["admission", "discharge", "annual_update"];
-    var MULTI_MAX = 5;
+    var MULTI_MAX = 7;
     var REP = ["admission", "discharge", "annual_update"];
     var hasSecondary = (a, c) => {
       const s = c.record_type === "admission" ? a.secondary_drug : (c.admission || {}).secondary_drug;
-      return !!s && s !== "00";
+      return !!s && s !== "0";
     };
     var FIELDS = [
       // ---- admission: the episode ----
       { key: "admission_transaction", name: "AdmissionTransactionType", label: "Admission type", set: "ADMISSION_TRANSACTION", in: ["admission"], req: "always", group: "Admission" },
-      { key: "service_type", name: "TypeOfService", label: "Type of service", set: "SERVICE_TYPES", in: ["admission"], req: "always", group: "Admission" },
-      { key: "referral_source", name: "ReferralSource", label: "Referral source", set: "REFERRAL_SOURCES", in: ["admission"], req: "always", group: "Admission" },
-      { key: "days_waited", name: "DaysWaitedToEnterTreatment", label: "Days waited to enter treatment", type: "int", min: 0, max: 999, in: ["admission"], req: "always", group: "Admission" },
-      { key: "prior_episodes", name: "NumberOfPriorTreatmentEpisodes", label: "Number of prior treatment episodes", type: "int", min: 0, max: 99, in: ["admission"], req: "always", group: "Admission" },
-      { key: "mat_planned", name: "MedicationAssistedTreatmentPlanned", label: "Medication-assisted treatment planned", set: "YES_NO", in: ["admission"], req: "always", group: "Admission" },
-      { key: "calworks", name: "CalWORKsRecipient", label: "CalWORKs recipient", set: "YES_NO", in: ["admission"], req: "always", group: "Admission" },
+      { key: "service_type", name: "TypeOfService", label: "Type of service", set: "SERVICE_TYPES", in: ["admission"], req: "always", group: "Admission", dict: "ADM-4 p.13" },
+      { key: "referral_source", name: "ReferralSource", label: "Referral source", set: "REFERRAL_SOURCES", in: ["admission"], req: "always", group: "Admission", dict: "ADM-5 p.14" },
+      { key: "days_waited", name: "DaysWaitedToEnterTreatment", label: "Days waited to enter treatment", type: "int", min: 0, max: 999, alt: [99901, 99904], in: ["admission"], req: "always", group: "Admission", dict: "ADM-6" },
+      { key: "prior_episodes", name: "NumberOfPriorTreatmentEpisodes", label: "Number of prior treatment episodes", type: "int", min: 0, max: 99, alt: [99900, 99901, 99904], in: ["admission"], req: "always", group: "Admission", dict: "ADM-7" },
+      { key: "medication", name: "MedicationPrescribedAsPartOfTreatment", label: "Medication prescribed as part of treatment", set: "MEDICATIONS", in: ["admission"], req: "always", group: "Admission", dict: "MED-7 p.81" },
+      { key: "calworks", name: "CalWORKsRecipient", label: "CalWORKs recipient", set: "CALWORKS", in: ["admission"], req: "always", group: "Admission", dict: "ADM-8 p.17" },
+      { key: "criminal_justice", name: "CriminalJusticeStatus", label: "Criminal justice status", set: "CRIMINAL_JUSTICE", in: ["admission"], req: "always", group: "Admission", dict: "LEG-1 p.66" },
       // ---- admission: about the client ----
-      { key: "sex_at_birth", name: "SexAtBirth", label: "Sex at birth", set: "SEX_AT_BIRTH", in: ["admission"], req: "always", group: "About the client" },
-      { key: "gender_identity", name: "GenderIdentity", label: "Gender identity", set: "GENDER_IDENTITY", in: ["admission"], req: "always", group: "About the client" },
-      { key: "race", name: "Race", label: `Race (up to ${MULTI_MAX})`, set: "RACES", multi: true, in: ["admission"], req: "always", group: "About the client" },
-      { key: "ethnicity", name: "Ethnicity", label: "Ethnicity", set: "ETHNICITIES", in: ["admission"], req: "always", group: "About the client" },
-      { key: "veteran", name: "VeteranStatus", label: "Veteran", set: "YES_NO_DECLINED", in: ["admission"], req: "always", group: "About the client" },
-      { key: "disability", name: "Disability", label: `Disability (up to ${MULTI_MAX})`, set: "DISABILITIES", multi: true, in: ["admission"], req: "always", group: "About the client" },
-      { key: "zip_code", name: "ZipCodeAtAdmission", label: "ZIP code of residence", type: "zip", in: ["admission"], req: "always", group: "About the client", help: "5 digits; 00000 when homeless or unknown (to verify)." },
-      { key: "education_grade", name: "HighestSchoolGradeCompleted", label: "Highest school grade completed (0-30)", type: "int", min: 0, max: 30, in: ["admission"], req: "always", group: "About the client" },
-      { key: "children_under_18", name: "NumberOfChildrenUnder18", label: "Number of children under 18", type: "int", min: 0, max: 99, in: ["admission"], req: "always", group: "About the client" },
-      { key: "children_cps", name: "ChildrenLivingWithOthersDueToCPS", label: "Of those, living with someone else by child protective order", type: "int", min: 0, max: 99, in: ["admission"], req: "always", group: "About the client" },
-      { key: "pregnant", name: "PregnantAtAdmission", label: "Pregnant at admission", set: "YES_NO", in: ["admission"], req: "always", group: "About the client" },
+      { key: "gender_identity", name: "GenderIdentity", label: "Gender", set: "GENDER_IDENTITY", in: ["admission"], req: "always", group: "About the client", dict: "CID-3 p.40" },
+      { key: "sexual_orientation", name: "SexualOrientation", label: "Sexual orientation", set: "SEXUAL_ORIENTATION", in: ["admission"], req: "always", group: "About the client", dict: "CID-20 p.59" },
+      { key: "race", name: "Race", label: "Race (up to 5)", set: "RACES", multi: true, multi_max: 5, in: ["admission"], req: "always", group: "About the client", dict: "CID-15 p.53" },
+      { key: "ethnicity", name: "Ethnicity", label: "Ethnicity", set: "ETHNICITIES", in: ["admission"], req: "always", group: "About the client", dict: "CID-16 p.55" },
+      { key: "veteran", name: "VeteranStatus", label: "U.S. veteran", set: "VETERAN", in: ["admission"], req: "always", group: "About the client", dict: "CID-17 p.56" },
+      { key: "disability", name: "Disability", label: "Disability (up to 7)", set: "DISABILITIES", multi: true, multi_max: 7, in: ["admission"], req: "always", group: "About the client", dict: "CID-18 p.57" },
+      {
+        key: "zip_code",
+        name: "ZipCodeAtAdmission",
+        label: "ZIP code of residence",
+        type: "zip",
+        in: ["admission"],
+        req: "always",
+        group: "About the client",
+        dict: "CID-8 p.44",
+        help: "5 digits, or 00000 when homeless; XXXXX if the client declines to state, ZZZZZ if unable to answer."
+      },
+      { key: "education_grade", name: "HighestSchoolGradeCompleted", label: "Highest school grade completed (0-30)", type: "int", min: 0, max: 30, alt: [99900, 99904], in: ["admission"], req: "always", group: "About the client", dict: "EMP-5" },
+      { key: "children_under_18", name: "NumberOfChildrenUnder18", label: "Number of children", type: "int", min: 0, max: 30, alt: [99904], in: ["admission"], req: "always", group: "About the client", dict: "SOC-5" },
+      { key: "children_cps", name: "ChildrenLivingWithOthersDueToCPS", label: "Of those, living with someone else by child protective order", type: "int", min: 0, max: 30, alt: [99904], in: ["admission"], req: "always", group: "About the client", dict: "SOC-7" },
+      { key: "pregnant", name: "PregnantAtAdmission", label: "Pregnant at admission", set: "PREGNANT", in: ["admission"], req: "always", group: "About the client", dict: "MED-5 p.79" },
+      { key: "consent", name: "ConsentForFutureContact", label: "Consent form for future contact on file", set: "CONSENT", in: ["admission"], req: "always", group: "About the client", dict: "CID-19 p.58" },
       // ---- admission: substance use history ----
-      { key: "primary_drug", name: "PrimaryDrug", label: "Primary drug", set: "DRUGS", in: ["admission"], req: "always", group: "Substance use" },
-      { key: "primary_route", name: "PrimaryDrugRoute", label: "Primary drug \u2014 usual route", set: "ROUTES", in: ["admission"], req: "always", group: "Substance use" },
-      { key: "primary_age_first_use", name: "PrimaryDrugAgeOfFirstUse", label: "Primary drug \u2014 age of first use", type: "int", min: 0, max: 99, in: ["admission"], req: "always", group: "Substance use" },
-      { key: "secondary_drug", name: "SecondaryDrug", label: "Secondary drug (None if none)", set: "DRUGS", in: ["admission"], req: "always", group: "Substance use" },
-      { key: "secondary_route", name: "SecondaryDrugRoute", label: "Secondary drug \u2014 usual route", set: "ROUTES", in: ["admission"], req: hasSecondary, group: "Substance use" },
-      { key: "secondary_age_first_use", name: "SecondaryDrugAgeOfFirstUse", label: "Secondary drug \u2014 age of first use", type: "int", min: 0, max: 99, in: ["admission"], req: hasSecondary, group: "Substance use" },
-      { key: "iv_use_12m", name: "NeedleUsePast12Months", label: "Needle use in the past 12 months", set: "YES_NO", in: ["admission"], req: "always", group: "Substance use" },
+      { key: "primary_drug", name: "PrimaryDrug", label: "Primary drug", set: "DRUGS", in: ["admission"], req: "always", group: "Substance use", dict: "ADU-1a pp.21-22" },
+      { key: "primary_route", name: "PrimaryDrugRoute", label: "Primary drug \u2014 usual route", set: "ROUTES", in: ["admission"], req: "always", group: "Substance use", dict: "ADU-3 p.25" },
+      { key: "primary_age_first_use", name: "PrimaryDrugAgeOfFirstUse", label: "Primary drug \u2014 age of first use", type: "int", min: 5, max: 105, alt: [99904], in: ["admission"], req: "always", group: "Substance use", dict: "ADU-4" },
+      { key: "secondary_drug", name: "SecondaryDrug", label: "Secondary drug (None if none)", set: "DRUGS", in: ["admission"], req: "always", group: "Substance use", dict: "ADU-1a pp.21-22" },
+      { key: "secondary_route", name: "SecondaryDrugRoute", label: "Secondary drug \u2014 usual route", set: "ROUTES", in: ["admission"], req: hasSecondary, group: "Substance use", dict: "ADU-3 p.25" },
+      { key: "secondary_age_first_use", name: "SecondaryDrugAgeOfFirstUse", label: "Secondary drug \u2014 age of first use", type: "int", min: 5, max: 105, alt: [99904], in: ["admission"], req: hasSecondary, group: "Substance use", dict: "ADU-4" },
+      { key: "iv_use_12m", name: "NeedleUsePast12Months", label: "Needle use in the past 12 months", set: "IV_USE_12M", in: ["admission"], req: "always", group: "Substance use", dict: "ADU-11 p.36" },
       // ---- discharge ----
       { key: "discharge_status", name: "DischargeStatus", label: "CalOMS discharge status", set: "DISCHARGE_STATUS", in: ["discharge"], req: "always", group: "Discharge" },
       { key: "last_service_date", name: "DateOfLastService", label: "Date of last face-to-face service", type: "date", in: ["discharge"], req: "always", group: "Discharge" },
       // ---- the 30-day repeated measures: admission, standard discharge, annual update ----
-      { key: "primary_days_used", name: "PrimaryDrugFrequency", label: "Days primary drug used, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
-      { key: "secondary_days_used", name: "SecondaryDrugFrequency", label: "Days secondary drug used, past 30", type: "int", min: 0, max: 30, in: REP, req: (a, c) => c.standard && hasSecondary(a, c), group: "Past 30 days" },
-      { key: "alcohol_days", name: "AlcoholUseDays", label: "Days alcohol used, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
-      { key: "iv_use_30", name: "NeedleUsePast30Days", label: "Needle use, past 30 days", set: "YES_NO", in: REP, req: "standard", group: "Past 30 days" },
+      { key: "primary_days_used", name: "PrimaryDrugFrequency", label: "Days primary drug used, past 30", type: "int", min: 0, max: 30, alt: [99902], in: REP, req: "standard", group: "Past 30 days", dict: "ADU-2" },
+      { key: "secondary_days_used", name: "SecondaryDrugFrequency", label: "Days secondary drug used, past 30", type: "int", min: 0, max: 30, alt: [99902], in: REP, req: (a, c) => c.standard && hasSecondary(a, c), group: "Past 30 days", dict: "ADU-2" },
+      { key: "alcohol_days", name: "AlcoholUseDays", label: "Days alcohol used, past 30", type: "int", min: 0, max: 30, alt: [99902], in: REP, req: "standard", group: "Past 30 days" },
+      { key: "iv_use_30", name: "NeedleUsePast30Days", label: "Days of needle use, past 30", type: "int", min: 0, max: 30, alt: [99900, 99904], in: REP, req: "standard", group: "Past 30 days", dict: "ADU-10 p.35" },
       { key: "employment_status", name: "CurrentEmploymentStatus", label: "Employment status", set: "EMPLOYMENT", in: REP, req: "standard", group: "Past 30 days" },
-      { key: "paid_work_days", name: "DaysPaidForWorkPast30", label: "Days paid for work, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
-      { key: "school_enrolled", name: "EnrolledInSchool", label: "Enrolled in school", set: "YES_NO", in: REP, req: "standard", group: "Past 30 days" },
-      { key: "job_training", name: "EnrolledInJobTraining", label: "Enrolled in job training", set: "YES_NO", in: REP, req: "standard", group: "Past 30 days" },
+      { key: "paid_work_days", name: "DaysPaidForWorkPast30", label: "Days paid for work, past 30", type: "int", min: 0, max: 30, alt: [99900, 99904], in: REP, req: "standard", group: "Past 30 days", dict: "EMP-2" },
+      { key: "school_enrolled", name: "EnrolledInSchool", label: "Enrolled in school", set: "SCHOOL_ENROLLED", in: REP, req: "standard", group: "Past 30 days", dict: "EMP-3 p.64" },
+      { key: "job_training", name: "EnrolledInJobTraining", label: "Enrolled in job training", set: "SCHOOL_ENROLLED", in: REP, req: "standard", group: "Past 30 days", dict: "EMP-4 p.65" },
       { key: "living_arrangement", name: "LivingArrangement", label: "Living arrangement", set: "LIVING", in: REP, req: "standard", group: "Past 30 days" },
-      { key: "arrests_30", name: "ArrestsPast30Days", label: "Arrests, past 30 days", type: "int", min: 0, max: 99, in: REP, req: "standard", group: "Past 30 days" },
-      { key: "jail_days_30", name: "JailDaysPast30", label: "Days in jail, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
-      { key: "prison_days_30", name: "PrisonDaysPast30", label: "Days in prison, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
-      { key: "er_visits_30", name: "EmergencyRoomVisitsPast30", label: "Emergency room visits, past 30 days", type: "int", min: 0, max: 99, in: REP, req: "standard", group: "Past 30 days" },
-      { key: "hospital_nights_30", name: "HospitalOvernightStaysPast30", label: "Nights in hospital, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
-      { key: "physical_health_days_30", name: "PhysicalHealthProblemDaysPast30", label: "Days with physical health problems, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
-      { key: "mh_diagnosis", name: "DiagnosedMentalIllness", label: "Diagnosed with a mental illness", set: "YES_NO_UNKNOWN", in: REP, req: "standard", group: "Past 30 days" },
-      { key: "mh_er_visits_30", name: "MentalHealthERVisitsPast30", label: "Emergency visits for mental health, past 30 days", type: "int", min: 0, max: 99, in: REP, req: "standard", group: "Past 30 days" },
-      { key: "psych_inpatient_days_30", name: "PsychiatricInpatientDaysPast30", label: "Days in psychiatric inpatient care, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
-      { key: "psych_meds", name: "PrescribedPsychiatricMedication", label: "Prescribed psychiatric medication", set: "YES_NO", in: REP, req: "standard", group: "Past 30 days" },
-      { key: "family_conflict_days_30", name: "FamilyConflictDaysPast30", label: "Days of serious family conflict, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
-      { key: "social_support_days_30", name: "SocialSupportRecoveryDaysPast30", label: "Days at social support recovery activities, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days" },
-      { key: "lives_with_user", name: "LivesWithSubstanceUser", label: "Lives with someone who uses alcohol or drugs", set: "YES_NO", in: REP, req: "standard", group: "Past 30 days" }
+      { key: "arrests_30", name: "ArrestsPast30Days", label: "Arrests, past 30 days", type: "int", min: 0, max: 30, alt: [99904], in: REP, req: "standard", group: "Past 30 days", dict: "LEG-3" },
+      { key: "jail_days_30", name: "JailDaysPast30", label: "Days in jail, past 30", type: "int", min: 0, max: 30, alt: [99904], in: REP, req: "standard", group: "Past 30 days", dict: "LEG-4" },
+      { key: "prison_days_30", name: "PrisonDaysPast30", label: "Days in prison, past 30", type: "int", min: 0, max: 30, alt: [99904], in: REP, req: "standard", group: "Past 30 days", dict: "LEG-5" },
+      { key: "er_visits_30", name: "EmergencyRoomVisitsPast30", label: "Emergency room visits, past 30 days", type: "int", min: 0, max: 99, alt: [99904], in: REP, req: "standard", group: "Past 30 days", dict: "MED-2" },
+      { key: "hospital_nights_30", name: "HospitalOvernightStaysPast30", label: "Nights in hospital, past 30", type: "int", min: 0, max: 30, alt: [99904], in: REP, req: "standard", group: "Past 30 days", dict: "MED-3" },
+      { key: "physical_health_days_30", name: "PhysicalHealthProblemDaysPast30", label: "Days with physical health problems, past 30", type: "int", min: 0, max: 30, alt: [99904], in: REP, req: "standard", group: "Past 30 days", dict: "MED-4 p.78" },
+      { key: "mh_diagnosis", name: "DiagnosedMentalIllness", label: "Ever diagnosed with a mental illness", set: "MH_DIAGNOSIS", in: REP, req: "standard", group: "Past 30 days", dict: "MHD-1 p.86" },
+      { key: "mh_er_visits_30", name: "MentalHealthERVisitsPast30", label: "Emergency visits for mental health, past 30 days", type: "int", min: 0, max: 99, alt: [99904], in: REP, req: "standard", group: "Past 30 days", dict: "MHD-2" },
+      { key: "psych_inpatient_days_30", name: "PsychiatricInpatientDaysPast30", label: "Days in psychiatric inpatient care, past 30", type: "int", min: 0, max: 30, alt: [99904], in: REP, req: "standard", group: "Past 30 days", dict: "MHD-3" },
+      { key: "psych_meds", name: "MentalHealthMedicationDaysPast30", label: "Days took prescribed mental-health medication, past 30", type: "int", min: 0, max: 30, alt: [99904], in: REP, req: "standard", group: "Past 30 days", dict: "MHD-4 p.89" },
+      { key: "family_conflict_days_30", name: "FamilyConflictDaysPast30", label: "Days of serious family conflict, past 30", type: "int", min: 0, max: 30, alt: [99900, 99904], in: REP, req: "standard", group: "Past 30 days", dict: "SOC-4" },
+      { key: "social_support_days_30", name: "SocialSupportRecoveryDaysPast30", label: "Days at social support recovery activities, past 30", type: "int", min: 0, max: 30, in: REP, req: "standard", group: "Past 30 days", dict: "SOC-1" },
+      { key: "lives_with_user", name: "LivesWithSubstanceUser", label: "Days lived with someone who uses alcohol or drugs, past 30", type: "int", min: 0, max: 30, alt: [99900, 99904], in: REP, req: "standard", group: "Past 30 days", dict: "SOC-3 p.93" }
     ];
     var FIELD2 = Object.fromEntries(FIELDS.map((f) => [f.key, f]));
     var fieldsFor = (type) => FIELDS.filter((f) => f.in.includes(type));
     var FROM_SUDS = {
-      asam_level: { "1.0": "01", "2.1": "02", "2.5": "03", "3.1": "04", "3.3": "05", "3.5": "06", "3.7": "07", "4.0": "10", OTP: "11" },
-      substance: { opioids_fentanyl: "21", opioids_heroin: "01", opioids_rx: "16", alcohol: "02", methamphetamine: "05", cocaine: "08", benzodiazepines: "12", cannabis: "09", synthetic_cannabinoids: "99", xylazine: "99", other: "99" },
+      asam_level: { "1.0": "1", "2.1": "1", "2.5": "1", "3.1": "2", "3.3": "2", "3.5": "2", "3.7": "2", "4.0": "2", OTP: "7" },
+      substance: { opioids_fentanyl: "99903", opioids_heroin: "1", opioids_rx: "16", alcohol: "2", methamphetamine: "5", cocaine: "8", benzodiazepines: "12", cannabis: "9", synthetic_cannabinoids: "99903", xylazine: "99903", other: "99903" },
       discharge_reason: { completed: "1", transferred: "1", incarcerated: "8", deceased: "7", lost_contact: "6", declined: "5", moved: "4" },
-      veteran: { 1: "Y", 0: "N" }
+      veteran: { 1: "1", 0: "0" }
     };
     var ID_COLUMNS = [
       { key: "record_type", name: "RecordType" },
@@ -16462,8 +16541,8 @@ var require_caloms_spec = __commonJS({
       { key: "dob", name: "DateOfBirth" },
       { key: "admission_date", name: "AdmissionDate" }
     ];
-    var RECORD_CODE = { admission: "A", discharge: "D", annual_update: "U" };
-    module.exports = { SPEC_VERSION, SPEC_SOURCE, SETS, FIELDS, FIELD: FIELD2, RECORD_TYPES, RECORD_CODE, ADMINISTRATIVE_DISCHARGE, MULTI_MAX, fieldsFor, FROM_SUDS, ID_COLUMNS };
+    var RECORD_CODE = { admission: "1", discharge: "4", annual_update: "7" };
+    module.exports = { SPEC_VERSION, SPEC_SOURCE, SETS, ALT_LABELS, FIELDS, FIELD: FIELD2, RECORD_TYPES, RECORD_CODE, ADMINISTRATIVE_DISCHARGE, MULTI_MAX, fieldsFor, FROM_SUDS, ID_COLUMNS };
   }
 });
 
@@ -24986,12 +25065,12 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
             encrypt3("Sign-in sheet kept on paper; headcount only. (Sample data)")
           );
         }
-        const CALOMS_BASE = { admission_transaction: "1", service_type: "01", days_waited: 3, prior_episodes: 0, mat_planned: "N", calworks: "N", race: ["01"], ethnicity: "05", veteran: "N", disability: ["1"], zip_code: "00000", education_grade: 12, children_under_18: 0, children_cps: 0, pregnant: "N", primary_age_first_use: 19, secondary_drug: "00", primary_days_used: 10, alcohol_days: 0, employment_status: "3", paid_work_days: 0, school_enrolled: "N", job_training: "N", arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 2, mh_diagnosis: "N", mh_er_visits_30: 0, psych_inpatient_days_30: 0, psych_meds: "N", family_conflict_days_30: 1, social_support_days_30: 4, lives_with_user: "N" };
-        const CALOMS_DISCHARGE = { discharge_status: "1", primary_days_used: 0, alcohol_days: 0, iv_use_30: "N", employment_status: "1", paid_work_days: 20, school_enrolled: "N", job_training: "N", living_arrangement: "3", arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 0, mh_diagnosis: "N", mh_er_visits_30: 0, psych_inpatient_days_30: 0, psych_meds: "N", family_conflict_days_30: 0, social_support_days_30: 12, lives_with_user: "N" };
+        const CALOMS_BASE = { admission_transaction: "1", service_type: "1", days_waited: 3, prior_episodes: 0, medication: "1", calworks: "0", criminal_justice: "1", gender_identity: "5", sexual_orientation: "1", race: ["01"], ethnicity: "1", veteran: "0", disability: ["1"], zip_code: "00000", education_grade: 12, children_under_18: 0, children_cps: 0, pregnant: "0", consent: "1", primary_age_first_use: 19, secondary_drug: "0", primary_days_used: 10, alcohol_days: 0, employment_status: "3", paid_work_days: 0, school_enrolled: "0", job_training: "0", arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 2, mh_diagnosis: "0", mh_er_visits_30: 0, psych_inpatient_days_30: 0, psych_meds: 0, family_conflict_days_30: 1, social_support_days_30: 4, lives_with_user: 0 };
+        const CALOMS_DISCHARGE = { discharge_status: "1", primary_days_used: 0, alcohol_days: 0, iv_use_30: 0, employment_status: "1", paid_work_days: 20, school_enrolled: "0", job_training: "0", living_arrangement: "3", arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 0, mh_diagnosis: "0", mh_er_visits_30: 0, psych_inpatient_days_30: 0, psych_meds: 0, family_conflict_days_30: 0, social_support_days_30: 12, lives_with_user: 0 };
         for (const [i, answers] of [
-          [0, { referral_source: "01", sex_at_birth: "F", gender_identity: "5", primary_drug: "21", primary_route: "4", iv_use_12m: "Y", iv_use_30: "Y", living_arrangement: "1" }],
-          [5, { referral_source: "01", sex_at_birth: "M", gender_identity: "1", primary_drug: "08", primary_route: "3", iv_use_12m: "N", iv_use_30: "N", living_arrangement: "3", employment_status: "1", paid_work_days: 20 }],
-          [6, { referral_source: "01", sex_at_birth: "F", gender_identity: "2", primary_drug: "01", primary_route: "4", iv_use_12m: "Y", iv_use_30: "Y", living_arrangement: "2", secondary_drug: "05", secondary_route: "2", secondary_age_first_use: 22, secondary_days_used: 4 }]
+          [0, { referral_source: "1", gender_identity: "5", primary_drug: "99903", primary_route: "4", iv_use_12m: "1", iv_use_30: 3, living_arrangement: "1" }],
+          [5, { referral_source: "1", gender_identity: "1", primary_drug: "8", primary_route: "3", iv_use_12m: "0", iv_use_30: 0, living_arrangement: "3", employment_status: "1", paid_work_days: 20 }],
+          [6, { referral_source: "1", gender_identity: "2", primary_drug: "1", primary_route: "4", iv_use_12m: "1", iv_use_30: 2, living_arrangement: "2", secondary_drug: "5", secondary_route: "2", secondary_age_first_use: 22, secondary_days_used: 4 }]
         ]) {
           const c = cids[i];
           const ep = c && db3.one(`SELECT id, opened_at, closed_at FROM episodes WHERE client_id=? ORDER BY opened_at LIMIT 1`, c.id);
@@ -25004,7 +25083,7 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
             "admission",
             null,
             ep.opened_at.slice(0, 10),
-            "01",
+            "1",
             null,
             encrypt3(JSON.stringify({ ...CALOMS_BASE, ...answers })),
             c.worker,
@@ -25660,7 +25739,8 @@ Task: Suggest entries for the client's treatment / care coordination plan from t
     function calomsPrompt({ type, text }) {
       const S = require_caloms_spec();
       const lines = calomsFields(type).map((f) => {
-        if (f.set) return `- ${f.key} (${f.label})${f.multi ? " [up to 5 codes]" : ""}: ${S.SETS[f.set].map((c) => `${c.code}=${c.label}`).join("; ")}`;
+        if (f.set) return `- ${f.key} (${f.label})${f.multi ? ` [up to ${f.multi_max || S.MULTI_MAX} codes]` : ""}: ${S.SETS[f.set].map((c) => `${c.code}=${c.label}`).join("; ")}`;
+        if (f.alt) return `- ${f.key} (${f.label}): whole number ${f.min}-${f.max}, or one of ${f.alt.join(", ")}`;
         return `- ${f.key} (${f.label}): whole number${f.min !== void 0 ? ` ${f.min}-${f.max}` : ""}`;
       });
       return {
@@ -26867,12 +26947,12 @@ var require_ai = __commonJS({
           if (f.set) {
             const codes = new Set(S.SETS[f.set].map((c) => c.code));
             if (f.multi) {
-              const vals = [...new Set(raw.split(/[\s,;]+/).filter((c) => codes.has(c)))].slice(0, S.MULTI_MAX);
+              const vals = [...new Set(raw.split(/[\s,;]+/).filter((c) => codes.has(c)))].slice(0, f.multi_max || S.MULTI_MAX);
               value = vals.length ? vals : null;
             } else value = codes.has(raw) ? raw : null;
           } else if (f.type === "int") {
             const n = Number(raw);
-            value = /^\d+$/.test(raw) && n >= (f.min ?? 0) && n <= (f.max ?? 999) ? n : null;
+            value = /^\d+$/.test(raw) && (n >= (f.min ?? 0) && n <= (f.max ?? 999) || (f.alt || []).includes(n)) ? n : null;
           }
           if (value === null) {
             dropped++;
@@ -28586,6 +28666,7 @@ var require_caloms = __commonJS({
           version: S.SPEC_VERSION,
           source: S.SPEC_SOURCE,
           sets: S.SETS,
+          alt_labels: S.ALT_LABELS,
           record_types: S.RECORD_TYPES,
           multi_max: S.MULTI_MAX,
           administrative_discharge: S.ADMINISTRATIVE_DISCHARGE,
@@ -28596,8 +28677,11 @@ var require_caloms = __commonJS({
             set: f.set || null,
             type: f.type || (f.set ? "code" : "text"),
             multi: !!f.multi,
+            multi_max: f.multi_max || null,
             min: f.min,
             max: f.max,
+            alt: f.alt || null,
+            dict: f.dict || null,
             in: f.in,
             group: f.group,
             help: f.help || null,
@@ -28680,19 +28764,27 @@ var require_caloms = __commonJS({
           }
           const bad = vals.filter((x) => !codes.includes(String(x)));
           if (bad.length) add(f.key, "invalid_code", `${f.label}: ${bad.join(", ")} is not a valid code`);
-          if (f.multi && vals.length > S.MULTI_MAX) add(f.key, "too_many_codes", `${f.label} takes at most ${S.MULTI_MAX} answers`);
+          if (f.multi && vals.length > (f.multi_max || S.MULTI_MAX)) add(f.key, "too_many_codes", `${f.label} takes at most ${f.multi_max || S.MULTI_MAX} answers`);
           if (f.multi && new Set(vals).size !== vals.length) add(f.key, "duplicate_code", `${f.label} lists the same answer twice`);
         } else if (f.type === "int") {
           if (typeof v !== "number" || !Number.isInteger(v)) add(f.key, "not_a_number", `${f.label} must be a whole number`);
-          else if (v < f.min || v > f.max) add(f.key, "out_of_range", `${f.label} must be between ${f.min} and ${f.max}`);
+          else if (v < f.min || v > f.max) {
+            if (!(f.alt && f.alt.includes(v))) add(f.key, "out_of_range", `${f.label} must be between ${f.min} and ${f.max}${f.alt ? `, or ${f.alt.join(" / ")}` : ""}`);
+          }
         } else if (f.type === "date") {
           if (!validDay(v)) add(f.key, "date_invalid", `${f.label} must be a real date (YYYY-MM-DD)`);
         } else if (f.type === "zip") {
-          if (!/^\d{5}$/.test(v)) add(f.key, "zip_invalid", `${f.label} must be 5 digits`);
+          if (!/^(\d{5}|XXXXX|ZZZZZ)$/.test(v)) add(f.key, "zip_invalid", `${f.label} must be 5 digits, 00000, XXXXX or ZZZZZ`);
         }
       }
       const has = (k) => !empty(a[k]);
       const num = (k) => typeof a[k] === "number" ? a[k] : null;
+      const countOf = (k) => {
+        const v = num(k);
+        const f = S.FIELD[k];
+        return v !== null && f && v >= f.min && v <= f.max ? v : null;
+      };
+      const codeOf = (k) => a[k] === void 0 || a[k] === null ? null : String(a[k]);
       if (type === "admission") {
         if (!ctx.dob || !validDay(ctx.dob)) add("dob", "dob_missing", "The client's date of birth is required for a CalOMS admission (add it on the client record)");
         else if (dateOk) {
@@ -28701,24 +28793,29 @@ var require_caloms = __commonJS({
             const age = ageOn(ctx.dob, date);
             if (age > 110) add("dob", "age_out_of_range", `Age at admission (${age}) is over 110; check the date of birth`);
             else if (age < 12) add("dob", "age_under_12", `Age at admission is ${age}; confirm the date of birth`, "warning");
-            for (const k of ["primary_age_first_use", "secondary_age_first_use"]) if (num(k) !== null && num(k) > age) add(k, "first_use_after_admission", `${label(k)} (${num(k)}) is older than the client's age at admission (${age})`);
+            for (const k of ["primary_age_first_use", "secondary_age_first_use"]) if (countOf(k) !== null && countOf(k) > age) add(k, "first_use_after_admission", `${label(k)} (${countOf(k)}) is older than the client's age at admission (${age})`);
+            if (codeOf("veteran") === "1" && age < 17) add("veteran", "veteran_under_17", "A client under 17 at admission cannot be a U.S. veteran");
           }
         }
-        if (a.pregnant === "Y" && a.sex_at_birth && a.sex_at_birth !== "F") add("pregnant", "pregnant_not_female", "Pregnant can only be Yes when sex at birth is Female");
-        if (a.primary_drug === "00") add("primary_drug", "primary_drug_none", "Primary drug cannot be None");
-        if (has("secondary_drug") && a.secondary_drug !== "00" && a.secondary_drug === a.primary_drug) add("secondary_drug", "secondary_same_as_primary", "Secondary drug must differ from the primary drug");
-        if (a.iv_use_30 === "Y" && a.iv_use_12m === "N") add("iv_use_12m", "needle_use_inconsistent", "Needle use in the past 30 days means needle use in the past 12 months too");
-        if (num("children_cps") !== null && num("children_under_18") !== null && num("children_cps") > num("children_under_18")) add("children_cps", "children_cps_exceeds", "Children living with others by protective order cannot exceed the number of children under 18");
-        for (const [k, exclusive] of [["disability", ["1", "9"]], ["race", ["19"]]]) {
-          const vals = Array.isArray(a[k]) ? a[k] : [];
+        if (codeOf("pregnant") === "1" && ["1", "4"].includes(codeOf("gender_identity"))) add("pregnant", "pregnant_not_possible", "Pregnant at admission cannot be Yes for this gender");
+        if (codeOf("primary_drug") === "0") add("primary_drug", "primary_drug_none", "Primary drug cannot be None on an admission");
+        if (has("secondary_drug") && codeOf("secondary_drug") !== "0" && codeOf("secondary_drug") === codeOf("primary_drug")) add("secondary_drug", "secondary_same_as_primary", "Secondary drug must differ from the primary drug");
+        if (countOf("iv_use_30") > 0 && codeOf("iv_use_12m") === "0") add("iv_use_12m", "needle_use_inconsistent", "Needle use in the past 30 days means needle use in the past 12 months too");
+        if (codeOf("criminal_justice") === "1" && ["7", "8", "10", "12"].includes(codeOf("referral_source"))) add("criminal_justice", "cj_status_referral_conflict", 'Criminal justice status cannot be "No criminal justice involvement" with this referral source');
+        if (codeOf("referral_source") === "8" && codeOf("criminal_justice") !== "4") add("criminal_justice", "cj_status_ab109", 'A Post-Release Community Supervision (AB 109) referral needs criminal justice status "Post-release Community Supervision (AB 109) or on probation\u2026"');
+        if (codeOf("criminal_justice") === "99904" && !["3", "4", "5"].includes(codeOf("service_type")) && !(Array.isArray(a.disability) && a.disability.map(String).includes("7"))) add("criminal_justice", "cj_unable_restricted", '"Client unable to answer" for criminal justice status is only allowed for a detox service or a developmentally disabled client');
+        if (countOf("children_cps") !== null && countOf("children_under_18") !== null && countOf("children_cps") > countOf("children_under_18")) add("children_cps", "children_cps_exceeds", "Children living with someone else by protective order cannot exceed the number of children");
+        for (const [k, exclusive] of [["disability", ["1", "99900", "99904"]], ["race", ["19", "99900"]]]) {
+          const vals = (Array.isArray(a[k]) ? a[k] : []).map(String);
           if (vals.length > 1 && vals.some((x) => exclusive.includes(x))) add(k, "exclusive_code_combined", `${label(k)}: "${S.SETS[S.FIELD[k].set].find((c) => c.code === vals.find((x) => exclusive.includes(x))).label}" cannot be combined with other answers`);
         }
         if (dateOk && ctx.episode && ctx.episode.opened_at && ctx.episode.opened_at.slice(0, 10) !== date) add("record_date", "admission_date_differs", `Admission date differs from the episode's start (${ctx.episode.opened_at.slice(0, 10)})`, "warning");
       }
-      const secondaryDrug = type === "admission" ? a.secondary_drug : (ctx.admission || {}).secondary_drug;
-      if (secondaryDrug === "00" && num("secondary_days_used") > 0) add("secondary_days_used", "secondary_days_without_drug", "Days secondary drug used must be 0 or blank when there is no secondary drug");
-      if (num("jail_days_30") !== null && num("prison_days_30") !== null && num("jail_days_30") + num("prison_days_30") > 30) add("prison_days_30", "jail_prison_over_30", "Days in jail and in prison together cannot exceed 30");
-      if (num("hospital_nights_30") !== null && num("psych_inpatient_days_30") !== null && num("hospital_nights_30") + num("psych_inpatient_days_30") > 30) add("psych_inpatient_days_30", "inpatient_over_30", "Hospital nights and psychiatric inpatient days together exceed 30; check both", "warning");
+      const secondaryDrug = type === "admission" ? codeOf("secondary_drug") : ctx.admission ? String(ctx.admission.secondary_drug) : null;
+      if (secondaryDrug === "0" && countOf("secondary_days_used") > 0) add("secondary_days_used", "secondary_days_without_drug", "Days secondary drug used must be 0 or blank when there is no secondary drug");
+      if (countOf("jail_days_30") !== null && countOf("prison_days_30") !== null && countOf("jail_days_30") + countOf("prison_days_30") > 30) add("prison_days_30", "jail_prison_over_30", "Days in jail and in prison together cannot exceed 30");
+      if (countOf("hospital_nights_30") !== null && countOf("psych_inpatient_days_30") !== null && countOf("hospital_nights_30") + countOf("psych_inpatient_days_30") > 30) add("psych_inpatient_days_30", "inpatient_over_30", "Hospital nights and psychiatric inpatient days together exceed 30; check both", "warning");
+      if ((countOf("er_visits_30") > 0 || countOf("hospital_nights_30") > 0) && !(countOf("physical_health_days_30") > 0)) add("physical_health_days_30", "health_days_zero", "Emergency room visits or hospital nights were reported, so days with physical health problems cannot be 0");
       if (type === "discharge" || type === "annual_update") {
         if (!ctx.admission) add("record_type", "no_admission", `There is no CalOMS admission record for this episode, so this ${type === "discharge" ? "discharge" : "annual update"} cannot be submitted`);
         else if (ctx.admissionFatal) add("record_type", "admission_has_errors", "The admission this record follows has fatal errors; fix the admission first");
@@ -28913,7 +29010,7 @@ var require_caloms = __commonJS({
       }
       return out2;
     }
-    var MULTI_COLS = (f) => Array.from({ length: S.MULTI_MAX }, (_, i) => ({ key: `${f.key}_${i + 1}`, name: `${f.name}${i + 1}` }));
+    var MULTI_COLS = (f) => Array.from({ length: f.multi_max || S.MULTI_MAX }, (_, i) => ({ key: `${f.key}_${i + 1}`, name: `${f.name}${i + 1}` }));
     function columnsFor(type) {
       const cols2 = [...S.ID_COLUMNS, { key: "record_date", name: type === "admission" ? "AdmissionTransactionDate" : type === "discharge" ? "DischargeDate" : "AnnualUpdateDate" }];
       for (const f of S.fieldsFor(type)) {
@@ -29017,11 +29114,11 @@ var require_caloms = __commonJS({
         `Records held back because of fatal errors: ${excluded}. Missing or overdue records: ${missing}.`,
         "Fix them in SUDS (Reports -> State reporting -> Validation) and produce a new submission for them.",
         "",
-        "IMPORTANT: the code values and column names in these files follow SUDS's CalOMS Tx layout, which has",
-        "NOT been verified against the current DHCS CalOMS Tx data dictionary / file specification. Before the",
-        "first submission the county must check every code table (server/caloms-spec.js, docs/compliance/CALOMS.md)",
-        "against the dictionary DHCS has issued, and convert these CSV files to the DHCS upload format if it is",
-        "not CSV. Dates are YYYY-MM-DD; multi-answer elements (race, disability) are split into numbered columns.",
+        "IMPORTANT: the code values in these files were verified against the DHCS CalOMS Tx Data Dictionary",
+        "(File Version 3.0, October 2024) \u2014 see docs/compliance/CALOMS.md. The column names and file layout",
+        "follow SUDS's CalOMS Tx layout and have NOT been verified against the DHCS file specification: before",
+        "the first submission the county must convert these CSV files to the DHCS upload format if it is not",
+        "CSV. Dates are YYYY-MM-DD; multi-answer elements (race, disability) are split into numbered columns.",
         "",
         "How to submit (county process)",
         "  1. Resolve every fatal error in the SUDS validation report for the period.",
@@ -54366,6 +54463,75 @@ var require_db = __commonJS({
       //     (never synchronised); SUDS on this device keeps its own. Self-contained and idempotent, so it can be renumbered.
       (d) => {
         createTablesFromSchema(d, safeSchema(), ["incoming_referrals", "incoming_referral_attempts"], 70);
+      },
+      // 71: CalOMS Tx dictionary verification (released in 1.25.0): remap every stored record's answers from the
+      //     old unverified codes to the DHCS Data Dictionary v3.0 values (server/caloms-spec.js). Y/N become 1/0;
+      //     service types 01-13 become ADM-4 1-7 (ASAM outpatient -> 1 Non-Residential, ASAM residential/inpatient
+      //     -> 2 Residential, ambulatory/residential/inpatient withdrawal management -> 3/4 detox, NTP -> 7, recovery
+      //     services -> 1); referral sources 01-16 become ADM-5 1-14; ethnicities 01-06 become CID-16 1-6/99900;
+      //     race 18/19 become 17/99900; disability 9 becomes 99900; gender 6/7 become 99903/99900; drug codes are
+      //     unpadded and 21/99 become 99903; route 5 becomes 99903. Answers with no dictionary counterpart are
+      //     dropped so validation flags them for the worker (psychiatric-medication/needle-use/lives-with "Yes",
+      //     which are now day counts; "Unknown" mental-illness diagnosis; the removed sex-at-birth and
+      //     MAT-planned elements). Out-of-range numbers are kept as-is so the edit checks flag them. The
+      //     service_type clear-text column is remapped the same way. Self-contained and idempotent (every mapping
+      //     is a fixed point on the new codes), so it can be renumbered.
+      (d) => {
+        const { decrypt: decrypt3, encrypt: encrypt3 } = require_crypto();
+        const SERVICE = { "01": "1", "02": "1", "03": "1", "04": "2", "05": "2", "06": "2", "07": "2", "08": "3", "09": "4", "10": "4", "11": "7", "12": "7", "13": "1" };
+        const REFERRAL = { "01": "1", "02": "2", "03": "3", "04": "4", "05": "5", "06": "13", "07": "12", "08": "9", "09": "7", "10": "7", "11": "10", "12": "10", "13": "11", "14": "10", "15": "10", "16": "3" };
+        const ETHNIC = { "01": "2", "02": "4", "03": "3", "04": "5", "05": "1", "06": "99900" };
+        const RACE = { "17": "17", "18": "17", "19": "99900" };
+        const DISAB = { "9": "99900" };
+        const GENDER = { "6": "99903", "7": "99900" };
+        const YN = { Y: "1", N: "0" };
+        const VET = { Y: "1", N: "0", D: "99900" };
+        const drug = (v) => {
+          const s = String(v);
+          if (s === "21" || s === "99") return "99903";
+          const m = /^0(\d)$/.exec(s);
+          return m ? m[1] : s;
+        };
+        const upd = d.prepare(`UPDATE caloms_records SET answers_enc=?, service_type=? WHERE id=?`);
+        for (const r of d.prepare(`SELECT id, service_type, answers_enc FROM caloms_records`).all()) {
+          let a = {};
+          try {
+            a = r.answers_enc ? JSON.parse(decrypt3(r.answers_enc)) : {};
+          } catch {
+            continue;
+          }
+          const mapStr = (table) => (v) => {
+            const s = String(v);
+            return table[s] !== void 0 ? table[s] : s;
+          };
+          const mapList = (table) => (v) => (Array.isArray(v) ? v : [v]).map((x) => {
+            const s = String(x);
+            return table[s] !== void 0 ? table[s] : s;
+          });
+          if (a.service_type !== void 0) a.service_type = mapStr(SERVICE)(a.service_type);
+          if (a.referral_source !== void 0) a.referral_source = mapStr(REFERRAL)(a.referral_source);
+          if (a.ethnicity !== void 0) a.ethnicity = mapStr(ETHNIC)(a.ethnicity);
+          if (a.race !== void 0) a.race = mapList(RACE)(a.race);
+          if (a.disability !== void 0) a.disability = mapList(DISAB)(a.disability);
+          if (a.gender_identity !== void 0) a.gender_identity = mapStr(GENDER)(a.gender_identity);
+          for (const k of ["primary_drug", "secondary_drug"]) if (a[k] !== void 0) a[k] = drug(a[k]);
+          for (const k of ["primary_route", "secondary_route"]) if (String(a[k]) === "5") a[k] = "99903";
+          for (const k of ["calworks", "pregnant", "iv_use_12m", "school_enrolled", "job_training"]) if (a[k] !== void 0) a[k] = mapStr(YN)(a[k]);
+          if (a.veteran !== void 0) a.veteran = mapStr(VET)(a.veteran);
+          if (a.mh_diagnosis !== void 0) {
+            const s = String(a.mh_diagnosis);
+            a.mh_diagnosis = s === "U" ? void 0 : mapStr(YN)(s);
+            if (a.mh_diagnosis === void 0) delete a.mh_diagnosis;
+          }
+          for (const k of ["psych_meds", "iv_use_30", "lives_with_user"]) {
+            if (a[k] === "N") a[k] = 0;
+            else if (a[k] === "Y") delete a[k];
+          }
+          delete a.mat_planned;
+          delete a.sex_at_birth;
+          const service = r.service_type && SERVICE[String(r.service_type)] ? SERVICE[String(r.service_type)] : r.service_type;
+          upd.run(encrypt3(JSON.stringify(a)), service, r.id);
+        }
       }
     ];
     var PERF_INDEXES_47 = [

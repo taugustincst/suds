@@ -1,14 +1,21 @@
 # CalOMS Tx reporting in SUDS
 
-> **Status: VERIFIED 2026-10-05 against the DHCS *CalOMS Tx Data Dictionary*, File Version 3.0
-> (October 2024) — and the spec does not pass.** The verification report is
-> [docs/evidence/caloms-dictionary-verification.md](evidence/caloms-dictionary-verification.md):
-> 4 of 17 code sets match, 5 partially match, 8 are wrong (3 completely — service types, referral
-> sources, ethnicities). The dictionary has no Y/N yes-no convention (every yes/no element is
-> numeric 1/0 with 999xx specials), two "yes/no" fields are really day counts, numeric fields lack
-> the 999xx declined/unable values, and four elements SUDS does not collect include the required
-> CID-19 Consent. **Do not submit a SUDS extract to DHCS until the spec is corrected.**
-> The DHCS dictionary copy used is the October 2024 v3.0 PDF (SHA-256 recorded in the report).
+> **Status: code values VERIFIED 2026-10-05 against the DHCS *CalOMS Tx Data Dictionary*, File Version 3.0
+> (October 2024).** Every code set in `server/caloms-spec.js` now carries the dictionary's values
+> (asserted in `test/caloms-dictionary.test.js`); the verification report is
+> [docs/evidence/caloms-dictionary-verification.md](evidence/caloms-dictionary-verification.md), and the
+> 1.25.0 correction is described below. The dictionary copy used is the October 2024 v3.0 PDF
+> (SHA-256 recorded in the report). Two corrections to the report itself came out of the
+> PDF re-check: the report's ADM-5 referral labels were wrong (the dictionary's 14 values are now in
+> the spec), MHD-1 is `1`/`0`/`99900`/`99904` (not `99901`), MHD-4 is a 0–30 day count (not yes/no),
+> EMPLOYMENT/LIVING labels follow the dictionary, and race allows at most 5 codes (CID-15 p.53) while
+> disability allows 7 (CID-18 p.57).
+>
+> **Open item before the first submission:** the code *values* are verified, but the extract's column
+> names and file layout are SUDS's own and have **not** been verified against the DHCS file
+> specification. The county must convert the CSV files to the DHCS upload format if the county's
+> channel needs something else (fixed-width / XML unconfirmed). DHCS's own cross-submission edits
+> (duplicates across providers, transaction sequencing) are the county's to clear as they come back.
 
 ## What SUDS does and does not do
 
@@ -52,103 +59,147 @@ the answers.
 
 ## Record types
 
-| Record | When | Carries |
-| --- | --- | --- |
-| Admission (`A`) | Each episode opened on or after the start date | Admission, client, substance-use and past-30-day elements |
-| Discharge (`D`) | When the episode is closed | Discharge status, date of last service; past-30-day elements for a standard discharge |
-| Annual update (`U`) | Each anniversary of the admission while the episode is open; accepted from 60 days before to 30 days after (window to verify) | Past-30-day elements |
-| Provider activity | Every provider ID, every month of the extract period | Counts of A/D/U; `NoActivity=Y` for a month with none |
+| Record | Code (TRN-1, dictionary p.104) | When | Carries |
+| --- | --- | --- | --- |
+| Admission | `1` | Each episode opened on or after the start date | Admission, client, substance-use and past-30-day elements |
+| Discharge | `4` | When the episode is closed | Discharge status, date of last service; past-30-day elements for a standard discharge |
+| Annual update | `7` | Each anniversary of the admission while the episode is open; accepted from 60 days before to 30 days after (window to verify) | Past-30-day elements |
+| Provider activity | — | Every provider ID, every month of the extract period | Counts of 1/4/7; `NoActivity=Y` for a month with none |
 
-## Field mapping (to verify against the current DHCS data dictionary)
+## What changed in 1.25.0 (the dictionary correction)
+
+The spec had been built from the Data Collection Guide's structure "as generally known", without the
+Data Dictionary. Every code value is now set from the dictionary (group-item and page cited in
+`server/caloms-spec.js`):
+
+- **Service types** are the dictionary's ADM-4 codes 1–7 (Non-Residential … Narcotic Treatment Program),
+  not the old ASAM-style 01–13. The ASAM level SUDS records now only *suggests* a starting value
+  (outpatient → 1, residential/inpatient → 2, OTP → 7); the worker confirms it.
+- **Referral sources** are ADM-5 codes 1–14 (the dictionary's own list, which differs from the old one).
+- **Yes/no is numeric**: every yes/no element is `1`/`0` with its per-element 999xx specials
+  (99900 declined, 99901 not sure, 99904 unable — whichever the element allows). There is no Y/N anywhere.
+- **Two "yes/no" fields are really day counts**: needle use in the past 30 days (ADU-10, 0–30) and days
+  lived with someone who uses (SOC-3, 0–30); prescribed psychiatric medication is also a day count
+  (MHD-4, 0–30).
+- **Numeric elements accept the dictionary's 999xx alternative values** (declined / not sure / unable /
+  not applicable, per element); the form offers them beside the number.
+- **Four elements added**: criminal justice status (LEG-1), medication prescribed as part of treatment
+  (MED-7, replacing the old MAT-planned yes/no), consent for future contact (CID-19, required) and sexual
+  orientation (CID-20). Sex at birth is removed — the dictionary has no such element; gender is CID-3.
+- **New edit checks from the dictionary**: veteran under 17 at admission; pregnant only when gender allows;
+  criminal-justice status against the referral source (a DUI/AB-109/court referral means involvement);
+  days with physical health problems > 0 when ER visits or hospital nights are reported; primary drug None
+  not allowed on an admission.
+- **Data migration 71** remaps stored answers to the new codes (Y/N→1/0, unpadded drug codes, the service
+  and referral remaps, etc.). Answers with no dictionary counterpart (e.g. "Yes" to a question that is now
+  a day count) are dropped so validation flags them for the worker to re-ask; out-of-range numbers are kept
+  so the edit checks flag them.
+
+## Field mapping
 
 Records: A = admission, D = discharge, U = annual update. Required: *yes* always; *standard* on admissions,
-annual updates and standard discharges; *conditional* see the edit checks.
+annual updates and standard discharges; *conditional* see the edit checks. "Values" gives the dictionary
+element; the 999xx codes are the alternative values the element accepts instead of a number. The extract
+column names are SUDS's own (open item above).
 
-| SUDS key | Extract column (CalOMS element, to verify) | Records | Required | Values |
+| SUDS key | Extract column | Records | Required | Values (dictionary element) |
 | --- | --- | --- | --- | --- |
-| `admission_transaction` | AdmissionTransactionType | A | yes | code set ADMISSION_TRANSACTION |
-| `service_type` | TypeOfService | A | yes | code set SERVICE_TYPES |
-| `referral_source` | ReferralSource | A | yes | code set REFERRAL_SOURCES |
-| `days_waited` | DaysWaitedToEnterTreatment | A | yes | 0–999 |
-| `prior_episodes` | NumberOfPriorTreatmentEpisodes | A | yes | 0–99 |
-| `mat_planned` | MedicationAssistedTreatmentPlanned | A | yes | code set YES_NO |
-| `calworks` | CalWORKsRecipient | A | yes | code set YES_NO |
-| `sex_at_birth` | SexAtBirth | A | yes | code set SEX_AT_BIRTH |
-| `gender_identity` | GenderIdentity | A | yes | code set GENDER_IDENTITY |
-| `race` | Race1–5 | A | yes | code set RACES |
-| `ethnicity` | Ethnicity | A | yes | code set ETHNICITIES |
-| `veteran` | VeteranStatus | A | yes | code set YES_NO_DECLINED |
-| `disability` | Disability1–5 | A | yes | code set DISABILITIES |
-| `zip_code` | ZipCodeAtAdmission | A | yes | 5-digit ZIP |
-| `education_grade` | HighestSchoolGradeCompleted | A | yes | 0–30 |
-| `children_under_18` | NumberOfChildrenUnder18 | A | yes | 0–99 |
-| `children_cps` | ChildrenLivingWithOthersDueToCPS | A | yes | 0–99 |
-| `pregnant` | PregnantAtAdmission | A | yes | code set YES_NO |
-| `primary_drug` | PrimaryDrug | A | yes | code set DRUGS |
-| `primary_route` | PrimaryDrugRoute | A | yes | code set ROUTES |
-| `primary_age_first_use` | PrimaryDrugAgeOfFirstUse | A | yes | 0–99 |
-| `secondary_drug` | SecondaryDrug | A | yes | code set DRUGS |
-| `secondary_route` | SecondaryDrugRoute | A | conditional | code set ROUTES |
-| `secondary_age_first_use` | SecondaryDrugAgeOfFirstUse | A | conditional | 0–99 |
-| `iv_use_12m` | NeedleUsePast12Months | A | yes | code set YES_NO |
-| `discharge_status` | DischargeStatus | D | yes | code set DISCHARGE_STATUS |
+| `admission_transaction` | AdmissionTransactionType | A | yes | `1`–`2` |
+| `service_type` | TypeOfService | A | yes | ADM-4: `1`–`7` |
+| `referral_source` | ReferralSource | A | yes | ADM-5: `1`–`14` |
+| `days_waited` | DaysWaitedToEnterTreatment | A | yes | ADM-6: 0–999, or 99901/99904 |
+| `prior_episodes` | NumberOfPriorTreatmentEpisodes | A | yes | ADM-7: 0–99, or 99900/99901/99904 |
+| `medication` | MedicationPrescribedAsPartOfTreatment | A | yes | MED-7: `1`–`5`, 99903 |
+| `calworks` | CalWORKsRecipient | A | yes | ADM-8: `1`/`0`/`99901` |
+| `criminal_justice` | CriminalJusticeStatus | A | yes | LEG-1: `1`–`7`, 99904 |
+| `gender_identity` | GenderIdentity | A | yes | CID-3: `1`–`6`, 99900/99903 |
+| `sexual_orientation` | SexualOrientation | A | yes | CID-20: `1`–`6`,`8`–`12` |
+| `race` | Race1–5 | A | yes | CID-15: `01`–`19`, 99900 (up to 5) |
+| `ethnicity` | Ethnicity | A | yes | CID-16: `1`–`6`, 99900 |
+| `veteran` | VeteranStatus | A | yes | CID-17: `1`/`0`/99900/99904 |
+| `disability` | Disability1–7 | A | yes | CID-18: `1`–`8`, 99900/99904 (up to 7) |
+| `zip_code` | ZipCodeAtAdmission | A | yes | CID-8: 5 digits, 00000, XXXXX or ZZZZZ |
+| `education_grade` | HighestSchoolGradeCompleted | A | yes | EMP-5: 0–30, or 99900/99904 |
+| `children_under_18` | NumberOfChildrenUnder18 | A | yes | SOC-5: 0–30, or 99904 |
+| `children_cps` | ChildrenLivingWithOthersDueToCPS | A | yes | SOC-7: 0–30, or 99904 |
+| `pregnant` | PregnantAtAdmission | A | yes | MED-5: `1`/`0`/`99901` |
+| `consent` | ConsentForFutureContact | A | yes | CID-19: `1`/`0` (required element) |
+| `primary_drug` | PrimaryDrug | A | yes | ADU-1a: `0`–`20`, 99901/99903 |
+| `primary_route` | PrimaryDrugRoute | A | yes | ADU-3: `1`–`4`, 99902/99903 |
+| `primary_age_first_use` | PrimaryDrugAgeOfFirstUse | A | yes | ADU-4: 5–105, or 99904 |
+| `secondary_drug` | SecondaryDrug | A | yes | ADU-1a: `0`–`20`, 99901/99903 |
+| `secondary_route` | SecondaryDrugRoute | A | conditional | ADU-3: `1`–`4`, 99902/99903 |
+| `secondary_age_first_use` | SecondaryDrugAgeOfFirstUse | A | conditional | ADU-4: 5–105, or 99904 |
+| `iv_use_12m` | NeedleUsePast12Months | A | yes | ADU-11: `1`/`0`/`99904` |
+| `discharge_status` | DischargeStatus | D | yes | DIS-2: `1`–`8` |
 | `last_service_date` | DateOfLastService | D | yes | date |
-| `primary_days_used` | PrimaryDrugFrequency | A, D, U | standard | 0–30 |
-| `secondary_days_used` | SecondaryDrugFrequency | A, D, U | conditional | 0–30 |
-| `alcohol_days` | AlcoholUseDays | A, D, U | standard | 0–30 |
-| `iv_use_30` | NeedleUsePast30Days | A, D, U | standard | code set YES_NO |
-| `employment_status` | CurrentEmploymentStatus | A, D, U | standard | code set EMPLOYMENT |
-| `paid_work_days` | DaysPaidForWorkPast30 | A, D, U | standard | 0–30 |
-| `school_enrolled` | EnrolledInSchool | A, D, U | standard | code set YES_NO |
-| `job_training` | EnrolledInJobTraining | A, D, U | standard | code set YES_NO |
-| `living_arrangement` | LivingArrangement | A, D, U | standard | code set LIVING |
-| `arrests_30` | ArrestsPast30Days | A, D, U | standard | 0–99 |
-| `jail_days_30` | JailDaysPast30 | A, D, U | standard | 0–30 |
-| `prison_days_30` | PrisonDaysPast30 | A, D, U | standard | 0–30 |
-| `er_visits_30` | EmergencyRoomVisitsPast30 | A, D, U | standard | 0–99 |
-| `hospital_nights_30` | HospitalOvernightStaysPast30 | A, D, U | standard | 0–30 |
-| `physical_health_days_30` | PhysicalHealthProblemDaysPast30 | A, D, U | standard | 0–30 |
-| `mh_diagnosis` | DiagnosedMentalIllness | A, D, U | standard | code set YES_NO_UNKNOWN |
-| `mh_er_visits_30` | MentalHealthERVisitsPast30 | A, D, U | standard | 0–99 |
-| `psych_inpatient_days_30` | PsychiatricInpatientDaysPast30 | A, D, U | standard | 0–30 |
-| `psych_meds` | PrescribedPsychiatricMedication | A, D, U | standard | code set YES_NO |
-| `family_conflict_days_30` | FamilyConflictDaysPast30 | A, D, U | standard | 0–30 |
-| `social_support_days_30` | SocialSupportRecoveryDaysPast30 | A, D, U | standard | 0–30 |
-| `lives_with_user` | LivesWithSubstanceUser | A, D, U | standard | code set YES_NO |
+| `primary_days_used` | PrimaryDrugFrequency | A, D, U | standard | ADU-2: 0–30, or 99902 |
+| `secondary_days_used` | SecondaryDrugFrequency | A, D, U | conditional | ADU-2: 0–30, or 99902 |
+| `alcohol_days` | AlcoholUseDays | A, D, U | standard | 0–30, or 99902 |
+| `iv_use_30` | NeedleUsePast30Days | A, D, U | standard | ADU-10: 0–30, or 99900/99904 |
+| `employment_status` | CurrentEmploymentStatus | A, D, U | standard | EMP-1: `1`–`5` |
+| `paid_work_days` | DaysPaidForWorkPast30 | A, D, U | standard | EMP-2: 0–30, or 99900/99904 |
+| `school_enrolled` | EnrolledInSchool | A, D, U | standard | EMP-3: `1`/`0`/99900/99904 |
+| `job_training` | EnrolledInJobTraining | A, D, U | standard | EMP-4: `1`/`0`/99900/99904 |
+| `living_arrangement` | LivingArrangement | A, D, U | standard | SOC-2: `1`–`3` |
+| `arrests_30` | ArrestsPast30Days | A, D, U | standard | LEG-3: 0–30, or 99904 |
+| `jail_days_30` | JailDaysPast30 | A, D, U | standard | LEG-4: 0–30, or 99904 |
+| `prison_days_30` | PrisonDaysPast30 | A, D, U | standard | LEG-5: 0–30, or 99904 |
+| `er_visits_30` | EmergencyRoomVisitsPast30 | A, D, U | standard | MED-2: 0–99, or 99904 |
+| `hospital_nights_30` | HospitalOvernightStaysPast30 | A, D, U | standard | MED-3: 0–30, or 99904 |
+| `physical_health_days_30` | PhysicalHealthProblemDaysPast30 | A, D, U | standard | MED-4: 0–30, or 99904 |
+| `mh_diagnosis` | DiagnosedMentalIllness | A, D, U | standard | MHD-1: `1`/`0`/99900/99904 |
+| `mh_er_visits_30` | MentalHealthERVisitsPast30 | A, D, U | standard | MHD-2: 0–99, or 99904 |
+| `psych_inpatient_days_30` | PsychiatricInpatientDaysPast30 | A, D, U | standard | MHD-3: 0–30, or 99904 |
+| `psych_meds` | MentalHealthMedicationDaysPast30 | A, D, U | standard | MHD-4: 0–30, or 99904 |
+| `family_conflict_days_30` | FamilyConflictDaysPast30 | A, D, U | standard | SOC-4: 0–30, or 99900/99904 |
+| `social_support_days_30` | SocialSupportRecoveryDaysPast30 | A, D, U | standard | SOC-1: 0–30 |
+| `lives_with_user` | LivesWithSubstanceUser | A, D, U | standard | SOC-3: 0–30, or 99900/99904 |
 
-## Code sets (to verify)
+## Code sets
 
-**ADMISSION_TRANSACTION**: `1` Initial admission; `2` Transfer or change in service (same provider)
+Every value below is the DHCS Data Dictionary v3.0 wording (see `server/caloms-spec.js` for the
+per-set dictionary citations).
 
-**SERVICE_TYPES**: `01` Outpatient (ASAM 1.0); `02` Intensive outpatient (ASAM 2.1); `03` Partial hospitalization (ASAM 2.5); `04` Residential, clinically managed low intensity (ASAM 3.1); `05` Residential, population-specific high intensity (ASAM 3.3); `06` Residential, clinically managed high intensity (ASAM 3.5); `07` Inpatient, medically monitored (ASAM 3.7); `08` Withdrawal management, ambulatory (1-WM / 2-WM); `09` Withdrawal management, residential (3.2-WM); `10` Withdrawal management, inpatient (3.7-WM / 4-WM); `11` Narcotic treatment program — maintenance; `12` Narcotic treatment program — detoxification; `13` Recovery services
+**ADMISSION_TRANSACTION**: `1` Initial Admission; `2` Transfer or Change in Service
 
-**REFERRAL_SOURCES**: `01` Individual (self); `02` Alcohol or drug treatment provider; `03` Other health care provider; `04` School; `05` Employer / EAP; `06` Other community referral; `07` Court or criminal justice (not DUI); `08` DUI / DWI; `09` Probation; `10` Parole; `11` Drug court; `12` PC 1000 (deferred entry of judgment); `13` Dependency court / child welfare services; `14` CalWORKs / social services; `15` Mental health provider; `16` Hospital or emergency department
+**SERVICE_TYPES** (ADM-4): `1` Non-Residential; `2` Residential; `3` Non-Residential Detox; `4` Residential Detox; `5` Non-Residential Detox Observation; `6` Residential Detox Observation; `7` Narcotic Treatment Program
 
-**DRUGS**: `00` None; `01` Heroin; `02` Alcohol; `03` Barbiturates; `04` Other sedatives or hypnotics; `05` Methamphetamine; `06` Other amphetamines; `07` Other stimulants; `08` Cocaine / crack; `09` Marijuana / hashish; `10` PCP; `11` Other hallucinogens; `12` Tranquilizers (benzodiazepines); `13` Other tranquilizers; `14` Non-prescription methadone; `15` Oxycodone / OxyContin; `16` Other opiates or synthetics; `17` Inhalants; `18` Over-the-counter; `19` Ecstasy (MDMA); `20` Other club drugs; `21` Fentanyl; `99` Other
+**REFERRAL_SOURCES** (ADM-5): `1` Individual, including self-referral; `2` Alcohol / Drug Abuse Program; `3` Other Health Care Provider; `4` School / Educational; `5` Employer / EAP; `6` 12 Step Mutual Aid; `7` Probation or Parole; `8` Post-Release Community Supervision (AB 109); `9` DUI / DWI; `10` Adult Felon Drug Court; `11` Dependency Drug Court; `12` Court / Criminal Justice; `13` Other Community Referral; `14` Child Protective Services
 
-**ROUTES**: `1` Oral; `2` Smoking; `3` Inhalation (nasal); `4` Injection; `5` Other
+**DRUGS** (ADU-1a): `0` None; `1` Heroin; `2` Alcohol; `3` Barbiturates; `4` Other Sedatives or Hypnotics; `5` Methamphetamine; `6` Other Amphetamines; `7` Other Stimulants; `8` Cocaine / Crack; `9` Marijuana / Hashish; `10` PCP; `11` Other Hallucinogens; `12` Tranquilizers (Benzodiazepine); `13` Other Tranquilizers; `14` Non-Prescription Methadone; `15` OxyCodone / OxyContin; `16` Other Opiates or Synthetics; `17` Inhalants; `18` Over-the-Counter; `19` Ecstasy; `20` Other Club Drugs; `99901` Unknown / not sure / don't know (administrative discharges only); `99903` Other
 
-**YES_NO**: `Y` Yes; `N` No
+**ROUTES** (ADU-3): `1` Oral; `2` Smoking; `3` Inhalation; `4` Injection (IV or intramuscular); `99902` None or not applicable; `99903` Other
 
-**YES_NO_DECLINED**: `Y` Yes; `N` No; `D` Declined to state
+**GENDER_IDENTITY** (CID-3): `1` Male; `2` Female; `3` Transgender (Trans Man); `4` Transgender (Trans Woman); `5` Gender Non-Conforming / Gender Queer; `6` Not Available; `99900` Client declined to state; `99903` Other
 
-**YES_NO_UNKNOWN**: `Y` Yes; `N` No; `U` Unknown
+**SEXUAL_ORIENTATION** (CID-20): `1` Heterosexual / Straight; `2` Lesbian (female); `3` Gay (male); `4` Bisexual; `5` Unsure / Questioning; `6` Declined to state; `8` Pansexual; `9` Asexual; `10` Other; `11` Not Available; `12` Queer (value 7 retired 2024-09-24)
 
-**SEX_AT_BIRTH**: `M` Male; `F` Female; `X` Intersex / another sex; `D` Declined to state
+**RACES** (CID-15): `01` White / Caucasian; `02` Black / African-American; `03` American Indian; `04` Alaska Native; `05` Asian Indian; `06` Cambodian; `07` Chinese; `08` Filipino; `09` Guamanian; `10` Hawaiian; `11` Japanese; `12` Korean; `13` Laotian; `14` Samoan; `15` Vietnamese; `16` Other Asian; `17` Other Race; `18` Multi Racial; `19` Race Not Available; `99900` Client declined to state
 
-**GENDER_IDENTITY**: `1` Male; `2` Female; `3` Transgender man / trans masculine; `4` Transgender woman / trans feminine; `5` Genderqueer / non-binary; `6` Another gender identity; `7` Declined to state
+**ETHNICITIES** (CID-16): `1` Not Hispanic; `2` Mexican / Mexican American; `3` Cuban; `4` Puerto Rican; `5` Other Hispanic / Latino; `6` Hispanic or Latino Origin Not Available; `99900` Client declined to state
 
-**RACES**: `01` White; `02` Black or African American; `03` American Indian; `04` Alaska Native; `05` Asian Indian; `06` Cambodian; `07` Chinese; `08` Filipino; `09` Guamanian; `10` Native Hawaiian; `11` Japanese; `12` Korean; `13` Laotian; `14` Samoan; `15` Vietnamese; `16` Other Asian; `17` Other Pacific Islander; `18` Other; `19` Declined to state
+**DISABILITIES** (CID-18): `1` None; `2` Visual; `3` Hearing; `4` Speech; `5` Mobility; `6` Mental; `7` Developmentally Disabled; `8` Other Disability (not SUD); `99900` Client declined to state; `99904` Client unable to answer
 
-**ETHNICITIES**: `01` Mexican / Mexican American / Chicano; `02` Puerto Rican; `03` Cuban; `04` Other Hispanic or Latino; `05` Not Hispanic or Latino; `06` Declined to state
+**CRIMINAL_JUSTICE** (LEG-1): `1` No criminal justice involvement; `2` Under parole supervision by CDCR; `3` On parole from any other jurisdiction; `4` Post-release Community Supervision (AB 109) or on probation; `5` Admitted under other diversion (CA Penal Code §1000); `6` Incarcerated; `7` Awaiting trial, charges or sentencing; `99904` Client unable to answer
 
-**DISABILITIES**: `1` None; `2` Visual; `3` Hearing; `4` Speech; `5` Mobility; `6` Mental; `7` Developmental; `8` Other; `9` Declined to state
+**MEDICATIONS** (MED-7): `1` None; `2` Methadone; `3` LAAM; `4` Buprenorphine (Subutex); `5` Buprenorphine (Suboxone); `99903` Other
 
-**EMPLOYMENT**: `1` Employed full time (35+ hours a week); `2` Employed part time; `3` Unemployed, looking for work; `4` Unemployed, not looking for work; `5` Not in the labor force (student, homemaker, retired, disabled, incarcerated)
+**CONSENT** (CID-19): `1` Yes; `0` No
 
-**LIVING**: `1` Homeless; `2` Dependent living (supervised, or with family); `3` Independent living
+**CALWORKS** (ADM-8) / **PREGNANT** (MED-5): `1` Yes; `0` No; `99901` Not sure / don't know
 
-**DISCHARGE_STATUS**: `1` Completed treatment / recovery plan goals — referred; `2` Completed treatment / recovery plan goals — not referred; `3` Left before completion with satisfactory progress — standard questions; `4` Left before completion with satisfactory progress — administrative questions; `5` Left before completion with unsatisfactory progress — standard questions; `6` Left before completion with unsatisfactory progress — administrative questions; `7` Death; `8` Incarceration
+**IV_USE_12M** (ADU-11): `1` Yes; `0` No; `99904` Client unable to answer
+
+**SCHOOL_ENROLLED** (EMP-3/EMP-4) / **VETERAN** (CID-17) / **MH_DIAGNOSIS** (MHD-1): `1` Yes; `0` No; `99900` Client declined to state; `99904` Client unable to answer
+
+**EMPLOYMENT** (EMP-1): `1` Employed Full time (35 hours or more); `2` Employed Part time (less than 35 hrs.); `3` Unemployed, looking for work; `4` Unemployed, not in the labor force (not seeking); `5` Not in the labor force (Not seeking)
+
+**LIVING** (SOC-2): `1` Homeless; `2` Dependent living; `3` Independent living
+
+**DISCHARGE_STATUS** (DIS-2): `1` Completed Treatment Plan & Goals / Referred / Standard (all questions); `2` Completed Treatment Plan & Goals / Not Referred / Standard (all questions); `3` Left Before Completion w/ Satisfactory Progress / Referred / Standard (all questions); `4` Left Before Completion w/ Satisfactory Progress / Administrative (minimum questions); `5` Left Before Completion w/ Unsatisfactory Progress / Referred / Standard (all questions); `6` Left Before Completion w/ Unsatisfactory Progress / Administrative (minimum questions); `7` Death; `8` Incarceration
+
+The 999xx alternative values on numeric elements: `99900` Client declined to state; `99901` Not sure / don't know; `99902` None or not applicable; `99904` Client unable to answer.
 
 
 ## Edit checks
@@ -159,9 +210,9 @@ extract) and always hold the record back from the extract. **Warnings** are list
 | Code | Severity | Rule |
 | --- | --- | --- |
 | `required` | fatal | A required element is blank (per record type; conditional ones below) |
-| `invalid_code` / `too_many_codes` / `duplicate_code` | fatal | Not in the code set; more than 5 answers; the same answer twice |
-| `out_of_range` / `not_a_number` | fatal | Counts and days outside their range (e.g. days in past 30: 0–30) |
-| `zip_invalid`, `date_invalid` | fatal | ZIP not 5 digits; a date that is not a real date |
+| `invalid_code` / `too_many_codes` / `duplicate_code` | fatal | Not in the code set; more than the element's maximum answers (race 5, disability 7); the same answer twice |
+| `out_of_range` / `not_a_number` | fatal | Counts and days outside their range (or not a 999xx alternative the element allows) |
+| `zip_invalid`, `date_invalid` | fatal | ZIP not 5 digits, 00000, XXXXX or ZZZZZ; a date that is not a real date |
 | `provider_missing` / `provider_unknown` | fatal | No provider ID, or one not configured for the program |
 | `date_future` | fatal | Record date after today |
 | `dob_missing` | fatal | Admission for a client with no date of birth |
@@ -169,16 +220,21 @@ extract) and always hold the record back from the extract. **Warnings** are list
 | `age_out_of_range` | fatal | Age at admission over 110 |
 | `age_under_12` | warning | Age at admission under 12 |
 | `first_use_after_admission` | fatal | Age of first use (primary or secondary) above the age at admission |
-| `pregnant_not_female` | fatal | Pregnant = Yes when sex at birth is not Female |
-| `primary_drug_none` | fatal | Primary drug = None |
+| `veteran_under_17` | fatal | Veteran = Yes when the client is under 17 at admission (CID-17 rule 2) |
+| `pregnant_not_possible` | fatal | Pregnant = Yes when gender is Male or Transgender (Trans Woman) (MED-6 rule 2) |
+| `primary_drug_none` | fatal | Primary drug = None on an admission (ADU-1a rule 2) |
 | `secondary_same_as_primary` | fatal | Secondary drug equals the primary |
 | conditional `required` | fatal | Secondary route and age of first use when there is a secondary drug; days used for it on later records |
 | `secondary_days_without_drug` | fatal | Days secondary drug used > 0 with no secondary drug |
-| `needle_use_inconsistent` | fatal | Needle use in past 30 days but not in past 12 months |
-| `children_cps_exceeds` | fatal | Children living with others by protective order > children under 18 |
-| `exclusive_code_combined` | fatal | Disability "None"/"Declined", or race "Declined", combined with other answers |
+| `needle_use_inconsistent` | fatal | Days of needle use in the past 30 but no needle use in the past 12 months |
+| `cj_status_referral_conflict` | fatal | Criminal justice status "No involvement" with a criminal-justice referral source (LEG-1 rule 3) |
+| `cj_status_ab109` | fatal | Post-Release Community Supervision (AB 109) referral without the AB 109 criminal justice status |
+| `cj_unable_restricted` | fatal | Criminal justice status "unable to answer" outside a detox service or developmental disability (LEG-1 rule 2) |
+| `children_cps_exceeds` | fatal | Children living with someone else by protective order > number of children |
+| `exclusive_code_combined` | fatal | Disability None/declined/unable, or race Not Available/declined, combined with other answers |
 | `jail_prison_over_30` | fatal | Jail + prison days in past 30 > 30 |
 | `inpatient_over_30` | warning | Hospital nights + psychiatric inpatient days > 30 |
+| `health_days_zero` | fatal | ER visits or hospital nights reported but 0 days with physical health problems (MED-4 rule 3) |
 | `admission_date_differs` | warning | CalOMS admission date differs from the episode's start date |
 | `discharge_before_admission` | fatal | Discharge date before the admission date |
 | `last_service_outside_episode` | fatal | Date of last service outside admission – discharge |
@@ -190,10 +246,10 @@ extract) and always hold the record back from the extract. **Warnings** are list
 | `missing_discharge` | fatal (report) | Closed episode with no discharge record |
 | `annual_update_overdue` / `annual_update_due` | fatal / warning (report) | Anniversary passed (+30 days) with no annual update / due now |
 
-**Not validated** (to add once the dictionary is confirmed): DHCS's own cross-submission edits (duplicate
-admissions across providers, a discharge for an admission DHCS never accepted, transaction sequencing),
-element-level edits that depend on the service type (e.g. NTP-only elements), the place-of-birth and
-identifier elements SUDS does not collect, and the exact submission deadlines.
+**Not validated**: DHCS's own cross-submission edits (duplicate admissions across providers, a discharge for
+an admission DHCS never accepted, transaction sequencing — TRN-1 resubmission/deletion types 2, 3, 5, 6, 8, 9,
+which SUDS does not produce), the place-of-birth and identifier elements SUDS does not collect, and the exact
+submission deadlines.
 
 ## Validation report
 
@@ -206,10 +262,11 @@ can be downloaded as CSV. Anyone who can read episodes sees it for their own cas
 
 The files (in both the preview and the submission):
 
-- `admissions.csv`, `discharges.csv`, `annual_updates.csv` — identifying columns (RecordType, ProviderID,
-  ProviderClientID = SUDS client code, ClientLastName, ClientFirstName, DateOfBirth, AdmissionDate), the
-  record date, then the elements in the order of the mapping table above. Multi-answer elements are split
-  into numbered columns (Race1–Race5, Disability1–Disability5). Dates are `YYYY-MM-DD`.
+- `admissions.csv`, `discharges.csv`, `annual_updates.csv` — identifying columns (RecordType as the
+  TRN-1 code — 1 admission, 4 discharge, 7 annual update — ProviderID, ProviderClientID = SUDS client code,
+  ClientLastName, ClientFirstName, DateOfBirth, AdmissionDate), the record date, then the elements in the
+  order of the mapping table above. Multi-answer elements are split into numbered columns (Race1–Race5,
+  Disability1–Disability7). Dates are `YYYY-MM-DD`. Column names are SUDS's own (open item above).
 - `provider_activity.csv` — ProviderID, ReportMonth (`YYYYMM`), counts, NoActivity.
 - `README.txt` — the period, counts, how many records were held back, the layout version, this warning and
   the §2.32 notice.

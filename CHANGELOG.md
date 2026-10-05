@@ -4,6 +4,39 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+## 1.25.0 — 2026-10-05
+
+A minor (the owner lifted the feature freeze): the CalOMS Tx code values are corrected against the DHCS
+*CalOMS Tx Data Dictionary*, File Version 3.0 (October 2024). The spec had been built from the Data
+Collection Guide's structure without the dictionary; the verification
+(docs/evidence/caloms-dictionary-verification.md) found only 4 of 17 code sets matching. Every code value
+in `server/caloms-spec.js` is now set from the dictionary (group-item and page cited per set and element;
+`test/caloms-dictionary.test.js` asserts them), and migration 71 remaps stored records. Ships with one
+migration, no new or widened permission and no new route.
+
+* **Dictionary-verified code sets.** Service types are ADM-4 codes 1–7; referral sources ADM-5 1–14; drug
+  codes are unpadded 0–20 with 99901/99903 (fentanyl and "other" are 99903); routes are 1–4 with
+  99902/99903; gender is CID-3 1–6 with 99900/99903; races are zero-padded 01–19 with 99900 (at most 5);
+  ethnicities are CID-16 1–6 with 99900; disabilities are 1–8 with 99900/99904 (at most 7); record codes
+  are TRN-1 1/4/7.
+* **Yes/no is numeric.** Every yes/no element is `1`/`0` with its per-element 999xx specials — no Y/N
+  anywhere. Needle use in the past 30 days, days lived with someone who uses, and psychiatric-medication
+  days are 0–30 day counts (not yes/no); every numeric element accepts the dictionary's 999xx alternative
+  values, offered in the form beside the number; ZIP accepts 00000, XXXXX and ZZZZZ.
+* **Four elements added, two removed.** Criminal justice status (LEG-1), medication prescribed as part of
+  treatment (MED-7, replacing the MAT-planned yes/no), the required consent for future contact (CID-19)
+  and sexual orientation (CID-20) are now asked; sex at birth is removed (the dictionary has no such
+  element).
+* **New edit checks from the dictionary.** Veteran under 17 at admission; pregnant only when gender allows;
+  criminal-justice status against the referral source; days with physical health problems > 0 when ER visits
+  or hospital nights are reported; primary drug None not allowed on an admission.
+* **Migration 71** remaps stored answers (Y/N→1/0, service/referral/ethnicity/race/disability/gender/drug/
+  route codes, unpadded drugs). Answers with no dictionary counterpart are dropped so validation flags
+  them for the worker to re-ask; out-of-range numbers are kept so the edit checks flag them.
+* **Open item:** the extract's column names and file layout are SUDS's own and are not dictionary-verified;
+  the county converts the CSV files to the DHCS upload format before the first submission
+  (docs/compliance/CALOMS.md).
+
 ## 1.24.4 — 2026-10-05
 
 A patch of 1.24.3 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*): the defects 1.24.3's exact-commit CI
