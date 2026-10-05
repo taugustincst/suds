@@ -62,6 +62,8 @@ async function axe(page, where) {
 }
 const toastSays = (page, re) => until(async () => re.test((await page.$$eval('.toast', els => els.map(e => e.textContent))).join(' | ')));
 const localDay = (page, days) => page.evaluate((n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }, days);
+// 1.24.4: date boxes are text fields showing M/D/YYYY (keyboard-first); the ISO is parsed on read.
+const localDayMDY = (page, days) => page.evaluate((n) => { const d = new Date(); d.setDate(d.getDate() + n); return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`; }, days);
 // The phone's "Add…" list on a client record, then one of its entries.
 async function addOnPhone(page, label) {
   await page.click('[data-client-add]');
@@ -113,13 +115,13 @@ try {
   await nav.page.selectOption('.modal select[name=outcome]', 'voicemail');
   ok(!(await nav.page.isChecked('.modal input[name=follow_up_needed]')), 'Follow-up needed starts unticked');
   await nav.page.click('.modal [data-quick-dates="follow_up_due"] [data-quick-date="3"]');
-  eq(await nav.page.inputValue('.modal input[name=follow_up_due]'), await localDay(nav.page, 3), '"In 3 days" sets the call-back date');
+  eq(await nav.page.inputValue('.modal input[name=follow_up_due]'), await localDayMDY(nav.page, 3), '"In 3 days" sets the call-back date');
   ok(await nav.page.isChecked('.modal input[name=follow_up_needed]'), 'and ticks Follow-up needed');
   // 1.23.1: unticking Follow-up needed clears the date in the form, as the server does on save.
   await nav.page.click('.modal input[name=follow_up_needed]');
   eq(await nav.page.inputValue('.modal input[name=follow_up_due]'), '', 'unticking Follow-up needed clears the call-back date in the form');
   await nav.page.click('.modal [data-quick-dates="follow_up_due"] [data-quick-date="3"]');
-  ok(await nav.page.isChecked('.modal input[name=follow_up_needed]') && await nav.page.inputValue('.modal input[name=follow_up_due]') === await localDay(nav.page, 3), 'a date chosen again ticks it again');
+  ok(await nav.page.isChecked('.modal input[name=follow_up_needed]') && await nav.page.inputValue('.modal input[name=follow_up_due]') === await localDayMDY(nav.page, 3), 'a date chosen again ticks it again');
   await nav.page.click('.modal button[type=submit]');
   ok(await toastSays(nav.page, /Call logged/), 'the call is logged');
   await settle(nav.page);

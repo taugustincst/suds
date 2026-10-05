@@ -122,8 +122,9 @@ try {
     ok(new RegExp(`Send ${expected} reminder`).test(msg), 'the confirmation says how many reminders it sends', msg);
     ok(new RegExp(`${skipped} notes? already ha(s|ve) an open reminder`).test(msg), 'and that the note already reminded is skipped', msg);
     await sup.page.locator('.modal-bg').nth(-1).locator('button', { hasText: /^Send \d+ reminder/ }).click();
-    await until(async () => (await sup.page.$eval('[data-remind-all]', b => b.dataset.remindAll).catch(() => null)) === '0', { timeout: 15000 });
-    eq(await sup.page.$eval('[data-remind-all]', b => b.dataset.remindAll), '0', 'afterwards every overdue note has its reminder');
+    await until(async () => !(await sup.page.$('[data-remind-all]')), { timeout: 15000 });
+    ok(!(await sup.page.$('[data-remind-all]')), 'afterwards the bulk action is gone: every overdue note has its reminder');
+    ok(/Every overdue note has an open reminder/.test(await sup.page.textContent('[data-section=unsigned]')), 'and the queue says so');
     const after = await openReminders(sup);
     for (const d of overdue) eq(after.filter(x => x === pair(d)).length, 1, `exactly one open reminder for overdue note ${d.id.slice(0, 8)}'s author and client`);
     // Released in 1.24.0: each reminder Remind all sent opens the oldest overdue draft of that author on that client.
@@ -133,10 +134,9 @@ try {
       const oldest = overdue.filter(d => pair(d) === `${t.client_id} ${t.assigned_to}`).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))[0];
       eq(t.note_id, oldest.id, `Remind all links ${t.id.slice(0, 8)} to the oldest overdue draft of that author and client`);
     }
-    // Pressing it again sends nothing.
-    await sup.page.click('[data-remind-all]'); await settle(sup.page);
-    ok(!(await sup.page.$('.modal-bg')), 'a second press asks nothing: there is nobody left to remind');
-    eq((await openReminders(sup)).length, after.length, 'and sends no further to-do');
+    // The button is gone, so there is no second press: nobody is left to remind.
+    ok(!(await sup.page.$('[data-remind-all]')), 'no bulk action remains to press');
+    eq((await openReminders(sup)).length, after.length, 'and no further to-do was sent');
     // The author sees the reminder among their own to-dos.
     const theirs = (await nav.api('GET', '/api/tasks?mine=1&status=open&limit=500')).data.rows || [];
     const navDrafts = overdue.filter(d => theirs.some(t => isReminder(t) && `${t.client_id} ${t.assigned_to}` === pair(d)));

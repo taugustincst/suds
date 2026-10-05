@@ -53,6 +53,8 @@ const STRUCTURE = ['landmark-one-main', 'landmark-no-duplicate-main', 'landmark-
 // the sample files, the views' periods and the defaults asserted must name the quarter the server means, even when
 // the run crosses midnight at a quarter's end or the machine's zone is another. `lq` is the quarter of the sample files.
 const serverToday = async (page) => { const r = await api(page, 'GET', '/api/county-submission/options'); if (!r.data || !r.data.today) throw new Error(`the server's date: ${r.status}`); return r.data.today; };
+// 1.24.4: date boxes are text fields showing M/D/YYYY (keyboard-first); the ISO is parsed on read.
+const toMDY = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ''); return m ? `${+m[2]}/${+m[3]}/${m[1]}` : iso; };
 let lq = null; let filesToday = null;
 
 const browser = await chromium.launch();
@@ -378,7 +380,7 @@ try {
   ok(/Enter figures for Canyon Mobile Outreach/.test(await adm.textContent('.modal h2')), 'the toast\'s Enter figures opens the dialog for the program just added');
   ok(/\*/.test(await adm.textContent('.modal [data-field="funds.0.naloxone_kits"] label')), 'every figure is marked required (*), as every form marks one');
   ok((await adm.$$eval('.modal [name="funds.0.category"] option', os => os.map(o => o.textContent))).some(t => /^Core strategy /.test(t)) && (await adm.$$eval('.modal [name="funds.0.category"] option', os => os.map(o => o.textContent))).some(t => /^Approved use /.test(t)), 'Exhibit E\'s uses say their schedule, as the fund form does');
-  eq(await adm.inputValue('.modal [name=from]'), lastQuarters(await serverToday(adm), 1)[0].from, 'Enter figures defaults to the last complete quarter');
+  eq(await adm.inputValue('.modal [name=from]'), toMDY(lastQuarters(await serverToday(adm), 1)[0].from), 'Enter figures defaults to the last complete quarter');
   await axe(adm, 'Enter figures dialog (1280)');
   await adm.fill('.modal [name=source_ref]', 'Q report emailed by the program (fictional)');
   await adm.fill('.modal [name="funds.0.name"]', 'County settlement share');

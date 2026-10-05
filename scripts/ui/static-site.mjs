@@ -133,7 +133,7 @@ ok(await page.$('a[data-procurement-link][href="procurement.html"]'), 'the phone
   ok(/Penetration test: not yet commissioned/.test(await page.textContent('main')), 'the pen-test status is stated as it is');
   const blanks = await page.$$eval('[data-field]', els => els.map(e => [e.dataset.field, e.dataset.published, e.textContent.trim()]));
   eq(blanks.length, 6, 'six facts in the contact block');
-  ok(blanks.every(([f, pub, t]) => (f === 'legal_entity' ? pub === '1' && t === 'AugustInnovations LLC' : pub === '0' && t === 'Not yet published by the maintainer')), 'the legal entity is the licensor; the rest say "Not yet published by the maintainer" until the owner fills procurement.json', blanks);
+  ok(blanks.every(([f, pub, t]) => (f === 'legal_entity' ? pub === '1' && t === 'AugustInnovations LLC' : ['pricing', 'sla'].includes(f) ? pub === '1' : pub === '0' && t === 'Not yet published by the maintainer')), 'the licensor, pricing and support terms are published; the contact facts say "Not yet published by the maintainer" until the owner fills them in', blanks);
   ok(!/\bdemo\b|evaluation copy/i.test((await page.textContent('main')).replace(/organizations evaluating/i, '')), 'no demo or evaluation-copy wording about SUDS itself');
   eq(asked.length, 0, 'the page asked no server API for anything', asked);
   page.off('request', onReq);
