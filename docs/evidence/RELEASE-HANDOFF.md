@@ -1,4 +1,4 @@
-# Release hand-off: tags v1.16.3 to v1.24.1
+# Release hand-off: tags v1.16.3 to v1.24.3
 
 > **The one owner action: run step 1, then step 2's tag commands and its one `git push`.** It is what unblocks:
 >
@@ -259,3 +259,31 @@ can still be replaced; the CHANGELOG line is what exposes it.)
   same for an older line, which only matters if a fix for it is still wanted).
 * Regenerate the SBOM from the tag if you like (`node scripts/sbom.js --ref v1.24.0 --out docs/evidence/sbom-1.24.0.cdx.json`):
   it records the same commit and must come out byte-identical. 1.24.1 is a patch and has no SBOM of its own.
+
+## 6. Execution log — 2026-10-05 evening (assistant-run, owner-authorized)
+
+The one owner action is done. What actually happened, against the plan above:
+
+* **Tags pushed.** All 20 annotated tags `v1.16.3`–`v1.24.3` are on origin (verified with
+  `git ls-remote --tags origin`). The plan above covered through `v1.24.1`; `v1.24.2` ("Release 1.24.2",
+  `544c204f0b90c583624434814ce49abea762bb49`) and `v1.24.3` ("Release 1.24.3",
+  `82217278be9a622348189f86f52a26c6fea8e45a`) were added the same evening.
+* **v1.24.1 published by its workflow** (run 37366144240, `github-actions[bot]`, 2026-10-05T20:11:11Z).
+  Live `version.json` reads 1.24.1.
+* **v1.16.3 and v1.16.4 published by hand** (assets built locally at `/tmp/releases/`,
+  notes from CHANGELOG). They were published manually — not via their historical workflows — so no old
+  build can roll back GitHub Pages.
+* **v1.24.2 release FAILED legitimately** (run 37366148402): its exact commit's CI was never green.
+  Do not publish v1.24.2; 1.24.3 supersedes it.
+* **v1.24.3 release failed only on a cancelled CI run** (run 37365713865): the exact-commit CI run
+  37366624441 was cancelled ~15 min in with every job cancelled. CI was re-queued; the release workflow
+  reruns after it goes green. **Only v1.24.3 may be deployed to Pages — never an older release.**
+* **Historical workflows v1.17.0–v1.24.0** were dispatched, many cancelled ~15 min in, and re-dispatched
+  (attempt 2, queued as of 2026-10-05 20:15 UTC). Still in flight at the time of writing.
+* **"Latest" is wrong right now.** GitHub marks `v1.16.4` Latest (an artifact of the manual publishes).
+  When v1.24.3 publishes, mark **v1.24.3** Latest and verify.
+* **Checksums:** each workflow publishes `suds-vX.Y.Z.zip` + `.sha256`; step 4's second-channel
+  publication (notes + CHANGELOG line) is still owed for the workflow-published releases once they land.
+* **v1.23.6 exception note** (step 3) is still owed by hand once its release exists.
+* **Pricing commit `6b4844f7`** ("Publish introductory pricing and support terms") is on origin/main
+  after the 1.24.3 tag; it ships to Pages with the next patch release (1.24.4), not with 1.24.3.

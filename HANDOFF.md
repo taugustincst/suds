@@ -3,13 +3,16 @@
 A living note between the assistants working on SUDS. Tj's rule: keep it current, keep it honest.
 Replies go under "Claude → Muse" below, newest first.
 
-## 2026-10-05 — Folder: 1.24.3 (evaluation defects + bottlenecks, committed, push on owner's desk)
+## 2026-10-05 — Folder: 1.24.3 (evaluation defects + bottlenecks — pushed; release publication pending CI)
 
 - **Scope.** Every defect, bottleneck and UI finding from the 2026-10-05 full evaluation, patched on top of
   1.24.2. Patch-sized per the release policy: `node scripts/release-policy.js --version 1.24.3 --previous
   v1.24.2 --previous-ref 544c204` passes (no migration, no new/widened permission, no new route; 126 lines
   outside docs, tests and generated files, of the 1,500 a patch may add). No policy exception. Commit
-  "Release 1.24.3" on top of `544c204`, not pushed — the push (and the 19 waiting tags) is the owner's call.
+  `82217278` "Release 1.24.3" pushed to origin/main 2026-10-05; tag v1.24.3 pushed with the other 19 waiting
+  tags (v1.16.3–v1.24.2). GitHub Release publication is pending: the first CI run for the exact commit was
+  cancelled, the rerun (37366624441) is in flight, and the release workflow reruns after it goes green.
+  v1.24.2's release failed legitimately (its commit's CI was never green) and is superseded — do not publish it.
 - **Fixed.**
   1. procurement.html blanks: Contact-and-terms fields now render "Not yet published by the maintainer" as
      static HTML (visible with JS off too); procurement.js drops the `muted` class when a published value
@@ -42,15 +45,23 @@ Replies go under "Claude → Muse" below, newest first.
   departed-worker draft handoff (server rules + `departedDraftsCard` in admin.js); Finance/Read-only menus
   (`test/nav-menu.test.js` covers every role × profile); sign-reminder "Open the draft" (`tasks.js` `sourceOf`
   → `note_id`); sign-reminder to-dos are created as to-dos server-side (`server/rules/tasks.js`).
-- **Verified.** Full `npm test` (the only failures were the pre-existing 1.24.2 version-stamp drift, fixed by
-  this release's proper stamping); browser subset green — dates 8/8, menu-home 217/217, frontline-review 87/87,
-  forms 33/33, no page/console errors. `scripts/check-html-sinks.js` clean.
+- **Verified (targeted — full suite NOT completed).** A properly captured full `npm test` on the stamped
+  1.24.3 tree was never completed: the one long run was pre-stamp 1.24.2 output through a pipe into `tail`
+  that masked Node's failure, and the later full rerun was terminated. What did pass after stamping: parser
+  7/7, parser+navigation 11/11, navigation 4/4, time/form targeted 25/25, forms/supervision 10/10,
+  backup/restore 2/2, demo 2/2, part 2/disclosure 32/32, version/device audit after stamping 38/38, and
+  the browser subset — dates 8/8, menu-home 217/217, frontline-review 87/87, forms 33/33 (345/345, no
+  page/console errors). `scripts/check-html-sinks.js` clean. Full `npm test` on the exact 1.24.3 commit is
+  left to CI (run 37366624441 re-queued after the first attempt was cancelled).
 - **Release hygiene (worth knowing).** 1.24.2's release commit left `SUDS_VERSION`, `version.json` and the
   service-worker stamp at 1.24.1, and never rebuilt `public/local/kernel.js` — so the device build was still
   running 1.24.1's kernel (missing 1.24.2's server-side timezone fixes). This release re-stamps everything
   (`npm run build:local`, `npm run gen:schema`) and ships the rebuilt kernel.
-- **Parked for Tj.** Push the 1.24.3 commit; push the 19 waiting tags (v1.16.3–v1.24.2, docs/evidence/
-  RELEASE-HANDOFF.md); cancel PublicRecords.us (~$20) and Adobe (~$24.60) — not started.
+- **Parked for Tj (updated 2026-10-05 evening).** DONE: 1.24.3 commit pushed to origin/main; all 20 tags
+  pushed (v1.16.3–v1.24.3, docs/evidence/RELEASE-HANDOFF.md); PublicRecordsData.us cancelled — merchant
+  confirmed in writing 2026-10-05 that closure is complete and no further charges will be made (was
+  $20/mo; account/report access retained 1 month). STILL WAITING: Adobe cancellation — blocked on Tj
+  submitting the Adobe login through the secure card (observed charges $29.99/mo).
 
 ## 2026-10-05 — Folder: 1.24.2 (a11y tab-strip reflow, timezone-correct dates)
 
