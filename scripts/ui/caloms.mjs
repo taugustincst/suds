@@ -63,8 +63,9 @@ let clientId;
   await page.click('.modal button[type=submit]'); await settle(page);
   ok(await page.$('.modal .field[data-field=caloms_service_type].error'), 'a blank CalOMS answer is flagged under its field');
   ok(await page.$('.modal'), 'and the episode is not opened');
-  // Answer everything: the first choice in each list, except where that would be a contradiction.
-  const pick = { caloms_sex_at_birth: 'F', caloms_pregnant: 'N', caloms_primary_drug: '05', caloms_secondary_drug: '00', caloms_iv_use_30: 'N', caloms_iv_use_12m: 'N' };
+  // Answer everything: the first choice in each list, except where that would be a contradiction
+  // (a male client cannot be pregnant; primary drug None is not allowed on an admission).
+  const pick = { caloms_pregnant: '0', caloms_primary_drug: '5' };
   for (const name of await page.$$eval('.modal select[name^=caloms_]', els => els.map(e => e.name))) {
     const value = pick[name] || await page.$eval(`.modal select[name=${name}]`, s => [...s.options].find(o => o.value)?.value);
     await page.selectOption(`.modal select[name=${name}]`, value);
