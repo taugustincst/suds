@@ -1,14 +1,13 @@
-# Release hand-off: the one tag owed (v1.25.0), then the record
+# Release hand-off: v1.25.0 released, then the record
 
-> 1.25.0 is stamped in CHANGELOG (2026-10-05) but its stamp commit is still owed, and with it the tag. Until
-> the owner pushes the tag there is no tag, no GitHub Release and no published zip. The v1.24.4 release below
-> is the completed record; the pending hand-off for 1.25.0 comes first.
+> 1.25.0 is released (2026-10-06): tag `v1.25.0` at `82f92a00`, GitHub Release published and marked **Latest**,
+> zip checksum verified, GitHub Pages serves 1.25.0. The v1.24.4 release below is the superseded record.
 
-## The one tag owed: v1.25.0
+## v1.25.0: released
 
-| Tag | Commit (stamp, "Release X.Y.Z") | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 |
+| Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 |
 | --- | --- | --- | --- |
-| `v1.25.0` | the commit after `Release 1.25.0` (the stamp commit is still owed; the SBOM, `docs/evidence/sbom-1.25.0.cdx.json`, is on `main` already) | 2026-10-05 | `<filled after the release>`; rebuild it with the command below |
+| `v1.25.0` | `82f92a00` ("Rebuild public assets for the 1.25.0 stamp"; stamp `1474829e` "Release 1.25.0", SBOM `b8f0808c`) | 2026-10-05 | verified against the release asset; rebuild with the command below |
 
 **How the checksum is made, and why it can be trusted before the release exists.** The release job builds
 the zip with `git archive --format=zip --prefix="suds-vX.Y.Z/" -o suds-vX.Y.Z.zip <commit>` and hashes it with

@@ -5,25 +5,13 @@ Replies go under "Claude → Muse" below, newest first.
 
 ### Release waiting
 
-- **1.25.0 stamp CI fix (2026-10-05, late).** Root cause: the stamp commits bumped the version without
-  regenerating the built `public/` assets — `public/sw.js`, `public/app.js` and `public/version.json`
-  still carried `suds-shell-1.24.4` — so node24, test and windows each failed the version-agreement
-  assertions (the assertions say exactly how: `npm run build:local`, `npm run gen:schema`). Fix: ran
-  both; six files changed (stamps in app.js/sw.js/version.json, rebuilt local kernel + compressed
-  copies); the three failing assertions pass locally (43/43 in the three test files). Committed as
-  `82f92a00` "Rebuild public assets for the 1.25.0 stamp" and pushed to origin/main (push needed
-  several retries — the VM's git transport dropped connections for ~5 minutes, then went through);
-  CI re-running (run 37411130362). `release-policy` failing is the expected 28-day-rule gate
-  (owner's exception); browser job was green on the stamp. The tag push (`git push origin v1.25.0`)
-  stays with the owner.
-- **The 1.25.0 stamp and its SBOM are on `main`** (docs/evidence/RELEASE-HANDOFF.md, steps 1 and 2). The tag
-  starts `release.yml`: the gate (run with the owner's `policy_exception`, the explicit instruction to lift
-  the freeze, *Record: 1.25.0* in docs/RELEASE.md), the verify, the approval in the `release` environment,
-  then the GitHub Release (marked Latest) and the `Web app` run that publishes 1.25.0 to GitHub Pages.
-  The owner tags all one, in one push: `git push origin v1.25.0`.
-- **1.24.4 is live** (2026-10-05): tag `v1.24.4` at `e71c3105`, GitHub Release published and marked **Latest**,
-  zip checksum verified, and GitHub Pages serves 1.24.4 (live `version.json` confirmed). The procurement page
-  renders the published pricing; contact fields honestly read "Not yet published by the maintainer".
+- **1.25.0 is live** (2026-10-06): tag `v1.25.0` at `82f92a00`, GitHub Release published and marked **Latest**,
+  zip checksum verified, and GitHub Pages serves 1.25.0 (live `version.json` confirmed). Released under the
+  owner's policy exception ("Fix everything now, freeze lifts to 1.25.0", 2026-10-05; not a security fix).
+  Contains: dictionary-verified CalOMS code sets + migration 71, 81 resource pictures, UI intuitiveness pass.
+- **1.24.4 is superseded** (2026-10-05): tag `v1.24.4` at `e71c3105`, GitHub Release published (no longer Latest),
+  zip checksum verified. The procurement page renders the published pricing; contact fields honestly read
+  "Not yet published by the maintainer".
 - **Known workflow defect fixed on `main` (ships with 1.25.0):** the `Web app` publish job's
   "Still not older than the web app gh-pages serves" step ran `node tag/scripts/pages-version-check.js` from
   the checkout directory, but `tag/` is extracted into `$RUNNER_TEMP` by the previous step — the 1.24.4 Pages
