@@ -285,7 +285,7 @@ run. Until the owner pushes the tag, 1.25.0 is the one tag owed.
 | Line | Gets | For how long |
 | --- | --- | --- |
 | **The latest minor** (today 1.25.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
-| **The previous minor** (today 1.24.x, until 30 days after 1.25.0's release date: the date of its tag. `v1.25.0` is not pushed yet ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); plan as if the 30 days run from its stamp, 2026-10-05, and check the tag's date once it is pushed) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.24` is made from `v1.24.4`'s line) | **30 days** after the next minor's release date, then none |
+| **The previous minor** (today 1.24.x, until 30 days after 1.25.0's release date: the date of its tag, 2026-10-06) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.24` is made from `v1.24.4`'s line) | **30 days** after the next minor's release date, then none |
 | Anything older (today 1.23.x and before: once 1.25.0 was released, 1.23.x stopped being the previous minor, whatever was left of its 30 days after 1.24.0; 1.22.x stopped when 1.24.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's

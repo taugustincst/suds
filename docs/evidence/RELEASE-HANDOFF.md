@@ -25,40 +25,17 @@ R1250=$(git log -1 --format=%H --grep='^Release 1.25.0$' origin/main)
 git archive --format=zip --prefix=suds-v1.25.0/ -o suds-v1.25.0.zip "$R1250" && sha256sum suds-v1.25.0.zip
 ```
 
-## 1. Check (the owner, from any clone)
+## Completed: v1.25.0 (2026-10-06)
 
-```bash
-git fetch origin
-R1250=$(git log -1 --format=%H --grep='^Release 1.25.0$' origin/main)
-for c in $R1250; do
-  git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
-done
-git show -s --format='%h %s' $R1250   # "Release 1.25.0"
-git show origin/main:package.json | grep '"version"'                            # 1.25.0
-gh run list --workflow ci.yml --commit $R1250 --event push --limit 1   # completed, success
-git ls-remote --tags origin | grep 'v1.25.0'   # not there yet: the tag is what this hand-off is for
-```
+- `v1.25.0` — commit `82f92a00686a17e9ff086409db8a6184f0a2d9b1` (stamp `1474829e` "Release 1.25.0", SBOM `b8f0808c`, asset rebuild `82f92a00`; CHANGELOG 2026-10-05), zip SHA-256 verified against the downloaded release asset with `sha256sum -c`: OK.
 
-## 2. Tag, and push
+- Release run 37416362595 (success; exact-commit CI 37411130362, all jobs green except the expected `release-policy` 28-day gate, covered by the owner's `policy_exception`); published 2026-10-06T05:38:43Z, marked **Latest**. The `policy_exception` records the owner's explicit instruction ("Fix everything now, freeze lifts to 1.25.0", 2026-10-05) — not a security fix.
 
-```bash
-git tag -a v1.25.0 "$R1250" -m "SUDS 1.25.0"
-git push origin v1.25.0
-```
+- Assets: `suds-v1.25.0.zip` + `.sha256`, `suds-1.25.0-windows-x64.zip` + `.sha256`.
 
-**Never push an older tag alone.** A lone older tag would become the newest tag there is: its `release.yml`
-would mark it Latest and start a `Web app` run for it. `v1.25.0` is newer than every tag on origin, so its
-push is safe on its own.
+- Pages: the `Web app` run 37419567221 succeeded (the `tag/` path fix from 1.24.4 held). Live `version.json` reads **1.25.0**.
 
-## 3. What the tag's run does, and what to approve
-
-The tag runs **its own** copy of `release.yml` (the copy at the tag), whose gate runs `main`'s copy of the gate
-scripts. The run waits for the owner's approval in the `release` environment, and the published release starts a
-`Web app` run that waits for a second approval.
-
-| Tag | Its gate (main's scripts) | Latest? Web app? | What the owner does |
-| --- | --- | --- | --- |
-| `v1.25.0` | **Passes with the owner's `policy_exception`**: a feature release inside 1.24.0's 28 days, on the owner's explicit instruction to lift the freeze ("Fix everything now, freeze lifts to 1.25.0") — not a security fix, so no `Security exception:` line (*Record: 1.25.0*) | **Latest**, and it starts a `Web app` run: the newest tag. Its run also builds and attaches the Windows server zip, unsigned while the certificate secrets are not set | Nothing to dispatch: the tag push runs it. Approve the release job; **approve its `Web app` run**, which publishes 1.25.0 to GitHub Pages. The 1.24.4 `Web app` publish bug (the `tag/` path) is fixed in this tree and ships with 1.25.0 |
+- Contains: dictionary-verified CalOMS code sets (all 17 from DHCS Oct 2024 v3.0) + migration 71, resource pictures for all 81 providers, UI intuitiveness pass (plainer call-form labels, accessible resource view toggle).
 
 ## Completed: v1.24.4 (2026-10-05)
 
