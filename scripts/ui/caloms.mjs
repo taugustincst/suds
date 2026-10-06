@@ -66,12 +66,22 @@ let clientId;
   // Answer everything: the first choice in each list, except where that would be a contradiction
   // (a male client cannot be pregnant; primary drug None is not allowed on an admission).
   const pick = { caloms_pregnant: '0', caloms_primary_drug: '5' };
+  // Secondary-drug fields are conditional on having a secondary drug (None here): the route select is left
+  // on its placeholder, and the age/days numbers are left blank (see below).
+  const skipSelect = new Set(['caloms_secondary_route']);
   for (const name of await page.$$eval('.modal select[name^=caloms_]', els => els.map(e => e.name))) {
+    if (skipSelect.has(name)) continue;
     const value = pick[name] || await page.$eval(`.modal select[name=${name}]`, s => [...s.options].find(o => o.value)?.value);
     await page.selectOption(`.modal select[name=${name}]`, value);
   }
   const nums = { caloms_primary_age_first_use: '19', caloms_education_grade: '12' };
-  for (const name of await page.$$eval('.modal input[type=number][name^=caloms_]', els => els.map(e => e.name))) await page.fill(`.modal input[name=${name}]`, nums[name] || '0');
+  // Secondary-drug fields are conditional on having a secondary drug (None here): filling the age with 0
+  // would fail its 5-105 range, so they are left blank.
+  const skip = new Set(['caloms_secondary_age_first_use', 'caloms_secondary_days_used']);
+  for (const name of await page.$$eval('.modal input[type=number][name^=caloms_]', els => els.map(e => e.name))) {
+    if (skip.has(name)) continue;
+    await page.fill(`.modal input[name=${name}]`, nums[name] || '0');
+  }
   await page.fill('.modal input[name=caloms_zip_code]', '95814');
   await page.check('.modal input[name=caloms_race__01]'); await page.check('.modal input[name=caloms_disability__1]');
   await page.click('.modal button[type=submit]');

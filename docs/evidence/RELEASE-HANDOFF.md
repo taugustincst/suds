@@ -6,9 +6,9 @@
 
 ## Completed: v1.24.4 (2026-10-05)
 
-| Tag | Commit | Release run | Published |
-| --- | --- | --- | --- |
-| `v1.24.4` | `e71c3105d4926d4e22207f415916bce6e07d6676` ("Release 1.24.4") | 37385754401 (success; exact-commit CI 37381511508, all 11 jobs green) | 2026-10-05T23:05:43Z, **Latest** |
+- `v1.24.4` — commit `e71c3105d4926d4e22207f415916bce6e07d6676` (CHANGELOG 2026-10-05), zip SHA-256 `f3787da4bbf95b3f3cab14a8ab0542c73edf06e649a3bcab083dfbdb07d262b6` (verified against the downloaded release asset)
+
+- Release run 37385754401 (success; exact-commit CI 37381511508, all 11 jobs green); published 2026-10-05T23:05:43Z, marked **Latest**.
 
 - Assets: `suds-v1.24.4.zip` (SHA-256 `f3787da4bbf95b3f3cab14a8ab0542c73edf06e649a3bcab083dfbdb07d262b6`,
   verified against the downloaded release asset with `sha256sum -c`: OK), `suds-v1.24.4.zip.sha256`,
