@@ -58,7 +58,10 @@ disclosure is for**, so a referral to a housing, employment, legal-aid, benefits
 consent that names that purpose (a general treatment, payment and operations consent no longer covers it), or a
 supervisor's override; and passwords that contain a person's name or a common word are refused when next changed
 ([docs/compliance/PART2.md](../compliance/PART2.md), *Purpose match*). Navigators, clinicians and supervisors get two
-new permissions for the intake queue; finance and read-only do not. A referral network partner organisations join (beyond the
+new permissions for the intake queue; finance and read-only do not. 1.25.0 changes little your staff will notice:
+the CalOMS Tx code sets are corrected against the DHCS data dictionary (so a treatment extract's answers are the
+dictionary's values), every resource-directory card shows a picture, and the call and text forms are plainer.
+A referral network partner organisations join (beyond the
 1.17.0 one-time secure links) is planned and not scheduled ([STRATEGY.md](STRATEGY.md)). Choose SUDS for what it does
 today.
 

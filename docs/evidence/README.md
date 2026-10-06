@@ -9,7 +9,37 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
-**Version.** It describes 1.24.1: the commit "Release 1.24.1", a patch of 1.24.0 with no policy exception, whose tag was pushed with the others on 2026-10-05 ([../RELEASE.md](../RELEASE.md), *Record: 1.24.1*; the tag hand-off record is [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.24.1 makes SUDS proprietary (`LICENSE`, AugustInnovations LLC; SUDS on this device stays free for real use; 1.24.0 and earlier stay MIT; `NOTICE` lists the third-party licences) and carries the fixes of the market evaluation of 1.24.0, with no migration, permission or route (*1.24.1: the licence and the evaluation fixes*, below). A patch has no SBOM of its own: 1.24.1 keeps 1.24.0's, `sbom-1.24.0`, whose components it does not change (that file records 1.24.0's commit and its MIT licence; `scripts/sbom.js` names the proprietary licence for the commits after it). 1.24.0 is the stamp "Release 1.24.0" and the commit after it that adds its SBOM (on `main`, and published to GitHub Pages by a direct `gh-pages` push at the owner's request); the owner pushed its tag on 2026-10-05 with the others ([../RELEASE.md](../RELEASE.md), *Record: 1.24.0*). 1.24.0 carries the fixes of an owner-authorised white-box penetration test of 1.23.6 (a consent's purpose checked at every disclosure, an office deletion that stands against a sync push, a refused push to a signed note, and seven Low findings), released under a recorded security exception inside 1.23.0's 28 days, with incoming referrals (an intake queue, migration 70, the `intake:read` and `intake:write` permissions), possible duplicate time (migration 68), a sign reminder that opens its draft (migration 69), scheduled backups on SUDS on this device, the Security & procurement page and the hardening checklist, and the office server for Windows, `suds.exe` (*1.24.0: the pen-test fixes, intake and the Windows server*, below). The recovery, upgrade and installer evidence below was run on the released 1.23.0 and has not been run again on 1.24.0 or 1.24.1. The SBOMs for 1.23.0 (`48cc586`), 1.22.0 (`74852e5`), 1.21.0 (`f58128c`), 1.20.0 (`66a616b`), 1.19.0 (`3dc20dc`), 1.17.0 (`485548c`) and 1.16.4 (`6491308`) stay in this folder as history; none was made for 1.17.1 or 1.18.0. `test/doc-currency.test.js` fails when this line, the questionnaire's *Checked against* or the newest SBOM falls behind the minor line of the version `package.json` stamps. (Until the review of the 1.17.0 candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed, and that was never published.)
+**Version.** It describes 1.25.0: the commit "Release 1.25.0", a feature release on the owner's explicit
+instruction ("Fix everything now, freeze lifts to 1.25.0"), inside 1.24.0's 28 days — not a security exception
+([../RELEASE.md](../RELEASE.md), *Record: 1.25.0*; the tag hand-off record is [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)).
+1.25.0 corrects the CalOMS Tx code sets against the DHCS Data Dictionary v3.0 (File Version 3.0, October 2024):
+all 17 code sets rewritten, yes/no as numeric 1/0, four elements added (LEG-1 criminal justice status, MED-7
+medication prescribed, CID-19 consent for future contact, CID-20 sexual orientation), sex at birth removed, new
+edit checks, and migration 71 remapping stored answers
+([caloms-dictionary-verification.md](caloms-dictionary-verification.md)); the resource directory shows a picture
+for every one of the 81 providers; and the call/text forms and the resource-directory view are plainer. A minor
+gets an SBOM of its own: `sbom-1.25.0` (a patch has none of its own — 1.24.4 keeps 1.24.0's). 1.24.4, a patch with
+no policy exception, fixed what 1.24.3's exact-commit CI found and published the introductory pricing; it is
+tagged, through the gate, published and marked Latest, and what GitHub Pages serves. 1.24.1 makes SUDS proprietary
+(`LICENSE`, AugustInnovations LLC; SUDS on this device stays free for real use; 1.24.0 and earlier stay MIT;
+`NOTICE` lists the third-party licences) and carries the fixes of the market evaluation of 1.24.0, with no
+migration, permission or route (*1.24.1: the licence and the evaluation fixes*, below). 1.24.0 is the stamp
+"Release 1.24.0" and the commit after it that adds its SBOM (on `main`, and published to GitHub Pages by a direct
+`gh-pages` push at the owner's request); the owner pushed its tag on 2026-10-05 with the others ([../RELEASE.md](../RELEASE.md),
+*Record: 1.24.0*). 1.24.0 carries the fixes of an owner-authorised white-box penetration test of 1.23.6 (a
+consent's purpose checked at every disclosure, an office deletion that stands against a sync push, a refused push
+to a signed note, and seven Low findings), released under a recorded security exception inside 1.23.0's 28 days,
+with incoming referrals (an intake queue, migration 70, the `intake:read` and `intake:write` permissions), possible
+duplicate time (migration 68), a sign reminder that opens its draft (migration 69), scheduled backups on SUDS on
+this device, the Security & procurement page and the hardening checklist, and the office server for Windows,
+`suds.exe` (*1.24.0: the pen-test fixes, intake and the Windows server*, below). The recovery, upgrade and
+installer evidence below was run on the released 1.23.0 and has not been run again on 1.24.0, 1.24.1 or 1.25.0.
+The SBOMs for 1.24.0 (`d109d32`), 1.23.0 (`48cc586`), 1.22.0 (`74852e5`), 1.21.0 (`f58128c`), 1.20.0 (`66a616b`),
+1.19.0 (`3dc20dc`), 1.17.0 (`485548c`) and 1.16.4 (`6491308`) stay in this folder as history; none was made for
+1.17.1 or 1.18.0. `test/doc-currency.test.js` fails when this line, the questionnaire's *Checked against* or the
+newest SBOM falls behind the minor line of the version `package.json` stamps. (Until the review of the 1.17.0
+candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed,
+and that was never published.)
 
 **Other ways in.** The same ground is covered question by question in [../security/QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md), and for buyers in [../market/BUYER-GUIDE-IT.md](../market/BUYER-GUIDE-IT.md).
 
@@ -17,7 +47,8 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 | File | What it is | How to check it |
 | --- | --- | --- |
-| [sbom-1.24.0.cdx.json](sbom-1.24.0.cdx.json) | CycloneDX 1.5 software bill of materials for 1.24.0 (and its patch 1.24.1, which has none of its own), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject). See *The SBOM*, below. Generated from the stamp commit ("Release 1.24.0"), since the tag is not pushed yet, and added by the commit after it | `node scripts/sbom.js --ref $(git log -1 --format=%H --grep='^Release 1.24.0$' origin/main)` prints the same bytes, and `test/sbom.test.js` checks it |
+| [sbom-1.25.0.cdx.json](sbom-1.25.0.cdx.json) | CycloneDX 1.5 software bill of materials for 1.25.0, with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject). See *The SBOM*, below. Generated from the 1.25.0 tree on `main` (`package.json` 1.25.0; the stamp commit is still owed), since the tag is not pushed yet | `node scripts/sbom.js` prints the same bytes on this tree, and `test/sbom.test.js` checks it |
+| [sbom-1.24.0.cdx.json](sbom-1.24.0.cdx.json) | CycloneDX 1.5 software bill of materials for 1.24.0 (and its patches 1.24.1 and 1.24.4, which have none of their own), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject). See *The SBOM*, below. Generated from the stamp commit ("Release 1.24.0"), since the tag is not pushed yet, and added by the commit after it | `node scripts/sbom.js --ref $(git log -1 --format=%H --grep='^Release 1.24.0$' origin/main)` prints the same bytes, and `test/sbom.test.js` checks it |
 | [sbom-1.23.0.cdx.json](sbom-1.23.0.cdx.json) | History: the SBOM for 1.23.0 (and its patches 1.23.1 to 1.23.6). See *The SBOM*, below. Generated from the stamp commit, since the tag is not pushed yet | `node scripts/sbom.js --ref 48cc586bcdab8b729a85d71ecc388cff0a20d579` prints the same bytes, and `test/sbom.test.js` checks it |
 | [sbom-1.22.0.cdx.json](sbom-1.22.0.cdx.json) | History: the SBOM for 1.22.0. See *The SBOM*, below. Generated from the stamp commit, since the tag is not pushed yet | `node scripts/sbom.js --ref 74852e525901eb921dbcf56364b66cc2837f3da8` prints the same bytes, and `test/sbom.test.js` checks it |
 | [sbom-1.21.0.cdx.json](sbom-1.21.0.cdx.json) | History: the SBOM for 1.21.0. See *The SBOM*, below. Generated from the stamp commit, since the tag is not pushed yet | `node scripts/sbom.js --ref f58128c3080b464f874832856ff32d18658e3ab4` prints the same bytes, and `test/sbom.test.js` checks it |

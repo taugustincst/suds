@@ -29,6 +29,8 @@
 | Authenticator allow-list (released in 1.21.0; office server only, off by default) | Passkeys only on listed authenticator models, each proven by its attestation (`packed`, `fido-u2f`, `tpm`, `android-key`) against the roots of a FIDO Metadata Service file the administrator loads; no outbound call (migration 63). From 1.22.0 a passkey the list newly refuses stops after a grace period (0 to 90 days, 14 by default; `passkeys.allowlist_grace_until`, migration 66), never for a model reported compromised or revoked. | `server/attestation.js`, `server/authenticator-allowlist.js`, `../FINGERPRINT.md` (*Authenticator allow-list*) |
 | SUDS Server (released in 1.18.0; optional) | The Linux installer for Ubuntu 24.04 / RHEL 9 (LUKS data disk, pinned Node and Caddy, sandboxed systemd unit on 127.0.0.1, keys as root-only credentials, firewall), and a weekly compliance check that runs as root, separately from the SUDS service, and writes a report signed with its own key. | `deploy/linux/`, `scripts/compliance-check.js`, `server/compliance-report.js`, `server/compliance-rules.js`, `../SELF-HOSTING.md` |
 
+*What 1.25.0 changes here.* Nothing structural: 1.25.0 adds no component, moves no trust boundary and adds no route. It rewrites the CalOMS Tx code sets from the DHCS data dictionary (migration 71 remaps the stored answers; `server/caloms-spec.js`), puts a picture on every resource-directory provider, and makes labels plainer.
+
 ## Data flow diagram (office server)
 
 ```

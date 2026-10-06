@@ -1,8 +1,65 @@
-# Release record: v1.24.4 (published 2026-10-05)
+# Release hand-off: the one tag owed (v1.25.0), then the record
 
-> 1.24.4 is published and live. This file recorded the hand-off while the tag was still owed; the
-> completed release is recorded here. The next release (1.25.0, CalOMS corrections + UI cleanup +
-> resource pictures) gets its own hand-off when it is stamped.
+> 1.25.0 is stamped in CHANGELOG (2026-10-05) but its stamp commit is still owed, and with it the tag. Until
+> the owner pushes the tag there is no tag, no GitHub Release and no published zip. The v1.24.4 release below
+> is the completed record; the pending hand-off for 1.25.0 comes first.
+
+## The one tag owed: v1.25.0
+
+| Tag | Commit (stamp, "Release X.Y.Z") | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 |
+| --- | --- | --- | --- |
+| `v1.25.0` | the commit after `Release 1.25.0` (the stamp commit is still owed; the SBOM, `docs/evidence/sbom-1.25.0.cdx.json`, is on `main` already) | 2026-10-05 | `<filled after the release>`; rebuild it with the command below |
+
+**How the checksum is made, and why it can be trusted before the release exists.** The release job builds
+the zip with `git archive --format=zip --prefix="suds-vX.Y.Z/" -o suds-vX.Y.Z.zip <commit>` and hashes it with
+`sha256sum` (`.github/workflows/release.yml`, *Package*; `scripts/package.js` does the same for `HEAD`). The
+release job itself refuses to publish a Release whose zip is not byte for byte its own build
+(`scripts/release-existing.js`).
+
+**Still, compare before you record it anywhere.** After the release job has run, the `.sha256` beside its zip
+must equal the value above. If it differs, the build is not what was reproduced here: do not record it, and find
+out why (a git change on the runner that altered the zip bytes; compare `unzip -l` of both, file by file) before
+anyone installs from it. Anyone can recheck the value from a clone at any time:
+
+```bash
+R1250=$(git log -1 --format=%H --grep='^Release 1.25.0$' origin/main)
+git archive --format=zip --prefix=suds-v1.25.0/ -o suds-v1.25.0.zip "$R1250" && sha256sum suds-v1.25.0.zip
+```
+
+## 1. Check (the owner, from any clone)
+
+```bash
+git fetch origin
+R1250=$(git log -1 --format=%H --grep='^Release 1.25.0$' origin/main)
+for c in $R1250; do
+  git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
+done
+git show -s --format='%h %s' $R1250   # "Release 1.25.0"
+git show origin/main:package.json | grep '"version"'                            # 1.25.0
+gh run list --workflow ci.yml --commit $R1250 --event push --limit 1   # completed, success
+git ls-remote --tags origin | grep 'v1.25.0'   # not there yet: the tag is what this hand-off is for
+```
+
+## 2. Tag, and push
+
+```bash
+git tag -a v1.25.0 "$R1250" -m "SUDS 1.25.0"
+git push origin v1.25.0
+```
+
+**Never push an older tag alone.** A lone older tag would become the newest tag there is: its `release.yml`
+would mark it Latest and start a `Web app` run for it. `v1.25.0` is newer than every tag on origin, so its
+push is safe on its own.
+
+## 3. What the tag's run does, and what to approve
+
+The tag runs **its own** copy of `release.yml` (the copy at the tag), whose gate runs `main`'s copy of the gate
+scripts. The run waits for the owner's approval in the `release` environment, and the published release starts a
+`Web app` run that waits for a second approval.
+
+| Tag | Its gate (main's scripts) | Latest? Web app? | What the owner does |
+| --- | --- | --- | --- |
+| `v1.25.0` | **Passes with the owner's `policy_exception`**: a feature release inside 1.24.0's 28 days, on the owner's explicit instruction to lift the freeze ("Fix everything now, freeze lifts to 1.25.0") — not a security fix, so no `Security exception:` line (*Record: 1.25.0*) | **Latest**, and it starts a `Web app` run: the newest tag. Its run also builds and attaches the Windows server zip, unsigned while the certificate secrets are not set | Nothing to dispatch: the tag push runs it. Approve the release job; **approve its `Web app` run**, which publishes 1.25.0 to GitHub Pages. The 1.24.4 `Web app` publish bug (the `tag/` path) is fixed in this tree and ships with 1.25.0 |
 
 ## Completed: v1.24.4 (2026-10-05)
 

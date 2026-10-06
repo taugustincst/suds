@@ -6,7 +6,7 @@ months of compliance and security work, **C** cut the EHR-adjacent framing and r
 
 **The owner chose B and C together**: commit to the work, and aim it at the workflow SUDS does best —
 outreach, naloxone and supply distribution, and grant reporting for harm-reduction and prevention programmes.
-This page answers each point with its status through 1.24.1, the latest release, and where the evidence is (what
+This page answers each point with its status through 1.25.0, the latest release, and where the evidence is (what
 1.17.0 to 1.24.1 added is also listed in [STRATEGY.md](STRATEGY.md), *Built vs planned, exactly*; 1.20.0 added
 county-entered figures for grantees not on SUDS, the installer fixes from a real install in a container, and the
 county-contract kit; 1.21.0 added screened county publication releases, field devices that hold only a field
@@ -27,7 +27,11 @@ owner-approved policy exception that is not a security fix, recorded in [RELEASE
 white-box penetration test of 1.23.6 and added an intake queue for referrals to the programme, possible duplicate
 time, scheduled device backups, a Security & procurement page with a hardening checklist, and the office server for
 Windows, *Record: 1.24.0*; 1.24.1, a patch with no exception, made SUDS proprietary under the owner's licence, with
-SUDS on this device free for real use, and fixed what the market evaluation of 1.24.0 found, *Record: 1.24.1*).
+SUDS on this device free for real use, and fixed what the market evaluation of 1.24.0 found, *Record: 1.24.1*;
+1.25.0, a feature release on the owner's explicit instruction to lift the freeze, corrected the CalOMS Tx code
+sets against the DHCS data dictionary (File Version 3.0, October 2024; migration 71 remaps stored answers), put a
+picture on every one of the 81 resource-directory providers, and made the call/text forms and the resource-directory
+view plainer, *Record: 1.25.0*).
 "Addressed in software"
 means the capability exists and is tested; it does not mean an auditor, a regulator or counsel has confirmed it.
 Organisational items that software cannot close are marked **open**.

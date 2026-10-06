@@ -2,9 +2,9 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.25.0 — 2026-10-05
 
-* **CalOMS Tx 1.25.0 (unstamped; the owner lifted the feature freeze).** Dictionary-verified code sets: service types are ADM-4 codes 1–7; referral sources ADM-5 1–14; drug
+* **CalOMS Tx 1.25.0 (the owner lifted the feature freeze: "Fix everything now, freeze lifts to 1.25.0").** Dictionary-verified code sets: service types are ADM-4 codes 1–7; referral sources ADM-5 1–14; drug
   codes are unpadded 0–20 with 99901/99903 (fentanyl and "other" are 99903); routes are 1–4 with
   99902/99903; gender is CID-3 1–6 with 99900/99903; races are zero-padded 01–19 with 99900 (at most 5);
   ethnicities are CID-16 1–6 with 99900; disabilities are 1–8 with 99900/99904 (at most 7); record codes
@@ -26,6 +26,13 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **Open item:** the extract's column names and file layout are SUDS's own and are not dictionary-verified;
   the county converts the CSV files to the DHCS upload format before the first submission
   (docs/compliance/CALOMS.md).
+* **Resource pictures for all 81 providers.** The starter directory's provider-picture download now finds
+  every provider's picture (official websites recorded for the two Sierra providers; better discovery of
+  advertised pictures, a browser user agent, more image sources), so the resource directory cards show a
+  picture for each of the 81 providers.
+* **UI intuitiveness pass.** Plainer call/text form labels ("Client (optional)" with a plain-English help
+  line; "Also log this as a time entry" matching the visit form) and an accessible resource-directory
+  view toggle (role, labels and pressed state announced).
 
 ## 1.24.4 — 2026-10-05
 

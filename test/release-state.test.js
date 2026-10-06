@@ -260,11 +260,11 @@ test('parsers read the real documents\' shapes', () => {
   const fs = require('node:fs');
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const h = RS.parseHandoff(read(RS.FILES.handoff));
-  // No tags are owed right now (v1.24.4 was the last one and it is pushed): the table is empty and the
-  // parser must read that correctly, not crash or invent rows.
-  assert.equal(h.rows.length, 0, 'no completed rows while no tags are owed');
-  assert.equal((h.pending || []).length, 0, 'no pending rows while no tags are owed');
-  assert.equal(h.tagCommands.length, 0, 'no tag commands while no tags are owed');
+  // One tag is owed right now (v1.25.0 is stamped, its stamp commit and tag still owed): the table has one
+  // pending row, and the parser must read that correctly, not crash or invent rows.
+  assert.equal(h.rows.length, 0, 'no completed rows while the one owed tag is pending');
+  assert.equal((h.pending || []).length, 1, 'one pending row: v1.25.0');
+  assert.equal(h.tagCommands.length, 1, 'one tag command: v1.25.0');
   assert.ok(h.rows.every((r) => /^v\d+\.\d+\.\d+$/.test(r.tag) && r.commit.length === 40), 'every completed row names a tag and its commit');
   assert.ok((h.pending || []).every((r) => /^v\d+\.\d+\.\d+$/.test(r.tag)), 'every pending row names its tag');
   assert.equal(h.tagCommands.length, h.rows.length + h.pending.length, 'one tag command per row (a row the stamp cannot fill yet included)');

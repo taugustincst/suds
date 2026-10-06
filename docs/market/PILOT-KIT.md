@@ -97,7 +97,7 @@ audit report — see the [readiness scorecard](README.md#readiness-scorecard)).
 | **1–2** | Daily 10-minute stand-up for the first week; vendor available in business hours. Parallel run with spreadsheets. | No blocking defects |
 | **2 (day 14)** | Check-in 1: usability issues, list tweaks, first data-completeness check. | Issues logged with owners |
 | **4 (day 30)** | Check-in 2: first month-end funder report from SUDS compared with the spreadsheet version, and its preparation hours logged against the baseline. Decide whether to stop the parallel run. Monthly audit review done by the privacy officer. | Parallel run stopped (or extended with reasons) |
-| **5–8** | Normal operations. If in scope: CalOMS preview compared with the real submission (never submitted), EHR hand-off test, FHIR walkthrough with IT. Key-rotation drill on a copy. | Drills recorded |
+| **5–8** | Normal operations. If in scope: CalOMS preview compared with the real submission (never submitted; from 1.25.0 the extract's code sets are verified against the DHCS Data Dictionary v3.0, though the upload layout still needs the county's check), EHR hand-off test, FHIR walkthrough with IT. Key-rotation drill on a copy. | Drills recorded |
 | **8 (day 60)** | Check-in 3: mid-point metrics against baseline. | Metrics sheet updated |
 | **9–12** | Quarter-end funder report produced from SUDS. Collect staff survey. | Report submitted or ready |
 | **13 (day 90)** | Evaluation (section 7) and decision: continue (contract), extend, or exit (section 6). | Decision recorded |

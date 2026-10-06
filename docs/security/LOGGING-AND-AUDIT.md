@@ -11,6 +11,8 @@ Administrators and supervisors (`audit:read`) search it under Settings → Audit
 ### Audit actions added in recent releases (1.18.0 to 1.20.0)
 
 Every action the server writes is in the *Audit action catalogue* below; this table says what the newest ones record.
+1.25.0 adds no new audit action: migration 71 remaps stored CalOMS answers in place (the migration itself is not
+audited per row; the upgrade's pre-migration backup and the migration run are in the operational log).
 
 None of these entries carries a figure, a token, a key's private half, a passkey's signature or anything biometric; where a file or a statement matters, the entry names its SHA-256 or fingerprint.
 

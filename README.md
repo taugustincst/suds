@@ -18,8 +18,8 @@ exports, disclosures and configuration changes.
 
 **Optional modules.** Programmes that are treatment-adjacent can switch the *programme profile* from **Harm
 reduction & outreach** (the default) to **Treatment-adjacent** to show the clinical modules: care plan, problem
-list and assessments, structured clinical notes, CalOMS Tx (extract not yet verified against the DHCS data
-dictionary), a FHIR R4 feed and a county EHR encounter hand-off. A programme whose EHR stays the clinical record
+list and assessments, structured clinical notes, CalOMS Tx (code sets verified against the DHCS Data Dictionary
+v3.0 in 1.25.0; the upload file layout is still the county's to confirm), a FHIR R4 feed and a county EHR encounter hand-off. A programme whose EHR stays the clinical record
 can choose **Part 2 compliance module (beside an EHR)** instead: the consent, disclosure and breach work leads,
 with patients and encounters imported from the EHR ([docs/integration/EHR-PART2-LAYER.md](docs/integration/EHR-PART2-LAYER.md)). SUDS is **not** an EHR, does not create Drug
 Medi-Cal claims, and has no eMAR or e-prescribing. It is proprietary software of AugustInnovations LLC ([LICENSE](LICENSE)), with its source visible: SUDS on this
@@ -28,7 +28,25 @@ under a signed licence agreement; it is not a hosted service. Positioning, buyer
 and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:
 [docs/architecture/README.md](docs/architecture/README.md).
 
-## What's new in 1.18.0 to 1.24.1
+## What's new in 1.18.0 to 1.25.0
+
+**1.25.0**
+
+* **CalOMS Tx code sets corrected against the DHCS data dictionary** ([docs/compliance/CALOMS.md](docs/compliance/CALOMS.md)):
+  all 17 code sets rewritten from the DHCS CalOMS Tx Data Dictionary (File Version 3.0, October 2024) — service
+  types, referral sources, drugs, routes, gender, races, ethnicities and disabilities; yes/no is numeric `1`/`0`
+  everywhere, with each element's `999xx` alternative values; four elements added (LEG-1 criminal justice status,
+  MED-7 medication prescribed, CID-19 consent for future contact, CID-20 sexual orientation) and sex at birth
+  removed; new edit checks from the dictionary. Migration 71 remaps stored answers to the dictionary's values
+  (unmappable answers are dropped so the edit checks flag them for the worker to re-ask). The extract's column
+  names and file layout are SUDS's own and still need the county's check before the first submission.
+* **Resource pictures for all 81 providers**: the starter directory's provider-picture download now finds every
+  provider's picture, so each resource-directory card shows one.
+* **UI intuitiveness pass**: plainer call and text form labels ("Client (optional)" with a plain-English help
+  line; "Also log this as a time entry" matching the visit form) and an accessible resource-directory view
+  toggle (role, labels and pressed state announced). On the owner's explicit instruction to lift the feature
+  freeze ("Fix everything now, freeze lifts to 1.25.0"), inside 1.24.0's 28 days — not a security exception
+  ([docs/RELEASE.md](docs/RELEASE.md), *Record: 1.25.0*).
 
 **1.24.1**
 

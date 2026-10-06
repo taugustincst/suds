@@ -54,11 +54,10 @@ a stabilisation release, 1.23.1, and these commitments, which hold until this se
    made only to ship a security fix that cannot wait, and its CHANGELOG section or its *Record* says so on a line of
    its own, `Security exception: <reason>`, which the CI check below reads. An owner's wish for a feature sooner is
    not an exception any more: it waits for the next feature release.
-3. **1.23.x was the supported line until 1.24.0.** It got every defect and security fix as a patch until 1.24.0 was
-   released; from then, security fixes only, for **30 days after 1.24.0's release date** (1.24.0 is stamped
-   2026-10-03, so plan as if they run to 2026-11-02; the freeze's lifting moved this from at least 2026-11-28), from
-   `maint/1.23` (*Supported versions* and *Backports*, below). 1.24.x is the supported line now; 1.22.x and older get
-   nothing more.
+3. **1.24.x was the supported line until 1.25.0.** It got every defect and security fix as a patch until 1.25.0 was
+   released; from then, security fixes only, for **30 days after 1.25.0's release date** (the date of its tag; plan
+   as if they run from its stamp, 2026-10-05), from `maint/1.24` (*Supported versions* and *Backports*, below).
+   1.25.x is the supported line now; 1.23.x and older get nothing more.
 4. **Every release is tagged by the owner and published by `release.yml`.** The owner pushes the `vX.Y.Z` tag; the
    GitHub Release, its zip and checksum come from `release.yml`, and GitHub Pages is updated by the `Web app` run that
    release starts, approved in the `release` environment. **Once the owner has pushed the owed tags
@@ -265,13 +264,29 @@ exceptions table, as point 4 requires; it is not a policy exception (the patch r
 either. It did: the tags were still owed, so on 2026-10-03, at the owner's request to build and
 release 1.24.1, it was published to GitHub Pages by a direct push to `gh-pages` (`d109d32`, the commit CI passes).
 
+**Record: 1.25.0 ships on the owner's explicit instruction to lift the freeze.** 1.25.0 is a feature release
+stamped 2026-10-05, two days after 1.24.0 (2026-10-03), inside its 28 days and inside the feature freeze of
+*Stabilisation* point 1. The owner lifted the freeze for it explicitly on 2026-10-05: "Fix everything now, freeze
+lifts to 1.25.0". This is not a security fix, so no `Security exception:` line is recorded; the owner runs the
+tag's release with `policy_exception` set to this instruction, which the release job prints at the top of its
+notes. It carries the CalOMS Tx dictionary verification (all 17 code sets rewritten from the DHCS Data Dictionary
+v3.0, File Version 3.0, October 2024; yes/no as numeric 1/0; LEG-1 criminal justice status, MED-7 medication
+prescribed, CID-19 consent for future contact and CID-20 sexual orientation added; sex at birth removed; new edit
+checks; migration 71 remapping stored answers), a picture for every one of the 81 resource-directory providers,
+and the UI intuitiveness pass (plainer call/text form labels, an accessible resource-directory view toggle). The
+SBOM, `docs/evidence/sbom-1.25.0.cdx.json`, is committed on `main` with the stamp preparation. The owner tags the
+stamp commit: `v1.25.0` (step 2 of [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); it is the newest
+tag, and its `release.yml` run is the Latest release, attaches the Windows server zip (unsigned until the owner
+adds the code-signing secrets, `WINDOWS_CERT_PFX_BASE64` and `WINDOWS_CERT_PASSWORD`) and starts the `Web app`
+run. Until the owner pushes the tag, 1.25.0 is the one tag owed.
+
 ### Supported versions
 
 | Line | Gets | For how long |
 | --- | --- | --- |
-| **The latest minor** (today 1.24.x) | Every fix: defects and security, as patch releases on that line (1.24.1, a patch of 1.24.0 with no exception, *Record: 1.24.1*, is the first) | Until the next minor is released |
-| **The previous minor** (today 1.23.x, until 30 days after 1.24.0's release date: the date of its tag. `v1.24.0` was pushed 2026-10-05 ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)), so its 30 days run to 2026-11-04; 1.24.0 goes to GitHub Pages with its stamp on 2026-10-03, and a programme should plan as if they run from then, to 2026-11-02) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.23` is made from `v1.23.6`'s line once the tags exist) | **30 days** after the next minor's release date, then none |
-| Anything older (today 1.22.x and before: once 1.24.0 was released, 1.22.x stopped being the previous minor, whatever was left of its 30 days after 1.23.0; 1.21.x stopped when 1.23.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
+| **The latest minor** (today 1.25.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
+| **The previous minor** (today 1.24.x, until 30 days after 1.25.0's release date: the date of its tag. `v1.25.0` is not pushed yet ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); plan as if the 30 days run from its stamp, 2026-10-05, and check the tag's date once it is pushed) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.24` is made from `v1.24.4`'s line) | **30 days** after the next minor's release date, then none |
+| Anything older (today 1.23.x and before: once 1.25.0 was released, 1.23.x stopped being the previous minor, whatever was left of its 30 days after 1.24.0; 1.22.x stopped when 1.24.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's
 CHANGELOG section, naming the affected versions (as 1.15.4 did); programmes with a support agreement are told
@@ -420,6 +435,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.23.6 | a widened permission in a patch during the feature freeze, and an exception that is not a security fix (*Stabilisation*, points 1 and 2): an administrator may change their own permissions, role and account. The release-policy check passes (no migration, permission name or route; 224 lines), so the exception is recorded by hand | the owner asked that an administrator be able to change all permissions, their own included, and chose to ship it in 1.23.6 rather than wait for 1.24.0; safeguards: the lockout guard, a confirmation before each change to one's own access, `self: true` in the audit, and a deny on an administrator now advisory. Released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages`, because the tags owed since 1.16.3 were not yet pushed (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.6*, above) |
 | 1.24.0 | monthly limit and the feature freeze (*Stabilisation*, point 1: a feature release two days after 1.23.0, migrations 68, 69 and 70, the permissions `intake:read` and `intake:write`, 22 routes), under the security exception point 2 allows; the gate refuses it on the feature interval, so its tag needs *Run workflow* with `policy_exception` | the fixes of the owner-authorised white-box pen test of 1.23.6 (M1, M2 and seven Low findings), released at once on the owner's instruction to lift the freeze, with the feature work done for 1.24.0 and `suds.exe` (owner decision of 2026-10-03); `Security exception:` recorded, so CI's `release-policy` job passes | owner (a request, no workflow record; *Record: 1.24.0*, above) |
 | 1.24.1 | none of the policy (a patch within the patch rules: no migration, permission or route, 311 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once the owner has pushed the tags; it went live first, on 2026-10-03, by a direct push to `gh-pages` at the owner's request (*Record: 1.24.1*) | the licence change the owner decided on 2026-10-03 (proprietary, AugustInnovations LLC, SUDS on this device free for real use under section 2A) and the fixes from the market evaluation of 1.24.0 (D1 to D7); the tags owed since 1.16.3 are not yet pushed (*Stabilisation*, point 4) | no exception to approve; the direct push was at the owner's request (*Record: 1.24.1*, above) |
+| 1.25.0 | monthly limit and the feature freeze (*Stabilisation*, point 1: a feature release two days after 1.24.0, migration 71; no new permission or route); not a security fix, so no `Security exception:` line — the owner's explicit instruction to lift the freeze, recorded in *Record: 1.25.0* and passed as `policy_exception` when the tag's release runs | the CalOMS Tx dictionary verification (all 17 code sets rewritten from the DHCS Data Dictionary v3.0; migration 71 remapping stored answers), a picture for every one of the 81 resource-directory providers, and the UI intuitiveness pass, on the owner's instruction of 2026-10-05 ("Fix everything now, freeze lifts to 1.25.0") | owner (`policy_exception`, *Record: 1.25.0*, above) |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as

@@ -153,15 +153,16 @@ Zero runtime dependencies: the server uses only Node.js built-ins; a production 
 Build-time tooling is listed separately. A CycloneDX SBOM per release, reproducible from the commit. Dependabot
 for build tooling, the container base and CI actions. Evidence:
 [../../security/VULNERABILITY-MANAGEMENT.md](../../security/VULNERABILITY-MANAGEMENT.md);
-[../../evidence/sbom-1.24.0.cdx.json](../../evidence/sbom-1.24.0.cdx.json) (`node scripts/sbom.js`,
+[../../evidence/sbom-1.25.0.cdx.json](../../evidence/sbom-1.25.0.cdx.json) (`node scripts/sbom.js`,
 `test/sbom.test.js`).
 
 **Q. Release integrity: how does the county know the build it runs is the released code?** **Releases 1.16.3 to
 1.24.0 were published without a tag**, without a GitHub Release and without the release gate's approval. All are
 tagged since 2026-10-05, and 1.24.1's tag has been through the gate and its GitHub Release is published; each is
 recorded in the exceptions table ([../../RELEASE.md](../../RELEASE.md), *The exceptions in one place*).
-`v1.24.2` and `v1.24.3` are tagged but superseded and will never publish. **1.24.4 is the one release still
-without a tag**: stamped 2026-10-05, it waits for the owner's tag (docs/evidence/RELEASE-HANDOFF.md); until the
+`v1.24.2` and `v1.24.3` are tagged but superseded and will never publish. 1.24.4 is tagged, has been through
+the gate, and its GitHub Release is published and marked Latest (2026-10-05). **1.25.0 is the one release still
+published without a tag**: stamped 2026-10-05, it waits for the owner's tag (docs/evidence/RELEASE-HANDOFF.md); until the
 tag is pushed there is no tag or published zip to check it against. Verify against the commit instead. Each
 commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
 release zip, which anyone can rebuild with `git archive` and compare. `scripts/release-site-check.js` checks a

@@ -1,11 +1,13 @@
 # SUDS go-to-market strategy
 
 **Status: the owner's strategy, written down and assessed, 29 September 2026; its *Built vs planned* table is current to
-1.24.1.** It replaces nothing in the rest of this pack until a row below says it is done. Everything described as
+1.25.0.** It replaces nothing in the rest of this pack until a row below says it is done. Everything described as
 *planned* is not in a released version of SUDS. It was first written at 1.17.0, whose features are **released in
 1.17.0**. Under *Stabilisation* ([docs/RELEASE.md](../RELEASE.md)) 1.24.0 came early, under its one security exception (the
-fixes of an owner-authorised white-box penetration test of 1.23.6), and the next feature release comes no earlier than
-2026-10-31 and only through the release gate; `test/release-wording.test.js` keeps these lines honest at each stamp.
+fixes of an owner-authorised white-box penetration test of 1.23.6); 1.25.0 came early too, on the owner's explicit
+instruction to lift the freeze ("Fix everything now, freeze lifts to 1.25.0") — not a security exception — and the next
+feature release comes no earlier than 28 days after 1.25.0's release date (the date of its tag) and only through the
+release gate; `test/release-wording.test.js` keeps these lines honest at each stamp.
 
 The strategy has three parts:
 
@@ -50,7 +52,7 @@ that are not customers. **The organisational items are the critical path for eve
 | --- | --- | --- | --- |
 | **Harm-reduction and outreach CBOs** (roughly 3–40 staff; opioid-settlement, SOR / NDP, SABG prevention funding spent on outreach and distribution) | Programme director, from a grant line | Outreach, supplies and funder reporting; implementation and support | Core fit. Needs an IT partner or a county sponsor; SUDS is not hosted |
 | **Counties as funders and sponsors** (county behavioural-health or public-health departments that allocate settlement money to CBOs) | County SUD / behavioural-health administrator; county IT gates it | Consistent outcome data from the CBOs they fund; a site licence or sponsored instances; implementation across CBOs | The "sell to the money" buyer. Procurement is 6–24+ months; nothing organisational is ready |
-| **Treatment-adjacent programmes with an EHR** (county-contracted SUD providers that also do outreach, navigation or recovery support) | Programme director and county IT | Part 2-controlled work beside the EHR; a CalOMS extract where the EHR does not produce one | Optional modules exist; the CalOMS layout is not verified; no live EHR connection yet |
+| **Treatment-adjacent programmes with an EHR** (county-contracted SUD providers that also do outreach, navigation or recovery support) | Programme director and county IT | Part 2-controlled work beside the EHR; a CalOMS extract where the EHR does not produce one | Optional modules exist; the CalOMS code sets are verified against the DHCS data dictionary (1.25.0), the upload layout is not; no live EHR connection yet |
 | **Organisations that receive referrals** (shelters, MAT clinics, recovery residences, hospital navigators) | Nobody at first: they are invited | Free participation in the referral flow | One-time secure links released in 1.17.0 (off by default); the network is planned (see *Capture 6*) |
 
 Out of scope, and still said plainly: DMC billing, e-prescribing, the treatment medical record and a SABG
@@ -224,10 +226,11 @@ and a county runs one instance per provider ([docs/architecture/COUNTY-MULTI-TEN
 
 **Assessment, stated precisely.** SUDS produces files checked by SUDS's own edits and intended for submission. It
 does **not** yet produce "validated, submission-ready" files in the sense a county would take that to mean: the
-layout, element names and code sets have **not been verified against the DHCS data dictionary**, CSV is produced
-where the county's channel may need another format, and DHCS's own edits are authoritative. Until a county has
-checked the layout and sent a real file through its channel, say "a CalOMS Tx extract with built-in checks, to
-be verified against the DHCS data dictionary with the county". The wedge is sound in shape (every
+code sets have been verified against the DHCS Data Dictionary v3.0 (File Version 3.0, October 2024) in 1.25.0,
+but the layout and element names have **not**, CSV is produced where the county's channel may need another
+format, and DHCS's own edits are authoritative. Until a county has checked the layout and sent a real file
+through its channel, say "a CalOMS Tx extract with dictionary-verified code sets and built-in checks, the upload
+layout to be verified against the DHCS data dictionary with the county". The wedge is sound in shape (every
 county-contracted treatment provider reports CalOMS, and many do so by hand), but it:
 
 - is a treatment-side wedge, while SUDS's core fit is harm reduction and outreach — it opens the
@@ -327,12 +330,12 @@ until counsel and one pilot have looked at it.
 
 ## Built vs planned, exactly
 
-| Capability | State on 3 October 2026 (1.24.1) |
+| Capability | State on 5 October 2026 (1.25.0) |
 | --- | --- |
 | Outreach, anonymous contacts, supplies, funder reporting, settlement report and DHCS/county layouts | **Built** (layouts not checked against current official templates) |
 | Local mode (offline copy, office sync) | **Built**, off by default; the wizard recommends it for harm reduction |
 | FHIR R4 read and bulk export with Part 2 consent; encounter hand-off | **Built**; no live EHR connection yet |
-| CalOMS Tx capture, checks and extract | **Built; layout not verified** against the DHCS data dictionary; SUDS does not submit |
+| CalOMS Tx capture, checks and extract | **Built; code sets verified** against the DHCS Data Dictionary v3.0 (File Version 3.0, October 2024) in 1.25.0 ([docs/compliance/CALOMS.md](../compliance/CALOMS.md)); the upload file layout is still the county's to confirm; SUDS does not submit |
 | Referrals with consent check and loop closure, inside one programme | **Built** |
 | Note import review queue (Pocket AI, OneNote) | **Built** |
 | AI documentation copilot | **Released in 1.17.0** ([docs/AI-COPILOT.md](../AI-COPILOT.md)); off by default |
@@ -357,6 +360,7 @@ until counsel and one pilot have looked at it.
 | An administrator may change their own permissions, role and account, confirmed first and audited with `self: true`, with a lockout guard that keeps an active administrator who can manage users | **Released in 1.23.6** ([CHANGELOG](../../CHANGELOG.md)); a patch with no migration, permission name or route, shipped under an owner-approved policy exception that is not a security fix: it widens what an administrator may do during the feature freeze ([docs/RELEASE.md](../RELEASE.md), *Record: 1.23.6*) |
 | The fixes of an owner-authorised white-box penetration test of 1.23.6 (a consent's purpose checked at every disclosure, an office deletion that stands against a sync push, stronger passwords, sign-in limits per person, and five more), an intake queue for referrals to the programme, possible duplicate time, a sign reminder that opens its draft, scheduled backups on SUDS on this device, the Security & procurement page and the hardening checklist, and the office server for Windows (`suds.exe`) | **Released in 1.24.0** ([CHANGELOG](../../CHANGELOG.md)); a feature release inside 1.23.0's 28 days under the recorded security exception ([docs/RELEASE.md](../RELEASE.md), *Record: 1.24.0*): migrations 68 to 70, the `intake:read` and `intake:write` permissions. The white-box test was not independent: the independent penetration test is still owed |
 | The proprietary licence (AugustInnovations LLC; SUDS on this device free for real use under section 2A; 1.24.0 and earlier stay MIT), and the fixes from the market evaluation of 1.24.0: no two-step lockout in `npm run try`, HTTPS seen at once after the setup wizard, a common password with extra letters refused, clearer referral consent wording, a switched-off module's forms gone after a refused save, a sign reminder its worker cannot close while drafts are unsigned, and a device backup due today rather than overdue | **Released in 1.24.1** ([CHANGELOG](../../CHANGELOG.md)); a patch: no migration, no permission, no route, and no policy exception ([docs/RELEASE.md](../RELEASE.md), *Record: 1.24.1*) |
+| The CalOMS Tx code sets corrected against the DHCS Data Dictionary v3.0 (File Version 3.0, October 2024): all 17 code sets rewritten, yes/no as numeric 1/0, LEG-1 criminal justice status, MED-7 medication prescribed, CID-19 consent for future contact and CID-20 sexual orientation added, sex at birth removed, new edit checks, and migration 71 remapping stored answers; a picture for every one of the 81 resource-directory providers; plainer call/text form labels and an accessible resource-directory view toggle | **Released in 1.25.0** ([CHANGELOG](../../CHANGELOG.md)); a feature release on the owner's explicit instruction to lift the freeze, inside 1.24.0's 28 days — not a security exception ([docs/RELEASE.md](../RELEASE.md), *Record: 1.25.0*) |
 | One-time secure referral links to organisations not on SUDS, with an invitation | **Released in 1.17.0**; off by default; counsel reviews the design before a programme switches it on |
 | A cross-organisation referral network (organisations that join and accept referrals in SUDS) | **Planned**, not scheduled |
 | Inbound FHIR referrals | **Design placeholder** ([docs/integration/FHIR.md](../integration/FHIR.md)) |
