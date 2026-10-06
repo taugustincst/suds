@@ -9,7 +9,8 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone, 
   const isText = (values?.method || method || 'phone') === 'text';
   const noun = isText ? 'text message' : 'call';
   const f = form([
-    { name: 'client_id', label: `Client (optional for non-client ${isText ? 'texts' : 'calls'})`, type: 'client', value: clientId || values?.client_id, display: clientDisplay },
+    { name: 'client_id', label: 'Client (optional)', type: 'client', value: clientId || values?.client_id, display: clientDisplay,
+      help: isText ? 'For a text to someone who is not a client, leave this blank.' : 'For a call with someone who is not a client, leave this blank.' },
     { name: 'direction', label: 'Direction', type: 'select', options: isText ? [{ value: 'outbound', label: 'Sent' }, { value: 'inbound', label: 'Received' }] : ['outbound', 'inbound'], required: true, noBlank: true, value: 'outbound' },
     { name: 'started_at', label: 'Date & time', type: 'datetime', required: true, value: values?.started_at || new Date().toISOString() },
     { name: 'duration_minutes', label: isText ? 'Time spent (minutes)' : 'Duration (minutes)', type: 'number', min: 0, step: 1, value: values?.duration_minutes ?? (isText ? 1 : 5) },
@@ -21,7 +22,7 @@ export function openCallForm(values, { clientId, clientDisplay, method, onDone, 
       help: isText ? 'Record what was exchanged, not a screenshot. Texting a client about treatment is a disclosure if anyone else can read their phone — keep it to arranging contact unless they have agreed otherwise.' : null },
     // Unticked on every new call (1.15.3), as on a visit: time goes on the time sheet only when someone chose it,
     // and the help says how many minutes that will be.
-    isNew ? { name: 'log_time', label: 'Also log as time entry', type: 'checkbox', value: false, help: ' ' } : null,
+    isNew ? { name: 'log_time', label: 'Also log this as a time entry', type: 'checkbox', value: false, help: ' ' } : null,
   ].filter(Boolean), { values: values || prefill || {}, submitText: isNew ? (isText ? 'Log text' : 'Log call') : 'Save', draftKey: values ? `call:${values.id}` : `call:new:${isText ? 'text' : 'phone'}`, onCancel: () => m.close(), onSubmit: async (d) => {
     d.method = isText ? 'text' : 'phone';
     if (isNew) await post('/api/calls', d); else await put(`/api/calls/${values.id}`, { ...d, if_updated_at: values.updated_at });

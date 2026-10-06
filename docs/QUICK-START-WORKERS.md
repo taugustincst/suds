@@ -21,7 +21,7 @@ Your menu is built for your role, so you may not see every card's button. If one
 3. Fill in what you did and when. Keep the short summary free of names and health details.
 4. Need to check back? Set **Remind me to follow up on** (a visit) or **Remind me to call back on** (a call). The
    to-do appears on your list for that day.
-5. Paid time? Tick **Also log this as a time entry** (a call: **Also log as time entry**).
+5. Paid time? Tick **Also log this as a time entry**.
 6. Press **Save** (a visit), **Log call** (a call) or **Log text** (a text).
 
 You closed the form by accident? Open **Log a visit** again and choose *Resume* when it asks **Resume your unsent

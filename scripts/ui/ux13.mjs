@@ -122,7 +122,7 @@ try {
     // A call starts unticked too.
     await page.evaluate(async () => (await import('./views/calls.js')).openCallForm(null, {}));
     await page.waitForSelector('.modal input[name=log_time]');
-    ok(!(await page.isChecked('.modal input[name=log_time]')), 'a new call starts with "Also log as time entry" unticked');
+    ok(!(await page.isChecked('.modal input[name=log_time]')), 'a new call starts with "Also log this as a time entry" unticked');
     await page.check('.modal input[name=log_time]');
     ok(/Adds 5 min/.test(await page.textContent('.modal [data-field="log_time"] .help')), 'and ticked, says the minutes it adds');
     await closeModals(page);

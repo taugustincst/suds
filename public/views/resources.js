@@ -191,7 +191,7 @@ route('resources', async (r) => {
     pageHead('Resource directory', can('resources:write') ? h('button', { class: 'btn primary', onClick: () => openResourceForm(null, (id) => nav(`resource/${id}`)) }, '+ Add resource') : null, can('export:read') ? h('button', { class: 'btn', onClick: () => window.__suds.downloadCsv('/api/reports/export/resources') }, 'Export') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field grow' }, h('label', {}, 'Search'), search), h('div', { class: 'field' }, h('label', {}, 'Category'), catSel), h('div', { class: 'field' }, h('label', {}, 'Service'), tagSel),
       h('button', { class: 'btn', onClick: () => nav(link({ q: search.value })) }, 'Search'), h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: inactive, onChange: e => nav(link({ inactive: e.target.checked })) }), 'Show inactive'),
-      h('div', { class: 'seg' }, h('button', { class: view === 'cards' ? 'active' : '', onClick: () => setView('cards'), title: 'Cards' }, '▦'), h('button', { class: view === 'list' ? 'active' : '', onClick: () => setView('list'), title: 'List' }, '☰'))),
+      h('div', { class: 'seg', role: 'group', 'aria-label': 'View' }, h('button', { class: view === 'cards' ? 'active' : '', onClick: () => setView('cards'), title: 'Cards', 'aria-label': 'Card view', 'aria-pressed': String(view === 'cards') }, '▦'), h('button', { class: view === 'list' ? 'active' : '', onClick: () => setView('list'), title: 'List', 'aria-label': 'List view', 'aria-pressed': String(view === 'list') }, '☰'))),
     await regionCard(refresh),
     h('div', { class: 'muted small mb' }, `${rows.length} of ${data.total} resources`),
     view === 'list' ? list() : cards());
