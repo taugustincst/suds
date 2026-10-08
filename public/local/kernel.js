@@ -53653,6 +53653,7 @@ var require_db = __commonJS({
       try {
         db3.exec("PRAGMA busy_timeout = 5000");
         db3.exec(SECURE_DELETE);
+        if (dbPath !== ":memory:") ensureWal(db3);
         initialise(db3, readSchemaFile(), dbPath);
         sealSnapshots(dbPath);
       } catch (e) {
@@ -53671,6 +53672,18 @@ var require_db = __commonJS({
       }
       openedPath = dbPath;
       return db3;
+    }
+    var walMode = false;
+    function ensureWal(d) {
+      let mode = "";
+      try {
+        mode = String(Object.values(d.prepare("PRAGMA journal_mode = WAL").get() || {})[0] || "").toLowerCase();
+      } catch (e) {
+        mode = `error: ${e && e.message}`;
+      }
+      walMode = mode === "wal";
+      if (!walMode) console.warn(`[suds] ${JSON.stringify({ event: "db.wal_unavailable", journal_mode: mode.slice(0, 120) })}`);
+      return walMode;
     }
     function openReadOnly(dbPath = config2.dbPath) {
       if (db3) return db3;
@@ -54992,7 +55005,7 @@ var require_db = __commonJS({
     var openedPath = null;
     async function readSnapshot(fn) {
       const file = db3 && openedPath && openedPath !== ":memory:" ? openedPath : null;
-      if (!snapshotStore || !file || txDepth > 0 || snapshotStore.getStore()) return fn(false);
+      if (!snapshotStore || !file || !walMode || txDepth > 0 || snapshotStore.getStore()) return fn(false);
       let conn2;
       try {
         conn2 = new DatabaseSync2(file, { readOnly: true });

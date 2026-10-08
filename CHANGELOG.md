@@ -2,6 +2,16 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Fixed
+
+* **BO1 (Critical):** a database restored from "Download encrypted backup" or `npm run backup` (a `VACUUM INTO` copy)
+  stayed in rollback-journal mode, so a read snapshot held the main connection's writes and the server answered
+  500 "database is locked" and lost audit entries under load. Every writable open now sets WAL (a PRAGMA, not a
+  migration), which also repairs a database restored by an earlier version at its next start; a read snapshot is
+  not taken on a database that could not be put in WAL mode. `test/backup-wal.test.js`.
+
 ## 1.25.1 — 2026-10-08
 
 A patch of 1.25.0 (docs/RELEASE.md, *Record: 1.25.1*): the fixes from the evaluation of 1.25.0 (E1 to E11), with
