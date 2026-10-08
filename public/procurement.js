@@ -5,18 +5,21 @@
 //  - the contact, legal entity, pricing stance and SLA come from procurement.json (the owner edits it for SUDS on
 //    this device) and, on an office server, from what an administrator published under Settings
 //    (GET /api/procurement), which wins where it is set. Blank everywhere: "Not yet published by the maintainer".
+//  - procurement.html carries procurement.json's published legal entity, pricing and support text as static HTML, so a
+//    crawler, a print to PDF or a reader with JavaScript off sees the same words (test/procurement-hardening.test.js
+//    keeps the two equal). When procurement.json cannot be read (offline), that text stands.
 // External, not inline: the CSP forbids inline scripts. Every value is set as text, never as HTML.
 (async () => {
   const BLANK = 'Not yet published by the maintainer';
   const FIELDS = ['legal_entity', 'contact_name', 'contact_email', 'contact_url', 'pricing', 'sla'];
   const text = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
-  let cfg = {};
-  try { cfg = (await fetch('procurement.json', { cache: 'no-store' }).then(r => (r.ok ? r.json() : {}))) || {}; } catch { /* offline: the defaults in the page stand */ }
+  let cfg = null;
+  try { const r = await fetch('procurement.json', { cache: 'no-store' }); if (r.ok) cfg = (await r.json()) || {}; } catch { /* offline: the text in the page stands */ }
 
   // Documents: <repository>/blob/<branch>/<path>. Only an https github-style address is used; anything else keeps the
   // addresses written into the page.
-  const repo = text(cfg.repository_url);
-  const branch = text(cfg.default_branch) || 'main';
+  const repo = text(cfg && cfg.repository_url);
+  const branch = text(cfg && cfg.default_branch) || 'main';
   if (repo && /^https:\/\/[^\s/]+\/[^\s]+$/.test(repo) && /^[\w./-]+$/.test(branch)) {
     const base = repo.replace(/\/+$/, '').replace(/\.git$/, '');
     for (const a of document.querySelectorAll('a[data-doc]')) a.href = `${base}/blob/${branch}/${a.dataset.doc}`;
@@ -32,7 +35,9 @@
   for (const f of FIELDS) {
     const dd = document.querySelector(`[data-field="${f}"]`);
     if (!dd) continue;
-    const v = text(office[f]) || text(cfg[f]);
+    // procurement.json could not be read (offline, or a file: copy): the page's own copy of it stands.
+    const own = text(dd.textContent);
+    const v = text(office[f]) || (cfg ? text(cfg[f]) : (own !== BLANK ? own : null));
     dd.dataset.published = v ? '1' : '0';
     if (!v) { dd.textContent = BLANK; dd.classList.add('muted'); continue; }
     dd.classList.remove('muted');

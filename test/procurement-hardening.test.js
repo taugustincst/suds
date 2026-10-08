@@ -60,6 +60,9 @@ test('the static build ships public/procurement.json with the licensor\'s legal 
   assert.match(j.pricing, /PROGRAM — \$4,800 \/ year/, 'the program tier is published');
   assert.match(j.pricing, /MULTI-SITE — \$12,000 \/ year/, 'the multi-site tier is published');
   assert.match(j.pricing, /COUNTY-WIDE — custom/, 'the county-wide tier is published');
+  // The CalOMS promise is no wider than what is verified: the code sets, not the file layout (docs/compliance/CALOMS.md).
+  assert.match(j.pricing, /CalOMS code-set validation against the DHCS dictionary included; file layout confirmed with your county/);
+  assert.doesNotMatch(j.pricing, /CalOMS extract validation/);
   for (const f of ['contact_email', 'contact_name', 'contact_url']) assert.equal(j[f], '', `${f} is blank: the owner supplies it`);
   assert.match(j.sla, /2 business days/, 'the paid-plan support terms are published');
   assert.match(j.repository_url, /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/);
@@ -70,6 +73,20 @@ test('the static build ships public/procurement.json with the licensor\'s legal 
   assert.ok(docs.length >= 10, 'the page links the buyer documents');
   for (const d of docs) assert.ok(fs.existsSync(path.join(__dirname, '..', d)), `${d} exists`);
   assert.ok(!/<script>|\son[a-z]+="/i.test(html), 'no inline script or handler (CSP)');
+  // Without JavaScript (a crawler, a print to PDF, a reviewer's fetch) the page says what procurement.json publishes:
+  // the static text of each fact is procurement.json's, word for word, and a blank one says so.
+  const unescape = (t) => t.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  for (const f of FIELDS) {
+    const m = new RegExp(`<dd data-field="${f}"([^>]*)>([\\s\\S]*?)</dd>`).exec(html);
+    assert.ok(m, `procurement.html has the ${f} fact`);
+    const shown = unescape(m[2]).trim();
+    if (j[f]) {
+      assert.equal(shown, j[f].trim(), `${f}: the static HTML is procurement.json's text`);
+      assert.doesNotMatch(m[1], /muted/, `${f} is published, not greyed out`);
+    } else {
+      assert.equal(shown, 'Not yet published by the maintainer', `${f} is blank in procurement.json and says so`);
+    }
+  }
   assert.ok(!/\bdemo\b|evaluation copy|trial version/i.test(html.replace(/organizations evaluating/i, '')), 'no demo or evaluation wording about SUDS itself');
 });
 

@@ -17,8 +17,8 @@ purchase order, instead of a formal RFP. Thresholds vary widely by county and by
 services, IT, professional services), and IT or software purchases often need IT approval regardless of amount.
 
 - **Fits:** a pilot ([PILOT-KIT.md](PILOT-KIT.md)), and a small programme's implementation plus a year of
-  support (at the unvalidated pricing hypothesis, roughly $5,500–13,500 in year one,
-  [templates/PRICING.md](templates/PRICING.md)).
+  support (at the published introductory tiers, a $2,500 90-day pilot credited toward Program at $4,800 a year,
+  [`public/procurement.json`](../../public/procurement.json)).
 - **Watch for:** splitting a purchase to stay under a threshold is prohibited; multi-year terms count in full;
   software may still require an IT security review and a BAA whatever the amount.
 - **CBOs** buying with grant money follow their own procurement policy and the funder's rules (for federal

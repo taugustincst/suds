@@ -32,11 +32,12 @@ on SUDS on this device alike. It summarises what SUDS is and the two ways to run
 [PROCUREMENT.md](PROCUREMENT.md), the [pilot kit](PILOT-KIT.md), the security questionnaire, threat model, data
 inventory and pen-test scope (stated as not yet commissioned), the accessibility conformance report and the
 [BAA/QSOA](templates/BAA-QSOA-DRAFT.md), [DPA](templates/DPA-DRAFT.md) and [SLA](templates/SUPPORT-SLA.md) templates,
-each on the repository's default branch (`repository_url` in `public/procurement.json`). Its contact block — legal
-entity, contact name, email, web page, pricing and service levels — reads *Not yet published by the maintainer*
-until the owner fills it: the six empty keys of `public/procurement.json` for the published SUDS on this device, and
-Settings › Program › Security & procurement page (the `procurement_*` settings) on an office server. **Owner item:**
-fill them; SUDS invents none of them.
+each on the repository's default branch (`repository_url` in `public/procurement.json`). Its contact block publishes
+the legal entity (AugustInnovations LLC), the introductory pricing tiers and the paid-plan support terms (since
+1.24.4; the page also carries them as static text, so they read the same without JavaScript). Contact name, email
+and web page read *Not yet published by the maintainer* until the owner fills them: the three empty keys of
+`public/procurement.json` for the published SUDS on this device, and Settings › Program › Security & procurement
+page (the `procurement_*` settings) on an office server. **Owner item:** fill them; SUDS invents none of them.
 
 ## Index
 
@@ -140,7 +141,7 @@ Software cannot close these. Suggested timeline from the start of Phase 1.
 | BAA/QSOA and DPA templates reviewed by vendor counsel | Vendor / company | Month 1–2 | Drafts in [templates/](templates/) |
 | Support (business hours) and SLA template reviewed by counsel | Vendor / company | Month 1–2 | Owner template drafted (`[owner to complete]` placeholders); today's channels are the public issue tracker and private vulnerability reports ([../SUPPORT.md](../SUPPORT.md); the security policy is [SECURITY.md](../../SECURITY.md), with response targets for the owner to confirm) |
 | Vendor-hosted environment ([HOSTING.md](HOSTING.md) checklist) | Vendor / company | After 3 pilots measure support hours | Planned — not offered |
-| Pricing validated with 3 pilot customers | Vendor / company | Phase 2 | Unvalidated hypothesis ([templates/PRICING.md](templates/PRICING.md)); models to decide in [PRICING-OPTIONS.md](PRICING-OPTIONS.md) |
+| Pricing validated with 3 pilot customers | Vendor / company | Phase 2 | Introductory tiers published ([`public/procurement.json`](../../public/procurement.json)); not yet validated by a paying programme. [templates/PRICING.md](templates/PRICING.md) and [PRICING-OPTIONS.md](PRICING-OPTIONS.md) are superseded records |
 | Counsel: the AI copilot's data flow — BAA and Part 2 QSOA terms for an AI provider; what "identifiers removed" may be called; whether SUD counseling notes may be drafted with it (1.17.0 excludes them, the conservative default) | Vendor / company counsel | Before any pilot turns the copilot on (released in 1.17.0) | Not started |
 | Counsel and a county: data stewardship for pooled outcomes, and the one-time referral-link design as built ([DATA-NETWORK.md](DATA-NETWORK.md), *What counsel must review*) | Vendor / company counsel, county | Before any pooled figure, and before any programme switches on secure referral links (released in 1.17.0; off by default) | Not started (the dataset is design only) |
 | Independent penetration test, findings remediated | Vendor / company | Month 2–4 | Not started |
@@ -158,7 +159,7 @@ Software cannot close these. Suggested timeline from the start of Phase 1.
 - Never claim a certification, attestation or audit SUDS does not have. Say "readiness", "self-assessment" or
   "planned", with a date.
 - Never describe SUDS as an EHR, a SmartCare/Netsmart replacement, or able to bill DMC.
-- Legal templates are drafts for counsel; pricing is an unvalidated hypothesis; the SLA is a template.
+- Legal templates are drafts for counsel; pricing is published as introductory tiers, not yet validated by a paying programme; the SLA is a template.
 - Never claim a time saving, a report "in minutes" or any outcome that a pilot has not measured.
 - Never describe SUDS as hosted, or promise 24×7 support or an uptime figure, until [HOSTING.md](HOSTING.md) says it is offered.
 - Lead with the Part 2 layer beside the EHR, field-ready outreach and funder outcomes; clinical modules are

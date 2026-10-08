@@ -21,6 +21,13 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   exact-commit CI; the other twelve runs were cancelled), how to rebuild their zips from the tag, and that
   v1.24.2's tag is mis-stamped and superseded. HANDOFF.md's "dispatched and queued" and "notes published" carry a
   dated correction.
+* **One pricing source of truth.** The procurement page carries the published pricing and support terms as static
+  HTML, word for word `public/procurement.json`'s (a test keeps them equal), so a crawler, a print to PDF or a
+  reader with JavaScript off no longer sees "Not yet published by the maintainer" for them; the contact lines still
+  say so. The pilot tier promises "CalOMS code-set validation against the DHCS dictionary; file layout confirmed
+  with your county" instead of "CalOMS extract validation", since the file layout is not verified.
+  docs/market/templates/PRICING.md and PRICING-OPTIONS.md are marked superseded by the published tiers, and the
+  questionnaire and market documents say the pricing is published.
 
 ## 1.25.0 — 2026-10-05
 

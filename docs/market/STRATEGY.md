@@ -272,7 +272,7 @@ The software's marginal cost is near zero. The cost of serving a programme is no
 (if offered) hosting and assurance ([HOSTING.md](HOSTING.md), *Unit-cost model*), plus model calls for the
 copilot. SUDS is proprietary from 1.24.1 (owner decision of 2026-10-03; [LICENSE](../../LICENSE)), so a price can buy a
 licence to the code as well as a service. [PRICING-OPTIONS.md](PRICING-OPTIONS.md) sets out the models and a worksheet for the owner.
-[templates/PRICING.md](templates/PRICING.md) remains the published hypothesis until the owner decides.
+The owner has decided: the introductory tiers in [`public/procurement.json`](../../public/procurement.json) (90-day pilot $2,500 flat, Program $4,800 a year, Multi-site $12,000 a year, County-wide custom) are the published prices, shown on the procurement page; [templates/PRICING.md](templates/PRICING.md) is the superseded hypothesis, kept as a record.
 
 ## Moat: what public code cannot copy
 

@@ -248,6 +248,6 @@ What is still missing:
   - the public issue tracker, <https://github.com/taugustincst/suds/issues> (no client information);
   - private vulnerability reports;
   - accessibility reports, with their published targets.
-- **A Security & procurement page in the app (1.24.0).** Linked from the sign-in page and the menu, it needs no account and links the buyer documents and templates; its contact, pricing and service-level lines read *Not yet published by the maintainer* until the owner fills them (`public/procurement.json`, or an office's Settings › Program). **Owner item.**
+- **A Security & procurement page in the app (1.24.0).** Linked from the sign-in page and the menu, it needs no account and links the buyer documents and templates; its pricing (the four introductory tiers) and its paid-plan support terms are published (since 1.24.4, from `public/procurement.json`, also written into the page itself so it reads the same without JavaScript); its contact name, email and website still read *Not yet published by the maintainer* until the owner fills them (`public/procurement.json`, or an office's Settings › Program). **Owner item:** the contact lines.
 - **There is no signed support agreement.** [../market/templates/SUPPORT-SLA.md](../market/templates/SUPPORT-SLA.md) is an owner template for counsel: its hours, contacts and response targets are `[owner to complete]`.
 - **Not offered:** 24×7 support, vendor on-call, or an uptime commitment.
