@@ -18,7 +18,8 @@ const H = require('./helpers');
 const db = require('../server/db');
 
 let c;
-before(async () => { await H.start(); c = H.client(); });
+// The warnings /api/health carries are for an administrator (or the metrics token) since 1.25.3: c is one.
+before(async () => { await H.start(); c = H.client(); await c.login('admin', 'AdminPassw0rd!x'); });
 after(async () => { await H.stop(); fs.rmSync(dir, { recursive: true, force: true }); });
 
 const PENDING = 'pending first run (expected on day one)';

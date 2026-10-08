@@ -115,9 +115,11 @@ async function drill({ keys, anchorDir }) {
   try {
     const health = await call('GET', '/api/health');
     out.ready_at = Date.now(); await send({ type: 'ready' });
-    check('The application serves from the restored copy (/api/health)', health.status === 200 && health.data && health.data.database === 'ok', health.status === 200 ? 'healthy' : `HTTP ${health.status}${health.data && health.data.warnings ? ': ' + health.data.warnings.join(' ') : ''}`);
     const login = await call('POST', '/api/auth/login', { username, password });
     const mfa = login.status === 200 && login.data.mfaPending ? await call('POST', '/api/auth/mfa/verify', { code: totp(secret) }) : { status: 0 };
+    // The reasons behind a 503 are an administrator's (1.25.3): asked again once the drill's administrator is signed in.
+    const why = health.status !== 200 && mfa.status === 200 ? (await call('GET', '/api/health')).data : health.data;
+    check('The application serves from the restored copy (/api/health)', health.status === 200 && health.data && health.data.database === 'ok', health.status === 200 ? 'healthy' : `HTTP ${health.status}${why && why.warnings ? ': ' + why.warnings.join(' ') : ''}`);
     check('Password and second-factor sign-in work', login.status === 200 && mfa.status === 200, `login HTTP ${login.status}, MFA HTTP ${mfa.status}`);
     const stats = await call('GET', '/api/admin/stats');
     const liveClients = db.one(`SELECT COUNT(*) n FROM clients WHERE deleted_at IS NULL`).n;

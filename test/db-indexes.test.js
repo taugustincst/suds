@@ -59,8 +59,10 @@ test('an index that cannot be created is logged (no row values) and reported by 
   const server = http.createServer(createHandler());
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   try {
-    const res = await fetch(`http://127.0.0.1:${server.address().port}/api/health`);
-    const body = await res.json();
+    // The warnings go to an administrator or the metrics token (1.25.3).
+    const config = require('../server/config'); const was = config.metricsToken; config.metricsToken = 'scrape-token-1234';
+    let res, body;
+    try { res = await fetch(`http://127.0.0.1:${server.address().port}/api/health`, { headers: { Authorization: 'Bearer scrape-token-1234' } }); body = await res.json(); } finally { config.metricsToken = was; }
     assert.equal(res.status, 503);
     assert.ok(body.warnings.some((w) => /idx_users_oidc_subject/.test(w) && !/secret-subject-value/.test(w)), JSON.stringify(body.warnings));
   } finally { await new Promise((r) => server.close(r)); }

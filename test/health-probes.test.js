@@ -7,8 +7,8 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const H = require('./helpers');
 
-let c;
-before(async () => { await H.start(); c = H.client(); });
+let c, admin;
+before(async () => { await H.start(); c = H.client(); admin = H.client(); await admin.login('admin', 'AdminPassw0rd!x'); });
 after(() => H.stop());
 
 test('live and ready answer 200 on a healthy server, unauthenticated and with no detail', async () => {
@@ -23,7 +23,7 @@ test('operational warnings make /api/health 503 but leave liveness and readiness
   H.db.setSetting('backup_schedule_hours', '24'); H.db.setSetting('last_scheduled_backup_at', '2026-01-01T00:00:00.000Z');
   H.db.setSetting('last_scheduled_backup_status', 'failed: disk');
   try {
-    const detailed = await c.get('/api/health');
+    const detailed = await admin.get('/api/health'); // the warnings are an administrator's (1.25.3)
     assert.equal(detailed.status, 503, 'the detailed status still says an operator must act');
     assert.ok(detailed.data.warnings.length >= 2);
     assert.equal((await c.get('/api/health/live')).status, 200, 'a warning must not make a platform restart the process');

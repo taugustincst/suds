@@ -348,7 +348,8 @@ test('the health endpoint reports on the database, not just the listener', async
   // The quiet failures: a broken audit chain and a backup schedule that stopped running are both "not ok".
   H.db.setSetting('audit_verify_failed_at', '2026-09-01T00:00:00.000Z');
   H.db.setSetting('backup_schedule_hours', '24'); H.db.setSetting('last_scheduled_backup_at', '2026-01-01T00:00:00.000Z');
-  const bad = await c.get('/api/health');
+  assert.equal((await c.get('/api/health')).status, 503, 'anyone sees that an operator must act');
+  const bad = await admin.get('/api/health'); // the reasons only for an administrator or the metrics token
   assert.equal(bad.status, 503);
   assert.ok(bad.data.warnings.some(w => /audit log/.test(w)), 'names the audit failure');
   assert.ok(bad.data.warnings.some(w => /Scheduled backups/.test(w)), 'and the stale backup');

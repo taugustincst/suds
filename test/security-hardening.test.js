@@ -44,8 +44,8 @@ test('production: anchors left in the data directory are reported red on Securit
     const item = s.items.find((i) => i.name === 'Audit anchors outside the database');
     assert.equal(item.level, 'bad');
     assert.match(item.detail, /WORM/);
-    const h = await fetch(base + '/api/health');
-    const body = await h.json();
+    const h = await admin.get('/api/health'); // the warnings are an administrator's (1.25.3)
+    const body = h.data;
     assert.equal(h.status, 503);
     assert.ok(body.warnings.some((w) => /AUDIT_ANCHOR_DIR/.test(w)));
     assert.ok(require('../server/startup-checks').problems().some((p) => /AUDIT_ANCHOR_DIR/.test(p)), 'and the startup log says so');

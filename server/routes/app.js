@@ -60,17 +60,19 @@ module.exports = (r) => {
     return { ok: true };
   });
 
-  // The detailed operational status, for monitoring and alerting (not for a restart decision). Unauthenticated
-  // and carrying no PHI or configuration detail, so a monitor or a county's IT can call it. It answers 503
-  // for anything an operator must act on — including warnings a restart cannot fix — which is why probes use
-  // /api/health/live and /api/health/ready above.
+  // The detailed operational status, for monitoring and alerting (not for a restart decision). Unauthenticated,
+  // so a monitor can call it: it answers 503 for anything an operator must act on — including warnings a restart
+  // cannot fix — which is why probes use /api/health/live and /api/health/ready above. Anyone gets the status;
+  // the reasons go to the same callers as the inventory figures (below).
   // The "Security & procurement" page's published facts (public/procurement.html; server/procurement.js): public, so
   // an organization evaluating SUDS can read them before it has an account. Only the six procurement_* settings.
   r.get('/api/procurement', () => require('../procurement').publicInfo());
   r.get('/api/health', (ctx) => {
-    // Status and warnings are for any monitor. The version, schema number and disk figures describe the
-    // installation (what to attack, how much it holds) and go only to an administrator's session or to a
-    // caller presenting the METRICS_TOKEN — the same credential a scraper already has.
+    // The status ({ ok, uptime_seconds, database } and 200 or 503) is for any monitor. The version, schema number,
+    // disk figures and the warnings describe the installation (what to attack, how much it holds, which control is
+    // down: low disk, a failed backup, a broken audit chain) and go only to an administrator's session or to a caller
+    // presenting the METRICS_TOKEN — the same credential a scraper already has. Up to 1.25.2 anyone was given the
+    // warnings (pen test of suds.systems, MINOR-2).
     const detailed = (ctx.user && auth.hasPerm(ctx.user, 'settings:manage') && !ctx.session?.mfa_pending) || metricsTokenPresented(ctx);
     const out = { ok: true, uptime_seconds: Math.round(process.uptime()) };
     if (detailed) out.version = config.version;
@@ -119,8 +121,9 @@ module.exports = (r) => {
       if (fs.existsSync(crt)) { const validTo = new (require('node:crypto').X509Certificate)(fs.readFileSync(crt)).validTo; const left = (Date.parse(validTo) - Date.now()) / 86400000; if (left < CERT_WARN_DAYS) warnings.push(`The HTTPS certificate ${left < 0 ? 'expired' : 'expires'} ${validTo}. Create a new one under Settings → Network & devices.`); }
     } catch { /* a check that cannot run must not itself take the endpoint down */ }
     if (warnings.length) out.ok = false;
-    if (warnings.length || pending.length) out.warnings = [...warnings, ...pending];
     ctx.status = out.ok ? 200 : 503;
+    if (!detailed) return { ok: out.ok, uptime_seconds: out.uptime_seconds, database: out.database };
+    if (warnings.length || pending.length) out.warnings = [...warnings, ...pending];
     return out;
   });
 

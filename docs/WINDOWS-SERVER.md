@@ -77,7 +77,8 @@ Then, before real records go in:
 * Download the **key backup** (**Settings → System & backups → Download key backup**, or copy
   `C:\ProgramData\SUDS\keys.json`) and store it apart from the server and its backups. Without it, the database and every backup are unreadable.
 * Set `AUDIT_ANCHOR_DIR` to write-once storage outside the data folder (see *Settings*). Until you do,
-  `/api/health` and `suds status` report a warning.
+  `/api/health` answers 503 and Security status says why (`suds status` too when `METRICS_TOKEN` is set: the
+  reasons are given only to an administrator or the metrics token).
 * Turn on scheduled backups with an offsite folder (see *Backups*). The wizard turns on 4-hourly local backups.
 * Set `WEBAUTHN_RP_ID` to the server's name if staff will use fingerprint sign-in (FINGERPRINT.md).
 * Run `suds status`.

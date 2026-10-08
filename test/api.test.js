@@ -1416,6 +1416,25 @@ test('the health endpoint gives the version, schema and disk figures only to an 
   } finally { config.metricsToken = was; }
 });
 
+// Pen test of suds.systems, MINOR-2: the warnings (low disk, a failed backup, a broken audit chain) said which control
+// was down to anyone who asked. Anonymous callers get the status only; the reasons go where the inventory goes.
+test('the health endpoint gives its warnings only to an administrator or the metrics token; anyone gets the status', async () => {
+  const config = require('../server/config');
+  H.db.setSetting('audit_verify_failed_at', '2026-09-01T00:00:00.000Z');
+  const was = config.metricsToken; config.metricsToken = 'scrape-token-1234';
+  try {
+    const anon = await H.client().get('/api/health');
+    assert.equal(anon.status, 503, 'a monitor still sees that an operator must act');
+    assert.deepEqual(Object.keys(anon.data).sort(), ['database', 'ok', 'uptime_seconds'], JSON.stringify(anon.data));
+    assert.equal(anon.data.ok, false);
+    assert.equal((await nav.get('/api/health')).data.warnings, undefined, 'a navigator is not an administrator');
+    assert.equal((await H.client().get('/api/health', { Authorization: 'Bearer wrong-token-0000' })).data.warnings, undefined);
+    for (const r of [await admin.get('/api/health'), await H.client().get('/api/health', { Authorization: 'Bearer scrape-token-1234' })]) {
+      assert.equal(r.status, 503); assert.ok(r.data.warnings.some((w) => /audit log failed its integrity check/.test(w)), JSON.stringify(r.data));
+    }
+  } finally { config.metricsToken = was; H.db.run(`DELETE FROM settings WHERE key='audit_verify_failed_at'`); }
+});
+
 // ---- The generated first-run password file is retired with the password ----
 test('changing an administrator password deletes the first-admin password file', async () => {
   const fs = require('node:fs');

@@ -344,11 +344,11 @@ async function cmdTry(p) {
 // ---------------------------------------------------------------------------------------------------------------
 // suds status
 // ---------------------------------------------------------------------------------------------------------------
-function getJson(url, { timeoutMs = 4000 } = {}) {
+function getJson(url, { timeoutMs = 4000, token = '' } = {}) {
   return new Promise((resolve) => {
     const mod = url.startsWith('https:') ? require('node:https') : require('node:http');
     // Only this server's own health answer is read, on this machine: a self-signed certificate is accepted here.
-    const req = mod.get(url, { timeout: timeoutMs, rejectUnauthorized: false, headers: { Accept: 'application/json' } }, (res) => {
+    const req = mod.get(url, { timeout: timeoutMs, rejectUnauthorized: false, headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) } }, (res) => {
       let body = ''; res.setEncoding('utf8');
       res.on('data', (c) => { body += c; if (body.length > 1e6) req.destroy(); });
       res.on('end', () => { let json = null; try { json = JSON.parse(body); } catch {} resolve({ status: res.statusCode, json }); });
@@ -395,13 +395,23 @@ function diskFree(dir) {
   return { path: dir, free_bytes: null };
 }
 
+/** The METRICS_TOKEN the server is given (the environment, or the data folder's .env; or its _FILE), or ''. */
+function metricsToken(dir, env) {
+  const dot = readDotEnv(path.join(dir, '.env'));
+  const get = (k) => (env[k] !== undefined && env[k] !== '' ? env[k] : dot[k]) || '';
+  if (get('METRICS_TOKEN')) return get('METRICS_TOKEN');
+  try { return get('METRICS_TOKEN_FILE') ? fs.readFileSync(get('METRICS_TOKEN_FILE'), 'utf8').trim() : ''; } catch { return ''; }
+}
+
 /** Everything `suds status` reports. `deps` lets tests replace Windows and the network. */
 async function statusReport({ dataFlag, env = process.env, platform = process.platform, exec = svc.defaultExec, fetchJson = getJson } = {}) {
   // The data folder is this computer's (`platform` only says whether to ask Windows about the service).
   const { dir, source } = resolveDataDir({ flag: dataFlag, env });
   const where = listenSettings(dir, env);
   const service = platform === 'win32' ? svc.query(exec) : { installed: false, state: 'not available (Windows only)' };
-  const h = await fetchJson(`${where.probe}/api/health`);
+  // The reasons behind a 503 go only to an administrator or the metrics token (1.25.3): sent when the server has one.
+  const token = metricsToken(dir, env);
+  const h = await fetchJson(`${where.probe}/api/health`, token ? { token } : undefined);
   const logDir = path.join(dir, 'logs');
   let current = null; try { current = fs.readdirSync(logDir).filter((f) => /^suds-\d{4}-\d\d-\d\d\.log$/.test(f)).sort().pop() || null; } catch {}
   return {
@@ -432,6 +442,7 @@ function statusText(s) {
     `  Service:      ${s.service.installed === true ? `${s.service.state}${s.service.account ? `, as ${s.service.account}` : ''}${s.service.start_type ? `, ${s.service.start_type}` : ''}` : s.service.installed === false ? s.service.state : `unknown (${s.service.error || 'sc.exe did not answer'})`}`,
     `  Health:       ${health}`,
     ...warn.map((w) => `                ! ${w}`),
+    ...(s.server.reachable && !s.server.healthy && !warn.length ? ['                ! the reason is on Settings > Security status (an administrator); with METRICS_TOKEN set, suds status shows it here'] : []),
     `  Address:      ${s.server.url}   (port ${s.server.port}${s.server.setup_complete ? '' : '; setup not finished yet'})`,
     `  Data folder:  ${s.data_dir}${s.data_dir_exists ? '' : ' (does not exist yet)'}   (${s.data_dir_source})`,
     `  Logs:         ${s.logs.current || s.logs.dir}`,

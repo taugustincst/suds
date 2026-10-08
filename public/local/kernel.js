@@ -27761,8 +27761,9 @@ var require_app = __commonJS({
         } catch {
         }
         if (warnings.length) out2.ok = false;
-        if (warnings.length || pending.length) out2.warnings = [...warnings, ...pending];
         ctx.status = out2.ok ? 200 : 503;
+        if (!detailed) return { ok: out2.ok, uptime_seconds: out2.uptime_seconds, database: out2.database };
+        if (warnings.length || pending.length) out2.warnings = [...warnings, ...pending];
         return out2;
       });
       r.get("/api/metrics", (ctx) => {

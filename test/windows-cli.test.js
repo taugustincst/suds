@@ -201,6 +201,14 @@ test('suds status: the JSON shape monitoring reads, from a fake Windows and a fa
     assert.match(C.statusText(down), /Health: +not answering at http:\/\/localhost:8443 \(ECONNREFUSED\)/);
     const warn = await C.statusReport({ dataFlag: dir, env: {}, platform: 'win32', exec, fetchJson: async () => ({ status: 503, json: { ok: false, warnings: ['Scheduled backups are set for every 4 hours but the last one ran 2026-09-01.'] } }) });
     assert.equal(warn.server.healthy, false); assert.match(C.statusText(warn), /NOT OK \(HTTP 503\)\n +! Scheduled backups/);
+    // 1.25.3: /api/health keeps its warnings from anonymous callers. suds status sends the server's METRICS_TOKEN when
+    // it has one (here from the data folder's .env), and says where the reason is when it has none.
+    const anon = await C.statusReport({ dataFlag: dir, env: {}, platform: 'win32', exec, fetchJson: async () => ({ status: 503, json: { ok: false, uptime_seconds: 5, database: 'ok' } }) });
+    assert.match(C.statusText(anon), /NOT OK \(HTTP 503\)\n +! the reason is on Settings > Security status/);
+    fs.writeFileSync(path.join(dir, '.env'), 'METRICS_TOKEN=scrape-token-1234\n');
+    const seen = [];
+    await C.statusReport({ dataFlag: dir, env: {}, platform: 'win32', exec, fetchJson: async (u, o) => { seen.push(o); return { status: 200, json: { ok: true } }; } });
+    assert.deepEqual(seen, [{ token: 'scrape-token-1234' }]);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
