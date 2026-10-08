@@ -595,3 +595,22 @@ test('bulk export: a consent revoked while the job is building never lets that p
   const jobId = k.headers.get('content-location').split('/').pop();
   await fetch(base + `/fhir/R4/$export-status/${jobId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${ehr.token}` } });
 });
+
+test('Consent?status= uses the programme\'s date when the search runs, not when the server started (F1)', async () => {
+  const LD = require('../server/local-date');
+  // Pago Pago (UTC-11) and Kiritimati (UTC+14) are always on different dates: a consent whose last day is today in
+  // Pago Pago has run out in Kiritimati. Changing the zone within one process stands in for the clock passing midnight.
+  const who = await newClient('Dana', 'Daylong');
+  const lastDay = LD.localDate(new Date(), 'Pacific/Pago_Pago');
+  consent(who); const ending = consent(who, { expires: lastDay });
+  const listed = async (status) => entriesOf((await fhirGet(`/fhir/R4/Consent?patient=${who}&status=${status}`, ehr.token)).data, 'Consent');
+  try {
+    H.db.setSetting('org_timezone', 'Pacific/Pago_Pago');
+    assert.ok((await listed('active')).some(c => c.id === ending), 'in force on its last day');
+    H.db.setSetting('org_timezone', 'Pacific/Kiritimati');
+    const active = await listed('active');
+    assert.ok(active.length >= 1 && !active.some(c => c.id === ending), 'no longer listed as active the next day');
+    const inactive = await listed('inactive');
+    assert.ok(inactive.some(c => c.id === ending && c.status === 'inactive'), 'listed as inactive, as its own status says');
+  } finally { H.db.run(`DELETE FROM settings WHERE key='org_timezone'`); }
+});

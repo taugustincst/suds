@@ -374,8 +374,11 @@ const DEFS = {
     params: {},
   },
   Consent: {
-    src: `SELECT k.id _fid, 'consent' _kind, k.id _rid, k.client_id _cid, k.updated_at _upd, k.signed_at _date, CASE WHEN k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= '${today()}') THEN 'active' ELSE 'inactive' END _st
-      FROM consents k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT} AND k.type IN (${disclosure.FHIR_CONSENT_TYPES.map(t => `'${t}'`).join(',')})`,
+    // A getter, so "today" is the programme's date when the search runs, not when this module was loaded (F1).
+    get src() {
+      return `SELECT k.id _fid, 'consent' _kind, k.id _rid, k.client_id _cid, k.updated_at _upd, k.signed_at _date, CASE WHEN k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= '${today()}') THEN 'active' ELSE 'inactive' END _st
+      FROM consents k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT} AND k.type IN (${disclosure.FHIR_CONSENT_TYPES.map(t => `'${t}'`).join(',')})`;
+    },
     load: (kind, id) => db.one(`SELECT * FROM consents WHERE id=?`, id), map: mapConsent, date: true,
     params: { status: statusParam({ active: 'active', inactive: 'inactive' }) },
     // Only the consents that cover this recipient for this purpose, of a type that may cover it now (a
