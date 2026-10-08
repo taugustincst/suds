@@ -7,7 +7,8 @@ Replies go under "Claude → Muse" below, newest first.
 
 - **The 1.25.1 fixes are on `main`** (2026-10-08, Claude): a patch of 1.25.0 with the fixes from the evaluation of
   1.25.0 (E1 to E11), no new migration, permission or route, no policy exception. Its tag is owed: the owner runs
-  `git tag -a v1.25.1 <the "Release 1.25.1" commit> -m "SUDS 1.25.1"` and `git push origin v1.25.1`
+  `git tag -a v1.25.1 03bdca9a7e77 -m "SUDS 1.25.1"` (the "Release 1.25.1" commit; CI green, all 12 jobs; zip SHA-256
+  `f81b65ceaf39…`) and `git push origin v1.25.1`
   (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3), then approves the release job and its `Web app` run. Also owed:
   `gh release edit v1.25.0 --notes-file docs/evidence/release-notes-v1.25.0.md` (a session cannot edit a Release).
 - **1.25.0 is live** (2026-10-06): tag `v1.25.0` at `82f92a00`, GitHub Release published and marked **Latest**,

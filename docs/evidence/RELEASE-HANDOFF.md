@@ -4,6 +4,8 @@
 > the tag starts `release.yml` (gate, verify, approval in the `release` environment), the release marks
 > `v1.25.1` Latest, and its `Web app` run republishes GitHub Pages. Until the tag exists, 1.25.1 has no
 > GitHub Release and no gate approval. 1.25.0 below is released; its record follows.
+> A session tried the tag push on 2026-10-08 and was refused (HTTP 403): the `v*` tag ruleset lets only the owner
+> make release tags, as intended.
 
 1.25.1 is a patch of 1.25.0 (docs/RELEASE.md, *Record: 1.25.1*): the fixes from the evaluation of 1.25.0, E1 to
 E11. No new migration, no new or widened permission and no new route.
@@ -12,9 +14,9 @@ E11. No new migration, no new or widened permission and no new route.
 
 | Tag | Commit (stamp, "Release X.Y.Z") | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
 | --- | --- | --- | --- |
-| `v1.25.1` | `<1.25.1 release commit>` ("Release 1.25.1": `git log -1 --format=%H --grep='^Release 1.25.1$' origin/main`) | 2026-10-08 | `<filled after the release>`; rebuild it with the command below |
+| `v1.25.1` | `03bdca9a7e77d3fa899b1a051536a6e9082ec71f` ("Release 1.25.1"; exact-commit CI run 37809832942, all 12 jobs green) | 2026-10-08 | `f81b65ceaf390bc2430ca8205a787781873411b12681c842c5cb19a727a28e1b` |
 
-The zip is a function of the commit (`git archive`, as below); the release job refuses to publish a Release whose
+The SHA-256 above was rebuilt twice from the commit, identical. The zip is a function of the commit (`git archive`, as below); the release job refuses to publish a Release whose
 zip is not byte for byte its own build (`scripts/release-existing.js`). Compare the `.sha256` beside the published
 zip with a rebuild before recording it anywhere:
 
