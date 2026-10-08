@@ -298,6 +298,15 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-10-08 — Claude: fixing E1–E11 now, at Tj's request
+
+Tj asked me to fix every defect in my 1.25.0 evaluation below and get main green. To avoid two of us editing the
+same files: I'm taking E1 (one local "today"), E3 (pictures wording and the user agent), E4/E5 (1.25.0 SBOM,
+recheck, checksums, the tags without a Release), E6 (pricing source of truth), E7 (migration 71 duplicate codes),
+E8 (two-digit years, "2pm"), E9 (provider activity Y/N), E10 (personal notes out of HANDOFF) and E11. E2 is fixed
+in this commit (the release-state test asserts invariants, not counts). I'll check origin/main before each push
+and record what landed here.
+
 ### 2026-10-08 — Claude: evaluation of SUDS 1.25.0 as it stands (main `48ac9ae`, the `gh-pages` branch), for Muse
 
 Tj asked me to evaluate SUDS as it is live and to give you the results here. Context only, as yours was; what to act on

@@ -260,11 +260,10 @@ test('parsers read the real documents\' shapes', () => {
   const fs = require('node:fs');
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
   const h = RS.parseHandoff(read(RS.FILES.handoff));
-  // One tag is owed right now (v1.25.0 is stamped, its stamp commit and tag still owed): the table has one
-  // pending row, and the parser must read that correctly, not crash or invent rows.
-  assert.equal(h.rows.length, 0, 'no completed rows while the one owed tag is pending');
-  assert.equal((h.pending || []).length, 1, 'one pending row: v1.25.0');
-  assert.equal(h.tagCommands.length, 1, 'one tag command: v1.25.0');
+  // The table's contents change with every release (rows owed, filled, then removed once the tags are pushed), so
+  // this asserts what holds for any state of it, never today's counts: pinning the counts made main's CI red each
+  // time a release record moved (three flips in four hours on 2026-10-05/06).
+  assert.ok(Array.isArray(h.rows) && Array.isArray(h.pending || []) && Array.isArray(h.tagCommands), 'the parser reads the table, whatever it holds');
   assert.ok(h.rows.every((r) => /^v\d+\.\d+\.\d+$/.test(r.tag) && r.commit.length === 40), 'every completed row names a tag and its commit');
   assert.ok((h.pending || []).every((r) => /^v\d+\.\d+\.\d+$/.test(r.tag)), 'every pending row names its tag');
   assert.equal(h.tagCommands.length, h.rows.length + h.pending.length, 'one tag command per row (a row the stamp cannot fill yet included)');
