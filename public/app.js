@@ -692,6 +692,8 @@ export const fmt = {
   isDateOnly: (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s),
   parse: (s) => { if (!s) return null; if (fmt.isDateOnly(s)) { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); } const d = new Date(s); return isNaN(d) ? null : d; },
   date: (s) => { const d = fmt.parse(s); return d ? d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—'; },
+  // A month (YYYY-MM) as the app names one: "Oct 2026", not "2026-10" (CS16).
+  month: (ym) => { const m = /^(\d{4})-(\d{2})$/.exec(ym || ''); return m ? new Date(+m[1], +m[2] - 1, 1).toLocaleDateString(undefined, { year: 'numeric', month: 'short' }) : (ym || '—'); },
   dt: (s) => { const d = fmt.parse(s); if (!d) return '—'; return fmt.isDateOnly(s) ? d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); },
   time: (s) => { const d = fmt.parse(s); return d && !fmt.isDateOnly(s) ? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : ''; },
   // Past due? A calendar-day deadline is only late once that whole local day has ended.
@@ -1050,7 +1052,9 @@ export function form(fields, { values = {}, submitText = 'Save', onSubmit, onCan
   // so nothing here depends on a native UI that does not reliably render on every platform.
   const el = h('form', { noValidate: true, onSubmit: async (e) => {
     e.preventDefault();
-    errBox.classList.add('hidden'); errNear.classList.add('hidden');
+    // An earlier attempt's message goes, words and all, not just out of sight: it was still read out and found on
+    // the page beside a later question, such as "This may be time already logged" (FL10).
+    errBox.classList.add('hidden'); errNear.classList.add('hidden'); errBox.textContent = ''; errNear.textContent = '';
     submitBtn.disabled = true;
     // Everything from clearing the old errors onwards is inside the try: whatever throws — read() on a
     // half-entered date, the request itself, or a DOM assumption that a view broke (the resource form
@@ -2386,11 +2390,13 @@ export async function loadSession() {
     // sign-in is allowed (passkey_mfa, the server's own rule: auth.mfaDeadline); switched off, it no longer counts.
     if (state.user.mfa_required && !state.user.mfa_enabled && !state.user.passkey_mfa && !state.mfaPending && !state.local) {
       const due = state.user.mfa_setup_deadline ? fmt.parse(state.user.mfa_setup_deadline) : null;
-      const when = due ? (due.getTime() < Date.now() ? 'now' : `by ${fmt.date(state.user.mfa_setup_deadline)}`) : 'now';
+      const passed = !!due && due.getTime() < Date.now();
+      const when = due && !passed ? `by ${fmt.date(state.user.mfa_setup_deadline)}` : 'now';
       // One line on every screen (a paragraph took a third of a phone's screen above every page): the
       // deadline stays visible, the consequence is said to a screen reader in the same line and announced
-      // once, and "Set up" goes straight to enrolment.
-      const full = `Your role requires two-step verification. Set it up ${when} — after that, SUDS will not let you in until it is done.`;
+      // once, and "Set up" goes straight to enrolment. Once the deadline has passed it is not "after that" (BO18).
+      const full = passed ? `Your role requires two-step verification. The deadline (${fmt.date(state.user.mfa_setup_deadline)}) has passed: set it up now to continue.`
+        : `Your role requires two-step verification. Set it up ${when} — after that, SUDS will not let you in until it is done.`;
       // Once dismissed, the bar (about 50 px above every page on a phone) becomes a small "2-step" link in the
       // header, kept for this person on every device (a preference), until two-step verification is set up.
       state.mfaDue = { when, full };

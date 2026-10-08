@@ -130,6 +130,9 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
   await p.evaluate(() => { location.hash = '#/clients'; });
   ok(await until(() => p.evaluate(() => location.hash.startsWith('#/profile?mfa=1')), { timeout: 8000 }), 'past the MFA deadline, the next page goes to two-step enrolment', await p.evaluate(() => location.hash));
   ok(await until(async () => (await p.locator('.modal h2', { hasText: 'Set up 2-step verification' }).count()) > 0, { timeout: 8000 }), 'and the authenticator enrolment opens, so the account is not locked out');
+  // Past the deadline the wording does not talk about "after that" (BO18).
+  const note = await until(async () => { const t = await p.textContent('[data-mfa-required-note]').catch(() => ''); return /has passed/.test(t || '') ? t : null; }, { timeout: 8000 });
+  ok(note && /The deadline \(.+\) has passed: set it up now to continue/.test(note) && !/after that/.test(note), 'the profile says the deadline has passed, not "after that"', note);
   eq((await api('PUT', '/api/admin/settings', { mfa_required_roles: 'admin,navigator', mfa_grace_days: 14 })).status, 200, 'the policy is put back');
 
   // Sign-up switched off.
