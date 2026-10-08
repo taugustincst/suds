@@ -25,7 +25,7 @@ export function openResourceForm(values, onDone) {
     { name: 'intake_process', label: 'How to refer / intake process', type: 'textarea', span: true, rows: 2, placeholder: 'Who to call, what paperwork, how long it usually takes' }, { name: 'cost_notes', label: 'Cost / payment', type: 'textarea', span: true, rows: 2 },
     { name: 'capacity_notes', label: 'Capacity / waitlist notes', type: 'textarea', span: true, rows: 2 },
     { type: 'section', label: 'Verification & notes', collapsible: true, open: false },
-    { name: 'last_verified_at', label: 'Last verified', type: 'date' }, { name: 'is_active', label: 'Active', type: 'checkbox', value: values ? values.is_active : true }, { name: 'notes', label: 'Internal notes', type: 'textarea', span: true, rows: 2 },
+    { name: 'last_verified_at', label: 'Last verified', type: 'date', max: fmt.today() }, { name: 'is_active', label: 'Active', type: 'checkbox', value: values ? values.is_active : true }, { name: 'notes', label: 'Internal notes', type: 'textarea', span: true, rows: 2 },
   ], { values: values || {}, submitText: isNew ? 'Add resource' : 'Save', onCancel: () => m.close(), onSubmit: async (d) => {
     d.service_tags = tags.getValue(); d.populations = pops.getValue();
     let id = values?.id; if (isNew) id = (await post('/api/resources', d)).id; else await put(`/api/resources/${id}`, { ...d, if_updated_at: values.updated_at });

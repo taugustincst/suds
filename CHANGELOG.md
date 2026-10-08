@@ -6,6 +6,9 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ### Fixed
 
+* **Past-only dates read a two-digit year into the past (F2).** Last overdose date, naloxone last given, a
+  resource's last verified date and a problem's onset date cannot be in the future, so "30" there is 1930's,
+  not 2030's, and a future date is refused as for a date of birth.
 * **FHIR `Consent?status=` uses today's date (F1).** The filter used the date the server started on, so an expired
   consent matched `status=active` until a restart while its own status said inactive.
 * **Real dates only (BO5).** The API took impossible dates such as 2026-09-31 (stored, and read as October 1st by a

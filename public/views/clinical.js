@@ -115,7 +115,7 @@ export function openProblemForm(clientId, p, { onDone } = {}) {
     { name: 'icd10_description', label: 'Code description', placeholder: 'e.g. Opioid dependence, uncomplicated' },
     { name: 'status', label: 'Status', type: 'select', options: K.PROBLEM_STATUSES || ['active', 'resolved', 'inactive'], noBlank: true, value: p?.status || 'active' },
     { name: 'source', label: 'Identified through', type: 'select', options: (K.PROBLEM_SOURCES || []).map(v => ({ value: v, label: fmt.label(v) })), noBlank: true, value: p?.source || 'self_report' },
-    { name: 'onset_date', label: 'Onset / identified on', type: 'date' },
+    { name: 'onset_date', label: 'Onset / identified on', type: 'date', max: fmt.today() },
     { name: 'resolved_date', label: 'Resolved on', type: 'date', help: 'Filled in with today when the status is set to resolved.' },
   ], { values: p || {}, submitText: p ? 'Save changes' : 'Add problem', extra: z, draftKey: p ? `problem:${p.id}` : `problem:new:${clientId}`, onCancel: () => m.close(), onSubmit: async (d) => {
     const body = { ...d, z_codes: z.read() };

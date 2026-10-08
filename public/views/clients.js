@@ -72,8 +72,8 @@ export function clientFields(C, { isNew = true, hasEpisodes = false, openEpisode
     { type: 'section', label: 'Substance use & health details', collapsible: true, hint: 'fill in what you know; you can come back later' },
     { name: 'primary_substance', label: 'Primary substance', type: 'select', list: 'SUBSTANCES' }, { name: 'secondary_substances', label: 'Secondary substances' }, { name: 'route_of_use', label: 'Route of use', type: 'select', options: ['oral', 'smoked', 'snorted', 'injected', 'multiple', 'unknown'] },
     { name: 'asam_level', label: 'ASAM level of care', type: 'select', options: C.ASAM }, { name: 'mat_status', label: 'MAT status', type: 'select', options: ['none', 'interested', 'referred', 'active', 'discontinued', 'unknown'] }, { name: 'mat_medication', label: 'MAT medication', type: 'select', options: ['buprenorphine', 'buprenorphine_xr', 'methadone', 'naltrexone_xr', 'naltrexone_oral', 'other'] },
-    asked('overdose_history', 'History of overdose'), { name: 'last_overdose_date', label: 'Last overdose date', type: 'date' },
-    { name: 'naloxone_provided', label: 'Naloxone provided', type: 'checkbox' }, { name: 'naloxone_last_date', label: 'Naloxone last given', type: 'date' },
+    asked('overdose_history', 'History of overdose'), { name: 'last_overdose_date', label: 'Last overdose date', type: 'date', max: fmt.today() },
+    { name: 'naloxone_provided', label: 'Naloxone provided', type: 'checkbox' }, { name: 'naloxone_last_date', label: 'Naloxone last given', type: 'date', max: fmt.today() },
     asked('co_occurring_mh', 'Co-occurring mental health'), asked('justice_involved', 'Justice involved'), asked('pregnant_or_parenting', 'Pregnant or parenting'),
     { name: 'goals', label: 'Client goals', type: 'textarea', span: true }, { name: 'flags', label: 'Safety flags (comma separated)', span: true, help: 'e.g. no home visits alone, allergy: naltrexone, do not contact via family' },
   ];
