@@ -163,6 +163,17 @@ test('a spreadsheet import accepts the programme\'s wording and its own choices'
   assert.equal(loc.parse('nowhere at all'), undefined);
 });
 
+test('a spreadsheet import reads a two-digit year as typed dates do (E8)', () => {
+  const DI = require('../server/dataimport');
+  const dob = DI.ENTITIES.clients.fields.find(f => f.key === 'dob');
+  const next = Number(require('../server/local-date').today().slice(0, 4)) + 1;
+  const yy = (n) => String(n % 100).padStart(2, '0');
+  assert.equal(dob.parse('7/9/81'), '1981-07-09', 'a date of birth in 1981, not 2081');
+  assert.equal(dob.parse(`3/4/${yy(next)}`), `${next}-03-04`, 'up to next year is this century');
+  assert.equal(dob.parse(`3/4/${yy(next + 1)}`), `${next + 1 - 100}-03-04`, 'anything later is the last');
+  assert.equal(dob.parse('7/9/1981'), '1981-07-09');
+});
+
 test('devices receive the lists but can never change them', async () => {
   const bare = H.client();
   const l = await bare.post('/api/auth/login', { username: 'ol_nav', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' });

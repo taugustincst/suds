@@ -13,7 +13,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   `server/local-date.js` for every "today" and date default, and the browser uses `fmt.today()`. CI's new
   `evening` job runs `npm test` at 9pm in Los Angeles (`scripts/test-evening.sh`).
 * **Typed dates and times.** A two-digit year slides: "7/9/81" is 1981, not 2081 (refused as in the future),
-  and up to next year's is this century. A time box takes an hour alone: "2pm", "9 a", or "9" (09:00, on the
+  and up to next year's is this century, in a typed date and in a spreadsheet import's date columns alike. A time box takes an hour alone: "2pm", "9 a", or "9" (09:00, on the
   24-hour clock, as "930" is 09:30).
 * **Provider pictures: an honest user agent and an honest count.** The picture download names SUDS
   (`SUDS/<version> (+https://github.com/taugustincst/suds) region pictures`) instead of posing as Chrome,

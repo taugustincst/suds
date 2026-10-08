@@ -38838,6 +38838,11 @@ var require_dataimport = __commonJS({
     var { blindIndex: blindIndex2 } = require_crypto();
     var yes = (v) => v === true || /^(1|y|yes|true|x)$/i.test(String(v ?? "").trim());
     var yesNo = (v) => v === null || v === void 0 || String(v).trim() === "" ? null : yes(v);
+    var fullYear = (yy) => {
+      const next = Number(require_local_date().today().slice(0, 4)) + 1;
+      const c = Math.floor(next / 100) * 100;
+      return String(Number(yy) <= next % 100 ? c + Number(yy) : c - 100 + Number(yy));
+    };
     var dateOf = (v) => {
       if (v === null || v === void 0 || v === "") return null;
       if (typeof v === "number") return excelDate(v);
@@ -38845,7 +38850,7 @@ var require_dataimport = __commonJS({
       const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
       if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
       const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s);
-      if (us) return `${us[3].length === 2 ? "20" + us[3] : us[3]}-${us[1].padStart(2, "0")}-${us[2].padStart(2, "0")}`;
+      if (us) return `${us[3].length === 2 ? fullYear(us[3]) : us[3]}-${us[1].padStart(2, "0")}-${us[2].padStart(2, "0")}`;
       const d = new Date(s);
       return isNaN(d) ? void 0 : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     };
