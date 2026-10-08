@@ -52,6 +52,9 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   review" instead.
 * **BO21:** the dialogs that reject spending or return or reopen time said the reason is "recorded in audit log";
   it is stored encrypted with the entry and shown to the person who submitted it, and the label now says so.
+* **BO14:** `node scripts/update.js --check` crashed with a git error and a stack trace on a release-tag checkout
+  (detached HEAD, as `git clone --branch v<version>` leaves it). It now names the tag and the newest release tag
+  and says how to move to it; `--apply` refuses to follow a branch from a tag; a git failure is one line.
 
 ## 1.25.1 — 2026-10-08
 
