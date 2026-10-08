@@ -11,7 +11,9 @@
 #             channel other than the download), and its pinned Node.js and Caddy, by checksum
 #  2. stop    SUDS, so nothing is written after the backup
 #  3. back up an encrypted backup (scripts/backup.js, as the suds user with the service's keys) — refuse to go on without it
-#  4. swap    /opt/suds/current (and /opt/suds/node) to the new release, and its systemd units and Caddyfile
+#  4. swap    /opt/suds/current (and /opt/suds/node) to the new release, and its systemd units and Caddyfile (site
+#             blocks an operator appended to /etc/caddy/Caddyfile are moved to /etc/caddy/Caddyfile.d/local.caddy;
+#             any other local edit there stops the upgrade before step 2: deploy/linux/README.md)
 #  5. start   and wait for /api/health/ready (migrations run here; SUDS snapshots the database before them);
 #             Caddy is restarted when its pinned version or the Caddyfile changed
 #  6. roll back if it does not become ready: the previous code, Node, Caddy and units, and the database put back
@@ -88,6 +90,9 @@ if [[ -z "${SUDS_UPGRADER_HANDOVER:-}" && -f "$staged_upgrader" && -f "$STAGED_T
     exec bash "$staged_upgrader" "$@"
   fi
 fi
+# An operator's edit to /etc/caddy/Caddyfile, which step 4 replaces: moved to the site-local directory there, or
+# refused now, before anything is stopped or changed (lib.sh caddy_local_edits). Never silently discarded.
+if [[ "$TLS_MODE" != none ]]; then caddy_local_edits "$(P "$CODE_BASE/$CUR")/Caddyfile" "$STAGED_TREE/Caddyfile"; fi
 PIN_TREE=$STAGED_TREE; [[ -f "$PIN_TREE/deploy/linux/pins" ]] || PIN_TREE=$SRC
 old_node=$(readlink "$(P "$CODE_BASE/node")" 2>/dev/null || true)
 install_node "$PIN_TREE"
@@ -115,6 +120,7 @@ if (( ! DRY )); then backup_file=$(find "$(P "$backup_dir")" -maxdepth 1 -name '
 say ""; say "== 4. Switch to $VERSION =="
 use_node "$NODE_DIR"
 point_current_at "$VERSION"
+caddy_move_local "$stamp"
 install_units "$STAGED_TREE"
 conf_set SUDS_VERSION "$VERSION"
 [[ -z "$RELEASE_CHECKSUM_SOURCE" ]] || conf_set SUDS_RELEASE_CHECKSUM_SOURCE "$RELEASE_CHECKSUM_SOURCE"
@@ -139,6 +145,8 @@ else
   [[ -n "$old_node" ]] && use_node "$old_node"
   put_back_caddy
   install_units "$(P "$CODE_BASE/$CUR")"
+  # The operator's own Caddyfile, as it was, when step 4 moved its site blocks (the old one does not import them).
+  [[ -z "$CADDY_LOCAL_SAVED" ]] || act install -m 0644 -o root -g root "$(P "$CADDY_LOCAL_SAVED")" "$(P /etc/caddy/Caddyfile)"
   conf_set SUDS_VERSION "$CUR"
   act systemctl daemon-reload
   # The new version may have migrated the database before failing: put back the backup taken in step 3. The

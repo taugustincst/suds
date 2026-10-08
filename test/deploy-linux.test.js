@@ -179,6 +179,21 @@ test('--tls=county-cert: the certificate goes to Caddy, port 80 stays closed', (
   assert.ok(r.out.includes(`+ install -m 0640 -o root -g caddy ${key} ${fx.root}/etc/caddy/tls/key.pem`));
   assert.ok(!r.out.includes('+ ufw allow 80/tcp'), 'no port 80');
   assert.ok(r.out.includes('+ ufw delete allow 80/tcp'));
+  // A www redirect needs a certificate for www as well: Caddy's own, not a county one the installer cannot read.
+  const www = run('install.sh', [...BASE, '--tls=county-cert', `--cert=${cert}`, `--key=${key}`, '--www-redirect'], fx);
+  assert.match(www.err, /REFUSED: --www-redirect needs --tls=caddy/);
+  fs.rmSync(fx.dir, { recursive: true, force: true });
+});
+
+test('the Caddyfile: site-local files imported at the end (upgrades replace this file)', () => {
+  const caddyfile = fs.readFileSync(path.join(REPO, 'Caddyfile'), 'utf8');
+  assert.match(caddyfile, /\n\nimport \/etc\/caddy\/Caddyfile\.d\/\*\.caddy\n$/, 'the last line, at the top level: a file there may hold whole site blocks');
+  const fx = fixture();
+  const r = run('install.sh', [...BASE, '--domain=www.suds.county.example.gov', '--www-redirect'], fx);
+  assert.match(r.err, /REFUSED: --www-redirect redirects www\.<domain> to <domain>/);
+  const plan = run('install.sh', [...BASE, '--www-redirect'], fx);
+  assert.equal(plan.code, 0, plan.all);
+  assert.match(plan.out, /\+ write \S+\/etc\/caddy\/Caddyfile\.d\/www-redirect\.caddy \(mode 0644, owner root:root/);
   fs.rmSync(fx.dir, { recursive: true, force: true });
 });
 

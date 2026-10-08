@@ -384,12 +384,60 @@ stage_release() {
 }
 point_current_at() { act ln -sfn "$1" "$(P "$CODE_BASE/current.new")"; act mv -Tf "$(P "$CODE_BASE/current.new")" "$(P "$CODE_BASE/current")"; }
 
-# The systemd units shipped in a code tree, installed unchanged.
+# The systemd units shipped in a code tree, installed unchanged; the Caddyfile too, beside the site-local directory
+# it imports (which nothing here ever writes into, except install.sh --www-redirect and caddy_move_local).
+CADDY_SITE_DIR=/etc/caddy/Caddyfile.d
 install_units() {
   local tree=$1 u
   for u in suds.service suds-compliance.service suds-compliance.timer; do act install -m 0644 -o root -g root "$tree/deploy/linux/$u" "$(P "/etc/systemd/system/$u")"; done
   if [[ "${TLS_MODE:-caddy}" != none ]]; then act install -m 0644 -o root -g root "$tree/deploy/linux/caddy.service" "$(P /etc/systemd/system/caddy.service)"; fi
+  act install -d -m 0755 -o root -g root "$(P "$CADDY_SITE_DIR")"
   act install -m 0644 -o root -g root "$tree/Caddyfile" "$(P /etc/caddy/Caddyfile)"
+}
+
+# caddy_local_edits CURRENT_CADDYFILE NEW_CADDYFILE — called before anything is changed. /etc/caddy/Caddyfile is
+# replaced by the release's copy, so an operator's edit to it would be lost without a word (1.25.1: the www redirect
+# suds.systems appended by hand would have gone at the next upgrade). Nothing to do when it is the current or the new
+# release's copy, or absent. When it is the current release's copy with site blocks appended after it (whole blocks:
+# braces balanced) and the new copy imports $CADDY_SITE_DIR, those blocks are set aside in CADDY_LOCAL_BLOCKS for
+# caddy_move_local. Anything else is refused, with what to do.
+CADDY_LOCAL_BLOCKS=''
+caddy_local_edits() {
+  local cur=$1 new=$2 live extra size
+  live=$(P /etc/caddy/Caddyfile); CADDY_LOCAL_BLOCKS=''
+  [[ -f "$live" ]] || return 0
+  if [[ ! -f "$new" ]] && (( DRY )); then printf '+ check %s for local changes against %s and the new release'"'"'s\n' "$live" "$cur"; return 0; fi
+  cmp -s "$live" "$new" && return 0
+  [[ -f "$cur" ]] && cmp -s "$live" "$cur" && return 0
+  if [[ -f "$cur" ]] && grep -qxF "import $CADDY_SITE_DIR/*.caddy" "$new"; then
+    size=$(wc -c < "$cur")
+    if cmp -s -n "$size" "$live" "$cur"; then
+      extra=$(tail -c +"$((size + 1))" "$live")
+      if [[ -z "${extra//[[:space:]]/}" ]]; then return 0; fi
+      if awk '{ for (i = 1; i <= length($0); i++) { c = substr($0, i, 1); if (c == "{") d++; else if (c == "}" && --d < 0) exit 1 } } END { exit (d != 0) }' <<< "$extra" \
+        && [[ ! -e "$(P "$CADDY_SITE_DIR/local.caddy")" ]]; then
+        CADDY_LOCAL_BLOCKS=$extra
+        note "/etc/caddy/Caddyfile has site blocks added after the release's own: they will be moved to $CADDY_SITE_DIR/local.caddy, which the new Caddyfile imports"
+        return 0
+      fi
+    fi
+  fi
+  die "/etc/caddy/Caddyfile has local changes that installing the release's Caddyfile would discard, and they are not only whole site blocks added at its end (or $CADDY_SITE_DIR/local.caddy exists already). SUDS and Caddy have not been touched: both are running as they were. Move what you added into a file $CADDY_SITE_DIR/<name>.caddy (whole site blocks; the SUDS Caddyfile imports every *.caddy file there, and upgrades never touch them), put the release's own Caddyfile back (cp ${cur#"$ROOT"} /etc/caddy/Caddyfile), and run this again. Caddy keeps serving its loaded configuration until it is restarted (deploy/linux/README.md, Site-local Caddy configuration)."
+}
+# caddy_move_local LABEL — write CADDY_LOCAL_BLOCKS (from caddy_local_edits) to $CADDY_SITE_DIR/local.caddy, and keep
+# the operator's whole Caddyfile beside it as /etc/caddy/Caddyfile.local-LABEL (CADDY_LOCAL_SAVED), for a rollback.
+CADDY_LOCAL_SAVED=''
+caddy_move_local() {
+  [[ -n "$CADDY_LOCAL_BLOCKS" ]] || return 0
+  CADDY_LOCAL_SAVED=/etc/caddy/Caddyfile.local-$1
+  act install -d -m 0755 -o root -g root "$(P "$CADDY_SITE_DIR")"
+  act install -m 0644 -o root -g root "$(P /etc/caddy/Caddyfile)" "$(P "$CADDY_LOCAL_SAVED")"
+  put_file "$(P "$CADDY_SITE_DIR/local.caddy")" 0644 root:root <<EOF
+# Moved here from the end of /etc/caddy/Caddyfile by deploy/linux/$(basename "$0") ($1): the SUDS Caddyfile is replaced by every
+# upgrade, and imports the *.caddy files in this directory, which no upgrade touches. The whole file as it was: $CADDY_LOCAL_SAVED
+$CADDY_LOCAL_BLOCKS
+EOF
+  note "your site blocks are now in $CADDY_SITE_DIR/local.caddy (your Caddyfile as it was: $CADDY_LOCAL_SAVED)"
 }
 
 # Run a command as the suds user with the service's keys, the way the service gets them (a transient unit

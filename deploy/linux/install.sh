@@ -28,6 +28,9 @@
 #   --log-retention-days=N       journal retention (default 400)
 #   --journal-max-use=SIZE       the journal's disk cap, e.g. 8G (default 8G; docs/SELF-HOSTING.md, Sizing)
 #   --metrics                    generate a METRICS_TOKEN credential for GET /api/metrics
+#   --www-redirect               also answer www.<domain>, with a permanent redirect to https://<domain> (--tls=caddy;
+#                                a file in /etc/caddy/Caddyfile.d, which upgrades never touch; a re-run without it
+#                                leaves the file as it is)
 #   --accept-unencrypted-disk[=REASON]   continue although /var/lib/suds is not on an encrypted volume (recorded
 #                                as an accepted risk in every compliance report; do not use for production PHI)
 #   --console-access             you are at the console: skip the check that the firewall will not cut off SSH
@@ -43,7 +46,7 @@ SRC=$(cd "$HERE/../.." && pwd)
 . "$HERE/lib.sh"
 
 DOMAIN='' ADMIN_CIDR='' OFFSITE='' ANCHORS='' TLS_MODE=caddy TLS_CERT='' TLS_KEY='' ACME_EMAIL='' VERSION=''
-LOG_DAYS=400 JOURNAL_MAX=8G METRICS=0 ACCEPT_UNENC='' CONSOLE=0 SKIP_CHECK=0 CA_FILE='' CONNECT_HOST='' NTP_SERVERS=''
+LOG_DAYS=400 JOURNAL_MAX=8G METRICS=0 WWW_REDIRECT=0 ACCEPT_UNENC='' CONSOLE=0 SKIP_CHECK=0 CA_FILE='' CONNECT_HOST='' NTP_SERVERS=''
 RELEASE_ZIP='' RELEASE_SHA256='' NODE_TARBALL='' CADDY_TARBALL='' TRUST_RELEASE_CHECKSUM=0 RELEASE_CHECKSUM_SOURCE=''
 for arg in "$@"; do
   case "$arg" in
@@ -68,6 +71,7 @@ for arg in "$@"; do
     --log-retention-days=*) LOG_DAYS=${arg#*=} ;;
     --journal-max-use=*) JOURNAL_MAX=${arg#*=} ;;
     --metrics) METRICS=1 ;;
+    --www-redirect) WWW_REDIRECT=1 ;;
     --accept-unencrypted-disk) ACCEPT_UNENC=yes ;;
     --accept-unencrypted-disk=*) ACCEPT_UNENC=${arg#*=}; ACCEPT_UNENC=${ACCEPT_UNENC//[^A-Za-z0-9 ._,:;()\/-]/} ;;
     --console-access) CONSOLE=1 ;;
@@ -108,6 +112,10 @@ case "$TLS_MODE" in
   county-cert) [[ -r "$TLS_CERT" && -r "$TLS_KEY" ]] || die "--tls=county-cert needs --cert=<PEM chain> and --key=<PEM key>, both readable" ;;
   *) die "--tls must be caddy or county-cert" ;;
 esac
+if (( WWW_REDIRECT )); then
+  [[ $TLS_MODE == caddy ]] || die "--www-redirect needs --tls=caddy (Caddy obtains the www certificate). With a county certificate that also names www.$DOMAIN, add the redirect in $CADDY_SITE_DIR yourself (deploy/linux/README.md, Site-local Caddy configuration)."
+  [[ "${DOMAIN,,}" != www.* ]] || die "--www-redirect redirects www.<domain> to <domain>: --domain=$DOMAIN is already the www name"
+fi
 export DRY NODE_TARBALL CADDY_TARBALL RELEASE_ZIP RELEASE_SHA256 TLS_MODE TRUST_RELEASE_CHECKSUM
 if path_within "$ANCHORS" "$DATA_DIR" || path_within "$DATA_DIR" "$ANCHORS"; then die "--anchors=$ANCHORS is inside the data directory $DATA_DIR (or contains it): anchors on the same disk as the database catch nothing a rewrite of that disk would hide. Use write-once storage elsewhere."; fi
 if path_within "$OFFSITE" "$DATA_DIR" || path_within "$DATA_DIR" "$OFFSITE"; then die "--offsite=$OFFSITE is inside the data directory $DATA_DIR: an offsite copy must survive losing that disk."; fi
@@ -170,6 +178,9 @@ fi
 say ""; say "== Staging SUDS $VERSION =="
 stage_release "$VERSION"
 [[ -n "$RELEASE_CHECKSUM_SOURCE" ]] || RELEASE_CHECKSUM_SOURCE=$(conf_get SUDS_RELEASE_CHECKSUM_SOURCE)
+# A re-run replaces /etc/caddy/Caddyfile too: an operator's edit to it is moved or refused, never discarded.
+cur_link=$(readlink "$(P "$CODE_BASE/current")" 2>/dev/null || true)
+if [[ -n "$cur_link" ]]; then caddy_local_edits "$(P "$CODE_BASE/$(basename "$cur_link")")/Caddyfile" "$STAGED_TREE/Caddyfile"; fi
 PIN_TREE=$STAGED_TREE; [[ -f "$PIN_TREE/deploy/linux/pins" ]] || PIN_TREE=$SRC
 say ""; say "== Node.js (pinned: $(pin NODE_VERSION "$PIN_TREE")) =="
 install_node "$PIN_TREE"
@@ -335,6 +346,20 @@ SUDS_UPSTREAM=127.0.0.1:8080
 SUDS_CADDY_TLS=/etc/caddy/suds-tls.caddy
 SUDS_CADDY_ADMIN=off
 EOF
+# www.<domain>: a redirect to the one name the app answers on, not a second origin (passkeys are bound to the
+# domain in WEBAUTHN_RP_ID/WEBAUTHN_ORIGINS). Without it www has no certificate (the 1.25.1 launch).
+if (( WWW_REDIRECT )); then
+  act install -d -m 0755 -o root -g root "$(P "$CADDY_SITE_DIR")"
+  put_file "$(P "$CADDY_SITE_DIR/www-redirect.caddy")" 0644 root:root <<EOF
+# Written by deploy/linux/install.sh --www-redirect: www.${DOMAIN,,} answers with a permanent redirect to
+# https://${DOMAIN,,}, the one name SUDS serves (passkeys are bound to it). Site-local: no upgrade changes this file.
+www.${DOMAIN,,} {
+	import {\$SUDS_CADDY_TLS:/dev/null}
+	header -Server
+	redir https://${DOMAIN,,}{uri} permanent
+}
+EOF
+fi
 
 # ---- 8. Host hardening: firewall, time, updates, journal ----
 ports='443'; if [[ $TLS_MODE == caddy ]]; then ports='443 and 80'; fi
@@ -450,6 +475,7 @@ if ! command -v auditd >/dev/null 2>&1 && [[ ! -x "$(P /sbin/auditd)" ]]; then n
 
 # ---- 9. Services ----
 say ""; say "== Services =="
+caddy_move_local "$(date -u +%Y%m%dT%H%M%SZ)"
 install_units "$STAGED_TREE"
 # SELinux (RHEL): files unpacked or moved into place keep the label of where they came from; relabel them.
 if [[ $OS_FAMILY == rhel ]] && command -v getenforce >/dev/null 2>&1 && [[ "$(getenforce 2>/dev/null)" == Enforcing ]]; then

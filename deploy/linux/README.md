@@ -32,9 +32,57 @@ The files that install and run SUDS Server on Ubuntu 24.04 LTS or RHEL/Rocky/Alm
 | `/etc/suds/suds-server.conf` | root, 0644 | Site facts for the compliance check (domain, shares, admin network, `SUDS_CA_FILE`, `SUDS_CONNECT_HOST`, NTP servers, how the release was checked, first install date, accepted risks). Lines the installer does not manage are kept on a re-run |
 | `/etc/suds/ca.pem` | root, 0644 | `--ca-file`: the county CA, for the compliance check's TLS test |
 | `/etc/systemd/system/suds.service.d/10-site.conf` | root, 0644 | The anchor mount (`RequiresMountsFor`), `ReadWritePaths=<anchors> -<offsite>` (the offsite share optional: its outage never stops SUDS), the metrics credential |
-| `/etc/caddy/Caddyfile`, `suds.env`, `suds-tls.caddy` | root, 0644 | The repository's Caddyfile and its site values; TLS 1.2+ |
+| `/etc/caddy/Caddyfile`, `suds.env`, `suds-tls.caddy` | root, 0644 | The repository's Caddyfile and its site values; TLS 1.2+. Replaced by every upgrade: do not edit it (below) |
+| `/etc/caddy/Caddyfile.d/*.caddy` | root, 0644 (directory 0755) | Site-local Caddy configuration, imported at the end of the Caddyfile; never changed by an upgrade. `www-redirect.caddy` with `--www-redirect` |
 | `/etc/systemd/journald.conf.d/suds.conf` | root, 0644 | Persistent journal, `MaxRetentionSec`, `SystemMaxUse` (`--journal-max-use`, default 8G) |
 | `/etc/systemd/timesyncd.conf.d/suds.conf`, `/etc/chrony/sources.d/suds.sources`, `/etc/chrony.d/suds.conf` | root, 0644 | `--ntp-server`: the county time source (chrony is kept where installed) |
+
+## Site-local Caddy configuration
+
+`/etc/caddy/Caddyfile` is the release's own file: `install.sh` and `upgrade.sh` replace it with the release's copy.
+Anything of your own goes in a file **`/etc/caddy/Caddyfile.d/<name>.caddy`** — whole site blocks, such as another
+name to redirect — which the Caddyfile imports at its end (`import /etc/caddy/Caddyfile.d/*.caddy`; an empty directory
+is not an error in the pinned Caddy) and which neither script ever changes. Restart Caddy after editing one
+(`systemctl restart caddy`; `/opt/caddy/current/caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`
+with the variables in `/etc/caddy/suds.env` checks it first).
+
+- **`www.<domain>`**: `install.sh --www-redirect` (with `--tls=caddy`) writes `Caddyfile.d/www-redirect.caddy`, a
+  permanent redirect from `www.<domain>` to `https://<domain>`; Caddy obtains the www certificate. A redirect, not a
+  second name for the app: passkeys are bound to `<domain>` (`WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`).
+- **Local edits to the Caddyfile itself** are never discarded without a word (from 1.25.3). Before anything is
+  stopped or changed, `upgrade.sh` (and a re-run of `install.sh`) compares `/etc/caddy/Caddyfile` with the running
+  release's copy. Whole site blocks **appended** after it are moved to `Caddyfile.d/local.caddy` during the switch,
+  and your file as it was is kept as `/etc/caddy/Caddyfile.local-<time>` (a rollback puts it back). Any other edit
+  stops the run with `REFUSED: /etc/caddy/Caddyfile has local changes …`, SUDS and Caddy untouched: move your
+  additions into `Caddyfile.d`, put the release's file back (`cp /opt/suds/<running version>/Caddyfile
+  /etc/caddy/Caddyfile`; Caddy keeps serving what it loaded until it restarts) and run it again.
+
+### Before upgrading suds.systems from 1.25.1
+
+The live server's `/etc/caddy/Caddyfile` is 1.25.1's with a `www.suds.systems { redir https://suds.systems{uri}
+permanent }` block appended by hand (launch day). `upgrade.sh` 1.25.3 moves an appended block like that one by
+itself; to move it by hand first instead (recommended: you see the result before the upgrade), in one sitting:
+
+```bash
+sudo install -d -m 0755 /etc/caddy/Caddyfile.d
+sudo tee /etc/caddy/Caddyfile.d/www-redirect.caddy >/dev/null <<'EOF'
+www.suds.systems {
+	import {$SUDS_CADDY_TLS:/dev/null}
+	header -Server
+	redir https://suds.systems{uri} permanent
+}
+EOF
+sudo cp /etc/caddy/Caddyfile /root/Caddyfile.launch-day                 # keep the edited file
+sudo cp /opt/suds/1.25.1/Caddyfile /etc/caddy/Caddyfile                 # the release's own; do NOT restart Caddy now
+sudo cmp /opt/suds/1.25.1/Caddyfile /etc/caddy/Caddyfile && echo ready  # the upgrade will find no local edit
+```
+
+Do not restart Caddy between these steps and the upgrade: 1.25.1's Caddyfile does not import `Caddyfile.d`, so www
+would lose its certificate until the upgrade installs the 1.25.3 one (which imports it) and restarts Caddy. Then
+upgrade as usual (docs/SELF-HOSTING.md, *Upgrading*) and check `curl -sI https://www.suds.systems/` answers `301`
+with `Location: https://suds.systems/`, and that `https://suds.systems/` answers without a `Via` header. If the upgrade
+rolls back, it puts 1.25.1's Caddyfile back and restarts Caddy: put `/root/Caddyfile.launch-day` back too
+(`sudo cp /root/Caddyfile.launch-day /etc/caddy/Caddyfile && sudo systemctl restart caddy`).
 
 ## Testing it
 

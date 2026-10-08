@@ -442,6 +442,80 @@ test('upgrade.sh for real, run as installed (/opt/suds/current): once the new re
   assert.match(fs.readFileSync(envFile, 'utf8'), /^WEBAUTHN_RP_ID=suds\.county\.example\.gov$/m);
 });
 
+// ---- Site-local Caddy configuration (the 1.25.1 launch: a www block appended to /etc/caddy/Caddyfile by hand) ----
+
+const WWW_BLOCK = '\nwww.suds.county.example.gov {\n\tredir https://suds.county.example.gov{uri} permanent\n}\n';
+
+test('upgrade.sh for real: site blocks appended to /etc/caddy/Caddyfile are moved to Caddyfile.d, not discarded; the release\'s Caddyfile imports them', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const { h, R } = installedOld();
+  const live = path.join(R, 'etc/caddy/Caddyfile');
+  const operators = fs.readFileSync(live, 'utf8') + WWW_BLOCK;
+  fs.writeFileSync(live, operators);
+  const next = tree(VERSION, { caddyfileExtra: '\n# changed\n' });
+  fs.writeFileSync(h.log, '');
+  const r = run(h, 'upgrade.sh', next, [VERSION, '--ready-timeout=2', '--skip-compliance-check'], { HARNESS_HEALTHY: `${OLD},${VERSION}` });
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.out, /site blocks added after the release's own: they will be moved to \/etc\/caddy\/Caddyfile\.d\/local\.caddy/);
+  assert.ok(r.out.indexOf('will be moved') < r.out.indexOf('== 2-3. Stop SUDS'), 'decided before SUDS is stopped');
+  assert.equal(fs.readFileSync(live, 'utf8'), fs.readFileSync(path.join(next, 'Caddyfile'), 'utf8'), 'the release\'s Caddyfile is installed');
+  assert.match(fs.readFileSync(live, 'utf8'), /^import \/etc\/caddy\/Caddyfile\.d\/\*\.caddy$/m, 'and it imports the site-local directory');
+  const moved = fs.readFileSync(path.join(R, 'etc/caddy/Caddyfile.d/local.caddy'), 'utf8');
+  assert.ok(moved.includes(WWW_BLOCK.trim()), moved);
+  const saved = fs.readdirSync(path.join(R, 'etc/caddy')).filter((f) => f.startsWith('Caddyfile.local-'));
+  assert.equal(saved.length, 1); assert.equal(fs.readFileSync(path.join(R, 'etc/caddy', saved[0]), 'utf8'), operators, 'the operator\'s whole file is kept');
+  assert.ok(h.commands().includes('systemctl restart caddy.service'), 'Caddy restarted with the new Caddyfile');
+  // The next upgrade finds the release's own Caddyfile and nothing to move.
+  const third = tree('99.0.0', { caddyfileExtra: '\n# changed again\n' });
+  const r2 = run(h, 'upgrade.sh', third, ['99.0.0', '--ready-timeout=2', '--skip-compliance-check'], { HARNESS_HEALTHY: `${VERSION},99.0.0` });
+  assert.equal(r2.code, 0, r2.all);
+  assert.doesNotMatch(r2.all, /will be moved|local changes/);
+  assert.equal(fs.readFileSync(path.join(R, 'etc/caddy/Caddyfile.d/local.caddy'), 'utf8'), moved, 'and the site-local file is left as it is');
+});
+
+test('upgrade.sh for real: any other edit to /etc/caddy/Caddyfile stops it before anything is stopped or changed, saying what to do', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const { h, R } = installedOld();
+  const live = path.join(R, 'etc/caddy/Caddyfile');
+  const edited = fs.readFileSync(live, 'utf8').replace('encode gzip', 'encode gzip zstd');
+  fs.writeFileSync(live, edited);
+  const caddyBefore = fs.readlinkSync(path.join(R, 'opt/caddy/current'));
+  const next = tree(VERSION, { caddy: CADDY_V2, caddyfileExtra: '\n# changed\n' });
+  fs.writeFileSync(h.log, '');
+  const r = run(h, 'upgrade.sh', next, [VERSION, '--ready-timeout=2', '--skip-compliance-check'], { HARNESS_HEALTHY: `${OLD},${VERSION}` });
+  assert.equal(r.code, 1, r.all);
+  assert.match(r.err, /REFUSED: \/etc\/caddy\/Caddyfile has local changes .* SUDS and Caddy have not been touched/);
+  assert.match(r.err, new RegExp(`Move what you added into a file /etc/caddy/Caddyfile\\.d/<name>\\.caddy .*\\(cp /opt/suds/${OLD.replace(/\./g, '\\.')}/Caddyfile /etc/caddy/Caddyfile`));
+  assert.ok(!/systemctl (stop|start|restart)/.test(h.commands()), 'SUDS and Caddy were not stopped or restarted');
+  assert.equal(fs.readFileSync(live, 'utf8'), edited, 'the edited Caddyfile is untouched');
+  assert.equal(fs.readlinkSync(path.join(R, 'opt/suds/current')), OLD);
+  assert.equal(fs.readlinkSync(path.join(R, 'opt/caddy/current')), caddyBefore, 'not even the Caddy symlink');
+  // A re-run of install.sh is held to the same rule.
+  const again = run(h, 'install.sh', next, [...INSTALL, `--version=${OLD}`], { HARNESS_HEALTHY: OLD });
+  assert.equal(again.code, 1, again.all);
+  assert.match(again.err, /REFUSED: \/etc\/caddy\/Caddyfile has local changes/);
+});
+
+test('upgrade.sh for real: a rollback after moving the appended blocks puts the operator\'s Caddyfile back as it was', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const { h, R } = installedOld();
+  const live = path.join(R, 'etc/caddy/Caddyfile');
+  const operators = fs.readFileSync(live, 'utf8') + WWW_BLOCK;
+  fs.writeFileSync(live, operators);
+  const r = run(h, 'upgrade.sh', tree(VERSION, { caddyfileExtra: '\n# changed\n' }), [VERSION, '--ready-timeout=2', '--skip-compliance-check'], { HARNESS_HEALTHY: OLD });
+  assert.equal(r.code, 1, r.all);
+  assert.match(r.err, /failed and was rolled back/);
+  assert.equal(fs.readFileSync(live, 'utf8'), operators, 'the old release does not import Caddyfile.d: its operator\'s file is restored');
+});
+
+test('install.sh for real --www-redirect: www.<domain> redirects permanently to the domain, in a site-local file', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const h = host(); const t = tree(VERSION);
+  const r = run(h, 'install.sh', t, [...INSTALL.map((a) => (a.startsWith('--domain') ? '--domain=SUDS.County.Example.gov' : a)), '--www-redirect'], { HARNESS_HEALTHY: VERSION });
+  assert.equal(r.code, 0, r.all);
+  const f = path.join(h.root, 'etc/caddy/Caddyfile.d/www-redirect.caddy');
+  assert.equal(mode(f), 0o644);
+  const block = fs.readFileSync(f, 'utf8').split('\n').filter((l) => !l.startsWith('#')).join('\n');
+  assert.equal(block, 'www.suds.county.example.gov {\n\timport {$SUDS_CADDY_TLS:/dev/null}\n\theader -Server\n\tredir https://suds.county.example.gov{uri} permanent\n}\n');
+  assert.equal(mode(path.join(h.root, 'etc/caddy/Caddyfile.d')), 0o755);
+});
+
 // ---- Found by the installer run in a systemd container (docs/evidence/installer-container-run-2026-09-30, 1.19.0) ----
 
 /** A tree as a release zip, the way release.yml builds it: one top directory, suds-v<version>/. */

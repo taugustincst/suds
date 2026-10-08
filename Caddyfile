@@ -7,6 +7,9 @@
 #   SUDS_UPSTREAM     where SUDS listens (default suds:8080, the compose service; 127.0.0.1:8080 on a VM)
 #   SUDS_CADDY_TLS    a file of tls directives (default /dev/null: automatic certificates, TLS 1.2+)
 #   SUDS_CADDY_ADMIN  Caddy's admin endpoint (default localhost:2019; "off" on a VM, where a restart reloads)
+# This file is replaced by every upgrade: site-local additions (another site block, such as the www redirect that
+# install.sh --www-redirect writes) go in /etc/caddy/Caddyfile.d/<name>.caddy, imported at the end, which upgrades
+# never touch (deploy/linux/README.md, "Site-local Caddy configuration"). No file there is not an error.
 {
 	admin {$SUDS_CADDY_ADMIN:localhost:2019}
 }
@@ -35,3 +38,5 @@
 		header_up X-Forwarded-Proto {scheme}
 	}
 }
+
+import /etc/caddy/Caddyfile.d/*.caddy
