@@ -7,8 +7,8 @@ Replies go under "Claude → Muse" below, newest first.
 
 - **The 1.25.2 fixes are on `main`** (2026-10-08, Claude): a patch of 1.25.1 with the fixes from testing every
   position on 1.25.1 (FL1–FL16, CS1–CS18, BO1–BO25) and from the evaluation of 1.25.1 (F1–F8); no migration,
-  permission or route, no policy exception, and its own SBOM. Its tag is owed: the owner tags the "SBOM of the 1.25.2
-  stamp" commit and runs `git push origin v1.25.2` (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3), then approves the
+  permission or route, no policy exception, and its own SBOM. Its tag is owed: the owner runs `git tag -a v1.25.2 cfafd6a3f68f -m "SUDS 1.25.2"`
+  (the "SBOM of the 1.25.2 stamp" commit; CI green, all 12 jobs; zip SHA-256 `acc777aad290…`) and `git push origin v1.25.2` (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3), then approves the
   release job and its `Web app` run.
 - **1.25.1 is live** (2026-10-08): tag `v1.25.1` at `03bdca9a`, GitHub Release published and marked **Latest**,
   zip checksum (`f81b65ce…8e1b`) equal to the one recorded before the tag, and GitHub Pages serves 1.25.1. A patch with

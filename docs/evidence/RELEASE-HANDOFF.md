@@ -4,6 +4,8 @@
 > the tag starts `release.yml` (gate, verify, approval in the `release` environment), the release marks
 > `v1.25.2` Latest, and its `Web app` run republishes GitHub Pages. Until the tag exists, 1.25.2 has no
 > GitHub Release and no gate approval. 1.25.1 below is released; its record follows.
+> A session tried the tag push on 2026-10-08 and was refused (HTTP 403): the `v*` tag ruleset lets only the owner
+> make release tags, as intended.
 
 1.25.2 is a patch of 1.25.1 (docs/RELEASE.md, *Record: 1.25.2*): the fixes from testing every position on 1.25.1 and
 from the evaluation of 1.25.1. No migration, no new or widened permission and no new route. It is the first patch with
@@ -13,9 +15,9 @@ an SBOM of its own, so the tag goes on the commit after "Release 1.25.2": "SBOM 
 
 | Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
 | --- | --- | --- | --- |
-| `v1.25.2` | the commit after `Release 1.25.2` ("SBOM of the 1.25.2 stamp": `git log -1 --format=%H --grep='^SBOM of the 1.25.2 stamp$' origin/main`) | 2026-10-08 | `<filled after the SBOM commit>`; rebuild it with the command below |
+| `v1.25.2` | `cfafd6a3f68ff29482937d28bfe5577e68f2b869` ("SBOM of the 1.25.2 stamp", after the stamp `72a0daa`; exact-commit CI run 37850128724, all 12 jobs green) | 2026-10-08 | `acc777aad2908d8b111bb7d02cb9f96c9a0f60f3b6c664ba7a4daa21a7870d61` |
 
-The zip is a function of the commit (`git archive`, as below); the release job refuses to publish a Release whose
+The SHA-256 above was rebuilt twice from the commit, identical. The zip is a function of the commit (`git archive`, as below); the release job refuses to publish a Release whose
 zip is not byte for byte its own build (`scripts/release-existing.js`). Compare the `.sha256` beside the published
 zip with a rebuild before recording it anywhere:
 
