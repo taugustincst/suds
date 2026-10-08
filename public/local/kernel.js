@@ -25302,6 +25302,24 @@ var require_admin = __commonJS({
     var listener = (init_listener(), __toCommonJS(listener_exports));
     var fs = (init_fs(), __toCommonJS(fs_exports));
     var path = (init_path(), __toCommonJS(path_exports));
+    function offsiteDirProblem(dir) {
+      if (!path.isAbsolute(dir)) return "must be an absolute path (for example /mnt/backups or D:\\SUDS-backups)";
+      let st;
+      try {
+        st = fs.statSync(dir);
+      } catch {
+        return "does not exist (is the share mounted?)";
+      }
+      if (!st.isDirectory()) return "is not a folder";
+      const probe = path.join(dir, `.suds-write-test-${proc.pid}-${Date.now()}`);
+      try {
+        fs.writeFileSync(probe, "x", { mode: 384 });
+        fs.unlinkSync(probe);
+      } catch {
+        return "cannot be written to by SUDS (check the share's permissions)";
+      }
+      return null;
+    }
     module.exports = (r) => {
       r.get("/api/admin/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => {
         const out2 = {};
@@ -25349,6 +25367,21 @@ var require_admin = __commonJS({
             }
             if (k === "sso_deprovision_days" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 3650)) throw badRequest("sso_deprovision_days must be 0 (off) or a whole number of days");
             if (k === "scim_default_role" && v !== "" && !ROLES.includes(v)) throw badRequest(`scim_default_role must be one of ${ROLES.join(", ")}`);
+            if (k === "scim_default_role" && v === "admin") throw badRequest("scim_default_role cannot be admin: map a group to the administrator role instead, so nobody becomes one by default");
+            if (k === "sso_emergency_accounts" && v !== "") {
+              const names = [...new Set(v.split(",").map((x) => x.trim()).filter(Boolean))];
+              for (const u of names) {
+                const row = db3.one(`SELECT role, is_active FROM users WHERE username=?`, u);
+                if (!row) throw badRequest(`Emergency account "${u}" does not exist`, { fields: { sso_emergency_accounts: `"${u}" does not exist` } });
+                if (row.role !== "admin" || !row.is_active) throw badRequest(`Emergency account "${u}" must be an active administrator`, { fields: { sso_emergency_accounts: `"${u}" is not an active administrator` } });
+              }
+              v = names.join(",");
+            }
+            if (k === "backup_schedule_hours" && v !== "" && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 168)) throw badRequest("backup_schedule_hours must be 0 (off) or a whole number of hours from 1 to 168", { fields: { backup_schedule_hours: "a whole number of hours from 1 to 168, or 0 for off" } });
+            if (k === "backup_offsite_dir" && v !== "" && !config2.local) {
+              const problem = offsiteDirProblem(v);
+              if (problem) throw badRequest(`backup_offsite_dir ${problem}`, { fields: { backup_offsite_dir: problem } });
+            }
             if (k === "scim_group_roles" && v !== "") v = require_scim().normaliseGroupRoles(v);
             if (k === "programme_profile" && !require_programme().PROFILES[v]) throw badRequest(`programme_profile must be one of ${Object.keys(require_programme().PROFILES).join(", ")}`, { fields: { programme_profile: "choose a program profile" } });
             if (k.startsWith("module_") && v !== "" && !["0", "1"].includes(v)) throw badRequest(`${k} must be 1 (on), 0 (off) or blank (as the profile has it)`);

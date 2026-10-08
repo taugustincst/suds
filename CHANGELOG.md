@@ -40,6 +40,12 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   published, "Not yet published by this program" when blank; *The software vendor* carries AugustInnovations LLC's
   published licence terms, pricing and support from `procurement.json`, which are accurate on any copy as the
   vendor's. SUDS on this device shows only the vendor's part, unchanged.
+* **BO11:** Settings saved an offsite backup folder that was relative, missing or a file, and backup intervals of
+  0.5 or 100000 hours; each failed only at the next backup. The folder must now be an absolute, existing directory
+  SUDS can write to (the rule a provisioning file already met), and the interval 0 (off) or 1 to 168 whole hours.
+* **BO12:** the SCIM default role could be set to administrator, and the SSO emergency accounts could name users
+  who do not exist. The default role is never administrator, and each emergency account must be an active
+  administrator whenever the list is saved, not only when SSO is turned on. `test/admin-settings-checks.test.js`.
 
 ## 1.25.1 — 2026-10-08
 

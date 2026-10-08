@@ -44,6 +44,16 @@ const listener = require('../listener');
 const fs = require('node:fs');
 const path = require('node:path');
 
+// Why a folder cannot take the offsite copy of each backup, or null: absolute, an existing directory, writable.
+function offsiteDirProblem(dir) {
+  if (!path.isAbsolute(dir)) return 'must be an absolute path (for example /mnt/backups or D:\\SUDS-backups)';
+  let st; try { st = fs.statSync(dir); } catch { return 'does not exist (is the share mounted?)'; }
+  if (!st.isDirectory()) return 'is not a folder';
+  const probe = path.join(dir, `.suds-write-test-${process.pid}-${Date.now()}`);
+  try { fs.writeFileSync(probe, 'x', { mode: 0o600 }); fs.unlinkSync(probe); } catch { return 'cannot be written to by SUDS (check the share\'s permissions)'; }
+  return null;
+}
+
 module.exports = (r) => {
   r.get('/api/admin/settings', auth.requireAuth, auth.requirePerm('settings:manage'), () => {
     const out = {};
@@ -97,6 +107,29 @@ module.exports = (r) => {
         if (k === 'sso_mfa_acr_values' && v !== '') { const vals = v.split(/[\s,]+/).filter(Boolean); if (vals.some((x) => !/^[\w:./#-]{1,200}$/.test(x))) throw badRequest('sso_mfa_acr_values must be acr values (URIs or names) separated by commas'); v = vals.join(','); }
         if (k === 'sso_deprovision_days' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 3650)) throw badRequest('sso_deprovision_days must be 0 (off) or a whole number of days');
         if (k === 'scim_default_role' && v !== '' && !ROLES.includes(v)) throw badRequest(`scim_default_role must be one of ${ROLES.join(', ')}`);
+        // Everyone the identity provider pushes in no mapped group would be an administrator (1.25.2, BO12): an
+        // administrator is made by a mapped group or by hand, never by default. The form never offered it.
+        if (k === 'scim_default_role' && v === 'admin') throw badRequest('scim_default_role cannot be admin: map a group to the administrator role instead, so nobody becomes one by default');
+        // The accounts that keep password sign-in when single sign-on is required must be there to use (BO12):
+        // checked when they are named, not only when SSO is turned on (security-status.validateSettings).
+        if (k === 'sso_emergency_accounts' && v !== '') {
+          const names = [...new Set(v.split(',').map(x => x.trim()).filter(Boolean))];
+          for (const u of names) {
+            const row = db.one(`SELECT role, is_active FROM users WHERE username=?`, u);
+            if (!row) throw badRequest(`Emergency account "${u}" does not exist`, { fields: { sso_emergency_accounts: `"${u}" does not exist` } });
+            if (row.role !== 'admin' || !row.is_active) throw badRequest(`Emergency account "${u}" must be an active administrator`, { fields: { sso_emergency_accounts: `"${u}" is not an active administrator` } });
+          }
+          v = names.join(',');
+        }
+        // Scheduled backups (1.25.2, BO11): off (0) or a whole number of hours up to a week; 0.5 or 100000 were saved.
+        if (k === 'backup_schedule_hours' && v !== '' && !(Number.isInteger(Number(v)) && Number(v) >= 0 && Number(v) <= 168)) throw badRequest('backup_schedule_hours must be 0 (off) or a whole number of hours from 1 to 168', { fields: { backup_schedule_hours: 'a whole number of hours from 1 to 168, or 0 for off' } });
+        // The offsite copy's folder is checked as it is saved, by the rule a provisioning file meets (an absolute path
+        // to an existing directory) and by writing to it: a relative path, a share that is not mounted or a file was
+        // saved and only failed at the next backup (BO11).
+        if (k === 'backup_offsite_dir' && v !== '' && !config.local) {
+          const problem = offsiteDirProblem(v);
+          if (problem) throw badRequest(`backup_offsite_dir ${problem}`, { fields: { backup_offsite_dir: problem } });
+        }
         if (k === 'scim_group_roles' && v !== '') v = require('../scim').normaliseGroupRoles(v);
         // The profile always has a value: a blank one would be decided again from the data at the next start.
         if (k === 'programme_profile' && !require('../programme').PROFILES[v]) throw badRequest(`programme_profile must be one of ${Object.keys(require('../programme').PROFILES).join(', ')}`, { fields: { programme_profile: 'choose a program profile' } });
