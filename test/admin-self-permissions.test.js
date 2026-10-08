@@ -44,10 +44,10 @@ test('an administrator grants and denies their own permissions, audited with sel
   assert.equal(lastAudit('user.permission.revoke', me.id).self, true);
   assert.equal((await c.get('/api/admin/audit')).status, 200);
   // Grant: allowed for an administrator as for anyone (privileged ones only to the admin role: they are one).
-  r = await c.post(`/api/users/${me.id}/permissions`, { permission: 'notes:clinical:read', mode: 'grant', reason: REASON });
+  r = await c.post(`/api/users/${me.id}/permissions`, { permission: 'assessments:*', mode: 'grant', reason: REASON });
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.equal(lastAudit('user.permission.grant', me.id).self, true);
-  assert.ok((await c.get('/api/me')).data.permissions.includes('notes:clinical:read'));
+  assert.ok((await c.get('/api/me')).data.permissions.includes('assessments:*'));
   // A change to someone else carries no self mark.
   const nav = H.makeUser('selfperm_nav', 'navigator');
   assert.equal((await c.post(`/api/users/${nav.id}/permissions`, { permission: 'audit:read', mode: 'grant', reason: REASON })).status, 200);
@@ -166,4 +166,32 @@ test('lockout guard: two administrators demoting each other at once, with passwo
     assert.deepEqual([ra.status, rb.status].sort(), [200, 400]);
     H.db.run(`UPDATE users SET role='admin' WHERE id IN (?,?)`, a.id, b.id);
   });
+});
+
+test('an administrator cannot grant clinical-note access to themselves or another administrator: break-glass is the way in (1.25.2, BO3)', async () => {
+  const me = H.makeUser('selfperm_clin_a', 'admin');
+  const other = H.makeUser('selfperm_clin_b', 'admin');
+  const sup = H.makeUser('selfperm_clin_sup', 'supervisor');
+  const clin = H.makeUser('selfperm_clin_c', 'clinician');
+  const c = await signIn(me);
+  for (const permission of ['notes:clinical:read', 'notes:clinical:write']) {
+    for (const target of [me, other]) {
+      const r = await c.post(`/api/users/${target.id}/permissions`, { permission, mode: 'grant', reason: REASON });
+      assert.equal(r.status, 400, `${permission} to ${target.username}: ${JSON.stringify(r.data)}`);
+      assert.match(r.data.error, /only by break-glass/);
+      assert.equal(lastAudit('user.permission.denied', target.id).permission, permission, 'the refusal is audited');
+    }
+  }
+  assert.ok(!(await c.get('/api/me')).data.permissions.includes('notes:clinical:read'));
+  // A clinician's note: refused to the administrator without break-glass, even with a grant row put in by hand
+  // (one left from before 1.25.2): it is ignored at request time.
+  const cc = await signIn(clin);
+  const client = (await cc.post('/api/clients', { first_name: 'Bree', last_name: 'Glass' })).data;
+  const note = await cc.post('/api/notes', { client_id: client.id, kind: 'clinical', title: 'Session', content: 'Clinical content', occurred_at: new Date().toISOString() });
+  assert.equal(note.status, 201, JSON.stringify(note.data));
+  H.db.run(`INSERT INTO user_permission_overrides(user_id, permission, mode, reason, granted_by) VALUES(?,?,?,?,?)`, me.id, 'notes:clinical:read', 'grant', REASON, me.id);
+  assert.ok(!(await c.get('/api/me')).data.permissions.includes('notes:clinical:read'), 'a grant row from before is ignored');
+  assert.equal((await c.get(`/api/notes/${note.data.id}`)).status, 403, 'the note is not readable without break-glass');
+  // Granting it to a role that treats clients is unchanged.
+  assert.equal((await c.post(`/api/users/${sup.id}/permissions`, { permission: 'notes:clinical:write', mode: 'grant', reason: REASON })).status, 200);
 });

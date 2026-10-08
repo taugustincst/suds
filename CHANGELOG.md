@@ -17,6 +17,10 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **BO10:** the wizard no longer preselects Yes for the offline copy on a harm-reduction programme: No is the
   default for every profile, as docs/DEPLOYMENT.md's checklist says ("left off unless a field-work need is
   documented"); the question says when to answer Yes.
+* **BO3 (High):** an administrator could grant themselves (or another administrator) `notes:clinical:read` or
+  `notes:clinical:write` and read clinical notes without break-glass. Neither is grantable to the administrator
+  role any more, and a grant row left from before is ignored at request time and shown as having no effect
+  (narrowing only; break-glass is unchanged). `test/admin-self-permissions.test.js`.
 
 ## 1.25.1 — 2026-10-08
 
