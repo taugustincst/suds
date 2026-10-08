@@ -11107,7 +11107,16 @@ var require_http = __commonJS({
           sendJson(res, e.status || 400, { error: e.message });
           return true;
         }
+        if (req.method !== "GET" && req.method !== "HEAD") {
+          res.setHeader("Allow", "GET, HEAD");
+          sendJson(res, 405, { error: "Method not allowed" });
+          return true;
+        }
         let p = decodeURIComponent(url.pathname);
+        if (p.split("/").some((s) => s.startsWith("."))) {
+          sendJson(res, 404, { error: "Not found" });
+          return true;
+        }
         if (p === "/app" || p === "/app/") p = "/get-app.html";
         else if (p === "/" || !path.extname(p)) p = "/index.html";
         const file = path.resolve(path.join(root, p));

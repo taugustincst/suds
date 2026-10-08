@@ -310,9 +310,15 @@ function serveStatic(root) {
   return (req, res) => {
     let url;
     try { url = parseRequestUrl(req.url, 'http://x'); } catch (e) { sendJson(res, e.status || 400, { error: e.message }); return true; }
+    // The app routes with the hash (#/clients), so the shell is only ever fetched: anything but GET and HEAD
+    // (TRACE /, a POST to a page) is refused rather than answered with it (pen test of suds.systems, INFO-3).
+    if (req.method !== 'GET' && req.method !== 'HEAD') { res.setHeader('Allow', 'GET, HEAD'); sendJson(res, 405, { error: 'Method not allowed' }); return true; }
     let p = decodeURIComponent(url.pathname);
+    // No file of the app's starts with a dot, and a probe for one (/.env, /.git/HEAD) is told it is not here
+    // rather than given the shell with a 200; so is a name with an extension that is not a file (below).
+    if (p.split('/').some((s) => s.startsWith('.'))) { sendJson(res, 404, { error: 'Not found' }); return true; }
     if (p === '/app' || p === '/app/') p = '/get-app.html';
-    else if (p === '/' || !path.extname(p)) p = '/index.html'; // SPA fallback
+    else if (p === '/' || !path.extname(p)) p = '/index.html'; // SPA fallback: an extensionless path (/, /?local=1, an old deep link)
     const file = path.resolve(path.join(root, p));
     if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) {
       sendJson(res, 404, { error: 'Not found' }); return true;
