@@ -2,6 +2,20 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Fixed
+
+* **"Today" is the programme's date everywhere.** It was the UTC date in many places, so after 5pm in
+  California an intake and the episode form were dated tomorrow, CalOMS refused that admission as in the
+  future, and a discharge with no date on that evening's episode was refused. Consents, court orders and
+  assignments also lapsed at 5pm, and an evening call's time entry was dated tomorrow. The server uses
+  `server/local-date.js` for every "today" and date default, and the browser uses `fmt.today()`. CI's new
+  `evening` job runs `npm test` at 9pm in Los Angeles (`scripts/test-evening.sh`).
+* **Typed dates and times.** A two-digit year slides: "7/9/81" is 1981, not 2081 (refused as in the future),
+  and up to next year's is this century. A time box takes an hour alone: "2pm", "9 a", or "9" (09:00, on the
+  24-hour clock, as "930" is 09:30).
+
 ## 1.25.0 — 2026-10-05
 
 * **CalOMS Tx 1.25.0 (the owner lifted the feature freeze: "Fix everything now, freeze lifts to 1.25.0").** Dictionary-verified code sets: service types are ADM-4 codes 1–7; referral sources ADM-5 1–14; drug
