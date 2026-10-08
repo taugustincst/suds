@@ -26,6 +26,7 @@ route('setup', async () => {
     { type: 'section', label: 'Your program' },
     { name: 'org_name', label: 'Program name', required: true, placeholder: 'e.g. Clark County SUD Navigation Program', span: true },
     { name: 'county_name', label: 'County' }, { name: 'program_contact', label: 'Privacy officer / program contact' },
+    timezoneChoice(),
     // The programme profile (server/programme.js): what the screens lead with. Harm reduction is the default;
     // Settings › Programme changes it, and switches single clinical modules on, at any time.
     { name: 'programme_profile', label: 'What kind of program is this?', type: 'select', noBlank: true, required: true, value: 'harm_reduction', span: true,
@@ -78,7 +79,7 @@ route('setup', async () => {
     // The fund's type and settlement category go only with a fund, and the category only with settlement money.
     if (!d.main_fund_name) { delete d.main_fund_type; delete d.main_fund_settlement_use; delete d.main_fund_settlement_hiaa; }
     else if (d.main_fund_type !== 'opioid_settlement') { delete d.main_fund_settlement_use; delete d.main_fund_settlement_hiaa; }
-    for (const k of ['main_fund_type', 'main_fund_settlement_use', 'main_fund_settlement_hiaa']) if (d[k] === '') delete d[k];
+    for (const k of ['main_fund_type', 'main_fund_settlement_use', 'main_fund_settlement_hiaa', 'org_timezone']) if (d[k] === '') delete d[k];
     const r = await post('/api/setup/complete', d);
     state.setupNeeded = false; // "Go to sign-in" may be the same page with only a new #hash
     f.classList.add('hidden'); done.classList.remove('hidden');
@@ -138,3 +139,14 @@ route('setup', async () => {
     status.local_mode_env ? h('p', { class: 'small muted', 'data-local-mode-env': '1' }, `Offline copies on staff devices are ${status.local_mode ? 'allowed' : 'not allowed'} by the LOCAL_MODE_ENABLED setting on this server, so that is not asked here.`) : null,
     status.port_env ? h('p', { class: 'small muted', 'data-port-env': '1' }, `The port (${status.listener?.port}) is set by the PORT environment variable on this server, so it is not asked here.`) : null, f, done));
 });
+
+// The programme's time zone (F4): which calendar day a visit, a due date and a report period fall on. Prefilled with
+// this browser's zone, which on the computer running SUDS is the county's; a server left on UTC dates an evening's
+// work tomorrow. Settings → Program settings changes it later.
+function timezoneChoice() {
+  const here = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; } })();
+  let zones = []; try { zones = Intl.supportedValuesOf('timeZone'); } catch { zones = []; }
+  const options = [...new Set([here, ...zones].filter(Boolean))].map(z => ({ value: z, label: z === here ? `${z.replace(/_/g, ' ')} (this computer's time zone)` : z.replace(/_/g, ' ') }));
+  return { name: 'org_timezone', label: 'Time zone', type: 'select', options, value: here, placeholder: '— this server\'s time zone —', span: true,
+    help: 'Decides which calendar day a visit, a due date and a report period fall on. Choose where the program works.' };
+}

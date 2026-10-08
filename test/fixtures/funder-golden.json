@@ -1000,6 +1000,19 @@
    }
   ]
  },
+ "dashboard": {
+  "interventions": {
+   "total": 15000,
+   "minutes": 450000,
+   "naloxone_kits": 6192
+  },
+  "calls": {
+   "total": 3000
+  },
+  "referrals": {
+   "total": 1500
+  }
+ },
  "fiscal year, Los Angeles": {
   "from": "2025-07-01",
   "to": "2026-06-30",
@@ -1188,13 +1201,13 @@
     },
     {
      "month": "2025-10",
-     "n": 22,
-     "reversals": 20
+     "n": 23,
+     "reversals": 21
     },
     {
      "month": "2025-11",
-     "n": 26,
-     "reversals": 21
+     "n": 25,
+     "reversals": 20
     },
     {
      "month": "2025-12",
@@ -1218,13 +1231,13 @@
     },
     {
      "month": "2026-04",
-     "n": 27,
-     "reversals": 17
+     "n": 28,
+     "reversals": 18
     },
     {
      "month": "2026-05",
-     "n": 24,
-     "reversals": 20
+     "n": 23,
+     "reversals": 19
     },
     {
      "month": "2026-06",
@@ -1285,18 +1298,5 @@
     "approved_minutes": 6540
    }
   ]
- },
- "dashboard": {
-  "interventions": {
-   "total": 15000,
-   "minutes": 450000,
-   "naloxone_kits": 6192
-  },
-  "calls": {
-   "total": 3000
-  },
-  "referrals": {
-   "total": 1500
-  }
  }
 }

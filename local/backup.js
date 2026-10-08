@@ -154,12 +154,17 @@ export function scheduleState(lastIso, everyDays = DEFAULT_EVERY_DAYS, now = Dat
 }
 
 // suds-device-backup-2026-10-01.sudsbackup (a download) or suds-device-backup-2026-10-01-153012.sudsbackup
-// (a scheduled one: the time too, in UTC, so two in a day never collide).
+// (a scheduled one: the time too, so two in a day never collide). Both are this device's own date and time, the
+// day the page calls "today": in UTC, an evening backup in California was named with tomorrow's date (F3).
 const FILE_RE = /^suds-device-backup-(\d{4}-\d{2}-\d{2})(?:-(\d{6}))?\.sudsbackup$/;
+const p2 = (n) => String(n).padStart(2, '0');
+const ymd = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+/** A downloaded backup's file name, from the moment it was made. */
+export const downloadName = (iso) => `suds-device-backup-${ymd(new Date(iso))}.sudsbackup`;
 /** A scheduled backup's file name, from the moment it was made. */
 export function fileName(iso) {
-  const d = new Date(iso); const p = (n) => String(n).padStart(2, '0');
-  return `suds-device-backup-${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}-${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}.sudsbackup`;
+  const d = new Date(iso);
+  return `suds-device-backup-${ymd(d)}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}.sudsbackup`;
 }
 /** Is this a file SUDS named? Nothing else in a folder is ever read or removed. */
 export const isBackupName = (name) => FILE_RE.test(String(name || ''));

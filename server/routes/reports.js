@@ -9,7 +9,8 @@ const CFX = require('../client-filters');
 const { defer } = require('../spreadsheet');
 const FR = require('../funder-report');
 
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
+/** The instants (ISO, UTC) at which the programme's day `date` begins and the next one begins. */
+const dayBounds = (date) => { const { localMidnight } = require('../local-date'); return [localMidnight(date), localMidnight(addDays(date, 1))]; };
 const addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 /**
  * A report period, as calendar days in the organisation's time zone. `from`/`to` bound date columns
@@ -23,7 +24,8 @@ function range(ctx) {
   const { localDate, localMidnight } = require('./budget');
   const to = ctx.query.get('to') || localDate();
   const from = ctx.query.get('from') || addDays(to, -89);
-  if (!DAY.test(to) || !DAY.test(from) || !Number.isFinite(Date.parse(to)) || !Number.isFinite(Date.parse(from))) throw badRequest('from and to must be dates (YYYY-MM-DD)');
+  const { isRealDate } = require('../local-date');
+  if (!isRealDate(to) || !isRealDate(from)) throw badRequest('from and to must be real dates (YYYY-MM-DD)');
   const fromTs = localMidnight(from);
   const toEnd = new Date(Date.parse(localMidnight(addDays(to, 1))) - 1).toISOString();
   // Sargable: the leading range (the earliest and latest of the two forms' bounds) is one index range scan
@@ -79,36 +81,50 @@ function requireReportRun({ caseloadScoped, fund = false }) {
 }
 
 const nextMonth = (m) => { const y = Number(m.slice(0, 4)); const mo = Number(m.slice(5, 7)); return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`; };
+const localMonth = (col, from) => require('../local-date').monthSql(col, from, require('../local-date').today().slice(0, 7));
+/** From the programme's day `date` on, for a column holding bare dates and instants: SQL and its parameters. */
+function since(col, date) {
+  const t = require('../local-date').localMidnight(date);
+  return [`${col} >= ? AND ((length(${col})=10 AND ${col} >= ?) OR (length(${col})>10 AND ${col} >= ?))`, t < date ? t : date, date, t];
+}
 /** The monthly report's figures, in phases (a generator: `yield` marks where the event loop may be let go). */
 function* monthlyFigures(user, s) {
-  const out = {};
+  const LD = require('../local-date');
+  const out = {}; const first = s.slice(0, 7);
   out.intakes = db.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s);
   out.discharges = db.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s);
   yield;
   // One pass over the visits for the services, the people served and the naloxone (three passes until 1.13.0),
   // a month at a time with the event loop let go in between: the minutes are not in the period index, so the
-  // pass reads every visit's row (0.3 s at 100,000 visits in one piece). Months are whole strings' prefixes, so
-  // each visit falls in exactly one piece, and the last piece takes everything after (dated ahead) as before.
+  // pass reads every visit's row (0.3 s at 100,000 visits in one piece). Each piece is one of the programme's
+  // months (CS5): a bare date by its days, an instant by the instants the month begins and ends at, inside one
+  // index range that holds both forms. The last piece takes everything after (dated ahead), by its UTC month.
   // A month with only anonymous visits has no row of people served, as before.
   const visits = [];
-  const bounds = []; for (let m = s.slice(0, 7); m <= require('../local-date').today().slice(0, 7); m = nextMonth(m)) bounds.push(m);
-  for (let i = 0; i < bounds.length; i++) {
-    const hi = i + 1 < bounds.length ? bounds[i + 1] : null;
-    visits.push(...db.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions
-      WHERE occurred_at >= ?${hi ? ' AND occurred_at < ?' : ''} GROUP BY month ORDER BY month`, i ? bounds[i] : s, ...(hi ? [hi] : [])));
+  const bounds = []; for (let m = first; m <= LD.today().slice(0, 7); m = nextMonth(m)) bounds.push(m);
+  const cols = 'COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips';
+  for (const m of bounds) {
+    const d0 = m === first ? s : `${m}-01`; const d1 = `${nextMonth(m)}-01`;
+    const t0 = LD.localMidnight(d0); const t1 = LD.localMidnight(d1);
+    const row = db.one(`SELECT ${cols} FROM interventions WHERE occurred_at >= ? AND occurred_at < ?
+      AND ((length(occurred_at)=10 AND occurred_at >= ? AND occurred_at < ?) OR (length(occurred_at)>10 AND occurred_at >= ? AND occurred_at < ?))`,
+    t0 < d0 ? t0 : d0, t1 > d1 ? t1 : d1, d0, d1, t0, t1);
+    if (row.n) visits.push({ month: m, ...row });
     yield;
   }
+  const ahead = `${nextMonth(bounds[bounds.length - 1])}-01`;
+  visits.push(...db.all(`SELECT substr(occurred_at,1,7) month, ${cols} FROM interventions WHERE ${since('occurred_at', ahead)[0]} GROUP BY month ORDER BY month`, ...since('occurred_at', ahead).slice(1)));
   out.interventions = visits.map(({ month, n, minutes, clients }) => ({ month, n, minutes, clients }));
   out.naloxone = visits.map(({ month, kits, strips }) => ({ month, kits, strips }));
   out.unduplicated_clients = visits.filter(x => x.clients > 0).map(({ month, clients }) => ({ month, clients }));
   yield;
-  out.calls = db.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s);
-  out.referrals = db.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s);
+  out.calls = db.all(`SELECT ${localMonth('started_at', first)} month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE ${since('started_at', s)[0]} GROUP BY month ORDER BY month`, ...since('started_at', s).slice(1));
+  out.referrals = db.all(`SELECT ${localMonth('referred_at', first)} month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE ${since('referred_at', s)[0]} GROUP BY month ORDER BY month`, ...since('referred_at', s).slice(1));
   yield;
-  out.overdose_events = db.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s);
+  out.overdose_events = db.all(`SELECT ${localMonth('occurred_at', first)} month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE ${since('occurred_at', s)[0]} GROUP BY month ORDER BY month`, ...since('occurred_at', s).slice(1));
   out.episodes = db.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s);
   yield;
-  out.mat_linkage = db.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s);
+  out.mat_linkage = db.all(`SELECT ${localMonth('referred_at', first)} month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND ${since('referred_at', s)[0]} GROUP BY month ORDER BY month`, ...since('referred_at', s).slice(1));
   out.spend = auth.hasPerm(user, 'budget:read') ? db.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [];
   out.time = db.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s);
   // The keys in the order the report has always had them.
@@ -232,7 +248,9 @@ module.exports = (r) => {
       tasks: (() => { const team = auth.hasPerm(ctx.user, 'notes:cosign') && auth.hasPerm(ctx.user, 'clients:all') ? 1 : 0; return { team: !!team,
         open: db.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, team).n,
         overdue: db.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db.now(), ctx.user.id, team).n,
-        due_today: db.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, team).n }; })(),
+        // A timed to-do is an instant (UTC): due today when it falls within the programme's day, not when its UTC date is
+        // today's, which missed one due this evening and counted it tomorrow instead (CS4).
+        due_today: db.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at = ? ELSE due_at >= ? AND due_at < ? END) AND (assigned_to=? OR ?)`, today, ...dayBounds(today), ctx.user.id, team).n }; })(),
       time: auth.hasPerm(ctx.user, 'time:read') || auth.hasPerm(ctx.user, 'time:write') ? { minutes: db.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?)`, from, to, ctx.user.id, auth.hasPerm(ctx.user, 'time:all') ? 1 : 0).n,
         by_category: db.all(`SELECT category k, SUM(minutes) n FROM time_entries WHERE work_date BETWEEN ? AND ? AND (user_id=? OR ?) GROUP BY category ORDER BY n DESC`, from, to, ctx.user.id, auth.hasPerm(ctx.user, 'time:all') ? 1 : 0) } : null,
       // A supervisor's unsigned-notes alert covers the team's drafts, the same way the overdue-tasks alert

@@ -22,11 +22,11 @@ before(async () => {
   H.makeCaseloadUser('hrclin_scoped', 'clinician'); clinScoped = H.client(); await clinScoped.login('hrclin_scoped', 'StaffPassw0rd!x');
   clientId = (await sup.post('/api/clients', { first_name: 'Nadia', last_name: 'Loxone', confirm_duplicate: true })).data.id;
   // Anonymous community distribution at two sites, and one kit to an enrolled client.
-  for (const [kits, location, at] of [[10, 'community', '2026-05-02T18:00:00.000Z'], [5, 'community', '2026-05-02T19:00:00.000Z'], [8, 'shelter', '2026-05-09T17:00:00.000Z']]) {
+  for (const [kits, location, at] of [[10, 'community', H.localAt('2026-05-02', 11)], [5, 'community', H.localAt('2026-05-02', 12)], [8, 'shelter', H.localAt('2026-05-09', 10)]]) {
     assert.equal((await sup.post('/api/interventions', { type: 'naloxone_distribution', occurred_at: at, naloxone_kits: kits, location })).status, 201);
   }
-  assert.equal((await sup.post('/api/interventions', { client_id: clientId, type: 'harm_reduction', occurred_at: '2026-05-03T18:00:00.000Z', naloxone_kits: 1, location: 'field' })).status, 201);
-  assert.equal((await sup.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: '2026-05-03T18:00:00.000Z' })).status, 201, 'a visit with no naloxone is not in the log');
+  assert.equal((await sup.post('/api/interventions', { client_id: clientId, type: 'harm_reduction', occurred_at: H.localAt('2026-05-03', 11), naloxone_kits: 1, location: 'field' })).status, 201);
+  assert.equal((await sup.post('/api/interventions', { client_id: clientId, type: 'case_management', occurred_at: H.localAt('2026-05-03', 11) })).status, 201, 'a visit with no naloxone is not in the log');
   // Reversals reported back to the programme: one by a named client, one from the community.
   assert.equal((await sup.post('/api/overdose-events', { client_id: clientId, occurred_at: '2026-05-10T10:00:00Z', kind: 'reversal', naloxone_used: true, naloxone_doses: 2, administered_by: 'bystander', survived: true, location_type: 'residence' })).status, 201);
   assert.equal((await sup.post('/api/overdose-events', { occurred_at: '2026-05-11T10:00:00Z', kind: 'reversal', naloxone_used: true, naloxone_doses: 1, administered_by: 'family', survived: true, location_type: 'street', city: 'Marysville' })).status, 201);

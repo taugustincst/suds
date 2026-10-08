@@ -136,7 +136,7 @@ test('returned or reopened time is a to-do for the worker, due now (the bell); a
   const before = H.db.one(`SELECT COUNT(*) n FROM tasks WHERE assigned_to=?`, U.nav).n;
   assert.equal((await sup.post(`/api/time/${t1}/approve`, { decision: 'rejected', note: 'Split the travel from the paperwork' })).status, 200);
   const due = (await nav.get('/api/tasks/due?within=60')).data.rows;
-  const t = due.find(x => /Correct your time for 21 Sep 2026 \(2h 30m\): returned by/.test(x.title));
+  const t = due.find(x => /Correct your time for Sep 21, 2026 \(2h 30m\): returned by/.test(x.title));
   assert.ok(t, JSON.stringify(due.map(x => x.title)));
   const full = (await nav.get(`/api/tasks?status=open&limit=100`)).data.rows.find(x => x.id === t.id);
   assert.match(full.description, /Returned: Split the travel from the paperwork/);
@@ -157,7 +157,7 @@ test('returned or reopened time is a to-do for the worker, due now (the bell); a
   const r = await sup.post('/api/time/approve-batch', { ids: [b1, b2, b3], decision: 'rejected', note: 'Add descriptions' });
   assert.equal(r.status, 200); assert.equal(r.data.rejected, 3);
   assert.ok((await nav.get('/api/tasks/due?within=60')).data.rows.some(x => /Correct 2 of your time entries/.test(x.title)));
-  assert.ok((await nav2.get('/api/tasks/due?within=60')).data.rows.some(x => /Correct your time for 24 Sep 2026 \(20m\)/.test(x.title)));
+  assert.ok((await nav2.get('/api/tasks/due?within=60')).data.rows.some(x => /Correct your time for Sep 24, 2026 \(20m\)/.test(x.title)));
 });
 
 test('the note viewer names the client: the code always, the name for a reader who may open the record', async () => {

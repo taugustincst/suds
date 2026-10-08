@@ -128,6 +128,26 @@ test('the hardening checklist is for administrators only and ticks itself off fr
   H.db.run(`UPDATE users SET mfa_enabled=0`);
 });
 
+test('the checklist asks for the program\'s time zone until one is chosen, and again when it is UTC (F4)', async () => {
+  const get = async () => (await admin.get('/api/admin/security/hardening')).data.items.find((i) => i.id === 'timezone');
+  const was = H.db.getSetting('org_timezone', null);
+  try {
+    H.db.run(`DELETE FROM settings WHERE key='org_timezone'`);
+    let t = await get();
+    if (process.platform !== 'win32') { assert.equal(t.done, false, 'nothing chosen on a Linux server'); assert.equal(t.recommended, true); }
+    assert.match(t.action.href, /field=org_timezone/);
+    assert.equal((await admin.put('/api/admin/settings', { org_timezone: 'America/Los_Angeles' })).status, 200);
+    t = await get();
+    assert.equal(t.done, true); assert.equal(t.status, 'America/Los_Angeles');
+    assert.equal((await admin.put('/api/admin/settings', { org_timezone: 'Etc/UTC' })).status, 200);
+    t = await get();
+    assert.equal(t.done, false, 'UTC chosen is still UTC'); assert.match(t.why, /dated tomorrow/);
+    const { isUtcZone } = require('../server/hardening');
+    for (const z of ['UTC', 'Etc/UTC', 'Etc/GMT', 'GMT', 'Etc/Universal', 'Zulu']) assert.ok(isUtcZone(z), z);
+    for (const z of ['America/Los_Angeles', 'Europe/London', 'Etc/GMT+8']) assert.ok(!isUtcZone(z), z);
+  } finally { if (was === null) H.db.run(`DELETE FROM settings WHERE key='org_timezone'`); else H.db.setSetting('org_timezone', was); }
+});
+
 test('the checklist surfaces the host compliance check: no report yet, then the last report\'s result', async () => {
   const s = (await admin.get('/api/admin/security/hardening')).data;
   const c = s.items.find((i) => i.id === 'compliance_check');

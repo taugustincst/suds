@@ -55,8 +55,10 @@ test('the schedule: due once the chosen number of calendar days has begun, overd
 });
 
 test('file names: dated and timed, only SUDS\'s own files are ever chosen for removal, oldest first', () => {
-  const n = B.fileName('2026-10-01T15:30:12.345Z');
+  // The device's own date and time (F3), whatever zone the test runs in.
+  const n = B.fileName(new Date(2026, 9, 1, 15, 30, 12, 345).toISOString());
   assert.equal(n, 'suds-device-backup-2026-10-01-153012.sudsbackup');
+  assert.equal(B.downloadName(new Date(2026, 9, 1, 21, 5).toISOString()), 'suds-device-backup-2026-10-01.sudsbackup', 'an evening download is named with that evening\'s date');
   assert.ok(B.isBackupName(n) && B.isBackupName('suds-device-backup-2026-09-01.sudsbackup'), 'a scheduled and a downloaded backup are both ours');
   assert.ok(!B.isBackupName('notes.txt') && !B.isBackupName('suds-device-backup-2026-10-01.sudsbackup.txt') && !B.isBackupName('../suds-device-backup-2026-10-01.sudsbackup'));
   const names = ['notes.txt', 'suds-device-backup-2026-09-30-090000.sudsbackup', 'suds-device-backup-2026-09-01.sudsbackup', 'suds-device-backup-2026-10-01-080000.sudsbackup', 'suds-device-backup-2026-10-01-170000.sudsbackup', 'Client list.xlsx'];

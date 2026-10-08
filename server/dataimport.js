@@ -8,11 +8,41 @@ const { blindIndex } = require('./crypto');
 const yes = (v) => v === true || /^(1|y|yes|true|x)$/i.test(String(v ?? '').trim());
 // A question somebody has to ask: a blank cell is not an answer (NULL, "Not asked"), anything else yes or no.
 const yesNo = (v) => (v === null || v === undefined || String(v).trim() === '' ? null : yes(v));
-// A two-digit year slides, as typed dates do (public/input-parsers.js): up to next year's is this century,
-// anything later the last, so a date of birth "7/9/81" is 1981, not 2081.
-const fullYear = (yy) => { const next = Number(require('./local-date').today().slice(0, 4)) + 1; const c = Math.floor(next / 100) * 100; return String(Number(yy) <= next % 100 ? c + Number(yy) : c - 100 + Number(yy)); };
-const dateOf = (v) => { if (v === null || v === undefined || v === '') return null; if (typeof v === 'number') return excelDate(v); const s = String(v).trim(); const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s); if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`; const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s); if (us) return `${us[3].length === 2 ? fullYear(us[3]) : us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`; const d = new Date(s); return isNaN(d) ? undefined : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-const datetimeOf = (v) => { if (v === null || v === undefined || v === '') return null; if (typeof v === 'number') { if (!Number.isFinite(v) || v < 1) return undefined; if (v % 1) return new Date(Math.round((v - 25569) * 86400000)).toISOString(); const d = excelDate(v); return d ? new Date(d + 'T12:00:00').toISOString() : undefined; } const d = new Date(String(v).trim()); if (!isNaN(d)) return d.toISOString(); const day = dateOf(v); return day ? new Date(day + 'T12:00:00').toISOString() : undefined; };
+// A two-digit year is read as a typed date's is (public/input-parsers.js fullYear, F2): for a date that is never in
+// the future (a date of birth, an intake) the latest year not after this one, so "7/9/81" is 1981 and, in 2026,
+// "1/5/27" is 1927; for any other date within 20 years ahead and 80 behind, so a due date "1/5/28" is 2028.
+const LD = () => require('./local-date');
+const fullYear = (yy, past) => {
+  const year = Number(LD().today().slice(0, 4)); let y = year - (year % 100) + Number(yy);
+  if (past) { if (y > year) y -= 100; } else if (y > year + 20) y -= 100; else if (y <= year - 80) y += 100;
+  return String(y);
+};
+const TWO_DIGIT_YEAR = /^\s*\d{1,2}[/.-]\d{1,2}[/.-]\d{2}(?!\d)/;
+// undefined (the row's error) for a date that is not a real one ("2/30/90", "13/1/26") or has no year at all: "10/8"
+// was read by the Date constructor as 2001-10-08 (BO4).
+const day = (y, m, d) => { const s = `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; return LD().isRealDate(s) ? s : undefined; };
+const dateOf = (v, { past = false } = {}) => {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number') return excelDate(v);
+  const s = String(v).trim();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s); if (iso) return day(iso[1], iso[2], iso[3]);
+  const us = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/.exec(s); if (us) return day(us[3].length === 2 ? fullYear(us[3], past) : us[3], us[1], us[2]);
+  if (!/\d{4}/.test(s)) return undefined;
+  const d = new Date(s); return isNaN(d) ? undefined : day(d.getFullYear(), d.getMonth() + 1, d.getDate());
+};
+const pastDateOf = (v) => dateOf(v, { past: true });
+const datetimeOf = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number') { if (!Number.isFinite(v) || v < 1) return undefined; if (v % 1) return new Date(Math.round((v - 25569) * 86400000)).toISOString(); const d = excelDate(v); return d ? new Date(d + 'T12:00:00').toISOString() : undefined; }
+  let s = String(v).trim();
+  // The date part is checked as dateOf checks one, and its two-digit year read the same way, before the Date
+  // constructor reads the time: it rolls "9/31/2026 10:00" over to October 1st and calls "10/8 14:00" 2001.
+  const us = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})(?!\d)/.exec(s);
+  if (us) { const date = dateOf(us[0]); if (!date) return undefined; s = `${+us[1]}/${+us[2]}/${date.slice(0, 4)}${s.slice(us[0].length)}`; }
+  else if (/^\d{4}-\d{2}-\d{2}/.test(s)) { if (!dateOf(s.slice(0, 10))) return undefined; } else if (!/\d{4}/.test(s)) return undefined;
+  const d = new Date(s); if (!isNaN(d)) return d.toISOString();
+  const date = dateOf(v); return date ? new Date(date + 'T12:00:00').toISOString() : undefined;
+};
 // enumOf takes a fixed list of codes, or the key of a documentation list (Settings → Lists): then the
 // choices a new record may use, the programme's own included, and a cell may carry the label a SUDS export
 // wrote ("Warm Handoff", or whatever the programme renamed it to) as well as the code.
@@ -27,9 +57,9 @@ const clientRef = F('client_ref', 'Client', ['client code', 'client', 'code', 'c
 const ENTITIES = {
   clients: { label: 'Clients', table: 'clients', fields: [
     F('first_name', 'First name', ['first', 'given name', 'firstname'], str(100), { required: true }), F('last_name', 'Last name', ['last', 'surname', 'family name', 'lastname'], str(100), { required: true }),
-    F('preferred_name', 'Preferred name', ['nickname', 'goes by'], str(100)), F('dob', 'Date of birth', ['dob', 'birth date', 'birthdate', 'birthday'], dateOf), F('phone', 'Phone', ['phone number', 'cell', 'mobile', 'telephone'], str(40)), F('email', 'Email', ['e-mail'], str(200)),
+    F('preferred_name', 'Preferred name', ['nickname', 'goes by'], str(100)), F('dob', 'Date of birth', ['dob', 'birth date', 'birthdate', 'birthday'], pastDateOf), F('phone', 'Phone', ['phone number', 'cell', 'mobile', 'telephone'], str(40)), F('email', 'Email', ['e-mail'], str(200)),
     F('address', 'Address', ['street', 'address line'], str(300)), F('city', 'City', [], str(100)), F('zip', 'ZIP', ['zip code', 'postal code'], str(12)), F('gender', 'Gender', ['sex'], str(40)), F('preferred_language', 'Language', ['preferred language'], str(60)),
-    F('status', 'Status', ['program status'], enumOf(['waitlist', 'active', 'inactive', 'closed', 'deceased'])), F('intake_date', 'Intake date', ['intake', 'enrolled', 'enrollment date', 'start date'], dateOf), F('referral_source', 'Referral source', ['referred by', 'source'], str(120)),
+    F('status', 'Status', ['program status'], enumOf(['waitlist', 'active', 'inactive', 'closed', 'deceased'])), F('intake_date', 'Intake date', ['intake', 'enrolled', 'enrollment date', 'start date'], pastDateOf), F('referral_source', 'Referral source', ['referred by', 'source'], str(120)),
     F('primary_substance', 'Primary substance', ['substance', 'drug of choice', 'doc'], enumOf('SUBSTANCES')), F('asam_level', 'ASAM level', ['asam', 'level of care'], str(20)), F('mat_status', 'MAT status', ['mat', 'moud'], enumOf(['none', 'interested', 'referred', 'active', 'discontinued', 'unknown'])),
     F('risk_level', 'Risk level', ['risk'], enumOf(['low', 'moderate', 'high', 'critical'])), F('housing_status', 'Housing', ['housing status', 'living situation'], str(60)), F('insurance', 'Insurance', ['payer', 'coverage'], str(100)),
     F('overdose_history', 'Overdose history', ['overdose', 'od history', 'prior overdose'], yesNo), F('naloxone_provided', 'Naloxone provided', ['naloxone', 'narcan'], yes), F('goals', 'Goals', ['client goals'], str(2000)), F('flags', 'Safety flags', ['flags', 'alerts'], str(300)),
@@ -85,17 +115,34 @@ function resolveClient(ref, ctx, auth) {
   if (rows.length === 1) return rows[0].id; if (rows.length > 1) return 'ambiguous'; return null;
 }
 
-// Validate and convert one spreadsheet row into a record; returns { record, errors: [] }
+/**
+ * A client's dates that cannot be right, as messages (BO4): a date of birth or an intake after today (the
+ * programme's) or a date of birth more than 120 years ago. Checked in the preview and again at commit.
+ */
+function dateProblems(entity, rec) {
+  if (entity !== 'clients') return [];
+  const today = LD().today(); const out = [];
+  if (rec.dob && rec.dob > today) out.push('Date of birth cannot be in the future');
+  else if (rec.dob && rec.dob < `${Number(today.slice(0, 4)) - 120}${today.slice(4)}`) out.push('Date of birth is more than 120 years ago');
+  if (rec.intake_date && rec.intake_date > today) out.push('Intake date cannot be in the future');
+  return out;
+}
+
+// Validate and convert one spreadsheet row into a record; returns { record, errors: [], dates: [] }. `dates` lists
+// each date written with a two-digit year and what it was read as, for the preview to show (BO4).
 function convertRow(entity, mapping, row) {
-  const def = ENTITIES[entity]; const record = {}; const errors = [];
+  const def = ENTITIES[entity]; const record = {}; const errors = []; const dates = [];
   for (const [header, key] of Object.entries(mapping)) {
     const f = def.fields.find(x => x.key === key); if (!f) continue;
     const raw = row[header]; const v = f.parse(raw);
-    if (v === undefined) errors.push(`${f.label}: "${raw}" is not a valid ${f.key.includes('date') || f.key.endsWith('_at') ? 'date' : 'value'}${f.help ? ' (' + f.help.slice(0, 80) + ')' : ''}`);
+    const isDate = [dateOf, pastDateOf, datetimeOf].includes(f.parse);
+    if (v === undefined) errors.push(`${f.label}: "${raw}" is not a valid ${isDate ? 'date (a real date, with its year)' : 'value'}${f.help ? ' (' + f.help.slice(0, 80) + ')' : ''}`);
     else record[key] = v;
+    if (isDate && v && typeof raw === 'string' && TWO_DIGIT_YEAR.test(raw)) dates.push({ field: f.label, raw: raw.trim(), value: String(v).slice(0, 10) });
   }
   for (const f of def.fields) if (f.required && (record[f.key] === null || record[f.key] === undefined || record[f.key] === '')) errors.push(`${f.label} is required`);
-  return { record, errors };
+  errors.push(...dateProblems(entity, record));
+  return { record, errors, dates };
 }
 
-module.exports = { ENTITIES, suggestMapping, convertRow, resolveClient };
+module.exports = { ENTITIES, suggestMapping, convertRow, resolveClient, dateProblems, dateOf };

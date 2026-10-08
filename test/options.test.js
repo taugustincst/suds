@@ -163,15 +163,42 @@ test('a spreadsheet import accepts the programme\'s wording and its own choices'
   assert.equal(loc.parse('nowhere at all'), undefined);
 });
 
-test('a spreadsheet import reads a two-digit year as typed dates do (E8)', () => {
+test('a spreadsheet import reads a two-digit year as typed dates do (E8, F2)', () => {
   const DI = require('../server/dataimport');
-  const dob = DI.ENTITIES.clients.fields.find(f => f.key === 'dob');
-  const next = Number(require('../server/local-date').today().slice(0, 4)) + 1;
+  const field = (e, k) => DI.ENTITIES[e].fields.find(f => f.key === k);
+  const dob = field('clients', 'dob');
+  const year = Number(require('../server/local-date').today().slice(0, 4));
   const yy = (n) => String(n % 100).padStart(2, '0');
   assert.equal(dob.parse('7/9/81'), '1981-07-09', 'a date of birth in 1981, not 2081');
-  assert.equal(dob.parse(`3/4/${yy(next)}`), `${next}-03-04`, 'up to next year is this century');
-  assert.equal(dob.parse(`3/4/${yy(next + 1)}`), `${next + 1 - 100}-03-04`, 'anything later is the last');
+  assert.equal(dob.parse(`3/4/${yy(year)}`), `${year}-03-04`, 'this year is this century');
+  assert.equal(dob.parse(`3/4/${yy(year + 1)}`), `${year + 1 - 100}-03-04`, 'a date of birth is never next year');
   assert.equal(dob.parse('7/9/1981'), '1981-07-09');
+  const due = field('time_entries', 'work_date');
+  assert.equal(due.parse(`3/4/${yy(year + 2)}`), `${year + 2}-03-04`, 'another date takes up to 20 years ahead');
+  assert.equal(due.parse(`3/4/${yy(year + 21)}`), `${year + 21 - 100}-03-04`, 'and no more');
+});
+
+test('a spreadsheet import refuses an impossible, year-less or future date, and lists two-digit years (BO4)', () => {
+  const DI = require('../server/dataimport');
+  const LD = require('../server/local-date');
+  const today = LD.today(); const tomorrow = LD.addDays(today, 1);
+  const mdy = (iso) => `${+iso.slice(5, 7)}/${+iso.slice(8, 10)}/${iso.slice(0, 4)}`;
+  const row = (dob, intake) => DI.convertRow('clients', { F: 'first_name', L: 'last_name', D: 'dob', I: 'intake_date' }, { F: 'Ann', L: 'Example', D: dob, I: intake });
+  const bad = (r, re) => assert.ok(r.errors.some(e => re.test(e)), JSON.stringify(r.errors));
+  bad(row('2/30/90', ''), /Date of birth: "2\/30\/90" is not a valid date/);
+  bad(row('1990-02-30', ''), /not a valid date/);
+  bad(row('', '10/8'), /Intake date: "10\/8" is not a valid date/);
+  bad(row('', '13/1/26'), /Intake date/);
+  bad(row(mdy(tomorrow), ''), /Date of birth cannot be in the future/);
+  bad(row('', mdy(tomorrow)), /Intake date cannot be in the future/);
+  bad(row(`1/1/${Number(today.slice(0, 4)) - 121}`, ''), /more than 120 years ago/);
+  const ok = row('7/9/81', mdy(today));
+  assert.deepEqual(ok.errors, []); assert.equal(ok.record.dob, '1981-07-09'); assert.equal(ok.record.intake_date, today);
+  assert.deepEqual(ok.dates, [{ field: 'Date of birth', raw: '7/9/81', value: '1981-07-09' }], 'the two-digit year is listed with what it was read as');
+  const due = DI.ENTITIES.tasks.fields.find(f => f.key === 'due_at');
+  assert.equal(due.parse('9/31/2026 10:00'), undefined, 'not rolled over to October 1st');
+  assert.equal(due.parse('10/8 14:00'), undefined, 'not 2001');
+  assert.equal(due.parse('2026-09-31T10:00'), undefined);
 });
 
 test('devices receive the lists but can never change them', async () => {

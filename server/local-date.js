@@ -63,6 +63,30 @@ const today = () => localDate();
 /** The calendar date `n` days after `date` (YYYY-MM-DD); calendar arithmetic, so no time zone is involved. */
 const addDays = (date, n) => new Date(Date.parse(`${String(date).slice(0, 10)}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 /**
+ * True for a real calendar date written YYYY-MM-DD. The pattern alone is not enough: V8's Date.parse reads
+ * "2026-09-31" as October 1st and "1990-02-30" as March 2nd, so an impossible date was stored as typed (BO5).
+ */
+function isRealDate(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const t = Date.parse(`${s}T00:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === s;
+}
+const nextMonth = (m) => { const y = Number(m.slice(0, 4)); const mo = Number(m.slice(5, 7)); return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`; };
+/**
+ * SQL for the month (YYYY-MM) of `col`, a column holding bare dates and instants, on the programme's calendar, for the
+ * months `from` to `to` (YYYY-MM). An instant is UTC, so its own first seven characters put a visit at 8:30pm on
+ * October 31st in Los Angeles in November (CS5); it is placed by the instants the programme's months begin at instead.
+ * A bare date is its own month; an instant outside the months keeps its UTC month. The bounds are ISO strings made
+ * here, never input, so they are written into the SQL.
+ */
+function monthSql(col, from, to) {
+  const months = []; for (let m = from; m <= to && months.length < 600; m = nextMonth(m)) months.push(m);
+  if (!months.length) return `substr(${col},1,7)`;
+  const after = localMidnight(`${nextMonth(months[months.length - 1])}-01`);
+  const steps = months.map(m => `WHEN ${col} >= '${localMidnight(`${m}-01`)}' THEN '${m}'`).reverse().join(' ');
+  return `(CASE WHEN length(${col})=10 OR ${col} >= '${after}' THEN substr(${col},1,7) ${steps} ELSE substr(${col},1,7) END)`;
+}
+/**
  * The programme's date of a stored value: an instant (ISO, UTC) is read on the programme's calendar, so a call at 9pm
  * in Los Angeles is that day's, not the next (its UTC date); a bare YYYY-MM-DD is already a date and is kept.
  */
@@ -72,4 +96,4 @@ function dayOf(at) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : (localDate(s) || s.slice(0, 10));
 }
 
-module.exports = { today, localDate, localMidnight, orgTimezone, validTimezone, addDays, dayOf, formatter };
+module.exports = { today, localDate, localMidnight, orgTimezone, validTimezone, addDays, dayOf, isRealDate, monthSql, formatter };

@@ -61,8 +61,8 @@ before(async () => {
   fund = (await c.admin.post('/api/budget/funds', { name: 'Settlement A', source_type: 'opioid_settlement', total_amount: 10000, fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', settlement_use: 'core_a' })).data.id;
   const id = (await c.supervisor.post('/api/clients', { first_name: 'Augusta', last_name: 'Last', confirm_duplicate: true })).data.id;
   clientId = id; clientCode = H.db.one(`SELECT client_code FROM clients WHERE id=?`, id).client_code;
-  assert.equal((await c.supervisor.post('/api/interventions', { client_id: id, type: 'case_management', occurred_at: '2026-08-31T18:00:00.000Z', funding_source_id: fund })).status, 201);
-  assert.equal((await c.supervisor.post('/api/interventions', { type: 'naloxone_distribution', occurred_at: '2026-08-12T18:00:00.000Z', naloxone_kits: 3, location: 'community' })).status, 201);
+  assert.equal((await c.supervisor.post('/api/interventions', { client_id: id, type: 'case_management', occurred_at: H.localAt('2026-08-31', 11), funding_source_id: fund })).status, 201);
+  assert.equal((await c.supervisor.post('/api/interventions', { type: 'naloxone_distribution', occurred_at: H.localAt('2026-08-12', 11), naloxone_kits: 3, location: 'community' })).status, 201);
 });
 after(async () => { await H.stop(); });
 

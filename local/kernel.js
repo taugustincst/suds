@@ -727,7 +727,7 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
     let file;
     try { file = await asHttp(() => backup.create({ bytes: sqlite.exportCurrent(), meta, passphrase: v.passphrase, appVersion: require('./shims/config.js').version })); }
     catch (e) { putBack('last_backup_at', previous); putBack('last_backup_to', previousTo); throw e; }
-    const name = `suds-device-backup-${at.slice(0, 10)}.sudsbackup`;
+    const name = backup.downloadName(at);
     ctx.res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${name}"` });
     ctx.res.end(Buffer.from(file));
   });

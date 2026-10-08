@@ -76,7 +76,8 @@ module.exports = (r) => {
   // How complaints were handled over a period: counts only.
   r.get('/api/complaints/report', auth.requireAuth, auth.requirePerm('complaints:read', 'complaints:write'), (ctx) => {
     const today = require('../local-date').today(); const from = ctx.query.get('from') || `${today.slice(0, 4)}-01-01`; const to = ctx.query.get('to') || today;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw badRequest('from and to must be YYYY-MM-DD');
+    const { isRealDate } = require('../local-date');
+    if (!isRealDate(from) || !isRealDate(to)) throw badRequest('from and to must be real dates (YYYY-MM-DD)');
     const w = `received_at BETWEEN ? AND ?`;
     const by = (col) => db.all(`SELECT ${col} k, COUNT(*) n FROM complaints WHERE ${w} GROUP BY ${col} ORDER BY n DESC`, from, to);
     const days = db.all(`SELECT julianday(resolved_at)-julianday(received_at) d FROM complaints WHERE ${w} AND resolved_at IS NOT NULL ORDER BY d`, from, to).map(x => x.d);

@@ -9,7 +9,8 @@ const base = process.env.SUDS_SETUP_URL || 'http://127.0.0.1:8095';
 let port = Number(process.env.SETUP_PORT || 8496);
 const { ok, eq, finish } = makeChecks('setup');
 const browser = await chromium.launch();
-const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1200, height: 900 } }); const page = await ctx.newPage();
+// The browser is in Los Angeles, as a county's is, whatever zone this machine runs in: the wizard offers its zone (F4).
+const ctx = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1200, height: 900 }, timezoneId: 'America/Los_Angeles' }); const page = await ctx.newPage();
 const errors = []; page.on('pageerror', e => errors.push('PAGEERROR ' + e.message));
 // The service worker cannot install behind a certificate the browser does not trust; a county trusts the
 // self-signed one once per device, the test never does. Everything else on the console is a defect.
@@ -58,6 +59,8 @@ await page.selectOption('select[name=programme_profile]', 'harm_reduction');
 eq((await offlineField())?.value, 'no', 'a hand-picked answer is not overwritten by the profile');
 // The programme profile: harm reduction & outreach unless the county says it is treatment-adjacent.
 eq(await page.$eval('select[name=programme_profile]', e => e.value).catch(() => null), 'harm_reduction', 'the wizard asks what kind of programme this is and defaults to harm reduction & outreach');
+eq(await page.$eval('select[name=org_timezone]', e => e.value).catch(() => null), 'America/Los_Angeles', 'the wizard asks for the time zone, prefilled with this computer\'s');
+ok(/Time zone/.test(await page.$eval('[data-field=org_timezone] label', e => e.textContent).catch(() => '')), 'with a label');
 // The programme's main fund (optional) becomes the default for new visits.
 ok(await page.$('input[name=main_fund_name]'), 'the wizard asks for the programme\'s main funding source');
 // 1.14.0: what kind of funding it is. The placeholder's example is settlement money, and a fund named as
@@ -95,6 +98,8 @@ ok(await page.$('.layout'), 'the administrator signs in over HTTPS at the new ad
   eq(mods.publication, true, 'and publication releases on, as a new install starts');
   const https = ((await page.evaluate(() => fetch('/api/admin/security/hardening', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()))).items || []).find(i => i.id === 'https');
   eq(https && https.status, 'served by SUDS', 'the hardening checklist sees the HTTPS the wizard just switched on, without a restart');
+  const tz = ((await page.evaluate(() => fetch('/api/admin/security/hardening', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()))).items || []).find(i => i.id === 'timezone');
+  ok(tz && tz.done && tz.status === 'America/Los_Angeles', 'the time zone chosen in the wizard is the program\'s, and the checklist has it done', tz);
   const funds = await page.evaluate(() => fetch('/api/budget/funds', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()));
   const main = (funds.funds || []).find(f => f.name === 'County opioid settlement allocation');
   ok(main, 'the main funding source named in the wizard exists', JSON.stringify(funds).slice(0, 200));

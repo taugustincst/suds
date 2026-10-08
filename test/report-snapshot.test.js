@@ -130,10 +130,20 @@ test('the monthly report reads a month at a time and answers exactly what one pa
   assert.equal(r.status, 200);
   const [ty, tm] = require('../server/local-date').today().split('-').map(Number);
   const s = new Date(Date.UTC(ty, tm - 24, 1)).toISOString().slice(0, 10);
-  // 1.13.0's three passes over the visits.
-  assert.deepEqual(r.data.interventions, db.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s).map(x => ({ ...x })));
-  assert.deepEqual(r.data.naloxone, db.all(`SELECT substr(occurred_at,1,7) month, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s).map(x => ({ ...x })));
-  assert.deepEqual(r.data.unduplicated_clients, db.all(`SELECT substr(occurred_at,1,7) month, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? AND client_id IS NOT NULL GROUP BY month ORDER BY month`, s).map(x => ({ ...x })));
+  // 1.13.0's three passes over the visits, by the programme's month (1.25.2, CS5: an instant's UTC month put an
+  // evening at the end of a month in the next one), worked out here one visit at a time.
+  const { dayOf } = require('../server/local-date');
+  const byMonth = new Map();
+  for (const v of db.all(`SELECT occurred_at, duration_minutes, client_id, naloxone_kits, fentanyl_strips FROM interventions`)) {
+    const day = dayOf(v.occurred_at); if (day < s) continue;
+    const m = byMonth.get(day.slice(0, 7)) || { n: 0, minutes: 0, clients: new Set(), kits: 0, strips: 0 };
+    m.n++; m.minutes += v.duration_minutes || 0; m.kits += v.naloxone_kits || 0; m.strips += v.fentanyl_strips || 0; if (v.client_id) m.clients.add(v.client_id);
+    byMonth.set(day.slice(0, 7), m);
+  }
+  const months = [...byMonth.keys()].sort();
+  assert.deepEqual(r.data.interventions, months.map(month => { const m = byMonth.get(month); return { month, n: m.n, minutes: m.minutes, clients: m.clients.size }; }));
+  assert.deepEqual(r.data.naloxone, months.map(month => ({ month, kits: byMonth.get(month).kits, strips: byMonth.get(month).strips })));
+  assert.deepEqual(r.data.unduplicated_clients, months.filter(month => byMonth.get(month).clients.size).map(month => ({ month, clients: byMonth.get(month).clients.size })));
   assert.ok(r.data.interventions.length >= 10, 'the fixture has visits in most months');
   // It lets the event loop go at least once a month of the window (1.13.0 read twelve months in one piece).
   const g = require('../server/routes/reports').monthlyFigures(db.one(`SELECT * FROM users WHERE username='admin'`), s);

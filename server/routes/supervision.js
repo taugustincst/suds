@@ -63,7 +63,6 @@ function mayRemindWorker(user, workerId) {
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-const day = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : d; };
 // A date as the app shows one (public/app.js fmt.date, in the office's US English: "Jun 19, 2026").
 const appDay = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || ''); return m ? `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}` : d; };
 
@@ -193,7 +192,8 @@ module.exports = (r) => {
   const mins = (n) => { const h = Math.floor((n || 0) / 60), m = (n || 0) % 60; return h ? `${h}h${m ? ` ${m}m` : ''}` : `${m}m`; };
   function tellWorker(ctx, workerId, entries, note, reopened) {
     if (!workerId || !entries.length) return null;
-    const what = entries.length === 1 ? `your time for ${day(entries[0].work_date)} (${mins(entries[0].minutes)})` : `${entries.length} of your time entries (${entries.map(e => day(e.work_date)).filter((x, i, a) => a.indexOf(x) === i).slice(0, 3).join(', ')}${entries.length > 3 ? '…' : ''})`;
+    // Dates as the app shows them ("Sep 21, 2026"), not "21 Sep 2026" (CS16); several are separated by semicolons.
+    const what = entries.length === 1 ? `your time for ${appDay(entries[0].work_date)} (${mins(entries[0].minutes)})` : `${entries.length} of your time entries (${entries.map(e => appDay(e.work_date)).filter((x, i, a) => a.indexOf(x) === i).slice(0, 3).join('; ')}${entries.length > 3 ? '…' : ''})`;
     const title = `Correct ${what}: ${reopened ? 'reopened' : 'returned'} by ${ctx.user.display_name || 'your supervisor'}`;
     const desc = `${reopened ? 'Reopened' : 'Returned'}: ${note}\nOpen My time, correct ${entries.length === 1 ? 'the entry' : 'them'} and submit again.`;
     const id = require('../crypto').uuid();

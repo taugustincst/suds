@@ -18,9 +18,16 @@ test('sample data: admin loads it, staff see it, it is removed cleanly with tomb
   assert.equal((await nav.get('/api/admin/demo')).status, 403);
   const st0 = (await admin.get('/api/admin/demo')).data;
   assert.equal(st0.loaded, false); assert.equal(st0.clients_total, 0);
-  const r = await admin.post('/api/admin/demo', {});
+  // A programme in Los Angeles on a server whose own zone may be anything (UTC in a container): the sample times are
+  // working hours on the programme's clock, not 3 AM (FL15).
+  H.db.setSetting('org_timezone', 'America/Los_Angeles');
+  let r; try { r = await admin.post('/api/admin/demo', {}); } finally { H.db.run(`DELETE FROM settings WHERE key='org_timezone'`); }
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.equal(r.data.loaded, true); assert.equal(r.data.counts.clients, 12); assert.ok(r.data.counts.interventions > 50);
+  const laHour = (iso) => Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', hourCycle: 'h23' }).format(new Date(iso)));
+  const odd = db.all(`SELECT occurred_at FROM interventions WHERE length(occurred_at)>10`).map(x => x.occurred_at).filter(t => { const hr = laHour(t); return hr < 7 || hr > 20; });
+  // A visit "today at 17:00" is moved back to a minute ago when that is still ahead, so only the past counts here.
+  assert.ok(odd.every(t => Date.now() - Date.parse(t) < 120000), `visits at working hours in Los Angeles: ${odd.slice(0, 3).join(', ')}`);
   assert.equal((await admin.post('/api/admin/demo', {})).status, 400);
   // navigator carries part of the sample caseload; codes are marked DEMO-
   const mine = (await nav.get('/api/caseload')).data.caseload; assert.ok(mine.length >= 3, 'navigator has sample caseload');

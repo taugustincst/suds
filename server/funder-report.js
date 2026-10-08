@@ -235,7 +235,8 @@ function overdoseFigures(ts, tsP, cf = null) {
       COALESCE(SUM(o.naloxone_doses),0) naloxone_doses FROM overdose_events o WHERE ${ts('o.occurred_at')}${scope}`, ...tsP, ...sp);
   return {
     ...od,
-    by_month: db.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END) reversals,
+    // By the programme's month (CS5): the period's own months, tsP's from and to.
+    by_month: db.all(`SELECT ${require('./local-date').monthSql('o.occurred_at', String(tsP[4]).slice(0, 7), String(tsP[5]).slice(0, 7))} month, COUNT(*) n, SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END) reversals,
         COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN o.naloxone_doses ELSE 0 END),0) reversal_doses FROM overdose_events o WHERE ${ts('o.occurred_at')}${scope} GROUP BY month ORDER BY month`, ...tsP, ...sp),
     // Who gave the naloxone in each reversal (as the NDP log counts it), so the rows add up to the reversals.
     by_administered_by: db.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts('o.occurred_at')} AND ${NALOXONE} AND o.survived=1${scope} GROUP BY k ORDER BY n DESC`, ...tsP, ...sp),

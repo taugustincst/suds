@@ -86,8 +86,12 @@ module.exports = (r) => {
       // category (Exhibit E allowable use, California HIAA), as Funding & spending asks.
       main_fund_type: { type: 'string', enum: C.FUNDING_TYPES }, main_fund_settlement_use: { type: 'string', enum: C.SETTLEMENT_USES.map(x => x.code) },
       main_fund_settlement_hiaa: { type: 'string', enum: [...C.SETTLEMENT_HIAA.map(x => x.code), 'none'] },
+      // The programme's time zone (F4): the wizard offers the browser's, which on the computer running SUDS is the
+      // county's. Omitted, the server's own zone stays in use (Security status then asks for one).
+      org_timezone: { type: 'string', maxLen: 64 },
       // port omitted → 'auto' (standard port with fallback)
     });
+    if (v.org_timezone && !require('../local-date').validTimezone(v.org_timezone)) throw badRequest('org_timezone must be a time zone name such as America/Los_Angeles', { fields: { org_timezone: 'is not a time zone this server knows' } });
     const pwProblem = auth.passwordProblem(v.admin_password, { username: v.admin_username, display_name: v.admin_display_name });
     if (pwProblem) throw badRequest(pwProblem, { fields: { admin_password: pwProblem } });
 
@@ -108,6 +112,7 @@ module.exports = (r) => {
       db.run(`INSERT INTO users(id,username,password_hash,display_name,role,must_change_password,password_changed_at) VALUES(?,?,?,?,?,0,?)`, uuid(), v.admin_username, adminHash, v.admin_display_name, 'admin', db.now());
       db.setSetting('org_name', v.org_name); if (v.county_name) db.setSetting('county_name', v.county_name); if (v.program_contact) db.setSetting('program_contact', v.program_contact);
       db.setSetting('caseload_restriction', '1');
+      if (v.org_timezone) db.setSetting('org_timezone', v.org_timezone);
       db.setSetting('programme_profile', v.programme_profile || require('../programme').DEFAULT_PROFILE);
       if (v.participant_code_default === true && (v.programme_profile || require('../programme').DEFAULT_PROFILE) === 'harm_reduction') db.setSetting('participant_code_default', '1');
       mainFund = require('./budget').createProgrammeFund(v.main_fund_name, { type: v.main_fund_type || 'other', settlement_use: v.main_fund_settlement_use || null, settlement_hiaa: v.main_fund_settlement_hiaa || null });
@@ -133,7 +138,7 @@ module.exports = (r) => {
     // in the environment decides it — then the environment keeps winning and the answer is only recorded.
     const localMode = v.local_mode === true;
     if (!config.localModeFromEnv) config.localModeEnabled = localMode;
-    audit.log({ user: { username: v.admin_username }, action: 'setup.complete', ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config.localModeEnabled, programme_profile: require('../programme').profile(), defaults, main_fund: mainFund } });
+    audit.log({ user: { username: v.admin_username }, action: 'setup.complete', ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config.localModeEnabled, programme_profile: require('../programme').profile(), org_timezone: v.org_timezone || undefined, defaults, main_fund: mainFund } });
     // (network switch below persists the final port)
     // 4. switch listener
     let desc;

@@ -41,11 +41,17 @@ export async function spreadsheetImportCard() {
     const missing = p.fields.filter(f => f.required && !Object.values(mapping).includes(f.key));
     const errRows = p.rows.filter(r => r.errors.length);
     const dupes = p.rows.filter(r => r.record._duplicate_of);
+    const shortYears = p.rows.flatMap(r => (r.dates || []).map(d => ({ n: r.n, ...d })));
     const skipDup = h('input', { type: 'checkbox', checked: true });
     review.append(...[
       h('div', { class: 'row mb' }, p.sheets.length > 1 ? h('select', { onChange: (e) => load(file, null, Number(e.target.value)) }, p.sheets.map((s, i) => h('option', { value: i, selected: i === p.sheet }, `Sheet: ${s.name} (${s.rows} rows)`))) : null, badge(`${p.rows.length} rows`), badge(`${p.valid} ready`, 'ok'), p.invalid ? badge(`${p.invalid} with problems`, 'danger') : null, dupes.length ? badge(`${dupes.length} look like existing clients`, 'warn') : null, p.truncated ? badge('Only the first 2000 rows are shown', 'warn') : null),
       h('details', { open: !!missing.length }, h('summary', {}, 'Column matching', missing.length ? h('span', { class: 'badge danger', style: { marginLeft: '.5rem' } }, `missing: ${missing.map(f => f.label).join(', ')}`) : h('span', { class: 'badge ok', style: { marginLeft: '.5rem' } }, 'all required columns found')), h('div', { class: 'table-wrap' }, mapTable), h('div', { class: 'btn-row' }, h('button', { class: 'btn sm', onClick: () => load(file, mapping, p.sheet) }, 'Re-check with these columns'))),
       errRows.length ? h('div', { class: 'card tight mt' }, h('h3', { class: 'eyebrow' }, 'Rows that need attention'), table([{ label: 'Row', key: 'n' }, { label: 'Problem', render: r => r.errors.join('; ') }], errRows.slice(0, 50), { wrap: false }), errRows.length > 50 ? h('div', { class: 'small muted' }, `…and ${errRows.length - 50} more`) : null) : null,
+      // A two-digit year is a guess (a date of birth "1/5/27" is 1927, a due date "1/5/28" 2028): each one is shown with
+      // what it was read as, so the person importing can check it before anything is saved (BO4).
+      shortYears.length ? h('div', { class: 'card tight mt', 'data-import-dates': '1' }, h('h3', { class: 'eyebrow' }, 'Dates with a two-digit year: check how they were read'),
+        table([{ label: 'Row', key: 'n' }, { label: 'Column', key: 'field' }, { label: 'In the file', key: 'raw' }, { label: 'Read as', render: d => fmt.date(d.value) }], shortYears.slice(0, 50), { wrap: false }),
+        shortYears.length > 50 ? h('div', { class: 'small muted' }, `…and ${shortYears.length - 50} more`) : null) : null,
       dupes.length ? h('label', { class: 'check' }, skipDup, `Skip rows that match an existing client by name (${dupes.length})`) : null,
       h('div', { class: 'btn-row' },
         p.valid ? h('button', { class: 'btn primary', onClick: async (e) => {
