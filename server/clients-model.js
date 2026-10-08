@@ -162,7 +162,7 @@ function codeNumber(code, prefix) {
 }
 
 function nextClientCode() {
-  const year = new Date().getFullYear();
+  const year = Number(require('./local-date').today().slice(0, 4)); // the programme's year: C27- is not issued on its New Year's Eve
   // Clients created on a device (local mode) get an M prefix so codes never collide with the office server's C codes.
   const prefix = `${require('./config').local ? 'M' : 'C'}${String(year).slice(2)}-`;
   // A per-prefix counter is the source of truth, so a renamed code (`-D2`) or a code past 9999 (which sorts

@@ -81,19 +81,7 @@ function requireReportRun({ caseloadScoped, fund = false }) {
 }
 
 const nextMonth = (m) => { const y = Number(m.slice(0, 4)); const mo = Number(m.slice(5, 7)); return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`; };
-/**
- * The month (YYYY-MM) of a stored date or instant on the programme's calendar, as SQL, for the months from `from`
- * (YYYY-MM) to this one. An instant is UTC, so its own prefix put a visit at 8:30pm on October 31st in Los Angeles in
- * November (CS5); it is placed by the instants the programme's months begin at instead. A bare date is its own month;
- * an instant before `from` or after this month keeps its UTC month. The bounds are ISO strings made here, not input.
- */
-function localMonth(col, from) {
-  const { localMidnight, today } = require('../local-date');
-  const months = []; for (let m = from; m <= today().slice(0, 7); m = nextMonth(m)) months.push(m);
-  const after = localMidnight(`${nextMonth(months[months.length - 1])}-01`);
-  const steps = months.map(m => `WHEN ${col} >= '${localMidnight(`${m}-01`)}' THEN '${m}'`).reverse().join(' ');
-  return `(CASE WHEN length(${col})=10 OR ${col} >= '${after}' THEN substr(${col},1,7) ${steps} ELSE substr(${col},1,7) END)`;
-}
+const localMonth = (col, from) => require('../local-date').monthSql(col, from, require('../local-date').today().slice(0, 7));
 /** From the programme's day `date` on, for a column holding bare dates and instants: SQL and its parameters. */
 function since(col, date) {
   const t = require('../local-date').localMidnight(date);

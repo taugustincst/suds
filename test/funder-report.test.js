@@ -35,7 +35,8 @@ after(async () => { await H.stop(); });
 // a naloxone reversal whether or not its box was ticked (the fixture has such rows), which moved the reversal
 // figures and nothing else. "Who gave the naloxone" counts the reversals (naloxone used, the person survived),
 // as the NDP log does, so that its rows add up to the reversals and are protected with them; that moved
-// those rows and nothing else.
+// those rows and nothing else. In 1.25.2 the overdoses by month are the programme's months, not
+// UTC ones (CS5): that moved the Los Angeles case's overdose.by_month rows between neighbouring months and nothing else.
 const FUND_KEYS = ['name', 'grant_number', 'fiscal_year_start', 'fiscal_year_end', 'clients_served', 'services', 'approved_minutes'];
 const sortRows = (rows) => [...rows].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 function normalise(d) {

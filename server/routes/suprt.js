@@ -34,8 +34,10 @@ const assessmentsOf = (clientId) => db.all(`SELECT * FROM suprt_assessments WHER
 const dischargeOf = (c) => (c && ['closed', 'inactive', 'deceased'].includes(c.status) && c.discharge_date ? String(c.discharge_date).slice(0, 10) : null);
 /** The first SOR-funded service after `after` (a date, or '' for any). */
 function firstSorService(clientId, after = '') {
-  const r = db.one(`SELECT MIN(substr(i.occurred_at,1,10)) d FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id WHERE i.client_id=? AND f.source_type='sor_grant' AND substr(i.occurred_at,1,10) > ?`, clientId, after);
-  return (r && r.d) || null;
+  // On the programme's calendar (CS5): an evening visit's UTC date is the next day. A client's own visits: a handful.
+  const { dayOf } = require('../local-date');
+  return db.all(`SELECT i.occurred_at FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id WHERE i.client_id=? AND f.source_type='sor_grant'`, clientId)
+    .map(r => dayOf(r.occurred_at)).filter(d => d && d > after).sort()[0] || null;
 }
 
 /**

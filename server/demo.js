@@ -122,7 +122,7 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
       return id;
     });
     // Funding
-    const y = new Date().getFullYear();
+    const y = Number(LD.today().slice(0, 4));
     const fundStart = `${y}-07-01`; // the settlement fund's fiscal year; work before it is not charged to it
     const fund = track('funding_sources', uuid());
     // Its Exhibit E allowable use and California High Impact Abatement Activity (constants.SETTLEMENT_USES /
