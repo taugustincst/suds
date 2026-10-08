@@ -221,7 +221,7 @@ const admin = await session('admin', 'AdminPassw0rd!x');
     eq(exp.status, 201, 'a navigator records an expenditure');
     await navS.close();
     eq((await fin.api('PUT', `/api/budget/expenditures/${exp.data && exp.data.id}`, { amount: 12.35 })).status, 200, 'finance changes it');
-    await go(fin.page, 'budget');
+    await go(fin.page, 'budget?tab=expenditures&status=pending');
     const row = await until(() => fin.page.$('tr:has-text("BO13 check vendor")'));
     ok(row && !(await row.$('button:has-text("Approve")')), 'finance is not offered Approve on an expenditure it changed');
     ok(row && await row.$('[data-self-review]'), 'the row says it waits for someone else instead');

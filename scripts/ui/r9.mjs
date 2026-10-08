@@ -248,6 +248,15 @@ try {
     eq(refused.join(', '), '', 'FL12: and nothing was asked for while the second step was owed');
     await ctx.close();
   }
+  { // FL12: signing out asks for nothing that needs the session it just ended.
+    const s = await session('mrivera');
+    const refused = []; s.page.on('response', r => { if (r.status() === 401) refused.push(new URL(r.url()).pathname); });
+    await s.page.click('text=Sign out');
+    await s.page.waitForSelector('input[name=username]', { timeout: 10000 }).catch(() => {});
+    await s.page.waitForTimeout(2000);
+    eq(refused.join(', '), '', 'FL12: signing out leaves no refused request behind');
+    await s.ctx.close();
+  }
 } catch (e) {
   fail(`crashed: ${e.stack || e.message}`);
 }
