@@ -16573,7 +16573,18 @@ var require_caloms_spec = __commonJS({
       { key: "secondary_days_used", name: "SecondaryDrugFrequency", label: "Days secondary drug used, past 30", type: "int", min: 0, max: 30, alt: [99902], in: REP, req: (a, c) => c.standard && hasSecondary(a, c), group: "Past 30 days", dict: "ADU-2" },
       { key: "alcohol_days", name: "AlcoholUseDays", label: "Days alcohol used, past 30", type: "int", min: 0, max: 30, alt: [99902], in: REP, req: "standard", group: "Past 30 days" },
       { key: "iv_use_30", name: "NeedleUsePast30Days", label: "Days of needle use, past 30", type: "int", min: 0, max: 30, alt: [99900, 99904], in: REP, req: "standard", group: "Past 30 days", dict: "ADU-10 p.35" },
-      { key: "employment_status", name: "CurrentEmploymentStatus", label: "Employment status", set: "EMPLOYMENT", in: REP, req: "standard", group: "Past 30 days" },
+      // The labels are the dictionary's (EMP-1 p.62); the help tells 4 from 5 in the words SUDS used before 1.25.0, which the
+      // dictionary check (docs/evidence/caloms-dictionary-verification.md) found equivalent to them (1.25.2, CS12).
+      {
+        key: "employment_status",
+        name: "CurrentEmploymentStatus",
+        label: "Employment status",
+        set: "EMPLOYMENT",
+        in: REP,
+        req: "standard",
+        group: "Past 30 days",
+        help: "4: out of work and not looking for work. 5: not in the labor force at all \u2014 a student, homemaker, retired, disabled, or incarcerated."
+      },
       { key: "paid_work_days", name: "DaysPaidForWorkPast30", label: "Days paid for work, past 30", type: "int", min: 0, max: 30, alt: [99900, 99904], in: REP, req: "standard", group: "Past 30 days", dict: "EMP-2" },
       { key: "school_enrolled", name: "EnrolledInSchool", label: "Enrolled in school", set: "SCHOOL_ENROLLED", in: REP, req: "standard", group: "Past 30 days", dict: "EMP-3 p.64" },
       { key: "job_training", name: "EnrolledInJobTraining", label: "Enrolled in job training", set: "SCHOOL_ENROLLED", in: REP, req: "standard", group: "Past 30 days", dict: "EMP-4 p.65" },
@@ -16597,7 +16608,10 @@ var require_caloms_spec = __commonJS({
     var FROM_SUDS = {
       asam_level: { "1.0": "1", "2.1": "1", "2.5": "1", "3.1": "2", "3.3": "2", "3.5": "2", "3.7": "2", "4.0": "2", OTP: "7" },
       substance: { opioids_fentanyl: "99903", opioids_heroin: "1", opioids_rx: "16", alcohol: "2", methamphetamine: "5", cocaine: "8", benzodiazepines: "12", cannabis: "9", synthetic_cannabinoids: "99903", xylazine: "99903", other: "99903" },
-      discharge_reason: { completed: "1", transferred: "1", incarcerated: "8", deceased: "7", lost_contact: "6", declined: "5", moved: "4" },
+      // No suggestion for "transferred" or "moved" (1.25.2, CS10): DIS-2 (p.61) asks whether the client completed the
+      // treatment plan and how they progressed, which neither reason says; 1 (completed) or 4 (satisfactory progress)
+      // would be a claim the state counts. The worker chooses the status.
+      discharge_reason: { completed: "1", incarcerated: "8", deceased: "7", lost_contact: "6", declined: "5" },
       veteran: { 1: "1", 0: "0" }
     };
     var ID_COLUMNS = [
@@ -16656,7 +16670,7 @@ var require_overdose_events = __commonJS({
     "use strict";
     init_globals_inject();
     var C = require_constants();
-    var { define: define2 } = require_core();
+    var { define: define2, flag } = require_core();
     var { ownedBy } = require_shared();
     var KINDS = C.OVERDOSE_KINDS;
     module.exports = define2({
@@ -16681,7 +16695,23 @@ var require_overdose_events = __commonJS({
         notes: { type: "string", maxLen: 4e3 }
       },
       owner: { col: "reported_by", all: "records:manage-others" },
-      editableBy: ownedBy(["reported_by"], "records:manage-others")
+      editableBy: ownedBy(["reported_by"], "records:manage-others"),
+      // What happened and the naloxone answers must agree, since each kind is a different count (1.25.2, FL2). A reversal
+      // means naloxone was given and a fatal overdose that the person did not survive: the kind decides those, at the
+      // office (routes/overdose.js normalise) and now on a push too. An overdose "with no naloxone given" that says
+      // naloxone was given is ambiguous: REST refuses it, and a device's offline record lands flagged for the office.
+      normalise(row, c) {
+        const kind = c.plain("kind");
+        if (kind === "reversal") row.naloxone_used = 1;
+        if (kind === "fatal") row.survived = 0;
+        return null;
+      },
+      check(row, c) {
+        if (!c.changed().some((k) => ["kind", "naloxone_used", "naloxone_doses"].includes(k)) || c.plain("kind") !== "overdose") return null;
+        if (![true, 1, "1"].includes(c.plain("naloxone_used")) && !(Number(c.plain("naloxone_doses")) > 0)) return null;
+        const message = `Naloxone was given, so this is "Overdose reversed with naloxone" (or a fatal overdose), not an overdose with no naloxone given. Change what happened, or untick naloxone and clear the doses.`;
+        return flag("was accepted, but it says naloxone was given to an overdose recorded as having none; the office will review it", { message, fields: { kind: message }, code: "overdose_consistency" });
+      }
     });
   }
 });
@@ -18936,15 +18966,15 @@ var require_spreadsheet = __commonJS({
     }
     var FORMULA_START = /^'*[=+\-@\t\r]/;
     var UNGUARD = /^'+[=+\-@\t\r]/;
-    function toCsv(rows, columns) {
+    function toCsv(rows, columns, { plain = false } = {}) {
       const esc = (v) => {
         if (v === null || v === void 0) return "";
         if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
         let t = typeof v === "object" ? JSON.stringify(v) : String(v);
-        if (FORMULA_START.test(t)) return `"'` + t.replace(/"/g, '""') + '"';
+        if (!plain && FORMULA_START.test(t)) return `"'` + t.replace(/"/g, '""') + '"';
         return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
       };
-      return "\uFEFF" + [columns.map((c) => esc(c.label || c.key || c)).join(","), ...rows.map((r) => columns.map((c) => esc(r[c.key || c])).join(","))].join("\r\n");
+      return (plain ? "" : "\uFEFF") + [columns.map((c) => esc(c.label || c.key || c)).join(","), ...rows.map((r) => columns.map((c) => esc(r[c.key || c])).join(","))].join("\r\n");
     }
     function crc32(buf) {
       let c, crc = 4294967295;
@@ -28827,6 +28857,7 @@ var require_caloms = __commonJS({
           const vals = distinctCodes(Array.isArray(a[k]) ? a[k] : []);
           if (vals.length > 1 && vals.some((x) => exclusive.includes(x))) add(k, "exclusive_code_combined", `${label(k)}: "${S.SETS[S.FIELD[k].set].find((c) => c.code === vals.find((x) => exclusive.includes(x))).label}" cannot be combined with other answers`);
         }
+        if (codeOf("service_type") === "7" && codeOf("medication") === "1") add("medication", "ntp_medication_none", 'Narcotic Treatment Program with medication "None": confirm that no medication is prescribed as part of treatment', "warning");
         if (dateOk && ctx.episode && ctx.episode.opened_at && ctx.episode.opened_at.slice(0, 10) !== date) add("record_date", "admission_date_differs", `Admission date differs from the episode's start (${ctx.episode.opened_at.slice(0, 10)})`, "warning");
       }
       const secondaryDrug = type === "admission" ? codeOf("secondary_drug") : ctx.admission ? String(ctx.admission.secondary_drug) : null;
@@ -29078,7 +29109,7 @@ var require_caloms = __commonJS({
           return o;
         });
         counts[type] = rows.length;
-        files.push([FILE[type], T.toCsv(rows, cols2.map((c) => ({ key: c.key, label: c.name })))]);
+        files.push([FILE[type], T.toCsv(rows, cols2.map((c) => ({ key: c.key, label: c.name })), { plain: true })]);
       }
       const activity = [];
       for (const p of providers().filter((x) => !providerId || x.id === providerId)) for (const month of monthsBetween(from, to)) {
@@ -29086,11 +29117,14 @@ var require_caloms = __commonJS({
         const n = (t) => inMonth.filter((r) => r.record_type === t).length;
         activity.push({ provider_id: p.id, report_month: month.replace("-", ""), admissions: n("admission"), discharges: n("discharge"), annual_updates: n("annual_update"), no_activity: inMonth.length ? "N" : "Y" });
       }
-      files.push(["provider_activity.csv", T.toCsv(activity, [{ key: "provider_id", label: "ProviderID" }, { key: "report_month", label: "ReportMonth" }, { key: "admissions", label: "Admissions" }, { key: "discharges", label: "Discharges" }, { key: "annual_updates", label: "AnnualUpdates" }, { key: "no_activity", label: "NoActivity" }])]);
+      files.push(["provider_activity.csv", T.toCsv(activity, [{ key: "provider_id", label: "ProviderID" }, { key: "report_month", label: "ReportMonth" }, { key: "admissions", label: "Admissions" }, { key: "discharges", label: "Discharges" }, { key: "annual_updates", label: "AnnualUpdates" }, { key: "no_activity", label: "NoActivity" }], { plain: true })]);
       const excluded = providerId ? rep.checked.filter((x) => mine(x.record) && fatal(x.issues).length).length : rep.summary.blocked;
       files.push(["README.txt", readme({ from, to, counts, excluded, activity, generatedBy, missing: rep.summary.missing, preview, submissionId, providerId })]);
       if (preview) for (const f of files) f[0] = `PREVIEW-${f[0]}`;
       return { files, ready, clientIds: [...new Set(ready.map((r) => r.client_id))], counts, excluded, activity_rows: activity.length, no_activity_months: activity.filter((a) => a.no_activity === "Y").length };
+    }
+    function periodOpenNote(to) {
+      return to >= today() ? `The period has not ended yet (it runs to ${to}): records saved later in it go into a later file, and the provider activity for ${to.slice(0, 7)} is partial.` : null;
     }
     function readme({ from, to, counts, excluded, activity, generatedBy, missing, preview = false, submissionId = null, providerId = null }) {
       return [
@@ -29117,6 +29151,7 @@ var require_caloms = __commonJS({
         "",
         ...submissionId ? [`Submission: ${submissionId} (its SHA-256 is recorded in SUDS; send this file unchanged)`] : [],
         `Period: ${from} to ${to}`,
+        ...periodOpenNote(to) ? [`NOTE: ${periodOpenNote(to)}`] : [],
         ...providerId ? [`Provider: ${providerId}${(() => {
           const p = providers().find((x) => x.id === providerId) || {};
           return [p.legal_name || p.name, p.npi ? `NPI ${p.npi}` : ""].filter(Boolean).map((x) => ` - ${x}`).join("");
@@ -29153,7 +29188,7 @@ var require_caloms = __commonJS({
         ...require_disclosure().part2Program() ? ["42 CFR Part 2", "-------------", require_disclosure().fileNotice(), ""] : []
       ].join("\r\n");
     }
-    module.exports = { enabled, providers, validNpi, schedule, startDate, config: config2, PROVIDER_ID, normalize, check, fatal, blocking, CROSS_RECORD, present, recordsForEpisode, contextFor, save, report, buildExtract, monthsBetween, columnsFor, ANNUAL_EARLY, ANNUAL_LATE, addYears, addDays };
+    module.exports = { enabled, providers, validNpi, schedule, startDate, config: config2, PROVIDER_ID, normalize, check, fatal, blocking, CROSS_RECORD, present, recordsForEpisode, contextFor, save, report, buildExtract, periodOpenNote, monthsBetween, columnsFor, ANNUAL_EARLY, ANNUAL_LATE, addYears, addDays };
   }
 });
 
@@ -29664,7 +29699,7 @@ var require_caloms2 = __commonJS({
         });
         require_incidents().maybeMassExport({ clients: x.clientIds.length, kind: "caloms", user: ctx.user });
         audit3.log({ user: ctx.user, action: "caloms.submitted", entity: "caloms_submission", entityId: id, ip: ctx.ip, details: { from, to, ...x.counts, held_back: x.excluded, clients_disclosed: x.clientIds.length, sha256: hash2 } });
-        return { ok: true, id, from, to, submitted_at: stamp2, file_name: fileName2, sha256: hash2, bytes: body.length, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded };
+        return { ok: true, id, from, to, submitted_at: stamp2, file_name: fileName2, sha256: hash2, bytes: body.length, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded, warnings: [C.periodOpenNote(to)].filter(Boolean) };
       });
       const ownOnly = (ctx) => auth3.caseloadRestricted(ctx.user);
       const mayReach = (ctx, sub, what) => {
@@ -40007,13 +40042,17 @@ var require_episodes2 = __commonJS({
         let remindersCancelled = 0;
         const skipped = [];
         db3.transaction(() => {
+          const release = (a) => lastDay < a.start_date ? db3.run(`UPDATE assignments SET end_date=?, ended_at=?, updated_at=? WHERE id=?`, a.start_date, db3.now(), db3.now(), a.id) : db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, lastDay, db3.now(), a.id);
           for (const a of open3) {
-            if (db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND (end_date IS NULL OR end_date >= ?)`, a.client_id, to.id, when)) {
-              db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, lastDay, db3.now(), a.id);
-              skipped.push({ client_id: a.client_id, reason: "already assigned to the receiving worker" });
+            const theirs = db3.one(`SELECT id, role_on_case FROM assignments WHERE client_id=? AND user_id=? AND (end_date IS NULL OR end_date >= ?) AND (ended_at IS NULL OR ended_at > ?)`, a.client_id, to.id, when, db3.now());
+            if (theirs) {
+              release(a);
+              const promoted = (v.role_on_case || a.role_on_case) === "primary" && theirs.role_on_case !== "primary";
+              if (promoted) db3.run(`UPDATE assignments SET role_on_case='primary', updated_at=? WHERE id=?`, db3.now(), theirs.id);
+              skipped.push({ client_id: a.client_id, reason: "already assigned to the receiving worker", promoted: promoted || void 0 });
               continue;
             }
-            db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, lastDay, db3.now(), a.id);
+            release(a);
             db3.run(
               `INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes_enc,created_by) VALUES(?,?,?,?,?,?,?)`,
               uuid2(),
@@ -42528,15 +42567,20 @@ var require_imports2 = __commonJS({
         audit3.log({ user: ctx.user, action: "authz.denied", ip: ctx.ip, success: false, details: { perms: ["graph:import"], path: ctx.path } });
         throw forbidden("Importing from the shared OneNote notebook is for supervisors and administrators. Export your own pages from OneNote and upload them instead.");
       };
-      r.get("/api/imports/onenote/status", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => ({ configured: !!(config2.msGraph.tenantId && config2.msGraph.clientId && config2.msGraph.clientSecret && config2.msGraph.user), user: config2.msGraph.user ? config2.msGraph.user.replace(/(.{2}).+(@.+)/, "$1***$2") : null, shared_allowed: auth3.hasPerm(ctx.user, "graph:import") }));
-      r.get("/api/imports/onenote/notebooks", auth3.requireAuth, auth3.requirePerm("imports:write"), sharedNotebook, async (ctx) => {
+      const graphConfigured = () => !!(config2.msGraph.tenantId && config2.msGraph.clientId && config2.msGraph.clientSecret && config2.msGraph.user);
+      const needGraph = (ctx) => {
+        if (ctx.headers["x-ms-access-token"] || graphConfigured()) return;
+        throw new HttpError3(409, "OneNote import is not set up on this server: Microsoft Graph has no credentials (MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET, MS_ONENOTE_USER). Ask your administrator to set it up, or export the pages from OneNote and upload the file instead.");
+      };
+      r.get("/api/imports/onenote/status", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => ({ configured: graphConfigured(), user: config2.msGraph.user ? config2.msGraph.user.replace(/(.{2}).+(@.+)/, "$1***$2") : null, shared_allowed: auth3.hasPerm(ctx.user, "graph:import") }));
+      r.get("/api/imports/onenote/notebooks", auth3.requireAuth, auth3.requirePerm("imports:write"), sharedNotebook, needGraph, async (ctx) => {
         try {
           return { notebooks: await onenote.listNotebooks({ token: ctx.headers["x-ms-access-token"] }) };
         } catch (e) {
           throw new HttpError3(502, e.message);
         }
       });
-      r.get("/api/imports/onenote/sections/:id/pages", auth3.requireAuth, auth3.requirePerm("imports:write"), sharedNotebook, async (ctx) => {
+      r.get("/api/imports/onenote/sections/:id/pages", auth3.requireAuth, auth3.requirePerm("imports:write"), sharedNotebook, needGraph, async (ctx) => {
         try {
           return { pages: await onenote.listPages(ctx.params.id, { token: ctx.headers["x-ms-access-token"], since: ctx.query.get("since") || void 0 }) };
         } catch (e) {
@@ -42546,6 +42590,7 @@ var require_imports2 = __commonJS({
       r.post("/api/imports/onenote/fetch", auth3.requireAuth, auth3.requirePerm("imports:write"), sharedNotebook, async (ctx) => {
         const { page_ids } = validate(ctx.body, { page_ids: { type: "array", required: true } });
         if (!page_ids.length || page_ids.length > 200) throw badRequest("Select 1\u2013200 pages");
+        needGraph(ctx);
         let items;
         try {
           items = await onenote.fetchPages(page_ids.map(String), { token: ctx.headers["x-ms-access-token"] });

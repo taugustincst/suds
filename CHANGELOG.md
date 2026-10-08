@@ -2,6 +2,44 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Fixed
+
+* **CalOMS special answers in the Start an episode and Discharge dialogs (CS1, CS18).** Choosing a 999xx special answer
+  ("Client unable to answer") now fills its number box and is saved, as in the Edit dialog; an administrative discharge
+  no longer drops it silently. The help names the list beside the box instead of saying "below".
+* **Caseload transfer (CS3).** A receiving worker whose assignment was ended earlier that day gets the client (it
+  counted as "already assigned", and the client was left with nobody); one who held the client as secondary takes over
+  as primary; a departing worker's end date is never before their start; the result's wording is corrected.
+* **Sign & lock only for the author (CS6).** A supervisor opening another worker's draft is no longer offered a
+  signature the server refuses; the dialog says only the author signs.
+* **Clinical supervisors (CS7).** A clinician's Permissions say that countersigning is the per-user Countersign notes
+  grant (the role is unchanged); the sample clinician is titled "LCSW, Clinician".
+* **Report a privacy concern (CS8).** Staff who cannot open the incident register (clinicians, navigators) have
+  **Report a privacy concern** on Privacy & Part 2: a high-priority to-do, encrypted like every to-do, for a supervisor
+  or administrator to record it in the register. No new route or permission.
+* **+ Disclosure (CS9)** fills in the recipient and purpose from the consent chosen, still editable.
+* **CalOMS (CS10-CS14).** "Transferred" and "Moved" no longer pre-fill a discharge status that claims completion or
+  satisfactory progress. A Narcotic Treatment Program admission with medication "None" is a warning to confirm (the
+  dictionary's ADM-4 note; no warning for a "Transfer" admission with no earlier episode, which the dictionary does not
+  support: docs/compliance/CALOMS.md). Employment status 4 and 5 have help that tells them apart. The DHCS submission
+  files are plain CSV, with no byte-order mark and no spreadsheet formula guard (every other export keeps both). A
+  submission for a period that has not ended says so in the confirmation, the answer and the README.
+* **OneNote import with Microsoft Graph not set up (CS15)** answers 409 with what to do, not 502.
+* **The supervisor's "Settings" menu entry (CS17)** is called "Supervision tools", as its page is.
+* **Overdose records (FL2).** "Overdose (no naloxone given)" with naloxone given is refused at the office and flagged
+  for review on a device's push (server/rules/overdose_events.js); a push of a reversal or a fatal overdose gets the
+  same naloxone and survival answers the office gives it; the form keeps them in step.
+* **Referral consents (FL7, FL8).** The server's precise reason is shown when a consent on file does not name the
+  provider; a consent that does not cover the referral is never pre-selected and says so when chosen, and saving one
+  as pending warns. A consent's "To whom" suggests the resource directory's names.
+* **State reporting with CalOMS off (FL13)** asks a navigator to go to their administrator, and shows what would be
+  needed instead of a "Fatal" error per intake.
+* **Phone and wording (FL6, FL9, FL11, FL14).** The phone's top bar keeps its height on short pages; the offline
+  message says the entry is only on this screen; closing a dialog opened from "Add…" puts focus back on "Add…"; a
+  secondary substance stored as a code reads as its label.
+
 ## 1.25.1 — 2026-10-08
 
 A patch of 1.25.0 (docs/RELEASE.md, *Record: 1.25.1*): the fixes from the evaluation of 1.25.0 (E1 to E11), with
