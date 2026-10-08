@@ -83,7 +83,7 @@ module.exports = (r) => {
         // Sign-up on the sign-in page (POST /api/auth/signup): on unless switched off.
         if (k === 'self_signup' && v !== '' && !['0', '1'].includes(v)) throw badRequest('self_signup must be 1 (on) or 0 (off)');
         // The programme's calendar (server/routes/budget.js orgTimezone): an IANA name this server knows.
-        if (k === 'org_timezone' && v !== '' && !require('./budget').validTimezone(v)) throw badRequest('org_timezone must be a time zone name such as America/Los_Angeles');
+        if (k === 'org_timezone' && v !== '' && !require('../local-date').validTimezone(v)) throw badRequest('org_timezone must be a time zone name such as America/Los_Angeles');
         if (['mfa_require_all', 'sso_required', 'dr_drill_monthly', 'passkey_signin', 'passkey_signing', 'sign_strong_required', 'participant_code_default', 'field_device_default'].includes(k) && v !== '' && !['0', '1'].includes(v)) throw badRequest(`${k} must be 1 (on) or 0 (off)`);
         if (k === 'field_device_window_days' && v !== '') { const FS = require('../field-scope'); if (!(Number.isInteger(Number(v)) && Number(v) >= FS.WINDOW_MIN && Number(v) <= FS.WINDOW_MAX)) throw badRequest(`field_device_window_days must be a whole number of days from ${FS.WINDOW_MIN} to ${FS.WINDOW_MAX}`); }
         if (['dr_rto_target_minutes', 'dr_rpo_target_hours'].includes(k) && v !== '' && !(Number(v) > 0)) throw badRequest(`${k} must be a positive number`);

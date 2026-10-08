@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Gaps closed after the 1.9.4 completeness audit: a fatal overdose discharges the client and correcting the
 // event undoes it, patient-rights requests can be edited and voided, the program-wide episode list, the meta
 // lists the views read, and routes that had no API test at all.
@@ -35,7 +36,7 @@ test('a fatal overdose goes through discharge: the open episode closes as deceas
   assert.equal(episodeRow(c.episode_id).status, 'open');
   const task = await nav.post('/api/tasks', { client_id: c.id, title: 'Call back about housing', due_date: '2026-10-01' });
   assert.equal(task.status, 201);
-  const ev = await nav.post('/api/overdose-events', { client_id: c.id, occurred_at: '2026-09-20T03:00:00Z', kind: 'fatal' });
+  const ev = await nav.post('/api/overdose-events', { client_id: c.id, occurred_at: '2026-09-20T19:00:00Z', kind: 'fatal' }); // noon in California: the 20th in any US zone
   assert.equal(ev.status, 201);
   assert.deepEqual(clientRow(c.id), { status: 'deceased', discharge_date: '2026-09-20', discharge_reason: 'deceased' });
   assert.deepEqual(episodeRow(c.episode_id), { status: 'closed', discharge_reason: 'deceased', closed_at: '2026-09-20' });
@@ -241,7 +242,7 @@ test('GET /api/waitlist lists waitlisted clients on the caller\'s caseload, long
 });
 
 test('POST /api/time/submit-period submits the caller\'s own draft and rejected time in the range, nobody else\'s', async () => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = LD.today();
   const mine = [];
   for (let i = 0; i < 2; i++) { const r = await nav.post('/api/time', { work_date: today, minutes: 30, category: 'admin' }); assert.equal(r.status, 201, JSON.stringify(r.data)); mine.push(r.data.id); }
   const theirs = (await nav2.post('/api/time', { work_date: today, minutes: 15, category: 'admin' })).data.id;

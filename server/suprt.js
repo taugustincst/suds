@@ -132,7 +132,7 @@ function itemsFor(type, answers = {}) {
 // ---- dates ----
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
-const today = () => require('./routes/budget').localDate();
+const today = () => require('./local-date').localDate();
 const dec = (v) => { if (!v) return null; try { return decrypt(v); } catch { return null; } };
 /** Days to the reassessment: 180 (six months) unless the programme's SOR contract says 90 (setting). */
 function reassessmentDays() { return db.getSetting('suprt_reassessment_months', '6') === '3' ? 90 : 180; }

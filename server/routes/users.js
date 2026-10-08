@@ -67,7 +67,7 @@ module.exports = (r) => {
   // with an inactive account (Home). Counts and the person's name only: nothing about any client or to-do.
   // "Open" matches what POST /api/caseload/transfer moves (server/routes/episodes.js).
   const caseloadCounts = (userId) => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = require('../local-date').today();
     const where = userId ? 'AND u.id=?' : '';
     const args = userId ? [userId] : [];
     return db.all(`SELECT u.id, u.display_name, u.role, u.is_active,

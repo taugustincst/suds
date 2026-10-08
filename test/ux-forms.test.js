@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // 1.14.0 usability review of the forms: the API behind the lighter visit, time, supplies and re-admission forms.
 //  * A visit can carry its note (POST /api/interventions { note }): one request, both saved or neither, the note
 //    an ordinary draft linked to the visit and its client, under the Note form's permissions, encryption and audit.
@@ -12,7 +13,7 @@ const H = require('./helpers');
 const db = H.db;
 
 let nav, sup, clin, navUser, clientId;
-const today = new Date().toISOString().slice(0, 10);
+const today = LD.today();
 const count = (sql, ...p) => db.one(sql, ...p).n;
 before(async () => {
   await H.start();

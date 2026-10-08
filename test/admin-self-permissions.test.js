@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // An administrator changes their own access (the owner's decision after 1.23.5: "Admin needs to be able to change
 // all permissions including their own"). Whoever holds users:manage may change anyone's role, permissions and
 // account, their own included, through the same routes; a change that would leave no active account able to manage
@@ -146,7 +147,7 @@ test('separation of duties that is not about permissions stays: an administrator
   const me = H.makeUser('selfsod_a', 'admin');
   const c = await signIn(me);
   const id = require('node:crypto').randomUUID();
-  H.db.run(`INSERT INTO time_entries(id, user_id, work_date, minutes, status) VALUES(?,?,?,30,'submitted')`, id, me.id, new Date().toISOString().slice(0, 10));
+  H.db.run(`INSERT INTO time_entries(id, user_id, work_date, minutes, status) VALUES(?,?,?,30,'submitted')`, id, me.id, LD.today());
   const r = await c.post(`/api/time/${id}/approve`, { decision: 'approved' });
   assert.equal(r.status, 403, JSON.stringify(r.data));
   assert.match(r.data.error, /your own time/);

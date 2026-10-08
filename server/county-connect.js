@@ -79,7 +79,7 @@ function dueDays() { const n = Number(db.getSetting(SETTING_DUE_DAYS, String(DUE
 /** A day `n` days after `day` (YYYY-MM-DD). */
 const plusDays = (day, n) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 function startDate() { const s = db.getSetting(SETTING_START, ''); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null; }
-const today = () => require('./routes/budget').localDate();
+const today = () => require('./local-date').localDate();
 
 /**
  * The county's code (county.js countyCode(): settings.county_code, made the first time it is asked for, and

@@ -99,7 +99,7 @@ function lastActivitySql() {
  * record merged into another is purged with that record (same person), never on its own clock.
  */
 function expiredClients(years = retentionYears(), now = new Date()) {
-  const cutoff = new Date(now.getTime() - years * 365.25 * 86400000).toISOString().slice(0, 10);
+  const cutoff = require('./local-date').localDate(new Date(now.getTime() - years * 365.25 * 86400000));
   return db.all(`SELECT * FROM (
       SELECT c.id, c.client_code, c.legal_hold, c.status, ${lastActivitySql()} AS ended
       FROM clients c

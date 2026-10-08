@@ -24,7 +24,7 @@ function requirePart2Elements(v) {
 }
 
 function presentConsent(c) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = require('../local-date').today();
   const active = !c.revoked_at && (!c.expires_at || c.expires_at >= today);
   return { ...c, recipient: c.recipient_enc ? decrypt(c.recipient_enc) : null, purpose: c.purpose_enc ? decrypt(c.purpose_enc) : null, scope: c.scope_enc ? decrypt(c.scope_enc) : null,
     signer_name: c.signer_name_enc ? decrypt(c.signer_name_enc) : null, revoked_reason: c.revoked_reason_enc ? decrypt(c.revoked_reason_enc) : null,
@@ -87,7 +87,7 @@ module.exports = (r) => {
     if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
     auth.assertClientAccess(ctx, ctx.params.id);
     const v = validate(ctx.body, { type: { type: 'string', required: true, enum: C.CONSENT_TYPES }, recipient: { type: 'string', maxLen: RECIPIENT_MAX }, signed_at: { type: 'date' }, expires_at: { type: 'date' } });
-    const from = v.signed_at || new Date().toISOString().slice(0, 10); const to = v.expires_at || '9999-12-31';
+    const from = v.signed_at || require('../local-date').today(); const to = v.expires_at || '9999-12-31';
     const want = disclosure.normalise(v.recipient);
     const duplicates = db.all(`SELECT c.*, u.display_name AS created_by_name FROM consents c JOIN users u ON u.id=c.created_by WHERE c.client_id=? AND c.type=? AND c.revoked_at IS NULL ORDER BY c.signed_at DESC`, ctx.params.id, v.type)
       .map(presentConsent)
@@ -190,7 +190,7 @@ module.exports = (r) => {
       revoke: yes(c.revocation_right_given), expires: c.expires_at || c.expires_event || '', signer: c.signer_relationship && c.signer_relationship !== 'patient' ? `${c.signer_name || ''} (${String(c.signer_relationship).replace(/_/g, ' ')})` : 'The patient',
       signed: c.signed_at, redisclosure: yes(c.redisclosure_notice_given), refusal: yes(c.refusal_consequences_given),
       evidence: [c.signed_on_paper ? 'Signed on paper' : null, c.witness ? `Witness: ${c.witness}` : null, c.document_ref ? `Document: ${c.document_ref}` : null].filter(Boolean).join('; '),
-      status: c.revoked_at ? `Revoked ${c.revoked_at.slice(0, 10)}${c.revoked_reason ? ` (${c.revoked_reason})` : ''}` : c.active ? 'Active' : 'Expired' };
+      status: c.revoked_at ? `Revoked ${require('../local-date').dayOf(c.revoked_at)}${c.revoked_reason ? ` (${c.revoked_reason})` : ''}` : c.active ? 'Active' : 'Expired' };
     audit.log({ user: ctx.user, action: 'consent.print', entity: 'consent', entityId: c.id, clientId: c.client_id, ip: ctx.ip });
     const body = require('../pdf').renderForm({ title: `Consent to disclose: ${String(c.type).replace(/_/g, ' ')}`, org: db.getSetting('org_name', 'SUDS'),
       meta: [`Recorded by ${row.created_by_name}`, c.legacy_elements ? 'Recorded before the 2024 element list' : null], fields, values,

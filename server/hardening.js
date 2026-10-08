@@ -131,8 +131,8 @@ function items() {
       const fresh = age !== null && age <= 8;
       add({ id: 'compliance_check', title: 'Pass the weekly host compliance check', done: signed && overall === 'pass' && fresh, where: 'server',
         why: !signed ? 'The last compliance report\'s signature does not verify. Look at it on Security status before relying on it.'
-          : overall !== 'pass' ? `The last check (${String(r.generated_at).slice(0, 10)}) found ${overall === 'fail' ? 'failures' : 'items needing attention'} on this machine. Each is listed, with how to fix it, under "Host (last compliance check)" on Security status.`
-            : !fresh ? `The last report is ${age} days old: the check should run weekly (suds-compliance.timer).` : `Passed on ${String(r.generated_at).slice(0, 10)}.`,
+          : overall !== 'pass' ? `The last check (${require('./local-date').dayOf(r.generated_at)}) found ${overall === 'fail' ? 'failures' : 'items needing attention'} on this machine. Each is listed, with how to fix it, under "Host (last compliance check)" on Security status.`
+            : !fresh ? `The last report is ${age} days old: the check should run weekly (suds-compliance.timer).` : `Passed on ${require('./local-date').dayOf(r.generated_at)}.`,
         status: `${overall} on ${String(r.generated_at || '?').slice(0, 10)}${signed ? '' : ' (signature does not verify)'}`,
         compliance: { overall, generated_at: r.generated_at || null, signature_ok: signed, counts: (r.summary && r.summary.counts) || null },
         action: { label: 'See the findings', href: '#/admin?tab=security' } });

@@ -67,7 +67,7 @@ function detectPdfFields(buf) {
 const guessAutofill = (label) => { const l = label.toLowerCase(); if (/\b(full|client|participant|patient)?\s*name\b/.test(l) && !/worker|staff|navigator|witness|contact|parent|guardian/.test(l)) return 'client.full_name'; if (/first name/.test(l)) return 'client.first_name'; if (/last name/.test(l)) return 'client.last_name'; if (/\b(dob|birth)/.test(l)) return 'client.dob'; if (/phone|telephone/.test(l)) return 'client.phone'; if (/e-?mail/.test(l)) return 'client.email'; if (/address|street/.test(l)) return 'client.address'; if (/\bcity\b/.test(l)) return 'client.city'; if (/\bzip/.test(l)) return 'client.zip'; if (/medicaid/.test(l)) return 'client.medicaid_id'; if (/insurance/.test(l)) return 'client.insurance'; if (/client (id|code|number)|case (id|number)/.test(l)) return 'client.client_code'; if (/\b(today|date)\b/.test(l) && !/birth|dob/.test(l)) return 'today'; if (/navigator|worker|staff|case manager|counselor/.test(l)) return 'worker.name'; return undefined; };
 
 function autofillValues(fields, clientRow, user) {
-  const c = M.decryptRow(clientRow); const today = new Date().toISOString().slice(0, 10);
+  const c = M.decryptRow(clientRow); const today = require('../local-date').today();
   const src = {
     'client.full_name': [c.first_name, c.last_name].filter(Boolean).join(' '), 'client.first_name': c.first_name, 'client.last_name': c.last_name, 'client.preferred_name': c.preferred_name, 'client.dob': c.dob, 'client.phone': c.phone, 'client.email': c.email,
     'client.address': [c.address, [c.city, c.zip].filter(Boolean).join(' ')].filter(Boolean).join(', '), 'client.city': c.city, 'client.zip': c.zip, 'client.client_code': c.client_code, 'client.gender': c.gender, 'client.pronouns': c.pronouns, 'client.insurance': c.insurance, 'client.medicaid_id': c.medicaid_id,
@@ -114,7 +114,7 @@ function safeContentType(t) { return SERVABLE_TYPES.has(String(t || '').toLowerC
 // and the §2.32 notice (the full text, so it can accompany the page if it is sent on).
 function printFooter() {
   const disclosure = require('../disclosure'); const n = disclosure.notice();
-  const printed = `Printed from SUDS ${new Date().toISOString().slice(0, 10)}.`;
+  const printed = `Printed from SUDS ${require('../local-date').today()}.`;
   return disclosure.part2Program() ? `${printed} PROTECTED BY 42 CFR PART 2. ${n.short} If this record is disclosed, this notice must accompany it (42 CFR §2.32): ${n.text}`
     : `${printed} Contains protected health information; handle per HIPAA.`;
 }
@@ -248,7 +248,7 @@ module.exports = (r) => {
     const f = loadForm(ctx, ctx.params.id); const client = M.decryptRow(db.one(`SELECT * FROM clients WHERE id=?`, f.client_id));
     const values = parseJson(decrypt(f.values_enc), {}); const by = f.completed_by ? db.one(`SELECT display_name FROM users WHERE id=?`, f.completed_by) : null;
     audit.log({ user: ctx.user, action: 'client_form.print', entity: 'client_form', entityId: f.id, clientId: f.client_id, ip: ctx.ip });
-    const body = pdf.renderForm({ title: f.template_name, org: db.getSetting('org_name', 'SUDS'), meta: [`Client: ${client.first_name} ${client.last_name} (${client.client_code})`, f.status === 'completed' ? `Completed ${f.completed_at.slice(0, 10)}${by ? ' by ' + by.display_name : ''}` : 'DRAFT'], fields: parseJson(f.fields_json, []), values, footer: printFooter() });
+    const body = pdf.renderForm({ title: f.template_name, org: db.getSetting('org_name', 'SUDS'), meta: [`Client: ${client.first_name} ${client.last_name} (${client.client_code})`, f.status === 'completed' ? `Completed ${require('../local-date').dayOf(f.completed_at)}${by ? ' by ' + by.display_name : ''}` : 'DRAFT'], fields: parseJson(f.fields_json, []), values, footer: printFooter() });
     ctx.res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': contentDisposition(ctx.query.get('download') === '1' ? 'attachment' : 'inline', `${client.client_code}-${f.template_name}.pdf`) }); ctx.res.end(body); return null;
   });
   // Signed / scanned copies attached to the filled form (stored encrypted)

@@ -57,7 +57,7 @@ module.exports = (r) => {
     beforeInsert: (ctx, v) => {
       if (v.complainant === 'anonymous' && v.client_id) throw badRequest('An anonymous complaint cannot name the client; record it without one');
       if (['resolved', 'closed'].includes(v.status) && !v.resolution) throw badRequest('Say how the complaint was resolved before closing it');
-      if (['resolved', 'closed'].includes(v.status) && !v.resolved_at) v.resolved_at = new Date().toISOString().slice(0, 10);
+      if (['resolved', 'closed'].includes(v.status) && !v.resolved_at) v.resolved_at = require('../local-date').today();
       encComplaint(v);
     },
     beforeUpdate: (ctx, v, row) => {
@@ -65,7 +65,7 @@ module.exports = (r) => {
       if (v.summary === null) throw badRequest('A complaint needs its summary');
       const closing = ['resolved', 'closed'].includes(v.status) && !['resolved', 'closed'].includes(row.status);
       if (closing && !v.resolution && !row.resolution_enc) throw badRequest('Say how the complaint was resolved before closing it');
-      if (closing && !v.resolved_at) v.resolved_at = new Date().toISOString().slice(0, 10);
+      if (closing && !v.resolved_at) v.resolved_at = require('../local-date').today();
       if (v.status && ['open', 'investigating'].includes(v.status)) v.resolved_at = null;
       encComplaint(v);
     },
@@ -75,7 +75,7 @@ module.exports = (r) => {
   });
   // How complaints were handled over a period: counts only.
   r.get('/api/complaints/report', auth.requireAuth, auth.requirePerm('complaints:read', 'complaints:write'), (ctx) => {
-    const from = ctx.query.get('from') || `${new Date().getUTCFullYear()}-01-01`; const to = ctx.query.get('to') || new Date().toISOString().slice(0, 10);
+    const today = require('../local-date').today(); const from = ctx.query.get('from') || `${today.slice(0, 4)}-01-01`; const to = ctx.query.get('to') || today;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw badRequest('from and to must be YYYY-MM-DD');
     const w = `received_at BETWEEN ? AND ?`;
     const by = (col) => db.all(`SELECT ${col} k, COUNT(*) n FROM complaints WHERE ${w} GROUP BY ${col} ORDER BY n DESC`, from, to);
@@ -110,7 +110,7 @@ module.exports = (r) => {
   });
   r.post('/api/incidents', auth.requireAuth, auth.requirePerm('incidents:write'), (ctx) => {
     const v = validate(ctx.body, { ...INCIDENT_SHAPE, title: { ...INCIDENT_SHAPE.title, required: true }, discovered_at: { type: 'date', required: true } });
-    if (v.discovered_at > new Date().toISOString().slice(0, 10)) throw badRequest('An incident cannot be discovered in the future');
+    if (v.discovered_at > require('../local-date').today()) throw badRequest('An incident cannot be discovered in the future');
     const id = uuid();
     const cols = { id, discovered_at: v.discovered_at, occurred_at: v.occurred_at || null, part2_records: v.part2_records === undefined ? 1 : v.part2_records,
       affected_count: v.affected_count || 0, max_in_one_state: v.max_in_one_state || 0, reported_by: ctx.user.id, source: 'manual' };

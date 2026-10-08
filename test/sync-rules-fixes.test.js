@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // The places where sync push and the REST routes disagreed before 1.14.0, one test each, asserting what is
 // stored (test/sync-rules.test.js compares the outcomes; these check the effect). Each would fail on 1.13.0.
 const { test, before, after } = require('node:test');
@@ -7,7 +8,7 @@ const H = require('./helpers');
 const { randomUUID } = require('node:crypto');
 
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
-const day = (d = 0) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+const day = (d = 0) => LD.addDays(LD.today(), d);
 const U = {}; const C = {};
 let enc, dec;
 

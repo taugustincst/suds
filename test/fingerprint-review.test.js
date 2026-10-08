@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // The review of fingerprint sign-in and signing (docs/FINGERPRINT.md, "Review of 1.19.0's fingerprint work"): each
 // finding's fix, tested where it can be seen (the route, the sync push, the verifier on its own), with outside test
 // vectors (test/fixtures/webauthn: real browser and authenticator responses from py_webauthn's suite, and RFC 8949's
@@ -18,8 +19,8 @@ const config = require('../server/config');
 const PW = 'StaffPassw0rd!x';
 const APW = 'AdminPassw0rd!x';
 let admin, base;
-const today = () => new Date().toISOString().slice(0, 10);
-const yearFrom = (years) => { const d = new Date(); d.setUTCFullYear(d.getUTCFullYear() + years); return d.toISOString().slice(0, 10); };
+const today = () => LD.today();
+const yearFrom = (years) => { const [y, m, d] = LD.today().split('-').map(Number); return new Date(Date.UTC(y + years, m - 1, d)).toISOString().slice(0, 10); };
 const setting = (k, v) => { if (v === null) H.db.run(`DELETE FROM settings WHERE key=?`, k); else H.db.setSetting(k, v); };
 const resetLimits = () => { const app = require('../server/app'); for (const k of ['passkey-options:127.0.0.1', 'login:127.0.0.1', 'passkey-options:::1', 'login:::1', 'passkey-options:::ffff:127.0.0.1', 'login:::ffff:127.0.0.1']) app.rateLimitReset(k); };
 

@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Street outreach on a device that syncs with an office (local mode): the office's supply items and stock reach
 // the device, a contact logged there with no connection draws the device's copy down, and at the next sync the
 // office receives the contact and its supplies, draws its own stock down once (the supply rules,
@@ -51,7 +52,7 @@ test('a contact logged offline on the device reaches the office at the next sync
   const nav = H.client(); await nav.login(USER, PASSWORD);
   const shift = ok(await nav.get(`/api/outreach/shift?since=${encodeURIComponent(new Date(Date.now() - 3600000).toISOString())}`), 200, 'shift at the office');
   assert.equal(shift.contacts, 1); assert.equal(shift.naloxone_kits, 3);
-  const day = require('../server/routes/budget').localDate(); const from = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+  const day = require('../server/routes/budget').localDate(); const from = LD.addDays(LD.today(), -2);
   const ndp = ok(await office.get(`/api/reports/naloxone-ndp?from=${from}&to=${day}&purpose=submission&counts=exact`), 200, 'ndp');
   assert.equal(ndp.totals.community_kits, 3, 'counted as community distribution');
 });

@@ -57,7 +57,7 @@ module.exports = (r) => {
     const staged = db.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL)`, uid).n;
     const tf = cf('t.client_id');
     const dueToday = db.all(`SELECT t.id, t.title_enc, t.description_enc, t.created_by, t.assigned_to, t.due_at, t.priority, t.status, t.client_id, c.client_code, ${NAME_COLS} FROM tasks t LEFT JOIN clients c ON c.id=t.client_id
-      WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND substr(t.due_at,1,10) <= date('now','localtime') AND (t.client_id IS NULL OR ${tf.sql}) ORDER BY t.due_at LIMIT 10`, uid, ...tf.params)
+      WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND substr(t.due_at,1,10) <= ? AND (t.client_id IS NULL OR ${tf.sql}) ORDER BY t.due_at LIMIT 10`, uid, require('../local-date').today(), ...tf.params)
       .map(t => withClientName(ctx, t)).map(require('./tasks').presentTask)
       // Home shows only the title: the details stay off its payload, but whether a to-do is a supervisor's reminder to
       // sign notes is said, so ticking it can ask about drafts left without reading the to-do again (review of 1.23.5).

@@ -24,7 +24,7 @@ function applyFatal(ctx, event) {
   if (!event.client_id) return;
   const c = db.one(`SELECT id, status, discharge_date, discharge_reason FROM clients WHERE id=?`, event.client_id);
   if (!c || c.status === 'deceased') return; // already recorded as deceased: nothing of ours to undo later
-  const when = String(event.occurred_at).slice(0, 10);
+  const when = require('../local-date').dayOf(event.occurred_at);
   const details = { prior_status: c.status, prior_discharge_date: c.discharge_date || null, prior_discharge_reason: c.discharge_reason || null, episode_id: null, assignment_ids: [], task_ids: [] };
   db.transaction(() => {
     const ep = db.one(`SELECT id FROM episodes WHERE client_id=? AND status='open' ORDER BY opened_at DESC LIMIT 1`, c.id);
@@ -118,7 +118,7 @@ module.exports = (r) => {
       // Keep the client's own summary fields in step, so the record a worker reads at the top of a file
       // still matches the events underneath it.
       if (!row.client_id) return;
-      const day = String(row.occurred_at).slice(0, 10);
+      const day = require('../local-date').dayOf(row.occurred_at);
       db.run(`UPDATE clients SET overdose_history=1, last_overdose_date=CASE WHEN last_overdose_date IS NULL OR last_overdose_date < ? THEN ? ELSE last_overdose_date END, updated_at=? WHERE id=?`, day, day, db.now(), row.client_id);
       if (row.kind === 'fatal') applyFatal(ctx, row);
     },
@@ -128,7 +128,7 @@ module.exports = (r) => {
       const sameClient = prev.client_id === row.client_id;
       if (wasFatal && (!isFatal || !sameClient)) revertFatal(ctx, prev);
       if (isFatal && (!wasFatal || !sameClient)) {
-        const day = String(row.occurred_at).slice(0, 10);
+        const day = require('../local-date').dayOf(row.occurred_at);
         db.run(`UPDATE clients SET overdose_history=1, last_overdose_date=CASE WHEN last_overdose_date IS NULL OR last_overdose_date < ? THEN ? ELSE last_overdose_date END, updated_at=? WHERE id=?`, day, day, db.now(), row.client_id);
         applyFatal(ctx, row);
       }

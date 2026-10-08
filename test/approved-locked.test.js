@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // QA 1.15.3, defect 1: an approved time entry is part of a signed-off time sheet, yet PUT /api/time/:id changed
 // its minutes and left it "approved". It is now locked at both doors (REST and sync push, one rule in
 // server/rules/time_entries.js): no edit and no delete, by the worker or by a manager, until a supervisor
@@ -10,7 +11,7 @@ const H = require('./helpers');
 const { randomUUID } = require('node:crypto');
 
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
-const today = new Date().toISOString().slice(0, 10);
+const today = LD.today();
 const U = {}; const C = {};
 
 before(async () => {

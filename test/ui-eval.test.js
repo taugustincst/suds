@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // The UI evaluation fixes (1.15.2) that rest on the server: the supervision queue names each draft's author so
 // a supervisor can send them a reminder to-do through the ordinary to-do route, and the users list counts each
 // person's individual permission overrides for the badge on their row. No new route: the reminder is a task.
@@ -32,7 +33,7 @@ test('supervision queue: an overdue draft names its author, and a reminder to-do
   // "Remind author": POST /api/tasks for the author on the note's client, with the reference line.
   const ref = `Reference: supervision reminder for note ${draft.data.id}`;
   const title = 'Finish and sign your admin note from 1 Jan';
-  const t = await sup.post('/api/tasks', { client_id: c, assigned_to: navId, title, description: `uesup asked you to finish and sign this draft note.\n${ref}`, due_at: new Date().toISOString().slice(0, 10), priority: 'high' });
+  const t = await sup.post('/api/tasks', { client_id: c, assigned_to: navId, title, description: `uesup asked you to finish and sign this draft note.\n${ref}`, due_at: LD.today(), priority: 'high' });
   assert.equal(t.status, 201);
   const stored = H.db.one(`SELECT * FROM tasks WHERE id=?`, t.data.id);
   assert.equal(stored.assigned_to, navId, 'assigned to the author');

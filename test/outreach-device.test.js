@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Street outreach on SUDS on this device (the published web app, no office): the browser kernel, bundled from the
 // current sources (test/fixtures/kernel-harness.js), is the whole of SUDS there, with no connection at all. A
 // contact logged on the outreach screen draws the device's own stock down, the shift summary counts it, and the
@@ -31,7 +32,7 @@ test('offline on the device: an outreach contact draws the device\'s stock down 
   const s = ok(await call('GET', `/api/outreach/shift?since=${encodeURIComponent(new Date(Date.parse(at) - 60000).toISOString())}`), 200, 'shift');
   assert.equal(s.contacts, 2); assert.equal(s.naloxone_kits, 2);
   assert.deepEqual(Object.fromEntries(s.supplies.map(x => [x.item, x.quantity])), { 'Naloxone kit': 2, 'Syringe 1 mL': 10, 'Wound care kit': 1 });
-  const day = require('../server/routes/budget').localDate(); const from = new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10);
+  const day = require('../server/routes/budget').localDate(); const from = LD.addDays(LD.today(), -2);
   const ssp = ok(await call('GET', `/api/reports/ssp?from=${from}&to=${day}&counts=exact`), 200, 'ssp');
   assert.equal(ssp.totals.anonymous_contacts, 2); assert.equal(ssp.totals.syringes_distributed, 10);
   // Settlement outcomes run on the device too (the same server code): none of its funds is settlement money yet.

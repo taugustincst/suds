@@ -120,7 +120,7 @@ module.exports = (r) => {
           // Recorded with who and when for Home; the reason itself goes into the draft incident (encrypted),
           // which a privacy officer reviews and closes — never into the audit log.
           db.setSetting('part2_program_off', JSON.stringify({ since: db.now(), by: ctx.user.display_name || ctx.user.username }));
-          incident = require('../incidents').draft({ source: 'part2_program_off', sourceRef: db.now().slice(0, 10), title: 'Part 2 program protections switched off',
+          incident = require('../incidents').draft({ source: 'part2_program_off', sourceRef: require('../local-date').today(), title: 'Part 2 program protections switched off',
             description: `${ctx.user.display_name || ctx.user.username} switched this program's 42 CFR Part 2 protections off. Reason given: ${reason}\n\nConfirm the determination with counsel. If it was a mistake, switch the program back on and assess whether anything was disclosed without the Part 2 protections meanwhile.`, user: ctx.user });
         }
         if (v.part2_program) db.run(`DELETE FROM settings WHERE key='part2_program_off'`);
@@ -244,8 +244,8 @@ module.exports = (r) => {
     const out = {
       part2_program: disclosure.part2Program(),
       clients_missing_notice: n(`SELECT COUNT(*) n FROM clients c WHERE ${MISSING_NOTICE}`),
-      consents_legacy_active: n(`SELECT COUNT(*) n FROM consents WHERE type IN (${C.PART2_CONSENT_TYPES.map(() => '?').join(',')}) AND (rule_version IS NULL OR rule_version<>'2024') AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, ...C.PART2_CONSENT_TYPES),
-      court_orders_active: n(`SELECT COUNT(*) n FROM court_orders WHERE status='active' AND (expires_at IS NULL OR expires_at >= date('now'))`),
+      consents_legacy_active: n(`SELECT COUNT(*) n FROM consents WHERE type IN (${C.PART2_CONSENT_TYPES.map(() => '?').join(',')}) AND (rule_version IS NULL OR rule_version<>'2024') AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, ...C.PART2_CONSENT_TYPES, require('../local-date').today()),
+      court_orders_active: n(`SELECT COUNT(*) n FROM court_orders WHERE status='active' AND (expires_at IS NULL OR expires_at >= ?)`, require('../local-date').today()),
       disclosures_90d: n(`SELECT COUNT(*) n FROM disclosures WHERE disclosed_at >= ?`, new Date(Date.now() - 90 * 86400000).toISOString()),
       complaints_open: n(`SELECT COUNT(*) n FROM complaints WHERE status IN ('open','investigating')`),
       incidents_open: n(`SELECT COUNT(*) n FROM privacy_incidents WHERE status='open'`),
@@ -263,8 +263,8 @@ module.exports = (r) => {
     const n = (sql, ...p) => db.one(sql, ...p).n;
     const scope = auth.caseloadFilter(ctx.user, 'c.id');
     const inScope = (alias) => `${alias}.client_id IN (SELECT c.id FROM clients c WHERE c.deleted_at IS NULL AND ${scope.sql})`;
-    const today = new Date().toISOString().slice(0, 10);
-    const in30 = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    const today = require('../local-date').today();
+    const in30 = require('../local-date').addDays(today, 30);
     const since90 = new Date(Date.now() - 90 * 86400000).toISOString();
     const T = C.PART2_CONSENT_TYPES; const q = T.map(() => '?').join(',');
     const live = `k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= ?)`;

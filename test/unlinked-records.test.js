@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Security review of 1.12.4, findings 4 and 6.
 // 4: a record with no client is outside caseload scoping, and the generic list allowed `client_id IS NULL OR
 //    <caseload>` — so every navigator read every other worker's unlinked crisis call (caller's name, phone,
@@ -62,7 +63,7 @@ for (const k of CASES) {
 
 test('an expenditure with no client is its worker\'s, or budget:approve\'s (supervisor, finance), over REST and sync', async () => {
   const fund = H.db.one(`SELECT id FROM funding_sources WHERE is_active=1 LIMIT 1`).id;
-  const created = await c.unav1.post('/api/budget/expenditures', { funding_source_id: fund, spent_at: new Date().toISOString().slice(0, 10), amount: 12, category: 'transportation', description: 'Bus pass for Ulysses K' });
+  const created = await c.unav1.post('/api/budget/expenditures', { funding_source_id: fund, spent_at: LD.today(), amount: 12, category: 'transportation', description: 'Bus pass for Ulysses K' });
   assert.equal(created.status, 201, JSON.stringify(created.data));
   assert.ok(!JSON.stringify((await c.unav2.get('/api/budget/expenditures?limit=1000')).data).includes('Ulysses K'));
   assert.equal((await c.unav2.get(`/api/budget/expenditures/${created.data.id}`)).status, 403);
@@ -84,7 +85,7 @@ test('a device cannot overwrite another worker\'s unlinked call by pushing its i
 });
 
 test('sync sends time entries with no client only to their worker (or time:all), as REST does', async () => {
-  const t = await c.unav1.post('/api/time', { work_date: new Date().toISOString().slice(0, 10), minutes: 30, category: 'admin', description: 'Drove Vernon T to the clinic' });
+  const t = await c.unav1.post('/api/time', { work_date: LD.today(), minutes: 30, category: 'admin', description: 'Drove Vernon T to the clinic' });
   assert.equal(t.status, 201, JSON.stringify(t.data));
   assert.ok(!JSON.stringify(await pullAll(c.unav2)).includes('Vernon T'));
   assert.ok(!JSON.stringify(await pullAll(c.uclin)).includes('Vernon T'));

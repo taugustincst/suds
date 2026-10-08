@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // The independent security review of 1.15.3, fixed in 1.15.4 (CHANGELOG "Security"). One section per finding,
 // each written to fail on 1.15.3:
 //   H1  sync push let a device approve time and spending (its own included): rulings are the office's
@@ -12,7 +13,7 @@ const H = require('./helpers');
 const { randomUUID } = require('node:crypto');
 
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
-const today = new Date().toISOString().slice(0, 10);
+const today = LD.today();
 const later = (ms = 5000) => ({ updated_at: iso(Date.now() + ms) });
 const U = {}; const C = {};
 let admin;

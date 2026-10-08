@@ -154,9 +154,14 @@ function runChild(tmp, dbFile, onStep, keys = { enc: config.encryptionKey, idx: 
     child.stdout.on('data', () => {});
     child.stderr.on('data', (b) => { stderr = (stderr + b.toString()).slice(-4000); });
     const timer = setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, CHILD_TIMEOUT_MS);
-    child.on('message', (m) => { if (m && m.type === 'progress') onStep(m.step); else if (m && m.type === 'result') result = m; });
+    // The moment the copy answered is taken on this process's clock, the one restoreStarted was read from: the copy
+    // runs with a scrubbed environment, so its clock is not guaranteed to be this one (CI's evening job shifts only
+    // this process's).
+    let readyAt = null;
+    child.on('message', (m) => { if (m && m.type === 'progress') onStep(m.step); else if (m && m.type === 'ready') readyAt = Date.now(); else if (m && m.type === 'result') result = m; });
     child.on('exit', (code, signal) => {
       clearTimeout(timer);
+      if (result && result.ready_at && readyAt) result.ready_at = readyAt;
       resolve(result || { ok: false, error: signal === 'SIGKILL' ? `the restored copy did not finish within ${Math.round(CHILD_TIMEOUT_MS / 60000)} minutes` : `the drill process exited (${code ?? signal})${stderr ? ': ' + stderr.trim().split('\n').slice(-3).join(' ') : ''}`, checks: [] });
     });
     // The keys go over IPC, never in the child's environment or arguments.

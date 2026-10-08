@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Security review of 1.16.0 (r6), H2: sync push stored every column a device sent, so a device could write
 // columns no REST route lets a person set -- who created a record (and so who may delete it), who made a
 // disclosure, an attachment's content type. A device now writes only a table's declared columns (its rules'
@@ -17,7 +18,7 @@ const rules = require('../server/rules');
 const PW = 'StaffPassw0rd!x';
 const U = {}; const C = {};
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
-const day = (d = 0) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+const day = (d = 0) => LD.addDays(LD.today(), d);
 let enc;
 
 before(async () => {

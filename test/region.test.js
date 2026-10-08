@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const H = require('./helpers');
@@ -197,7 +198,7 @@ test('a downloaded picture becomes the card picture: the POST names the photo, a
 test('removing a starter directory keeps anything used or verified', async () => {
   const rows = (await nav.get('/api/resources?limit=1000')).data.rows;
   const verified = rows[0], referred = rows[1];
-  await nav.put(`/api/resources/${verified.id}`, { last_verified_at: new Date().toISOString().slice(0, 10) });
+  await nav.put(`/api/resources/${verified.id}`, { last_verified_at: LD.today() });
   const cid = (await nav.post('/api/clients', { first_name: 'Ref', last_name: 'Client' })).data.id;
   assert.equal((await nav.post('/api/referrals', { client_id: cid, resource_id: referred.id, referred_at: new Date().toISOString(), status: 'pending' })).status, 201);
   const out = (await nav.del('/api/regions/sacramento-metro')).data;

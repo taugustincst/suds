@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Follow-up to-dos follow the follow-up date (released in 1.23.0; server/rules/follow-ups.js): on a
 // call or text, a visit and a referral, a date set when the record is made OR added by editing it makes the to-do; a
 // changed date moves it; a cleared date (or Follow-up needed unticked on a call) cancels it -- but only while the to-do
@@ -13,7 +14,7 @@ const PW = 'StaffPassw0rd!x';
 let nav, navId, clientId, resourceId;
 const ok = (r, s = 201) => { assert.equal(r.status, s, JSON.stringify(r.data)); return r.data; };
 const minutesAgo = (n) => new Date(Date.now() - n * 60000).toISOString();
-const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+const inDays = (n) => LD.addDays(LD.today(), n);
 const tasksOf = (col, id) => H.db.all(`SELECT * FROM tasks WHERE ${col}=? ORDER BY created_at`, id);
 const openOf = (col, id) => tasksOf(col, id).filter(t => t.status === 'open' || t.status === 'in_progress');
 

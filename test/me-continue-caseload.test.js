@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Security review of 1.13.0, finding 2: GET /api/me/continue (the Home page's "continue where you left off")
 // ignored the caseload. After a navigator's assignment to a client ended, opening the client was refused (403)
 // but /api/me/continue still listed the client's name and to-do titles ("Send ROI to Valley Behavioral"), and
@@ -11,7 +12,7 @@ const H = require('./helpers');
 const db = H.db;
 
 let nav1, nav2, nav1Id, mine, theirs, kept;
-const today = new Date().toISOString().slice(0, 10);
+const today = LD.today();
 before(async () => {
   await H.start();
   nav1Id = H.makeCaseloadUser('mc_nav1', 'navigator').id; H.makeCaseloadUser('mc_nav2', 'navigator');

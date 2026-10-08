@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, fmt, can, pageHead, confirmDialog, downloadCsv, nav, bars, stat, badge, announce, NOT_SAVED } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, fmt, can, pageHead, confirmDialog, downloadCsv, nav, bars, stat, badge, announce, NOT_SAVED, addDaysLocal } from '../app.js';
 
 // ---- possible duplicates (1.24.0) ----
 // A start time with minutes is a range ("09:00–10:00"); the server compares ranges and descriptions
@@ -217,7 +217,7 @@ route('time', async (r) => {
       can('time:approve') ? h('button', { class: 'btn', onClick: () => nav('supervision'), title: 'Approval happens on the Supervision page' }, 'Go to time approval') : null,
       can('export:read') ? h('button', { class: 'btn', onClick: () => downloadCsv(`/api/reports/export/time?from=${from}&to=${to}&format=xlsx`) }, 'Export to Excel') : null),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('button', { class: 'btn', onClick: () => nav(`time?from=${fromI.value}&to=${toI.value}`) }, 'Apply'),
-      h('button', { class: 'btn ghost sm', onClick: () => { const d = new Date(); const day = d.getDay(); const mon = new Date(d); mon.setDate(d.getDate() - ((day + 6) % 7)); nav(`time?from=${mon.toISOString().slice(0, 10)}&to=${fmt.today()}`); } }, 'This week'),
+      h('button', { class: 'btn ghost sm', onClick: () => { nav(`time?from=${addDaysLocal(-((new Date().getDay() + 6) % 7))}&to=${fmt.today()}`); } }, 'This week'),
       h('button', { class: 'btn ghost sm', onClick: () => nav(`time?from=${to.slice(0, 8)}01&to=${to}`) }, 'This month')),
     h('div', { class: 'grid cols-4 mb' }, stat('Total', fmt.mins(total)), stat('Entries', fmt.num(data.total)), stat('Workers', fmt.num(sum.by_worker.length)), stat('Avg / day', fmt.mins(sum.by_day.length ? Math.round(total / sum.by_day.length) : 0))),
     h('div', { class: 'grid cols-3 mb' }, h('div', { class: 'card' }, h('h2', {}, 'By category'), bars(sum.by_category, { valueKey: 'minutes', labelKey: 'category', format: fmt.mins, list: 'TIME_CATEGORIES' })),

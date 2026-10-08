@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // The county view (server/county.js, server/routes/county.js; docs/COUNTY-VIEW.md): a programme's signed county
 // submission file (Send to the county, on the Settlement outcomes page), and a county's server registering the
 // programmes' keys, importing their files and combining them for a period. One test server plays both: it makes
@@ -195,7 +196,7 @@ test('S6: a period is real days (not 2026-02-30), and a county file is made only
   const today = require('../server/routes/budget').localDate();
   const r = await fin.get(`/api/county-submission/file?from=2026-01-01&to=${today}&${q}`);
   assert.equal(r.status, 400, 'a period ending today is not over'); assert.match(r.data.error, /not over yet/);
-  const future = new Date(Date.now() + 40 * 86400000).toISOString().slice(0, 10);
+  const future = LD.addDays(LD.today(), 40);
   assert.match((await fin.get(`/api/county-submission/file?from=2026-01-01&to=${future}&${q}`)).data.error, /not over yet/);
   assert.equal((await fin.get(`/api/county-submission/file?from=2026-06-01&to=2026-05-01&${q}`)).status, 400, 'from after to');
   assert.equal((await fin.get('/api/county-submission/file')).status, 400, 'no period');
@@ -551,7 +552,7 @@ test('refusals: each is refused with a reason, audited without figures, and noth
   await refusedWith(text(extra), 'schema');
   await refusedWith('', 'malformed');
   await refusedWith(JSON.stringify({ ...good, padding: 'x'.repeat(K.MAX_FILE_BYTES) }), 'too_large', 413);
-  const future = new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
+  const future = LD.addDays(LD.today(), 60);
   await refusedWith(text(K.signWithSeed({ ...good.payload, period: { from: '2026-01-01', to: future }, generated_at: `${future}T00:00:00.000Z` }, samples[1].seed).file), 'period');
   assert.throws(() => K.signWithSeed({ ...good.payload, period: { from: '2026-03-31', to: '2026-01-01' } }, samples[1].seed), /starts/);
   const b = clone(good); b.payload.period = { from: '2026-03-31', to: '2026-01-01' };

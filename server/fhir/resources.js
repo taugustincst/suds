@@ -157,7 +157,7 @@ function mapCall(c) {
 }
 
 // ---- Consent ----
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => require('../local-date').today();
 function consentPurposes(type, purposeText) {
   return disclosure.consentPurposeCodes({ type, purpose: purposeText }).map(code => ({ system: SYS.actReason, code, display: disclosure.FHIR_PURPOSES[code].display }));
 }
@@ -374,7 +374,7 @@ const DEFS = {
     params: {},
   },
   Consent: {
-    src: `SELECT k.id _fid, 'consent' _kind, k.id _rid, k.client_id _cid, k.updated_at _upd, k.signed_at _date, CASE WHEN k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now')) THEN 'active' ELSE 'inactive' END _st
+    src: `SELECT k.id _fid, 'consent' _kind, k.id _rid, k.client_id _cid, k.updated_at _upd, k.signed_at _date, CASE WHEN k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= '${today()}') THEN 'active' ELSE 'inactive' END _st
       FROM consents k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT} AND k.type IN (${disclosure.FHIR_CONSENT_TYPES.map(t => `'${t}'`).join(',')})`,
     load: (kind, id) => db.one(`SELECT * FROM consents WHERE id=?`, id), map: mapConsent, date: true,
     params: { status: statusParam({ active: 'active', inactive: 'inactive' }) },

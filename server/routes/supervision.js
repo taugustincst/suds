@@ -144,7 +144,7 @@ module.exports = (r) => {
     const title = `${REMINDER_TITLE}${ref.resource}`;
     const desc = `${ctx.user.display_name || 'Your supervisor'} asked you to record the outcome of this referral (sent ${appDay(ref.referred_at)}). Open the referral from this to-do to record it.`;
     db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,description_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?,?)`,
-      id, ref.client_id, ref.user_id, ctx.user.id, encrypt(title), encrypt(desc), require('./budget').localDate(), 'normal', ref.id);
+      id, ref.client_id, ref.user_id, ctx.user.id, encrypt(title), encrypt(desc), require('../local-date').localDate(), 'normal', ref.id);
     audit.log({ user: ctx.user, action: 'referral.remind', entity: 'referral', entityId: ref.id, clientId: ref.client_id, ip: ctx.ip, details: { worker: ref.user_id, task: id } });
     return { ok: true, task: id, worker: worker.display_name };
   });

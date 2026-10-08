@@ -91,7 +91,7 @@ function* monthlyFigures(user, s) {
   // each visit falls in exactly one piece, and the last piece takes everything after (dated ahead) as before.
   // A month with only anonymous visits has no row of people served, as before.
   const visits = [];
-  const bounds = []; for (let m = s.slice(0, 7); m <= new Date().toISOString().slice(0, 7); m = nextMonth(m)) bounds.push(m);
+  const bounds = []; for (let m = s.slice(0, 7); m <= require('../local-date').today().slice(0, 7); m = nextMonth(m)) bounds.push(m);
   for (let i = 0; i < bounds.length; i++) {
     const hi = i + 1 < bounds.length ? bounds[i + 1] : null;
     visits.push(...db.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions
@@ -172,7 +172,7 @@ module.exports = (r) => {
     const expand = (sql, p) => { const before = sql.slice(0, sql.indexOf('{CF}')); const n = (before.match(/\?/g) || []).length; return [sql.replace('{CF}', cf.sql), [...p.slice(0, n), ...cf.params, ...p.slice(n)]]; };
     const scoped = (sql, ...p) => { const [q, a] = expand(sql, p); return db.all(q, ...a); };
     const scoped1 = (sql, ...p) => { const [q, a] = expand(sql, p); return db.one(q, ...a); };
-    const today = require('./budget').localDate();
+    const today = require('../local-date').localDate();
     // At 20,000 clients a fiscal year's dashboard is about a second of queries. The event loop is let go after
     // each one (as the funder report does between its phases), so a colleague's request waits for one query,
     // tens of milliseconds, not for all of them. q(fn): run one query, then yield.
@@ -271,7 +271,7 @@ module.exports = (r) => {
       })() : null,
       // The number of clients the "consent expiring" list shows (the card below lists the first 20 consents).
       consents_expiring_clients: await q(() => { const f = CFX.consentExpiring(); return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n; }),
-      consents_expiring: db.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10), ...cf.params).map(x => ({ ...x, recipient: x.recipient_enc ? require('../crypto').decrypt(x.recipient_enc) : null, recipient_enc: undefined })),
+      consents_expiring: db.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, require('../local-date').addDays(today, 30), ...cf.params).map(x => ({ ...x, recipient: x.recipient_enc ? require('../crypto').decrypt(x.recipient_enc) : null, recipient_enc: undefined })),
     };
     // The dashboard reads across nearly every PHI table; that is a PHI read like any other.
     audit.log({ user: ctx.user, action: 'report.dashboard', ip: ctx.ip, details: { from, to } });
@@ -281,8 +281,9 @@ module.exports = (r) => {
   // Outcomes / monthly program report
   r.get('/api/reports/monthly', auth.requireAuth, auth.requirePerm('reports:read'), async (ctx) => {
     const months = Math.min(24, Math.max(1, Number(ctx.query.get('months') || 12)));
-    const start = new Date(); start.setUTCDate(1); start.setUTCMonth(start.getUTCMonth() - months + 1);
-    const s = start.toISOString().slice(0, 10);
+    // The first day of the month `months - 1` before this one, on the programme's calendar (server/local-date.js).
+    const [ty, tm] = require('../local-date').today().split('-').map(Number);
+    const s = new Date(Date.UTC(ty, tm - months, 1)).toISOString().slice(0, 10);
     // Exact programme-wide counts of people by month: an insider view (docs/HIPAA.md, small cells), so it is audited.
     audit.log({ user: ctx.user, action: 'report.monthly', ip: ctx.ip, details: { months } });
     // Read from one snapshot, letting the event loop go between the queries where there is a snapshot to read

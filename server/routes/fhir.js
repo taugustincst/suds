@@ -152,7 +152,7 @@ const PROFILES = { Patient: 'us-core-patient', Encounter: 'us-core-encounter', O
 function capability(ctx) {
   const base = baseUrl(ctx);
   return {
-    resourceType: 'CapabilityStatement', id: 'suds', status: 'active', date: new Date().toISOString().slice(0, 10), publisher: 'SUDS', kind: 'instance',
+    resourceType: 'CapabilityStatement', id: 'suds', status: 'active', date: require('../local-date').today(), publisher: 'SUDS', kind: 'instance',
     instantiates: ['http://hl7.org/fhir/uv/bulkdata/CapabilityStatement/bulk-data'],
     software: { name: 'SUDS', version: config.version },
     implementation: { description: 'SUDS read-only FHIR R4 API (42 CFR Part 2: consent-gated)', url: base },

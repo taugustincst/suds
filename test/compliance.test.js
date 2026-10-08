@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // The compliance review: each test here is a gap that review found — a way the legal record could be
 // rewritten, information could leave without a basis, an export could identify someone, an emergency
 // access could go unreviewed, a truncated audit log could look intact, or a record could outlive its
@@ -433,7 +434,7 @@ test('patient-rights requests get a 30-day clock and a client tab', async () => 
 test('retention purge hard-deletes an expired record across every table, and nothing else', async () => {
   const R = require('../server/retention');
   const old = (await nav.post('/api/clients', { first_name: 'Ancient', last_name: 'File', status: 'closed', discharge_date: '2012-03-01', intake_date: '2011-01-01' })).data.id;
-  const keep = (await nav.post('/api/clients', { first_name: 'Recent', last_name: 'File', status: 'closed', discharge_date: new Date(Date.now() - 400 * 86400000).toISOString().slice(0, 10) })).data.id;
+  const keep = (await nav.post('/api/clients', { first_name: 'Recent', last_name: 'File', status: 'closed', discharge_date: LD.addDays(LD.today(), -400) })).data.id;
   const stillOpen = (await nav.post('/api/clients', { first_name: 'Open', last_name: 'Episode', status: 'closed', discharge_date: '2012-03-01' })).data.id;
   for (const c of [old, keep, stillOpen]) {
     await nav.post('/api/interventions', { client_id: c, type: 'outreach', occurred_at: '2012-01-05T10:00:00Z', duration_minutes: 10 });

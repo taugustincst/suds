@@ -37,8 +37,10 @@ const AGE_BANDS = [[0, 17, '0-17'], [18, 24, '18-24'], [25, 34, '25-34'], [35, 4
 function ageBand(dob, now = new Date()) {
   if (!dob) return '';
   const born = new Date(dob); if (!Number.isFinite(born.getTime())) return '';
-  let age = now.getUTCFullYear() - born.getUTCFullYear();
-  if (now.getUTCMonth() < born.getUTCMonth() || (now.getUTCMonth() === born.getUTCMonth() && now.getUTCDate() < born.getUTCDate())) age--;
+  // Age on the programme's date of `now` (server/local-date.js), not the UTC one: a birthday starts at local midnight.
+  const [y, m, d] = (require('./local-date').localDate(now) || now.toISOString().slice(0, 10)).split('-').map(Number);
+  let age = y - born.getUTCFullYear();
+  if (m - 1 < born.getUTCMonth() || (m - 1 === born.getUTCMonth() && d < born.getUTCDate())) age--;
   if (age >= 90) return '90+';
   const band = AGE_BANDS.find(([lo, hi]) => age >= lo && age <= hi);
   return band ? band[2] : '';

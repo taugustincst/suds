@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Supervision › "Waiting to hear what happened" (1.23.0, docs/USER_GUIDE.md › Supervision):
 //   * only referrals that truly lack an outcome are listed: contacted (the provider has not answered) and
 //     scheduled (nobody has recorded whether the appointment happened); accepted and waitlisted are the
@@ -189,7 +190,7 @@ test('the reminder\'s details carry no record id, use the app\'s date format, an
 // a reminder and kept Remind worker away. A reminder is now the to-do its referral.remind audit entry names.
 test('a to-do renamed to the reminder\'s title is not a reminder', async () => {
   const id = await refer(nav, 'contacted', 8);
-  const t = ok(await sup.post('/api/tasks', { client_id: clientId, assigned_to: navUser.id, title: 'Check in with the clinic', referral_id: id, due_at: new Date().toISOString().slice(0, 10) }));
+  const t = ok(await sup.post('/api/tasks', { client_id: clientId, assigned_to: navUser.id, title: 'Check in with the clinic', referral_id: id, due_at: LD.today() }));
   ok(await nav.put(`/api/tasks/${t.id}`, { title: 'Record what happened with your referral to Remind Detox' }), 200);
   assert.equal((await queue()).find(x => x.id === id).reminded_at, null, 'the renamed to-do is not taken for a reminder');
   ok(await sup.post(`/api/supervision/referrals/${id}/remind`, {}), 200);
@@ -210,7 +211,7 @@ test('deleting a referral cancels the supervisor\'s open reminder for it, over R
   // A to-do someone else gave the worker about the referral, not a reminder, is the worker's to close.
   const id2 = await refer(nav, 'contacted', 5);
   const r2 = ok(await sup.post(`/api/supervision/referrals/${id2}/remind`, {}), 200);
-  const other = ok(await sup.post('/api/tasks', { client_id: clientId, assigned_to: navUser.id, title: 'Ask the clinic about transport', referral_id: id2, due_at: new Date().toISOString().slice(0, 10) })).id;
+  const other = ok(await sup.post('/api/tasks', { client_id: clientId, assigned_to: navUser.id, title: 'Ask the clinic about transport', referral_id: id2, due_at: LD.today() })).id;
   const login = await H.client().post('/api/auth/login', { username: 'srnav', password: PW }, { 'X-Sync-Client': '1' });
   const B = { Authorization: 'Bearer ' + login.data.token, Cookie: '' };
   const push = await H.client().post('/api/sync/push', { tables: {}, tombstones: [{ table_name: 'referrals', id: id2, deleted_at: new Date(Date.now() + 2000).toISOString() }] }, B);

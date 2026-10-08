@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Day-to-day usefulness for frontline workers (1.22.0, docs/USER_GUIDE.md), what the server decides:
 //   * a call or text with a "remind me to call back on" date is a follow-up whether or not the box was ticked too,
 //     so the to-do is made (a date with the box left unticked used to make none);
@@ -14,7 +15,7 @@ const ELEMENTS = { signed_at: '2026-09-01', scope: 'Referral summary', expires_a
 let sup, nav, nav2, clientId, office;
 const ok = (r, s = 201) => { assert.equal(r.status, s, JSON.stringify(r.data)); return r.data; };
 const minutesAgo = (n) => new Date(Date.now() - n * 60000).toISOString();
-const tomorrow = () => new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+const tomorrow = () => LD.addDays(LD.today(), 1);
 
 before(async () => {
   await H.start();

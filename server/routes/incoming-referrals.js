@@ -57,7 +57,7 @@ function checkPerson(v, row = null) {
   if (!String(val('first_name') || '').trim() && !String(val('last_name') || '').trim() && !String(val('phone') || '').trim()) {
     throw badRequest('Give the person\'s name, or a phone number to reach them on', { fields: { last_name: 'is required unless a first name or phone is given' } });
   }
-  if (v.dob && v.dob > new Date().toISOString().slice(0, 10)) throw badRequest('Validation failed', { fields: { dob: 'cannot be in the future' } });
+  if (v.dob && v.dob > require('../local-date').today()) throw badRequest('Validation failed', { fields: { dob: 'cannot be in the future' } });
   notFuture('received_at', v.received_at);
 }
 

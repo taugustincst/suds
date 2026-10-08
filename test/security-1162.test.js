@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Security review of 1.16.1 (r7): the findings fixed in 1.16.2, each at both doors (REST and sync push) where it
 // has two. The device side of M3 (a flagged note leaves the navigator's device) is test/counseling-drop-device.test.js.
 const { test, before, after } = require('node:test');
@@ -9,7 +10,7 @@ const H = require('./helpers');
 const PW = 'StaffPassw0rd!x';
 const U = {}; const C = {};
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
-const day = (d = 0) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+const day = (d = 0) => LD.addDays(LD.today(), d);
 let enc, dec, sha256;
 
 before(async () => {

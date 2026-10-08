@@ -409,7 +409,7 @@ function baseAnswer(cursor, serverNow, complete) {
   out.settings.caseload_restriction = db.getSetting('caseload_restriction', '1'); // unset means on (server/auth.js)
   // The office's calendar goes to its devices, so "today" and a visit's service date are the same day on
   // both (the zone in force: the setting, else ORG_TIMEZONE).
-  out.settings.org_timezone = require('./budget').orgTimezone() || null;
+  out.settings.org_timezone = require('../local-date').orgTimezone() || null;
   return out;
 }
 // A device that has been away longer than tombstones are kept cannot be told what was deleted, so it is

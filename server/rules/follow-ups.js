@@ -227,7 +227,7 @@ function deriveCallFollowUp(v, existing) {
 function defaultReferralDue(v) {
   if (v.follow_up_due) return;
   const days = v.urgency === 'emergent' ? 1 : v.urgency === 'urgent' ? 3 : 14;
-  v.follow_up_due = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+  v.follow_up_due = require('../local-date').addDays(require('../local-date').today(), days);
 }
 
 module.exports = { reconcile, cancelForDeleted, pushDeleted, reminderTasks, track, finish, deriveCallFollowUp, defaultReferralDue, SPECS };

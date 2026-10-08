@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // The frontline-UX and market reviews of 1.15.3 (fixed in 1.16.0). What the API decides: yes/no questions
 // nobody asked stored as "not asked" rather than "no" (and SUPRT-A not reading them as "no"); SUPRT-A complete
 // only with every section its assessment point asks, coded answers checked; returned or reopened time told to
@@ -14,8 +15,8 @@ const { randomUUID } = require('node:crypto');
 const PW = 'StaffPassw0rd!x';
 let admin, nav, nav2, sup, fin, ro, clin, U = {};
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
-const today = new Date().toISOString().slice(0, 10);
-const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+const today = LD.today();
+const from = LD.addDays(LD.today(), -30);
 // A CSV with quoted fields (labels carry commas), as the exports write it.
 function csvRows(text) {
   const out = []; let row = []; let cur = ''; let q = false;

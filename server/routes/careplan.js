@@ -19,7 +19,7 @@ const { encrypt, decrypt, uuid } = require('../crypto');
 const { assertFresh } = require('../crud');
 
 const dec = (v) => (v ? decrypt(v) : null);
-const today = () => require('./budget').localDate();
+const today = () => require('../local-date').localDate();
 
 function clientFor(ctx, clientId) {
   if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, clientId)) throw notFound('Client not found');

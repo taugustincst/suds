@@ -75,7 +75,7 @@ module.exports = define({
     }
     // An admission and discharge recorded together, already over, are the care team's to record: from anyone else,
     // only one of today's (a contact opened and closed offline), never a past one reports would count (N4).
-    const recent = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const recent = require('../local-date').addDays(require('../local-date').today(), -1);
     if (!c.existing && val('status') === 'closed' && [opened, closed].some(d => d && String(d).slice(0, 10) < recent) && !standing(c.user, row.client_id)) {
       out.push(refuse('not permitted: only the client\'s care team or a supervisor can record a past admission and discharge', { status: 403, message: 'Only the client\'s care team or a supervisor can record a past admission and discharge' }));
     }

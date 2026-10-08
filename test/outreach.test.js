@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Street outreach (server/outreach.js, public/views/outreach.js): a field contact is an anonymous visit saved
 // through POST /api/interventions, so its supplies draw the stock down by the supply rules and every report that
 // counts anonymous distribution counts it; GET /api/outreach/shift is the worker's own "my shift" summary.
@@ -83,7 +84,7 @@ test('who may use it: those who record visits', async () => {
 });
 
 test('the reports count outreach contacts as anonymous visits and distribution', async () => {
-  const from = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10); const to = require('../server/routes/budget').localDate();
+  const from = LD.addDays(LD.today(), -3); const to = require('../server/routes/budget').localDate();
   const ssp = ok(await sup.get(`/api/reports/ssp?from=${from}&to=${to}&counts=exact`), 200);
   assert.ok(ssp.totals.anonymous_contacts >= 3, 'the contacts that handed supplies out: ' + `anonymous contacts ${ssp.totals.anonymous_contacts}`);
   assert.ok(ssp.totals.syringes_distributed >= 20);

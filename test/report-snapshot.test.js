@@ -128,8 +128,8 @@ test('every table a publication release reads is part of the data\'s version it 
 test('the monthly report reads a month at a time and answers exactly what one pass over the visits did', async () => {
   const r = await req('GET', '/api/reports/monthly?months=24');
   assert.equal(r.status, 200);
-  const start = new Date(); start.setUTCDate(1); start.setUTCMonth(start.getUTCMonth() - 23);
-  const s = start.toISOString().slice(0, 10);
+  const [ty, tm] = require('../server/local-date').today().split('-').map(Number);
+  const s = new Date(Date.UTC(ty, tm - 24, 1)).toISOString().slice(0, 10);
   // 1.13.0's three passes over the visits.
   assert.deepEqual(r.data.interventions, db.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s).map(x => ({ ...x })));
   assert.deepEqual(r.data.naloxone, db.all(`SELECT substr(occurred_at,1,7) month, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s).map(x => ({ ...x })));

@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Released in 1.24.0: a supervisor's "finish and sign" reminder opens the draft it is about (tasks.note_id, migration 69,
 // server/rules/tasks.js noteLinkRefusal / dropNoteLink). The link names the to-do's assignee's own live draft on the
 // to-do's client; only a holder of notes:cosign sets or changes it, on a sign reminder, over REST and sync push alike; a
@@ -13,7 +14,7 @@ const { randomUUID } = require('node:crypto');
 const PW = 'StaffPassw0rd!x';
 let nav, sup, clin, clin2, U = {};
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
-const today = new Date().toISOString().slice(0, 10);
+const today = LD.today();
 
 before(async () => {
   await H.start();

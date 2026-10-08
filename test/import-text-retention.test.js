@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // An imported page (a OneNote export, a Pocket AI transcript) that is filed as a note must not keep a second
 // copy of its text in import_items: the note is the system of record, and the copy outlived the client's
 // retention purge and the import's own purge (evidence-pack review of 1.16.4). Filing clears it at both doors
@@ -14,7 +15,7 @@ const MARK = 'Zbigniew-Quatermass-IMPORTMARK';
 let sup, nav, U = {};
 let enc, dec;
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
-const day = (d = 0) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+const day = (d = 0) => LD.addDays(LD.today(), d);
 
 before(async () => {
   await H.start();

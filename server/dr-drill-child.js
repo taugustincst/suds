@@ -114,7 +114,7 @@ async function drill({ keys, anchorDir }) {
   };
   try {
     const health = await call('GET', '/api/health');
-    out.ready_at = Date.now();
+    out.ready_at = Date.now(); await send({ type: 'ready' });
     check('The application serves from the restored copy (/api/health)', health.status === 200 && health.data && health.data.database === 'ok', health.status === 200 ? 'healthy' : `HTTP ${health.status}${health.data && health.data.warnings ? ': ' + health.data.warnings.join(' ') : ''}`);
     const login = await call('POST', '/api/auth/login', { username, password });
     const mfa = login.status === 200 && login.data.mfaPending ? await call('POST', '/api/auth/mfa/verify', { code: totp(secret) }) : { status: 0 };

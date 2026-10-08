@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // SUDS as the Part 2 layer beside an EHR (1.17.0; docs/integration/EHR-PART2-LAYER.md): the part2_layer programme
 // profile (EHR-like modules off, the FHIR API on), the Part 2 layer summary, FHIR R4 Provenance for each Consent the
 // EHR may read, and patients and encounters imported from the EHR's FHIR export through the spreadsheet import's
@@ -42,7 +43,7 @@ test('the Part 2 compliance module profile: EHR-like modules off, the FHIR API o
 test('the Part 2 layer summary: counts only, for who may read consents', async () => {
   const c = (await nav.post('/api/clients', { first_name: 'Summary', last_name: 'Person', status: 'active', confirm_duplicate: true })).data.id;
   H.db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,redisclosure_notice_given,created_by,rule_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-    randomUUID(), c, 'part2_disclosure', encrypt('Somewhere'), encrypt('Treatment'), encrypt('All'), '2026-01-01', new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10), 1, 1, adminId, '2024');
+    randomUUID(), c, 'part2_disclosure', encrypt('Somewhere'), encrypt('Treatment'), encrypt('All'), '2026-01-01', LD.addDays(LD.today(), 10), 1, 1, adminId, '2024');
   const r = await nav.get('/api/part2/layer');
   assert.equal(r.status, 200, JSON.stringify(r.data));
   assert.equal(r.data.profile, 'part2_layer');

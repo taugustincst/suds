@@ -62,7 +62,7 @@ function ageOn(dob, day) {
   const [by, bm, bd] = dob.split('-').map(Number); const [y, m, d] = day.split('-').map(Number);
   return y - by - ((m < bm || (m === bm && d < bd)) ? 1 : 0);
 }
-function today() { try { return require('./routes/budget').localDate(); } catch { return new Date().toISOString().slice(0, 10); } }
+function today() { return require('./local-date').today(); }
 // Annual updates: due on each anniversary of the admission. Accepted from ANNUAL_EARLY days before to
 // ANNUAL_LATE days after it (window to verify against the DHCS guide).
 const ANNUAL_EARLY = 60, ANNUAL_LATE = 30;

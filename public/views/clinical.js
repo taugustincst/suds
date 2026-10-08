@@ -4,7 +4,7 @@
 // that sums them up on the Overview. The instrument wording, scoring bands, ASAM dimension names and Z codes
 // come from the server (GET /api/meta/constants, built from server/clinical.js), so the score shown while
 // the form is filled in is the one the server saves.
-import { h, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, confirmDialog, kv, emptyState, clear, flag, moduleOn } from '../app.js';
+import { h, get, post, put, del, state, form, modal, toast, table, badge, fmt, can, confirmDialog, kv, emptyState, clear, flag, moduleOn, addDaysLocal } from '../app.js';
 import { asamCopilot, carePlanCopilot, mayUseAi, aiStatus, aiOffered } from './ai.js';
 
 const C = () => state.constants || {};
@@ -218,7 +218,7 @@ export async function carePlanTab(clientId, { refresh, clientDisplay } = {}) {
       writable ? h('div', { class: 'row nowrap' },
         h('button', { class: 'btn sm', 'data-add-step': g.id, onClick: () => openStepForm(g, null, { onDone: refresh }) }, '+ Step'),
         g.status === 'active' ? h('button', { class: 'btn sm ghost', 'data-review-goal': g.id, onClick: async () => {
-          const f = form([{ name: 'review_date', label: 'Next review by', type: 'date', required: true, value: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10) }], { submitText: 'Record review', onCancel: () => m.close(), onSubmit: async (d) => { await put(`/api/goals/${g.id}`, { reviewed: true, review_date: d.review_date }); toast('Review recorded', 'ok'); m.close(); refresh && refresh(); } });
+          const f = form([{ name: 'review_date', label: 'Next review by', type: 'date', required: true, value: addDaysLocal(90) }], { submitText: 'Record review', onCancel: () => m.close(), onSubmit: async (d) => { await put(`/api/goals/${g.id}`, { reviewed: true, review_date: d.review_date }); toast('Review recorded', 'ok'); m.close(); refresh && refresh(); } });
           const m = modal('Reviewed with the client today', f);
         } }, 'Reviewed') : null,
         h('button', { class: 'btn sm ghost', 'data-edit-goal': g.id, onClick: () => openGoalForm(clientId, g, active.concat(problems.filter(p => p.id === g.problem_id && p.status !== 'active')), { onDone: refresh }) }, 'Edit'),

@@ -19,7 +19,7 @@ const MEDIA_OVER = 500;
 const WARN_DAYS = 14;
 
 const addDays = (date, n) => new Date(Date.parse(String(date).slice(0, 10) + 'T00:00:00Z') + n * DAY).toISOString().slice(0, 10);
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => require('./local-date').today();
 
 /**
  * What the breach notification rule requires of this incident, and by when. Every obligation is
@@ -93,7 +93,7 @@ function linkClient(incidentId, clientId) {
 function massExportThreshold() { const v = Number(db.getSetting('mass_export_threshold', '')); return Number.isFinite(v) && v > 0 ? v : 500; }
 function maybeMassExport({ clients, kind, user }) {
   if (clients < massExportThreshold()) return null;
-  return draft({ source: 'mass_export', sourceRef: `${kind}:${new Date().toISOString().slice(0, 10)}:${user.id}`, title: `Identified export of ${clients} clients (${kind})`,
+  return draft({ source: 'mass_export', sourceRef: `${kind}:${today()}:${user.id}`, title: `Identified export of ${clients} clients (${kind})`,
     description: `An identified export (${kind}) naming ${clients} clients was made by ${user.display_name || user.username}. Confirm it was authorised and went where it was recorded as going; if so, determine "not a breach" with that reason.`, user });
 }
 

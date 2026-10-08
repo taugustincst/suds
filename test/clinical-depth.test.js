@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Clinical depth for CalAIM documentation: the problem list (with its change history and note links), the
 // care coordination plan, ASAM six-dimension assessments, scored outcome measures (PHQ-9, GAD-7, AUDIT-C,
 // DAST-10, wellbeing), the PHQ-9 item 9 safety alert, the programme outcomes report and its de-identified
@@ -12,7 +13,7 @@ const CL = require('../server/clinical');
 let admin, sup, clin, nav, nav2, fin, ro;
 let clinId, navId, clientId, navClientId;
 const iso = (ms) => new Date(ms).toISOString();
-const day = (offset) => new Date(Date.now() + offset * 86400000).toISOString().slice(0, 10);
+const day = (offset) => LD.addDays(LD.today(), offset);
 const push = (c, body) => c.post('/api/sync/push', { device_now: iso(Date.now()), ...body });
 
 before(async () => {

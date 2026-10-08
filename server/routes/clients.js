@@ -264,10 +264,10 @@ module.exports = (r) => {
     // assigned, last contact, overdue to-dos, consent expiry) are then worked out for its rows alone. One query
     // used to work every one of them out for every client in the list before sorting and cutting it to a page:
     // 200 ms for a sort of 20,000 clients, 90 ms to reach page 100 of the default order.
-    const now = db.now();
+    const now = db.now(); const today = require('../local-date').today();
     const LAST_CONTACT = `(SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied')))`;
-    const OVERDUE = `(SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END))`;
-    let sortCols = sort === 'overdue' ? { sql: `, ${OVERDUE} AS overdue_tasks, ${LAST_CONTACT} AS last_contact`, params: [now] }
+    const OVERDUE = `(SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < ? ELSE t.due_at < ? END))`;
+    let sortCols = sort === 'overdue' ? { sql: `, ${OVERDUE} AS overdue_tasks, ${LAST_CONTACT} AS last_contact`, params: [today, now] }
       : sort === 'last_contact' || sort === 'risk' ? { sql: `, ${LAST_CONTACT} AS last_contact`, params: [] } : { sql: '', params: [] };
     let pageOrder = order;
     if (nameTier && !sort) {
@@ -282,7 +282,7 @@ module.exports = (r) => {
     const byId = new Map(db.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth.activeAssignment('a.')}) AS assigned_workers,
       ${LAST_CONTACT} AS last_contact, ${OVERDUE} AS overdue_tasks
       ${consentWindow ? `, (SELECT MIN(co.expires_at) FROM consents co WHERE co.client_id=c.id AND co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ?) AS consent_expires_at` : ''}
-      FROM clients c WHERE c.id IN (SELECT value FROM json_each(?))`, now, ...(consentWindow ? [consentWindow.from, consentWindow.to] : []), JSON.stringify(pageIds)).map(x => [x.id, x]));
+      FROM clients c WHERE c.id IN (SELECT value FROM json_each(?))`, today, now, ...(consentWindow ? [consentWindow.from, consentWindow.to] : []), JSON.stringify(pageIds)).map(x => [x.id, x]));
     const rows = pageIds.map(id => byId.get(id));
     const total = db.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
     audit.log({ user: ctx.user, action: 'client.list', ip: ctx.ip, details: { q: q ? '[redacted]' : '', searched: q ? searched : undefined, search_refused: searchRefused, status, sort: sort || undefined, filters: filters.length ? filters : undefined, offset: offset || undefined, count: rows.length, deidentified: deidentify } });
@@ -331,7 +331,7 @@ module.exports = (r) => {
     enc.full_name_idx = blindIndex((v.last_name || '') + (v.first_name || ''));
     const cols = { id, client_code: M.nextClientCode(), ...enc, created_by: ctx.user.id };
     for (const f of M.PLAIN_FIELDS) if (v[f] !== undefined) cols[f] = v[f];
-    if (!cols.intake_date) cols.intake_date = new Date().toISOString().slice(0, 10);
+    if (!cols.intake_date) cols.intake_date = require('../local-date').today();
     // Risk is somebody's judgement, never a default (QA 1.15.3): the column's schema DEFAULT 'moderate' stored
     // every client created without one as Moderate. Not given means not assessed (NULL, shown "Not assessed").
     if (cols.risk_level === undefined) cols.risk_level = null;
@@ -386,7 +386,7 @@ module.exports = (r) => {
       throw conflict('This record is not a discharged one: it is active or on someone\'s caseload. Ask a supervisor to assign it to you.');
     }
     const hadAccess = auth.canAccessClient(ctx.user, row.id);
-    const today = require('./budget').localDate();
+    const today = require('../local-date').localDate();
     const episodeId = uuid();
     db.transaction(() => {
       db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid(), row.id, ctx.user.id, 'primary', today, ctx.user.id);
@@ -520,7 +520,7 @@ module.exports = (r) => {
       // At most one open episode: if both records had one, the duplicate's is closed as merged — the care
       // continues under the keeper's.
       if (db.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=? AND status='open'`, keep.id).n > 1) {
-        const today = new Date().toISOString().slice(0, 10);
+        const today = require('../local-date').today();
         for (const id of sourceOpenEpisodes) db.run(`UPDATE episodes SET status='closed', closed_at=?, closed_by=?, discharge_reason='merged', discharge_disposition='merged into duplicate record', updated_at=? WHERE id=? AND status='open'`, today, ctx.user.id, db.now(), id);
         moved._episodes_closed_as_merged = sourceOpenEpisodes.length;
       }
@@ -550,7 +550,7 @@ module.exports = (r) => {
     client.days_to_engagement = M.daysToEngagement(client);
     client.assignments = db.all(`SELECT a.*, u.display_name, u.role AS user_role FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=? ORDER BY a.end_date IS NOT NULL, a.start_date DESC`, row.id)
       .map(a => ({ ...a, notes: a.notes_enc ? decrypt(a.notes_enc) : null, notes_enc: undefined }));
-    client.active_consents = db.all(`SELECT id,type,recipient_enc,purpose_enc,signed_at,expires_at FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, row.id)
+    client.active_consents = db.all(`SELECT id,type,recipient_enc,purpose_enc,signed_at,expires_at FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, row.id, require('../local-date').today())
       .map(x => ({ id: x.id, type: x.type, recipient: x.recipient_enc ? decrypt(x.recipient_enc) : null, purpose: x.purpose_enc ? decrypt(x.purpose_enc) : null, signed_at: x.signed_at, expires_at: x.expires_at }));
     client.counts = {
       interventions: db.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, row.id).n,
@@ -562,7 +562,7 @@ module.exports = (r) => {
       // Of those, the change notices (open_tasks includes them): never overdue, shown apart (1.16.2).
       notices: db.all(`SELECT id, client_id, assigned_to, created_by, created_at, description_enc FROM tasks WHERE client_id=? AND status='open' AND due_at IS NULL AND created_by=assigned_to`, row.id).filter(require('../rules/tasks').isNotice).length,
       // Real to-dos past their due date (a notice has none): the Overview's tile warns only for these (r8 M1).
-      overdue_tasks: db.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END)`, row.id, require('./budget').localDate(), db.now()).n,
+      overdue_tasks: db.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END)`, row.id, require('../local-date').localDate(), db.now()).n,
       minutes: db.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
       spent: db.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n,
       episodes: db.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n,

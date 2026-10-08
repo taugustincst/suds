@@ -13,7 +13,7 @@ const FU = require('./follow-ups');
 
 // The date a service "happened on", for the grant it is charged to: the calendar date in the organisation's
 // time zone, or the service_date a REST caller gave explicitly.
-const serviceDate = (row) => row.service_date || require('../routes/budget').localDate(row.occurred_at);
+const serviceDate = (row) => row.service_date || require('../local-date').localDate(row.occurred_at);
 
 module.exports = define({
   table: 'interventions',

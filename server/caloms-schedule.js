@@ -100,7 +100,7 @@ function runIfDue(today = null) {
   if (!C.enabled() || !C.providers().length) return null;
   const S = C.schedule();
   if (S.frequency !== 'monthly') return null;
-  const day = today || require('./routes/budget').localDate();
+  const day = today || require('./local-date').localDate();
   if (Number(day.slice(8, 10)) < Math.min(28, Math.max(1, S.day))) return null;
   const { from, to } = previousMonth(day);
   // Done for the month once a run for it prepared every provider's file (or found none to prepare).
