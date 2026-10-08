@@ -141,7 +141,7 @@ function consentElementProblems(row) {
  */
 function activeConsent(clientId, consentId, { elements = true } = {}) {
   if (!consentId) return null;
-  const row = db.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
+  const row = db.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, consentId, clientId, require('./local-date').today()) || null;
   if (row && elements && consentElementProblems(row).length) return null;
   return row;
 }
@@ -150,7 +150,7 @@ function activeConsent(clientId, consentId, { elements = true } = {}) {
 function courtOrderProblems(o) {
   const out = [];
   if (o.status !== 'active') out.push('it has been vacated');
-  if (o.expires_at && o.expires_at < new Date().toISOString().slice(0, 10)) out.push('it has expired');
+  if (o.expires_at && o.expires_at < require('./local-date').today()) out.push('it has expired');
   if (!o.findings_recorded) out.push('it does not record the good-cause findings the regulation requires (§2.64(d))');
   if (!o.notice_requirement_met) out.push('the notice and opportunity to respond the regulation requires was not given');
   return out;
@@ -369,7 +369,7 @@ function consentCoversPurpose({ type, purpose: consentPurpose }, purpose) {
 // ---- the agreements register (qsoa / research / audit_evaluation) ----
 /** Why a registered agreement cannot authorise a disclosure today (empty when it can). */
 function agreementProblems(a) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = require('./local-date').today();
   const out = [];
   if (a.status !== 'active') out.push('it has been ended');
   if (a.expires_at && a.expires_at < today) out.push('it has expired');
@@ -570,7 +570,7 @@ function fileConsentFor(clientId, names, purpose) {
   const types = fileConsentTypes();
   if (!names.length || !types.length) return null;
   if (purpose !== null && !String(purpose || '').trim()) return null;
-  const rows = db.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => '?').join(',')}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY signed_at DESC, created_at DESC`, clientId, ...types);
+  const rows = db.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => '?').join(',')}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?) ORDER BY signed_at DESC, created_at DESC`, clientId, ...types, require('./local-date').today());
   return rows.find(c => !consentElementProblems(c).length && consentNamesRecipient({ type: c.type, recipient: dec(c.recipient_enc) }, names)
     && (purpose === null || consentCoversPurpose({ type: c.type, purpose: dec(c.purpose_enc) }, purpose))) || null;
 }
@@ -747,7 +747,7 @@ function fhirCoverage({ cacheKey, recipients, purposeOfUse, resourceType }) {
   const category = CATEGORY_OF_FHIR_TYPE[resourceType] || '*';
   const stamp = db.one(`SELECT (SELECT COUNT(*) FROM consents) n, (SELECT MAX(updated_at) FROM consents) u,
     (SELECT COUNT(*) FROM patient_requests) rn, (SELECT MAX(updated_at) FROM patient_requests) ru`);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = require('./local-date').today();
   const types = fhirConsentTypes();
   const key = `${stamp.n}|${stamp.u}|${stamp.rn}|${stamp.ru}|${types.join(',')}|${today}|${recipients.join('\u0001')}|${purposeOfUse}|${category}`;
   const hit = coverageCache.get(`${cacheKey}|${category}`);
@@ -755,8 +755,8 @@ function fhirCoverage({ cacheKey, recipients, purposeOfUse, resourceType }) {
   const map = new Map();
   const restricted = new Set(db.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map(r => r.client_id));
   const rows = types.length ? db.all(`SELECT k.* FROM consents k JOIN clients c ON c.id=k.client_id
-    WHERE k.type IN (${types.map(() => '?').join(',')}) AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now'))
-      AND c.deleted_at IS NULL AND c.merged_into IS NULL ORDER BY k.signed_at, k.created_at`, ...types) : [];
+    WHERE k.type IN (${types.map(() => '?').join(',')}) AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= ?)
+      AND c.deleted_at IS NULL AND c.merged_into IS NULL ORDER BY k.signed_at, k.created_at`, ...types, today) : [];
   for (const row of rows) {
     if (restricted.has(row.client_id)) continue;
     // A consent without the §2.31 elements authorises nothing here either (as requireBasis re-checks them).

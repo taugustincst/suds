@@ -156,7 +156,7 @@ module.exports = (r) => {
       // who re-admits the person picks the case up themselves.
       if (e.closed_at) db.run(`UPDATE assignments SET end_date=NULL, updated_at=? WHERE client_id=? AND end_date=? AND ended_at IS NULL`, db.now(), e.client_id, e.closed_at);
       if (!db.one(`SELECT 1 FROM assignments WHERE client_id=? AND end_date IS NULL AND ended_at IS NULL`, e.client_id) && (auth.caseloadRestricted(ctx.user) || ['navigator', 'clinician'].includes(ctx.user.role))) {
-        db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid(), e.client_id, ctx.user.id, 'primary', new Date().toISOString().slice(0, 10), ctx.user.id);
+        db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid(), e.client_id, ctx.user.id, 'primary', localDate(), ctx.user.id);
       }
     });
     audit.log({ user: ctx.user, action: 'episode.reopen', entity: 'episode', entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason_recorded: reason ? true : undefined, was_discharged: e.discharge_reason, caloms_discharge_removed: calDischarge ? true : undefined } });
@@ -198,10 +198,10 @@ module.exports = (r) => {
     const { limit, offset } = paging(ctx.query, { limit: 200, max: 500 });
     const where = `c.deleted_at IS NULL AND c.status='waitlist' AND ${cf.sql}`;
     const rows = db.all(`SELECT c.*,
-        CAST(julianday('now') - julianday(COALESCE(c.intake_date, date(c.created_at))) AS INTEGER) AS days_waiting,
+        CAST(julianday(?) - julianday(COALESCE(c.intake_date, date(c.created_at))) AS INTEGER) AS days_waiting,
         (SELECT MAX(occurred_at) FROM interventions i WHERE i.client_id=c.id) AS last_contact
       FROM clients c WHERE ${where}
-      ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, days_waiting DESC, c.id LIMIT ? OFFSET ?`, ...cf.params, limit, offset);
+      ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, days_waiting DESC, c.id LIMIT ? OFFSET ?`, localDate(), ...cf.params, limit, offset);
     const total = db.one(`SELECT COUNT(*) n FROM clients c WHERE ${where}`, ...cf.params).n;
     const M = require('../clients-model');
     const deidentify = !auth.hasPerm(ctx.user, 'clients:read');
@@ -225,7 +225,7 @@ module.exports = (r) => {
     const to = db.one(`SELECT id, display_name, is_active FROM users WHERE id=?`, v.to_user_id);
     if (!from || !to) throw notFound('Worker not found');
     if (!to.is_active) throw badRequest('That worker\'s account is not active');
-    const when = v.effective_date || new Date().toISOString().slice(0, 10);
+    const when = v.effective_date || localDate();
     // end_date is the departing worker's last day, inclusive, and access is granted through the end of that
     // day. Their last day is therefore the day before the receiving worker starts, or a transfer effective
     // today would leave both of them holding the client until midnight.

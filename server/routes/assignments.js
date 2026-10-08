@@ -20,8 +20,8 @@ module.exports = (r) => {
     if (restores && !undone) throw badRequest('The assignment to restore was not found, or it has not ended.');
     const id = uuid();
     db.transaction(() => {
-      if ((v.role_on_case || 'primary') === 'primary') db.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE client_id=? AND role_on_case='primary' AND end_date IS NULL`, db.now(), c.id);
-      db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes_enc,created_by) VALUES(?,?,?,?,?,?,?)`, id, c.id, v.user_id, v.role_on_case || 'primary', v.start_date || new Date().toISOString().slice(0, 10), v.notes ? encrypt(v.notes) : null, ctx.user.id);
+      if ((v.role_on_case || 'primary') === 'primary') db.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE client_id=? AND role_on_case='primary' AND end_date IS NULL`, require('../local-date').today(), db.now(), c.id);
+      db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes_enc,created_by) VALUES(?,?,?,?,?,?,?)`, id, c.id, v.user_id, v.role_on_case || 'primary', v.start_date || require('../local-date').today(), v.notes ? encrypt(v.notes) : null, ctx.user.id);
     });
     audit.log({ user: ctx.user, action: undone ? 'assignment.restore' : 'assignment.create', entity: 'assignment', entityId: id, clientId: c.id, ip: ctx.ip, details: { user_id: v.user_id, role: v.role_on_case, ...(undone ? { restores: undone.id } : {}) } });
     ctx.status = 201; return { id };
@@ -31,7 +31,7 @@ module.exports = (r) => {
     // The same reach as adding one (server/rules/assignments.js): a client this person can open, or clients:all.
     if (!auth.hasPerm(ctx.user, 'clients:all')) auth.assertClientAccess(ctx, a.client_id);
     // ended_at, not just end_date: the worker loses the client now rather than at the end of the day.
-    db.run(`UPDATE assignments SET end_date=date('now'), ended_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), a.id);
+    db.run(`UPDATE assignments SET end_date=?, ended_at=?, updated_at=? WHERE id=?`, require('../local-date').today(), db.now(), db.now(), a.id);
     audit.log({ user: ctx.user, action: 'assignment.end', entity: 'assignment', entityId: a.id, clientId: a.client_id, ip: ctx.ip });
     return { ok: true };
   });

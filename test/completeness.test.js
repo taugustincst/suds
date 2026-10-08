@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Gaps closed after the 1.9.4 completeness audit: a fatal overdose discharges the client and correcting the
 // event undoes it, patient-rights requests can be edited and voided, the program-wide episode list, the meta
 // lists the views read, and routes that had no API test at all.
@@ -241,7 +242,7 @@ test('GET /api/waitlist lists waitlisted clients on the caller\'s caseload, long
 });
 
 test('POST /api/time/submit-period submits the caller\'s own draft and rejected time in the range, nobody else\'s', async () => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = LD.today();
   const mine = [];
   for (let i = 0; i < 2; i++) { const r = await nav.post('/api/time', { work_date: today, minutes: 30, category: 'admin' }); assert.equal(r.status, 201, JSON.stringify(r.data)); mine.push(r.data.id); }
   const theirs = (await nav2.post('/api/time', { work_date: today, minutes: 15, category: 'admin' })).data.id;

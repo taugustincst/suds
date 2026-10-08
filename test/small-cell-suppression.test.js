@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Small-cell suppression in every report labelled suitable for publication or sharing: the funder report,
 // the NDP log and the opioid settlement report (server/small-cells.js; docs/HIPAA.md "Small cells in
 // aggregate reports"). Every cell counting fewer people than the threshold is suppressed (primary), and
@@ -283,7 +284,7 @@ test('attack 1, differencing: a fund-filtered or custom-period run is never a pu
   // Standard periods: a quarter and a fiscal year starting on a quarter; a period not yet over is not one.
   assert.equal((await sup.get('/api/reports/funder?from=2025-01-01&to=2025-03-31')).data.release.period, 'quarter');
   assert.equal((await sup.get('/api/reports/funder?from=2024-07-01&to=2025-06-30')).data.release.period, 'year');
-  const today = new Date().toISOString().slice(0, 10); const monthStart = `${today.slice(0, 7)}-01`;
+  const today = LD.today(); const monthStart = `${today.slice(0, 7)}-01`;
   const monthEnd = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0)).toISOString().slice(0, 10);
   const open = (await sup.get(`/api/reports/funder?from=${monthStart}&to=${monthEnd}`)).data;
   assert.equal(open.suppression.purpose, 'submission', 'the current month has not ended: rerun tomorrow, it would give away today');

@@ -10,6 +10,10 @@ const { acquire } = require('../server/instance-lock');
 const { waitFor } = require('./wait');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-lock-'));
+// A lock another process left, with its heartbeat (the mtime) set by this process's clock, as a holder's touch sets
+// it: the file system stamps a plain write with the kernel's time, which CI's evening job (scripts/test-evening.sh,
+// libfaketime) does not move, and every lock would then look a day stale or a day ahead.
+const putLock = (d, text) => { const f = path.join(d, '.suds.lock'); fs.writeFileSync(f, text); const now = new Date(); fs.utimesSync(f, now, now); };
 after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 test('acquire with no data directory is a harmless no-op', () => {
@@ -37,7 +41,7 @@ test('a second acquire against the same directory, while the first is still held
 test('a lock left by a process that is no longer running is taken over, not left stuck forever', () => {
   const d = fs.mkdtempSync(path.join(dir, 'c-'));
   const deadPid = 999999; // exceedingly unlikely to be a live pid on any system running this test
-  fs.writeFileSync(path.join(d, '.suds.lock'), String(deadPid));
+  putLock(d, String(deadPid));
   const release = acquire(d);
   assert.equal(JSON.parse(fs.readFileSync(path.join(d, '.suds.lock'), 'utf8')).pid, process.pid, 'the stale lock was overwritten with this process\'s own pid');
   release();
@@ -55,7 +59,7 @@ test('releasing does not remove a lock another process has since taken (double-r
   const release1 = acquire(d);
   release1();
   // Simulate a different process taking the lock after ours released it.
-  fs.writeFileSync(path.join(d, '.suds.lock'), '424242');
+  putLock(d, '424242');
   release1(); // already released once; must not touch the new owner's file even if called again
   assert.equal(fs.readFileSync(path.join(d, '.suds.lock'), 'utf8').trim(), '424242');
 });
@@ -69,12 +73,12 @@ test('a lock file naming THIS process\'s pid, left by a previous run, is stale (
   // In a container node is PID 1 on every start. After SIGKILL / OOM / power loss the old .suds.lock says "1";
   // the new process is also PID 1, so "is pid 1 running?" is always yes, and the old code crash-looped forever.
   const d = fs.mkdtempSync(path.join(dir, 'self-'));
-  fs.writeFileSync(path.join(d, '.suds.lock'), String(process.pid)); // old plain-pid format
+  putLock(d, String(process.pid)); // old plain-pid format
   const release = acquire(d);
   assert.equal(lockOf(d).pid, process.pid);
   release();
   // And the same in the JSON format.
-  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: process.pid, bootId: _internals.bootId(), startTime: _internals.startTime(process.pid) }));
+  putLock(d, JSON.stringify({ pid: process.pid, bootId: _internals.bootId(), startTime: _internals.startTime(process.pid) }));
   const release2 = acquire(d);
   release2();
 });
@@ -98,16 +102,16 @@ async function withLiveChild(fn) {
 
 test('a lock held by a different live process (same boot, same start time) is refused', { skip: process.platform !== 'linux' }, () => withLiveChild((pid) => {
   const d = fs.mkdtempSync(path.join(dir, 'live-'));
-  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid, bootId: _internals.bootId(), startTime: _internals.startTime(pid) }));
+  putLock(d, JSON.stringify({ pid, bootId: _internals.bootId(), startTime: _internals.startTime(pid) }));
   assert.throws(() => acquire(d), /already running against this data directory/);
   // An old plain-pid lock naming a live other process is still honoured.
-  fs.writeFileSync(path.join(d, '.suds.lock'), String(pid));
+  putLock(d, String(pid));
   assert.throws(() => acquire(d), /already running against this data directory/);
 }));
 
 test('a lock whose pid now belongs to an unrelated process (different start time) is stale', { skip: process.platform !== 'linux' }, () => withLiveChild((pid) => {
   const d = fs.mkdtempSync(path.join(dir, 'reuse-'));
-  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid, bootId: _internals.bootId(), startTime: '1' }));
+  putLock(d, JSON.stringify({ pid, bootId: _internals.bootId(), startTime: '1' }));
   const release = acquire(d);
   assert.equal(lockOf(d).pid, process.pid);
   release();
@@ -115,7 +119,7 @@ test('a lock whose pid now belongs to an unrelated process (different start time
 
 test('a lock written during a previous boot is stale even if its pid is running now', { skip: process.platform !== 'linux' }, () => withLiveChild((pid) => {
   const d = fs.mkdtempSync(path.join(dir, 'boot-'));
-  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid, bootId: '00000000-0000-0000-0000-000000000000', startTime: _internals.startTime(pid) }));
+  putLock(d, JSON.stringify({ pid, bootId: '00000000-0000-0000-0000-000000000000', startTime: _internals.startTime(pid) }));
   const release = acquire(d);
   assert.equal(lockOf(d).pid, process.pid);
   release();
@@ -123,7 +127,7 @@ test('a lock written during a previous boot is stale even if its pid is running 
 
 test('a corrupt lock file (e.g. torn write at power loss) is stale, not a permanent lock-out', () => {
   const d = fs.mkdtempSync(path.join(dir, 'corrupt-'));
-  fs.writeFileSync(path.join(d, '.suds.lock'), '{"pid": 12');
+  putLock(d, '{"pid": 12');
   const release = acquire(d);
   release();
 });
@@ -144,7 +148,7 @@ test('the lock records this host\'s name', () => {
 
 test('same host, own pid (container restarted after a crash keeps its hostname) is taken over at once', () => {
   const d = fs.mkdtempSync(path.join(dir, 'samehost-'));
-  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: process.pid, hostname: HOST, bootId: _internals.bootId(), startTime: 'x' }));
+  putLock(d, JSON.stringify({ pid: process.pid, hostname: HOST, bootId: _internals.bootId(), startTime: 'x' }));
   const release = acquire(d, fast); // fresh heartbeat, but provably our own dead predecessor
   assert.equal(lockOf(d).pid, process.pid);
   release();
@@ -152,20 +156,20 @@ test('same host, own pid (container restarted after a crash keeps its hostname) 
 
 test('another host (a second replica) with our pid and a live heartbeat is refused, not taken over', () => {
   const d = fs.mkdtempSync(path.join(dir, 'replica-'));
-  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: process.pid, hostname: 'replica-2', bootId: _internals.bootId(), startTime: _internals.startTime(process.pid) }));
+  putLock(d, JSON.stringify({ pid: process.pid, hostname: 'replica-2', bootId: _internals.bootId(), startTime: _internals.startTime(process.pid) }));
   assert.throws(() => acquire(d, fast), (e) => /replica-2/.test(e.message) && /already running/.test(e.message) && /heartbeat/.test(e.message));
   assert.equal(lockOf(d).hostname, 'replica-2', 'the other holder\'s lock is untouched');
 });
 
 test('another host with a different boot id (shared NFS) and a live heartbeat is refused', () => {
   const d = fs.mkdtempSync(path.join(dir, 'nfs-'));
-  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: 4242, hostname: 'other-host', bootId: '00000000-0000-0000-0000-000000000000', startTime: '5' }));
+  putLock(d, JSON.stringify({ pid: 4242, hostname: 'other-host', bootId: '00000000-0000-0000-0000-000000000000', startTime: '5' }));
   assert.throws(() => acquire(d, fast), /other-host/);
 });
 
 test('another host whose heartbeat is older than the stale window is taken over', () => {
   const d = fs.mkdtempSync(path.join(dir, 'stale-'));
-  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: process.pid, hostname: 'crashed-container', bootId: _internals.bootId() }));
+  putLock(d, JSON.stringify({ pid: process.pid, hostname: 'crashed-container', bootId: _internals.bootId() }));
   ageLock(d, 1000);
   const release = acquire(d, fast);
   assert.equal(lockOf(d).hostname, HOST);
@@ -174,7 +178,7 @@ test('another host whose heartbeat is older than the stale window is taken over'
 
 test('start-up waits for another host\'s heartbeat to go stale, then takes over', () => {
   const d = fs.mkdtempSync(path.join(dir, 'wait-'));
-  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: 7, hostname: 'gone' })); // a fresh heartbeat
+  putLock(d, JSON.stringify({ pid: 7, hostname: 'gone' })); // a fresh heartbeat
   // That it waited is read from what it said, not from a stopwatch (a lower bound on elapsed time depends on
   // the file system's mtime precision and on how quickly this line runs after the write).
   const warned = []; const warn = console.warn; console.warn = (m) => warned.push(String(m));
@@ -199,7 +203,7 @@ test('a holder whose lock was taken over is told (onLost), so it can stop writin
   const d = fs.mkdtempSync(path.join(dir, 'lost-'));
   let lost = null;
   const release = acquire(d, { ...fast, onLost: (why) => { lost = why; } });
-  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: 99, hostname: 'usurper' }));
+  putLock(d, JSON.stringify({ pid: 99, hostname: 'usurper' }));
   await waitFor(() => lost, { message: 'onLost' });
   assert.ok(lost, 'onLost was called');
   release();
@@ -208,11 +212,11 @@ test('a holder whose lock was taken over is told (onLost), so it can stop writin
 
 test('old lock formats (1.12.0 and earlier, no hostname) are judged as written on this host', () => {
   const d = fs.mkdtempSync(path.join(dir, 'legacy-'));
-  fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ pid: process.pid, bootId: _internals.bootId(), startTime: 'x' }));
+  putLock(d, JSON.stringify({ pid: process.pid, bootId: _internals.bootId(), startTime: 'x' }));
   const r1 = acquire(d, fast); r1(); // own pid: the crashed predecessor (node as PID 1 in a container)
-  fs.writeFileSync(path.join(d, '.suds.lock'), String(process.pid));
+  putLock(d, String(process.pid));
   const r2 = acquire(d, fast); r2(); // old plain-pid format, own pid
-  fs.writeFileSync(path.join(d, '.suds.lock'), '999999');
+  putLock(d, '999999');
   const r3 = acquire(d, fast); r3(); // dead pid
 });
 
@@ -224,7 +228,7 @@ test('old lock formats (1.12.0 and earlier, no hostname) are judged as written o
 // /proc/self/mountinfo, the pid namespace, /etc/machine-id); the local rules apply only when the hostname AND
 // that identity match, and otherwise only the heartbeat counts.
 const ME = { hostname: HOST, rootId: 'root-a', pidNs: 'pid:[4026532001]', machineId: 'machine-1' };
-const writeLock = (d, rec) => fs.writeFileSync(path.join(d, '.suds.lock'), JSON.stringify({ bootId: _internals.bootId(), startTime: _internals.startTime(process.pid), ...rec }));
+const writeLock = (d, rec) => putLock(d, JSON.stringify({ bootId: _internals.bootId(), startTime: _internals.startTime(process.pid), ...rec }));
 
 test('the lock records the container identity (root mount digest, pid namespace, machine id)', { skip: process.platform !== 'linux' }, () => {
   const d = fs.mkdtempSync(path.join(dir, 'ident-'));

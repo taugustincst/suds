@@ -307,7 +307,7 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
       db.run(`INSERT INTO supply_items(id,name,category,product,unit,quick,updated_by) VALUES(?,?,?,?,?,?,?)`, itemId, name, category, product, unit, quick, workers[0]);
       for (const [qty, lot, days, source] of receipts) {
         db.run(`INSERT INTO supply_ledger(id,item_id,site_id,kind,quantity,lot_number,expires_on,occurred_on,source,reference,user_id) VALUES(?,?,?,'received',?,?,?,?,?,?,?)`,
-          track('supply_ledger', uuid()), itemId, site, qty, lot, days === null ? null : new Date(Date.now() + days * 86400000).toISOString().slice(0, 10), day(30), source, 'Sample delivery', workers[0]);
+          track('supply_ledger', uuid()), itemId, site, qty, lot, days === null ? null : require('./local-date').addDays(require('./local-date').today(), days), day(30), source, 'Sample delivery', workers[0]);
       }
     }
 

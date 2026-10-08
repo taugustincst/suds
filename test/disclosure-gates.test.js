@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // The disclosure gate, closed where an independent review found it open (docs/compliance/PART2.md):
 //   1. a consent covers only the recipient it names — for a referral, a manual disclosure, an identified
 //      export and the county EHR hand-off, with the same name matching the FHIR API uses; a supervisor may
@@ -122,7 +123,7 @@ test('an identified export under consent includes only clients whose consent nam
 });
 
 test('the county EHR hand-off under consent leaves out clients whose consent names someone else', async () => {
-  const day = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+  const day = (n) => LD.addDays(LD.today(), n);
   const named = await newClient(); const other = await newClient();
   for (const id of [named, other]) assert.equal((await sup.post('/api/interventions', { client_id: id, type: 'case_management', occurred_at: `${day(-2)}T18:00:00.000Z`, duration_minutes: 30 })).status, 201);
   await addConsent(named, { type: 'part2_tpo', recipient: 'County EHR billing unit', purpose: 'Treatment, payment and health care operations', ...ELEMENTS, signed_at: day(-5) });
@@ -218,7 +219,7 @@ test('identified exports: "internal" stays inside the programme; audit and resea
   assert.equal((await sup.get(`/api/reports/export/interventions?${q}&basis=audit_evaluation&recipient=Someone%20else&agreement_id=${a}`)).status, 409);
   assert.equal((await sup.get(`/api/reports/export/interventions?${q}&basis=audit_evaluation&recipient=Export%20auditor&agreement_id=${a}`)).status, 200);
   const q2 = (await sup.post('/api/disclosure-agreements', { kind: 'qsoa', organisation: 'Hand-off QSOA Org', services: 'Billing', agreement_date: '2026-01-01' })).data.id;
-  const day = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+  const day = (n) => LD.addDays(LD.today(), n);
   assert.equal((await sup.get(`/api/handoff/export?from=${day(-7)}&to=${day(0)}&recipient=Unregistered%20Org&purpose=Billing&basis=qsoa`)).status, 400, 'a hand-off under a QSOA needs one with the recipient');
   assert.equal((await sup.get(`/api/handoff/export?from=${day(-7)}&to=${day(0)}&recipient=Hand-off%20QSOA%20Org&purpose=Billing&basis=qsoa&agreement_id=${q2}`)).status, 200);
 });

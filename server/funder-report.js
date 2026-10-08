@@ -54,7 +54,7 @@ function release(ctx, { from, to }, { fund = null } = {}) {
   if (fund) why.push('it is filtered to one funding source');
   if (auth.caseloadRestricted(ctx.user)) why.push('it counts only your caseload');
   if (!period) why.push('its period is not a calendar month, a quarter or a year starting on 1 January, April, July or October');
-  else if (to >= require('./routes/budget').localDate()) why.push('its period has not ended yet');
+  else if (to >= require('./local-date').localDate()) why.push('its period has not ended yet');
   return { publishable: !why.length, period, not_publishable: why };
 }
 

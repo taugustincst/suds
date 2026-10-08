@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Usability of navigation (1.14.0): what the API and the shipped pages decide about finding things.
 //   * Home's "Naloxone kits given" counts kits on any visit type and opens the visits behind the number
 //     (GET /api/interventions?naloxone=1), not only the naloxone-distribution visits;
@@ -65,7 +66,7 @@ test('the funder report\'s submission is read from one snapshot of the data', as
   const orig = db.readSnapshot; let calls = 0;
   db.readSnapshot = (fn) => { calls++; return orig(fn); };
   try {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = LD.today();
     const r = await admin.get(`/api/reports/funder?from=${today.slice(0, 4)}-01-01&to=${today}`);
     assert.equal(r.status, 200);
     assert.equal(r.data.suppression.purpose, 'submission');
@@ -110,7 +111,7 @@ test('the sidebar has State reporting and SUPRT-A entries, shown only when the m
 });
 
 test('a front-line worker who holds reports:read can run the funder report for their own caseload (what the More entry opens)', async () => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = LD.today();
   const r = await nav.get(`/api/reports/funder?from=${today.slice(0, 4)}-01-01&to=${today}`);
   assert.equal(r.status, 200);
   assert.notEqual(r.data.suppression.purpose, 'publication', 'an internal run, not a publication release');

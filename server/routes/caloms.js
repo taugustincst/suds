@@ -17,7 +17,7 @@ const { validate } = require('../validate');
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 /** The reporting period: from/to calendar days; by default the current month to date. */
 function period(ctx) {
-  const today = require('./budget').localDate();
+  const today = require('../local-date').localDate();
   const to = ctx.query.get('to') || today;
   const from = ctx.query.get('from') || `${to.slice(0, 7)}-01`;
   for (const v of [from, to]) if (!DAY.test(v) || !Number.isFinite(Date.parse(v))) throw badRequest('from and to must be dates (YYYY-MM-DD)');
@@ -39,7 +39,7 @@ function expectedFor(e, records) {
   const has = (t) => records.some(r => r.record_type === t);
   if (!has('admission')) out.push({ record_type: 'admission', record_date: e.opened_at.slice(0, 10), message: 'CalOMS admission record not yet completed' });
   if (e.status === 'closed' && !has('discharge')) out.push({ record_type: 'discharge', record_date: e.closed_at, message: 'CalOMS discharge record not yet completed' });
-  const today = require('./budget').localDate();
+  const today = require('../local-date').localDate();
   const end = e.closed_at && e.closed_at < today ? e.closed_at : today;
   for (let n = 1; n < 100; n++) {
     const anniv = C.addYears(e.opened_at.slice(0, 10), n);
@@ -90,7 +90,7 @@ module.exports = (r) => {
       db.setSetting('caloms_providers', JSON.stringify(provs));
       // Records are expected from the day reporting starts, not for every episode the programme ever had.
       if (v.start_date !== undefined && v.start_date !== null) db.setSetting('caloms_start_date', v.start_date);
-      else if (on && !C.startDate()) db.setSetting('caloms_start_date', require('./budget').localDate());
+      else if (on && !C.startDate()) db.setSetting('caloms_start_date', require('../local-date').localDate());
       if (v.schedule !== undefined && v.schedule !== null) db.setSetting('caloms_schedule', v.schedule);
       if (v.schedule_day !== undefined && v.schedule_day !== null) db.setSetting('caloms_schedule_day', String(v.schedule_day));
       if (v.split_by_provider !== undefined && v.split_by_provider !== null) db.setSetting('caloms_split_by_provider', v.split_by_provider ? '1' : '0');
@@ -270,7 +270,7 @@ module.exports = (r) => {
     if (!C.enabled()) throw badRequest('CalOMS Tx reporting is switched off for this program');
     if (!C.providers().length) throw badRequest('Add this program\'s CalOMS provider ID first');
     wholeProgramme(ctx, 'prepare');
-    const { from, to } = v.from && v.to ? v : SCHED.previousMonth(require('./budget').localDate());
+    const { from, to } = v.from && v.to ? v : SCHED.previousMonth(require('../local-date').localDate());
     if (from > to) throw badRequest('from must not be after to');
     return SCHED.run({ from, to, user: ctx.user, ip: ctx.ip, origin: 'manual' });
   });
@@ -319,11 +319,11 @@ module.exports = (r) => {
     const sub = mayReach(ctx, subFor(ctx.params.id), 'record the upload of');
     const v = validate(ctx.body || {}, { uploaded_on: { type: 'date', required: true }, dhcs_reference: { type: 'string', maxLen: 60, pattern: /^[A-Za-z0-9 ._/#-]*$/ } });
     if (sub.status !== 'produced') throw new HttpError(409, 'Produce the file first: a prepared file has not been accounted, so it cannot have been sent.');
-    if (v.uploaded_on > require('./budget').localDate()) throw badRequest('The upload date cannot be in the future', { fields: { uploaded_on: 'in the future' } });
+    if (v.uploaded_on > require('../local-date').localDate()) throw badRequest('The upload date cannot be in the future', { fields: { uploaded_on: 'in the future' } });
     // Against when it was produced, not when it was prepared (1.17.1; engineering review of 1.17.0, L4): a file the
     // monthly run prepared on the 5th and a person produced on the 12th cannot have been uploaded on the 8th.
     const produced = db.one(`SELECT created_at FROM caloms_submission_events WHERE submission_id=? AND action='produced' ORDER BY created_at LIMIT 1`, sub.id);
-    if (v.uploaded_on < (produced ? produced.created_at : sub.created_at).slice(0, 10)) throw badRequest('The upload date is before the file was produced', { fields: { uploaded_on: 'before the file existed' } });
+    if (v.uploaded_on < require('../local-date').dayOf(produced ? produced.created_at : sub.created_at)) throw badRequest('The upload date is before the file was produced', { fields: { uploaded_on: 'before the file existed' } });
     db.transaction(() => {
       db.run(`UPDATE caloms_submissions SET uploaded_at=?, uploaded_by=?, dhcs_reference=?, updated_at=? WHERE id=?`, v.uploaded_on, ctx.user.id, v.dhcs_reference || null, db.now(), sub.id);
       SCHED.logEvent(sub.id, 'uploaded', ctx.user, [v.uploaded_on, v.dhcs_reference].filter(Boolean).join(' '));
@@ -343,7 +343,7 @@ module.exports = (r) => {
   // that is missing — the client's primary worker, else whoever opened the episode. Codes, fields and dates
   // only, as the validation report. mine=1: only the caller's.
   r.get('/api/caloms/worklist', auth.requireAuth, auth.requirePerm('episodes:read', 'episodes:write'), (ctx) => {
-    const today = require('./budget').localDate();
+    const today = require('../local-date').localDate();
     const from = ctx.query.get('from') || C.startDate() || C.addDays(today, -365);
     const to = ctx.query.get('to') || today;
     for (const d of [from, to]) if (!DAY.test(d) || !Number.isFinite(Date.parse(d))) throw badRequest('from and to must be dates (YYYY-MM-DD)');

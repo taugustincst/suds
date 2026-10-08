@@ -1013,7 +1013,7 @@ export async function transferCard(fromId) {
     { name: 'from_user_id', label: 'Move clients from', type: 'select', required: true, value: fromList.some(u => u.id === fromId) ? fromId : undefined, options: fromList.map(u => ({ value: u.id, label: label(u) })) },
     { name: 'to_user_id', label: 'To', type: 'select', required: true, options: staff.map(u => ({ value: u.id, label: label(u) })) },
     { name: 'role_on_case', label: 'Role on the case', type: 'select', options: ['primary', 'secondary', 'clinician', 'peer', 'supervisor'], help: 'Leave empty to keep whatever role each assignment already has.' },
-    { name: 'effective_date', label: 'Effective from', type: 'date', value: new Date().toISOString().slice(0, 10) },
+    { name: 'effective_date', label: 'Effective from', type: 'date', value: fmt.today() },
     { name: 'reassign_open_tasks', label: 'Also move their open to-dos for those clients', type: 'checkbox', value: 1 },
     { name: 'reason', label: 'Reason (recorded in the audit log)', span: true, placeholder: 'e.g. left the program, extended leave' },
   ], { submitText: 'Transfer caseload', onSubmit: async (d) => {

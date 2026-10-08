@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Characterisation harness for the per-table rules (server/rules/): for every table a device pushes, the same
 // row is sent through /api/sync/push and through the REST route that writes that table, case by case —
 // valid, each invalid field, a client off the caseload, another worker's record, a role without the
@@ -21,7 +22,7 @@ const { randomUUID } = require('node:crypto');
 
 const OBSERVE = process.env.SUDS_CHARACTERISE === '1';
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
-const day = (offsetDays = 0) => new Date(Date.now() + offsetDays * 86400000).toISOString().slice(0, 10);
+const day = (offsetDays = 0) => LD.addDays(LD.today(), offsetDays);
 
 const U = {}; const C = {}; const X = {};
 let enc;

@@ -23,7 +23,7 @@ module.exports = (r) => {
     // shape and canEdit: server/rules/patient_requests.js (crud.js reads them from there).
     filters: (ctx, where, params) => {
       const s = ctx.query.get('status'); if (s && s !== 'all') { where.push('patient_requests.status=?'); params.push(s); }
-      if (ctx.query.get('overdue') === '1') { where.push(`patient_requests.status='open' AND patient_requests.due_at < ?`); params.push(new Date().toISOString().slice(0, 10)); }
+      if (ctx.query.get('overdue') === '1') { where.push(`patient_requests.status='open' AND patient_requests.due_at < ?`); params.push(require('../local-date').today()); }
     },
     beforeInsert: (ctx, v) => {
       if (!v.due_at) v.due_at = dueFrom(v.received_at);
@@ -37,7 +37,7 @@ module.exports = (r) => {
       if (v.status === 'open') v.closed_at = null;
       encNotes(v);
     },
-    afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt(row.notes_enc) : null, notes_enc: undefined, overdue: row.status === 'open' && row.due_at < new Date().toISOString().slice(0, 10) }),
+    afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt(row.notes_enc) : null, notes_enc: undefined, overdue: row.status === 'open' && row.due_at < require('../local-date').today() }),
   });
   r.get('/api/meta/patient-request-options', auth.requireAuth, () => ({ kinds: KINDS, statuses: STATUSES, days_to_respond: DAYS_TO_RESPOND }));
 };

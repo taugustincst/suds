@@ -121,7 +121,7 @@ module.exports = (r) => {
     if (!v.qsoa) missing.qsoa = 'Confirm that it includes qualified service organization terms under 42 CFR Part 2.';
     if (!v.counsel_reviewed) missing.counsel_reviewed = 'Confirm that your counsel has reviewed this use of client records.';
     if (Object.keys(missing).length) throw badRequest('The agreement cannot be recorded until each statement is confirmed.', { fields: missing });
-    if (v.agreement_date > new Date().toISOString().slice(0, 10)) throw badRequest('Validation failed', { fields: { agreement_date: 'The date the agreement was signed cannot be in the future.' } });
+    if (v.agreement_date > require('../local-date').today()) throw badRequest('Validation failed', { fields: { agreement_date: 'The date the agreement was signed cannot be in the future.' } });
     // configured_provider: the provider this server was set up for when the agreement was recorded (SUDS_AI_PROVIDER);
     // drafts are refused while the server is set up for another (ai-copilot.js status(), provider_changed).
     if (!AP.current()) throw badRequest(`This server's AI provider is not one SUDS knows (${AP.configProblem()}).`);

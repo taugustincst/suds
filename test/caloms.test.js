@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // CalOMS Tx state reporting and the county EHR hand-off (county review: "CalOMS Tx reporting: no admission,
 // discharge or annual-update records; no fatal-error validation or monthly provider accounting" and "Drug
 // Medi-Cal claims: no 837"). SUDS does not bill; it collects and validates CalOMS Tx records, extracts them
@@ -10,7 +11,7 @@ const H = require('./helpers');
 const db = H.db;
 
 let admin, sup, clin, fin, nav, clinId;
-const day = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+const day = (n) => LD.addDays(LD.today(), n);
 const TODAY = day(0);
 const PROVIDER = '123456';
 

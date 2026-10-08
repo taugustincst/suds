@@ -303,8 +303,14 @@ function caseloadRestricted(user) {
 // An assignment is over when its last day has passed, or the moment somebody ended it outright.
 // The date alone is not enough: a supervisor taking a worker off a case means now, not at midnight.
 // Parenthesised as a whole: callers drop it into WHERE clauses that may already contain an OR.
-const ACTIVE_ASSIGNMENT = `((end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')))`;
-const activeAssignment = (prefix = '') => ACTIVE_ASSIGNMENT.replace(/\b(end_date|ended_at)\b/g, `${prefix}$1`);
+// "Its last day has passed" is the programme's calendar (server/local-date.js), not SQLite's date('now'), the UTC
+// date, by which a Los Angeles assignment ending today ended at 5pm. The date is written into the SQL as a literal
+// (always YYYY-MM-DD), so the fragment still drops into any WHERE clause without parameters of its own.
+function activeAssignment(prefix = '') {
+  const today = require('./local-date').today();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) throw new Error('local date is not YYYY-MM-DD');
+  return `((${prefix}end_date IS NULL OR ${prefix}end_date >= '${today}') AND (${prefix}ended_at IS NULL OR ${prefix}ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')))`;
+}
 
 // A role without clients:read (finance, readonly: clients:list-deidentified) is not caseload-scoped because
 // it never sees who a client is — so it may open no client's record. caseloadRestricted() is false for it,

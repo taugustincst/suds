@@ -84,7 +84,7 @@ function withConsentOnFile(ctx, row) {
   const key = `${row.client_id}|${row.resource_id}`;
   if (!cache.has(key)) {
     const names = disclosure.recipientNames(resourceNames(row.resource_id)); const purpose = disclosure.referralPurpose(row.resource_id);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = require('../local-date').today();
     const types = disclosure.disclosingConsentTypes();
     cache.set(key, !!names.length && db.all(`SELECT * FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, row.client_id, today)
       .some(c => types.includes(c.type) && !disclosure.consentElementProblems(c).length && disclosure.consentNamesRecipient({ type: c.type, recipient: c.recipient_enc ? decrypt(c.recipient_enc) : null }, names)

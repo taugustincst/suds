@@ -3,7 +3,6 @@ const db = require('../db');
 const auth = require('../auth');
 const audit = require('../audit');
 const crud = require('../crud');
-const config = require('../config');
 const C = require('../constants');
 const { badRequest, notFound, forbidden, HttpError } = require('../http');
 const { validate } = require('../validate');
@@ -25,57 +24,7 @@ function presentExpenditure(e) {
 
 /** Money is stored as REAL: round to cents at the boundary so 25.009999 is never written and never summed. */
 const cents = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 100) / 100 : v);
-/** True for a time zone name this runtime knows (IANA, e.g. "America/Los_Angeles"). */
-function validTimezone(tz) {
-  if (typeof tz !== 'string' || !tz.trim() || tz.length > 64) return false;
-  try { formatter('en-US', { timeZone: tz }); return true; } catch { return false; }
-}
-// Building an Intl.DateTimeFormat costs tens of microseconds, and "today in the programme's time zone" is asked
-// for many times a request (every visit saved, every report period, every list of what is due). The formatters
-// are made once per zone and kept; a zone the runtime does not know still throws, and is not kept.
-const formatters = new Map();
-function formatter(locale, opts) {
-  const key = `${locale}|${JSON.stringify(opts)}`;
-  let f = formatters.get(key);
-  if (!f) { f = new Intl.DateTimeFormat(locale, opts); if (formatters.size > 200) formatters.clear(); formatters.set(key, f); }
-  return f;
-}
-/**
- * The organisation's time zone: the org_timezone setting (Settings → Program settings) when an
- * administrator has chosen one, else ORG_TIMEZONE / server.json (config.orgTimezone), else the machine's.
- * On SUDS on this device the setting is the browser's zone at set-up (local/kernel.js).
- */
-function orgTimezone() {
-  let v = null; try { v = db.getSetting('org_timezone', null); } catch { /* no database open (a unit test) */ }
-  return v && validTimezone(v) ? v : config.orgTimezone;
-}
-/** The calendar date (YYYY-MM-DD) of an instant in the organisation's time zone (orgTimezone()). */
-function localDate(when = new Date(), tz = orgTimezone()) {
-  const d = when instanceof Date ? when : new Date(when);
-  if (!Number.isFinite(d.getTime())) return null;
-  try { return formatter('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d); }
-  catch { return d.toISOString().slice(0, 10); }
-}
-
-/**
- * The instant (ISO, UTC) at which calendar day `date` (YYYY-MM-DD) begins in the organisation's time zone.
- * A report "for June 30" runs from local midnight to local midnight: with the day's bounds taken in UTC
- * instead, a 5:30pm visit on June 30th in Los Angeles (00:30 UTC on July 1st) fell out of the fiscal year.
- * DST-safe: the offset is measured at the answer, not at the guess.
- */
-function localMidnight(date, tz = orgTimezone()) {
-  const guess = Date.parse(`${date}T00:00:00Z`);
-  if (!Number.isFinite(guess)) return null;
-  const offset = (ms) => {
-    try {
-      const p = Object.fromEntries(formatter('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
-        .formatToParts(new Date(ms)).map(x => [x.type, x.value]));
-      return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - (ms % 1000));
-    } catch { return 0; }
-  };
-  const first = guess - offset(guess);
-  return new Date(guess - offset(first)).toISOString();
-}
+const { localDate, localMidnight, orgTimezone, validTimezone } = require('../local-date');
 
 // The fields of a fund and of a budget line, and what they must satisfy, are the tables' rules
 // (server/rules/funding_sources.js, budget_lines.js), which sync push applies to a device's rows as well.

@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // People WITHOUT passkeys see SUDS exactly as on 1.18.0 (docs/FINGERPRINT.md): password only, password and an
 // authenticator app, and single sign-on; signing in in the browser and on a device (sync), signing a note,
 // countersigning, approving time and spending, and the key backup. Each flow's status codes and the fields 1.18.0
@@ -22,8 +23,8 @@ const APW = 'AdminPassw0rd!x';
 const SECRET = 'JBSWY3DPEHPK3PXP';
 const setting = (k, v) => { if (v === null) H.db.run(`DELETE FROM settings WHERE key=?`, k); else H.db.setSetting(k, v); };
 const resetLimits = () => { const app = require('../server/app'); for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) { app.rateLimitReset(`login:${ip}`); app.rateLimitReset(`api:${ip}`); } };
-const yearFrom = (years) => { const d = new Date(); d.setUTCFullYear(d.getUTCFullYear() + years); return d.toISOString().slice(0, 10); };
-const today = () => new Date().toISOString().slice(0, 10);
+const yearFrom = (years) => { const [y, m, d] = LD.today().split('-').map(Number); return new Date(Date.UTC(y + years, m - 1, d)).toISOString().slice(0, 10); };
+const today = () => LD.today();
 const stale = (userId) => H.db.run(`UPDATE sessions SET reauth_at=? WHERE user_id=? AND revoked_at IS NULL`, new Date(Date.now() - 60 * 60000).toISOString(), userId);
 let step = 0; // each code a step of its own, so none is refused as already used
 const code = () => { H.db.run(`UPDATE users SET totp_last_step=NULL`); return totp(SECRET, Date.now() + (step++ % 2 ? 30_000 : 0)); };

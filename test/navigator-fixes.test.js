@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // The navigator-facing fixes: intake opens an episode, re-admission, due-soon reminders, names on the
 // to-do/call/time lists, an author asking for a co-sign, alias search, caseload sort, hand-offs, safety
 // plans and the supply cupboard.
@@ -104,7 +105,7 @@ test('to-do, call and time lists carry the client\'s name, never for a de-identi
   const c = (await nav.post('/api/clients', { first_name: 'Named', last_name: 'Person' })).data.id;
   await nav.post('/api/tasks', { client_id: c, title: 'Named task' });
   await nav.post('/api/calls', { client_id: c, direction: 'outbound', started_at: new Date().toISOString(), duration_minutes: 3, outcome: 'reached' });
-  await nav.post('/api/time', { client_id: c, work_date: new Date().toISOString().slice(0, 10), minutes: 10, category: 'direct_service' });
+  await nav.post('/api/time', { client_id: c, work_date: LD.today(), minutes: 10, category: 'direct_service' });
   const t = (await nav.get(`/api/tasks?client_id=${c}`)).data.rows[0];
   assert.equal(t.client_name, 'Person, Named'); assert.ok(t.client_code); assert.equal(t.c_first_name_enc, undefined, 'the ciphertext is not leaked');
   assert.equal((await nav.get(`/api/calls?client_id=${c}`)).data.rows[0].client_name, 'Person, Named');

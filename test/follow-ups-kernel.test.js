@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Follow-up to-dos on a device that syncs with the office (released in 1.23.0;
 // server/rules/follow-ups.js): the browser kernel, bundled from the current sources, makes and moves the to-do itself
 // with the same rule, links it to the call or visit, and the office, running the rule again on the push, finds that
@@ -22,7 +23,7 @@ after(async () => { await H.stop(); cleanup(); });
 const device = (...a) => kernelCaller(L)(...a);
 const ok = (r, status, what) => { assert.equal(r.status, status, `${what}: ${JSON.stringify(r.data).slice(0, 300)}`); return r.data; };
 const sync = async () => { const s = ok(await device('POST', '/api/local/sync', { server: base, username: USER, password: PASSWORD }), 200, 'sync'); assert.equal((s.rejected || []).length, 0, JSON.stringify(s.rejected)); return s; };
-const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+const inDays = (n) => LD.addDays(LD.today(), n);
 
 test('a device\'s call and visit follow-ups: one to-do each at the office, moved with the date', async () => {
   const clientId = ok(await office.post('/api/clients', { first_name: 'Kai', last_name: 'Kernel', status: 'active', confirm_duplicate: true }), 201, 'client').id;

@@ -18,7 +18,7 @@ const { encrypt, decrypt, uuid } = require('../crypto');
 const { assertFresh } = require('../crud');
 
 const dec = (v) => (v ? decrypt(v) : null);
-const today = () => require('./budget').localDate();
+const today = () => require('../local-date').localDate();
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 function clientFor(ctx, clientId) {

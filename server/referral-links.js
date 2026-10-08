@@ -332,9 +332,9 @@ function acknowledge({ token, claim, status, by, note, ip }) {
     const mark = `(secure referral link ${link.reference})`;
     const open = db.all(`SELECT id, title_enc FROM tasks WHERE referral_id=? AND assigned_to=? AND created_by=? AND status IN ('open','in_progress')`, link.referral_id, link.created_by, link.created_by)
       .find(t => (dec(t.title_enc) || '').includes(mark));
-    if (open) db.run(`UPDATE tasks SET title_enc=?, priority=?, due_at=?, updated_at=? WHERE id=?`, title, priority, new Date().toISOString().slice(0, 10), db.now(), open.id);
+    if (open) db.run(`UPDATE tasks SET title_enc=?, priority=?, due_at=?, updated_at=? WHERE id=?`, title, priority, require('./local-date').today(), db.now(), open.id);
     else db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`, uuid(), link.client_id, link.created_by, link.created_by,
-      title, new Date().toISOString().slice(0, 10), priority, link.referral_id);
+      title, require('./local-date').today(), priority, link.referral_id);
   });
   audit.log({ user: null, action: 'referral_link.ack', entity: 'referral_link', entityId: link.id, clientId: link.client_id, ip, details: { status, kind: link.kind } });
   return { ok: true, ack_status: status };

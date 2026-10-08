@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Fingerprint sign-in, authorization and signing with passkeys (docs/FINGERPRINT.md): WebAuthn verified with
 // node:crypto alone (server/webauthn.js), driven here by a software authenticator (test/authenticator.js) that
 // answers the way a phone does once the finger has matched, and can be bent to answer the ways it must not. Every test
@@ -17,8 +18,8 @@ const PW = 'StaffPassw0rd!x';
 const APW = 'AdminPassw0rd!x';
 let admin, base, clientId;
 // Dates are worked out when each test runs, from today: nothing here stops working on a given day.
-const today = () => new Date().toISOString().slice(0, 10);
-const yearFrom = (years) => { const d = new Date(); d.setUTCFullYear(d.getUTCFullYear() + years); return d.toISOString().slice(0, 10); };
+const today = () => LD.today();
+const yearFrom = (years) => { const [y, m, d] = LD.today().split('-').map(Number); return new Date(Date.UTC(y + years, m - 1, d)).toISOString().slice(0, 10); };
 const newFund = async () => (await admin.post('/api/budget/funds', { name: `Passkey fund ${crypto.randomUUID().slice(0, 8)}`, source_type: 'other', fiscal_year_start: yearFrom(-1), fiscal_year_end: yearFrom(1), total_amount: 100000 })).data.id;
 const resetLimits = () => { const app = require('../server/app'); for (const k of ['passkey-options:127.0.0.1', 'login:127.0.0.1']) app.rateLimitReset(k); };
 

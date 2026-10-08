@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const H = require('./helpers');
@@ -63,7 +64,7 @@ test('referral and engagement dates compute time-to-engagement', async () => {
   assert.equal(g2.data.client.days_to_engagement, null);
 });
 test('dashboard consents-expiring badge only counts active clients, matching the deep-linked list', async () => {
-  const soon = new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10);
+  const soon = LD.addDays(LD.today(), 5);
   const active = await nav.post('/api/clients', { first_name: 'Cara', last_name: 'Active', status: 'active' });
   const closed = await nav.post('/api/clients', { first_name: 'Cara', last_name: 'Closed', status: 'closed' });
   await nav.post(`/api/clients/${active.data.id}/consents`, { type: 'roi', signed_at: '2026-01-01', expires_at: soon });

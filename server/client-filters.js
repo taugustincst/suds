@@ -33,8 +33,8 @@ function mat(value) { return { sql: `COALESCE(c.mat_status,'unknown')=?`, params
 
 /** The window the dashboard's "consents expiring soon" uses: today (program time zone) to 30 days out. */
 function consentWindow() {
-  const today = require('./routes/budget').localDate();
-  return { from: today, to: new Date(Date.now() + 30 * DAY).toISOString().slice(0, 10) };
+  const today = require('./local-date').localDate();
+  return { from: today, to: require('./local-date').addDays(today, 30) };
 }
 /** Has a consent that is still in force and runs out within the window. */
 function consentExpiring({ from, to } = consentWindow()) {

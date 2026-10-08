@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Award amounts in the county submission file (schema version 2) and the programme's reporting-cadence reminders
 // (released in 1.21.0; docs/COUNTY-VIEW.md, "Award amounts" and "Reminders on the programme's side").
 // One test server plays both sides, as test/county.test.js does: it makes its own files as a programme, and as the
@@ -414,4 +415,4 @@ test('reminders: finance records a county\'s schedule; the periods due and overd
   assert.deepEqual(r.reminders, []); assert.equal(lastAudit('county_submission.schedule.remove').details.county_code, COUNTY.county_code);
   assert.equal((await fin.del(`/api/county-submission/schedules/${code}`)).status, 404);
 });
-const CCtoday = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+const CCtoday = (n) => LD.addDays(LD.today(), n);

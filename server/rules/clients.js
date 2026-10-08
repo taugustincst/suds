@@ -42,7 +42,7 @@ function contactProblems(row) {
   const fields = {};
   const dob = row.dob_enc;
   if (dob) {
-    const today = require('../routes/budget').localDate();
+    const today = require('../local-date').localDate();
     if (dob > today) fields.dob = 'cannot be in the future';
     else if (dob < '1900-01-01') fields.dob = 'must be after 1900';
   }

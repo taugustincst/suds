@@ -19,7 +19,7 @@ export async function episodesPanel(clientId, { onChange, client = null } = {}) 
 
   const openEpisode = () => {
     const f = form([
-      { name: 'opened_at', label: 'Date services started', type: 'date', value: new Date().toISOString().slice(0, 10), required: true },
+      { name: 'opened_at', label: 'Date services started', type: 'date', value: fmt.today(), required: true },
       { name: 'referral_source', label: 'Referred by', placeholder: 'e.g. jail release, hospital, self' },
       { name: 'funding_source_id', label: 'Funding source', type: 'fund' },
       { name: 'presenting_problem', label: 'What brought them in', type: 'textarea', span: true, help: 'Stored encrypted, like the rest of the record.' },
@@ -34,7 +34,7 @@ export async function episodesPanel(clientId, { onChange, client = null } = {}) 
 
   // Discharging a client whose care team you are not on ends only your own part (server/routes/episodes.js): said
   // before, and after, in those words (r9 M4). `standing` as the server has it: a manager, or on the care team.
-  const today = new Date().toISOString().slice(0, 10);
+  const today = fmt.today();
   const team = ((client && client.assignments) || []).filter(a => !a.end_date || a.end_date > today);
   const standing = can('records:manage-others') || team.some(a => a.user_id === state.user.id);
   const others = standing ? [] : [...new Set(team.filter(a => a.user_id !== state.user.id).map(a => a.display_name))];
@@ -45,7 +45,7 @@ export async function episodesPanel(clientId, { onChange, client = null } = {}) 
       // should be able to record by clicking straight through.
       { name: 'discharge_reason', label: 'Reason for discharge', type: 'select', required: true, placeholder: 'Choose a reason…', list: 'DISCHARGE_REASONS' },
       { name: 'discharge_disposition', label: 'Where are they going?', placeholder: 'e.g. outpatient at County OTP, residential, unknown' },
-      { name: 'closed_at', label: 'Discharge date', type: 'date', value: new Date().toISOString().slice(0, 10) },
+      { name: 'closed_at', label: 'Discharge date', type: 'date', value: fmt.today() },
       { name: 'discharge_summary', label: 'Discharge summary', type: 'textarea', rows: 5, span: true },
       { name: 'keep_client_active', label: 'Keep this client active (they are still being served under another episode)', type: 'checkbox', span: true },
       ...(calOn ? calomsFields(cal, 'discharge', { standardHint: true }) : []),

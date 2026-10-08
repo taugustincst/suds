@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Supplies by item, site and lot (docs/SUPPLIES.md): the permissions, the receiving log, transfers,
 // adjustments and disposals as an append-only ledger, first-expiry-first-out draw-down by visits, the
 // shortfall a draw-down records instead of going below zero, the reports that must not change for visits
@@ -13,7 +14,7 @@ const iso = (ms) => new Date(ms).toISOString();
 const push = (c, body) => c.post('/api/sync/push', { device_now: iso(Date.now()), ...body });
 const onHand = (item, site) => H.db.one(`SELECT COALESCE(SUM(quantity),0) n FROM supply_ledger WHERE item_id=? AND site_id=?`, item, site).n;
 const lotQty = (item, site, lot) => H.db.one(`SELECT COALESCE(SUM(quantity),0) n FROM supply_ledger WHERE item_id=? AND site_id=? AND lot_number=?`, item, site, lot).n;
-const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+const inDays = (n) => LD.addDays(LD.today(), n);
 async function item(body) { const r = await sup.post('/api/supplies/items', body); assert.equal(r.status, 201, JSON.stringify(r.data)); return r.data.id; }
 async function receive(body) { const r = await sup.post('/api/supplies/receipts', body); assert.equal(r.status, 201, JSON.stringify(r.data)); return r.data; }
 

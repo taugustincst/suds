@@ -76,7 +76,7 @@ function consentFor(clientId, recipient, purpose = null) {
   const D = require('../disclosure');
   if (recipient) return D.fileConsentFor(clientId, D.recipientNames(recipient), purpose);
   const types = D.fileConsentTypes();
-  return db.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => '?').join(',')}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, clientId, ...types)
+  return db.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => '?').join(',')}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, clientId, ...types, require('../local-date').today())
     .find(c => !D.consentElementProblems(c).length) || null;
 }
 

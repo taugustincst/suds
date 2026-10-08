@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // 1.14.0 performance work (docs/PERFORMANCE.md), the rest of it: the client list, the notes list and the timeline
 // find their page before reading its rows; a list's total leaves out the lookups that cannot change it; the
 // Supplies page adds up the ledger once; migration 47's indexes; and the prepared-statement cache in server/db.js.
@@ -79,8 +80,8 @@ test('a list\'s total leaves out the lookups that cannot change it, and still co
   assert.equal(r.data.total, db.one(`SELECT COUNT(*) n FROM interventions`).n);
   const n = await nav.get('/api/interventions?limit=5');
   assert.equal(n.data.total, db.one(`SELECT COUNT(*) n FROM interventions i WHERE i.client_id IN (SELECT client_id FROM assignments WHERE user_id=?) OR (i.client_id IS NULL AND i.user_id=?)`, navId, navId).n);
-  const ranged = await admin.get(`/api/interventions?limit=5&from=${new Date(Date.now() - 5 * 86400000).toISOString().slice(0, 10)}`);
-  assert.equal(ranged.data.total, db.one(`SELECT COUNT(*) n FROM interventions WHERE occurred_at >= ?`, new Date(Date.now() - 5 * 86400000).toISOString().slice(0, 10)).n);
+  const ranged = await admin.get(`/api/interventions?limit=5&from=${LD.addDays(LD.today(), -5)}`);
+  assert.equal(ranged.data.total, db.one(`SELECT COUNT(*) n FROM interventions WHERE occurred_at >= ?`, LD.addDays(LD.today(), -5)).n);
   // The SQL itself: a LEFT JOIN on a primary key is dropped from the COUNT unless the filters name its alias.
   const statements = [];
   const orig = db.one; db.one = (sql, ...p) => { statements.push(sql); return orig(sql, ...p); };

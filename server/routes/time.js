@@ -251,8 +251,8 @@ module.exports = (r) => {
   });
 
   r.get('/api/time/summary', auth.requireAuth, auth.requirePerm('time:read', 'time:write'), (ctx) => {
-    const from = ctx.query.get('from') || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-    const to = ctx.query.get('to') || new Date().toISOString().slice(0, 10);
+    const to = ctx.query.get('to') || require('../local-date').today();
+    const from = ctx.query.get('from') || require('../local-date').addDays(require('../local-date').today(), -30);
     const all = auth.hasPerm(ctx.user, 'time:all');
     const scope = all ? '' : 'AND t.user_id=?'; const p = all ? [] : [ctx.user.id];
     return {

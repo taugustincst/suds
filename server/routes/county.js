@@ -78,7 +78,7 @@ const REFUSALS_PER_10_MIN = 20;
 const WINDOW_MS = 10 * 60_000;
 const IS_FUND = `(source_type='opioid_settlement' OR settlement_use IS NOT NULL OR settlement_hiaa IS NOT NULL)`;
 
-const today = () => require('./budget').localDate();
+const today = () => require('../local-date').localDate();
 /** A fund's spending in the long CSV, in order, with its labels. */
 const spendMeasures = [['spend_own_category', 'Spent under the fund\'s own Exhibit E category ($)'], ['spend_other_categories', 'Spent under other categories ($)'], ['spend_approved', 'Spent, approved or reimbursed ($)'], ['spend_pending', 'Pending approval ($)']];
 /** The period asked for: real dates (K.isDay: not 2026-02-30), from on or before to. */

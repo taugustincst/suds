@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // The third hands-on UX review (1.14.0): a fresh production install through the wizard, a navigator on a
 // phone, a supervisor, finance and read-only at a desk, and local mode. What it found that the API decides:
 // anonymous outreach missing from Home and Reports, the usual consent that could not be saved as offered,
@@ -10,8 +11,8 @@ const H = require('./helpers');
 
 const PW = 'StaffPassw0rd!x';
 let admin, nav, nav2, sup, fin, clientId;
-const today = new Date().toISOString().slice(0, 10);
-const from = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+const today = LD.today();
+const from = LD.addDays(LD.today(), -30);
 before(async () => {
   await H.start();
   H.makeCaseloadUser('uxnav', 'navigator'); H.makeCaseloadUser('uxnav2', 'navigator'); H.makeUser('uxsup', 'supervisor'); H.makeUser('uxfin', 'finance');

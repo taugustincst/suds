@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Security review of 1.13.0, design weakness 7: finance (time:all, no clients:read) read the free-text
 // description of every worker's time entry — text the code itself says "can name the client" ("Drove Zebulon
 // to detox intake"). A role without clients:read now sees another worker's time as category, fund and hours
@@ -11,7 +12,7 @@ const H = require('./helpers');
 const { decrypt } = require('../server/crypto');
 
 let nav, sup, fin, finId, navEntry, finEntry;
-const today = new Date().toISOString().slice(0, 10);
+const today = LD.today();
 const SECRET = 'Drove Zebulon Quartermaine to detox intake';
 before(async () => {
   await H.start();

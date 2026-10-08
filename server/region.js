@@ -31,7 +31,7 @@ function list() {
 /** Insert missing programs and enrich existing ones. Never overwrites a value a human already entered. */
 function load({ regionId, actor, withPictures = true }) {
   const region = REGIONS[regionId]; if (!region) throw new Error('Unknown region');
-  const today = new Date().toISOString().slice(0, 10);
+  const today = require('./local-date').today();
   const note = provenance(region).replace('{DATE}', today);
   const prev = readState(regionId); const ids = prev ? { ...prev.ids } : {};
   let added = 0, enriched = 0, unchanged = 0, pictures = 0;

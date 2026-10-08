@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // 42 CFR Part 2 (2024 final rule): every control docs/compliance/PART2.md claims, as an API test — the
 // §2.31 consent elements, the TPO / counseling-notes / proceedings consents and what each may and may not
 // authorise, subpart E court orders, §2.32 notices on what leaves the programme, agreed restrictions, the
@@ -277,7 +278,7 @@ test('breach register: the 60-day clock, the four-factor assessment, notices bef
   assert.equal((await nav.get('/api/incidents')).status, 403);
   assert.equal((await nav.post('/api/incidents', { title: 'x', discovered_at: '2026-09-01' })).status, 403);
   assert.equal((await sup.post('/api/incidents', { title: 'Future', discovered_at: '2099-01-01' })).status, 400);
-  const disc = new Date(Date.now() - 50 * 86400000).toISOString().slice(0, 10);
+  const disc = LD.addDays(LD.today(), -50);
   const i = await sup.post('/api/incidents', { title: 'Laptop stolen from car', discovered_at: disc, description: 'Unencrypted spreadsheet of 12 clients', affected_count: 12 });
   assert.equal(i.status, 201);
   assert.equal(i.data.obligations.deadline, new Date(Date.parse(disc) + 60 * 86400000).toISOString().slice(0, 10), 'due 60 days after discovery');
@@ -303,7 +304,7 @@ test('breach register: the 60-day clock, the four-factor assessment, notices bef
   assert.equal((await sup.put(`/api/incidents/${i.data.id}/clients/${c2}`, { notified_at: disc })).status, 200);
   assert.equal((await sup.del(`/api/incidents/${i.data.id}/clients/${c2}`)).status, 200);
   assert.equal((await sup.del(`/api/incidents/${i.data.id}/clients/${c2}`)).status, 404);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = LD.today();
   assert.equal((await sup.put(`/api/incidents/${i.data.id}`, { individuals_notified_at: today, hhs_notified_at: today, media_notified_at: today })).status, 200);
   assert.equal((await sup.put(`/api/incidents/${i.data.id}`, { status: 'closed' })).status, 200);
   const full = await sup.get(`/api/incidents/${i.data.id}`);

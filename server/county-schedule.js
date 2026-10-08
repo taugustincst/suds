@@ -37,7 +37,7 @@ const DUE_DAYS_MAX = 180;
 
 const K = () => require('./county');
 const plusDays = (day, n) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
-const today = () => require('./routes/budget').localDate();
+const today = () => require('./local-date').localDate();
 
 function readJson(key, fallback) {
   try { const v = JSON.parse(db.getSetting(key, 'null')); return v === null || v === undefined ? fallback : v; } catch { return fallback; }

@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const H = require('./helpers');
@@ -40,7 +41,7 @@ test('form library: upload a PDF with fields, detect them, fill for a client wit
   assert.equal((await ro.post(`/api/clients/${clientId}/forms`, { template_id: tid })).status, 403);
   assert.equal((await nav2.post(`/api/clients/${clientId}/forms`, { template_id: tid })).status, 403, 'not on caseload');
   const s = await nav.post(`/api/clients/${clientId}/forms`, { template_id: tid }); assert.equal(s.status, 201, JSON.stringify(s.data));
-  assert.equal(s.data.values.client_name, 'Jamie Nguyen'); assert.equal(s.data.values.date_of_birth, '1988-04-12'); assert.equal(s.data.values.date, new Date().toISOString().slice(0, 10));
+  assert.equal(s.data.values.client_name, 'Jamie Nguyen'); assert.equal(s.data.values.date_of_birth, '1988-04-12'); assert.equal(s.data.values.date, LD.today());
   const fid = s.data.id;
   // completing without the signature fails
   const bad = await nav.put(`/api/forms/${fid}`, { values: { agree: true, notes: 'ok' }, status: 'completed' }); assert.equal(bad.status, 400); assert.match(bad.data.error, /Client signature/);

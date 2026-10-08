@@ -29,7 +29,7 @@ module.exports = (r) => {
       if (row._log_time && row.duration_minutes > 0) {
         const te = uuid();
         db.run(`INSERT INTO time_entries(id,user_id,client_id,work_date,minutes,category,call_id,description_enc) VALUES(?,?,?,?,?,?,?,?)`,
-          te, row.user_id, row.client_id || null, row.started_at.slice(0, 10), row.duration_minutes, 'direct_service', row.id, encrypt(`${row.direction} ${what}`));
+          te, row.user_id, row.client_id || null, require('../local-date').dayOf(row.started_at), row.duration_minutes, 'direct_service', row.id, encrypt(`${row.direction} ${what}`));
         // The caller's, for separation of duties (rules/shared.js recordedOrChanged), as routes/interventions.js does.
         require('../audit').log({ user: ctx.user, action: 'time_entry.create', entity: 'time_entry', entityId: te, clientId: row.client_id || null, ip: ctx.ip, details: { call_id: row.id, for: row.user_id !== ctx.user.id ? row.user_id : undefined } });
       }

@@ -17,7 +17,7 @@ module.exports = define({
     const out = [];
     if (row.acknowledged && row.ack_refused) out.push(refuse('has a value the office does not accept (it is both acknowledged and refused)', { message: 'Either the client signed the acknowledgement or declined to; not both' }));
     // Flagged on push: a phone whose date runs ahead of the office's has still recorded a notice that was given.
-    if (row.given_at && row.given_at > new Date().toISOString().slice(0, 10)) out.push(flag('was accepted, but it is dated in the future; the office will review it', { message: 'The notice cannot have been given in the future', code: 'future_date' }));
+    if (row.given_at && row.given_at > require('../local-date').today()) out.push(flag('was accepted, but it is dated in the future; the office will review it', { message: 'The notice cannot have been given in the future', code: 'future_date' }));
     return out;
   },
 });

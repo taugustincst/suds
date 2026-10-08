@@ -9362,6 +9362,73 @@ var require_audit = __commonJS({
   }
 });
 
+// server/local-date.js
+var require_local_date = __commonJS({
+  "server/local-date.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    function validTimezone(tz) {
+      if (typeof tz !== "string" || !tz.trim() || tz.length > 64) return false;
+      try {
+        formatter("en-US", { timeZone: tz });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    var formatters = /* @__PURE__ */ new Map();
+    function formatter(locale, opts) {
+      const key = `${locale}|${JSON.stringify(opts)}`;
+      let f = formatters.get(key);
+      if (!f) {
+        f = new Intl.DateTimeFormat(locale, opts);
+        if (formatters.size > 200) formatters.clear();
+        formatters.set(key, f);
+      }
+      return f;
+    }
+    function orgTimezone() {
+      let v = null;
+      try {
+        v = require_db().getSetting("org_timezone", null);
+      } catch {
+      }
+      return v && validTimezone(v) ? v : require_config().orgTimezone;
+    }
+    function localDate(when = /* @__PURE__ */ new Date(), tz = orgTimezone()) {
+      const d = when instanceof Date ? when : new Date(when);
+      if (!Number.isFinite(d.getTime())) return null;
+      try {
+        return formatter("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+      } catch {
+        return d.toISOString().slice(0, 10);
+      }
+    }
+    function localMidnight(date, tz = orgTimezone()) {
+      const guess = Date.parse(`${date}T00:00:00Z`);
+      if (!Number.isFinite(guess)) return null;
+      const offset = (ms) => {
+        try {
+          const p = Object.fromEntries(formatter("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+          return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - ms % 1e3);
+        } catch {
+          return 0;
+        }
+      };
+      const first = guess - offset(guess);
+      return new Date(guess - offset(first)).toISOString();
+    }
+    var today = () => localDate();
+    var addDays = (date, n) => new Date(Date.parse(`${String(date).slice(0, 10)}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+    function dayOf(at) {
+      if (at === null || at === void 0 || at === "") return null;
+      const s = String(at);
+      return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : localDate(s) || s.slice(0, 10);
+    }
+    module.exports = { today, localDate, localMidnight, orgTimezone, validTimezone, addDays, dayOf, formatter };
+  }
+});
+
 // server/incidents.js
 var require_incidents = __commonJS({
   "server/incidents.js"(exports, module) {
@@ -9376,7 +9443,7 @@ var require_incidents = __commonJS({
     var MEDIA_OVER = 500;
     var WARN_DAYS = 14;
     var addDays = (date, n) => new Date(Date.parse(String(date).slice(0, 10) + "T00:00:00Z") + n * DAY).toISOString().slice(0, 10);
-    var today = () => (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    var today = () => require_local_date().today();
     function obligations(i) {
       const deadline = addDays(i.discovered_at, NOTICE_DAYS);
       const due = i.law_enforcement_delay_until && i.law_enforcement_delay_until > deadline ? i.law_enforcement_delay_until.slice(0, 10) : deadline;
@@ -9445,7 +9512,7 @@ var require_incidents = __commonJS({
       if (clients < massExportThreshold()) return null;
       return draft({
         source: "mass_export",
-        sourceRef: `${kind}:${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}:${user.id}`,
+        sourceRef: `${kind}:${today()}:${user.id}`,
         title: `Identified export of ${clients} clients (${kind})`,
         description: `An identified export (${kind}) naming ${clients} clients was made by ${user.display_name || user.username}. Confirm it was authorised and went where it was recorded as going; if so, determine "not a breach" with that reason.`,
         user
@@ -12117,7 +12184,7 @@ var require_follow_ups = __commonJS({
     function defaultReferralDue(v) {
       if (v.follow_up_due) return;
       const days = v.urgency === "emergent" ? 1 : v.urgency === "urgent" ? 3 : 14;
-      v.follow_up_due = new Date(Date.now() + days * 864e5).toISOString().slice(0, 10);
+      v.follow_up_due = require_local_date().addDays(require_local_date().today(), days);
     }
     module.exports = { reconcile, cancelForDeleted, pushDeleted, reminderTasks, track, finish, deriveCallFollowUp, defaultReferralDue, SPECS };
   }
@@ -12658,7 +12725,7 @@ var require_interventions = __commonJS({
     var { periodProblem, ownedBy } = require_shared();
     var PC = require_participant_code();
     var FU = require_follow_ups();
-    var serviceDate = (row) => row.service_date || require_budget().localDate(row.occurred_at);
+    var serviceDate = (row) => row.service_date || require_local_date().localDate(row.occurred_at);
     module.exports = define2({
       table: "interventions",
       fields: {
@@ -13620,8 +13687,8 @@ var require_client_filters = __commonJS({
       return { sql: `COALESCE(c.mat_status,'unknown')=?`, params: [value] };
     }
     function consentWindow() {
-      const today = require_budget().localDate();
-      return { from: today, to: new Date(Date.now() + 30 * DAY).toISOString().slice(0, 10) };
+      const today = require_local_date().localDate();
+      return { from: today, to: require_local_date().addDays(today, 30) };
     }
     function consentExpiring({ from, to } = consentWindow()) {
       return { sql: `EXISTS (SELECT 1 FROM consents co WHERE co.client_id=c.id AND co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ?)`, params: [from, to] };
@@ -14531,7 +14598,7 @@ var require_consents2 = __commonJS({
       if (missing.length) throw badRequest(`A 42 CFR Part 2 consent must record ${missing.join("; ")}`, { missing });
     }
     function presentConsent(c) {
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const today = require_local_date().today();
       const active = !c.revoked_at && (!c.expires_at || c.expires_at >= today);
       return {
         ...c,
@@ -14608,7 +14675,7 @@ var require_consents2 = __commonJS({
         if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, ctx.params.id)) throw notFound();
         auth3.assertClientAccess(ctx, ctx.params.id);
         const v = validate(ctx.body, { type: { type: "string", required: true, enum: C.CONSENT_TYPES }, recipient: { type: "string", maxLen: RECIPIENT_MAX }, signed_at: { type: "date" }, expires_at: { type: "date" } });
-        const from = v.signed_at || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const from = v.signed_at || require_local_date().today();
         const to = v.expires_at || "9999-12-31";
         const want = disclosure.normalise(v.recipient);
         const duplicates = db3.all(`SELECT c.*, u.display_name AS created_by_name FROM consents c JOIN users u ON u.id=c.created_by WHERE c.client_id=? AND c.type=? AND c.revoked_at IS NULL ORDER BY c.signed_at DESC`, ctx.params.id, v.type).map(presentConsent).filter((c) => c.active && disclosure.normalise(c.recipient) === want && c.signed_at <= to && (!c.expires_at || c.expires_at >= from));
@@ -14747,7 +14814,7 @@ var require_consents2 = __commonJS({
           redisclosure: yes(c.redisclosure_notice_given),
           refusal: yes(c.refusal_consequences_given),
           evidence: [c.signed_on_paper ? "Signed on paper" : null, c.witness ? `Witness: ${c.witness}` : null, c.document_ref ? `Document: ${c.document_ref}` : null].filter(Boolean).join("; "),
-          status: c.revoked_at ? `Revoked ${c.revoked_at.slice(0, 10)}${c.revoked_reason ? ` (${c.revoked_reason})` : ""}` : c.active ? "Active" : "Expired"
+          status: c.revoked_at ? `Revoked ${require_local_date().dayOf(c.revoked_at)}${c.revoked_reason ? ` (${c.revoked_reason})` : ""}` : c.active ? "Active" : "Expired"
         };
         audit3.log({ user: ctx.user, action: "consent.print", entity: "consent", entityId: c.id, clientId: c.client_id, ip: ctx.ip });
         const body = require_pdf().renderForm({
@@ -14925,7 +14992,7 @@ Effective date: {effective}`;
               db3.setSetting("part2_program_off", JSON.stringify({ since: db3.now(), by: ctx.user.display_name || ctx.user.username }));
               incident = require_incidents().draft({
                 source: "part2_program_off",
-                sourceRef: db3.now().slice(0, 10),
+                sourceRef: require_local_date().today(),
                 title: "Part 2 program protections switched off",
                 description: `${ctx.user.display_name || ctx.user.username} switched this program's 42 CFR Part 2 protections off. Reason given: ${reason}
 
@@ -15093,8 +15160,8 @@ Confirm the determination with counsel. If it was a mistake, switch the program 
         const out2 = {
           part2_program: disclosure.part2Program(),
           clients_missing_notice: n(`SELECT COUNT(*) n FROM clients c WHERE ${MISSING_NOTICE}`),
-          consents_legacy_active: n(`SELECT COUNT(*) n FROM consents WHERE type IN (${C.PART2_CONSENT_TYPES.map(() => "?").join(",")}) AND (rule_version IS NULL OR rule_version<>'2024') AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, ...C.PART2_CONSENT_TYPES),
-          court_orders_active: n(`SELECT COUNT(*) n FROM court_orders WHERE status='active' AND (expires_at IS NULL OR expires_at >= date('now'))`),
+          consents_legacy_active: n(`SELECT COUNT(*) n FROM consents WHERE type IN (${C.PART2_CONSENT_TYPES.map(() => "?").join(",")}) AND (rule_version IS NULL OR rule_version<>'2024') AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, ...C.PART2_CONSENT_TYPES, require_local_date().today()),
+          court_orders_active: n(`SELECT COUNT(*) n FROM court_orders WHERE status='active' AND (expires_at IS NULL OR expires_at >= ?)`, require_local_date().today()),
           disclosures_90d: n(`SELECT COUNT(*) n FROM disclosures WHERE disclosed_at >= ?`, new Date(Date.now() - 90 * 864e5).toISOString()),
           complaints_open: n(`SELECT COUNT(*) n FROM complaints WHERE status IN ('open','investigating')`),
           incidents_open: n(`SELECT COUNT(*) n FROM privacy_incidents WHERE status='open'`),
@@ -15107,8 +15174,8 @@ Confirm the determination with counsel. If it was a mistake, switch the program 
         const n = (sql, ...p) => db3.one(sql, ...p).n;
         const scope = auth3.caseloadFilter(ctx.user, "c.id");
         const inScope = (alias) => `${alias}.client_id IN (SELECT c.id FROM clients c WHERE c.deleted_at IS NULL AND ${scope.sql})`;
-        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-        const in30 = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+        const today = require_local_date().today();
+        const in30 = require_local_date().addDays(today, 30);
         const since90 = new Date(Date.now() - 90 * 864e5).toISOString();
         const T = C.PART2_CONSENT_TYPES;
         const q = T.map(() => "?").join(",");
@@ -15389,9 +15456,10 @@ var require_clients = __commonJS({
           risk: `CASE c.risk_level WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'moderate' THEN 2 ELSE 3 END, last_contact ASC`
         }[sort] || "c.updated_at DESC";
         const now2 = db3.now();
+        const today = require_local_date().today();
         const LAST_CONTACT = `(SELECT MAX(t) FROM (SELECT MAX(occurred_at) t FROM interventions i WHERE i.client_id=c.id UNION ALL SELECT MAX(started_at) FROM calls ca WHERE ca.client_id=c.id AND ca.outcome IN ('reached','replied')))`;
-        const OVERDUE = `(SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < date('now','localtime') ELSE t.due_at < ? END))`;
-        let sortCols = sort === "overdue" ? { sql: `, ${OVERDUE} AS overdue_tasks, ${LAST_CONTACT} AS last_contact`, params: [now2] } : sort === "last_contact" || sort === "risk" ? { sql: `, ${LAST_CONTACT} AS last_contact`, params: [] } : { sql: "", params: [] };
+        const OVERDUE = `(SELECT COUNT(*) FROM tasks t WHERE t.client_id=c.id AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at < ? ELSE t.due_at < ? END))`;
+        let sortCols = sort === "overdue" ? { sql: `, ${OVERDUE} AS overdue_tasks, ${LAST_CONTACT} AS last_contact`, params: [today, now2] } : sort === "last_contact" || sort === "risk" ? { sql: `, ${LAST_CONTACT} AS last_contact`, params: [] } : { sql: "", params: [] };
         let pageOrder = order;
         if (nameTier && !sort) {
           const recent = db3.all(`SELECT client_id FROM audit_log WHERE user_id=? AND client_id IS NOT NULL AND action IN ('client.view','client.create','client.update','intervention.create','call.create','note.create','note.update') GROUP BY client_id ORDER BY MAX(at) DESC LIMIT 20`, ctx.user.id).map((x) => x.client_id);
@@ -15402,7 +15470,7 @@ var require_clients = __commonJS({
         const byId = new Map(db3.all(`SELECT c.*, (SELECT GROUP_CONCAT(u.display_name, ', ') FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=c.id AND ${auth3.activeAssignment("a.")}) AS assigned_workers,
       ${LAST_CONTACT} AS last_contact, ${OVERDUE} AS overdue_tasks
       ${consentWindow ? `, (SELECT MIN(co.expires_at) FROM consents co WHERE co.client_id=c.id AND co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ?) AS consent_expires_at` : ""}
-      FROM clients c WHERE c.id IN (SELECT value FROM json_each(?))`, now2, ...consentWindow ? [consentWindow.from, consentWindow.to] : [], JSON.stringify(pageIds)).map((x) => [x.id, x]));
+      FROM clients c WHERE c.id IN (SELECT value FROM json_each(?))`, today, now2, ...consentWindow ? [consentWindow.from, consentWindow.to] : [], JSON.stringify(pageIds)).map((x) => [x.id, x]));
         const rows = pageIds.map((id) => byId.get(id));
         const total = db3.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
         audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", searched: q ? searched : void 0, search_refused: searchRefused, status, sort: sort || void 0, filters: filters.length ? filters : void 0, offset: offset || void 0, count: rows.length, deidentified: deidentify } });
@@ -15442,7 +15510,7 @@ var require_clients = __commonJS({
         enc2.full_name_idx = blindIndex2((v.last_name || "") + (v.first_name || ""));
         const cols2 = { id, client_code: M.nextClientCode(), ...enc2, created_by: ctx.user.id };
         for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
-        if (!cols2.intake_date) cols2.intake_date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        if (!cols2.intake_date) cols2.intake_date = require_local_date().today();
         if (cols2.risk_level === void 0) cols2.risk_level = null;
         M.unaskedAsNull(cols2);
         const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
@@ -15487,7 +15555,7 @@ var require_clients = __commonJS({
           throw conflict("This record is not a discharged one: it is active or on someone's caseload. Ask a supervisor to assign it to you.");
         }
         const hadAccess = auth3.canAccessClient(ctx.user, row.id);
-        const today = require_budget().localDate();
+        const today = require_local_date().localDate();
         const episodeId = uuid2();
         db3.transaction(() => {
           db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid2(), row.id, ctx.user.id, "primary", today, ctx.user.id);
@@ -15604,7 +15672,7 @@ var require_clients = __commonJS({
           }
           if (dupAssignments.length) moved._duplicate_assignments_removed = dupAssignments.length;
           if (db3.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=? AND status='open'`, keep.id).n > 1) {
-            const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+            const today = require_local_date().today();
             for (const id of sourceOpenEpisodes) db3.run(`UPDATE episodes SET status='closed', closed_at=?, closed_by=?, discharge_reason='merged', discharge_disposition='merged into duplicate record', updated_at=? WHERE id=? AND status='open'`, today, ctx.user.id, db3.now(), id);
             moved._episodes_closed_as_merged = sourceOpenEpisodes.length;
           }
@@ -15627,7 +15695,7 @@ var require_clients = __commonJS({
         const client = M.decryptRow(row);
         client.days_to_engagement = M.daysToEngagement(client);
         client.assignments = db3.all(`SELECT a.*, u.display_name, u.role AS user_role FROM assignments a JOIN users u ON u.id=a.user_id WHERE a.client_id=? ORDER BY a.end_date IS NOT NULL, a.start_date DESC`, row.id).map((a) => ({ ...a, notes: a.notes_enc ? decrypt3(a.notes_enc) : null, notes_enc: void 0 }));
-        client.active_consents = db3.all(`SELECT id,type,recipient_enc,purpose_enc,signed_at,expires_at FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, row.id).map((x) => ({ id: x.id, type: x.type, recipient: x.recipient_enc ? decrypt3(x.recipient_enc) : null, purpose: x.purpose_enc ? decrypt3(x.purpose_enc) : null, signed_at: x.signed_at, expires_at: x.expires_at }));
+        client.active_consents = db3.all(`SELECT id,type,recipient_enc,purpose_enc,signed_at,expires_at FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, row.id, require_local_date().today()).map((x) => ({ id: x.id, type: x.type, recipient: x.recipient_enc ? decrypt3(x.recipient_enc) : null, purpose: x.purpose_enc ? decrypt3(x.purpose_enc) : null, signed_at: x.signed_at, expires_at: x.expires_at }));
         client.counts = {
           interventions: db3.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, row.id).n,
           calls: db3.one(`SELECT COUNT(*) n FROM calls WHERE client_id=?`, row.id).n,
@@ -15639,7 +15707,7 @@ var require_clients = __commonJS({
           // Of those, the change notices (open_tasks includes them): never overdue, shown apart (1.16.2).
           notices: db3.all(`SELECT id, client_id, assigned_to, created_by, created_at, description_enc FROM tasks WHERE client_id=? AND status='open' AND due_at IS NULL AND created_by=assigned_to`, row.id).filter(require_tasks().isNotice).length,
           // Real to-dos past their due date (a notice has none): the Overview's tile warns only for these (r8 M1).
-          overdue_tasks: db3.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END)`, row.id, require_budget().localDate(), db3.now()).n,
+          overdue_tasks: db3.one(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END)`, row.id, require_local_date().localDate(), db3.now()).n,
           minutes: db3.one(`SELECT COALESCE(SUM(minutes),0) n FROM time_entries WHERE client_id=?`, row.id).n,
           spent: db3.one(`SELECT COALESCE(SUM(amount),0) n FROM expenditures WHERE client_id=? AND status<>'rejected'`, row.id).n,
           episodes: db3.one(`SELECT COUNT(*) n FROM episodes WHERE client_id=?`, row.id).n,
@@ -15862,7 +15930,7 @@ var require_clients2 = __commonJS({
       const fields = {};
       const dob = row.dob_enc;
       if (dob) {
-        const today = require_budget().localDate();
+        const today = require_local_date().localDate();
         if (dob > today) fields.dob = "cannot be in the future";
         else if (dob < "1900-01-01") fields.dob = "must be after 1900";
       }
@@ -16096,7 +16164,7 @@ var require_episodes = __commonJS({
           else if (other.length && !standing(c.user, clientId)) out2.push(refuse("not permitted: the client already has an open episode at the office, and only their care team or a supervisor can open another", { message: "This client already has an open episode. Close it before opening another." }));
           else if (other.length) out2.push(flag("was accepted, but the client already had an open episode at the office; a supervisor should close one of the two", { code: "second_open_episode", message: "This client already has an open episode. Close it before opening another." }));
         }
-        const recent = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+        const recent = require_local_date().addDays(require_local_date().today(), -1);
         if (!c.existing && val("status") === "closed" && [opened, closed].some((d) => d && String(d).slice(0, 10) < recent) && !standing(c.user, row.client_id)) {
           out2.push(refuse("not permitted: only the client's care team or a supervisor can record a past admission and discharge", { status: 403, message: "Only the client's care team or a supervisor can record a past admission and discharge" }));
         }
@@ -16913,7 +16981,7 @@ var require_part2_notices = __commonJS({
         if (c.existing) return null;
         const out2 = [];
         if (row.acknowledged && row.ack_refused) out2.push(refuse("has a value the office does not accept (it is both acknowledged and refused)", { message: "Either the client signed the acknowledgement or declined to; not both" }));
-        if (row.given_at && row.given_at > (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) out2.push(flag("was accepted, but it is dated in the future; the office will review it", { message: "The notice cannot have been given in the future", code: "future_date" }));
+        if (row.given_at && row.given_at > require_local_date().today()) out2.push(flag("was accepted, but it is dated in the future; the office will review it", { message: "The notice cannot have been given in the future", code: "future_date" }));
         return out2;
       }
     });
@@ -17009,7 +17077,7 @@ var require_referrals = __commonJS({
       if (!cache.has(key)) {
         const names = disclosure.recipientNames(resourceNames(row.resource_id));
         const purpose = disclosure.referralPurpose(row.resource_id);
-        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const today = require_local_date().today();
         const types = disclosure.disclosingConsentTypes();
         cache.set(key, !!names.length && db3.all(`SELECT * FROM consents WHERE client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, row.client_id, today).some((c) => types.includes(c.type) && !disclosure.consentElementProblems(c).length && disclosure.consentNamesRecipient({ type: c.type, recipient: c.recipient_enc ? decrypt3(c.recipient_enc) : null }, names) && disclosure.consentCoversPurpose({ type: c.type, purpose: c.purpose_enc ? decrypt3(c.purpose_enc) : null }, purpose)));
       }
@@ -17784,7 +17852,7 @@ var require_forms = __commonJS({
     };
     function autofillValues(fields, clientRow, user) {
       const c = M.decryptRow(clientRow);
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const today = require_local_date().today();
       const src = {
         "client.full_name": [c.first_name, c.last_name].filter(Boolean).join(" "),
         "client.first_name": c.first_name,
@@ -17874,7 +17942,7 @@ var require_forms = __commonJS({
     function printFooter() {
       const disclosure = require_disclosure();
       const n = disclosure.notice();
-      const printed = `Printed from SUDS ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.`;
+      const printed = `Printed from SUDS ${require_local_date().today()}.`;
       return disclosure.part2Program() ? `${printed} PROTECTED BY 42 CFR PART 2. ${n.short} If this record is disclosed, this notice must accompany it (42 CFR \xA72.32): ${n.text}` : `${printed} Contains protected health information; handle per HIPAA.`;
     }
     var clientRecords = auth3.requirePerm("clients:read");
@@ -18034,7 +18102,7 @@ var require_forms = __commonJS({
         const values = parseJson(decrypt3(f.values_enc), {});
         const by = f.completed_by ? db3.one(`SELECT display_name FROM users WHERE id=?`, f.completed_by) : null;
         audit3.log({ user: ctx.user, action: "client_form.print", entity: "client_form", entityId: f.id, clientId: f.client_id, ip: ctx.ip });
-        const body = pdf.renderForm({ title: f.template_name, org: db3.getSetting("org_name", "SUDS"), meta: [`Client: ${client.first_name} ${client.last_name} (${client.client_code})`, f.status === "completed" ? `Completed ${f.completed_at.slice(0, 10)}${by ? " by " + by.display_name : ""}` : "DRAFT"], fields: parseJson(f.fields_json, []), values, footer: printFooter() });
+        const body = pdf.renderForm({ title: f.template_name, org: db3.getSetting("org_name", "SUDS"), meta: [`Client: ${client.first_name} ${client.last_name} (${client.client_code})`, f.status === "completed" ? `Completed ${require_local_date().dayOf(f.completed_at)}${by ? " by " + by.display_name : ""}` : "DRAFT"], fields: parseJson(f.fields_json, []), values, footer: printFooter() });
         ctx.res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": contentDisposition(ctx.query.get("download") === "1" ? "attachment" : "inline", `${client.client_code}-${f.template_name}.pdf`) });
         ctx.res.end(body);
         return null;
@@ -18536,7 +18604,7 @@ var require_suprt = __commonJS({
     }
     var DAY = /^\d{4}-\d{2}-\d{2}$/;
     var addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
-    var today = () => require_budget().localDate();
+    var today = () => require_local_date().localDate();
     var dec2 = (v) => {
       if (!v) return null;
       try {
@@ -19963,7 +20031,6 @@ var require_budget = __commonJS({
     var auth3 = require_auth2();
     var audit3 = require_audit();
     var crud = require_crud();
-    var config2 = require_config();
     var C = require_constants();
     var { badRequest, notFound, forbidden, HttpError: HttpError3 } = require_http();
     var { validate } = require_validate();
@@ -19988,57 +20055,7 @@ var require_budget = __commonJS({
       return o;
     }
     var cents = (v) => typeof v === "number" && Number.isFinite(v) ? Math.round(v * 100) / 100 : v;
-    function validTimezone(tz) {
-      if (typeof tz !== "string" || !tz.trim() || tz.length > 64) return false;
-      try {
-        formatter("en-US", { timeZone: tz });
-        return true;
-      } catch {
-        return false;
-      }
-    }
-    var formatters = /* @__PURE__ */ new Map();
-    function formatter(locale, opts) {
-      const key = `${locale}|${JSON.stringify(opts)}`;
-      let f = formatters.get(key);
-      if (!f) {
-        f = new Intl.DateTimeFormat(locale, opts);
-        if (formatters.size > 200) formatters.clear();
-        formatters.set(key, f);
-      }
-      return f;
-    }
-    function orgTimezone() {
-      let v = null;
-      try {
-        v = db3.getSetting("org_timezone", null);
-      } catch {
-      }
-      return v && validTimezone(v) ? v : config2.orgTimezone;
-    }
-    function localDate(when = /* @__PURE__ */ new Date(), tz = orgTimezone()) {
-      const d = when instanceof Date ? when : new Date(when);
-      if (!Number.isFinite(d.getTime())) return null;
-      try {
-        return formatter("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
-      } catch {
-        return d.toISOString().slice(0, 10);
-      }
-    }
-    function localMidnight(date, tz = orgTimezone()) {
-      const guess = Date.parse(`${date}T00:00:00Z`);
-      if (!Number.isFinite(guess)) return null;
-      const offset = (ms) => {
-        try {
-          const p = Object.fromEntries(formatter("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
-          return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - ms % 1e3);
-        } catch {
-          return 0;
-        }
-      };
-      const first = guess - offset(guess);
-      return new Date(guess - offset(first)).toISOString();
-    }
+    var { localDate, localMidnight, orgTimezone, validTimezone } = require_local_date();
     var rules = require_rules();
     var FUNDS = () => rules.forTable("funding_sources");
     var LINES = () => rules.forTable("budget_lines");
@@ -20818,7 +20835,7 @@ var require_referral_links = __commonJS({
         const priority = status === "declined" || status === "unable_to_reach" ? "high" : "normal";
         const mark = `(secure referral link ${link.reference})`;
         const open4 = db3.all(`SELECT id, title_enc FROM tasks WHERE referral_id=? AND assigned_to=? AND created_by=? AND status IN ('open','in_progress')`, link.referral_id, link.created_by, link.created_by).find((t) => (dec2(t.title_enc) || "").includes(mark));
-        if (open4) db3.run(`UPDATE tasks SET title_enc=?, priority=?, due_at=?, updated_at=? WHERE id=?`, title, priority, (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), db3.now(), open4.id);
+        if (open4) db3.run(`UPDATE tasks SET title_enc=?, priority=?, due_at=?, updated_at=? WHERE id=?`, title, priority, require_local_date().today(), db3.now(), open4.id);
         else db3.run(
           `INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,priority,referral_id) VALUES(?,?,?,?,?,?,?,?)`,
           uuid2(),
@@ -20826,7 +20843,7 @@ var require_referral_links = __commonJS({
           link.created_by,
           link.created_by,
           title,
-          (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+          require_local_date().today(),
           priority,
           link.referral_id
         );
@@ -23385,12 +23402,15 @@ var require_dr_drill = __commonJS({
           } catch {
           }
         }, CHILD_TIMEOUT_MS);
+        let readyAt = null;
         child.on("message", (m) => {
           if (m && m.type === "progress") onStep(m.step);
+          else if (m && m.type === "ready") readyAt = Date.now();
           else if (m && m.type === "result") result = m;
         });
         child.on("exit", (code, signal) => {
           clearTimeout(timer);
+          if (result && result.ready_at && readyAt) result.ready_at = readyAt;
           resolve2(result || { ok: false, error: signal === "SIGKILL" ? `the restored copy did not finish within ${Math.round(CHILD_TIMEOUT_MS / 6e4)} minutes` : `the drill process exited (${code ?? signal})${stderr ? ": " + stderr.trim().split("\n").slice(-3).join(" ") : ""}`, checks: [] });
         });
         child.send({ keys: { enc: keys.enc.toString("hex"), idx: keys.idx.toString("hex"), sig: config2.signingKey.toString("hex") }, anchorDir: config2.auditAnchorDir });
@@ -25000,7 +25020,7 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
               site,
               qty,
               lot,
-              days === null ? null : new Date(Date.now() + days * 864e5).toISOString().slice(0, 10),
+              days === null ? null : require_local_date().addDays(require_local_date().today(), days),
               day(30),
               source,
               "Sample delivery",
@@ -25287,7 +25307,7 @@ var require_admin = __commonJS({
             if (["session_idle_minutes", "session_absolute_hours", "password_max_age_days", "backup_retain_count"].includes(k) && v !== "" && Number(v) < 1) throw badRequest(`${k} must be at least 1; leave it blank to use the default`);
             if (k === "client_retention_years" && v !== "" && Number(v) < 6) throw badRequest("Client records must be kept at least 6 years (45 CFR \xA7164.316(b)(2)); most SUD programs keep 7 or more");
             if (k === "self_signup" && v !== "" && !["0", "1"].includes(v)) throw badRequest("self_signup must be 1 (on) or 0 (off)");
-            if (k === "org_timezone" && v !== "" && !require_budget().validTimezone(v)) throw badRequest("org_timezone must be a time zone name such as America/Los_Angeles");
+            if (k === "org_timezone" && v !== "" && !require_local_date().validTimezone(v)) throw badRequest("org_timezone must be a time zone name such as America/Los_Angeles");
             if (["mfa_require_all", "sso_required", "dr_drill_monthly", "passkey_signin", "passkey_signing", "sign_strong_required", "participant_code_default", "field_device_default"].includes(k) && v !== "" && !["0", "1"].includes(v)) throw badRequest(`${k} must be 1 (on) or 0 (off)`);
             if (k === "field_device_window_days" && v !== "") {
               const FS = require_field_scope();
@@ -26803,7 +26823,7 @@ var require_ai = __commonJS({
         if (!v.qsoa) missing.qsoa = "Confirm that it includes qualified service organization terms under 42 CFR Part 2.";
         if (!v.counsel_reviewed) missing.counsel_reviewed = "Confirm that your counsel has reviewed this use of client records.";
         if (Object.keys(missing).length) throw badRequest("The agreement cannot be recorded until each statement is confirmed.", { fields: missing });
-        if (v.agreement_date > (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) throw badRequest("Validation failed", { fields: { agreement_date: "The date the agreement was signed cannot be in the future." } });
+        if (v.agreement_date > require_local_date().today()) throw badRequest("Validation failed", { fields: { agreement_date: "The date the agreement was signed cannot be in the future." } });
         if (!AP.current()) throw badRequest(`This server's AI provider is not one SUDS knows (${AP.configProblem()}).`);
         const a = {
           provider: v.provider,
@@ -27517,8 +27537,8 @@ ${otherNote}`;
         return { ok: true };
       });
       r.get("/api/time/summary", auth3.requireAuth, auth3.requirePerm("time:read", "time:write"), (ctx) => {
-        const from = ctx.query.get("from") || new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
-        const to = ctx.query.get("to") || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const to = ctx.query.get("to") || require_local_date().today();
+        const from = ctx.query.get("from") || require_local_date().addDays(require_local_date().today(), -30);
         const all = auth3.hasPerm(ctx.user, "time:all");
         const scope = all ? "" : "AND t.user_id=?";
         const p = all ? [] : [ctx.user.id];
@@ -27556,8 +27576,9 @@ var require_exports = __commonJS({
       if (!dob) return "";
       const born = new Date(dob);
       if (!Number.isFinite(born.getTime())) return "";
-      let age = now2.getUTCFullYear() - born.getUTCFullYear();
-      if (now2.getUTCMonth() < born.getUTCMonth() || now2.getUTCMonth() === born.getUTCMonth() && now2.getUTCDate() < born.getUTCDate()) age--;
+      const [y, m, d] = (require_local_date().localDate(now2) || now2.toISOString().slice(0, 10)).split("-").map(Number);
+      let age = y - born.getUTCFullYear();
+      if (m - 1 < born.getUTCMonth() || m - 1 === born.getUTCMonth() && d < born.getUTCDate()) age--;
       if (age >= 90) return "90+";
       const band = AGE_BANDS.find(([lo, hi]) => age >= lo && age <= hi);
       return band ? band[2] : "";
@@ -27825,7 +27846,7 @@ var require_assessments = __commonJS({
     var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
     var { assertFresh } = require_crud();
     var dec2 = (v) => v ? decrypt3(v) : null;
-    var today = () => require_budget().localDate();
+    var today = () => require_local_date().localDate();
     var DAY = /^\d{4}-\d{2}-\d{2}$/;
     function clientFor(ctx, clientId) {
       if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, clientId)) throw notFound("Client not found");
@@ -28282,8 +28303,8 @@ var require_assignments2 = __commonJS({
         if (restores && !undone) throw badRequest("The assignment to restore was not found, or it has not ended.");
         const id = uuid2();
         db3.transaction(() => {
-          if ((v.role_on_case || "primary") === "primary") db3.run(`UPDATE assignments SET end_date=date('now'), updated_at=? WHERE client_id=? AND role_on_case='primary' AND end_date IS NULL`, db3.now(), c.id);
-          db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes_enc,created_by) VALUES(?,?,?,?,?,?,?)`, id, c.id, v.user_id, v.role_on_case || "primary", v.start_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), v.notes ? encrypt3(v.notes) : null, ctx.user.id);
+          if ((v.role_on_case || "primary") === "primary") db3.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE client_id=? AND role_on_case='primary' AND end_date IS NULL`, require_local_date().today(), db3.now(), c.id);
+          db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes_enc,created_by) VALUES(?,?,?,?,?,?,?)`, id, c.id, v.user_id, v.role_on_case || "primary", v.start_date || require_local_date().today(), v.notes ? encrypt3(v.notes) : null, ctx.user.id);
         });
         audit3.log({ user: ctx.user, action: undone ? "assignment.restore" : "assignment.create", entity: "assignment", entityId: id, clientId: c.id, ip: ctx.ip, details: { user_id: v.user_id, role: v.role_on_case, ...undone ? { restores: undone.id } : {} } });
         ctx.status = 201;
@@ -28293,7 +28314,7 @@ var require_assignments2 = __commonJS({
         const a = db3.one(`SELECT * FROM assignments WHERE id=?`, ctx.params.id);
         if (!a) throw notFound();
         if (!auth3.hasPerm(ctx.user, "clients:all")) auth3.assertClientAccess(ctx, a.client_id);
-        db3.run(`UPDATE assignments SET end_date=date('now'), ended_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), a.id);
+        db3.run(`UPDATE assignments SET end_date=?, ended_at=?, updated_at=? WHERE id=?`, require_local_date().today(), db3.now(), db3.now(), a.id);
         audit3.log({ user: ctx.user, action: "assignment.end", entity: "assignment", entityId: a.id, clientId: a.client_id, ip: ctx.ip });
         return { ok: true };
       });
@@ -28571,7 +28592,7 @@ var require_calls2 = __commonJS({
               te2,
               row.user_id,
               row.client_id || null,
-              row.started_at.slice(0, 10),
+              require_local_date().dayOf(row.started_at),
               row.duration_minutes,
               "direct_service",
               row.id,
@@ -28706,11 +28727,7 @@ var require_caloms = __commonJS({
       return y - by - (m < bm || m === bm && d < bd ? 1 : 0);
     }
     function today() {
-      try {
-        return require_budget().localDate();
-      } catch {
-        return (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      }
+      return require_local_date().today();
     }
     var ANNUAL_EARLY = 60;
     var ANNUAL_LATE = 30;
@@ -29227,7 +29244,7 @@ var require_caloms_schedule = __commonJS({
       if (!C.enabled() || !C.providers().length) return null;
       const S = C.schedule();
       if (S.frequency !== "monthly") return null;
-      const day = today || require_budget().localDate();
+      const day = today || require_local_date().localDate();
       if (Number(day.slice(8, 10)) < Math.min(28, Math.max(1, S.day))) return null;
       const { from, to } = previousMonth(day);
       if (S.last && S.last.from === from && S.last.to === to && !(S.last.failed && S.last.failed.length)) return null;
@@ -29298,7 +29315,7 @@ var require_retention = __commonJS({
       return `(SELECT MAX(d) FROM (${parts.join(" UNION ALL ")}))`;
     }
     function expiredClients(years = retentionYears(), now2 = /* @__PURE__ */ new Date()) {
-      const cutoff = new Date(now2.getTime() - years * 365.25 * 864e5).toISOString().slice(0, 10);
+      const cutoff = require_local_date().localDate(new Date(now2.getTime() - years * 365.25 * 864e5));
       return db3.all(`SELECT * FROM (
       SELECT c.id, c.client_code, c.legal_hold, c.status, ${lastActivitySql()} AS ended
       FROM clients c
@@ -29455,7 +29472,7 @@ var require_caloms2 = __commonJS({
     var { validate } = require_validate();
     var DAY = /^\d{4}-\d{2}-\d{2}$/;
     function period(ctx) {
-      const today = require_budget().localDate();
+      const today = require_local_date().localDate();
       const to = ctx.query.get("to") || today;
       const from = ctx.query.get("from") || `${to.slice(0, 7)}-01`;
       for (const v of [from, to]) if (!DAY.test(v) || !Number.isFinite(Date.parse(v))) throw badRequest("from and to must be dates (YYYY-MM-DD)");
@@ -29474,7 +29491,7 @@ var require_caloms2 = __commonJS({
       const has = (t) => records.some((r) => r.record_type === t);
       if (!has("admission")) out2.push({ record_type: "admission", record_date: e.opened_at.slice(0, 10), message: "CalOMS admission record not yet completed" });
       if (e.status === "closed" && !has("discharge")) out2.push({ record_type: "discharge", record_date: e.closed_at, message: "CalOMS discharge record not yet completed" });
-      const today = require_budget().localDate();
+      const today = require_local_date().localDate();
       const end = e.closed_at && e.closed_at < today ? e.closed_at : today;
       for (let n = 1; n < 100; n++) {
         const anniv = C.addYears(e.opened_at.slice(0, 10), n);
@@ -29528,7 +29545,7 @@ var require_caloms2 = __commonJS({
           db3.setSetting("caloms_enabled", on ? "1" : "0");
           db3.setSetting("caloms_providers", JSON.stringify(provs));
           if (v.start_date !== void 0 && v.start_date !== null) db3.setSetting("caloms_start_date", v.start_date);
-          else if (on && !C.startDate()) db3.setSetting("caloms_start_date", require_budget().localDate());
+          else if (on && !C.startDate()) db3.setSetting("caloms_start_date", require_local_date().localDate());
           if (v.schedule !== void 0 && v.schedule !== null) db3.setSetting("caloms_schedule", v.schedule);
           if (v.schedule_day !== void 0 && v.schedule_day !== null) db3.setSetting("caloms_schedule_day", String(v.schedule_day));
           if (v.split_by_provider !== void 0 && v.split_by_provider !== null) db3.setSetting("caloms_split_by_provider", v.split_by_provider ? "1" : "0");
@@ -29709,7 +29726,7 @@ var require_caloms2 = __commonJS({
         if (!C.enabled()) throw badRequest("CalOMS Tx reporting is switched off for this program");
         if (!C.providers().length) throw badRequest("Add this program's CalOMS provider ID first");
         wholeProgramme(ctx, "prepare");
-        const { from, to } = v.from && v.to ? v : SCHED.previousMonth(require_budget().localDate());
+        const { from, to } = v.from && v.to ? v : SCHED.previousMonth(require_local_date().localDate());
         if (from > to) throw badRequest("from must not be after to");
         return SCHED.run({ from, to, user: ctx.user, ip: ctx.ip, origin: "manual" });
       });
@@ -29750,9 +29767,9 @@ var require_caloms2 = __commonJS({
         const sub = mayReach(ctx, subFor(ctx.params.id), "record the upload of");
         const v = validate(ctx.body || {}, { uploaded_on: { type: "date", required: true }, dhcs_reference: { type: "string", maxLen: 60, pattern: /^[A-Za-z0-9 ._/#-]*$/ } });
         if (sub.status !== "produced") throw new HttpError3(409, "Produce the file first: a prepared file has not been accounted, so it cannot have been sent.");
-        if (v.uploaded_on > require_budget().localDate()) throw badRequest("The upload date cannot be in the future", { fields: { uploaded_on: "in the future" } });
+        if (v.uploaded_on > require_local_date().localDate()) throw badRequest("The upload date cannot be in the future", { fields: { uploaded_on: "in the future" } });
         const produced = db3.one(`SELECT created_at FROM caloms_submission_events WHERE submission_id=? AND action='produced' ORDER BY created_at LIMIT 1`, sub.id);
-        if (v.uploaded_on < (produced ? produced.created_at : sub.created_at).slice(0, 10)) throw badRequest("The upload date is before the file was produced", { fields: { uploaded_on: "before the file existed" } });
+        if (v.uploaded_on < require_local_date().dayOf(produced ? produced.created_at : sub.created_at)) throw badRequest("The upload date is before the file was produced", { fields: { uploaded_on: "before the file existed" } });
         db3.transaction(() => {
           db3.run(`UPDATE caloms_submissions SET uploaded_at=?, uploaded_by=?, dhcs_reference=?, updated_at=? WHERE id=?`, v.uploaded_on, ctx.user.id, v.dhcs_reference || null, db3.now(), sub.id);
           SCHED.logEvent(sub.id, "uploaded", ctx.user, [v.uploaded_on, v.dhcs_reference].filter(Boolean).join(" "));
@@ -29767,7 +29784,7 @@ var require_caloms2 = __commonJS({
         return { id: sub.id, file_name: sub.file_name, sha256: sub.sha256, status: sub.status, rows };
       });
       r.get("/api/caloms/worklist", auth3.requireAuth, auth3.requirePerm("episodes:read", "episodes:write"), (ctx) => {
-        const today = require_budget().localDate();
+        const today = require_local_date().localDate();
         const from = ctx.query.get("from") || C.startDate() || C.addDays(today, -365);
         const to = ctx.query.get("to") || today;
         for (const d of [from, to]) if (!DAY.test(d) || !Number.isFinite(Date.parse(d))) throw badRequest("from and to must be dates (YYYY-MM-DD)");
@@ -29826,7 +29843,7 @@ var require_careplan = __commonJS({
     var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
     var { assertFresh } = require_crud();
     var dec2 = (v) => v ? decrypt3(v) : null;
-    var today = () => require_budget().localDate();
+    var today = () => require_local_date().localDate();
     function clientFor(ctx, clientId) {
       if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, clientId)) throw notFound("Client not found");
       auth3.assertClientAccess(ctx, clientId);
@@ -30348,7 +30365,7 @@ var require_compliance = __commonJS({
         beforeInsert: (ctx, v) => {
           if (v.complainant === "anonymous" && v.client_id) throw badRequest("An anonymous complaint cannot name the client; record it without one");
           if (["resolved", "closed"].includes(v.status) && !v.resolution) throw badRequest("Say how the complaint was resolved before closing it");
-          if (["resolved", "closed"].includes(v.status) && !v.resolved_at) v.resolved_at = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+          if (["resolved", "closed"].includes(v.status) && !v.resolved_at) v.resolved_at = require_local_date().today();
           encComplaint(v);
         },
         beforeUpdate: (ctx, v, row) => {
@@ -30356,7 +30373,7 @@ var require_compliance = __commonJS({
           if (v.summary === null) throw badRequest("A complaint needs its summary");
           const closing = ["resolved", "closed"].includes(v.status) && !["resolved", "closed"].includes(row.status);
           if (closing && !v.resolution && !row.resolution_enc) throw badRequest("Say how the complaint was resolved before closing it");
-          if (closing && !v.resolved_at) v.resolved_at = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+          if (closing && !v.resolved_at) v.resolved_at = require_local_date().today();
           if (v.status && ["open", "investigating"].includes(v.status)) v.resolved_at = null;
           encComplaint(v);
         },
@@ -30365,8 +30382,9 @@ var require_compliance = __commonJS({
         canDelete: () => false
       });
       r.get("/api/complaints/report", auth3.requireAuth, auth3.requirePerm("complaints:read", "complaints:write"), (ctx) => {
-        const from = ctx.query.get("from") || `${(/* @__PURE__ */ new Date()).getUTCFullYear()}-01-01`;
-        const to = ctx.query.get("to") || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const today = require_local_date().today();
+        const from = ctx.query.get("from") || `${today.slice(0, 4)}-01-01`;
+        const to = ctx.query.get("to") || today;
         if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw badRequest("from and to must be YYYY-MM-DD");
         const w = `received_at BETWEEN ? AND ?`;
         const by = (col) => db3.all(`SELECT ${col} k, COUNT(*) n FROM complaints WHERE ${w} GROUP BY ${col} ORDER BY n DESC`, from, to);
@@ -30400,7 +30418,7 @@ var require_compliance = __commonJS({
       });
       r.post("/api/incidents", auth3.requireAuth, auth3.requirePerm("incidents:write"), (ctx) => {
         const v = validate(ctx.body, { ...INCIDENT_SHAPE, title: { ...INCIDENT_SHAPE.title, required: true }, discovered_at: { type: "date", required: true } });
-        if (v.discovered_at > (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) throw badRequest("An incident cannot be discovered in the future");
+        if (v.discovered_at > require_local_date().today()) throw badRequest("An incident cannot be discovered in the future");
         const id = uuid2();
         const cols2 = {
           id,
@@ -31650,7 +31668,7 @@ var require_county_connect = __commonJS({
       const s = db3.getSetting(SETTING_START, "");
       return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
     }
-    var today = () => require_budget().localDate();
+    var today = () => require_local_date().localDate();
     function countyCode({ user = null, ip = null } = {}) {
       const c = K.countyCode();
       if (c.created) audit3.log({ user, action: "county.code.create", ip, details: { county_code: c.code, via: "county-connect" } });
@@ -34605,7 +34623,7 @@ var require_funder_report = __commonJS({
       if (fund) why.push("it is filtered to one funding source");
       if (auth3.caseloadRestricted(ctx.user)) why.push("it counts only your caseload");
       if (!period) why.push("its period is not a calendar month, a quarter or a year starting on 1 January, April, July or October");
-      else if (to >= require_budget().localDate()) why.push("its period has not ended yet");
+      else if (to >= require_local_date().localDate()) why.push("its period has not ended yet");
       return { publishable: !why.length, period, not_publishable: why };
     }
     function publicationOn() {
@@ -35932,7 +35950,7 @@ var require_reports = __commonJS({
       yield;
       const visits = [];
       const bounds = [];
-      for (let m = s.slice(0, 7); m <= (/* @__PURE__ */ new Date()).toISOString().slice(0, 7); m = nextMonth(m)) bounds.push(m);
+      for (let m = s.slice(0, 7); m <= require_local_date().today().slice(0, 7); m = nextMonth(m)) bounds.push(m);
       for (let i = 0; i < bounds.length; i++) {
         const hi = i + 1 < bounds.length ? bounds[i + 1] : null;
         visits.push(...db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions
@@ -36007,7 +36025,7 @@ var require_reports = __commonJS({
           const [q2, a] = expand(sql, p);
           return db3.one(q2, ...a);
         };
-        const today = require_budget().localDate();
+        const today = require_local_date().localDate();
         const q = async (fn) => {
           const v = fn();
           await new Promise((resolve2) => defer(resolve2));
@@ -36132,17 +36150,15 @@ var require_reports = __commonJS({
             const f = CFX.consentExpiring();
             return scoped1(`SELECT COUNT(*) n FROM clients c WHERE deleted_at IS NULL AND status='active' AND ${f.sql} AND {CF}`, ...f.params).n;
           }),
-          consents_expiring: db3.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), ...cf.params).map((x) => ({ ...x, recipient: x.recipient_enc ? require_crypto().decrypt(x.recipient_enc) : null, recipient_enc: void 0 }))
+          consents_expiring: db3.all(`SELECT co.id, co.client_id, co.type, co.recipient_enc, co.expires_at, c.client_code FROM consents co JOIN clients c ON c.id=co.client_id WHERE co.revoked_at IS NULL AND co.expires_at BETWEEN ? AND ? AND c.status='active' AND ${cf.sql} ORDER BY co.expires_at LIMIT 20`, today, require_local_date().addDays(today, 30), ...cf.params).map((x) => ({ ...x, recipient: x.recipient_enc ? require_crypto().decrypt(x.recipient_enc) : null, recipient_enc: void 0 }))
         };
         audit3.log({ user: ctx.user, action: "report.dashboard", ip: ctx.ip, details: { from, to } });
         return require_dashboard_mask().dashboard(ctx.user, out2);
       });
       r.get("/api/reports/monthly", auth3.requireAuth, auth3.requirePerm("reports:read"), async (ctx) => {
         const months = Math.min(24, Math.max(1, Number(ctx.query.get("months") || 12)));
-        const start2 = /* @__PURE__ */ new Date();
-        start2.setUTCDate(1);
-        start2.setUTCMonth(start2.getUTCMonth() - months + 1);
-        const s = start2.toISOString().slice(0, 10);
+        const [ty, tm] = require_local_date().today().split("-").map(Number);
+        const s = new Date(Date.UTC(ty, tm - months, 1)).toISOString().slice(0, 10);
         audit3.log({ user: ctx.user, action: "report.monthly", ip: ctx.ip, details: { months } });
         const out2 = await db3.readSnapshot(async (canYield) => canYield ? FR.runAsync(monthlyFigures(ctx.user, s)) : FR.runSync(monthlyFigures(ctx.user, s)));
         return require_dashboard_mask().monthly(ctx.user, out2);
@@ -36329,7 +36345,7 @@ var require_county_schedule = __commonJS({
     var DUE_DAYS_MAX = 180;
     var K = () => require_county();
     var plusDays = (day, n) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
-    var today = () => require_budget().localDate();
+    var today = () => require_local_date().localDate();
     function readJson(key, fallback) {
       try {
         const v = JSON.parse(db3.getSetting(key, "null"));
@@ -38137,7 +38153,7 @@ var require_county2 = __commonJS({
     var REFUSALS_PER_10_MIN = 20;
     var WINDOW_MS = 10 * 6e4;
     var IS_FUND = `(source_type='opioid_settlement' OR settlement_use IS NOT NULL OR settlement_hiaa IS NOT NULL)`;
-    var today = () => require_budget().localDate();
+    var today = () => require_local_date().localDate();
     var spendMeasures = [["spend_own_category", "Spent under the fund's own Exhibit E category ($)"], ["spend_other_categories", "Spent under other categories ($)"], ["spend_approved", "Spent, approved or reimbursed ($)"], ["spend_pending", "Pending approval ($)"]];
     function periodOf(ctx) {
       const from = ctx.query.get("from") || "";
@@ -38828,7 +38844,7 @@ var require_dataimport = __commonJS({
       const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s);
       if (us) return `${us[3].length === 2 ? "20" + us[3] : us[3]}-${us[1].padStart(2, "0")}-${us[2].padStart(2, "0")}`;
       const d = new Date(s);
-      return isNaN(d) ? void 0 : d.toISOString().slice(0, 10);
+      return isNaN(d) ? void 0 : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     };
     var datetimeOf = (v) => {
       if (v === null || v === void 0 || v === "") return null;
@@ -39878,7 +39894,7 @@ var require_episodes2 = __commonJS({
           db3.run(`UPDATE clients SET status='active', discharge_date=NULL, discharge_reason=NULL, updated_at=? WHERE id=?`, db3.now(), e.client_id);
           if (e.closed_at) db3.run(`UPDATE assignments SET end_date=NULL, updated_at=? WHERE client_id=? AND end_date=? AND ended_at IS NULL`, db3.now(), e.client_id, e.closed_at);
           if (!db3.one(`SELECT 1 FROM assignments WHERE client_id=? AND end_date IS NULL AND ended_at IS NULL`, e.client_id) && (auth3.caseloadRestricted(ctx.user) || ["navigator", "clinician"].includes(ctx.user.role))) {
-            db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid2(), e.client_id, ctx.user.id, "primary", (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), ctx.user.id);
+            db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, uuid2(), e.client_id, ctx.user.id, "primary", localDate(), ctx.user.id);
           }
         });
         audit3.log({ user: ctx.user, action: "episode.reopen", entity: "episode", entityId: e.id, clientId: e.client_id, ip: ctx.ip, details: { reason_recorded: reason ? true : void 0, was_discharged: e.discharge_reason, caloms_discharge_removed: calDischarge ? true : void 0 } });
@@ -39933,10 +39949,10 @@ var require_episodes2 = __commonJS({
         const { limit: limit2, offset } = paging(ctx.query, { limit: 200, max: 500 });
         const where = `c.deleted_at IS NULL AND c.status='waitlist' AND ${cf.sql}`;
         const rows = db3.all(`SELECT c.*,
-        CAST(julianday('now') - julianday(COALESCE(c.intake_date, date(c.created_at))) AS INTEGER) AS days_waiting,
+        CAST(julianday(?) - julianday(COALESCE(c.intake_date, date(c.created_at))) AS INTEGER) AS days_waiting,
         (SELECT MAX(occurred_at) FROM interventions i WHERE i.client_id=c.id) AS last_contact
       FROM clients c WHERE ${where}
-      ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, days_waiting DESC, c.id LIMIT ? OFFSET ?`, ...cf.params, limit2, offset);
+      ORDER BY c.risk_level='critical' DESC, c.risk_level='high' DESC, days_waiting DESC, c.id LIMIT ? OFFSET ?`, localDate(), ...cf.params, limit2, offset);
         const total = db3.one(`SELECT COUNT(*) n FROM clients c WHERE ${where}`, ...cf.params).n;
         const M = require_clients_model();
         const deidentify = !auth3.hasPerm(ctx.user, "clients:read");
@@ -39970,7 +39986,7 @@ var require_episodes2 = __commonJS({
         const to = db3.one(`SELECT id, display_name, is_active FROM users WHERE id=?`, v.to_user_id);
         if (!from || !to) throw notFound("Worker not found");
         if (!to.is_active) throw badRequest("That worker's account is not active");
-        const when = v.effective_date || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const when = v.effective_date || localDate();
         const lastDay = new Date(Date.parse(when) - 864e5).toISOString().slice(0, 10);
         const scope = v.client_ids && v.client_ids.length ? { sql: `AND a.client_id IN (${v.client_ids.map(() => "?").join(",")})`, params: v.client_ids } : { sql: "", params: [] };
         const held = db3.all(`SELECT a.* FROM assignments a JOIN clients c ON c.id=a.client_id
@@ -40873,7 +40889,7 @@ var require_resources2 = __commonJS({
         serviceProvider: programRef()
       });
     }
-    var today = () => (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    var today = () => require_local_date().today();
     function consentPurposes(type, purposeText) {
       return disclosure.consentPurposeCodes({ type, purpose: purposeText }).map((code) => ({ system: SYS.actReason, code, display: disclosure.FHIR_PURPOSES[code].display }));
     }
@@ -41129,7 +41145,7 @@ var require_resources2 = __commonJS({
         params: {}
       },
       Consent: {
-        src: `SELECT k.id _fid, 'consent' _kind, k.id _rid, k.client_id _cid, k.updated_at _upd, k.signed_at _date, CASE WHEN k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now')) THEN 'active' ELSE 'inactive' END _st
+        src: `SELECT k.id _fid, 'consent' _kind, k.id _rid, k.client_id _cid, k.updated_at _upd, k.signed_at _date, CASE WHEN k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= '${today()}') THEN 'active' ELSE 'inactive' END _st
       FROM consents k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT} AND k.type IN (${disclosure.FHIR_CONSENT_TYPES.map((t) => `'${t}'`).join(",")})`,
         load: (kind, id) => db3.one(`SELECT * FROM consents WHERE id=?`, id),
         map: mapConsent,
@@ -41756,7 +41772,7 @@ var require_fhir = __commonJS({
         resourceType: "CapabilityStatement",
         id: "suds",
         status: "active",
-        date: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10),
+        date: require_local_date().today(),
         publisher: "SUDS",
         kind: "instance",
         instantiates: ["http://hl7.org/fhir/uv/bulkdata/CapabilityStatement/bulk-data"],
@@ -42003,7 +42019,7 @@ var require_handoff = __commonJS({
       const D = require_disclosure();
       if (recipient) return D.fileConsentFor(clientId, D.recipientNames(recipient), purpose);
       const types = D.fileConsentTypes();
-      return db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, clientId, ...types).find((c) => !D.consentElementProblems(c).length) || null;
+      return db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, clientId, ...types, require_local_date().today()).find((c) => !D.consentElementProblems(c).length) || null;
     }
     module.exports = (r) => {
       r.get("/api/handoff/summary", auth3.requireAuth, auth3.requirePerm("export:identified"), (ctx) => {
@@ -42716,7 +42732,7 @@ var require_incoming_referrals2 = __commonJS({
       if (!String(val("first_name") || "").trim() && !String(val("last_name") || "").trim() && !String(val("phone") || "").trim()) {
         throw badRequest("Give the person's name, or a phone number to reach them on", { fields: { last_name: "is required unless a first name or phone is given" } });
       }
-      if (v.dob && v.dob > (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) throw badRequest("Validation failed", { fields: { dob: "cannot be in the future" } });
+      if (v.dob && v.dob > require_local_date().today()) throw badRequest("Validation failed", { fields: { dob: "cannot be in the future" } });
       notFuture("received_at", v.received_at);
     }
     function update(id, cols2) {
@@ -44355,7 +44371,7 @@ var require_me = __commonJS({
         const staged = db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL)`, uid).n;
         const tf = cf("t.client_id");
         const dueToday = db3.all(`SELECT t.id, t.title_enc, t.description_enc, t.created_by, t.assigned_to, t.due_at, t.priority, t.status, t.client_id, c.client_code, ${NAME_COLS} FROM tasks t LEFT JOIN clients c ON c.id=t.client_id
-      WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND substr(t.due_at,1,10) <= date('now','localtime') AND (t.client_id IS NULL OR ${tf.sql}) ORDER BY t.due_at LIMIT 10`, uid, ...tf.params).map((t) => withClientName(ctx, t)).map(require_tasks2().presentTask).map(({ description, created_by, ...t }) => ({ ...t, sign_reminder: !!t.sign_reminder })).map((t) => t.client_id ? { ...t, client_name: t.client_name || t.client_code } : t);
+      WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND substr(t.due_at,1,10) <= ? AND (t.client_id IS NULL OR ${tf.sql}) ORDER BY t.due_at LIMIT 10`, uid, require_local_date().today(), ...tf.params).map((t) => withClientName(ctx, t)).map(require_tasks2().presentTask).map(({ description, created_by, ...t }) => ({ ...t, sign_reminder: !!t.sign_reminder })).map((t) => t.client_id ? { ...t, client_name: t.client_name || t.client_code } : t);
         const lastSeenElsewhere = db3.one(`SELECT last_seen_at, user_agent FROM sessions WHERE user_id=? AND revoked_at IS NULL AND id<>? ORDER BY last_seen_at DESC LIMIT 1`, uid, ctx.session.id);
         require_audit().log({ user: ctx.user, action: "me.continue", ip: ctx.ip, details: { recent: recent.length, drafts: drafts.length, due_today: dueToday.length } });
         return { recent, drafts, staged_imports: staged, due_today: dueToday, other_device: lastSeenElsewhere ? { last_seen_at: lastSeenElsewhere.last_seen_at, mobile: /Mobi|Android|iPhone|iPad/i.test(lastSeenElsewhere.user_agent || "") } : null };
@@ -44874,7 +44890,7 @@ var require_overdose = __commonJS({
       if (!event.client_id) return;
       const c = db3.one(`SELECT id, status, discharge_date, discharge_reason FROM clients WHERE id=?`, event.client_id);
       if (!c || c.status === "deceased") return;
-      const when = String(event.occurred_at).slice(0, 10);
+      const when = require_local_date().dayOf(event.occurred_at);
       const details = { prior_status: c.status, prior_discharge_date: c.discharge_date || null, prior_discharge_reason: c.discharge_reason || null, episode_id: null, assignment_ids: [], task_ids: [] };
       db3.transaction(() => {
         const ep = db3.one(`SELECT id FROM episodes WHERE client_id=? AND status='open' ORDER BY opened_at DESC LIMIT 1`, c.id);
@@ -44979,7 +44995,7 @@ var require_overdose = __commonJS({
         afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt3(row.notes_enc) : null, substances: row.substances_enc ? decrypt3(row.substances_enc) : null, notes_enc: void 0, substances_enc: void 0 }),
         afterInsert: (ctx, row) => {
           if (!row.client_id) return;
-          const day = String(row.occurred_at).slice(0, 10);
+          const day = require_local_date().dayOf(row.occurred_at);
           db3.run(`UPDATE clients SET overdose_history=1, last_overdose_date=CASE WHEN last_overdose_date IS NULL OR last_overdose_date < ? THEN ? ELSE last_overdose_date END, updated_at=? WHERE id=?`, day, day, db3.now(), row.client_id);
           if (row.kind === "fatal") applyFatal(ctx, row);
         },
@@ -44989,7 +45005,7 @@ var require_overdose = __commonJS({
           const sameClient = prev.client_id === row.client_id;
           if (wasFatal && (!isFatal || !sameClient)) revertFatal(ctx, prev);
           if (isFatal && (!wasFatal || !sameClient)) {
-            const day = String(row.occurred_at).slice(0, 10);
+            const day = require_local_date().dayOf(row.occurred_at);
             db3.run(`UPDATE clients SET overdose_history=1, last_overdose_date=CASE WHEN last_overdose_date IS NULL OR last_overdose_date < ? THEN ? ELSE last_overdose_date END, updated_at=? WHERE id=?`, day, day, db3.now(), row.client_id);
             applyFatal(ctx, row);
           }
@@ -45052,7 +45068,7 @@ var require_patient_requests2 = __commonJS({
           }
           if (ctx.query.get("overdue") === "1") {
             where.push(`patient_requests.status='open' AND patient_requests.due_at < ?`);
-            params.push((/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
+            params.push(require_local_date().today());
           }
         },
         beforeInsert: (ctx, v) => {
@@ -45067,7 +45083,7 @@ var require_patient_requests2 = __commonJS({
           if (v.status === "open") v.closed_at = null;
           encNotes(v);
         },
-        afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt3(row.notes_enc) : null, notes_enc: void 0, overdue: row.status === "open" && row.due_at < (/* @__PURE__ */ new Date()).toISOString().slice(0, 10) })
+        afterLoad: (ctx, row) => ({ ...row, notes: row.notes_enc ? decrypt3(row.notes_enc) : null, notes_enc: void 0, overdue: row.status === "open" && row.due_at < require_local_date().today() })
       });
       r.get("/api/meta/patient-request-options", auth3.requireAuth, () => ({ kinds: KINDS, statuses: STATUSES, days_to_respond: DAYS_TO_RESPOND }));
     };
@@ -48640,7 +48656,7 @@ var require_region = __commonJS({
     function load({ regionId, actor, withPictures = true }) {
       const region = REGIONS[regionId];
       if (!region) throw new Error("Unknown region");
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const today = require_local_date().today();
       const note = provenance(region).replace("{DATE}", today);
       const prev = readState(regionId);
       const ids = prev ? { ...prev.ids } : {};
@@ -49368,7 +49384,7 @@ var require_hardening = __commonJS({
             title: "Pass the weekly host compliance check",
             done: signed && overall === "pass" && fresh,
             where: "server",
-            why: !signed ? "The last compliance report's signature does not verify. Look at it on Security status before relying on it." : overall !== "pass" ? `The last check (${String(r.generated_at).slice(0, 10)}) found ${overall === "fail" ? "failures" : "items needing attention"} on this machine. Each is listed, with how to fix it, under "Host (last compliance check)" on Security status.` : !fresh ? `The last report is ${age} days old: the check should run weekly (suds-compliance.timer).` : `Passed on ${String(r.generated_at).slice(0, 10)}.`,
+            why: !signed ? "The last compliance report's signature does not verify. Look at it on Security status before relying on it." : overall !== "pass" ? `The last check (${require_local_date().dayOf(r.generated_at)}) found ${overall === "fail" ? "failures" : "items needing attention"} on this machine. Each is listed, with how to fix it, under "Host (last compliance check)" on Security status.` : !fresh ? `The last report is ${age} days old: the check should run weekly (suds-compliance.timer).` : `Passed on ${require_local_date().dayOf(r.generated_at)}.`,
             status: `${overall} on ${String(r.generated_at || "?").slice(0, 10)}${signed ? "" : " (signature does not verify)"}`,
             compliance: { overall, generated_at: r.generated_at || null, signature_ok: signed, counts: r.summary && r.summary.counts || null },
             action: { label: "See the findings", href: "#/admin?tab=security" }
@@ -50010,7 +50026,7 @@ var require_supervision = __commonJS({
           ctx.user.id,
           encrypt3(title),
           encrypt3(desc),
-          require_budget().localDate(),
+          require_local_date().localDate(),
           "normal",
           ref.id
         );
@@ -51024,7 +51040,7 @@ var require_sync = __commonJS({
       const out2 = { cursor, server_now: serverNow, complete, db_generation: db3.getSetting("db_generation", null), tables: {}, tombstones: [], settings: {}, skipped: [], dropped_clients: [], dropped_rows: [] };
       for (const k of SYNC2.settings_keys) out2.settings[k] = db3.getSetting(k, null);
       out2.settings.caseload_restriction = db3.getSetting("caseload_restriction", "1");
-      out2.settings.org_timezone = require_budget().orgTimezone() || null;
+      out2.settings.org_timezone = require_local_date().orgTimezone() || null;
       return out2;
     }
     function resyncCheck(out2, since) {
@@ -51235,7 +51251,7 @@ var require_users2 = __commonJS({
         return { users: rows };
       });
       const caseloadCounts = (userId) => {
-        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const today = require_local_date().today();
         const where = userId ? "AND u.id=?" : "";
         const args = userId ? [userId] : [];
         return db3.all(`SELECT u.id, u.display_name, u.role, u.is_active,
@@ -52396,8 +52412,11 @@ var require_auth2 = __commonJS({
       if (!hasPerm(user, "clients:read") && hasPerm(user, "clients:list-deidentified")) return false;
       return db3.getSetting("caseload_restriction", "1") === "1";
     }
-    var ACTIVE_ASSIGNMENT = `((end_date IS NULL OR end_date >= date('now')) AND (ended_at IS NULL OR ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')))`;
-    var activeAssignment = (prefix = "") => ACTIVE_ASSIGNMENT.replace(/\b(end_date|ended_at)\b/g, `${prefix}$1`);
+    function activeAssignment(prefix = "") {
+      const today = require_local_date().today();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) throw new Error("local date is not YYYY-MM-DD");
+      return `((${prefix}end_date IS NULL OR ${prefix}end_date >= '${today}') AND (${prefix}ended_at IS NULL OR ${prefix}ended_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')))`;
+    }
     function canAccessClient(user, clientId, { deidentified = false } = {}) {
       if (!hasPerm(user, "clients:read")) return deidentified && hasPerm(user, "clients:list-deidentified");
       if (!caseloadRestricted(user)) return true;
@@ -53050,14 +53069,14 @@ var require_disclosure = __commonJS({
     }
     function activeConsent(clientId, consentId, { elements = true } = {}) {
       if (!consentId) return null;
-      const row = db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now'))`, consentId, clientId) || null;
+      const row = db3.one(`SELECT * FROM consents WHERE id=? AND client_id=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?)`, consentId, clientId, require_local_date().today()) || null;
       if (row && elements && consentElementProblems(row).length) return null;
       return row;
     }
     function courtOrderProblems(o) {
       const out2 = [];
       if (o.status !== "active") out2.push("it has been vacated");
-      if (o.expires_at && o.expires_at < (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) out2.push("it has expired");
+      if (o.expires_at && o.expires_at < require_local_date().today()) out2.push("it has expired");
       if (!o.findings_recorded) out2.push("it does not record the good-cause findings the regulation requires (\xA72.64(d))");
       if (!o.notice_requirement_met) out2.push("the notice and opportunity to respond the regulation requires was not given");
       return out2;
@@ -53228,7 +53247,7 @@ var require_disclosure = __commonJS({
       return [...purposeWords(purpose)].some((w) => theirs.has(w));
     }
     function agreementProblems(a) {
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const today = require_local_date().today();
       const out2 = [];
       if (a.status !== "active") out2.push("it has been ended");
       if (a.expires_at && a.expires_at < today) out2.push("it has expired");
@@ -53370,7 +53389,7 @@ var require_disclosure = __commonJS({
       const types = fileConsentTypes();
       if (!names.length || !types.length) return null;
       if (purpose !== null && !String(purpose || "").trim()) return null;
-      const rows = db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= date('now')) ORDER BY signed_at DESC, created_at DESC`, clientId, ...types);
+      const rows = db3.all(`SELECT * FROM consents WHERE client_id=? AND type IN (${types.map(() => "?").join(",")}) AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at >= ?) ORDER BY signed_at DESC, created_at DESC`, clientId, ...types, require_local_date().today());
       return rows.find((c) => !consentElementProblems(c).length && consentNamesRecipient({ type: c.type, recipient: dec2(c.recipient_enc) }, names) && (purpose === null || consentCoversPurpose({ type: c.type, purpose: dec2(c.purpose_enc) }, purpose))) || null;
     }
     function requireRestrictionReview(clientIds, restriction_reviewed) {
@@ -53510,7 +53529,7 @@ var require_disclosure = __commonJS({
       const category = CATEGORY_OF_FHIR_TYPE[resourceType] || "*";
       const stamp2 = db3.one(`SELECT (SELECT COUNT(*) FROM consents) n, (SELECT MAX(updated_at) FROM consents) u,
     (SELECT COUNT(*) FROM patient_requests) rn, (SELECT MAX(updated_at) FROM patient_requests) ru`);
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const today = require_local_date().today();
       const types = fhirConsentTypes();
       const key = `${stamp2.n}|${stamp2.u}|${stamp2.rn}|${stamp2.ru}|${types.join(",")}|${today}|${recipients.join("")}|${purposeOfUse}|${category}`;
       const hit = coverageCache.get(`${cacheKey}|${category}`);
@@ -53518,8 +53537,8 @@ var require_disclosure = __commonJS({
       const map = /* @__PURE__ */ new Map();
       const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
       const rows = types.length ? db3.all(`SELECT k.* FROM consents k JOIN clients c ON c.id=k.client_id
-    WHERE k.type IN (${types.map(() => "?").join(",")}) AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= date('now'))
-      AND c.deleted_at IS NULL AND c.merged_into IS NULL ORDER BY k.signed_at, k.created_at`, ...types) : [];
+    WHERE k.type IN (${types.map(() => "?").join(",")}) AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= ?)
+      AND c.deleted_at IS NULL AND c.merged_into IS NULL ORDER BY k.signed_at, k.created_at`, ...types, today) : [];
       for (const row of rows) {
         if (restricted.has(row.client_id)) continue;
         if (consentElementProblems(row).length) continue;

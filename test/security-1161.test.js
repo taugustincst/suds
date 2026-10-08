@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Security review of 1.16.0 (r6): the findings fixed in 1.16.1, each at both doors (REST and sync push) where
 // it has two. H2 (the columns a device may write) is test/sync-attribution.test.js.
 const { test, before, after } = require('node:test');
@@ -9,7 +10,7 @@ const H = require('./helpers');
 const PW = 'StaffPassw0rd!x';
 const U = {}; const C = {};
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
-const day = (d = 0) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+const day = (d = 0) => LD.addDays(LD.today(), d);
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 let enc, dec;
 

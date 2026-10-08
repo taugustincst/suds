@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Security review of 1.16.3 (r9): the findings fixed in 1.16.4, at both doors (REST and sync push) where there are
 // two. The device side of N1 (a shared device and a note flagged as a SUD counseling note) is
 // test/shared-device-drop.test.js; the enrolment link with a non-Latin programme name is test/otpauth-qr.test.js.
@@ -10,7 +11,7 @@ const H = require('./helpers');
 const PW = 'StaffPassw0rd!x';
 const U = {}; const C = {};
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
-const day = (d = 0) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+const day = (d = 0) => LD.addDays(LD.today(), d);
 const later = (s = 5) => iso(Date.now() + s * 1000);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 let dec;

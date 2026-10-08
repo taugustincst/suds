@@ -59,18 +59,24 @@ const CASES = [
 ];
 async function runCases() {
   const out = {};
+  // The golden answers were written on a UTC machine, and report days are the programme's days: run the cases in
+  // UTC whatever zone the suite runs in (CI's evening job runs it in Los Angeles).
+  const zone = config.orgTimezone; config.orgTimezone = 'UTC';
+  try { await utcCases(out); } finally { config.orgTimezone = zone; }
+  // Report days are local days: the same fiscal year in Los Angeles moves visits across the boundaries.
+  const was = config.orgTimezone; config.orgTimezone = 'America/Los_Angeles';
+  try { out['fiscal year, Los Angeles'] = normalise((await admin.get(`/api/reports/funder?from=2025-07-01&to=2026-06-30${EXACT}`)).data); }
+  finally { config.orgTimezone = was; }
+  return out;
+}
+async function utcCases(out) {
   for (const [name, q] of CASES) {
     const r = await admin.get(`/api/reports/funder?${q.replace('{F0}', fx.funds[0])}${EXACT}`);
     assert.equal(r.status, 200, JSON.stringify(r.data));
     out[name] = normalise(r.data);
   }
-  // Report days are local days: the same fiscal year in Los Angeles moves visits across the boundaries.
-  const was = config.orgTimezone; config.orgTimezone = 'America/Los_Angeles';
-  try { out['fiscal year, Los Angeles'] = normalise((await admin.get(`/api/reports/funder?from=2025-07-01&to=2026-06-30${EXACT}`)).data); }
-  finally { config.orgTimezone = was; }
   const d = (await admin.get('/api/reports/dashboard?from=2025-07-01&to=2026-06-30')).data;
   out.dashboard = { interventions: { total: d.interventions.total, minutes: d.interventions.minutes, naloxone_kits: d.interventions.naloxone_kits }, calls: { total: d.calls.total }, referrals: { total: d.referrals.total } };
-  return out;
 }
 
 test('the funder report gives the same answers as the implementation it replaced', async () => {

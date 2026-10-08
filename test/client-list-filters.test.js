@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Load review, item 1: the client list filtered its first 200 rows in the browser, so at 2,000 clients the
 // Home page said "915 high-risk" and the tile opened a list of 101. The filters now run on the server,
 // inside the caseload-scoped query, and the list's total is the same number the dashboard tile shows.
@@ -28,7 +29,7 @@ before(async () => {
   navId = H.makeCaseloadUser('flt_nav', 'navigator').id;
   const recent = new Date(Date.now() - 3 * 86400000).toISOString();
   const old = new Date(Date.now() - 90 * 86400000).toISOString();
-  const soon = new Date(Date.now() + 10 * 86400000).toISOString().slice(0, 10);
+  const soon = LD.addDays(LD.today(), 10);
   db.transaction(() => {
     for (let i = 0; i < CLIENTS; i++) {
       const id = uuid();

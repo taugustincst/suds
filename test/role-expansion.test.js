@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // 1.16.0: the owner widened two roles' defaults (expansion only; nobody lost a permission).
 //   navigator  + clients:all (outreach engages whoever walks in) + notes:clinical:read (read only)
 //   clinician  + clients:all (coverage, on-call)                 + budget:read (no budget:write)
@@ -96,7 +97,7 @@ test('a clinician sees every client and the budget, and still cannot record spen
   assert.equal((await c.rx_clin.get('/api/budget/summary')).status, 200, 'budget:read');
   const funds = await c.rx_clin.get('/api/budget/funds');
   assert.equal(funds.status, 200);
-  const e = await c.rx_clin.post('/api/budget/expenditures', { spent_at: new Date().toISOString().slice(0, 10), amount: 5, category: 'client_assistance' });
+  const e = await c.rx_clin.post('/api/budget/expenditures', { spent_at: LD.today(), amount: 5, category: 'client_assistance' });
   assert.equal(e.status, 403, 'no budget:write');
 });
 
@@ -234,7 +235,7 @@ test('a supervisor held to a caseload cannot assign themselves past it', async (
   assert.ok([403, 404].includes(r.status), `a supervisor held to a caseload cannot assign themselves to a client off it (${r.status})`);
   assert.ok(!H.db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=?`, ids.theirs, heldSup.id), 'no assignment was made');
   assert.equal((await hs.get(`/api/clients/${ids.theirs}`)).status, 403);
-  const push = await hs.post('/api/sync/push', { device_now: new Date().toISOString(), tables: { assignments: [{ id: require('node:crypto').randomUUID(), client_id: ids.theirs, user_id: heldSup.id, role_on_case: 'primary', start_date: new Date().toISOString().slice(0, 10), updated_at: new Date().toISOString() }] } });
+  const push = await hs.post('/api/sync/push', { device_now: new Date().toISOString(), tables: { assignments: [{ id: require('node:crypto').randomUUID(), client_id: ids.theirs, user_id: heldSup.id, role_on_case: 'primary', start_date: LD.today(), updated_at: new Date().toISOString() }] } });
   assert.equal(push.status, 200, JSON.stringify(push.data));
   assert.ok(!H.db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=?`, ids.theirs, heldSup.id), 'nor from a device');
 });

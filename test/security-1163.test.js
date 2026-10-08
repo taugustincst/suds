@@ -1,4 +1,5 @@
 'use strict';
+const LD = require('../server/local-date'); // the programme's calendar, as the server dates things
 // Security review of 1.16.2 (r8): the findings fixed in 1.16.3, at both doors (REST and sync push) where there are
 // two. The device side of M2 (a shared device keeps what another account on it may read, and its unsynced edits)
 // is test/shared-device-drop.test.js.
@@ -10,7 +11,7 @@ const H = require('./helpers');
 const PW = 'StaffPassw0rd!x';
 const U = {}; const C = {};
 const iso = (ms = Date.now()) => new Date(ms).toISOString();
-const day = (d = 0) => new Date(Date.now() + d * 86400000).toISOString().slice(0, 10);
+const day = (d = 0) => LD.addDays(LD.today(), d);
 const later = (s = 5) => iso(Date.now() + s * 1000);
 let enc, dec;
 
