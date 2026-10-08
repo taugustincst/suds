@@ -134,6 +134,19 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 const today = () => require('./local-date').localDate();
 const dec = (v) => { if (!v) return null; try { return decrypt(v); } catch { return null; } };
+/**
+ * SQL (and its parameters) for "the programme's date of `col` is after `after` (when given) and on or before
+ * `through`", for a column holding bare dates and instants. An instant is UTC, so its first ten characters put an
+ * evening visit in Los Angeles on the next day (CS5); it is bounded by the instants the programme's days begin at.
+ */
+function dayRange(col, after, through) {
+  const LD = require('./local-date'); const next = (d) => LD.localMidnight(addDays(d, 1));
+  const bare = [`${col} <= ?`]; const inst = [`${col} < ?`]; const pb = [through]; const pi = [next(through)];
+  if (after) { bare.unshift(`${col} > ?`); pb.unshift(after); inst.unshift(`${col} >= ?`); pi.unshift(next(after)); }
+  return [`((length(${col})=10 AND ${bare.join(' AND ')}) OR (length(${col})>10 AND ${inst.join(' AND ')}))`, ...pb, ...pi];
+}
+/** The programme's dates of `col` for rows matching `where` (a client's own rows: a handful). */
+const daysOf = (sql, ...params) => db.all(sql, ...params).map(r => require('./local-date').dayOf(r.d)).filter(Boolean).sort();
 /** Days to the reassessment: 180 (six months) unless the programme's SOR contract says 90 (setting). */
 function reassessmentDays() { return db.getSetting('suprt_reassessment_months', '6') === '3' ? 90 : 180; }
 
@@ -188,9 +201,8 @@ function schedule({ baseline, done = [], closeout = null, discharge = null, on, 
 // ---- the client record: what SUDS already knows ----
 /** Is the client's first date of service, and every SOR-funded date, on the books? */
 function firstServiceDate(clientId) {
-  const r = db.one(`SELECT MIN(substr(occurred_at,1,10)) d FROM interventions WHERE client_id=?`, clientId);
   const c = db.one(`SELECT intake_date FROM clients WHERE id=?`, clientId) || {};
-  return [r && r.d, c.intake_date].filter(Boolean).sort()[0] || null;
+  return [daysOf(`SELECT occurred_at d FROM interventions WHERE client_id=?`, clientId)[0], c.intake_date].filter(Boolean).sort()[0] || null;
 }
 const yn = (v) => (v === null || v === undefined ? null : v ? 'yes' : 'no');
 // The discharge reasons SUDS records, as SUPRT closeout reasons.
@@ -217,18 +229,20 @@ function derive(clientId, { type, date, since = null }) {
     const ep = db.one(`SELECT discharge_reason FROM episodes WHERE client_id=? AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1`, clientId);
     const reason = (ep && ep.discharge_reason) || c.discharge_reason;
     a.A_closeout_reason = CLOSEOUT_FROM_DISCHARGE[reason] || null;
-    const last = db.one(`SELECT MAX(substr(occurred_at,1,10)) d FROM interventions WHERE client_id=? AND substr(occurred_at,1,10) <= ?`, clientId, date);
-    a.A_last_service_date = (last && last.d) || null;
+    const [inRange, ...p] = dayRange('occurred_at', null, date);
+    a.A_last_service_date = daysOf(`SELECT occurred_at d FROM interventions WHERE client_id=? AND ${inRange}`, clientId, ...p).pop() || null;
   }
   if (type !== 'closeout') {
     a.B_primary_substance = c.primary_substance || null;
     a.B_route_of_use = c.route_of_use && ITEM.B_route_of_use.options.some(o => o.value === c.route_of_use) ? c.route_of_use : null;
-    const odEver = db.one(`SELECT COUNT(*) n FROM overdose_events WHERE client_id=? AND substr(occurred_at,1,10) <= ?`, clientId, date).n;
+    const [odTo, ...odToP] = dayRange('occurred_at', null, date);
+    const odEver = db.one(`SELECT COUNT(*) n FROM overdose_events WHERE client_id=? AND ${odTo}`, clientId, ...odToP).n;
     // Only what the record says (1.16.0): an overdose on file is a yes; "no" only when someone recorded that
     // there has never been one. A question nobody asked (NULL) is left for the interview, not read as "no".
     const neverOd = c.overdose_history === 0 && !c.last_overdose_date;
     a.B_overdose_ever = c.overdose_history || odEver ? 'yes' : neverOd ? 'no' : null;
-    const odSince = db.one(`SELECT COUNT(*) n FROM overdose_events WHERE client_id=? AND substr(occurred_at,1,10) > ? AND substr(occurred_at,1,10) <= ?`, clientId, from, date).n;
+    const [odIn, ...odInP] = dayRange('occurred_at', from, date);
+    const odSince = db.one(`SELECT COUNT(*) n FROM overdose_events WHERE client_id=? AND ${odIn}`, clientId, ...odInP).n;
     const lastOd = c.last_overdose_date && c.last_overdose_date > from && c.last_overdose_date <= date;
     a.B_overdose_since_last = odSince || lastOd ? 'yes' : neverOd && !odEver ? 'no' : null;
     a.B_moud = c.mat_status ? (c.mat_status === 'active' ? 'yes' : 'no') : null;
@@ -249,9 +263,10 @@ function derive(clientId, { type, date, since = null }) {
   }
   if (type !== 'baseline') {
     // Services received since the last assessment, by SUDS's visit types.
-    const types = new Set(db.all(`SELECT DISTINCT type FROM interventions WHERE client_id=? AND substr(occurred_at,1,10) > ? AND substr(occurred_at,1,10) <= ?`, clientId, from, date).map(x => x.type));
-    const kits = db.one(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions WHERE client_id=? AND substr(occurred_at,1,10) > ? AND substr(occurred_at,1,10) <= ?`, clientId, from, date).n;
-    const refs = db.all(`SELECT res.category FROM referrals r LEFT JOIN resources res ON res.id=r.resource_id WHERE r.client_id=? AND substr(r.referred_at,1,10) > ? AND substr(r.referred_at,1,10) <= ?`, clientId, from, date).map(x => x.category);
+    const [ivIn, ...ivP] = dayRange('occurred_at', from, date); const [refIn, ...refP] = dayRange('r.referred_at', from, date);
+    const types = new Set(db.all(`SELECT DISTINCT type FROM interventions WHERE client_id=? AND ${ivIn}`, clientId, ...ivP).map(x => x.type));
+    const kits = db.one(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions WHERE client_id=? AND ${ivIn}`, clientId, ...ivP).n;
+    const refs = db.all(`SELECT res.category FROM referrals r LEFT JOIN resources res ON res.id=r.resource_id WHERE r.client_id=? AND ${refIn}`, clientId, ...refP).map(x => x.category);
     for (const [k, , visitTypes] of SERVICE_CATEGORIES) a[`E_${k}`] = visitTypes.some(t => types.has(t)) ? 'yes' : 'no';
     if (kits > 0) a.E_naloxone = 'yes';
     if (refs.length) a.E_treatment_referral = 'yes';

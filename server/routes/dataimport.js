@@ -150,7 +150,7 @@ module.exports = (r) => {
           // Already imported (this file, or an earlier upload of it): skip, and say so, rather than double it.
           const hash = rowHash(entity, rec);
           if (db.one(`SELECT 1 FROM import_rows WHERE row_hash=?`, hash)) { skippedDuplicates++; return; }
-          const id = uuid(); const now = db.now();
+          const id = uuid();
           checkRecord(entity, rec, ctx);
           switch (entity) {
             case 'clients': {
@@ -160,7 +160,7 @@ module.exports = (r) => {
               if (skip_duplicates && same.shown.length) { skipped++; return; }
               if (same.hidden.length) hiddenDuplicates.push([id, same.hidden]);
               const enc = M.encryptFields(rec); enc.full_name_idx = blindIndex((rec.last_name || '') + (rec.first_name || ''));
-              const cols = { id, client_code: M.nextClientCode(), ...enc, created_by: ctx.user.id, intake_date: rec.intake_date || now.slice(0, 10) };
+              const cols = { id, client_code: M.nextClientCode(), ...enc, created_by: ctx.user.id, intake_date: rec.intake_date || require('../local-date').today() };
               // A yes/no cell arrives as true/false, which SQLite cannot bind: stored as 1/0 (a "no" used to fail the row).
               for (const f of M.PLAIN_FIELDS) if (rec[f] !== undefined && rec[f] !== null) cols[f] = typeof rec[f] === 'boolean' ? (rec[f] ? 1 : 0) : rec[f];
               if (cols.risk_level === undefined) cols.risk_level = null; // not assessed, not the schema's 'moderate'

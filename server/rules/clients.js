@@ -154,7 +154,7 @@ module.exports = define({
     // clients:all, and the assignment is what keeps the client on their caseload (and in reach) if the
     // programme later holds them to it.
     const own = (c.session.state.assignments || {}).selfForClient;
-    if ((auth.caseloadRestricted(c.user) || ['navigator', 'clinician'].includes(c.user.role)) && !(own && own.get(row.id))) db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require('../crypto').uuid(), row.id, c.user.id, 'primary', (row.intake_date || db.now()).slice(0, 10), c.user.id);
+    if ((auth.caseloadRestricted(c.user) || ['navigator', 'clinician'].includes(c.user.role)) && !(own && own.get(row.id))) db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require('../crypto').uuid(), row.id, c.user.id, 'primary', (row.intake_date || require('../local-date').today()).slice(0, 10), c.user.id);
     // A person entered on a phone may already be on the office books under another spelling. The row still
     // lands (the worker cannot check from the field), but a supervisor is told to look.
     flagPossibleDuplicate(c.user, row, o.client_code, c.session.warnings);

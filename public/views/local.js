@@ -367,7 +367,8 @@ export function showRecoveryCode(code, createdAt, { after = 'dashboard', recover
   freshCode = { code, createdAt, after, recovered, username };
   navAndRender('recovery-code');
 }
-const codeFileName = (at) => `suds-recovery-code-${String(at || new Date().toISOString()).slice(0, 10)}.txt`;
+// This device's date, as the page's "today" is (F3): the UTC date named an evening's code with tomorrow's.
+const codeFileName = (at) => { const d = at ? new Date(at) : new Date(); return `suds-recovery-code-${Number.isNaN(d.getTime()) ? fmt.today() : fmt.isoLocal(d).slice(0, 10)}.txt`; };
 function codeText(c) {
   const program = state.org || '';
   return [
