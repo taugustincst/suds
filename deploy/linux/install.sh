@@ -344,11 +344,15 @@ quiet_act() { if (( DRY )); then act "$@"; else "$@" >/dev/null 2>&1 || true; fi
 if [[ $OS_FAMILY == debian ]]; then
   act ufw default deny incoming
   act ufw default allow outgoing
+  # The stale SSH rules (the image's open "allow OpenSSH/22", the previous run's admin network) go BEFORE the admin
+  # rule is added, never after it: with --admin-cidr=0.0.0.0/0 (or ::/0) ufw stores the admin rule as the plain
+  # "22/tcp from Anywhere", which `ufw delete allow 22/tcp` removes. 1.25.1 deleted it after adding it, and every
+  # new SSH connection was dropped once the install session closed (the Lightsail launch, HANDOFF 2026-10-08).
+  for r in OpenSSH 22/tcp 22; do quiet_act ufw delete allow "$r"; done
+  if [[ -n "$PREV_ADMIN_CIDR" && "$PREV_ADMIN_CIDR" != "$ADMIN_CIDR" ]]; then note "removing the previous SSH rule for $PREV_ADMIN_CIDR"; quiet_act ufw delete allow proto tcp from "$PREV_ADMIN_CIDR" to any port 22; fi
   act ufw allow proto tcp from "$ADMIN_CIDR" to any port 22 comment 'SUDS Server: SSH from the administration network'
   act ufw allow 443/tcp comment 'SUDS Server: HTTPS'
   if [[ $TLS_MODE == caddy ]]; then act ufw allow 80/tcp comment 'SUDS Server: redirect and ACME'; else quiet_act ufw delete allow 80/tcp; fi
-  for r in OpenSSH 22/tcp 22; do quiet_act ufw delete allow "$r"; done
-  if [[ -n "$PREV_ADMIN_CIDR" && "$PREV_ADMIN_CIDR" != "$ADMIN_CIDR" ]]; then note "removing the previous SSH rule for $PREV_ADMIN_CIDR"; quiet_act ufw delete allow proto tcp from "$PREV_ADMIN_CIDR" to any port 22; fi
   act ufw --force enable
 else
   act systemctl enable --now firewalld
@@ -362,6 +366,28 @@ else
   act firewall-cmd --permanent --zone="$zone" --remove-service=cockpit
   act firewall-cmd --reload
 fi
+# The rules as the firewall now has them, shown again at the end: an SSH lock-out does not show in this session
+# (an established connection is not checked again), only in the next one.
+firewall_summary() {
+  local out line ssh=0
+  if (( DRY )); then printf '+ show the firewall rules now in force, and warn if none allows SSH\n'; return 0; fi
+  if [[ $OS_FAMILY == debian ]]; then
+    out=$(ufw status 2>&1) || true
+    grep -Eq '^(22(/tcp)?|OpenSSH)( \(v6\))? +(ALLOW|LIMIT)' <<< "$out" && ssh=1
+  else
+    out=$(firewall-cmd --zone="$zone" --list-all 2>&1) || true
+    grep -Eq 'service name="ssh" accept|services:.* ssh( |$)' <<< "$out" && ssh=1
+  fi
+  say ""; say "== Firewall rules in force =="; while IFS= read -r line; do say "  $line"; done <<< "$out"
+  if (( ! ssh )); then
+    warn "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    warn "!!! NO FIREWALL RULE ALLOWS SSH (port 22). This session still works; the next SSH connection will not."
+    warn "!!! Do not close this session: add the rule for your administration network now, e.g."
+    if [[ $OS_FAMILY == debian ]]; then warn "!!!   ufw allow proto tcp from $ADMIN_CIDR to any port 22"; else warn "!!!   firewall-cmd --permanent --zone=$zone --add-rich-rule='$(rich "$ADMIN_CIDR")' && firewall-cmd --reload"; fi
+    warn "!!! then check it from a NEW terminal before you log out."
+    warn "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  fi
+}
 
 say ""; say "== Time synchronisation (audit timestamps depend on it) =="
 ntp_lines=''; for s in ${NTP_SERVERS//,/ }; do ntp_lines+="server $s iburst prefer"$'\n'; done
@@ -473,4 +499,5 @@ if [[ -e "$(P "$DATA_DIR/first-admin-password.txt")" ]] || (( DRY )); then
 fi
 
 if (( ! SKIP_CHECK )); then run_compliance_check; fi
+firewall_summary
 say ""; say "Done. On a new server the installer runs the first backup and recovery drill itself; if they could not run, they show as \"pending first run\" (a warning) until SUDS has run them, within the hour. Upgrade with deploy/linux/upgrade.sh <version>; the weekly compliance report is on Settings > Security status."

@@ -276,6 +276,58 @@ test('install.sh run again: idempotent — keys kept, first install date kept, o
   assert.equal(fs.readdirSync(path.join(R, 'opt/suds')).filter((f) => f.includes('.replaced.')).length, 0);
 });
 
+/**
+ * A ufw that keeps its rules (in <host>/ufw-rules.json) and deletes the way the real one does: a rule is stored by
+ * protocol, source and port, and a source of 0.0.0.0/0 or ::/0 is stored as Anywhere, so `ufw delete allow 22/tcp`
+ * removes `allow proto tcp from 0.0.0.0/0 to any port 22` (the 1.25.1 launch: HANDOFF 2026-10-08, finding 1).
+ * Commands are logged like the other stubs'.
+ */
+function statefulUfw(h, rules = []) {
+  const file = path.join(h.dir, 'ufw-rules.json'); fs.writeFileSync(file, JSON.stringify(rules));
+  js(path.join(h.bin, 'ufw'), `const fs = require('fs'); const a = process.argv.slice(2);
+    fs.appendFileSync(${JSON.stringify(h.log)}, 'ufw ' + a.join(' ') + '\\n');
+    const file = ${JSON.stringify(file)}; let rules = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const any = (s) => (!s || s === 'any' || s === '0.0.0.0/0' || s === '::/0' ? 'Anywhere' : s);
+    const parse = (w) => { const c = w.indexOf('comment'); if (c >= 0) w = w.slice(0, c);
+      if (w[0] === 'proto') { const g = (k) => w[w.indexOf(k) + 1]; return { port: g('port') + '/' + g('proto'), from: any(g('from')) }; }
+      if (w.length !== 1) process.exit(2);
+      return { port: w[0] === 'OpenSSH' ? 'OpenSSH' : w[0], from: 'Anywhere' }; };
+    const same = (x, y) => x.port === y.port && x.from === y.from;
+    if (a[0] === 'allow') { const r = parse(a.slice(1)); if (!rules.some((x) => same(x, r))) rules.push(r); }
+    else if (a[0] === 'delete' && a[1] === 'allow') { const r = parse(a.slice(2)); const n = rules.length; rules = rules.filter((x) => !same(x, r)); if (rules.length === n) { console.error('Could not delete non-existent rule'); process.exit(1); } }
+    else if (a[0] === 'status') { console.log('Status: active\\n\\nTo                         Action      From\\n--                         ------      ----'); for (const r of rules) console.log(r.port.padEnd(27) + 'ALLOW       ' + r.from); process.exit(0); }
+    fs.writeFileSync(file, JSON.stringify(rules));`);
+  return () => JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+test('install.sh for real with --admin-cidr=0.0.0.0/0: the SSH rule it adds is still there at the end (1.25.1 deleted it), and the rules are shown', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const h = host(); const t = tree(VERSION);
+  // A cloud image's own open rules, as Lightsail's Ubuntu has them.
+  const rules = statefulUfw(h, [{ port: '22', from: 'Anywhere' }, { port: 'OpenSSH', from: 'Anywhere' }]);
+  const r = run(h, 'install.sh', t, INSTALL.map((a) => (a.startsWith('--admin-cidr') ? '--admin-cidr=0.0.0.0/0' : a)), { HARNESS_HEALTHY: VERSION });
+  assert.equal(r.code, 0, r.all);
+  assert.deepEqual(rules(), [{ port: '22/tcp', from: 'Anywhere' }, { port: '443/tcp', from: 'Anywhere' }, { port: '80/tcp', from: 'Anywhere' }], 'SSH stays allowed: the stale rules went first');
+  const cmds = h.commands();
+  assert.ok(cmds.lastIndexOf('ufw delete allow') < cmds.indexOf('ufw allow proto tcp from 0.0.0.0/0 to any port 22'), 'every delete comes before the admin rule');
+  assert.match(r.out, /== Firewall rules in force ==\n(?:.*\n)*? {2}22\/tcp +ALLOW +Anywhere\n/, 'the final rules are printed');
+  assert.ok(r.out.lastIndexOf('== Firewall rules in force ==') > r.out.indexOf('KEY ESCROW'), 'at the very end, where the operator reads');
+  assert.doesNotMatch(r.err, /NO FIREWALL RULE ALLOWS SSH/);
+  // And ::/0 the same way, run again over the first install (the previous 0.0.0.0/0 rule is replaced, not kept).
+  const v6 = run(h, 'install.sh', t, INSTALL.map((a) => (a.startsWith('--admin-cidr') ? '--admin-cidr=::/0' : a)), { HARNESS_HEALTHY: VERSION });
+  assert.ok(rules().some((x) => x.port === '22/tcp'), `IPv6 anywhere keeps its SSH rule too:\n${v6.all}`);
+});
+
+test('install.sh for real: when no rule allows SSH at the end, it says so loudly, with the command that fixes it', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const h = host(); const t = tree(VERSION);
+  statefulUfw(h);
+  // A ufw that loses the SSH rule (another tool's cleanup, a broken profile): the installer cannot stop it, but must not keep quiet.
+  const ufw = path.join(h.bin, 'ufw'); fs.writeFileSync(ufw, fs.readFileSync(ufw, 'utf8').replace("if (a[0] === 'allow')", "if (a[0] === 'allow' && a.includes('22')) {} else if (a[0] === 'allow')"));
+  const r = run(h, 'install.sh', t, INSTALL, { HARNESS_HEALTHY: VERSION });
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.err, /NO FIREWALL RULE ALLOWS SSH \(port 22\)/);
+  assert.match(r.err, /ufw allow proto tcp from 10\.20\.0\.0\/16 to any port 22/);
+});
+
 test('install.sh for real on Rocky 9: chrony with the county time source, SELinux relabel when enforcing, curl-minimal left alone', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
   const h = host({ os: 'rocky' }); const t = tree(VERSION);
   fs.writeFileSync(path.join(h.root, 'etc/chrony.conf'), 'pool 2.rhel.pool.ntp.org iburst\n');

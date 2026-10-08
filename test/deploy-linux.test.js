@@ -145,7 +145,8 @@ test('Ubuntu 24.04: the plan installs the unit, generates each key root-only 060
     "+ ufw allow proto tcp from 10.20.0.0/16 to any port 22 comment SUDS\\ Server:\\ SSH\\ from\\ the\\ administration\\ network", "+ ufw allow 443/tcp comment SUDS\\ Server:\\ HTTPS",
     "+ ufw allow 80/tcp comment SUDS\\ Server:\\ redirect\\ and\\ ACME", '+ ufw --force enable']);
   assert.ok(r.out.indexOf('from 10.20.0.0/16 to any port 22') < r.out.indexOf('+ ufw --force enable'), 'the admin SSH rule exists before the firewall is enabled');
-  for (const d of ['+ ufw delete allow OpenSSH', '+ ufw delete allow 22/tcp', '+ ufw delete allow 22']) assert.ok(r.out.includes(`${d}\n`), `the dry run shows ${d}`);
+  for (const d of ['+ ufw delete allow OpenSSH', '+ ufw delete allow 22/tcp', '+ ufw delete allow 22']) assert.ok(r.out.includes(`${d}\n`) && r.out.indexOf(`${d}\n`) < r.out.indexOf('+ ufw allow proto tcp from 10.20.0.0/16'), `the dry run shows ${d}, before the admin rule is added (after it, it deleted an --admin-cidr=0.0.0.0/0 rule: 1.25.1)`);
+  assert.ok(r.out.indexOf('+ show the firewall rules now in force') > r.out.indexOf('compliance-check.js'), 'the rules in force are shown at the end');
   assert.ok(r.out.includes('+ systemctl enable --now systemd-timesyncd') && r.out.includes('+ timedatectl set-ntp true'), 'time sync');
   assert.ok(r.out.includes('+ systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'), 'unattended security updates');
   assert.ok(r.out.includes('compliance-check.js'), 'finishes with the compliance check');
