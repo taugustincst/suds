@@ -3,7 +3,7 @@
 ## Production readiness checklist (per release)
 - [ ] CI is green for the exact commit being released: `npm test`, the browser suite (`scripts/ui/run-all.sh`, 60 scripts including the first-run wizard, local mode, sync, device encryption and recovery, the static build, accessibility and the QA-regression script `a11y-round4`), Node 24 and the recovery drill. The release workflow enforces this (see *Release gate* below); the box is here so nobody tags a commit they have not seen pass
 - [ ] `CHANGELOG.md` has a section for the version, `package.json` version matches
-- [ ] Docs updated (`README.md`, `docs/INSTALL.md`, `docs/DEPLOYMENT.md`, `docs/HIPAA.md`), and the documents that name a release moved to this one: the questionnaire's *Checked against*, the evidence index's *Version.*, a new SBOM for a new minor (*Stamp checklist: the documents that name a release*, below; `test/doc-currency.test.js`)
+- [ ] Docs updated (`README.md`, `docs/INSTALL.md`, `docs/DEPLOYMENT.md`, `docs/HIPAA.md`), and the documents that name a release moved to this one: the questionnaire's *Checked against*, the evidence index's *Version.*, a new SBOM for every release, patches included, from 1.25.2 (*Stamp checklist: the documents that name a release*, below; `test/doc-currency.test.js`)
 - [ ] No secrets, databases or `data/` contents in the tree (`git status`, `.gitignore`)
 - [ ] Upgrade path: schema migrations in `server/db.js` run on start; take a backup before upgrading
 - [ ] Nothing native: no APK, launcher or mobile step is part of the release (removed in 1.9.3; docs/PLATFORM.md)
@@ -273,8 +273,9 @@ notes. It carries the CalOMS Tx dictionary verification (all 17 code sets rewrit
 v3.0, File Version 3.0, October 2024; yes/no as numeric 1/0; LEG-1 criminal justice status, MED-7 medication
 prescribed, CID-19 consent for future contact and CID-20 sexual orientation added; sex at birth removed; new edit
 checks; migration 71 remapping stored answers), better resource-directory pictures (a picture for every
-provider whose site allows an automated download; the published site has 40 of the 81, because many provider
-sites refuse automated downloads from the build server), and the UI intuitiveness pass (plainer call/text form labels, an accessible resource-directory view toggle). The
+provider whose site allows an automated download; the 1.25.0 build bundled 40 of the 81, because many
+provider sites refuse automated downloads from the build server; each build's count is the `summary` in its
+`region-pictures/<region>/manifest.json`), and the UI intuitiveness pass (plainer call/text form labels, an accessible resource-directory view toggle). The
 SBOM, `docs/evidence/sbom-1.25.0.cdx.json`, was first committed with the stamp preparation from `1474829e`
 ("Release 1.25.0"), whose kernel was still 1.24.4's; it is regenerated from the tag (`node scripts/sbom.js --ref
 v1.25.0`, 2026-10-08) and describes the shipped commit. The stamp was split over three commits, so the tag
@@ -670,14 +671,18 @@ found the county kit still calling a 1.20.0 feature unreleased, three times, aft
 
 **Stamp checklist: the documents that name a release.** When stamping X.Y.Z, the documents that say which release they
 describe move to it: `docs/security/QUESTIONNAIRE.md`'s **Checked against** line and `docs/evidence/README.md`'s
-**Version.** line, and for a new minor an SBOM of the stamp commit (`node scripts/sbom.js --ref <stamp sha> --out
+**Version.** line, and an SBOM of the stamp commit (`node scripts/sbom.js --ref <stamp sha> --out
 docs/evidence/sbom-X.Y.Z.cdx.json`, with every link to the old one outside the evidence index moved to it; older SBOMs
-stay as history). A commit cannot hold an SBOM of itself, so a new minor is two commits: `Release X.Y.Z` (the stamp,
+stay as history). **From 1.25.2 every release has its own SBOM, patches included** (evaluation of 1.25.1, F6: a county
+supply-chain reviewer expects one per shipped artifact, and 1.25.1 shipped with 1.25.0's); up to 1.25.1 only a new
+minor had one. A commit cannot hold an SBOM of itself, so every release is two commits: `Release X.Y.Z` (the stamp,
 with the links already naming the new SBOM), then `SBOM of the X.Y.Z stamp`, which adds the file and nothing else; the
-second is the release commit that CI must pass, that goes to `main` and that is tagged (since 1.20.0). The rule `test/doc-currency.test.js` enforces: once `package.json`'s version X.Y.Z has a dated
-CHANGELOG heading, each of the three names a version on the X.Y line, no later than X.Y.Z (a patch may keep its
-minor's documents and SBOM; a new minor may not), and every SBOM link outside the evidence index names the newest
-SBOM. While a version is being prepared (no date yet), the rule applies to the last stamped version. Re-read the
+second is the release commit that CI must pass, that goes to `main` and that is tagged (since 1.20.0 for a minor, and
+from 1.25.2 for a patch too, whose hand-off row then reads "the commit after `Release X.Y.Z`" like a minor's). The
+rule `test/doc-currency.test.js` enforces: once `package.json`'s version X.Y.Z has a dated CHANGELOG heading, each of
+the three names a version on the X.Y line, no later than X.Y.Z (a patch may keep its minor's questionnaire and
+evidence line; a new minor may not), from 1.25.2 the newest SBOM is X.Y.Z's own, and every SBOM link outside the
+evidence index names the newest SBOM. While a version is being prepared (no date yet), the rule applies to the last stamped version. Re-read the
 answers those documents give for what the release changed, not only the version line (the review of 1.19.0 found
 them two releases behind: the county connection and passkeys missing from the questionnaire, "planned" for a
 released county view; the review of 1.20.0 found the version lines moved and the content not).

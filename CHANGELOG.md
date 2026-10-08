@@ -78,6 +78,16 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   funder workbook's "Who was served" sheet wrote "male" and "unknown". Both now use the words the screen uses. The
   column headings of the table exports ("Spent At", "Record Id") and their 0/1 flags are unchanged in this patch: a
   county's spreadsheet or import may read them by name (proposed for 1.26 with a note in the release).
+* **BO23:** docs/WINDOWS-SERVER.md's checksum example still named the 1.24.0 zip, and its update example 1.25.0; both
+  are now version-free. (The executables themselves stay unsigned until the project has a code-signing
+  certificate, as the page says: an owner item.)
+* **F5:** README, the security questionnaire, the evidence index, docs/RELEASE.md and the evaluation response said the
+  published site has provider pictures for "40 of the 81" — 1.25.0's build; 1.25.1's bundled 61. They now point to
+  the `summary` in the published `region-pictures/<region>/manifest.json`, which changes with every build (1.25.0's
+  record keeps its number, as that build's).
+* **F6:** from 1.25.2 every release, patches included, has an SBOM of its own, made by the stamp as a minor's is
+  (two commits: the stamp, then "SBOM of the X.Y.Z stamp"). docs/RELEASE.md's checklists say so and
+  `test/doc-currency.test.js` fails a stamped release from 1.25.2 whose newest SBOM is not its own.
 
 ## 1.25.1 — 2026-10-08
 
