@@ -21,6 +21,12 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   `notes:clinical:write` and read clinical notes without break-glass. Neither is grantable to the administrator
   role any more, and a grant row left from before is ignored at request time and shown as having no effect
   (narrowing only; break-glass is unchanged). `test/admin-self-permissions.test.js`.
+* **BO6 (High):** finance's "Export to Excel" of spending and of staff time had every date cut to the year and
+  no vendor or receipt number, so it could not be reconciled. Spending and time **with no client** are the
+  programme's own books, not health information: they now keep their exact date, vendor and receipt number.
+  Every row linked to a client is de-identified exactly as before (year only, vendor and receipt left out, a
+  random record id), and no description is written to a de-identified file. The file's classification says so.
+  `test/finance-ledger.test.js`; docs/HIPAA.md.
 
 ## 1.25.1 — 2026-10-08
 

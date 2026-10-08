@@ -184,7 +184,8 @@ test('a de-identified export carries exactly its allow-listed columns, whatever 
     disclosures: ['Record Id', 'Disclosed At', 'Basis', 'Source', 'Disclosed By'],
     episodes: ['Record Id', 'Opened At', 'Closed At', 'Status', 'Referral Source', 'Discharge Reason', 'Funding Source'],
     overdose_events: ['Occurred At', 'Record Id', 'Kind', 'Naloxone Used', 'Naloxone Doses', 'Administered By', 'Ems Called', 'Hospitalized', 'Survived'],
-    expenditures: ['Spent At', 'Fund', 'Line', 'Category', 'Amount', 'Status', 'Record Id', 'Worker', 'Approver'],
+    // Plus vendor and receipt number, written only for spending with no client (exports.js LEDGER; 1.25.2, BO6).
+    expenditures: ['Spent At', 'Fund', 'Line', 'Category', 'Amount', 'Status', 'Record Id', 'Vendor', 'Receipt Ref', 'Worker', 'Approver'],
   };
   const X = require('../server/exports');
   assert.deepEqual(Object.keys(X.DEID_COLUMNS).sort(), Object.keys(expected).sort(), 'every client-linked dataset has an allow-list');
