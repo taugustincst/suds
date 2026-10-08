@@ -253,7 +253,7 @@ try {
     const refused = []; s.page.on('response', r => { if (r.status() === 401) refused.push(new URL(r.url()).pathname); });
     await s.page.click('text=Sign out');
     await s.page.waitForSelector('input[name=username]', { timeout: 10000 }).catch(() => {});
-    await s.page.waitForTimeout(2000);
+    await s.page.waitForTimeout(2000); // intentional: proves a late request after sign-out does NOT happen
     eq(refused.join(', '), '', 'FL12: signing out leaves no refused request behind');
     await s.ctx.close();
   }
