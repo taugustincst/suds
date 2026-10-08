@@ -2,6 +2,38 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Fixed
+
+* **FHIR `Consent?status=` uses today's date (F1).** The filter used the date the server started on, so an expired
+  consent matched `status=active` until a restart while its own status said inactive.
+* **Real dates only (BO5).** The API took impossible dates such as 2026-09-31 (stored, and read as October 1st by a
+  spreadsheet) for expenditures, time entries, report periods and every other date: they are refused as "not a real date".
+* **Spreadsheet import dates (BO4, F3).** An impossible date (2/30/90), a date with no year ("10/8" became 2001), and a
+  date of birth or intake in the future or a date of birth over 120 years ago are the row's error in the preview and
+  again at commit. The preview lists every two-digit year with what it was read as. A client with no intake date is
+  dated the programme's today, not the UTC date.
+* **Two-digit years and short dates by field (F2, FL3).** A date of birth (a field never in the future) reads "1/5/27"
+  as 1927; any other date takes up to 20 years ahead, so a consent expiry "10/1/28" is 2028, not 1928. A month and
+  day alone ("10/8") is accepted: this year's, last year's for a date of birth still to come, next year's for a
+  follow-up or due date already gone.
+* **A date of birth typed in search (FL4).** Client search finds 7/23/1993, 7-23-93 or 07231993, not only
+  1993-07-23.
+* **"Today" and months on the programme's calendar (CS4, CS5, F3).** Home's "To-dos for today" and the dashboard's
+  due-today count include a to-do due this evening; the monthly trend, the funder report's overdoses by month and
+  SUPRT's derived dates put an evening on the last day of a month in that month; a pushed client's assignment, a
+  new client's code year, device backup and recovery-code file names and the sample data's times use the
+  programme's (or the device's) date and zone, not UTC or the server's.
+* **The time zone is asked for (F4).** The setup wizard asks for the programme's time zone, prefilled with the
+  browser's, and the hardening checklist asks for one while the zone is UTC, or none was chosen on a non-Windows host.
+* **The Consents tab (CS2)** shows a consent as Active through its expiry date, as the server and Overview do; it read
+  "Expired" from 5pm the day before in California.
+* **Wording and formats (BO18, CS16, FL10).** Past the two-step verification deadline the banner and profile say it
+  has passed, not "after that"; the "Correct your time" to-do and the monthly trend use the app's date and month
+  format; a form's earlier error is cleared, not only hidden, when it is submitted again.
+* **Tests (F8).** Five tests whose fixtures assumed a US zone pass in any zone (`H.localAt`).
+
 ## 1.25.1 — 2026-10-08
 
 A patch of 1.25.0 (docs/RELEASE.md, *Record: 1.25.1*): the fixes from the evaluation of 1.25.0 (E1 to E11), with
