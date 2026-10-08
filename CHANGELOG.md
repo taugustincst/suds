@@ -11,6 +11,12 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   500 "database is locked" and lost audit entries under load. Every writable open now sets WAL (a PRAGMA, not a
   migration), which also repairs a database restored by an earlier version at its next start; a read snapshot is
   not taken on a database that could not be put in WAL mode. `test/backup-wal.test.js`.
+* **BO2 (High):** the setup wizard stored every "Yes" to the offline copy and to participant codes as No
+  (`validate()` turns a boolean into 1; the route compared with `true`). `test/setup-answers.test.js` and
+  `scripts/ui/setup-same-origin.mjs` now finish the wizard with Yes.
+* **BO10:** the wizard no longer preselects Yes for the offline copy on a harm-reduction programme: No is the
+  default for every profile, as docs/DEPLOYMENT.md's checklist says ("left off unless a field-work need is
+  documented"); the question says when to answer Yes.
 
 ## 1.25.1 — 2026-10-08
 

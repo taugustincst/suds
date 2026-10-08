@@ -49849,7 +49849,7 @@ var require_setup = __commonJS({
           https: { type: "boolean" },
           extra_hosts: { type: "string", maxLen: 300 },
           // "Allow staff to keep an offline copy on their devices?" — omitted means No: without an answer local mode stays off
-          // (the wizard itself recommends Yes for a harm-reduction programme and No for a treatment-adjacent one).
+          // (the wizard preselects No for every programme profile: an offline copy is an opt-in for a documented field-work need).
           local_mode: { type: "boolean" },
           // What kind of programme this is (server/programme.js); omitted means harm reduction & outreach.
           programme_profile: { type: "string", enum: Object.keys(require_programme().PROFILES) },
@@ -49883,7 +49883,7 @@ var require_setup = __commonJS({
           if (v.program_contact) db3.setSetting("program_contact", v.program_contact);
           db3.setSetting("caseload_restriction", "1");
           db3.setSetting("programme_profile", v.programme_profile || require_programme().DEFAULT_PROFILE);
-          if (v.participant_code_default === true && (v.programme_profile || require_programme().DEFAULT_PROFILE) === "harm_reduction") db3.setSetting("participant_code_default", "1");
+          if (v.participant_code_default === 1 && (v.programme_profile || require_programme().DEFAULT_PROFILE) === "harm_reduction") db3.setSetting("participant_code_default", "1");
           mainFund = require_budget().createProgrammeFund(v.main_fund_name, { type: v.main_fund_type || "other", settlement_use: v.main_fund_settlement_use || null, settlement_hiaa: v.main_fund_settlement_hiaa || null });
         });
         const defaults = applyProductionDefaults();
@@ -49901,7 +49901,7 @@ var require_setup = __commonJS({
           fs.writeFileSync(path.join(dir, "suds-ca.crt"), c.ca, { mode: 420 });
           tls = "selfsigned";
         } else if (proc.env.TLS_CERT_PATH) tls = "custom";
-        const localMode = v.local_mode === true;
+        const localMode = v.local_mode === 1;
         if (!config2.localModeFromEnv) config2.localModeEnabled = localMode;
         audit3.log({ user: { username: v.admin_username }, action: "setup.complete", ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config2.localModeEnabled, programme_profile: require_programme().profile(), defaults, main_fund: mainFund } });
         let desc;
