@@ -172,7 +172,8 @@ pre.note { white-space: pre-wrap; font-family: var(--font); background: var(--pa
 /* Mobile navigation */
 .mobilebar { display: none; }
 @media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; }
+  /* One column: the spare height of a short page stays below the content, not in the top bar (1.25.2, FL6). */
+  .layout { grid-template-columns: 1fr; align-content: start; }
   .mobilebar { display: flex; align-items: center; justify-content: space-between; gap: .5rem; position: sticky; top: 0; z-index: 30; background: var(--panel); border-bottom: 1px solid var(--border); padding: .4rem .6rem; padding-top: calc(.4rem + env(safe-area-inset-top)); }
   .mobilebar .btn { font-size: 1.25rem; padding: .3rem .6rem; }
   .mobilebar-title { display: flex; flex-direction: column; align-items: center; line-height: 1.15; min-width: 0; }

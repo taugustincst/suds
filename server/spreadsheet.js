@@ -27,15 +27,17 @@ function parseCsv(text) {
 // and a cell SUDS wrote reads back as the text it was made from (1.21.0; before, '=x came back as =x).
 const FORMULA_START = /^'*[=+\-@\t\r]/;
 const UNGUARD = /^'+[=+\-@\t\r]/;
-function toCsv(rows, columns) {
+// `plain` (1.25.2, CS13): a file a machine reads, such as the DHCS CalOMS Tx files, gets neither the byte-order mark
+// nor the formula guard, so a name such as "-Smith" reaches the state as typed. Every export a person opens keeps both.
+function toCsv(rows, columns, { plain = false } = {}) {
   const esc = v => {
     if (v === null || v === undefined) return '';
     if (typeof v === 'number') return Number.isFinite(v) ? String(v) : '';
     let t = typeof v === 'object' ? JSON.stringify(v) : String(v);
-    if (FORMULA_START.test(t)) return '"\'' + t.replace(/"/g, '""') + '"';
+    if (!plain && FORMULA_START.test(t)) return '"\'' + t.replace(/"/g, '""') + '"';
     return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
   };
-  return '﻿' + [columns.map(c => esc(c.label || c.key || c)).join(','), ...rows.map(r => columns.map(c => esc(r[c.key || c])).join(','))].join('\r\n');
+  return (plain ? '' : '﻿') + [columns.map(c => esc(c.label || c.key || c)).join(','), ...rows.map(r => columns.map(c => esc(r[c.key || c])).join(','))].join('\r\n');
 }
 
 // ---------- ZIP writer (deflate) ----------

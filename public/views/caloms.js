@@ -48,7 +48,7 @@ export function calomsFields(cfg, type, { values = {}, provider = null, standard
       const altLabels = cfg.spec.alt_labels || {};
       const altOpts = f.alt.map(code => ({ value: String(code), label: `${altLabels[code] || 'Special answer'} (${code})` }));
       out.push({ ...base, type: 'number', min: f.min, max: Math.max(f.max, ...f.alt.map(Number)), step: 1,
-        help: [`Enter ${f.min}–${f.max}`, f.help].filter(Boolean).join('; ') + ', or choose a special answer below.' });
+        help: [`Enter ${f.min}–${f.max}`, f.help].filter(Boolean).join('; ') + `, or choose an answer from “${f.label} — special answer”.` });
       out.push({ name: `${P}${f.key}__alt`, label: `${f.label} — special answer`, type: 'select',
         value: f.alt.map(String).includes(String(v ?? '')) ? v : '', options: altOpts });
     }
@@ -67,7 +67,8 @@ export function splitCaloms(cfg, type, data) {
     if (!k.startsWith(P)) { plain[k] = v; continue; }
     const key = k.slice(P.length);
     if (key === 'provider_id') { provider_id = v; continue; }
-    if (key.endsWith('__alt')) continue; // the 999xx special-answer select: its value was copied into the number box
+    // The 999xx special-answer select: wireCalomsAlt copies it into the number box; if that box is still empty, it is the answer.
+    if (key.endsWith('__alt')) { const numKey = key.slice(0, -5); if (v && (data[P + numKey] === null || data[P + numKey] === '' || data[P + numKey] === undefined)) answers[numKey] = Number(v); continue; }
     const m = /^(.+)__(.+)$/.exec(key);
     if (m && multi.has(m[1])) { if (v) multi.get(m[1]).push(m[2]); continue; }
     if (v !== null && v !== '' && v !== undefined) answers[key] = v;
@@ -97,7 +98,7 @@ const uploadDetail = (s) => { const m = /^(\d{4}-\d{2}-\d{2})\s*(.*)$/.exec(Stri
 const sevBadge = (s) => badge(s === 'fatal' ? 'Fatal' : 'Warning', s === 'fatal' ? 'danger' : 'warn');
 
 /** The 999xx special-answer selects fill their number box; typing a number clears the select. */
-function wireCalomsAlt(f) {
+export function wireCalomsAlt(f) {
   if (!f || !f.inputs) return;
   for (const [name, input] of Object.entries(f.inputs)) {
     if (!name.endsWith('__alt')) continue;
@@ -281,13 +282,16 @@ route('caloms', async (r) => {
   const validationCard = () => {
     if (!v) return null;
     const s = v.summary;
+    // With reporting off nothing is sent, so nothing is a fatal error yet: the rows say what would be needed (1.25.2, FL13).
+    const on = !!(cfg && cfg.enabled);
     const clientCell = (x) => (can('clients:read') ? h('a', { href: `#/client/${x.client_id}/episodes` }, x.client_code) : h('span', { class: 'mono' }, x.client_code));
     return h('div', { class: 'card mb', 'data-caloms-validation': '1' },
       h('div', { class: 'card-head' }, h('h2', {}, 'Validation report'), h('button', { class: 'btn sm', onClick: () => downloadCsv(`/api/caloms/validation?from=${from}&to=${to}&format=csv`) }, 'Download CSV')),
-      h('p', { class: 'small muted' }, 'Every CalOMS record dated in the period, checked against the edit rules, and every episode checked for the records it should have. A record with a fatal error is held back from the extract.'),
-      h('div', { class: 'grid cols-4 mb' }, stat('Records in period', s.records), stat('Ready to submit', s.ready), stat('Fatal errors', s.fatal, s.fatal ? 'danger' : ''), stat('Warnings', s.warnings, s.warnings ? 'warn' : '')),
+      h('p', { class: 'small muted', 'data-caloms-validation-off': on ? null : '1' }, on ? 'Every CalOMS record dated in the period, checked against the edit rules, and every episode checked for the records it should have. A record with a fatal error is held back from the extract.'
+        : 'CalOMS reporting is off, so nothing here is sent or counts as an error. The rows show what would be needed if it were turned on.'),
+      h('div', { class: 'grid cols-4 mb' }, stat('Records in period', s.records), stat('Ready to submit', s.ready), stat(on ? 'Fatal errors' : 'Needed if turned on', s.fatal, s.fatal && on ? 'danger' : ''), stat('Warnings', s.warnings, s.warnings && on ? 'warn' : '')),
       v.rows.length ? table([
-        { label: 'Severity', render: x => sevBadge(x.severity) },
+        { label: 'Severity', render: x => (on ? sevBadge(x.severity) : badge(x.severity === 'fatal' ? 'Needed if on' : 'Warning', 'info')) },
         { label: 'Client', render: clientCell },
         { label: 'Record', render: x => RECORD_LABEL[x.record_type] || x.record_type },
         { label: 'Date', render: x => fmt.date(x.record_date) },
@@ -354,7 +358,7 @@ route('caloms', async (r) => {
       h('div', { class: 'row' },
         h('button', { class: 'btn', disabled: !cfg.enabled, 'data-caloms-download': '1', onClick: () => downloadCsv(`/api/caloms/extract?from=${from}&to=${to}`) }, 'Download preview (not for submission)'),
         h('button', { class: 'btn primary', disabled: !cfg.enabled, 'data-caloms-submitted': '1', onClick: async () => {
-          if (!await confirmDialog('Produce the submission file for DHCS', `Produce the CalOMS Tx submission for ${fmt.date(from)} – ${fmt.date(to)}. It includes client names and dates of birth. Each client in it gets an entry in their accounting of disclosures (a disclosure required by law) and its records are marked as sent. ${v && v.summary.blocked ? `${n(v.summary.blocked, 'record')} with fatal errors will be held back: ${v.summary.blocked === 1 ? 'it is' : 'they are'} not in the file. ` : ''}Send the file that downloads to DHCS unchanged.`, { okText: 'Produce submission file' })) return;
+          if (!await confirmDialog('Produce the submission file for DHCS', `Produce the CalOMS Tx submission for ${fmt.date(from)} – ${fmt.date(to)}. It includes client names and dates of birth. Each client in it gets an entry in their accounting of disclosures (a disclosure required by law) and its records are marked as sent. ${v && v.summary.blocked ? `${n(v.summary.blocked, 'record')} with fatal errors will be held back: ${v.summary.blocked === 1 ? 'it is' : 'they are'} not in the file. ` : ''}${to >= fmt.today() ? `The period has not ended yet (it runs to ${fmt.date(to)}): records saved later in it go into a later file, and the provider activity for that month will be partial. ` : ''}Send the file that downloads to DHCS unchanged.`, { okText: 'Produce submission file' })) return;
           try {
             const r = await post('/api/caloms/submissions', { from, to, provider_id: provSel && provSel.value ? provSel.value : undefined });
             toast(`Submission produced: ${n(r.clients_disclosed, 'client')} accounted for as disclosed to DHCS.`, 'ok');
@@ -422,7 +426,7 @@ route('caloms', async (r) => {
     pageHead('State reporting'),
     h('div', { class: `banner ${cfg && cfg.enabled ? '' : 'warn'}`, 'data-caloms-status': cfg && cfg.enabled ? 'on' : 'off' }, cfg && cfg.enabled
       ? `CalOMS Tx reporting is on (provider ${cfg.providers.map(p => p.id).join(', ')}). The admission and discharge dialogs ask the CalOMS questions.`
-      : 'CalOMS Tx reporting is off for this program. Funder reports are not a substitute for CalOMS: a treatment program that must report turns it on under Settings below.'),
+      : `CalOMS Tx reporting is off for this program. Funder reports are not a substitute for CalOMS: a treatment program that must report ${can('settings:manage') ? 'turns it on under Settings below' : 'asks its administrator to turn it on'}.`),
     h('div', { class: 'filters' }, h('div', { class: 'field' }, h('label', {}, 'From'), fromI), h('div', { class: 'field' }, h('label', {}, 'To'), toI), h('button', { class: 'btn', onClick: () => go(fromI.value, toI.value) }, 'Apply'),
       h('button', { class: 'btn ghost sm', onClick: () => { const d = new Date(); d.setDate(0); const last = fmt.isoLocal(d).slice(0, 10); go(`${last.slice(0, 7)}-01`, last); } }, 'Last month')),
     h('h2', {}, `CalOMS Tx · ${fmt.date(from)} – ${fmt.date(to)}`),

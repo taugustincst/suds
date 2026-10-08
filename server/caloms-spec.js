@@ -165,7 +165,10 @@ const FIELDS = [
   { key: 'secondary_days_used', name: 'SecondaryDrugFrequency', label: 'Days secondary drug used, past 30', type: 'int', min: 0, max: 30, alt: [99902], in: REP, req: (a, c) => c.standard && hasSecondary(a, c), group: 'Past 30 days', dict: 'ADU-2' },
   { key: 'alcohol_days', name: 'AlcoholUseDays', label: 'Days alcohol used, past 30', type: 'int', min: 0, max: 30, alt: [99902], in: REP, req: 'standard', group: 'Past 30 days' },
   { key: 'iv_use_30', name: 'NeedleUsePast30Days', label: 'Days of needle use, past 30', type: 'int', min: 0, max: 30, alt: [99900, 99904], in: REP, req: 'standard', group: 'Past 30 days', dict: 'ADU-10 p.35' },
-  { key: 'employment_status', name: 'CurrentEmploymentStatus', label: 'Employment status', set: 'EMPLOYMENT', in: REP, req: 'standard', group: 'Past 30 days' },
+  // The labels are the dictionary's (EMP-1 p.62); the help tells 4 from 5 in the words SUDS used before 1.25.0, which the
+  // dictionary check (docs/evidence/caloms-dictionary-verification.md) found equivalent to them (1.25.2, CS12).
+  { key: 'employment_status', name: 'CurrentEmploymentStatus', label: 'Employment status', set: 'EMPLOYMENT', in: REP, req: 'standard', group: 'Past 30 days',
+    help: '4: out of work and not looking for work. 5: not in the labor force at all — a student, homemaker, retired, disabled, or incarcerated.' },
   { key: 'paid_work_days', name: 'DaysPaidForWorkPast30', label: 'Days paid for work, past 30', type: 'int', min: 0, max: 30, alt: [99900, 99904], in: REP, req: 'standard', group: 'Past 30 days', dict: 'EMP-2' },
   { key: 'school_enrolled', name: 'EnrolledInSchool', label: 'Enrolled in school', set: 'SCHOOL_ENROLLED', in: REP, req: 'standard', group: 'Past 30 days', dict: 'EMP-3 p.64' },
   { key: 'job_training', name: 'EnrolledInJobTraining', label: 'Enrolled in job training', set: 'SCHOOL_ENROLLED', in: REP, req: 'standard', group: 'Past 30 days', dict: 'EMP-4 p.65' },
@@ -197,7 +200,10 @@ const fieldsFor = (type) => FIELDS.filter(f => f.in.includes(type));
 const FROM_SUDS = {
   asam_level: { '1.0': '1', '2.1': '1', '2.5': '1', '3.1': '2', '3.3': '2', '3.5': '2', '3.7': '2', '4.0': '2', OTP: '7' },
   substance: { opioids_fentanyl: '99903', opioids_heroin: '1', opioids_rx: '16', alcohol: '2', methamphetamine: '5', cocaine: '8', benzodiazepines: '12', cannabis: '9', synthetic_cannabinoids: '99903', xylazine: '99903', other: '99903' },
-  discharge_reason: { completed: '1', transferred: '1', incarcerated: '8', deceased: '7', lost_contact: '6', declined: '5', moved: '4' },
+  // No suggestion for "transferred" or "moved" (1.25.2, CS10): DIS-2 (p.61) asks whether the client completed the
+  // treatment plan and how they progressed, which neither reason says; 1 (completed) or 4 (satisfactory progress)
+  // would be a claim the state counts. The worker chooses the status.
+  discharge_reason: { completed: '1', incarcerated: '8', deceased: '7', lost_contact: '6', declined: '5' },
   veteran: { 1: '1', 0: '0' },
 };
 

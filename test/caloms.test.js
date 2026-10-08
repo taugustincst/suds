@@ -36,12 +36,12 @@ async function newClient(who, extra = {}) {
   return r.data.id;
 }
 const codeOf = (id) => db.one(`SELECT client_code FROM clients WHERE id=?`, id).client_code;
-function unzip(buf) {
+function unzip(buf, { keepBom = false } = {}) {
   const out = {}; let i = 0;
   while (i + 30 <= buf.length && buf.readUInt32LE(i) === 0x04034b50) {
     const size = buf.readUInt32LE(i + 18); const nameLen = buf.readUInt16LE(i + 26); const extra = buf.readUInt16LE(i + 28);
     const name = buf.slice(i + 30, i + 30 + nameLen).toString(); const start = i + 30 + nameLen + extra;
-    out[name] = zlib.inflateRawSync(buf.slice(start, start + size)).toString('utf8').replace(/^﻿/, '');
+    out[name] = zlib.inflateRawSync(buf.slice(start, start + size)).toString('utf8'); if (!keepBom) out[name] = out[name].replace(/^﻿/, '');
     i = start + size;
   }
   return out;
@@ -377,6 +377,12 @@ test('the preview cannot be submitted; the submission file is produced once, acc
   assert.equal(got.x.status, 200);
   assert.equal(require('node:crypto').createHash('sha256').update(got.buf).digest('hex'), sub.data.sha256, 'byte for byte what was accounted');
   assert.equal(got.x.headers.get('x-suds-sha256'), sub.data.sha256);
+  // 1.25.2, CS13: the files DHCS reads are plain CSV: no byte-order mark before RecordType or ProviderID.
+  const plain = unzip(got.buf, { keepBom: true });
+  for (const n of ['admissions.csv', 'discharges.csv', 'annual_updates.csv', 'provider_activity.csv']) assert.ok(/^(RecordType|ProviderID),/.test(plain[n]), `${n} starts with its header, no byte-order mark`);
+  // CS14: a period that runs to today has not ended, and the answer and the README say so.
+  assert.ok(sub.data.warnings.some(w => /has not ended yet/.test(w) && /partial/.test(w)), JSON.stringify(sub.data.warnings));
+  assert.match(plain['README.txt'], /NOTE: The period has not ended yet/);
   assert.match(got.x.headers.get('content-disposition'), new RegExp(`caloms-tx-SUBMISSION-${from}_${TODAY}-`));
   const real = unzip(got.buf);
   assert.deepEqual(Object.keys(real).sort(), ['README.txt', 'admissions.csv', 'annual_updates.csv', 'discharges.csv', 'provider_activity.csv']);

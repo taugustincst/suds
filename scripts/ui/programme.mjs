@@ -95,10 +95,11 @@ try {
   const sup = await session('jwalker', PW);
   {
     const sb = await sidebar(sup.page);
-    // 1.15.2: a supervisor's main list is their supervision queue, caseloads (Settings › Move a caseload) and the
-    // team's daily pages; the programme's pages are one click away under More, not gone.
-    ok(sb.sections.includes('Program'), 'a supervisor has the Program section (for Settings: caseloads and the audit log)', sb.sections);
-    ok(sb.main.includes('Settings'), 'with Settings in the main list', sb.main);
+    // 1.15.2: a supervisor's main list is their supervision queue, caseloads (Supervision tools › Move a caseload) and the
+    // team's daily pages; the programme's pages are one click away under More, not gone. 1.25.2 (CS17): the entry is
+    // called "Supervision tools", as its page is, for someone who does not manage users.
+    ok(sb.sections.includes('Program'), 'a supervisor has the Program section (for Supervision tools: caseloads and the audit log)', sb.sections);
+    ok(sb.main.includes('Supervision tools') && !sb.main.includes('Settings'), 'with Supervision tools in the main list', sb.main);
     for (const want of ['Funding & spending', 'Policies & contracts', 'Funder report', 'Import', 'Reports']) ok((sb.more || []).includes(want), `and ${want} under More`, sb);
     ok(/Spent of budget/.test(await sup.page.textContent('#main')), 'a supervisor\'s Home keeps the budget tile');
   }

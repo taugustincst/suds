@@ -189,6 +189,9 @@ function check(rec, ctx) {
       const vals = distinctCodes(Array.isArray(a[k]) ? a[k] : []);
       if (vals.length > 1 && vals.some(x => exclusive.includes(x))) add(k, 'exclusive_code_combined', `${label(k)}: "${S.SETS[S.FIELD[k].set].find(c => c.code === vals.find(x => exclusive.includes(x))).label}" cannot be combined with other answers`);
     }
+    // ADM-4 note (p.13): a client in a Narcotic Treatment Program reports the medication prescribed (MED-7). "None"
+    // there is possible but unusual, so it is a warning to confirm, never a refusal (1.25.2, CS11).
+    if (codeOf('service_type') === '7' && codeOf('medication') === '1') add('medication', 'ntp_medication_none', 'Narcotic Treatment Program with medication "None": confirm that no medication is prescribed as part of treatment', 'warning');
     if (dateOk && ctx.episode && ctx.episode.opened_at && ctx.episode.opened_at.slice(0, 10) !== date) add('record_date', 'admission_date_differs', `Admission date differs from the episode's start (${ctx.episode.opened_at.slice(0, 10)})`, 'warning');
   }
   // Repeated measures: the same checks wherever they appear.
@@ -395,7 +398,7 @@ function buildExtract({ from, to, scope, generatedBy, preview = false, submissio
       return o;
     });
     counts[type] = rows.length;
-    files.push([FILE[type], T.toCsv(rows, cols.map(c => ({ key: c.key, label: c.name })))]);
+    files.push([FILE[type], T.toCsv(rows, cols.map(c => ({ key: c.key, label: c.name })), { plain: true })]);
   }
   // Provider activity: every configured provider, every month of the period.
   const activity = [];
@@ -404,12 +407,17 @@ function buildExtract({ from, to, scope, generatedBy, preview = false, submissio
     const n = (t) => inMonth.filter(r => r.record_type === t).length;
     activity.push({ provider_id: p.id, report_month: month.replace('-', ''), admissions: n('admission'), discharges: n('discharge'), annual_updates: n('annual_update'), no_activity: inMonth.length ? 'N' : 'Y' });
   }
-  files.push(['provider_activity.csv', T.toCsv(activity, [{ key: 'provider_id', label: 'ProviderID' }, { key: 'report_month', label: 'ReportMonth' }, { key: 'admissions', label: 'Admissions' }, { key: 'discharges', label: 'Discharges' }, { key: 'annual_updates', label: 'AnnualUpdates' }, { key: 'no_activity', label: 'NoActivity' }])]);
+  files.push(['provider_activity.csv', T.toCsv(activity, [{ key: 'provider_id', label: 'ProviderID' }, { key: 'report_month', label: 'ReportMonth' }, { key: 'admissions', label: 'Admissions' }, { key: 'discharges', label: 'Discharges' }, { key: 'annual_updates', label: 'AnnualUpdates' }, { key: 'no_activity', label: 'NoActivity' }], { plain: true })]);
   const excluded = providerId ? rep.checked.filter(x => mine(x.record) && fatal(x.issues).length).length : rep.summary.blocked;
   files.push(['README.txt', readme({ from, to, counts, excluded, activity, generatedBy, missing: rep.summary.missing, preview, submissionId, providerId })]);
   // Every file in a preview says so in its own name, so a stray copy cannot be taken for the submission.
   if (preview) for (const f of files) f[0] = `PREVIEW-${f[0]}`;
   return { files, ready, clientIds: [...new Set(ready.map(r => r.client_id))], counts, excluded, activity_rows: activity.length, no_activity_months: activity.filter(a => a.no_activity === 'Y').length };
+}
+
+/** Said when a file is made for a period that has not ended (1.25.2, CS14), as the funder report and county file do. */
+function periodOpenNote(to) {
+  return to >= today() ? `The period has not ended yet (it runs to ${to}): records saved later in it go into a later file, and the provider activity for ${to.slice(0, 7)} is partial.` : null;
 }
 
 function readme({ from, to, counts, excluded, activity, generatedBy, missing, preview = false, submissionId = null, providerId = null }) {
@@ -437,6 +445,7 @@ function readme({ from, to, counts, excluded, activity, generatedBy, missing, pr
     '',
     ...(submissionId ? [`Submission: ${submissionId} (its SHA-256 is recorded in SUDS; send this file unchanged)`] : []),
     `Period: ${from} to ${to}`,
+    ...(periodOpenNote(to) ? [`NOTE: ${periodOpenNote(to)}`] : []),
     ...(providerId ? [`Provider: ${providerId}${(() => { const p = providers().find(x => x.id === providerId) || {}; return [p.legal_name || p.name, p.npi ? `NPI ${p.npi}` : ''].filter(Boolean).map(x => ` - ${x}`).join(''); })()}`] : []),
     `Generated: ${db.now()}${generatedBy ? ` by ${generatedBy}` : ''}`,
     `Layout: ${S.SPEC_VERSION}`,
@@ -471,4 +480,4 @@ function readme({ from, to, counts, excluded, activity, generatedBy, missing, pr
   ].join('\r\n');
 }
 
-module.exports = { enabled, providers, validNpi, schedule, startDate, config, PROVIDER_ID, normalize, check, fatal, blocking, CROSS_RECORD, present, recordsForEpisode, contextFor, save, report, buildExtract, monthsBetween, columnsFor, ANNUAL_EARLY, ANNUAL_LATE, addYears, addDays };
+module.exports = { enabled, providers, validNpi, schedule, startDate, config, PROVIDER_ID, normalize, check, fatal, blocking, CROSS_RECORD, present, recordsForEpisode, contextFor, save, report, buildExtract, periodOpenNote, monthsBetween, columnsFor, ANNUAL_EARLY, ANNUAL_LATE, addYears, addDays };

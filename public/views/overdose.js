@@ -67,7 +67,14 @@ export function openOverdoseForm(row, { clientId = null, onDone } = {}) {
     },
   });
   const kindI = f.inputs.kind; const naloxoneI = f.inputs.naloxone_used;
-  if (kindI && naloxoneI) kindI.addEventListener('change', () => { if (kindI.value === 'reversal') naloxoneI.checked = true; });
+  // The kind and the naloxone and survival answers stay in step (1.25.2, FL2; server/rules/overdose_events.js): naloxone
+  // ticked on an overdose with none makes it a reversal, an overdose with none unticks it, and a fatal one unticks survived.
+  if (kindI && naloxoneI) kindI.addEventListener('change', () => {
+    if (kindI.value === 'reversal') naloxoneI.checked = true;
+    if (kindI.value === 'overdose') { naloxoneI.checked = false; if (f.inputs.naloxone_doses) f.inputs.naloxone_doses.value = ''; }
+    if (kindI.value === 'fatal' && f.inputs.survived) f.inputs.survived.checked = false;
+  });
+  if (kindI && naloxoneI) naloxoneI.addEventListener('change', () => { if (naloxoneI.checked && kindI.value === 'overdose') kindI.value = 'reversal'; });
   // Delete sits in the form's own button row, on the left. In a row of its own after the form it was the
   // dialog's last row as well, so it stuck to the bottom of a phone's screen on top of Save (styles.css).
   if (row) f.querySelector(':scope > .btn-row').prepend(h('button', { type: 'button', class: 'btn danger', style: { marginRight: 'auto' }, onClick: async () => {

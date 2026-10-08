@@ -207,7 +207,7 @@ module.exports = (r) => {
     // required by law or not (server/incidents.js); the review is a formality when it went to DHCS as recorded.
     require('../incidents').maybeMassExport({ clients: x.clientIds.length, kind: 'caloms', user: ctx.user });
     audit.log({ user: ctx.user, action: 'caloms.submitted', entity: 'caloms_submission', entityId: id, ip: ctx.ip, details: { from, to, ...x.counts, held_back: x.excluded, clients_disclosed: x.clientIds.length, sha256: hash } });
-    return { ok: true, id, from, to, submitted_at: stamp, file_name: fileName, sha256: hash, bytes: body.length, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded };
+    return { ok: true, id, from, to, submitted_at: stamp, file_name: fileName, sha256: hash, bytes: body.length, clients_disclosed: x.clientIds.length, counts: x.counts, held_back: x.excluded, warnings: [C.periodOpenNote(to)].filter(Boolean) };
   });
 
   // A file covers the whole programme unless a worker held to a caseload produced it themselves from their own

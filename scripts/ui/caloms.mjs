@@ -83,6 +83,14 @@ let clientId;
     await page.fill(`.modal input[name=${name}]`, nums[name] || '0');
   }
   await page.fill('.modal input[name=caloms_zip_code]', '95814');
+  // 1.25.2, CS1: a 999xx special answer chosen from its list fills the number box, here as in the Edit dialog; CS18:
+  // the help names that list (it sits beside the box, not below it); CS12: employment 4 and 5 are told apart.
+  const waitHelp = await page.$eval('.modal .field[data-field=caloms_days_waited] .help', e => e.textContent);
+  ok(/special answer”/.test(waitHelp) && !/below/.test(waitHelp), 'the special-answer help names the list beside the box', waitHelp);
+  ok(/not in the labor force at all/.test(await page.$eval('.modal .field[data-field=caloms_employment_status]', e => e.textContent)), 'employment status 4 and 5 are told apart');
+  await page.fill('.modal input[name=caloms_days_waited]', '');
+  await page.selectOption('.modal select[name=caloms_days_waited__alt]', '99904');
+  eq(await page.inputValue('.modal input[name=caloms_days_waited]'), '99904', 'choosing "Client unable to answer" fills the days-waited box');
   await page.check('.modal input[name=caloms_race__01]'); await page.check('.modal input[name=caloms_disability__1]');
   await page.click('.modal button[type=submit]');
   await until(async () => !(await page.$('.modal [data-caloms-admission]')));
@@ -92,6 +100,7 @@ let clientId;
   const cal = await api('GET', `/api/episodes/${eps.data.episodes[0].id}/caloms`);
   eq(cal.data.records.length, 1, 'with its CalOMS admission record');
   eq(cal.data.records[0].answers.zip_code, '95814', 'holding what was entered');
+  eq(cal.data.records[0].answers.days_waited, 99904, 'with the special answer chosen');
   eq(cal.data.records[0].issues.filter(i => i.severity === 'fatal').length, 0, 'and no fatal errors');
   // The episode's CalOMS records, from the Episodes tab.
   await go(page, `client/${clientId}/episodes`);
@@ -99,6 +108,23 @@ let clientId;
   await page.waitForSelector('.modal [data-caloms-episode]');
   ok((await page.textContent('.modal [data-caloms-episode]')).includes('Ready'), 'the admission record shows as ready to submit');
   await page.keyboard.press('Escape');
+  // 1.25.2: the Discharge dialog. CS10: a transfer suggests no CalOMS status, and one suggested for another reason goes
+  // again; CS1: a special answer chosen on an administrative discharge is saved, not silently dropped.
+  await page.click('.card-head button:has-text("Discharge")'); await page.waitForSelector('.modal select[name=caloms_discharge_status]');
+  await page.selectOption('.modal select[name=discharge_reason]', 'completed');
+  eq(await page.inputValue('.modal select[name=caloms_discharge_status]'), '1', 'Completed suggests status 1');
+  await page.selectOption('.modal select[name=discharge_reason]', 'transferred');
+  eq(await page.inputValue('.modal select[name=caloms_discharge_status]'), '', 'Transferred suggests nothing, and the suggestion for Completed goes');
+  await page.selectOption('.modal select[name=discharge_reason]', 'lost_contact');
+  eq(await page.inputValue('.modal select[name=caloms_discharge_status]'), '6', 'Lost contact suggests the administrative status 6');
+  await page.fill('.modal input[name=caloms_last_service_date]', await page.inputValue('.modal input[name=closed_at]')); // the programme's today, as the dialog dates the discharge
+  await page.selectOption('.modal select[name=caloms_alcohol_days__alt]', '99902');
+  eq(await page.inputValue('.modal input[name=caloms_alcohol_days]'), '99902', 'the special answer fills the box in the Discharge dialog too');
+  await page.click('.modal button[type=submit]');
+  await until(async () => !(await page.$('.modal select[name=caloms_discharge_status]')));
+  await settle(page); await page.evaluate(() => document.querySelectorAll('.modal-bg').forEach(m => m.remove()));
+  const dis = (await api('GET', `/api/episodes/${eps.data.episodes[0].id}/caloms`)).data.records.find(x => x.record_type === 'discharge');
+  eq(dis && dis.answers.alcohol_days, 99902, 'the discharge record keeps the special answer');
   // A navigator can see the validation report for their caseload but cannot make the extract.
   await go(page, 'caloms');
   ok(await page.$('[data-caloms-validation]'), 'a navigator sees the validation report');
@@ -141,7 +167,12 @@ const sup = await session('jwalker', 'Navigator2026!!');
   // Producing the submission accounts it and downloads exactly that file.
   const [sub] = await Promise.all([
     page.waitForEvent('download', { timeout: 15000 }),
-    (async () => { await page.click('[data-caloms-submitted]'); await page.click('.modal button:has-text("Produce submission file")'); })(),
+    (async () => {
+      await page.click('[data-caloms-submitted]'); await page.waitForSelector('.modal button:has-text("Produce submission file")');
+      // 1.25.2, CS14: the period runs to today, so the confirmation says it has not ended.
+      ok(/has not ended yet/.test(await page.textContent('.modal')), 'the confirmation says the period has not ended yet');
+      await page.click('.modal button:has-text("Produce submission file")');
+    })(),
   ]);
   ok(/^caloms-tx-SUBMISSION-\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}-[0-9a-f]{8}\.zip$/.test(sub.suggestedFilename()), 'the submission file downloads', sub.suggestedFilename());
   ok(await until(async () => /accounted for as disclosed to DHCS/.test(await page.textContent('body'))), 'the page confirms the submission was recorded');
@@ -160,6 +191,12 @@ const sup = await session('jwalker', 'Navigator2026!!');
   await page.click('button:has-text("+ Start an episode")');
   await page.waitForSelector('.modal input[name=opened_at]');
   ok(!(await page.$('.modal select[name=caloms_primary_drug]')), 'with it off, the admission dialog asks nothing about CalOMS');
+  // 1.25.2, FL13: with reporting off, a navigator is not sent to Settings they cannot open, and nothing is a "Fatal" error.
+  await page.keyboard.press('Escape');
+  await go(page, 'caloms');
+  ok(/asks its administrator to turn it on/.test(await page.textContent('[data-caloms-status]')), 'the off banner sends a navigator to their administrator');
+  ok(await page.$('[data-caloms-validation-off]'), 'the validation report says nothing is sent while reporting is off');
+  ok(!/Fatal/.test(await page.textContent('[data-caloms-validation]')), 'and calls nothing Fatal');
 }
 
 await browser.close();

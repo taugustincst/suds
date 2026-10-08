@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker, clear, contactLinks, mapLink, openHref, tabStrip, clientStatus, emptyState, downloadCsv, flag, moduleOn, supervising, undoToast } from '../app.js';
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker, clear, contactLinks, mapLink, openHref, tabStrip, clientStatus, emptyState, downloadCsv, flag, moduleOn, supervising, undoToast, listEntries } from '../app.js';
 import { openClientForm, riskText, yesNoAsked } from './clients.js';
 import { openInterventionForm, openRepeatInterventionForm, interventionTable } from './interventions.js';
 import { openCallForm, callTable } from './calls.js';
@@ -8,6 +8,8 @@ import { openTaskForm, taskTable } from './tasks.js';
 import { openNoteForm, noteTable, counselingHidden } from './notes.js';
 import { openExpenditureForm, expenditureTable } from './budget.js';
 import { openConsentForm, openDisclosureForm, part2Cards, part2Badge, consentTypeLabel, consentCategoriesLabel } from './part2.js';
+/** Secondary substances as typed, a code from the substance list ("opioids_fentanyl") read as its label (1.25.2, FL14). */
+const secondaryText = (s) => String(s || '').split(/\s*,\s*/).filter(Boolean).map(x => (listEntries('SUBSTANCES').some(e => e.code === x) ? fmt.label(x, 'SUBSTANCES') : x)).join(', ') || null;
 
 // A consent is in force through the whole of its expiry date, on this device's calendar, as the server and the
 // Overview have it (CS2): compared as a date, not as the instant of UTC midnight that a bare date parses to.
@@ -101,9 +103,11 @@ route('client', async (r) => {
     const listId = `client-add-${id}`;
     const list = h('div', { class: 'add-list hidden', id: listId });
     const addBtn = h('button', { class: 'btn primary', type: 'button', 'aria-expanded': 'false', 'aria-controls': listId, 'data-client-add': '1' }, 'Add…');
+    // An item gives focus back to "Add…" before its dialog opens: the dialog returns focus to what opened it, and the
+    // item itself is gone once the list closes (1.25.2, FL11, WCAG 2.4.3).
     const setOpen = (open) => {
       clear(list);
-      if (open) list.append(...acts.map(([, label, fn]) => h('button', { class: 'btn', type: 'button', onClick: () => { setOpen(false); fn(); } }, label)));
+      if (open) list.append(...acts.map(([, label, fn]) => h('button', { class: 'btn', type: 'button', onClick: () => { setOpen(false); addBtn.focus(); fn(); } }, label)));
       list.classList.toggle('hidden', !open); addBtn.setAttribute('aria-expanded', String(open));
       if (open) list.querySelector('button')?.focus();
     };
@@ -238,7 +242,7 @@ route('client', async (r) => {
       const [clinical, activity, consentWarn, standing] = await Promise.all([(await import('./clinical.js')).overviewCard(id, { refresh }), recentActivity(), consentAlert(), glance()]);
       return h('div', { class: 'grid cols-2' }, consentWarn, standing, clinical,
         h('div', { class: 'card' }, h('h2', {}, 'Identity & contact'), kv([['Name', `${c.first_name} ${c.last_name}${c.preferred_name ? ` ("${c.preferred_name}")` : ''}`], ['DOB', c.dob ? `${fmt.date(c.dob)} (${age})` : null], ['Gender / pronouns', [c.gender && fmt.label(c.gender), c.pronouns].filter(Boolean).join(' · ')], ['Phone', c.phone || c.alt_phone ? h('div', { class: 'row', style: { gap: '.5rem' } }, phoneRow(c.phone), c.alt_phone ? h('span', {}, h('span', { class: 'muted small' }, 'alt: '), phoneRow(c.alt_phone)) : null) : null], ['Email', c.email ? h('a', { href: `mailto:${c.email}` }, c.email) : null], ['Address', mapLink([c.address, c.city, c.zip].filter(Boolean).join(', '))], ['Language', c.preferred_language], ['Contact rules', [c.ok_to_text ? 'OK to text' : null, c.ok_to_voicemail ? 'OK to voicemail' : null, c.contact_preferences].filter(Boolean).join(' · ') || 'Not recorded — ask before texting or leaving a voicemail'], ['Emergency contact', linkifyPhones(c.emergency_contact)], ['Housing', c.housing_status && fmt.label(c.housing_status)], ['Insurance', [c.insurance && fmt.label(c.insurance), c.medicaid_id && `ID ${c.medicaid_id}`].filter(Boolean).join(' · ')], ['Veteran', yesNoAsked(c.veteran)]])),
-        h('div', { class: 'card' }, h('h2', {}, 'Substance use & clinical'), kv([['Primary substance', fmt.label(c.primary_substance, 'SUBSTANCES')], ['Secondary', c.secondary_substances], ['Route', c.route_of_use && fmt.label(c.route_of_use)], ['ASAM level', c.asam_level], ['MAT', [c.mat_status && fmt.label(c.mat_status), c.mat_medication && fmt.label(c.mat_medication)].filter(Boolean).join(' — ')], ['Overdose history', c.overdose_history ? `Yes${c.last_overdose_date ? ', last ' + fmt.date(c.last_overdose_date) : ''}` : yesNoAsked(c.overdose_history)], ['Naloxone', c.naloxone_provided ? `Provided${c.naloxone_last_date ? ' ' + fmt.date(c.naloxone_last_date) : ''}` : 'Not provided'], ['Co-occurring MH', yesNoAsked(c.co_occurring_mh)], ['Justice involved', yesNoAsked(c.justice_involved)], ['Pregnant / parenting', yesNoAsked(c.pregnant_or_parenting)], ['Goals', c.goals]])),
+        h('div', { class: 'card' }, h('h2', {}, 'Substance use & clinical'), kv([['Primary substance', fmt.label(c.primary_substance, 'SUBSTANCES')], ['Secondary', secondaryText(c.secondary_substances)], ['Route', c.route_of_use && fmt.label(c.route_of_use)], ['ASAM level', c.asam_level], ['MAT', [c.mat_status && fmt.label(c.mat_status), c.mat_medication && fmt.label(c.mat_medication)].filter(Boolean).join(' — ')], ['Overdose history', c.overdose_history ? `Yes${c.last_overdose_date ? ', last ' + fmt.date(c.last_overdose_date) : ''}` : yesNoAsked(c.overdose_history)], ['Naloxone', c.naloxone_provided ? `Provided${c.naloxone_last_date ? ' ' + fmt.date(c.naloxone_last_date) : ''}` : 'Not provided'], ['Co-occurring MH', yesNoAsked(c.co_occurring_mh)], ['Justice involved', yesNoAsked(c.justice_involved)], ['Pregnant / parenting', yesNoAsked(c.pregnant_or_parenting)], ['Goals', c.goals]])),
         h('div', { class: 'card' }, h('h2', {}, 'Program'), kv([['Status', fmt.label(clientStatus(c))], ['Intake', fmt.date(c.intake_date)], ['Referral source', c.referral_source && fmt.label(c.referral_source)], ['Referral date', c.referral_date && fmt.date(c.referral_date)], ['Engagement date', c.engagement_date && fmt.date(c.engagement_date)],
           ['Time until engaged', c.days_to_engagement === null ? (c.referral_date || c.engagement_date ? h('span', { class: 'muted' }, 'needs both dates') : null) : flag(`${c.days_to_engagement} day${Math.abs(c.days_to_engagement) === 1 ? '' : 's'}`, c.days_to_engagement < 0, 'engagement date is before the referral date')],
           ['Episode', c.open_episode ? h('a', { href: `#/client/${id}/episodes` }, 'Open — ', c.counts.episodes > 1 ? `${c.counts.episodes} episodes` : 'first episode') : c.counts.episodes ? h('a', { href: `#/client/${id}/episodes`, style: { color: 'var(--warn)' } }, 'Discharged — re-admit on the Episodes tab') : h('a', { href: `#/client/${id}/episodes`, style: { color: 'var(--warn)' } }, 'None open — start one on the Episodes tab')],

@@ -74,7 +74,7 @@ test('generic records (visits, calls, to-dos, time, referrals, overdose events) 
   await lostUpdate(`/api/referrals/${ref}`, (await nav.get(`/api/referrals/${ref}`)).data.row, { notes: 'first worker' }, { notes: 'second worker' });
   const od = await nav.post('/api/overdose-events', { client_id: clientId, kind: 'overdose', occurred_at: '2026-09-02T09:00:00Z' });
   assert.equal(od.status, 201, JSON.stringify(od.data));
-  await lostUpdate(`/api/overdose-events/${od.data.id}`, (await nav.get(`/api/overdose-events/${od.data.id}`)).data.row, { naloxone_used: true }, { naloxone_used: false });
+  await lostUpdate(`/api/overdose-events/${od.data.id}`, (await nav.get(`/api/overdose-events/${od.data.id}`)).data.row, { ems_called: true }, { ems_called: false }); // not naloxone: an overdose with no naloxone given cannot give it (1.25.2, FL2)
   // A one-click action (ticking a to-do done) sends no token and is not blocked by an earlier edit.
   assert.equal((await nav.put(`/api/tasks/${task}`, { status: 'done' })).status, 200);
 });

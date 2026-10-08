@@ -149,6 +149,14 @@ export function consentFormPanel(clientId, { onDone, onCancel, close, discloser,
       try { await put('/api/consent-template', body); toast('Saved as the program\'s usual consent', 'ok'); } catch (e) { toast(e.message, 'error'); }
     } }, 'Save as the program\'s usual consent'));
   }).catch(() => {});
+  // "To whom" suggests the resource directory's names: a referral relies on a consent only when it names the provider
+  // as the directory does, so a name typed freehand easily misses (1.25.2, FL7).
+  get('/api/resources?limit=1000', { quiet: true }).then((r) => {
+    const names = [...new Set((r.rows || []).map(x => x.name).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    const input = val('recipient'); if (!names.length || !input) return;
+    const id = `consent-recipients-${Math.random().toString(36).slice(2, 8)}`;
+    input.after(h('datalist', { id, 'data-recipient-suggestions': '1' }, names.map(n => h('option', { value: n })))); input.setAttribute('list', id);
+  }).catch(() => {});
   const el = h('div', { 'data-consent-form': '1' },
     // Which consent is a valid basis at all (1.15.3): the costliest mistake is recording the wrong kind.
     h('p', { class: 'small', 'data-consent-basis': '1' }, h('b', {}, 'Is this consent a valid basis for sharing?'), ' ',
@@ -308,6 +316,12 @@ export async function openDisclosureForm(clientId, d, { onDone } = {}) {
     // refresh the tab once it is closed (refreshing first would re-render the page underneath and take it away).
     if (r && r.notice) showNotice(r.notice, onDone); else { toast('Disclosure recorded', 'ok'); onDone && onDone(); }
   } });
+  // Choosing a consent fills in its recipient and purpose, still editable; a value typed over them is kept (1.25.2, CS9).
+  const filled = { disclosed_to: '', purpose: '' };
+  f.inputs.consent_id.addEventListener('change', () => {
+    const c = d.consents.find(x => x.id === f.inputs.consent_id.value) || {};
+    for (const [k, v] of [['disclosed_to', c.recipient], ['purpose', c.purpose]]) if (!f.inputs[k].value || f.inputs[k].value === filled[k]) { f.inputs[k].value = v || ''; filled[k] = v || ''; }
+  });
   const m = modal('Record a disclosure', h('div', {}, d.restrictions ? h('div', { class: 'banner warn small', 'data-restriction-banner': '1' }, 'This client has an agreed restriction on how their information is shared — see the Requests tab before recording a disclosure.') : null, f), { wide: true });
 }
 

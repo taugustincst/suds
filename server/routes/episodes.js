@@ -245,14 +245,25 @@ module.exports = (r) => {
 
     let moved = 0; let tasks = 0; let remindersCancelled = 0; const skipped = [];
     db.transaction(() => {
+      // The departing worker's end date is never before their start: an assignment that starts on or after the
+      // effective date ends there and then instead (ended_at), or it would end the day before it began (1.25.2, CS3).
+      const release = (a) => (lastDay < a.start_date
+        ? db.run(`UPDATE assignments SET end_date=?, ended_at=?, updated_at=? WHERE id=?`, a.start_date, db.now(), db.now(), a.id)
+        : db.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, lastDay, db.now(), a.id));
       for (const a of open) {
-        if (db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=? AND (end_date IS NULL OR end_date >= ?)`, a.client_id, to.id, when)) {
-          // The receiving worker already holds this client; just release the departing one.
-          db.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, lastDay, db.now(), a.id);
-          skipped.push({ client_id: a.client_id, reason: 'already assigned to the receiving worker' });
+        // An assignment of the receiving worker's that was ended there and then (ended_at) is not one they hold: until
+        // 1.25.2 it counted, and the client was left with nobody (CS3).
+        const theirs = db.one(`SELECT id, role_on_case FROM assignments WHERE client_id=? AND user_id=? AND (end_date IS NULL OR end_date >= ?) AND (ended_at IS NULL OR ended_at > ?)`, a.client_id, to.id, when, db.now());
+        if (theirs) {
+          // The receiving worker already holds this client: release the departing one, and a departing primary's
+          // role goes to them, or the client is left with no primary worker.
+          release(a);
+          const promoted = (v.role_on_case || a.role_on_case) === 'primary' && theirs.role_on_case !== 'primary';
+          if (promoted) db.run(`UPDATE assignments SET role_on_case='primary', updated_at=? WHERE id=?`, db.now(), theirs.id);
+          skipped.push({ client_id: a.client_id, reason: 'already assigned to the receiving worker', promoted: promoted || undefined });
           continue;
         }
-        db.run(`UPDATE assignments SET end_date=?, updated_at=? WHERE id=?`, lastDay, db.now(), a.id);
+        release(a);
         db.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,notes_enc,created_by) VALUES(?,?,?,?,?,?,?)`,
           uuid(), a.client_id, to.id, v.role_on_case || a.role_on_case, when, encrypt(v.reason ? `Transferred from ${from.display_name}: ${v.reason}` : `Transferred from ${from.display_name}`), ctx.user.id);
         moved++;

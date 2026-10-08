@@ -81,9 +81,12 @@ export const NAV = [
   { name: 'imports', label: 'Import', ico: '⇩', perm: 'imports:write', programme: true, front: 'more', help: 'Bring in spreadsheets (Excel / CSV) of clients, visits, calls, resources and more, or notes from Pocket AI and OneNote. Everything is checked before it is saved.' },
   // A supervisor holds assignments:manage (moving a caseload when someone leaves lives on this page) but not
   // users:manage; gating the whole page on the latter locked them out of a feature built for them.
-  { name: 'admin', team: true, label: 'Settings', ico: '⚙', perm: ['users:manage', 'assignments:manage'], programme: true, front: 'more', help: 'Staff accounts, security, connecting devices and backups — or, for a supervisor, moving a caseload and the audit log.' },
+  // Its label is the page's own title (1.25.2, CS17): "Supervision tools" for someone who does not manage users.
+  { name: 'admin', team: true, label: 'Settings', labelFor: (c) => (c.can('users:manage') ? 'Settings' : 'Supervision tools'), ico: '⚙', perm: ['users:manage', 'assignments:manage'], programme: true, front: 'more', help: 'Staff accounts, security, connecting devices and backups — or, for a supervisor, moving a caseload and the audit log.' },
 ];
 
+/** An entry's label for this person (`labelFor`, where the page is called something else for them). */
+export const navLabel = (n, c) => (n.labelFor ? n.labelFor(c) : n.label);
 /** Does the person hold any of these permissions? */
 export const canAnyOf = (c, perm) => (Array.isArray(perm) ? perm.some(p => c.can(p)) : c.can(perm));
 /**
