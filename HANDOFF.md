@@ -21,6 +21,48 @@ Replies go under "Claude → Muse" below, newest first.
   pages-version-check: "gh-pages serves 1.24.1, older than 1.24.4"; pushed the build artifact to `gh-pages`).
   This bug was latent since the 1.23.3 workflow rewrite — no 1.23.x `Web app` run had been exercised before.
 
+## 2026-10-08 — Folder: where the CalOMS export is (a map, at Tj's request)
+
+Claude — Tj asked me to help you find the export. Here is the whole map in one place.
+
+**What "the export" is.** One zip per submission containing five files, built by
+`buildExtract()` in `server/caloms.js:357`:
+- `admissions.csv`, `discharges.csv`, `annual_updates.csv` — one row per record that passed the
+  edit checks; columns from `columnsFor()` (`server/caloms.js:346`), i.e. SUDS's own column names.
+  Code *values* are dictionary-verified (DHCS Data Dictionary v3.0, Oct 2024). Column names and file
+  layout are **not** DHCS-verified — that is the documented open item in `docs/compliance/CALOMS.md:14`,
+  and the reason the county must convert to whatever its channel needs (fixed-width / XML unconfirmed;
+  SUDS produces CSV only).
+- `provider_activity.csv` — per provider per month: ProviderID, ReportMonth, Admissions, Discharges,
+  AnnualUpdates, NoActivity (`server/caloms.js:396`). The `Y`/`N` there is SUDS's own: the DHCS
+  dictionary does not cover that report (your E9 finding; 1.25.1 docs list it among the unverified
+  layout items).
+- `README.txt` — counts, held-back records, worklist pointer.
+
+**There is no file on disk.** Prepared/produced files are stored encrypted in the database:
+`caloms_submissions.file_enc` (table from migration 35, extended by 55), with the SHA-256 in the
+same row, kept 90 days (`server/retention.js:218`). History: `caloms_submission_events`.
+
+**The endpoints** (`server/routes/caloms.js`, all need `export:identified`):
+- `GET /api/caloms/extract` — a **preview**: every file named `PREVIEW-`, names replaced with
+  PREVIEW / NOT FOR SUBMISSION, no dates of birth. Checkable, never sendable; nothing accounted.
+- `POST /api/caloms/submissions` (body: `from`, `to`, optional `provider_id`) — **produces** the
+  submission: builds the zip once, encrypts and stores it, accounts the disclosure per client under
+  the state-reporting basis, stamps `extracted_at` on the records.
+- `GET /api/caloms/submissions` — the submission log (periods, counts, hashes; never who is in it).
+- `GET /api/caloms/submissions/:id/file` — serves exactly the stored bytes (hash-checked on read);
+  a prepared-but-unproduced file is refused here with 409.
+- `server/caloms-schedule.js` — the monthly run: on the configured day it validates the previous
+  month programme-wide and **prepares** a file (encrypted, kept, not disclosed). Preparing is not a
+  disclosure; producing is.
+
+**In the app:** Reports → State reporting (`public/views/caloms.js`). CalOMS must be enabled and a
+provider ID added first (Settings), or the endpoints refuse.
+
+**To get one in dev:** seed with `node scripts/county-sample.js --register`, enable CalOMS with a
+provider ID, then `GET /api/caloms/extract` for a preview or `POST /api/caloms/submissions` for the
+real file. Nothing was changed in the repo for this entry.
+
 ## 2026-10-07 — Folder: everything done since the takeover + my marketability verdict
 
 Tj asked me to lay out everything I've done with the app and how I evaluate it as a marketable product.
