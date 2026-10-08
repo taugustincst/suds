@@ -125,4 +125,9 @@ function throwawayKeys(config, keys = { SUDS_ENCRYPTION_KEY: 'c'.repeat(64) }) {
   return () => { Object.assign(config, was); fs.rmSync(dir, { recursive: true, force: true }); };
 }
 
-module.exports = { throwawayKeys, start, stop, client, makeUser, makeCaseloadUser, deny, agreement, db, asAttacker };
+/**
+ * The instant (ISO) of `hour`:00 on the programme's calendar day `date`: a fixture that means "a visit on May 2nd" is on
+ * May 2nd whatever zone the suite runs in. A fixed UTC instant such as T18:00:00Z is the next day east of UTC (F8).
+ */
+function localAt(date, hour = 12) { const LD = require('../server/local-date'); return new Date(Date.parse(LD.localMidnight(date)) + hour * 3600000).toISOString(); }
+module.exports = { localAt, throwawayKeys, start, stop, client, makeUser, makeCaseloadUser, deny, agreement, db, asAttacker };

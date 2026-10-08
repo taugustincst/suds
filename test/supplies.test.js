@@ -310,7 +310,7 @@ test('the NDP day log carries the naloxone product where the visit recorded it',
   const nal8 = await item({ name: 'Naloxone 8 mg nasal', category: 'naloxone', product: 'nasal_8mg' });
   await receive({ item_id: nal8, site_id: office, quantity: 10 });
   const nal4 = H.db.one(`SELECT id FROM supply_items WHERE name='Naloxone 4 mg nasal'`).id;
-  await nav.post('/api/interventions', { type: 'naloxone_distribution', occurred_at: '2026-06-05T18:00:00.000Z', location: 'community', supplies: [{ item_id: nal8, quantity: 2 }, { item_id: nal4, quantity: 1 }] });
+  await nav.post('/api/interventions', { type: 'naloxone_distribution', occurred_at: H.localAt('2026-06-05', 11), location: 'community', supplies: [{ item_id: nal8, quantity: 2 }, { item_id: nal4, quantity: 1 }] });
   const d = (await sup.get('/api/reports/naloxone-ndp?from=2026-06-01&to=2026-06-30&purpose=submission&counts=exact')).data;
   const rows = d.rows.filter(r => r.entry === 'distribution' && r.date === '2026-06-05');
   assert.deepEqual(rows.map(r => [r.product, r.kits]).sort(), [['nasal_4mg', 1], ['nasal_8mg', 2]]);
