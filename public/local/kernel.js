@@ -15475,6 +15475,10 @@ var require_clients = __commonJS({
         const rows = pageIds.map((id) => byId.get(id));
         const total = db3.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
         audit3.log({ user: ctx.user, action: "client.list", ip: ctx.ip, details: { q: q ? "[redacted]" : "", searched: q ? searched : void 0, search_refused: searchRefused, status, sort: sort || void 0, filters: filters.length ? filters : void 0, offset: offset || void 0, count: rows.length, deidentified: deidentify } });
+        if (deidentify) return { clients: rows.map((x) => {
+          const o = M.summary(x, { deidentify });
+          return { id: o.id, client_code: o.client_code, display_name: o.display_name, status: o.status };
+        }), total, limit: limit2, offset };
         return { clients: rows.map((x) => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks, ...consentWindow ? { consent_expires_at: x.consent_expires_at } : {} })), total, limit: limit2, offset };
       });
       r.post("/api/clients/check-duplicates", auth3.requireAuth, auth3.requirePerm("clients:write"), (ctx) => {

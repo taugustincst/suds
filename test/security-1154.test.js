@@ -230,6 +230,10 @@ test('M1: an override row that breaks those rules (from before 1.15.4) has no ef
   assert.equal((await fin.get(`/api/clients/${cl.id}`)).status, 403, 'finance still cannot open a client record');
   const list = await fin.get('/api/clients?limit=5');
   assert.ok(list.data.clients.every(c => c.first_name === undefined && c.last_name === undefined), 'and lists codes only');
+  // 1.25.2, BO7: and nothing else a code-only list does not need (no service dates, city, substance, MAT status,
+  // risk, last contact or assigned staff).
+  assert.ok(list.data.clients.length, 'the list is not empty');
+  for (const c of list.data.clients) assert.deepEqual(Object.keys(c).sort(), ['client_code', 'display_name', 'id', 'status'], JSON.stringify(c));
   const me = (await fin.get('/api/auth/me')).data.user.permissions;
   assert.ok(!me.includes('clients:read') && !me.includes('export:identified'), JSON.stringify(me));
   const listed = (await admin.get(`/api/users/${U.fin}/permissions`)).data;

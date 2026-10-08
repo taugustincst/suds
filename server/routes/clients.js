@@ -286,6 +286,10 @@ module.exports = (r) => {
     const rows = pageIds.map(id => byId.get(id));
     const total = db.one(`SELECT COUNT(*) n FROM clients c ${w}`, ...params).n;
     audit.log({ user: ctx.user, action: 'client.list', ip: ctx.ip, details: { q: q ? '[redacted]' : '', searched: q ? searched : undefined, search_refused: searchRefused, status, sort: sort || undefined, filters: filters.length ? filters : undefined, offset: offset || undefined, count: rows.length, deidentified: deidentify } });
+    // A de-identified role (finance, read-only) gets the code and status only: what its client picker and search
+    // show. Up to 1.25.1 it also got full intake, referral and engagement dates, the last-contact time, city,
+    // substance, MAT status, risk and the assigned staff, which "client codes only" never promised (1.25.2, BO7).
+    if (deidentify) return { clients: rows.map(x => { const o = M.summary(x, { deidentify }); return { id: o.id, client_code: o.client_code, display_name: o.display_name, status: o.status }; }), total, limit, offset };
     return { clients: rows.map(x => ({ ...M.summary(x, { deidentify }), assigned_workers: x.assigned_workers, last_contact: x.last_contact, overdue_tasks: x.overdue_tasks, ...(consentWindow ? { consent_expires_at: x.consent_expires_at } : {}) })), total, limit, offset };
   });
 

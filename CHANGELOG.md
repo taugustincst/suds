@@ -27,6 +27,9 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   Every row linked to a client is de-identified exactly as before (year only, vendor and receipt left out, a
   random record id), and no description is written to a de-identified file. The file's classification says so.
   `test/finance-ledger.test.js`; docs/HIPAA.md.
+* **BO7:** the client list a de-identified role (finance, read-only) gets carried full intake, referral and
+  engagement dates, the last-contact time, city, substance, MAT status, risk and the assigned staff. It now carries
+  the client code and status only, which is all its client picker and search show. `test/security-1154.test.js`.
 
 ## 1.25.1 — 2026-10-08
 
