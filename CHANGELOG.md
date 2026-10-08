@@ -88,6 +88,18 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **F6:** from 1.25.2 every release, patches included, has an SBOM of its own, made by the stamp as a minor's is
   (two commits: the stamp, then "SBOM of the X.Y.Z stamp"). docs/RELEASE.md's checklists say so and
   `test/doc-currency.test.js` fails a stamped release from 1.25.2 whose newest SBOM is not its own.
+* **FL1 (Medium):** a wrong or reused 2-step code at sign-in sent the person back to the password with "Session
+  expired". The code screen now keeps them there with the reason ("Invalid verification code…", "That code has
+  already been used…"); the server marks such a refusal `code_refused`, and only a sign-in that has really ended
+  goes back to the password. `test/mfa-enrol-hardening.test.js`, `scripts/ui/r9.mjs`.
+* **FL12:** the sign-in page logged a 401 for `/api/auth/me` on every load, and the 2-step step asked for
+  preferences, staff, funds and lists it was refused. The app asks `GET /api/auth/me?optional=1` (answered
+  `{ user: null }` when nobody is signed in) and loads nothing else until the second step is done.
+* **FL16:** a bare "Forbidden" for deleting another worker's draft note and for changing, signing or adding to a
+  note of a kind the role cannot write now says why; County connections shows the standard "Not available for
+  your role" page.
+* **FL5:** the client search said a misspelled name is found; only a last name is (first names have no sound-alike
+  index, and adding one is a schema change, proposed for 1.26). The search box now says so.
 
 ## 1.25.1 — 2026-10-08
 

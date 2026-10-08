@@ -2362,11 +2362,14 @@ export async function loadSession() {
   if (state.local) { try { const st = await get('/api/local/status', { quiet: true }); state.localSetupNeeded = st.users === 0; } catch { state.localSetupNeeded = false; } if (state.localSetupNeeded) { state.user = null; return; } }
   else { try { const st = await get('/api/setup/status', { quiet: true }); state.setupNeeded = !!st.needed; } catch { state.setupNeeded = false; } if (state.setupNeeded) { state.user = null; return; } }
   try {
-    const me = await get('/api/auth/me', { quiet: true });
+    const me = await get('/api/auth/me?optional=1', { quiet: true });
+    // Nobody signed in: the sign-in page, with no request that needs a session (1.25.2, FL12).
+    if (!me || !me.user) { state.user = null; state.signedInOffline = false; return; }
     state.user = me.user; state.org = me.org_name; state.mfaPending = me.mfaPending; state.idleMinutes = me.idle_minutes || 15; state.programme = me.programme || null;
     // The fund a new visit is pre-filled with (the worker's own default, else the programme's).
     state.defaultFundId = me.default_fund_id || null;
-    await Promise.all([loadRefData(), prefs.load()]);
+    // A sign-in still owing its second step is refused everything else: nothing is loaded until it is done (FL12).
+    if (!state.mfaPending) await Promise.all([loadRefData(), prefs.load()]);
     keepTabSession(me); state.signedInOffline = false;
     // Drafts typed by someone else in this tab are not theirs to see; this person's own kept drafts come back.
     claimDrafts();
@@ -2424,6 +2427,8 @@ export async function refreshPermissions({ rerender = true } = {}) {
   } catch { /* stay on the stale snapshot; the server still enforces */ }
 }
 export async function loadRefData() {
+  // Nobody signed in yet, or a sign-in still owing its second step: every one of these would be refused (FL12).
+  if (!state.user || state.mfaPending) return;
   // Not fatal: an account that must change its password first is refused nearly everything, and the one
   // page it may use has to render regardless.
   if (!state.constants) { try { state.constants = await get('/api/meta/constants', { quiet: true }); } catch { state.constants = state.constants || {}; } }

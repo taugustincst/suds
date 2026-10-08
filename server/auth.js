@@ -903,7 +903,9 @@ function verifyMfa(ctx, code) {
   if (r !== 'ok') {
     const locked = recordPasswordFailure(user);
     audit.log({ user, action: 'auth.mfa.failed', ip: ctx.ip, success: false, details: r === 'replay' ? { reason: 'replay', ...(locked ? { locked: true } : {}) } : locked ? { reason: 'locked after failures' } : undefined });
-    throw unauthorized(r === 'replay' ? 'That code has already been used. Wait for the next code from your authenticator app.' : 'Invalid verification code');
+    // code_refused: the session is fine and the person stays on the code screen with this reason (1.25.2, FL1: the app
+    // took every 401 here for an expired session and sent them back to the password).
+    throw new HttpError(401, r === 'replay' ? 'That code has already been used. Wait for the next code from your authenticator app.' : 'Invalid verification code. Check the code in your authenticator app and try again.', { code_refused: true });
   }
   clearFailures(user.id);
   db.run(`UPDATE sessions SET mfa_pending=0, reauth_at=?, reauth_method='totp' WHERE id=?`, db.now(), ctx.session.id);

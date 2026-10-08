@@ -358,6 +358,9 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   ok(!(await page.$('button:has-text("+ Line")')), 'nor "+ Line"');
   eq((await navS.api('POST', '/api/budget/funds', { name: 'x', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 1 })).status, 403, 'and the server refuses it regardless');
 
+  // 1.25.2, FL5: the search box promises misspellings for the last name only (no sound-alike index for first names yet).
+  await go(page, 'clients');
+  ok(/^Last name \(partial or misspelled OK\), first or preferred name/.test(await page.getAttribute('.main input[type=search]', 'placeholder').catch(() => '') || ''), 'the client search says a misspelling is found in the last name');
   // validation names the field the way the form does
   await go(page, 'interventions');
   await page.click('text=+ Log');

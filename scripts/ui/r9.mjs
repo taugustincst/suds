@@ -227,6 +227,27 @@ try {
   await dp.go('profile');
   ok(/2-step verification is on/.test(await dp.page.textContent('.main')), 'My profile says 2-step verification is on');
   await dp.ctx.close();
+
+  // ------------------------------------------------------------------ 1.25.2, FL1: a wrong code at sign-in
+  {
+    const ctx = await browser.newContext({ viewport: PHONE[0], ...PHONE[1] }); const page = await ctx.newPage();
+    page.on('pageerror', e => errors.push(`dchen-mfa PAGEERROR ${e.message}`));
+    // FL12: nothing that needs a session is asked for before there is one (the refused code itself is the one 401).
+    const refused = []; page.on('response', r => { if (r.status() === 401 && !/\/api\/auth\/mfa\/verify/.test(r.url())) refused.push(new URL(r.url()).pathname); });
+    await page.goto(base + '/#/login'); await settle(page);
+    eq(refused.join(', '), '', 'FL12: the sign-in page loads with no 401');
+    await page.fill('input[name=username]', 'dchen'); await page.fill('input[name=password]', PW); await page.click('button[type=submit]');
+    ok(await until(() => page.$('input[name=code]'), { timeout: 15000 }), 'signing in with 2-step on asks for the code');
+    await page.fill('input[name=code]', '000000'); await page.click('button[type=submit]'); await settle(page);
+    const said = await until(async () => { const t = await page.textContent('#app'); return /Invalid verification code/.test(t) ? t : null; }, { timeout: 5000 });
+    ok(said, 'FL1: a wrong code says "Invalid verification code"');
+    ok(/#\/mfa/.test(page.url()) && await page.$('input[name=code]'), 'and stays on the code screen, not back to the password', page.url());
+    ok(!(await toastText(page, /Session expired/).catch(() => null)), 'with no "Session expired" toast');
+    await page.fill('input[name=code]', totp(secret, Date.now() + 30000)); await page.click('button[type=submit]');
+    ok(await page.waitForSelector('.layout', { timeout: 15000 }).then(() => true, () => false), 'the right code then finishes the same sign-in');
+    eq(refused.join(', '), '', 'FL12: and nothing was asked for while the second step was owed');
+    await ctx.close();
+  }
 } catch (e) {
   fail(`crashed: ${e.stack || e.message}`);
 }

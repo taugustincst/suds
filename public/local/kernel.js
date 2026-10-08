@@ -28721,6 +28721,7 @@ var require_auth = __commonJS({
         return { ok: true };
       });
       r.get("/api/auth/me", (ctx) => {
+        if (!ctx.user && ctx.query && ctx.query.get("optional") === "1") return { user: null };
         if (!ctx.user) throw unauthorized();
         const u = db3.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
         return {
@@ -43490,6 +43491,7 @@ var require_notes2 = __commonJS({
     function kindPerm(kind, rw) {
       return `notes:${kind}:${rw}`;
     }
+    var noWrite = (kind) => kind === "clinical" ? "Your role cannot write clinical notes, so it cannot change, sign or add an addendum to one." : "Your role cannot write notes.";
     function verifyIdentity(ctx, purpose, params) {
       const body = validate(ctx.body || {}, { password: { type: "string", maxLen: 500 }, code: { type: "string", maxLen: 10 }, confirm: { type: "boolean" }, passkey: { type: "object" } }, { partial: true });
       const bind = body.passkey ? require_passkeys().bindingFor(ctx, purpose, params) : null;
@@ -43662,7 +43664,7 @@ var require_notes2 = __commonJS({
       });
       r.put("/api/notes/:id", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden(noWrite(n.kind));
         if (n.status !== "draft") throw badRequest(require_notes().SIGNED_MESSAGE);
         rules.assertEditable("notes", ctx, n);
         require_crud().assertFresh(ctx, n, "note");
@@ -43704,7 +43706,7 @@ var require_notes2 = __commonJS({
       });
       r.post("/api/notes/:id/request-cosign", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden(noWrite(n.kind));
         if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden("Only the author can ask for a review of their note");
         if (n.cosigned_at) throw badRequest("This note has already been countersigned");
         const { cosign_requested } = validate(ctx.body || {}, { cosign_requested: { type: "boolean" } });
@@ -43741,7 +43743,7 @@ var require_notes2 = __commonJS({
       });
       r.post("/api/notes/:id/sign", auth3.requireAuth, async (ctx) => {
         const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden(noWrite(n.kind));
         if (n.status !== "draft") throw badRequest("Note is already signed");
         if (n.author_id !== ctx.user.id) throw forbidden("Only the author can sign a note. Supervisors countersign instead.");
         const aiReviewed = require_notes().aiReviewed(ctx.body && ctx.body.ai_reviewed);
@@ -43823,7 +43825,7 @@ var require_notes2 = __commonJS({
       });
       r.post("/api/notes/:id/addenda", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden(noWrite(n.kind));
         const { content, reason } = validate(ctx.body, require_rules().forTable("note_addenda").shape());
         const id = uuid2();
         db3.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason_enc) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt3(content), reason ? encrypt3(reason) : null);
@@ -43834,9 +43836,9 @@ var require_notes2 = __commonJS({
       });
       r.delete("/api/notes/:id", auth3.requireAuth, (ctx) => {
         const n = load(ctx, ctx.params.id);
-        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden();
+        if (!auth3.hasPerm(ctx.user, kindPerm(n.kind, "write"))) throw forbidden(noWrite(n.kind));
         if (n.status !== "draft") throw badRequest("Signed notes are part of the legal record and cannot be deleted");
-        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden();
+        if (n.author_id !== ctx.user.id && !auth3.hasPerm(ctx.user, "records:manage-others")) throw forbidden("Only the author of a draft note, or a supervisor or administrator, can delete it.");
         db3.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db3.now(), db3.now(), n.id);
         const reminders = require_notes().closeSignReminders(n.author_id, n.id, n.client_id, { cause: "deleted" });
         audit3.log({ user: ctx.user, action: "note.delete", entity: "note", entityId: n.id, clientId: n.client_id, ip: ctx.ip, details: reminders.length ? { reminders_closed: reminders } : void 0 });
@@ -52967,7 +52969,7 @@ var require_auth2 = __commonJS({
       if (r !== "ok") {
         const locked = recordPasswordFailure(user);
         audit3.log({ user, action: "auth.mfa.failed", ip: ctx.ip, success: false, details: r === "replay" ? { reason: "replay", ...locked ? { locked: true } : {} } : locked ? { reason: "locked after failures" } : void 0 });
-        throw unauthorized(r === "replay" ? "That code has already been used. Wait for the next code from your authenticator app." : "Invalid verification code");
+        throw new HttpError3(401, r === "replay" ? "That code has already been used. Wait for the next code from your authenticator app." : "Invalid verification code. Check the code in your authenticator app and try again.", { code_refused: true });
       }
       clearFailures(user.id);
       db3.run(`UPDATE sessions SET mfa_pending=0, reauth_at=?, reauth_method='totp' WHERE id=?`, db3.now(), ctx.session.id);

@@ -1,4 +1,4 @@
-import { h, route, get, post, put, del, fmt, can, state, pageHead, table, kv, nav, toast, modal, form, confirmDialog, badge } from '../app.js';
+import { h, route, get, post, put, del, fmt, can, state, pageHead, table, kv, nav, toast, modal, form, confirmDialog, badge, emptyState } from '../app.js';
 import { monthsLabel } from '../county-periods.js';
 
 // The county connection (server/county-connect.js, server/county-connect-client.js; docs/COUNTY-VIEW.md, "Connecting").
@@ -77,7 +77,8 @@ async function revokeToken(t, what, refresh) {
 }
 
 route('county-connect', async () => {
-  if (state.local || !can('county:view')) return h('div', {}, pageHead('County connections'), h('p', {}, 'You do not have access to this page.'));
+  // The standard page for a role that may not open this one (FL16), as the router shows elsewhere.
+  if (state.local || !can('county:view')) return emptyState('Not available for your role', 'Your account does not have access to County connections. Ask your supervisor or administrator if you need it.', h('button', { class: 'btn', onClick: () => nav('dashboard') }, 'Back to home'), { level: 1 });
   const s = await get('/api/county-connect/settings');
   const manage = can('county:manage'); const configure = manage && can('settings:manage');
   const settingsCard = h('section', { class: 'card mb', 'aria-labelledby': 'cc-set-h', 'data-cc-settings': '1' },
