@@ -303,6 +303,7 @@ route('caloms', async (r) => {
     return h('div', { class: 'card mb', 'data-caloms-worklist': showAll ? 'all' : 'mine' },
       h('div', { class: 'card-head' }, h('h2', {}, 'To fix before the next submission'), toggle),
       h('p', { class: 'small muted' }, 'Each problem goes to whoever last saved the record — or, for a record still missing, the client\'s primary worker. Fix it on the client\'s Episodes tab; it drops off this list when the record passes.'),
+      h('p', { class: 'small muted', 'data-caloms-reask': '' }, 'An admission recorded before SUDS 1.25.0 is listed until someone asks the client the four questions the state now requires (medication, criminal justice status, sexual orientation, consent for future contact).'),
       work.rows.length ? table([
         { label: 'Severity', render: x => sevBadge(x.severity) }, { label: 'Client', render: clientCell },
         { label: 'Record', render: x => RECORD_LABEL[x.record_type] || x.record_type }, { label: 'Date', render: x => fmt.date(x.record_date) },

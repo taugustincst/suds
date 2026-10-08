@@ -122,6 +122,9 @@ const sup = await session('jwalker', 'Navigator2026!!');
   ok(report.includes('No CalOMS admission record'), 'with the missing admission');
   ok(report.includes('Fatal'), 'as a fatal error');
   ok(!report.includes('Omstest' + stamp), 'and no client names');
+  // Evaluation of 1.25.0, E7: an upgrader is told why every pre-1.25.0 admission is on the worklist.
+  const reask = await page.textContent('[data-caloms-worklist] [data-caloms-reask]').catch(() => '');
+  ok(/before SUDS 1\.25\.0/.test(reask) && /consent for future contact/.test(reask), 'the worklist says why an admission from before 1.25.0 is listed', reask);
   const handoff = await page.textContent('[data-handoff]');
   ok(handoff.includes('SUDS does not submit Drug Medi-Cal claims'), 'the hand-off states the billing boundary');
   await until(async () => !(await page.textContent('[data-handoff-summary]')).includes('Checking'));

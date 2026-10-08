@@ -323,7 +323,9 @@ test('the preview cannot be submitted; the submission file is produced once, acc
   assert.doesNotMatch(adm, /Oms[a-z0-9]{5}|1990-04-02/, 'no names or dates of birth anywhere in the preview');
   assert.ok(!adm.includes(codeOf(badClient)), 'the admission with a fatal error is held back');
   assert.match(files['PREVIEW-README.txt'], /^PREVIEW - NOT FOR SUBMISSION/);
-  // Provider activity: both providers, every month; the satellite reported nothing, so "no activity".
+  // Provider activity: both providers, every month; the satellite reported nothing, so "no activity". NoActivity stays
+  // Y/N: the dictionary has no provider-activity element and governs no format for it (evaluation of 1.25.0, E9;
+  // docs/compliance/CALOMS.md, "Preview, submission and how to submit").
   const act = files['PREVIEW-provider_activity.csv'].split('\r\n');
   assert.equal(act[0], 'ProviderID,ReportMonth,Admissions,Discharges,AnnualUpdates,NoActivity');
   assert.ok(act.some(l => l.startsWith(`654321,${TODAY.slice(0, 7).replace('-', '')},0,0,0,Y`)));
