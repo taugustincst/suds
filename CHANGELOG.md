@@ -12,6 +12,10 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   records the user agent sent, a summary (bundled, tried, refused) and a plain note, and the build log names
   how many sites refused. The "all 81 providers" claim is corrected everywhere: the published site has 40 of
   the 81.
+* **1.25.0's release record describes what shipped.** `docs/evidence/sbom-1.25.0.cdx.json` is regenerated from
+  the tag `v1.25.0` (`82f92a00`, kernel `91a14310…`), not the "Release 1.25.0" commit `1474829e`, whose kernel
+  was 1.24.4's; the hand-off's recheck command archives the tag; and both 1.25.0 SHA-256 values are recorded
+  (source zip `3a5002ad…c379`, Windows zip `489ee896…0754`).
 
 ## 1.25.0 — 2026-10-05
 

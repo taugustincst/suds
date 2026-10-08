@@ -7,7 +7,7 @@
 
 | Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 |
 | --- | --- | --- | --- |
-| `v1.25.0` | `82f92a00` ("Rebuild public assets for the 1.25.0 stamp"; stamp `1474829e` "Release 1.25.0", SBOM `b8f0808c`) | 2026-10-05 | verified against the release asset; rebuild with the command below |
+| `v1.25.0` | `82f92a00` ("Rebuild public assets for the 1.25.0 stamp"; stamp `1474829e` "Release 1.25.0", SBOM `b8f0808c`) | 2026-10-05 | `3a5002ad5ba7c242abb2cf6a51a21e1b628cbcfe06dbb25e7811b5d3dc3cc379` (verified against the release asset; rebuild with the command below) |
 
 **How the checksum is made, and why it can be trusted before the release exists.** The release job builds
 the zip with `git archive --format=zip --prefix="suds-vX.Y.Z/" -o suds-vX.Y.Z.zip <commit>` and hashes it with
@@ -18,20 +18,33 @@ release job itself refuses to publish a Release whose zip is not byte for byte i
 **Still, compare before you record it anywhere.** After the release job has run, the `.sha256` beside its zip
 must equal the value above. If it differs, the build is not what was reproduced here: do not record it, and find
 out why (a git change on the runner that altered the zip bytes; compare `unzip -l` of both, file by file) before
-anyone installs from it. Anyone can recheck the value from a clone at any time:
+anyone installs from it. Anyone can recheck the value from a clone at any time. Archive the **tag**, not the
+"Release 1.25.0" commit: the stamp was split over three commits, and `1474829e` ("Release 1.25.0") still carries
+1.24.4's kernel, so it archives to a different zip (`093c5d96…`). The tag `v1.25.0` is `82f92a00`, the commit
+the release job built:
 
 ```bash
-R1250=$(git log -1 --format=%H --grep='^Release 1.25.0$' origin/main)
-git archive --format=zip --prefix=suds-v1.25.0/ -o suds-v1.25.0.zip "$R1250" && sha256sum suds-v1.25.0.zip
+git fetch origin tag v1.25.0
+git archive --format=zip --prefix=suds-v1.25.0/ -o suds-v1.25.0.zip v1.25.0 && sha256sum suds-v1.25.0.zip
+# 3a5002ad5ba7c242abb2cf6a51a21e1b628cbcfe06dbb25e7811b5d3dc3cc379  suds-v1.25.0.zip
 ```
 
 ## Completed: v1.25.0 (2026-10-06)
 
-- `v1.25.0` — commit `82f92a00686a17e9ff086409db8a6184f0a2d9b1` (stamp `1474829e` "Release 1.25.0", SBOM `b8f0808c`, asset rebuild `82f92a00`; CHANGELOG 2026-10-05), zip SHA-256 verified against the downloaded release asset with `sha256sum -c`: OK.
+- `v1.25.0` — commit `82f92a00686a17e9ff086409db8a6184f0a2d9b1` (stamp `1474829e` "Release 1.25.0", SBOM `b8f0808c`, asset rebuild `82f92a00`; CHANGELOG 2026-10-05), zip SHA-256 `3a5002ad5ba7c242abb2cf6a51a21e1b628cbcfe06dbb25e7811b5d3dc3cc379` (rebuilt from the tag with `git archive` on 2026-10-08 and equal to the release asset's `.sha256` and to GitHub's asset digest).
 
 - Release run 37416362595 (success; exact-commit CI 37411130362, all jobs green except the expected `release-policy` 28-day gate, covered by the owner's `policy_exception`); published 2026-10-06T05:38:43Z, marked **Latest**. The `policy_exception` records the owner's explicit instruction ("Fix everything now, freeze lifts to 1.25.0", 2026-10-05) — not a security fix.
 
-- Assets: `suds-v1.25.0.zip` + `.sha256`, `suds-1.25.0-windows-x64.zip` + `.sha256`.
+- Assets: `suds-v1.25.0.zip` (SHA-256 `3a5002ad5ba7c242abb2cf6a51a21e1b628cbcfe06dbb25e7811b5d3dc3cc379`) + `.sha256`, `suds-1.25.0-windows-x64.zip` (SHA-256
+  `489ee896fb5bceaa875706b62198f346c973e0be423d9e7c90273a080d0f0754`, 47,299,927 bytes; unsigned) + `.sha256`. Both values were read
+  from the release's `.sha256` assets on 2026-10-08 and equal GitHub's own asset digests; the source zip's was also
+  rebuilt from the tag. They are the second channel for `upgrade.sh --release-sha256` (the Windows zip's had been
+  recorded nowhere on `main` until then).
+
+- SBOM: `docs/evidence/sbom-1.25.0.cdx.json` was first generated from `1474829e`, whose kernel is 1.24.4's
+  (`6fe02fce…`). It is regenerated from the tag (`node scripts/sbom.js --ref v1.25.0 --out
+  docs/evidence/sbom-1.25.0.cdx.json`, 2026-10-08) and now records commit `82f92a00` and the shipped kernel,
+  SHA-256 `91a14310e7faa177abad1f1b52681796dc1e02d518fc2f4506c521dabda5bf58` (the same bytes gh-pages serves).
 
 - Pages: the `Web app` run 37419567221 succeeded (the `tag/` path fix from 1.24.4 held). Live `version.json` reads **1.25.0**.
 
