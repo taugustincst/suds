@@ -25,8 +25,9 @@
 		X-Content-Type-Options nosniff
 		X-Frame-Options DENY
 		Referrer-Policy no-referrer
-		# Never advertise the proxy.
+		# Never advertise the proxy (reverse_proxy adds "Via: 1.1 Caddy" to every answer: pen test, INFO-2).
 		-Server
+		-Via
 	}
 
 	# SUDS runs with TRUST_PROXY=1 and reads the LAST address in X-Forwarded-For — the one this proxy

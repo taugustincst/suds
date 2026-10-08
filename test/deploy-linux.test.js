@@ -185,9 +185,11 @@ test('--tls=county-cert: the certificate goes to Caddy, port 80 stays closed', (
   fs.rmSync(fx.dir, { recursive: true, force: true });
 });
 
-test('the Caddyfile: site-local files imported at the end (upgrades replace this file)', () => {
+test('the Caddyfile: site-local files imported at the end (upgrades replace this file), the proxy never advertised', () => {
   const caddyfile = fs.readFileSync(path.join(REPO, 'Caddyfile'), 'utf8');
   assert.match(caddyfile, /\n\nimport \/etc\/caddy\/Caddyfile\.d\/\*\.caddy\n$/, 'the last line, at the top level: a file there may hold whole site blocks');
+  // Caddy (the pinned 2.10) adds "Via: 1.1 Caddy" to every proxied answer: removed with the Server header (pen test, INFO-2).
+  assert.match(caddyfile, /\n\t\t-Server\n\t\t-Via\n/);
   const fx = fixture();
   const r = run('install.sh', [...BASE, '--domain=www.suds.county.example.gov', '--www-redirect'], fx);
   assert.match(r.err, /REFUSED: --www-redirect redirects www\.<domain> to <domain>/);
