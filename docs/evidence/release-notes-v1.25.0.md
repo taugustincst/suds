@@ -1,13 +1,13 @@
 > **Corrections (2026-10-08).** These notes were edited after publication; the fixes ship in 1.25.1.
 >
-> * The policy line above said "10 hours after the previous one". v1.24.0 was released on 2026-10-03, three days before v1.25.0. The gate measured from when v1.24.0's tag was pushed (2026-10-05 19:42 UTC, with the other late tags), not from the release. The exception was needed either way.
+> * The policy line above said "10 hours after the previous one". v1.24.0 was released on 2026-10-03, two days before v1.25.0 (2026-10-05). The gate measured from when v1.24.0's tag was pushed (2026-10-05 19:42 UTC, with the other late tags), not from the release. The exception was needed either way.
 > * "Resource pictures for all 81 providers": the published site bundles pictures for 40 of the 81. The download also sent a browser user agent; 1.25.1 names SUDS instead and records which sites refused.
 > * "No Y/N anywhere" holds for every DHCS dictionary element and the admission, discharge and annual update files. `provider_activity.csv`'s `NoActivity` column is `Y`/`N`, which the dictionary does not govern.
 > * Upgrading from 1.24.x: every open episode's admission must be re-asked for the four new required elements before the next monthly file (see 1.25.1's notes). Migration 71 could store a repeated race code; 1.25.1 reads and saves race and disability as distinct codes.
 
 > **Release policy override: a policy exception.** This is a minor release less than 28 days after the previous feature release, sooner than the release policy (docs/RELEASE.md) allows. Reason given (`policy_exception`): Owner-directed: "Fix everything now, freeze lifts to 1.25.0" (2026-10-05). Feature release inside 1.24.0's 28 days on the owner's explicit instruction; not a security fix.
 >
-> * feature release 1.25.0 three days after the previous one (v1.24.0, released 2026-10-03); feature releases come at most once every 28 days
+> * feature release 1.25.0 two days after the previous one (v1.24.0, released 2026-10-03); feature releases come at most once every 28 days
 
 
 ## 1.25.0 — 2026-10-05

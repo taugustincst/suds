@@ -6702,7 +6702,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.25.0" : "local",
+      version: true ? "1.25.1" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -48554,7 +48554,7 @@ var require_region_pictures = __commonJS({
       }
       return null;
     }
-    var VERSION3 = true ? "1.25.0" : null.version;
+    var VERSION3 = true ? "1.25.1" : null.version;
     var USER_AGENT = `SUDS/${VERSION3} (+https://github.com/taugustincst/suds) region pictures`;
     var ACCEPT_PAGE = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
     var ACCEPT_PICTURE = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8";

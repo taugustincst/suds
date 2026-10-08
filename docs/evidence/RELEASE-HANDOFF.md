@@ -1,7 +1,63 @@
-# Release hand-off: v1.25.0 released, then the record
+# Release hand-off: v1.25.1 to tag, then the record
 
-> 1.25.0 is released (2026-10-06): tag `v1.25.0` at `82f92a00`, GitHub Release published and marked **Latest**,
-> zip checksum verified, GitHub Pages serves 1.25.0. The v1.24.4 release below is the superseded record.
+> **The one owner action: run step 1, then step 2's tag command and its push.** It publishes 1.25.1:
+> the tag starts `release.yml` (gate, verify, approval in the `release` environment), the release marks
+> `v1.25.1` Latest, and its `Web app` run republishes GitHub Pages. Until the tag exists, 1.25.1 has no
+> GitHub Release and no gate approval. 1.25.0 below is released; its record follows.
+
+1.25.1 is a patch of 1.25.0 (docs/RELEASE.md, *Record: 1.25.1*): the fixes from the evaluation of 1.25.0, E1 to
+E11. No new migration, no new or widened permission and no new route.
+
+## The one release
+
+| Tag | Commit (stamp, "Release X.Y.Z") | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
+| --- | --- | --- | --- |
+| `v1.25.1` | `<1.25.1 release commit>` ("Release 1.25.1": `git log -1 --format=%H --grep='^Release 1.25.1$' origin/main`) | 2026-10-08 | `<filled after the release>`; rebuild it with the command below |
+
+The zip is a function of the commit (`git archive`, as below); the release job refuses to publish a Release whose
+zip is not byte for byte its own build (`scripts/release-existing.js`). Compare the `.sha256` beside the published
+zip with a rebuild before recording it anywhere:
+
+```bash
+R1251=$(git log -1 --format=%H --grep='^Release 1.25.1$' origin/main)
+git archive --format=zip --prefix=suds-v1.25.1/ -o suds-v1.25.1.zip "$R1251" && sha256sum suds-v1.25.1.zip
+```
+
+## 1. Check (the owner, from any clone)
+
+```bash
+git fetch origin
+R1251=$(git log -1 --format=%H --grep='^Release 1.25.1$' origin/main)
+for c in $R1251; do
+  git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
+done
+git show -s --format='%h %s' $R1251   # "Release 1.25.1"
+git show origin/main:package.json | grep '"version"'                            # 1.25.1
+gh run list --workflow ci.yml --commit $R1251 --event push --limit 1   # completed, success
+git ls-remote --tags origin | grep 'v1.25.1'   # not there yet: the tag is what this hand-off is for
+```
+
+## 2. Tag, and push
+
+```bash
+git tag -a v1.25.1 "$R1251" -m "SUDS 1.25.1"
+git push origin v1.25.1
+```
+
+`v1.25.1` is newer than every tag on origin, so its push is safe on its own.
+
+## 3. What the tag's run does, and what to approve
+
+| Tag | Its gate (main's scripts) | Latest? Web app? | What the owner does |
+| --- | --- | --- | --- |
+| `v1.25.1` | **Passes**: a patch of `v1.25.0` with no new migration, permission or route, within the size limit (*Record: 1.25.1*) | **Latest**, and it starts a `Web app` run: the newest tag. Its run also builds and attaches the Windows server zip, unsigned while the certificate secrets are not set | Nothing to dispatch: the tag push runs it. Approve the release job, then **approve its `Web app` run**, which publishes 1.25.1 to GitHub Pages |
+
+**Also: correct the v1.25.0 Release notes** (the "10 hours after v1.24.0" line, the picture count, the Y/N claim
+and the upgrade note; docs/RELEASE.md, *Record: 1.25.1*). A session cannot edit a GitHub Release, so the owner runs:
+
+```bash
+gh release edit v1.25.0 --notes-file docs/evidence/release-notes-v1.25.0.md
+```
 
 ## v1.25.0: released
 

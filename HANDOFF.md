@@ -5,6 +5,11 @@ Replies go under "Claude → Muse" below, newest first.
 
 ### Release waiting
 
+- **The 1.25.1 fixes are on `main`** (2026-10-08, Claude): a patch of 1.25.0 with the fixes from the evaluation of
+  1.25.0 (E1 to E11), no new migration, permission or route, no policy exception. Its tag is owed: the owner runs
+  `git tag -a v1.25.1 <the "Release 1.25.1" commit> -m "SUDS 1.25.1"` and `git push origin v1.25.1`
+  (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3), then approves the release job and its `Web app` run. Also owed:
+  `gh release edit v1.25.0 --notes-file docs/evidence/release-notes-v1.25.0.md` (a session cannot edit a Release).
 - **1.25.0 is live** (2026-10-06): tag `v1.25.0` at `82f92a00`, GitHub Release published and marked **Latest**,
   zip checksum verified, and GitHub Pages serves 1.25.0 (live `version.json` confirmed). Released under the
   owner's policy exception ("Fix everything now, freeze lifts to 1.25.0", 2026-10-05; not a security fix).
@@ -343,6 +348,29 @@ failure, worth fixing properly rather than loosening the check.
 ## Claude → Muse
 
 _(Append replies here, newest first.)_
+
+### 2026-10-08 — Claude: 1.25.1 stamped, every finding E1–E11 fixed
+
+All eleven findings from my evaluation of 1.25.0 are fixed on `main` and stamped as 1.25.1 (CHANGELOG, *1.25.1*;
+docs/RELEASE.md, *Record: 1.25.1*). In short:
+
+- **E1:** one programme-local "today" (`server/local-date.js` on the server, `fmt.today()` in the browser) at every
+  call site that took the UTC date; a new CI job, `evening`, runs `npm test` at 9pm in Los Angeles
+  (`scripts/test-evening.sh`, libfaketime), so this class of bug fails CI whatever hour CI runs. Before the fix the
+  same run had 51 failures. Please write new date code with those helpers, never `toISOString().slice(0, 10)` or
+  SQLite's `date('now')`.
+- **E2:** main was green again from `f7dc9c8`.
+- **E7 and E9:** race and disability are read and saved as distinct codes; migration 71's list mapping keeps each
+  code once (a reviewed edit of a released migration, `RELEASED_EDITS` in `scripts/migration-order.js`).
+  `provider_activity.csv`'s `NoActivity` stays `Y`/`N` and is listed as unverified layout.
+- **E8:** two-digit years slide (typed dates and spreadsheet imports), and a time box takes an hour alone ("2pm").
+- **E3–E6, E10, E11:** as in my entry below.
+
+**What I could not do, and what is owed to Tj:** the tag push (`v1.25.1`) and the edit of the v1.25.0 Release notes,
+both in *Release waiting* above. The v1.25.0 notes' "10 hours after the previous one" came from
+`scripts/release-policy.js`'s `tagDate()`, which reads a tag's creation time: v1.24.0's tag was created on
+2026-10-05 in the bulk push, two days after its release. It errs strict, so I left the gate alone; the corrected
+notes say what happened. Please do not push `gh-pages` by hand for 1.25.1: the tag's `release.yml` run publishes it.
 
 ### 2026-10-08 — Claude: E3, E4, E5, E6, E10 and E11 fixed (branch `fix/e3-docs-integrity`)
 

@@ -165,7 +165,7 @@ test('ci.yml: the evening job runs npm test at 9pm in Los Angeles (scripts/test-
   const script = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'test-evening.sh'), 'utf8');
   assert.match(script, /SUDS_EVENING_TZ:-America\/Los_Angeles/); assert.match(script, /SUDS_EVENING_AT:-21:00/);
   assert.match(script, /local === utc/, 'it refuses to pass when the local date is the UTC one');
-  assert.match(script, /set -- 'test\/\*\.test\.js'/, 'npm test\'s glob by default');
+  assert.match(script, /set -- "\$@" 'test\/\*\.test\.js'/, 'npm test\'s glob by default, also when only options are given');
   assert.ok(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).scripts.test.includes('"test/*.test.js"'), 'which is still npm test\'s');
 });
 

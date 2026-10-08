@@ -2,10 +2,27 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.25.1 — 2026-10-08
 
-### Fixed
+A patch of 1.25.0 (docs/RELEASE.md, *Record: 1.25.1*): the fixes from the evaluation of 1.25.0 (E1 to E11), with
+their tests and documentation. No new migration (migration 71's list mapping now keeps each code once, a reviewed edit
+of a released migration), no new or widened permission and no new route (`node scripts/release-policy.js --version
+1.25.1 --previous v1.25.0` passes: 412 lines added outside docs, tests and generated files, of the 1,500 a
+patch may add). It passes the release policy with no exception; a patch is allowed inside the feature freeze.
+Upgrading needs nothing beyond replacing the files and restarting, but read the first point before the next monthly
+CalOMS file. What an upgrading administrator should know:
 
+* **Upgrading from 1.24.x or earlier to 1.25.x: re-ask every open episode's admission before the next monthly
+  file.** 1.25.0 added four elements the DHCS dictionary requires on every admission: medication prescribed as
+  part of treatment (MED-7), criminal justice status (LEG-1), sexual orientation (CID-20) and consent for future
+  contact (CID-19). No admission recorded before 1.25.0 has them, so after the upgrade **every one of them is
+  fatal** ("… is required") on State reporting's validation report and worklist and is held back from the
+  submission file, and so is each discharge and annual update that follows it ("The admission this record follows
+  has fatal errors"). The answers migration 71 had to drop are asked again the same way: "Yes" to needle use or
+  living with someone who uses in the past 30 days, or to psychiatric medication (all now day counts), and an
+  "Unknown" mental-illness diagnosis. Expect several worklist rows per old admission, one per missing answer (an
+  evaluation upgrade showed 42 rows for 3 records). Ask the client, record the answers on the client's Episodes
+  tab (**CalOMS records**), and clear the worklist before the next monthly file. The worklist now says this too.
 * **"Today" is the programme's date everywhere.** It was the UTC date in many places, so after 5pm in
   California an intake and the episode form were dated tomorrow, CalOMS refused that admission as in the
   future, and a discharge with no date on that evening's episode was refused. Consents, court orders and
@@ -15,6 +32,25 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **Typed dates and times.** A two-digit year slides: "7/9/81" is 1981, not 2081 (refused as in the future),
   and up to next year's is this century, in a typed date and in a spreadsheet import's date columns alike. A time box takes an hour alone: "2pm", "9 a", or "9" (09:00, on the
   24-hour clock, as "930" is 09:30).
+* **CI runs the tests on a California evening.** A new `evening` job runs `npm test` with the clock at 9pm in
+  Los Angeles, when the UTC date is already tomorrow's (`scripts/test-evening.sh`), so a "today" taken as the UTC
+  date fails CI whatever hour CI runs. The release-state test that counted the hand-off table's rows, which made
+  main's CI red after every release record, now checks what holds for any state of the table (E2).
+* **A repeated race code is one answer (E7).** Migration 71 mapped the old race codes 17 (Other Pacific
+  Islander) and 18 (Other) both to 17 (Other Race) and kept both, so a client with both became `["17","17"]`,
+  a fatal "lists the same answer twice" the worker never entered. SUDS now reads and saves race and disability
+  as distinct codes: a stored repeat is read, checked and extracted once, and stored once the next time the
+  record is saved (nothing is rewritten on read). Repeating a code is no longer an error, and does not count
+  twice towards the maximum. Migration 71 itself keeps each code once for a database not yet upgraded (a
+  reviewed edit of a released migration, recorded in `scripts/migration-order.js`; ADR-0007). Its comment no
+  longer calls it idempotent: race 18 and 19, gender 6 and referral sources 10–14 are codes in both the old and
+  the new sets with different meanings, so it must run exactly once, which the upgrade guarantees (tested).
+* **"No Y/N anywhere" corrected (E9).** It is true of the dictionary's elements and of the admission, discharge
+  and annual update files. It is not true of `provider_activity.csv`, whose `NoActivity` column is `Y`/`N`. The
+  dictionary has no provider-activity element (its form types, TRN-1 p.104, are admission, discharge and annual
+  update with their resubmissions and deletions), so it does not govern that column, and no document in the repository
+  gives the provider activity / no-activity report's format. `Y`/`N` stays, and
+  docs/compliance/CALOMS.md lists the column with the extract's other unverified layout (the open item).
 * **Provider pictures: an honest user agent and an honest count.** The picture download names SUDS
   (`SUDS/<version> (+https://github.com/taugustincst/suds) region pictures`) instead of posing as Chrome,
   as every other outbound request does. Fewer provider sites allow that, so the static build's manifest now
@@ -43,36 +79,9 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   Windows service (production, under a signed licence agreement)", as the licence requires.
 * **Documentation.** The 1.24.4 entry's repeated pricing bullet is removed; docs/RELEASE.md no longer calls 1.25.0
   "the one tag owed"; HANDOFF.md no longer carries the owner's personal admin notes, and names prospective
-  contacts by role.
-
-Fixes from the evaluation of 1.25.0 (E7, E9). No migration, no new or widened permission and no new route.
-
-* **Upgrading from 1.24.x or earlier to 1.25.x: re-ask every open episode's admission before the next monthly
-  file.** 1.25.0 added four elements the DHCS dictionary requires on every admission: medication prescribed as
-  part of treatment (MED-7), criminal justice status (LEG-1), sexual orientation (CID-20) and consent for future
-  contact (CID-19). No admission recorded before 1.25.0 has them, so after the upgrade **every one of them is
-  fatal** ("… is required") on State reporting's validation report and worklist and is held back from the
-  submission file, and so is each discharge and annual update that follows it ("The admission this record follows
-  has fatal errors"). The answers migration 71 had to drop are asked again the same way: "Yes" to needle use or
-  living with someone who uses in the past 30 days, or to psychiatric medication (all now day counts), and an
-  "Unknown" mental-illness diagnosis. Expect several worklist rows per old admission, one per missing answer (an
-  evaluation upgrade showed 42 rows for 3 records). Ask the client, record the answers on the client's Episodes
-  tab (**CalOMS records**), and clear the worklist before the next monthly file. The worklist now says this too.
-* **A repeated race code is one answer (E7).** Migration 71 mapped the old race codes 17 (Other Pacific
-  Islander) and 18 (Other) both to 17 (Other Race) and kept both, so a client with both became `["17","17"]`,
-  a fatal "lists the same answer twice" the worker never entered. SUDS now reads and saves race and disability
-  as distinct codes: a stored repeat is read, checked and extracted once, and stored once the next time the
-  record is saved (nothing is rewritten on read). Repeating a code is no longer an error, and does not count
-  twice towards the maximum. Migration 71 itself keeps each code once for a database not yet upgraded (a
-  reviewed edit of a released migration, recorded in `scripts/migration-order.js`; ADR-0007). Its comment no
-  longer calls it idempotent: race 18 and 19, gender 6 and referral sources 10–14 are codes in both the old and
-  the new sets with different meanings, so it must run exactly once, which the upgrade guarantees (tested).
-* **"No Y/N anywhere" corrected (E9).** It is true of the dictionary's elements and of the admission, discharge
-  and annual update files. It is not true of `provider_activity.csv`, whose `NoActivity` column is `Y`/`N`. The
-  dictionary has no provider-activity element (its form types, TRN-1 p.104, are admission, discharge and annual
-  update with their resubmissions and deletions), so it does not govern that column, and no document in the repository
-  gives the provider activity / no-activity report's format. `Y`/`N` stays, and
-  docs/compliance/CALOMS.md lists the column with the extract's other unverified layout (the open item).
+  contacts by role. The corrected text of the v1.25.0 GitHub Release notes is in
+  `docs/evidence/release-notes-v1.25.0.md` (the "10 hours after v1.24.0" line, the picture count, the Y/N
+  claim and the upgrade note), for the owner to apply with `gh release edit v1.25.0 --notes-file …`.
 
 ## 1.25.0 — 2026-10-05
 
@@ -83,7 +92,7 @@ Fixes from the evaluation of 1.25.0 (E7, E9). No migration, no new or widened pe
   are TRN-1 1/4/7.
 * **Yes/no is numeric.** Every yes/no element is `1`/`0` with its per-element 999xx specials — no Y/N
   in any dictionary element (the provider activity report's `NoActivity` is `Y`/`N`, outside the dictionary:
-  corrected after the release, *Unreleased*). Needle use in the past 30 days, days lived with someone who uses, and psychiatric-medication
+  corrected in 1.25.1). Needle use in the past 30 days, days lived with someone who uses, and psychiatric-medication
   days are 0–30 day counts (not yes/no); every numeric element accepts the dictionary's 999xx alternative
   values, offered in the form beside the number; ZIP accepts 00000, XXXXX and ZZZZZ.
 * **Four elements added, two removed.** Criminal justice status (LEG-1), medication prescribed as part of
@@ -104,7 +113,7 @@ Fixes from the evaluation of 1.25.0 (E7, E9). No migration, no new or widened pe
   providers; better discovery of advertised pictures, more image sources). *(Corrected 2026-10-08: this entry
   first said "all 81 providers". That was measured from the owner's network; the published site, built on
   GitHub's servers, has pictures for 40 of the 81, because many provider sites refuse automated downloads from
-  the build server. 1.25.0 also sent a browser user agent; that is withdrawn, see Unreleased.)*
+  the build server. 1.25.0 also sent a browser user agent; that is withdrawn in 1.25.1.)*
 * **UI intuitiveness pass.** Plainer call/text form labels ("Client (optional)" with a plain-English help
   line; "Also log this as a time entry" matching the visit form) and an accessible resource-directory
   view toggle (role, labels and pressed state announced).

@@ -284,6 +284,27 @@ and released on 2026-10-06: its `release.yml` run is the Latest release, attache
 until the owner adds the code-signing secrets, `WINDOWS_CERT_PFX_BASE64` and `WINDOWS_CERT_PASSWORD`) and started
 the `Web app` run, and GitHub Pages serves 1.25.0. No tag is owed.
 
+**Record: 1.25.1 is a patch with the fixes from the evaluation of 1.25.0.** 1.25.1, stamped 2026-10-08, is a
+patch of 1.25.0 inside 1.25.0's 28 days, which a patch may be (*Stabilisation*, point 1). It fixes E1 to E11 of the
+evaluation of 1.25.0 (HANDOFF.md, 2026-10-08): one programme-local "today" on the server and in the browser, with a
+CI `evening` job that runs the tests at 9pm in Los Angeles (E1); the release-state test that turned main red after
+every release record (E2); an honest user agent and picture count for the provider pictures (E3); 1.25.0's SBOM,
+recheck command and checksums (E4); the tags without a GitHub Release (E5); one pricing source of truth (E6);
+repeated race and disability codes read and saved once, with migration 71's list mapping deduplicated as a reviewed
+edit of a released migration (`scripts/migration-order.js`, `RELEASED_EDITS`; E7); two-digit years and an hour alone
+in typed dates and times, and two-digit years in a spreadsheet import (E8); the provider activity file's `Y`/`N`
+documented (E9); the hand-off's personal and third-party details (E10); and the cosmetic items (E11). No new
+migration, no new or widened permission and no new route, 412 lines added outside docs, tests and generated
+files (`node scripts/release-policy.js --version 1.25.1 --previous v1.25.0`), so it passes the release policy with
+no exception. It is released as one commit, "Release 1.25.1" (a patch keeps its minor's SBOM, `sbom-1.25.0`), the
+commit CI passes and the owner tags: `git tag -a v1.25.1 <that commit> -m "SUDS 1.25.1"`, then `git push origin
+v1.25.1` starts its `release.yml` run, whose release is the Latest and starts the `Web app` run that publishes it
+([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)). The v1.25.0 GitHub Release's notes said "10 hours
+after the previous one" (the gate measured from when v1.24.0's tag was pushed, 2026-10-05, not from its release on
+2026-10-03) and repeated the picture and Y/N claims; their corrected text is
+[evidence/release-notes-v1.25.0.md](evidence/release-notes-v1.25.0.md), for the owner to apply (`gh release edit
+v1.25.0 --notes-file docs/evidence/release-notes-v1.25.0.md`).
+
 ### Supported versions
 
 | Line | Gets | For how long |
@@ -440,6 +461,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.24.0 | monthly limit and the feature freeze (*Stabilisation*, point 1: a feature release two days after 1.23.0, migrations 68, 69 and 70, the permissions `intake:read` and `intake:write`, 22 routes), under the security exception point 2 allows; the gate refuses it on the feature interval, so its tag needs *Run workflow* with `policy_exception` | the fixes of the owner-authorised white-box pen test of 1.23.6 (M1, M2 and seven Low findings), released at once on the owner's instruction to lift the freeze, with the feature work done for 1.24.0 and `suds.exe` (owner decision of 2026-10-03); `Security exception:` recorded, so CI's `release-policy` job passes | owner (a request, no workflow record; *Record: 1.24.0*, above) |
 | 1.24.1 | none of the policy (a patch within the patch rules: no migration, permission or route, 311 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once the owner has pushed the tags; it went live first, on 2026-10-03, by a direct push to `gh-pages` at the owner's request (*Record: 1.24.1*) | the licence change the owner decided on 2026-10-03 (proprietary, AugustInnovations LLC, SUDS on this device free for real use under section 2A) and the fixes from the market evaluation of 1.24.0 (D1 to D7); the tags owed since 1.16.3 are not yet pushed (*Stabilisation*, point 4) | no exception to approve; the direct push was at the owner's request (*Record: 1.24.1*, above) |
 | 1.25.0 | monthly limit and the feature freeze (*Stabilisation*, point 1: a feature release two days after 1.24.0, migration 71; no new permission or route); not a security fix, so no `Security exception:` line — the owner's explicit instruction to lift the freeze, recorded in *Record: 1.25.0* and passed as `policy_exception` when the tag's release runs | the CalOMS Tx dictionary verification (all 17 code sets rewritten from the DHCS Data Dictionary v3.0; migration 71 remapping stored answers), better resource-directory pictures (40 of the 81 providers on the published site; many provider sites refuse automated downloads), and the UI intuitiveness pass, on the owner's instruction of 2026-10-05 ("Fix everything now, freeze lifts to 1.25.0") | owner (`policy_exception`, *Record: 1.25.0*, above) |
+| 1.25.1 | none of the policy (a patch within the patch rules: no new migration, permission or route, 412 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once the owner has pushed `v1.25.1` | the fixes from the evaluation of 1.25.0 (E1 to E11): one programme-local "today", typed dates and times, repeated CalOMS codes, honest provider-picture and release records, one pricing source of truth (*Record: 1.25.1*, above) | no exception to approve |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as

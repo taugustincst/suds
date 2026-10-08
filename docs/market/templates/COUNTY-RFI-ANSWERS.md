@@ -161,9 +161,10 @@ for build tooling, the container base and CI actions. Evidence:
 tagged since 2026-10-05, and 1.24.1's tag has been through the gate and its GitHub Release is published; each is
 recorded in the exceptions table ([../../RELEASE.md](../../RELEASE.md), *The exceptions in one place*).
 `v1.24.2` and `v1.24.3` are tagged but superseded and will never publish. 1.24.4 is tagged, has been through
-the gate, and its GitHub Release is published and marked Latest (2026-10-05). **1.25.0 is the one release still
-published without a tag**: stamped 2026-10-05, it waits for the owner's tag (docs/evidence/RELEASE-HANDOFF.md); until the
-tag is pushed there is no tag or published zip to check it against. Verify against the commit instead. Each
+the gate, and its GitHub Release is published (2026-10-05). 1.25.0 is tagged, has been through the gate, and its
+GitHub Release is published and marked Latest (2026-10-06). 1.25.1, stamped 2026-10-08, waits for the owner's tag
+(docs/evidence/RELEASE-HANDOFF.md); until the tag is pushed it is not published, and there is no tag or published
+zip to check it against. Verify against the commit instead. Each
 commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
 release zip, which anyone can rebuild with `git archive` and compare. `scripts/release-site-check.js` checks a
 published web app byte for byte against the commit's build. The steps are in
