@@ -36,6 +36,35 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   "the one tag owed"; HANDOFF.md no longer carries the owner's personal admin notes, and names prospective
   contacts by role.
 
+Fixes from the evaluation of 1.25.0 (E7, E9). No migration, no new or widened permission and no new route.
+
+* **Upgrading from 1.24.x or earlier to 1.25.x: re-ask every open episode's admission before the next monthly
+  file.** 1.25.0 added four elements the DHCS dictionary requires on every admission: medication prescribed as
+  part of treatment (MED-7), criminal justice status (LEG-1), sexual orientation (CID-20) and consent for future
+  contact (CID-19). No admission recorded before 1.25.0 has them, so after the upgrade **every one of them is
+  fatal** ("… is required") on State reporting's validation report and worklist and is held back from the
+  submission file, and so is each discharge and annual update that follows it ("The admission this record follows
+  has fatal errors"). The answers migration 71 had to drop are asked again the same way: "Yes" to needle use or
+  living with someone who uses in the past 30 days, or to psychiatric medication (all now day counts), and an
+  "Unknown" mental-illness diagnosis. Expect several worklist rows per old admission, one per missing answer (an
+  evaluation upgrade showed 42 rows for 3 records). Ask the client, record the answers on the client's Episodes
+  tab (**CalOMS records**), and clear the worklist before the next monthly file. The worklist now says this too.
+* **A repeated race code is one answer (E7).** Migration 71 mapped the old race codes 17 (Other Pacific
+  Islander) and 18 (Other) both to 17 (Other Race) and kept both, so a client with both became `["17","17"]`,
+  a fatal "lists the same answer twice" the worker never entered. SUDS now reads and saves race and disability
+  as distinct codes: a stored repeat is read, checked and extracted once, and stored once the next time the
+  record is saved (nothing is rewritten on read). Repeating a code is no longer an error, and does not count
+  twice towards the maximum. Migration 71 itself keeps each code once for a database not yet upgraded (a
+  reviewed edit of a released migration, recorded in `scripts/migration-order.js`; ADR-0007). Its comment no
+  longer calls it idempotent: race 18 and 19, gender 6 and referral sources 10–14 are codes in both the old and
+  the new sets with different meanings, so it must run exactly once, which the upgrade guarantees (tested).
+* **"No Y/N anywhere" corrected (E9).** It is true of the dictionary's elements and of the admission, discharge
+  and annual update files. It is not true of `provider_activity.csv`, whose `NoActivity` column is `Y`/`N`. The
+  dictionary has no provider-activity element (its form types, TRN-1 p.104, are admission, discharge and annual
+  update with their resubmissions and deletions), so it does not govern that column, and no document in the repository
+  gives the provider activity / no-activity report's format. `Y`/`N` stays, and
+  docs/compliance/CALOMS.md lists the column with the extract's other unverified layout (the open item).
+
 ## 1.25.0 — 2026-10-05
 
 * **CalOMS Tx 1.25.0 (the owner lifted the feature freeze: "Fix everything now, freeze lifts to 1.25.0").** Dictionary-verified code sets: service types are ADM-4 codes 1–7; referral sources ADM-5 1–14; drug
@@ -44,7 +73,8 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   ethnicities are CID-16 1–6 with 99900; disabilities are 1–8 with 99900/99904 (at most 7); record codes
   are TRN-1 1/4/7.
 * **Yes/no is numeric.** Every yes/no element is `1`/`0` with its per-element 999xx specials — no Y/N
-  anywhere. Needle use in the past 30 days, days lived with someone who uses, and psychiatric-medication
+  in any dictionary element (the provider activity report's `NoActivity` is `Y`/`N`, outside the dictionary:
+  corrected after the release, *Unreleased*). Needle use in the past 30 days, days lived with someone who uses, and psychiatric-medication
   days are 0–30 day counts (not yes/no); every numeric element accepts the dictionary's 999xx alternative
   values, offered in the form beside the number; ZIP accepts 00000, XXXXX and ZZZZZ.
 * **Four elements added, two removed.** Criminal justice status (LEG-1), medication prescribed as part of

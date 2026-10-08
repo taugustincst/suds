@@ -69,13 +69,21 @@ const ANNUAL_EARLY = 60, ANNUAL_LATE = 30;
 
 // ---- answers ----
 const empty = (v) => v === undefined || v === null || v === '' || (Array.isArray(v) && !v.length);
+// A multi-answer element (race, disability) as a list of distinct codes, in the order first given. The same code
+// twice says nothing more than once, so it is tidied, never an error: migration 71 as released in 1.25.0 mapped
+// old race 17 (Other Pacific Islander) and 18 (Other) both to 17, leaving ["17","17"] in records the worker never
+// entered twice (evaluation of 1.25.0, E7). Applied where answers are saved (normalize) and where a stored record
+// is read (present), so a stored duplicate is read, checked and extracted as one code and dropped from storage
+// the next time the record is saved; nothing is written on read.
+const distinctCodes = (list) => [...new Set(list.map(x => String(x).trim()).filter(Boolean))];
+const MULTI_KEYS = S.FIELDS.filter(f => f.multi).map(f => f.key);
 /** Keep only the elements this record type carries, in a stable shape (codes as strings, lists as arrays). */
 function normalize(type, raw = {}) {
   const out = {};
   for (const f of S.fieldsFor(type)) {
     let v = raw[f.key];
     if (empty(v)) continue;
-    if (f.multi) v = (Array.isArray(v) ? v : String(v).split(/[,;]/)).map(x => String(x).trim()).filter(Boolean);
+    if (f.multi) v = distinctCodes(Array.isArray(v) ? v : String(v).split(/[,;]/));
     else if (f.type === 'int') v = typeof v === 'number' ? v : (/^-?\d+$/.test(String(v).trim()) ? Number(String(v).trim()) : String(v));
     else v = String(v).trim();
     if (!empty(v)) out[f.key] = v;
@@ -122,12 +130,13 @@ function check(rec, ctx) {
     if (empty(v)) { if (required) add(f.key, 'required', `${f.label} is required`); continue; }
     if (f.set) {
       const codes = S.SETS[f.set].map(c => c.code);
-      const vals = f.multi ? (Array.isArray(v) ? v : [v]) : [v];
+      // A multi-answer list is checked as the distinct codes normalize() and present() keep (distinctCodes): a
+      // repeated code is not a problem, and does not count twice towards the maximum.
+      const vals = f.multi ? distinctCodes(Array.isArray(v) ? v : [v]) : [v];
       if (!f.multi && Array.isArray(v)) { add(f.key, 'invalid_code', `${f.label} takes one answer`); continue; }
       const bad = vals.filter(x => !codes.includes(String(x)));
       if (bad.length) add(f.key, 'invalid_code', `${f.label}: ${bad.join(', ')} is not a valid code`);
       if (f.multi && vals.length > (f.multi_max || S.MULTI_MAX)) add(f.key, 'too_many_codes', `${f.label} takes at most ${f.multi_max || S.MULTI_MAX} answers`);
-      if (f.multi && new Set(vals).size !== vals.length) add(f.key, 'duplicate_code', `${f.label} lists the same answer twice`);
     } else if (f.type === 'int') {
       if (typeof v !== 'number' || !Number.isInteger(v)) add(f.key, 'not_a_number', `${f.label} must be a whole number`);
       else if (v < f.min || v > f.max) {
@@ -177,7 +186,7 @@ function check(rec, ctx) {
     // CID-18 rule 2 (p.57): None (1), declined (99900) and unable (99904) take no other disability codes.
     // CID-15 rules 4-5 (p.53): Race Not Available (19) and declined (99900) take no other race codes.
     for (const [k, exclusive] of [['disability', ['1', '99900', '99904']], ['race', ['19', '99900']]]) {
-      const vals = (Array.isArray(a[k]) ? a[k] : []).map(String);
+      const vals = distinctCodes(Array.isArray(a[k]) ? a[k] : []);
       if (vals.length > 1 && vals.some(x => exclusive.includes(x))) add(k, 'exclusive_code_combined', `${label(k)}: "${S.SETS[S.FIELD[k].set].find(c => c.code === vals.find(x => exclusive.includes(x))).label}" cannot be combined with other answers`);
     }
     if (dateOk && ctx.episode && ctx.episode.opened_at && ctx.episode.opened_at.slice(0, 10) !== date) add('record_date', 'admission_date_differs', `Admission date differs from the episode's start (${ctx.episode.opened_at.slice(0, 10)})`, 'warning');
@@ -215,6 +224,8 @@ function present(row) {
   const o = { ...row };
   let answers = {};
   try { answers = row.answers_enc ? JSON.parse(decrypt(row.answers_enc)) : {}; } catch { answers = {}; }
+  if (!answers || typeof answers !== 'object' || Array.isArray(answers)) answers = {};
+  for (const k of MULTI_KEYS) if (Array.isArray(answers[k])) answers[k] = distinctCodes(answers[k]);
   o.answers = answers; delete o.answers_enc;
   return o;
 }

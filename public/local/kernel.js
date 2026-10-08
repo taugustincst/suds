@@ -28715,12 +28715,14 @@ var require_caloms = __commonJS({
     var ANNUAL_EARLY = 60;
     var ANNUAL_LATE = 30;
     var empty = (v) => v === void 0 || v === null || v === "" || Array.isArray(v) && !v.length;
+    var distinctCodes = (list) => [...new Set(list.map((x) => String(x).trim()).filter(Boolean))];
+    var MULTI_KEYS = S.FIELDS.filter((f) => f.multi).map((f) => f.key);
     function normalize(type, raw = {}) {
       const out2 = {};
       for (const f of S.fieldsFor(type)) {
         let v = raw[f.key];
         if (empty(v)) continue;
-        if (f.multi) v = (Array.isArray(v) ? v : String(v).split(/[,;]/)).map((x) => String(x).trim()).filter(Boolean);
+        if (f.multi) v = distinctCodes(Array.isArray(v) ? v : String(v).split(/[,;]/));
         else if (f.type === "int") v = typeof v === "number" ? v : /^-?\d+$/.test(String(v).trim()) ? Number(String(v).trim()) : String(v);
         else v = String(v).trim();
         if (!empty(v)) out2[f.key] = v;
@@ -28757,7 +28759,7 @@ var require_caloms = __commonJS({
         }
         if (f.set) {
           const codes = S.SETS[f.set].map((c) => c.code);
-          const vals = f.multi ? Array.isArray(v) ? v : [v] : [v];
+          const vals = f.multi ? distinctCodes(Array.isArray(v) ? v : [v]) : [v];
           if (!f.multi && Array.isArray(v)) {
             add(f.key, "invalid_code", `${f.label} takes one answer`);
             continue;
@@ -28765,7 +28767,6 @@ var require_caloms = __commonJS({
           const bad = vals.filter((x) => !codes.includes(String(x)));
           if (bad.length) add(f.key, "invalid_code", `${f.label}: ${bad.join(", ")} is not a valid code`);
           if (f.multi && vals.length > (f.multi_max || S.MULTI_MAX)) add(f.key, "too_many_codes", `${f.label} takes at most ${f.multi_max || S.MULTI_MAX} answers`);
-          if (f.multi && new Set(vals).size !== vals.length) add(f.key, "duplicate_code", `${f.label} lists the same answer twice`);
         } else if (f.type === "int") {
           if (typeof v !== "number" || !Number.isInteger(v)) add(f.key, "not_a_number", `${f.label} must be a whole number`);
           else if (v < f.min || v > f.max) {
@@ -28806,7 +28807,7 @@ var require_caloms = __commonJS({
         if (codeOf("criminal_justice") === "99904" && !["3", "4", "5"].includes(codeOf("service_type")) && !(Array.isArray(a.disability) && a.disability.map(String).includes("7"))) add("criminal_justice", "cj_unable_restricted", '"Client unable to answer" for criminal justice status is only allowed for a detox service or a developmentally disabled client');
         if (countOf("children_cps") !== null && countOf("children_under_18") !== null && countOf("children_cps") > countOf("children_under_18")) add("children_cps", "children_cps_exceeds", "Children living with someone else by protective order cannot exceed the number of children");
         for (const [k, exclusive] of [["disability", ["1", "99900", "99904"]], ["race", ["19", "99900"]]]) {
-          const vals = (Array.isArray(a[k]) ? a[k] : []).map(String);
+          const vals = distinctCodes(Array.isArray(a[k]) ? a[k] : []);
           if (vals.length > 1 && vals.some((x) => exclusive.includes(x))) add(k, "exclusive_code_combined", `${label(k)}: "${S.SETS[S.FIELD[k].set].find((c) => c.code === vals.find((x) => exclusive.includes(x))).label}" cannot be combined with other answers`);
         }
         if (dateOk && ctx.episode && ctx.episode.opened_at && ctx.episode.opened_at.slice(0, 10) !== date) add("record_date", "admission_date_differs", `Admission date differs from the episode's start (${ctx.episode.opened_at.slice(0, 10)})`, "warning");
@@ -28842,6 +28843,8 @@ var require_caloms = __commonJS({
       } catch {
         answers = {};
       }
+      if (!answers || typeof answers !== "object" || Array.isArray(answers)) answers = {};
+      for (const k of MULTI_KEYS) if (Array.isArray(answers[k])) answers[k] = distinctCodes(answers[k]);
       o.answers = answers;
       delete o.answers_enc;
       return o;
@@ -54542,8 +54545,18 @@ var require_db = __commonJS({
       //     dropped so validation flags them for the worker (psychiatric-medication/needle-use/lives-with "Yes",
       //     which are now day counts; "Unknown" mental-illness diagnosis; the removed sex-at-birth and
       //     MAT-planned elements). Out-of-range numbers are kept as-is so the edit checks flag them. The
-      //     service_type clear-text column is remapped the same way. Self-contained and idempotent (every mapping
-      //     is a fixed point on the new codes), so it can be renumbered.
+      //     service_type clear-text column is remapped the same way. A list that maps two old codes to one new code
+      //     keeps it once (old race 17 Other Pacific Islander and 18 Other both become 17 Other Race): released in
+      //     1.25.0 without that, it wrote ["17","17"], which server/caloms.js now reads as ["17"] (evaluation of
+      //     1.25.0, E7; this edit is acknowledged in scripts/migration-order.js RELEASED_EDITS).
+      //     NOT idempotent, and must run exactly once: race 18 and 19, gender 6 and referral source 10 to 14 are
+      //     codes in both the old and the new sets with different meanings (new race 18 Multi Racial would become 17,
+      //     new 19 Race Not Available 99900, new gender 6 Not Available 99903 Other, new referral 10 Adult Felon Drug
+      //     Court 7 Probation), and a stored record says nothing reliable about which set its codes are from (a
+      //     part-filled admission can hold only such codes). It runs once because migrate() applies it only to a
+      //     database below schema 71, in the transaction that stamps 71, and because as a released migration it can
+      //     never be renumbered or moved (scripts/migration-order.js); test/migrations.test.js 'migration 71 runs
+      //     once' holds both. Never copy this body into another migration.
       (d) => {
         const { decrypt: decrypt3, encrypt: encrypt3 } = require_crypto();
         const SERVICE = { "01": "1", "02": "1", "03": "1", "04": "2", "05": "2", "06": "2", "07": "2", "08": "3", "09": "4", "10": "4", "11": "7", "12": "7", "13": "1" };
@@ -54572,10 +54585,10 @@ var require_db = __commonJS({
             const s = String(v);
             return table[s] !== void 0 ? table[s] : s;
           };
-          const mapList = (table) => (v) => (Array.isArray(v) ? v : [v]).map((x) => {
+          const mapList = (table) => (v) => [...new Set((Array.isArray(v) ? v : [v]).map((x) => {
             const s = String(x);
             return table[s] !== void 0 ? table[s] : s;
-          });
+          }))];
           if (a.service_type !== void 0) a.service_type = mapStr(SERVICE)(a.service_type);
           if (a.referral_source !== void 0) a.referral_source = mapStr(REFERRAL)(a.referral_source);
           if (a.ethnicity !== void 0) a.ethnicity = mapStr(ETHNIC)(a.ethnicity);

@@ -14,7 +14,9 @@
 > **Open item before the first submission:** the code *values* are verified, but the extract's column
 > names and file layout are SUDS's own and have **not** been verified against the DHCS file
 > specification. The county must convert the CSV files to the DHCS upload format if the county's
-> channel needs something else (fixed-width / XML unconfirmed). DHCS's own cross-submission edits
+> channel needs something else (fixed-width / XML unconfirmed). The same holds for the provider activity
+> report (`provider_activity.csv`, its `NoActivity` column `Y`/`N`): the dictionary has no element for it, so
+> its format is SUDS's own and unverified. DHCS's own cross-submission edits
 > (duplicates across providers, transaction sequencing) are the county's to clear as they come back.
 
 ## What SUDS does and does not do
@@ -64,7 +66,7 @@ the answers.
 | Admission | `1` | Each episode opened on or after the start date | Admission, client, substance-use and past-30-day elements |
 | Discharge | `4` | When the episode is closed | Discharge status, date of last service; past-30-day elements for a standard discharge |
 | Annual update | `7` | Each anniversary of the admission while the episode is open; accepted from 60 days before to 30 days after (window to verify) | Past-30-day elements |
-| Provider activity | — | Every provider ID, every month of the extract period | Counts of 1/4/7; `NoActivity=Y` for a month with none |
+| Provider activity | — (not a TRN-1 form type) | Every provider ID, every month of the extract period | Counts of 1/4/7; `NoActivity=Y` for a month with none (SUDS's own column, not in the dictionary) |
 
 ## What changed in 1.25.0 (the dictionary correction)
 
@@ -77,7 +79,10 @@ Data Dictionary. Every code value is now set from the dictionary (group-item and
   (outpatient → 1, residential/inpatient → 2, OTP → 7); the worker confirms it.
 - **Referral sources** are ADM-5 codes 1–14 (the dictionary's own list, which differs from the old one).
 - **Yes/no is numeric**: every yes/no element is `1`/`0` with its per-element 999xx specials
-  (99900 declined, 99901 not sure, 99904 unable — whichever the element allows). There is no Y/N anywhere.
+  (99900 declined, 99901 not sure, 99904 unable — whichever the element allows). No dictionary element uses
+  Y/N, and neither do the admission, discharge and annual update files. The provider activity report's
+  `NoActivity` column does (`Y`/`N`): the dictionary does not govern it (*Preview, submission and how to
+  submit*). (Until the evaluation of 1.25.0, E9, this said "There is no Y/N anywhere".)
 - **Two "yes/no" fields are really day counts**: needle use in the past 30 days (ADU-10, 0–30) and days
   lived with someone who uses (SOC-3, 0–30); prescribed psychiatric medication is also a day count
   (MHD-4, 0–30).
@@ -93,7 +98,27 @@ Data Dictionary. Every code value is now set from the dictionary (group-item and
 - **Data migration 71** remaps stored answers to the new codes (Y/N→1/0, unpadded drug codes, the service
   and referral remaps, etc.). Answers with no dictionary counterpart (e.g. "Yes" to a question that is now
   a day count) are dropped so validation flags them for the worker to re-ask; out-of-range numbers are kept
-  so the edit checks flag them.
+  so the edit checks flag them. A list that maps two old codes to one new code keeps it once: old race 17
+  (Other Pacific Islander) and 18 (Other) both become 17 (Other Race). As released in 1.25.0 the migration kept
+  both (`["17","17"]`, a fatal duplicate the worker never entered; evaluation of 1.25.0, E7); SUDS now reads and
+  saves race and disability as distinct codes, so a record migrated that way is read, checked and extracted as
+  `["17"]`, and stored that way the next time it is saved. A repeated code is never an error. The migration is
+  **not idempotent** (race 18 and 19, gender 6 and referral sources 10–14 are codes in both sets with different
+  meanings) and runs exactly once: SUDS stamps schema 71 in the transaction that runs it, and a released
+  migration can never move (`scripts/migration-order.js`, `test/migrations.test.js`).
+
+### Upgrading from 1.24.x or earlier: re-ask every old admission
+
+After the upgrade, **every admission recorded before 1.25.0 has fatal errors** until someone re-asks it, because
+the four elements 1.25.0 added are required on every admission and no old admission has them: medication
+prescribed as part of treatment (MED-7), criminal justice status (LEG-1), sexual orientation (CID-20) and consent
+for future contact (CID-19). Each shows as "… is required" on the validation report and the worklist, and the
+record is held back from the submission file, with every discharge and annual update that follows it
+(`admission_has_errors`). The answers migration 71 dropped (a "Yes" to a question that is now a day count; an
+"Unknown" mental-illness diagnosis) are listed the same way. Expect several rows per old admission, one per
+missing answer: an evaluation upgrade showed 42 worklist rows for 3 records. Before the next monthly file, ask
+each client with an open episode, record the answers on the client's Episodes tab (**CalOMS records**), and work
+the worklist to empty. The worklist on State reporting says this in one line.
 
 ## Field mapping
 
@@ -267,7 +292,13 @@ The files (in both the preview and the submission):
   ClientLastName, ClientFirstName, DateOfBirth, AdmissionDate), the record date, then the elements in the
   order of the mapping table above. Multi-answer elements are split into numbered columns (Race1–Race5,
   Disability1–Disability7). Dates are `YYYY-MM-DD`. Column names are SUDS's own (open item above).
-- `provider_activity.csv` — ProviderID, ReportMonth (`YYYYMM`), counts, NoActivity.
+- `provider_activity.csv` — ProviderID, ReportMonth (`YYYYMM`), counts, NoActivity (`Y` for a month with no
+  admission, discharge or annual update, else `N`). This is SUDS's rendering of the provider activity /
+  no-activity report (county process, step 3 below). The dictionary does not govern it: it has no
+  provider-activity element, and its form types (TRN-1, p.104) are admission, discharge and annual update with
+  their resubmissions and deletions only (docs/evidence/caloms-dictionary-verification.md). No document in this
+  repository gives that report's format, so `Y`/`N` is kept rather than changed on a guess, and it is part of the
+  unverified layout (the open item above): check it with the county's channel before the first submission.
 - `README.txt` — the period, counts, how many records were held back, the layout version, this warning and
   the §2.32 notice.
 

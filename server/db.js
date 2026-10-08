@@ -872,8 +872,18 @@ const migrations = [
   //     dropped so validation flags them for the worker (psychiatric-medication/needle-use/lives-with "Yes",
   //     which are now day counts; "Unknown" mental-illness diagnosis; the removed sex-at-birth and
   //     MAT-planned elements). Out-of-range numbers are kept as-is so the edit checks flag them. The
-  //     service_type clear-text column is remapped the same way. Self-contained and idempotent (every mapping
-  //     is a fixed point on the new codes), so it can be renumbered.
+  //     service_type clear-text column is remapped the same way. A list that maps two old codes to one new code
+  //     keeps it once (old race 17 Other Pacific Islander and 18 Other both become 17 Other Race): released in
+  //     1.25.0 without that, it wrote ["17","17"], which server/caloms.js now reads as ["17"] (evaluation of
+  //     1.25.0, E7; this edit is acknowledged in scripts/migration-order.js RELEASED_EDITS).
+  //     NOT idempotent, and must run exactly once: race 18 and 19, gender 6 and referral source 10 to 14 are
+  //     codes in both the old and the new sets with different meanings (new race 18 Multi Racial would become 17,
+  //     new 19 Race Not Available 99900, new gender 6 Not Available 99903 Other, new referral 10 Adult Felon Drug
+  //     Court 7 Probation), and a stored record says nothing reliable about which set its codes are from (a
+  //     part-filled admission can hold only such codes). It runs once because migrate() applies it only to a
+  //     database below schema 71, in the transaction that stamps 71, and because as a released migration it can
+  //     never be renumbered or moved (scripts/migration-order.js); test/migrations.test.js 'migration 71 runs
+  //     once' holds both. Never copy this body into another migration.
   (d) => {
     const { decrypt, encrypt } = require('./crypto');
     const SERVICE = { '01': '1', '02': '1', '03': '1', '04': '2', '05': '2', '06': '2', '07': '2', '08': '3', '09': '4', '10': '4', '11': '7', '12': '7', '13': '1' };
@@ -890,7 +900,7 @@ const migrations = [
       let a = {};
       try { a = r.answers_enc ? JSON.parse(decrypt(r.answers_enc)) : {}; } catch { continue; } // a row we cannot read is left alone
       const mapStr = (table) => (v) => { const s = String(v); return table[s] !== undefined ? table[s] : s; };
-      const mapList = (table) => (v) => (Array.isArray(v) ? v : [v]).map(x => { const s = String(x); return table[s] !== undefined ? table[s] : s; });
+      const mapList = (table) => (v) => [...new Set((Array.isArray(v) ? v : [v]).map(x => { const s = String(x); return table[s] !== undefined ? table[s] : s; }))];
       if (a.service_type !== undefined) a.service_type = mapStr(SERVICE)(a.service_type);
       if (a.referral_source !== undefined) a.referral_source = mapStr(REFERRAL)(a.referral_source);
       if (a.ethnicity !== undefined) a.ethnicity = mapStr(ETHNIC)(a.ethnicity);

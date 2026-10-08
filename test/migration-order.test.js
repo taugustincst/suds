@@ -36,6 +36,20 @@ test('appending migrations passes; a released one moved, edited or removed fails
   assert.ok(M.compareMigrations(prev, M.migrationChunks(twice)).some((p) => /position 5 is headed "\/\/ 4:"/.test(p)));
 });
 
+test('a reviewed edit to a released migration passes only for the exact code it names (RELEASED_EDITS)', () => {
+  const prev = M.migrationChunks(src(['a', 'b', 'c']));
+  const next = M.migrationChunks(src(['a', 'B', 'c']));
+  const fp = M.fingerprintCode(next[1].code);
+  assert.ok(M.compareMigrations(prev, next, { edits: [] }).some((p) => p.includes(`fingerprint ${fp}`)), 'the failure names the fingerprint to record');
+  assert.deepEqual(M.compareMigrations(prev, next, { edits: [{ number: 2, fingerprint: fp, reason: 'test' }] }), []);
+  // The same fingerprint for another position, or the code changed again, is not acknowledged.
+  assert.ok(M.compareMigrations(prev, next, { edits: [{ number: 3, fingerprint: fp, reason: 'test' }] }).some((p) => /released migration 2 .* was changed/.test(p)));
+  const again = M.migrationChunks(src(['a', 'BB', 'c']));
+  assert.ok(M.compareMigrations(prev, again, { edits: [{ number: 2, fingerprint: fp, reason: 'test' }] }).some((p) => /released migration 2 .* was changed/.test(p)));
+  // Every recorded edit names a released position and says why it is safe.
+  for (const e of M.RELEASED_EDITS) { assert.ok(Number.isInteger(e.number) && e.number > 0); assert.match(e.fingerprint, /^[0-9a-f]{16}$/); assert.ok(e.reason.length > 40); }
+});
+
 test('server/db.js keeps every migration of the previous release tag at its position', (t) => {
   const tag = (() => { try { return M.baselineTag(require('../package.json').version); } catch { return null; } })();
   if (!tag) {

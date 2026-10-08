@@ -90,7 +90,7 @@ test('CID-19 Consent: strictly 1/0 and required (dictionary p.58)', () => {
   assert.equal(S.FIELD.consent.req, 'always');
 });
 
-test('yes/no answers are numeric 1/0 with per-element 999xx specials; no Y/N anywhere', () => {
+test('yes/no answers are numeric 1/0 with per-element 999xx specials; no Y/N in any code set', () => {
   for (const set of Object.keys(S.SETS)) for (const c of S.SETS[set]) assert.ok(!['Y', 'N', 'D', 'U'].includes(c.code), `${set} still has letter code ${c.code}`);
   assert.deepEqual(codes('CALWORKS'), ['1', '0', '99901']);            // ADM-8 p.17
   assert.deepEqual(codes('PREGNANT'), ['1', '0', '99901']);             // MED-5 p.79

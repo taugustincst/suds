@@ -6,7 +6,8 @@
 // that upgraded from one branch's build skip the other's migration forever. This compares the array with the
 // one in the previous release tag:
 //   * every migration the tag had is still there, at the same position, with the same code (comments and
-//     whitespace aside), and its header comment still carries its number (`// 45: ...`);
+//     whitespace aside) or an edit reviewed in RELEASED_EDITS (below), and its header comment still carries its
+//     number (`// 45: ...`);
 //   * the migrations after the tag's are numbered on from it, one header per entry, in order;
 //   * since 1.17.0, what the tag's migrations depend on (the helpers they run and the schema.sql definitions they
 //     read) is unchanged, or the change is acknowledged in DEPENDENCY_CHANGES (below, "What released migrations
@@ -60,10 +61,29 @@ function migrationChunks(src) {
 }
 
 /**
- * Problems with `next` (the tree being built) against `prev` (the previous release), as sentences; [] = none.
- * `prev` may be null (no release to compare with): only the numbering of `next` is checked.
+ * Edits to a released migration's code that were reviewed and are safe: { number, fingerprint, reason }. Only for a
+ * patch that may not add a migration (docs/RELEASE.md), and only when a database that already ran the released code
+ * is unaffected (it never runs it again) and test/migrations.test.js still upgrades the fixtures to the same structure
+ * as a fresh install. `fingerprint` is that of the migration's code as edited (the failure names it); an entry stops
+ * applying when the code changes again, and can be removed once a release tag includes the edit.
  */
-function compareMigrations(prev, next) {
+const RELEASED_EDITS = [
+  {
+    number: 71, fingerprint: '013f0c131ee25f49',
+    reason: 'Evaluation of 1.25.0, E7 (patch, no migration allowed): the race and disability lists keep each mapped code once, '
+      + 'so old race 17 and 18 together become ["17"], not a duplicate ["17","17"]. A database already on 71 is unchanged '
+      + '(server/caloms.js reads and saves its lists as distinct codes); one not yet upgraded gets the distinct list. No '
+      + 'structure changes, and test/migrations.test.js covers both.',
+  },
+];
+const fingerprintCode = (code) => require('node:crypto').createHash('sha256').update(code).digest('hex').slice(0, 16);
+
+/**
+ * Problems with `next` (the tree being built) against `prev` (the previous release), as sentences; [] = none.
+ * `prev` may be null (no release to compare with): only the numbering of `next` is checked. `edits`: the reviewed
+ * edits to released migrations (RELEASED_EDITS).
+ */
+function compareMigrations(prev, next, { edits = RELEASED_EDITS } = {}) {
   const out = [];
   next.forEach((m, i) => { if (m.number !== i + 1) out.push(`the migration at position ${i + 1} is headed "// ${m.number}:" (headers number the array from 1, one per migration, in order)`); });
   if (!prev) return out;
@@ -72,8 +92,9 @@ function compareMigrations(prev, next) {
     const at = where(m.code);
     if (i >= next.length) out.push(`released migration ${i + 1} (${m.title}) is gone: released migrations are never removed`);
     else if (next[i].code === m.code) return;
+    else if (edits.some((e) => e.number === i + 1 && e.fingerprint === fingerprintCode(next[i].code))) return;
     else if (at >= 0) out.push(`released migration ${i + 1} (${m.title}) moved to position ${at + 1}: a released migration keeps its number; append new ones after ${prev.length}`);
-    else out.push(`released migration ${i + 1} (${m.title}) was changed: a released migration is never edited (fix forward with a new migration)`);
+    else out.push(`released migration ${i + 1} (${m.title}) was changed (fingerprint ${fingerprintCode(next[i].code)}): a released migration is never edited (fix forward with a new migration; a patch that may not add one records a reviewed edit in RELEASED_EDITS)`);
   });
   return out;
 }
@@ -403,4 +424,4 @@ function main() {
 if (require.main === module) {
   try { process.exitCode = main(); } catch (e) { console.log(`::error::The migration order check could not run: ${e.message}`); process.exitCode = 1; }
 }
-module.exports = { normalizeCode, migrationChunks, compareMigrations, baselineTag, dbSourceAt, lex, topLevel, references, schemaWords, schemaStatements, migrationDependencies, compareDependencies, treeAt, DEPENDENCY_CHANGES };
+module.exports = { normalizeCode, migrationChunks, compareMigrations, baselineTag, dbSourceAt, lex, topLevel, references, schemaWords, schemaStatements, migrationDependencies, compareDependencies, treeAt, DEPENDENCY_CHANGES, RELEASED_EDITS, fingerprintCode };

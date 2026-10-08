@@ -309,7 +309,7 @@ test('migration 71: CalOMS answers are remapped from the old unverified codes to
   assert.equal(a.service_type, '2');
   assert.equal(a.referral_source, '9', 'DUI/DWI 08 -> 9');
   assert.equal(a.ethnicity, '2', 'Mexican 01 -> 2');
-  assert.deepEqual(a.race, ['17', '17', '99900']);
+  assert.deepEqual(a.race, ['17', '99900'], 'old 17 and 18 both become 17 Other Race, kept once (evaluation of 1.25.0, E7)');
   assert.deepEqual(a.disability, ['99900']);
   assert.equal(a.gender_identity, '99900', 'declined 7 -> 99900');
   assert.equal(a.primary_drug, '99903', 'fentanyl 21 -> 99903');
@@ -325,12 +325,63 @@ test('migration 71: CalOMS answers are remapped from the old unverified codes to
   assert.ok(!('mat_planned' in a) && !('sex_at_birth' in a), 'removed elements are dropped');
   assert.equal(a.arrests_30, 40, 'an out-of-range number is kept so the edit checks flag it');
   assert.equal(db().getSetting('schema_version'), String(d.LATEST_SCHEMA_VERSION));
-  // A second run changes nothing.
-  db().setSetting('schema_version', '70');
-  d.close(); d.open(dbPath);
-  assert.deepEqual(JSON.parse(decrypt(db().one(`SELECT answers_enc FROM caloms_records WHERE id=?`, id).answers_enc)), a);
   db().run(`DELETE FROM caloms_records WHERE id=?`, id);
   db().run(`DELETE FROM episodes WHERE id=?`, ep);
+});
+
+// Evaluation of 1.25.0, E7: the race list of a database not yet on 71 comes out with each code once.
+test('migration 71: race ["17","18"] (Other Pacific Islander, Other) becomes ["17"], not a duplicate; disability lists too', () => {
+  const d = require('../server/db');
+  const { encrypt, decrypt, uuid } = require('../server/crypto');
+  const rows = { pair: uuid(), disab: uuid() }; const eps = [];
+  // One admission per episode.
+  const put = (id, answers) => {
+    const ep = uuid(); eps.push(ep);
+    db().run(`INSERT INTO episodes(id,client_id,opened_at,opened_by) VALUES(?,?,?,?)`, ep, ids.client, '2026-09-01', ids.user);
+    db().run(`INSERT INTO caloms_records(id,client_id,episode_id,record_type,provider_id,record_date,service_type,answers_enc,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+      id, ids.client, ep, 'admission', '123456', '2026-09-01', '01', encrypt(JSON.stringify(answers)), ids.user, ids.user);
+  };
+  put(rows.pair, { service_type: '01', race: ['17', '18'], disability: ['2', '9'] });
+  put(rows.disab, { service_type: '01', race: ['01', '18', '17', '02'], disability: ['9', '9'] });
+  db().setSetting('schema_version', '70');
+  d.close(); d.open(dbPath);
+  const read = (id) => JSON.parse(decrypt(db().one(`SELECT answers_enc FROM caloms_records WHERE id=?`, id).answers_enc));
+  assert.deepEqual(read(rows.pair).race, ['17']);
+  assert.deepEqual(read(rows.pair).disability, ['2', '99900']);
+  assert.deepEqual(read(rows.disab).race, ['01', '17', '02'], 'the first place a code appears is kept');
+  assert.deepEqual(read(rows.disab).disability, ['99900']);
+  for (const id of Object.values(rows)) db().run(`DELETE FROM caloms_records WHERE id=?`, id);
+  for (const ep of eps) db().run(`DELETE FROM episodes WHERE id=?`, ep);
+});
+
+// Migration 71 is not idempotent (race 18 and 19, gender 6 and referral 10-14 mean different things before and after
+// it), so it must run exactly once: a database on 71 or later never runs it again, and it can never be renumbered.
+test('migration 71 runs once: a database already on it keeps answers in the new codes as they are', () => {
+  const d = require('../server/db');
+  const { encrypt, decrypt, uuid } = require('../server/crypto');
+  const id = uuid(); const eps = [uuid(), uuid()];
+  for (const ep of eps) db().run(`INSERT INTO episodes(id,client_id,opened_at,opened_by) VALUES(?,?,?,?)`, ep, ids.client, '2026-10-01', ids.user);
+  // Every code that migration 71 would remap if it ran on 1.25 data: Multi Racial, Race Not Available, gender Not
+  // Available, Adult Felon Drug Court; and a 1.25.0-migrated duplicate, which is left for server/caloms.js to read.
+  const now = { service_type: '1', referral_source: '10', race: ['18'], gender_identity: '6', disability: ['1'] };
+  const dup = { service_type: '1', referral_source: '14', race: ['17', '17'], gender_identity: '6', disability: ['1'] };
+  const id2 = uuid();
+  for (const [k, [rid, a]] of [[id, now], [id2, dup]].entries()) db().run(`INSERT INTO caloms_records(id,client_id,episode_id,record_type,provider_id,record_date,service_type,answers_enc,created_by,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+    rid, ids.client, eps[k], 'admission', '123456', '2026-10-01', '1', encrypt(JSON.stringify(a)), ids.user, ids.user);
+  const blob = (rid) => db().one(`SELECT answers_enc, service_type, updated_at FROM caloms_records WHERE id=?`, rid);
+  const before = [blob(id), blob(id2)];
+  assert.equal(db().getSetting('schema_version'), String(d.LATEST_SCHEMA_VERSION));
+  d.close(); d.open(dbPath);
+  assert.deepEqual([blob(id), blob(id2)], before, 'reopening at the current version rewrites nothing');
+  assert.deepEqual(JSON.parse(decrypt(blob(id).answers_enc)), now);
+  // Its position is pinned: moving it (a renumbering, which would run it again on databases already past it) fails.
+  const M = require('../scripts/migration-order');
+  const chunks = M.migrationChunks(fs.readFileSync(path.join(__dirname, '..', 'server', 'db.js'), 'utf8'));
+  assert.match(chunks[70].title, /^CalOMS Tx dictionary verification/);
+  const moved = [...chunks.slice(0, 70), { number: 71, title: 'another', code: '(d) => {}' }, { ...chunks[70], number: 72 }];
+  assert.ok(M.compareMigrations(chunks, moved).some((p) => /released migration 71 .* moved to position 72/.test(p)));
+  for (const rid of [id, id2]) db().run(`DELETE FROM caloms_records WHERE id=?`, rid);
+  for (const ep of eps) db().run(`DELETE FROM episodes WHERE id=?`, ep);
 });
 
 // ---- Databases written by later releases ----
