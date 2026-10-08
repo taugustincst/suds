@@ -68,9 +68,10 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
   const recordNaming = (st) => (st.clientId && providerId && !String(providerId).startsWith('__') && can('consents:write') && providerName() && !namesProvider(st)
     ? h('button', { type: 'button', class: 'btn sm', 'data-record-consent-naming': '1', onClick: (e) => recordConsentFor(st.clientId, e.currentTarget) }, `Record a consent naming ${providerName()}`) : null);
   // A consent that names the provider for another purpose (a TPO consent and a housing referral): say so, not "none names it".
+  // The purpose is quoted as the consent states it, and it often begins "For …", so the sentence does not say "given for".
   const noneNames = (st, button) => {
     const other = st.valid.find(c => c.names_resource && c.covers_referral === false);
-    return other ? [`The consent naming ${providerName()} was given for “${other.purpose || consentTypeLabel(other.type)}”, which does not cover this referral. `, button, ' for this purpose, or ask a supervisor to override.']
+    return other ? [`The consent naming ${providerName()} states its purpose as “${other.purpose || consentTypeLabel(other.type)}”, which does not cover this referral. `, button, ' for this purpose, or ask a supervisor to override.']
       : [`None of the consents on file names ${providerName()}. `, button];
   };
   const consentOption = (c) => ({ value: c.id, label: `${consentTypeLabel(c.type)} → ${c.recipient || '—'} (signed ${fmt.date(c.signed_at)}${c.expires_at ? `, expires ${fmt.date(c.expires_at)}` : ''})` });

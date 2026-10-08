@@ -28,6 +28,13 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   with your county" instead of "CalOMS extract validation", since the file layout is not verified.
   docs/market/templates/PRICING.md and PRICING-OPTIONS.md are marked superseded by the published tiers, and the
   questionnaire and market documents say the pricing is published.
+* **A referral's consent message quotes the purpose once.** "The consent naming … was given for “For treatment,
+  payment, and health care operations”" read "for For"; it now says the consent "states its purpose as “…”".
+* **README-WINDOWS.txt no longer heads the service install "for real records".** The heading is "Install it as a
+  Windows service (production, under a signed licence agreement)", as the licence requires.
+* **Documentation.** The 1.24.4 entry's repeated pricing bullet is removed; docs/RELEASE.md no longer calls 1.25.0
+  "the one tag owed"; HANDOFF.md no longer carries the owner's personal admin notes, and names prospective
+  contacts by role.
 
 ## 1.25.0 — 2026-10-05
 
@@ -85,11 +92,6 @@ nobody is left to remind).
 * **Tag hand-off retired.** All twenty tags `v1.16.3`–`v1.24.3` are pushed; docs/evidence/RELEASE-HANDOFF.md
   is now the record of the push, and docs/RELEASE.md, the evidence README, the security questionnaire and
   HANDOFF.md say so (`scripts/release-state.js` is clean).
-
-* **Published introductory pricing and support terms.** `public/procurement.json` now carries the pricing
-  tiers (90-day pilot, Program, Multi-site, County-wide) and the paid-plan support terms, so the
-  procurement page shows a buyer a price instead of "Not yet published by the maintainer". Contact
-  name, email and website are still unpublished — they need the owner's business contact.
 
 ## 1.24.3 — 2026-10-05
 

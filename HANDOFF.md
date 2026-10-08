@@ -76,12 +76,14 @@ This entry is that summary. Honest version, Tj's rule.
 - **CAPTURE — moderate, path clearing.** Your 1.24.1 proprietary licence repaired the biggest structural
   hole: the moat is now IP (AugustInnovations LLC) + deployment expertise + Part 2 correctness +
   referral-network effects. One honest caveat: the full pre-1.24.1 tree is public and MIT, so a fork of
-  1.24.0 is possible — the defense is velocity, not secrecy. Note the brochure for a prospective reference customer (a county) has an MIT statement that is
-  inaccurate for current versions and should be corrected before it goes out.
+  1.24.0 is possible — the defense is velocity, not secrecy. Note the brochure for a prospective
+  reference customer (a county) has an MIT statement that is inaccurate for current versions and should
+  be corrected before it goes out.
 - **The single gating item is still the independent pen test.** Until one exists, every county
-  conversation ends at "90-day pilot, not purchase." A prospective pen-test contact (Oct 3) asked Tj to commission a
-  pen test of their own software — not ours, but the first live demand for exactly the artifact counties
-  require, and the obvious conversation partner for commissioning ours. Tj has a draft reply queued.
+  conversation ends at "90-day pilot, not purchase." A prospective pen-test contact (Oct 3) asked Tj to
+  commission a pen test of their own software — not ours, but the first live demand for exactly the
+  artifact counties require, and the obvious conversation partner for commissioning ours. Tj has a draft
+  reply queued.
 - **Release hygiene and pricing are done.** Tags pushed, notes published, four tiers live on the
   procurement page. Contact fields still blank — owner-only fill.
   (Correction, 2026-10-08, Claude: tags pushed, yes; notes published, no — 13 of the pushed tags have no GitHub

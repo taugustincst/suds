@@ -165,7 +165,7 @@ function readmeText(version, pins) {
     '  suds-service.xml         Its settings. "suds service install" writes it again.',
     '  THIRD-PARTY-NOTICES.txt  The licences of Node.js and WinSW.',
     '',
-    'Install it as a Windows service (for real records)',
+    'Install it as a Windows service (production, under a signed licence agreement)',
     '  1. Unzip this folder to C:\\Program Files\\SUDS (or C:\\SUDS).',
     '  2. Open Terminal as administrator: right-click Start, choose "Terminal (Admin)".',
     '  3. cd "C:\\Program Files\\SUDS"',
