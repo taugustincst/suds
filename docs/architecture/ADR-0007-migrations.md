@@ -22,7 +22,11 @@ migrations on devices.
   `scripts/migration-order.js` (run by `test/migration-order.test.js` in `npm test`; CI's `test` job fetches
   the release tags so it cannot skip) compares the array with the previous release tag's and fails when a
   released migration moved, changed (comments and whitespace aside) or was removed, or a header does not carry
-  its position (docs/RELEASE.md, "Migration numbering across branches").
+  its position (docs/RELEASE.md, "Migration numbering across branches"). The one exception is a reviewed edit
+  recorded in `RELEASED_EDITS` there with the edited code's fingerprint and why it is safe: for a patch, which
+  may not add a migration, when a database that already ran the released code is unaffected (first used for
+  migration 71's duplicate race codes, evaluation of 1.25.0, E7). A migration that is not idempotent says so in
+  its header and relies on running once (migration 71).
 - Each migration runs in **one transaction with its version stamp**, foreign keys off (SQLite's table-rebuild
   recipe), followed by `PRAGMA foreign_key_check`: a migration that introduces a new orphan fails and rolls back;
   orphans that were already there are tolerated and reported, never silently dropped.

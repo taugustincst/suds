@@ -127,7 +127,6 @@ test('every fatal edit check fires on its own', () => {
     [adm({ education_grade: 'twelve' }), 'education_grade:not_a_number'],
     [adm({ zip_code: '958' }), 'zip_code:zip_invalid'],
     [adm({ race: ['01', '02', '03', '05', '06', '07'] }), 'race:too_many_codes'],
-    [adm({ race: ['01', '01'] }), 'race:duplicate_code'],
     [adm({ disability: ['1', '2'] }), 'disability:exclusive_code_combined'],
     [adm({}, { provider_id: '' }), 'provider_id:provider_missing'],
     [adm({}, { provider_id: '000000' }), 'provider_id:provider_unknown'],
@@ -173,6 +172,49 @@ test('every fatal edit check fires on its own', () => {
   // A warning is not fatal.
   const young = C.check({ record_type: 'admission', provider_id: PROVIDER, record_date: '2026-01-10', answers: admission({ primary_age_first_use: 8 }) }, { ...ctx, dob: '2016-01-01' });
   assert.ok(young.some(i => i.code === 'age_under_12' && i.severity === 'warning'));
+});
+
+// Evaluation of 1.25.0, E7: migration 71 as released turned race ["17","18"] into ["17","17"]. A repeated code is
+// tidied wherever answers are saved or read, and is never an error the worker did not make.
+test('a repeated race or disability code is one answer: tidied on save and on read, never a fatal error', async () => {
+  const C = require('../server/caloms');
+  const ctx = { dob: '1990-04-02', episode: { opened_at: '2026-01-10' }, providers: [PROVIDER], today: '2026-09-25', admission: null };
+  const codes = (answers) => C.check({ record_type: 'admission', provider_id: PROVIDER, record_date: '2026-01-10', answers: admission(answers) }, ctx).map(i => `${i.field}:${i.code}`);
+  assert.deepEqual(codes({ race: ['17', '17'] }), [], 'the checker counts distinct codes');
+  assert.deepEqual(codes({ race: ['01', '02', '03', '05', '06', '06'] }), [], 'a repeat does not count twice towards the maximum of 5');
+  assert.deepEqual(codes({ disability: ['1', '1'] }), [], '"None" twice is not "None" combined with another answer');
+  assert.deepEqual(C.normalize('admission', { race: ['17', '17', '01', '17'], disability: '2;2' }), { race: ['17', '01'], disability: ['2'] });
+
+  // An admission saved through the API with a repeated code is stored with it once.
+  const id = await newClient(nav);
+  const r = await nav.post(`/api/clients/${id}/episodes`, { opened_at: TODAY, caloms: { provider_id: PROVIDER, answers: admission({ race: ['17', '17'] }) } });
+  assert.equal(r.status, 201, JSON.stringify(r.data));
+  const { encrypt, decrypt } = require('../server/crypto');
+  const stored = () => db.one(`SELECT id, answers_enc, updated_at FROM caloms_records WHERE episode_id=?`, r.data.id);
+  assert.deepEqual(JSON.parse(decrypt(stored().answers_enc)).race, ['17']);
+
+  // A record a 1.25.0 upgrade already migrated to ["17","17"] (written here as migration 71 wrote it) is read as ["17"]:
+  // the episode view, the validation report and the worklist list no problem, and reading writes nothing.
+  db.run(`UPDATE caloms_records SET answers_enc=? WHERE id=?`, encrypt(JSON.stringify(admission({ race: ['17', '17'], disability: ['99900', '99900'] }))), stored().id);
+  const before = stored();
+  const view = await nav.get(`/api/episodes/${r.data.id}/caloms`);
+  assert.equal(view.status, 200);
+  assert.deepEqual(view.data.records[0].answers.race, ['17']);
+  assert.deepEqual(view.data.records[0].answers.disability, ['99900']);
+  assert.deepEqual(view.data.records[0].issues.filter(i => i.severity === 'fatal'), []);
+  const rep = await sup.get(`/api/caloms/validation?from=${TODAY}&to=${TODAY}`);
+  assert.ok(!rep.data.rows.some(x => x.client_code === codeOf(id)), JSON.stringify(rep.data.rows.filter(x => x.client_code === codeOf(id))));
+  const work = await sup.get(`/api/caloms/worklist?from=${TODAY}&to=${TODAY}`);
+  assert.equal(work.status, 200);
+  assert.ok(!(work.data.rows || []).some(x => x.client_code === codeOf(id)));
+  assert.deepEqual(stored(), before, 'reading the record does not rewrite it');
+  // The next save stores the list once.
+  const rec = view.data.records[0];
+  const put = await nav.put(`/api/caloms/records/${rec.id}`, { provider_id: PROVIDER, record_date: rec.record_date, answers: rec.answers });
+  assert.equal(put.status, 200, JSON.stringify(put.data));
+  const after = JSON.parse(decrypt(stored().answers_enc));
+  assert.deepEqual([after.race, after.disability], [['17'], ['99900']]);
+  db.run(`DELETE FROM caloms_records WHERE episode_id=?`, r.data.id);
 });
 
 // ---- discharge, annual update, re-admission ----
