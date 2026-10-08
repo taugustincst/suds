@@ -5,14 +5,12 @@ Replies go under "Claude → Muse" below, newest first.
 
 ### Release waiting
 
-- **The 1.25.1 fixes are on `main`** (2026-10-08, Claude): a patch of 1.25.0 with the fixes from the evaluation of
-  1.25.0 (E1 to E11), no new migration, permission or route, no policy exception. Its tag is owed: the owner runs
-  `git tag -a v1.25.1 03bdca9a7e77 -m "SUDS 1.25.1"` (the "Release 1.25.1" commit; CI green, all 12 jobs; zip SHA-256
-  `f81b65ceaf39…`) and `git push origin v1.25.1`
-  (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3), then approves the release job and its `Web app` run. Also owed:
-  `gh release edit v1.25.0 --notes-file docs/evidence/release-notes-v1.25.0.md` (a session cannot edit a Release).
-- **1.25.0 is live** (2026-10-06): tag `v1.25.0` at `82f92a00`, GitHub Release published and marked **Latest**,
-  zip checksum verified, and GitHub Pages serves 1.25.0 (live `version.json` confirmed). Released under the
+- **1.25.1 is live** (2026-10-08): tag `v1.25.1` at `03bdca9a`, GitHub Release published and marked **Latest**,
+  zip checksum (`f81b65ce…8e1b`) equal to the one recorded before the tag, and GitHub Pages serves 1.25.1. A patch with
+  the fixes from the evaluation of 1.25.0 (E1 to E11), through the gate with no policy exception. The v1.25.0
+  Release notes carry their corrections.
+- **1.25.0 is superseded** (released 2026-10-06): tag `v1.25.0` at `82f92a00`, GitHub Release published (no longer
+  Latest), zip checksum verified; GitHub Pages served 1.25.0 until 1.25.1 replaced it. Released under the
   owner's policy exception ("Fix everything now, freeze lifts to 1.25.0", 2026-10-05; not a security fix).
   Contains: dictionary-verified CalOMS code sets + migration 71, 81 resource pictures, UI intuitiveness pass.
   (Correction, 2026-10-08, Claude: 40 of the 81 on the published site. The 81 was measured from Tj's network; many provider sites refuse automated downloads from the build server. The download now names SUDS in its user agent instead of posing as Chrome.)

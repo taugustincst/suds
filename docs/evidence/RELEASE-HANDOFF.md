@@ -1,65 +1,33 @@
-# Release hand-off: v1.25.1 to tag, then the record
+# Release hand-off: v1.25.1 released, then the record
 
-> **The one owner action: run step 1, then step 2's tag command and its push.** It publishes 1.25.1:
-> the tag starts `release.yml` (gate, verify, approval in the `release` environment), the release marks
-> `v1.25.1` Latest, and its `Web app` run republishes GitHub Pages. Until the tag exists, 1.25.1 has no
-> GitHub Release and no gate approval. 1.25.0 below is released; its record follows.
-> A session tried the tag push on 2026-10-08 and was refused (HTTP 403): the `v*` tag ruleset lets only the owner
-> make release tags, as intended.
+> 1.25.1 is released (2026-10-08): tag `v1.25.1` at `03bdca9a`, GitHub Release published and marked **Latest**,
+> zip checksum verified against the value recorded before the tag, GitHub Pages serves 1.25.1. The v1.25.0 release
+> below is the superseded record. No tag is owed.
 
-1.25.1 is a patch of 1.25.0 (docs/RELEASE.md, *Record: 1.25.1*): the fixes from the evaluation of 1.25.0, E1 to
-E11. No new migration, no new or widened permission and no new route.
+## v1.25.1: released
 
-## The one release
-
-| Tag | Commit (stamp, "Release X.Y.Z") | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
+| Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 |
 | --- | --- | --- | --- |
-| `v1.25.1` | `03bdca9a7e77d3fa899b1a051536a6e9082ec71f` ("Release 1.25.1"; exact-commit CI run 37809832942, all 12 jobs green) | 2026-10-08 | `f81b65ceaf390bc2430ca8205a787781873411b12681c842c5cb19a727a28e1b` |
-
-The SHA-256 above was rebuilt twice from the commit, identical. The zip is a function of the commit (`git archive`, as below); the release job refuses to publish a Release whose
-zip is not byte for byte its own build (`scripts/release-existing.js`). Compare the `.sha256` beside the published
-zip with a rebuild before recording it anywhere:
+| `v1.25.1` | `03bdca9a` ("Release 1.25.1") | 2026-10-08 | `f81b65ceaf390bc2430ca8205a787781873411b12681c842c5cb19a727a28e1b` (recorded before the tag; the release asset matches) |
 
 ```bash
-R1251=$(git log -1 --format=%H --grep='^Release 1.25.1$' origin/main)
-git archive --format=zip --prefix=suds-v1.25.1/ -o suds-v1.25.1.zip "$R1251" && sha256sum suds-v1.25.1.zip
+git fetch origin tag v1.25.1
+git archive --format=zip --prefix=suds-v1.25.1/ -o suds-v1.25.1.zip v1.25.1 && sha256sum suds-v1.25.1.zip
+# f81b65ceaf390bc2430ca8205a787781873411b12681c842c5cb19a727a28e1b  suds-v1.25.1.zip
 ```
 
-## 1. Check (the owner, from any clone)
+## Completed: v1.25.1 (2026-10-08)
 
-```bash
-git fetch origin
-R1251=$(git log -1 --format=%H --grep='^Release 1.25.1$' origin/main)
-for c in $R1251; do
-  git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
-done
-git show -s --format='%h %s' $R1251   # "Release 1.25.1"
-git show origin/main:package.json | grep '"version"'                            # 1.25.1
-gh run list --workflow ci.yml --commit $R1251 --event push --limit 1   # completed, success
-git ls-remote --tags origin | grep 'v1.25.1'   # not there yet: the tag is what this hand-off is for
-```
-
-## 2. Tag, and push
-
-```bash
-git tag -a v1.25.1 "$R1251" -m "SUDS 1.25.1"
-git push origin v1.25.1
-```
-
-`v1.25.1` is newer than every tag on origin, so its push is safe on its own.
-
-## 3. What the tag's run does, and what to approve
-
-| Tag | Its gate (main's scripts) | Latest? Web app? | What the owner does |
-| --- | --- | --- | --- |
-| `v1.25.1` | **Passes**: a patch of `v1.25.0` with no new migration, permission or route, within the size limit (*Record: 1.25.1*) | **Latest**, and it starts a `Web app` run: the newest tag. Its run also builds and attaches the Windows server zip, unsigned while the certificate secrets are not set | Nothing to dispatch: the tag push runs it. Approve the release job, then **approve its `Web app` run**, which publishes 1.25.1 to GitHub Pages |
-
-**Also: correct the v1.25.0 Release notes** (the "10 hours after v1.24.0" line, the picture count, the Y/N claim
-and the upgrade note; docs/RELEASE.md, *Record: 1.25.1*). A session cannot edit a GitHub Release, so the owner runs:
-
-```bash
-gh release edit v1.25.0 --notes-file docs/evidence/release-notes-v1.25.0.md
-```
+- `v1.25.1` — commit `03bdca9a7e77d3fa899b1a051536a6e9082ec71f` ("Release 1.25.1"; CHANGELOG 2026-10-08), zip SHA-256
+  `f81b65ceaf390bc2430ca8205a787781873411b12681c842c5cb19a727a28e1b`, rebuilt twice from the commit before the tag and equal to the release asset's `.sha256`.
+- Exact-commit CI 37809832942 (all 12 jobs green) before the tag; the owner pushed the tag on 2026-10-08 (a session's
+  push was refused, HTTP 403, by the `v*` tag ruleset, as intended). Release run 37820056470 (success; the gate passed
+  it as a patch with no `policy_exception`); published 2026-10-08T18:00:38Z, marked **Latest**.
+- Assets: `suds-v1.25.1.zip` + `.sha256`, `suds-1.25.1-windows-x64.zip` (SHA-256 `b280651cc0d7de80ada82c751cade00538826621a3665a174ba601c9763d7d16`, unsigned: the code-signing
+  secrets are not set) + `.sha256`.
+- Pages: the `Web app` run succeeded; `gh-pages`' `version.json` reads **1.25.1**.
+- SBOM: a patch keeps its minor's, `sbom-1.25.0` (describes `v1.25.0`, not 1.25.1's code; evaluation of 1.25.1, F6).
+- The v1.25.0 Release notes carry the corrections block (`docs/evidence/release-notes-v1.25.0.md`), applied by the owner.
 
 ## v1.25.0: released
 
