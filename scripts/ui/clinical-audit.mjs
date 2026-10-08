@@ -636,6 +636,94 @@ const phone = await session('mrivera', 'Navigator2026!!', { width: 390, height: 
   await closeModal(page);
 }
 
+// ---------------- 1.25.2: the clinical role review and the front-line tester ----------------
+{
+  const CONSENT = { signed_at: day(-5), discloser: 'This program', scope: 'Referral information', expires_event: 'end of treatment', signed_on_paper: true, revocation_right_given: true, redisclosure_notice_given: true, refusal_consequences_given: true };
+  const c = (await nav.api('POST', '/api/clients', { first_name: 'Rev', last_name: 'Clin' + stamp, primary_substance: 'opioids_fentanyl', secondary_substances: 'opioids_fentanyl, kratom', confirm_duplicate: true })).data;
+  // FL14: a secondary substance stored as a code reads as its label.
+  await go(nav.page, `client/${c.id}`);
+  const subst = await nav.page.$eval('.main', e => e.textContent);
+  ok(!/opioids_fentanyl/.test(subst) && /kratom/.test(subst), 'a secondary substance code reads as its label, typed text as typed');
+
+  // CS6: a supervisor opening another worker's draft is not offered "Sign & lock", and is told why.
+  const draft = (await nav.api('POST', '/api/notes', { client_id: c.id, kind: 'admin', format: 'narrative', title: 'Draft ' + stamp, content: 'Draft by Maria.', occurred_at: new Date().toISOString() })).data;
+  const { page: sp } = sup;
+  await go(sp, 'dashboard');
+  await sp.evaluate(async (id) => (await import('./views/notes.js')).openNote(id), draft.id);
+  await sp.waitForSelector('.modal [data-owned-notice]');
+  ok(!(await sp.$('.modal button:has-text("Sign & lock")')), 'no "Sign & lock" on another worker\'s draft');
+  ok(/Only the author can sign it/.test(await sp.textContent('.modal [data-owned-notice]')), 'the dialog says only the author signs');
+  ok(await sp.$('.modal button:has-text("Edit draft")'), 'a supervisor can still edit it');
+  await closeModal(sp);
+  // CS17: the supervisor's menu entry has the page's own name.
+  ok(/Supervision tools/.test(await sp.textContent('.sidebar a[href="#/admin"]')), 'the menu says "Supervision tools", not "Settings"');
+  await go(sp, 'admin');
+  ok(/Supervision tools/.test(await sp.textContent('.main h1')) && /Supervision tools/.test(await sp.title()), 'and so do the heading and the title', await sp.title());
+
+  // CS9: choosing a consent on "+ Disclosure" fills in its recipient and purpose.
+  await nav.api('POST', `/api/clients/${c.id}/consents`, { ...CONSENT, type: 'part2_disclosure', recipient: 'Riverside Recovery House', purpose: 'Referral and care coordination' });
+  const np = nav.page;
+  await go(np, `client/${c.id}/consents`);
+  await np.click('button:has-text("+ Disclosure")'); await np.waitForSelector('.modal select[name=consent_id]');
+  await np.selectOption('.modal select[name=consent_id]', { index: 1 });
+  eq(await np.inputValue('.modal input[name=disclosed_to]'), 'Riverside Recovery House', 'the recipient comes from the consent');
+  eq(await np.inputValue('.modal input[name=purpose]'), 'Referral and care coordination', 'and so does the purpose');
+  await closeModal(np);
+
+  // FL7 and FL8: a consent that does not name the provider is not pre-selected, says so when chosen, and saving with a
+  // warm handoff shows the server's own reason.
+  const prov = (await nav.api('POST', '/api/resources', { name: 'Hope Street Detox ' + stamp, category: 'detox_withdrawal_mgmt' })).data;
+  await nav.api('POST', `/api/clients/${c.id}/consents`, { ...CONSENT, type: 'part2_disclosure', recipient: `Hope Street Detox ${stamp} — Springfield (Detox)`, purpose: 'Referral and care coordination' });
+  await np.evaluate(async ({ cid, rid }) => (await import('./views/referrals.js')).openReferralForm(null, { clientId: cid, resourceId: rid }), { cid: c.id, rid: prov.id });
+  await np.waitForSelector('.modal select[name=consent_id]'); await settle(np);
+  eq(await np.inputValue('.modal select[name=consent_id]'), '', 'a consent that does not name the provider is not pre-selected');
+  const near = await np.$$eval('.modal select[name=consent_id] option', os => os.find(o => /Springfield/.test(o.textContent))?.value);
+  await np.selectOption('.modal select[name=consent_id]', near);
+  ok(await until(() => np.$('.modal [data-consent-used].err')), 'choosing it says it does not cover this referral');
+  await np.check('.modal input[name=warm_handoff]'); await np.click('.modal button[type=submit]');
+  ok(await until(async () => /does not name Hope Street Detox/.test(await np.textContent('.modal').catch(() => ''))), 'saving shows the server\'s precise reason');
+  await closeModal(np);
+  // FL7: the consent form suggests the directory's names for "To whom".
+  await go(np, `client/${c.id}/consents`);
+  await np.click('button:has-text("+ Consent")');
+  ok(await until(() => np.$('.modal [data-recipient-suggestions] option')), '"To whom" suggests the resource directory\'s names');
+  await closeModal(np);
+
+  // FL2: the overdose form keeps what happened and naloxone in step.
+  await np.evaluate(async () => (await import('./views/overdose.js')).openOverdoseForm(null, {}));
+  await np.waitForSelector('.modal select[name=kind]');
+  await np.selectOption('.modal select[name=kind]', 'overdose'); await np.check('.modal input[name=naloxone_used]');
+  eq(await np.inputValue('.modal select[name=kind]'), 'reversal', 'ticking naloxone on an overdose with none makes it a reversal');
+  await np.selectOption('.modal select[name=kind]', 'fatal');
+  eq(await np.isChecked('.modal input[name=survived]'), false, 'a fatal overdose unticks "survived"');
+  await np.selectOption('.modal select[name=kind]', 'overdose');
+  eq(await np.isChecked('.modal input[name=naloxone_used]'), false, 'an overdose with no naloxone unticks naloxone');
+  await closeModal(np);
+}
+{
+  // CS7: the clinician's Permissions say how a clinical supervisor gets countersigning.
+  const a = await session('admin', 'AdminPassw0rd!x');
+  await go(a.page, 'admin?tab=users'); await a.page.waitForSelector('.main table');
+  await a.page.click('[data-user-permissions="kpatel"]');
+  ok(await until(() => a.page.$('.modal [data-perm-cosign-hint]')), 'a clinician\'s Permissions point to Countersign notes for a clinical supervisor');
+  await a.close();
+  // CS8: a clinician reports a privacy concern; a supervisor gets the to-do.
+  const k = await session('kpatel', 'Navigator2026!!');
+  await go(k.page, 'compliance');
+  await k.page.click('[data-report-concern-open]'); await k.page.waitForSelector('.modal [data-report-concern] textarea[name=what]');
+  ok(!!(await k.page.inputValue('.modal select[name=assigned_to]')), 'it goes to a supervisor or administrator by default');
+  await k.page.fill('.modal textarea[name=what]', 'Fax sent to the wrong number ' + stamp); await k.page.click('.modal button[type=submit]');
+  ok(await until(async () => /Reported/.test(await k.page.textContent('#toasts'))), 'the clinician is told it was reported');
+  await k.close();
+  // FL11: on a phone, closing a dialog opened from "Add…" puts focus back on "Add…".
+  const { page: pp, api: papi } = phone;
+  const pc = (await papi('POST', '/api/clients', { first_name: 'Focus', last_name: 'Back' + stamp, confirm_duplicate: true })).data;
+  await go(pp, `client/${pc.id}`);
+  await pp.click('[data-client-add]'); await pp.click('.add-list button:has-text("Call")');
+  await pp.waitForSelector('.modal'); await closeModal(pp);
+  eq(await pp.evaluate(() => document.activeElement && document.activeElement.dataset.clientAdd), '1', 'focus is back on "Add…"');
+}
+
 await phone.close(); await adm.close(); await sup.close(); await nav.close();
 await browser.close();
 if (errors.length) { console.log('ERRORS:'); errors.forEach(e => console.log('  ' + e)); } else console.log('NO ERRORS');

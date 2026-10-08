@@ -239,7 +239,7 @@ route('outreach', async () => {
           errorBox.classList.remove('hidden');
         }
       }
-      // An offline failure already says that the entry was kept and to try again (app.js OFFLINE_MESSAGE).
+      // An offline failure already says the entry is only on this screen and to try again (app.js OFFLINE_MESSAGE).
       if (!saved && errorBox.classList.contains('hidden')) {
         errorBox.textContent = err && err.offline ? err.message : `Not saved: ${(err && err.message) || 'something went wrong'}. Nothing was lost: try again.`;
         errorBox.classList.remove('hidden');

@@ -65,6 +65,9 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
   const providerName = () => { const x = res.find(r => r.id === providerId); return x ? x.name : (addedNames[providerId] || ''); };
   // ...and was given for a referral (covers_referral: the purpose it states covers one, server/disclosure.js).
   const namesProvider = (st) => st.valid.some(c => c.names_resource && c.covers_referral !== false);
+  // A consent the server says does not name this provider or cover a referral to it (1.25.2, FL8): never pre-selected,
+  // and when chosen the form says the referral cannot rely on it.
+  const notCovering = (c) => !!(c && providerId && !String(providerId).startsWith('__') && (c.names_resource === false || c.covers_referral === false));
   const recordNaming = (st) => (st.clientId && providerId && !String(providerId).startsWith('__') && can('consents:write') && providerName() && !namesProvider(st)
     ? h('button', { type: 'button', class: 'btn sm', 'data-record-consent-naming': '1', onClick: (e) => recordConsentFor(st.clientId, e.currentTarget) }, `Record a consent naming ${providerName()}`) : null);
   // A consent that names the provider for another purpose (a TPO consent and a housing referral): say so, not "none names it".
@@ -117,7 +120,9 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     } catch (e) {
       // The commonest failure by far is sharing without a consent; say what to do about it, once (the
       // server's message already ends in its own advice, and appending ours repeated it).
-      if (/valid, unexpired consent/i.test(e.message || '') || (e.data && e.data.recipientNotCovered && !namesProvider(consentState))) {
+      // A consent that is on file and chosen but does not name the provider or purpose: the server says exactly why, so its
+      // message stands (1.25.2, FL7; it used to be replaced by "No consent on file names …").
+      if (/valid, unexpired consent/i.test(e.message || '') && !(e.data && e.data.recipientNotCovered)) {
         const err = new Error(consentState.valid.length && namesProvider(consentState)
           ? 'Choose the client\'s consent under "Consent / ROI on file" before the provider is told who this client is — or, if you are relying on something else, choose the lawful basis.'
           : providerName() && can('consents:write') ? `No consent on file names ${providerName()}. Use "Record a consent naming ${providerName()}" under Consent, or choose a lawful basis above.`
@@ -126,7 +131,8 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
       }
       throw e;
     }
-    toast('Referral saved', 'ok'); m.close(); onDone && onDone();
+    const chosen = consentState.valid.find(c => c.id === d.consent_id);
+    toast(notCovering(chosen) ? 'Referral saved as it is, but the consent chosen does not cover it: it cannot move on from pending until a consent that does is recorded.' : 'Referral saved', notCovering(chosen) ? 'warn' : 'ok', { ms: notCovering(chosen) ? 8000 : undefined }); m.close(); onDone && onDone();
   } });
   const statusSel = f.inputs.status;
   const outcomeShown = () => !UNDER_WAY.includes(statusSel.value) || (!isNew && !!(values.barrier || values.outcome));
@@ -183,8 +189,10 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
   const showUsed = () => {
     const c = consentState.valid.find(x => x.id === consentSel.value);
     usedLine.dataset.consentUsed = c ? c.id : '';
-    usedLine.replaceChildren(...(c
-      ? [h('b', {}, 'This referral will rely on: '), consentOption(c).label, autoPicked ? ' — the one consent on file that names this provider.' : '']
+    usedLine.classList.toggle('err', notCovering(c));
+    usedLine.replaceChildren(...(notCovering(c)
+      ? [h('b', {}, 'This consent does not cover this referral: '), c.names_resource === false ? `it does not name ${providerName() || 'this provider'}.` : 'it was given for another purpose.', ' The referral can be saved as pending, but cannot go further until a consent that covers it is recorded.']
+      : c ? [h('b', {}, 'This referral will rely on: '), consentOption(c).label, autoPicked ? ' — the one consent on file that names this provider.' : '']
       : consentState.valid.length ? ['No consent chosen. Choose one before the provider is told who this client is.'] : []));
   };
   const rebuildConsents = (st) => {
@@ -192,7 +200,7 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
     const keep = consentSel.value;
     while (consentSel.firstChild) consentSel.firstChild.remove();
     consentSel.append(h('option', { value: '' }, st.expiredOnly ? '(expired)' : '—'), ...st.valid.map(c => { const o = consentOption(c); return h('option', { value: o.value }, o.label); }));
-    const kept = st.valid.some(c => c.id === keep) && !(autoPicked && keep !== st.suggested);
+    const kept = st.valid.some(c => c.id === keep && !notCovering(c)) && !(autoPicked && keep !== st.suggested);
     consentSel.value = kept ? keep : '';
     if (!kept) autoPicked = false;
     if (!consentSel.value && st.suggested && st.valid.some(c => c.id === st.suggested)) { consentSel.value = st.suggested; autoPicked = true; }
@@ -202,6 +210,8 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
   consentSel.addEventListener('change', () => { autoPicked = false; showUsed(); });
   // A new referral (or one with no consent yet) takes the suggestion the first read came back with.
   if (!values?.consent_id && consentState.suggested) { consentSel.value = consentState.suggested; autoPicked = consentSel.value === consentState.suggested; }
+  // A choice brought back by a saved draft of a new referral is not kept when it does not cover this referral.
+  if (isNew && notCovering(consentState.valid.find(c => c.id === consentSel.value))) consentSel.value = '';
   showUsed();
   let seq = 0;
   const reloadConsents = async () => {
