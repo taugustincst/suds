@@ -276,7 +276,7 @@ checks; migration 71 remapping stored answers), better resource-directory pictur
 provider whose site allows an automated download; the 1.25.0 build bundled 40 of the 81, because many
 provider sites refuse automated downloads from the build server; each build's count is the `summary` in its
 `region-pictures/<region>/manifest.json`), and the UI intuitiveness pass (plainer call/text form labels, an accessible resource-directory view toggle). The
-SBOM, `docs/evidence/sbom-1.25.0.cdx.json`, was first committed with the stamp preparation from `1474829e`
+SBOM, `sbom-1.25.0` (in the evidence index), was first committed with the stamp preparation from `1474829e`
 ("Release 1.25.0"), whose kernel was still 1.24.4's; it is regenerated from the tag (`node scripts/sbom.js --ref
 v1.25.0`, 2026-10-08) and describes the shipped commit. The stamp was split over three commits, so the tag
 `v1.25.0` is on `82f92a00` ("Rebuild public assets for the 1.25.0 stamp"), not on "Release 1.25.0"

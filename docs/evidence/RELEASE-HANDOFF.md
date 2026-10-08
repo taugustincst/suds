@@ -116,9 +116,8 @@ git archive --format=zip --prefix=suds-v1.25.0/ -o suds-v1.25.0.zip v1.25.0 && s
   rebuilt from the tag. They are the second channel for `upgrade.sh --release-sha256` (the Windows zip's had been
   recorded nowhere on `main` until then).
 
-- SBOM: `docs/evidence/sbom-1.25.0.cdx.json` was first generated from `1474829e`, whose kernel is 1.24.4's
-  (`6fe02fce…`). It is regenerated from the tag (`node scripts/sbom.js --ref v1.25.0 --out
-  docs/evidence/sbom-1.25.0.cdx.json`, 2026-10-08) and now records commit `82f92a00` and the shipped kernel,
+- SBOM: 1.25.0's SBOM (`sbom-1.25.0`, in the evidence index) was first generated from `1474829e`, whose kernel is 1.24.4's
+  (`6fe02fce…`). It is regenerated from the tag (`node scripts/sbom.js --ref v1.25.0`, 2026-10-08) and now records commit `82f92a00` and the shipped kernel,
   SHA-256 `91a14310e7faa177abad1f1b52681796dc1e02d518fc2f4506c521dabda5bf58` (the same bytes gh-pages serves).
 
 - Pages: the `Web app` run 37419567221 succeeded (the `tag/` path fix from 1.24.4 held). Live `version.json` reads **1.25.0**.
