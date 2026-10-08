@@ -65,7 +65,8 @@ code-signing certificate. Without one, Windows SmartScreen warns about an unknow
    ```
    It waits until SUDS answers and prints the address, `http://localhost:8080`.
 5. **Finish setup.** Open that address **in a browser on this server** and complete the setup wizard. The
-   wizard creates the first administrator. It asks whether other computers may connect, and it can create a
+   wizard creates the first administrator: the username is `guest` unless you type another, and the password
+   is the one you choose there; the last page repeats the username to sign in with. It asks whether other computers may connect, and it can create a
    self-signed HTTPS certificate. Then it moves SUDS to the address staff will use (see *HTTPS* and
    *Firewall*).
 

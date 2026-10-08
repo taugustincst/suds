@@ -86,6 +86,7 @@ const done = (await page.textContent('#app')).replace(/\s+/g, ' ');
 const wizardError = await page.$eval('.banner.danger, .banner.error, .err', e => e.textContent).catch(() => '');
 if (wizardError) console.log('  wizard said: ' + wizardError.slice(0, 300));
 ok(/Back up your encryption keys/.test(done), 'and tells the administrator to back up the generated keys');
+ok(/Sign in there with the username "[^"]+" and the password you just chose/.test(done), 'and names the username to sign in with (the 1.25.1 launch: the operator guessed "admin")', done.slice(0, 300));
 ok(new RegExp(`https://[^\\s]*:${port}`).test(done), `and shows the HTTPS address it is now listening on (port ${port})`, done.slice(0, 200));
 
 const after = `https://127.0.0.1:${port}`;

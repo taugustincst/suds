@@ -495,7 +495,9 @@ if (( ${#new_keys[@]} )); then
   say "==================================================================================================="
 fi
 if [[ -e "$(P "$DATA_DIR/first-admin-password.txt")" ]] || (( DRY )); then
-  say ""; say "First sign-in: the temporary administrator password is in $DATA_DIR/first-admin-password.txt (sudo cat it once; it is deleted when changed). Sign in at https://$DOMAIN, change it and enrol two-step verification."
+  # The name is not printed anywhere else, and the one people guess ("admin") is not it (the 1.25.1 launch).
+  admin_user=$(env_get SUDS_ADMIN_USERNAME); admin_user=${admin_user:-guest}
+  say ""; say "First sign-in: open https://$DOMAIN and sign in with the username \"$admin_user\" (the first administrator) and the temporary password in $DATA_DIR/first-admin-password.txt (sudo cat it once; it is deleted when changed). You are asked to change it, then to enrol two-step verification."
 fi
 
 if (( ! SKIP_CHECK )); then run_compliance_check; fi
