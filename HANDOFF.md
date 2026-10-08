@@ -348,6 +348,82 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-10-08 — Claude: every position tested on 1.25.1, and the evaluation of 1.25.1
+
+At Tj's request I tested every position on the released 1.25.1 (tag `v1.25.1`, `03bdca9a`): the two navigators, the
+clinician, the supervisor, the administrator, finance, the read-only county analyst, a county-view user, a device-only
+user on the published `gh-pages` build, and county IT installing the office server. Each was driven in a real browser
+on servers seeded with fictional data, on the real clock and at 21:00 Los Angeles (and 21:00 on 31 October for the
+month end), with every route probed for what the role must not do. A separate marketability evaluation scored the
+release. All fixes are going into 1.25.2 (below); please do not start parallel work on these items.
+
+**Scores (out of 5), 1.25.0 → 1.25.1:** Frontline 4.5 → 4.75; Supervisor/clinical 4.25 → 4.5; CBO director 3.75 (=);
+County 3.25 → 3.5; Device-only 3.25 (=); Security/compliance 3.25 → 3.5; Windows/county IT 3.0 (=). Lens average
+3.61 → 3.75. **Headline 2.75 → 3.0.** Every E1–E11 fix held hands-on; full `npm test` 2,047/2,047 in UTC and at 21:00
+Los Angeles; the browser scripts run, accessibility included (10,309 checks), all passed; the published zip matches the
+checksum recorded before the tag. What takes the headline to 3.5 is the owner's, not code: a published procurement
+contact and a completed independent pen test, with code signing or a confirmed CalOMS layout for margin.
+
+**Can each position do their job?**
+
+| Position | Verdict | Worst finding |
+| --- | --- | --- |
+| Navigator (mrivera, desktop) | Yes | FL1: a wrong 2-step code says "Session expired" |
+| Navigator (dchen, phone 390×844) | Yes | FL6: the top bar stretches on short pages |
+| Clinician (kpatel) | Yes, with friction | CS1 (High): the 999xx special answers cannot be chosen in the episode dialogs |
+| Supervisor (jwalker) | Yes | CS3: a caseload transfer can leave a client with nobody |
+| Administrator | Yes, with serious caveats | BO1 (Critical): a restored backup runs without WAL and returns 500 "database is locked" |
+| Finance (afinance) | Approves and reports; no usable ledger | BO6 (High): the Excel export drops dates, vendor and receipt |
+| Read-only (rreader) | Yes | BO7: the "de-identified" client list carries too much |
+| County user | Yes | — |
+| Device-only user (Pages) | Yes, everything tested passed | — |
+| County IT | Can install | BO2 (High): the wizard drops "Yes" answers; BO14: update --check crashes |
+
+Permission boundaries held everywhere: 157 routes as a navigator, all 440 as clinician and supervisor, all 509 as
+finance and read-only; every refusal is a 403/404 with a message, and the only 5xx is CS15 (OneNote import, 502). axe
+found nothing on any page or dialog for any position. Caseload scoping between the two navigators holds.
+
+**Findings** (full repro, file:line and fixes are in the testers' reports; IDs are stable):
+
+- *Critical/High:* **BO1** restore leaves the database in rollback-journal mode (WAL is set only when a database is
+  created, `server/schema.sql:3` via `initialise()`), so ordinary load gives 500 "database is locked" and lost audit
+  entries; **CS1** 999xx special answers unusable in Start an episode / Discharge (`episodes.js` never calls
+  `wireCalomsAlt`); **BO2** wizard drops "Yes" for the offline copy and participant codes (`true` → `1` vs `=== true`);
+  **BO3** an administrator can grant themselves `notes:clinical:*` and read clinical notes without break-glass;
+  **BO4** spreadsheet import stores impossible, future and year-less dates; **BO6** finance's Excel export is
+  de-identified to uselessness.
+- *Medium:* **FL1** wrong 2-step code → "Session expired"; **FL2** overdose records can contradict themselves (no check
+  in `server/rules/overdose_events.js`); **FL3** "10/8" refused in every date box; **FL4** search cannot find a date of
+  birth typed 7/23/1993; **CS2** Consents tab shows "Expired" on the last day (and a day early after 5pm); **CS3**
+  caseload transfer can leave nobody on the care team; **CS4** today's to-dos and the due-today count use the UTC date;
+  **CS5** the monthly trend report groups by UTC month; **BO5** the API accepts 2026-09-31; **BO7** read-only/finance
+  client list too wide; **BO8** deleting a budget line detaches approved spending; **BO9** an office server's
+  procurement page names the maintainer as BAA signer by default; **BO10** the wizard pre-selects the offline copy;
+  **BO11** offsite folder and backup hours not validated; **BO12** `scim_default_role` can be admin; emergency SSO
+  accounts need not exist; **F1** FHIR `Consent?status=` freezes "today" at server start (a 1.25.1 regression; the
+  disclosure decision itself uses the current date, so nothing leaks).
+- *Low:* FL5 (first-name misspellings not found), FL6, FL7, FL8, FL9, FL10, FL11 (focus not returned, WCAG 2.4.3),
+  FL12 (401s in the console), FL13; CS6–CS15; BO13–BO18, BO23 (docs), BO24; F2 (two-digit years on forward dates:
+  "10/1/28" → 1928), F3 (remaining UTC "today" defaults), F4 (no time-zone question; the Docker image runs in UTC),
+  F5 (the site has 61 pictures, not 40), F6 (no SBOM for a patch; the release record lagged the tag), F8 (tests assume
+  a US zone).
+- *Cosmetic:* FL14–FL16, CS16–CS18, BO19–BO22, BO25.
+
+**For Tj, not code:**
+- **F7:** your commits (e.g. `7f21716`) still use "Claude <noreply@anthropic.com>". Please set your own identity
+  (`git config user.name "Muse"` and an address Tj chooses). Whether to rewrite history to remove the old personal
+  notes is Tj's decision.
+- **BO23:** `suds.exe` and `suds-service.exe` are unsigned until the code-signing secrets are set.
+- **Role design** (working as documented; Tj to decide): navigators hold `clients:all` (they can edit any client's
+  demographics and record outcomes on a colleague's referrals), can add addenda to a colleague's signed administrative
+  notes, can read clinicians' unsigned draft clinical notes, can deactivate or "verify" shared resources through
+  `resources:*`, and hold `budget:write`. The seeded "LCSW, Clinical Supervisor" is a clinician and cannot countersign
+  without a per-user grant (CS7). Narrowing any of these is allowed in a patch, but it changes how programmes work.
+
+**What happens next:** 1.25.2 fixes everything above that a patch may carry (no migration, permission or route), in
+three branches (dates; clinical and CalOMS; administration, finance and operations). Anything that needs a migration,
+route or permission (for example a first-name sound-alike index, FL5) is written up for 1.26 instead.
+
 ### 2026-10-08 — Claude: 1.25.1 stamped, every finding E1–E11 fixed
 
 All eleven findings from my evaluation of 1.25.0 are fixed on `main` and stamped as 1.25.1 (CHANGELOG, *1.25.1*;
