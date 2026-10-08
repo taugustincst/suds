@@ -36293,7 +36293,7 @@ var require_reports = __commonJS({
         yield;
       }
       const ahead = `${nextMonth(bounds[bounds.length - 1])}-01`;
-      visits.push(...db3.all(`SELECT substr(occurred_at,1,7) month, ${cols2} FROM interventions WHERE (length(occurred_at)=10 AND occurred_at >= ?) OR (length(occurred_at)>10 AND occurred_at >= ?) GROUP BY month ORDER BY month`, ahead, LD.localMidnight(ahead)));
+      visits.push(...db3.all(`SELECT substr(occurred_at,1,7) month, ${cols2} FROM interventions WHERE ${since("occurred_at", ahead)[0]} GROUP BY month ORDER BY month`, ...since("occurred_at", ahead).slice(1)));
       out2.interventions = visits.map(({ month, n, minutes, clients }) => ({ month, n, minutes, clients }));
       out2.naloxone = visits.map(({ month, kits, strips }) => ({ month, kits, strips }));
       out2.unduplicated_clients = visits.filter((x) => x.clients > 0).map(({ month, clients }) => ({ month, clients }));
