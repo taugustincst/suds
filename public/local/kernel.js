@@ -25232,6 +25232,210 @@ var require_update = __commonJS({
   }
 });
 
+// server/retention.js
+var require_retention = __commonJS({
+  "server/retention.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var config2 = require_config();
+    var audit3 = require_audit();
+    var DELETE_TABLES = ["care_plan_steps", "care_plan_goals", "problem_history", "problems", "asam_assessments", "outcome_measures", "client_form_files", "client_forms", "disclosures", "court_orders", "part2_notices", "consents", "patient_requests", "referral_links", "referrals", "tasks", "calls", "overdose_events", "intervention_supplies", "interventions", "caloms_records", "suprt_assessments", "episodes", "assignments", "breakglass_events", "client_revisions", "incoming_referrals"];
+    var UNLINK_TABLES = ["time_entries", "expenditures", "complaints"];
+    var NO_TOMBSTONE = ["breakglass_events", "client_revisions", "referral_links", "incoming_referrals"];
+    function retentionYears() {
+      const v = Number(db3.getSetting("client_retention_years", ""));
+      return Number.isFinite(v) && v > 0 ? v : config2.clientRetentionYears;
+    }
+    var ACTIVITY = {
+      clients: ["intake_date", "discharge_date"],
+      episodes: ["opened_at", "closed_at"],
+      caloms_records: ["record_date"],
+      suprt_assessments: ["assessment_date"],
+      interventions: ["occurred_at"],
+      calls: ["started_at"],
+      notes: ["occurred_at", "signed_at", "cosigned_at"],
+      note_addenda: ["created_at"],
+      referrals: ["referred_at", "appointment_at", "admitted_at", "closed_at", "outcome_recorded_at"],
+      tasks: ["due_at", "completed_at"],
+      consents: ["signed_at", "revoked_at"],
+      disclosures: ["disclosed_at"],
+      client_forms: ["completed_at"],
+      client_form_files: ["created_at"],
+      overdose_events: ["occurred_at"],
+      patient_requests: ["received_at", "closed_at"],
+      problems: ["onset_date", "resolved_date", "updated_at"],
+      problem_history: ["created_at"],
+      care_plan_goals: ["start_date", "reviewed_at", "updated_at"],
+      care_plan_steps: ["completed_at", "updated_at"],
+      asam_assessments: ["assessed_at"],
+      outcome_measures: ["administered_at"],
+      court_orders: ["issued_at"],
+      part2_notices: ["given_at"],
+      // A secure referral link the recipient opened or answered is work on the record like the referral itself.
+      referral_links: ["created_at", "opened_at", "ack_at"],
+      // An incoming referral accepted into the record: the programme was asked to see the person then.
+      incoming_referrals: ["received_at"],
+      time_entries: ["work_date"],
+      expenditures: ["spent_at"]
+    };
+    var NOT_ACTIVITY = ["assignments", "breakglass_events", "complaints", "privacy_incident_clients", "intervention_supplies", "client_revisions"];
+    function lastActivitySql() {
+      const parts = [];
+      for (const [t, cols2] of Object.entries(ACTIVITY)) {
+        for (const col of cols2) {
+          if (t === "clients") parts.push(`SELECT substr(c.${col},1,10) d`);
+          else if (t === "note_addenda") parts.push(`SELECT MAX(substr(a.${col},1,10)) FROM note_addenda a JOIN notes n ON n.id=a.note_id WHERE n.client_id=c.id`);
+          else if (t === "client_form_files") parts.push(`SELECT MAX(substr(x.${col},1,10)) FROM client_form_files x JOIN client_forms f ON f.id=x.client_form_id WHERE f.client_id=c.id`);
+          else parts.push(`SELECT MAX(substr(${col},1,10)) FROM ${t} WHERE client_id=c.id`);
+        }
+      }
+      return `(SELECT MAX(d) FROM (${parts.join(" UNION ALL ")}))`;
+    }
+    function expiredClients(years = retentionYears(), now2 = /* @__PURE__ */ new Date()) {
+      const cutoff = require_local_date().localDate(new Date(now2.getTime() - years * 365.25 * 864e5));
+      return db3.all(`SELECT * FROM (
+      SELECT c.id, c.client_code, c.legal_hold, c.status, ${lastActivitySql()} AS ended
+      FROM clients c
+      WHERE c.legal_hold=0
+        AND c.merged_into IS NULL
+        AND (c.status='inactive' OR (c.status IN ('closed','deceased') AND NOT EXISTS (SELECT 1 FROM episodes e WHERE e.client_id=c.id AND e.status='open')))
+    ) WHERE ended IS NOT NULL AND ended <> '' AND ended < ?`, cutoff);
+    }
+    function purgeBlockers(clientId) {
+      const out2 = {};
+      const n = (sql) => db3.one(sql, clientId).n;
+      const referrals = n(`SELECT COUNT(*) n FROM referrals WHERE client_id=? AND status IN ('pending','contacted','accepted','waitlisted','scheduled')`);
+      const tasks = n(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`);
+      const requests = n(`SELECT COUNT(*) n FROM patient_requests WHERE client_id=? AND status='open'`);
+      if (referrals) out2.open_referrals = referrals;
+      if (tasks) out2.open_tasks = tasks;
+      if (requests) out2.open_requests = requests;
+      return out2;
+    }
+    function purgeClient(client, { user = { username: "system" }, reason = "retention" } = {}) {
+      const counts = {};
+      db3.transaction(() => {
+        const noteIds = db3.all(`SELECT id FROM notes WHERE client_id=?`, client.id).map((n) => n.id);
+        for (const id of noteIds) {
+          db3.run(`DELETE FROM note_addenda WHERE note_id=?`, id);
+        }
+        counts.notes = db3.run(`DELETE FROM notes WHERE client_id=?`, client.id).changes;
+        for (const id of noteIds) db3.tombstone("notes", id);
+        const inFiles = db3.all(`SELECT DISTINCT source_ref FROM disclosures WHERE client_id=? AND source='caloms' AND source_ref LIKE 'caloms:%'`, client.id).map((r) => r.source_ref.slice("caloms:".length));
+        counts.caloms_files_cleared = inFiles.reduce((n, id) => n + db3.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE id=? AND file_enc IS NOT NULL`, db3.now(), db3.now(), id).changes, 0);
+        counts.caloms_files_cleared += db3.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE status='prepared' AND file_enc IS NOT NULL`, db3.now(), db3.now()).changes;
+        counts.incoming_referral_attempts = db3.run(`DELETE FROM incoming_referral_attempts WHERE referral_id IN (SELECT id FROM incoming_referrals WHERE client_id=?)`, client.id).changes;
+        for (const t of DELETE_TABLES) {
+          const ids = db3.all(`SELECT id FROM ${t} WHERE client_id=?`, client.id).map((r) => r.id);
+          counts[t] = ids.length;
+          if (!ids.length) continue;
+          db3.run(`DELETE FROM ${t} WHERE client_id=?`, client.id);
+          if (!NO_TOMBSTONE.includes(t)) for (const id of ids) db3.tombstone(t, id);
+        }
+        for (const t of UNLINK_TABLES) counts[t] = db3.run(`UPDATE ${t} SET client_id=NULL, updated_at=? WHERE client_id=?`, db3.now(), client.id).changes;
+        counts.privacy_incident_clients = db3.run(
+          `UPDATE privacy_incident_clients SET client_code=COALESCE(client_code, ?), client_purged_at=?, client_id=NULL, updated_at=? WHERE client_id=?`,
+          client.client_code,
+          db3.now(),
+          db3.now(),
+          client.id
+        ).changes;
+        const items = [...new Set([
+          ...db3.all(`SELECT id FROM import_items WHERE suggested_client_id=?`, client.id),
+          ...noteIds.flatMap((id) => db3.all(`SELECT id FROM import_items WHERE note_id=?`, id))
+        ].map((r) => r.id))];
+        counts.import_items = items.length;
+        for (const id of items) {
+          db3.run(`DELETE FROM import_items WHERE id=?`, id);
+          db3.tombstone("import_items", id);
+        }
+        for (const dup of db3.all(`SELECT id, client_code, legal_hold FROM clients WHERE merged_into=?`, client.id)) {
+          if (dup.legal_hold) {
+            db3.run(`UPDATE clients SET merged_into=NULL, updated_at=? WHERE id=?`, db3.now(), dup.id);
+            continue;
+          }
+          purgeClient({ ...dup, ended: client.ended }, { user, reason: `merged into ${client.client_code} (${reason})` });
+          counts.merged_records = (counts.merged_records || 0) + 1;
+        }
+        db3.run(`DELETE FROM clients WHERE id=?`, client.id);
+        db3.tombstone("clients", client.id);
+      });
+      audit3.log({ user, action: "client.purge", entity: "client", entityId: client.id, clientId: client.id, details: { client_code: client.client_code, reason, ended: client.ended, counts } });
+      return counts;
+    }
+    function purgeExpiredClients(opts = {}) {
+      const years = retentionYears();
+      const purged = [];
+      const skipped = [];
+      for (const c of expiredClients(years)) {
+        const blockers = purgeBlockers(c.id);
+        if (Object.keys(blockers).length) {
+          console.warn(`[suds] retention: not purging ${c.client_code}: ${Object.entries(blockers).map(([k, v]) => `${v} ${k.replace("_", " ")}`).join(", ")}`);
+          audit3.log({ user: opts.user || { username: "system" }, action: "client.purge.skipped", entity: "client", entityId: c.id, clientId: c.id, details: { client_code: c.client_code, ...blockers } });
+          skipped.push(c.client_code);
+          continue;
+        }
+        try {
+          purgeClient(c, opts);
+          purged.push(c.client_code);
+        } catch (e) {
+          console.error(`[suds] retention: could not purge ${c.client_code}: ${e.message}`);
+        }
+      }
+      if (purged.length) console.log(`[suds] retention: purged ${purged.length} client record(s) older than ${years} years`);
+      db3.setSetting("client_retention_ran_at", db3.now());
+      return { years, purged, skipped };
+    }
+    function purgeExpiredIncomingReferrals(years = retentionYears(), now2 = /* @__PURE__ */ new Date(), { user = { username: "system" } } = {}) {
+      const cutoff = new Date(now2.getTime() - years * 365.25 * 864e5).toISOString();
+      const ids = db3.all(`SELECT id FROM incoming_referrals WHERE client_id IS NULL AND status NOT IN ('new','contacting') AND COALESCE(closed_at, received_at) < ?`, cutoff).map((r) => r.id);
+      if (!ids.length) return 0;
+      db3.transaction(() => {
+        for (const id of ids) {
+          db3.run(`DELETE FROM incoming_referral_attempts WHERE referral_id=?`, id);
+          db3.run(`DELETE FROM incoming_referrals WHERE id=?`, id);
+        }
+      });
+      audit3.log({ user, action: "incoming_referral.purge", entity: "incoming_referral", details: { referrals: ids.length, years } });
+      return ids.length;
+    }
+    var CALOMS_FILE_DAYS = 90;
+    function clearOldCalomsFiles(days = CALOMS_FILE_DAYS) {
+      const cutoff = new Date(Date.now() - days * 864e5).toISOString();
+      const n = db3.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE file_enc IS NOT NULL AND created_at < ?`, db3.now(), db3.now(), cutoff).changes;
+      if (n) audit3.log({ user: { username: "system" }, action: "caloms.submission.file_cleared", details: { files: n, older_than_days: days } });
+      return n;
+    }
+    function clearCommittedImportText() {
+      const n = db3.run(`UPDATE import_items SET content_enc='', title_enc=NULL, metadata_enc=NULL, updated_at=? WHERE status='committed' AND (content_enc<>'' OR title_enc IS NOT NULL OR metadata_enc IS NOT NULL)`, db3.now()).changes;
+      if (n) audit3.log({ user: { username: "system" }, action: "import.committed_text_cleared", entity: "import_item", details: { items: n } });
+      return n;
+    }
+    function runIfDue() {
+      const last = db3.getSetting("client_retention_ran_at", null);
+      if (last && Date.now() - Date.parse(last) < 864e5) return null;
+      try {
+        clearCommittedImportText();
+      } catch (e) {
+        console.error(`[suds] retention: could not clear filed import text: ${e.message}`);
+      }
+      try {
+        clearOldCalomsFiles();
+      } catch (e) {
+        console.error(`[suds] retention: could not clear old CalOMS files: ${e.message}`);
+      }
+      try {
+        purgeExpiredIncomingReferrals();
+      } catch (e) {
+        console.error(`[suds] retention: could not purge old incoming referrals: ${e.message}`);
+      }
+      return purgeExpiredClients();
+    }
+    module.exports = { ACTIVITY, NOT_ACTIVITY, retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, purgeExpiredIncomingReferrals, runIfDue, DELETE_TABLES, UNLINK_TABLES, CALOMS_FILE_DAYS, clearOldCalomsFiles, clearCommittedImportText };
+  }
+});
+
 // server/routes/admin.js
 var require_admin = __commonJS({
   "server/routes/admin.js"(exports, module) {
@@ -25659,6 +25863,9 @@ var require_admin = __commonJS({
         version: config2.version,
         key_source: config2.keySource,
         keys_backup_at: db3.getSetting("keys_backup_at") || "",
+        // "About this server" states the retention in force, not a sentence written once (1.25.2, BO15).
+        audit_retention_days: config2.auditRetentionDays,
+        client_retention_years: require_retention().retentionYears(),
         listener: listener.describe(),
         last_scheduled_backup_at: db3.getSetting("last_scheduled_backup_at") || "",
         last_scheduled_backup_status: db3.getSetting("last_scheduled_backup_status") || ""
@@ -29327,210 +29534,6 @@ var require_caloms_schedule = __commonJS({
       return run2({ from, to });
     }
     module.exports = { prepare, run: run2, runIfDue, previousMonth, logEvent, alreadyPrepared };
-  }
-});
-
-// server/retention.js
-var require_retention = __commonJS({
-  "server/retention.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var config2 = require_config();
-    var audit3 = require_audit();
-    var DELETE_TABLES = ["care_plan_steps", "care_plan_goals", "problem_history", "problems", "asam_assessments", "outcome_measures", "client_form_files", "client_forms", "disclosures", "court_orders", "part2_notices", "consents", "patient_requests", "referral_links", "referrals", "tasks", "calls", "overdose_events", "intervention_supplies", "interventions", "caloms_records", "suprt_assessments", "episodes", "assignments", "breakglass_events", "client_revisions", "incoming_referrals"];
-    var UNLINK_TABLES = ["time_entries", "expenditures", "complaints"];
-    var NO_TOMBSTONE = ["breakglass_events", "client_revisions", "referral_links", "incoming_referrals"];
-    function retentionYears() {
-      const v = Number(db3.getSetting("client_retention_years", ""));
-      return Number.isFinite(v) && v > 0 ? v : config2.clientRetentionYears;
-    }
-    var ACTIVITY = {
-      clients: ["intake_date", "discharge_date"],
-      episodes: ["opened_at", "closed_at"],
-      caloms_records: ["record_date"],
-      suprt_assessments: ["assessment_date"],
-      interventions: ["occurred_at"],
-      calls: ["started_at"],
-      notes: ["occurred_at", "signed_at", "cosigned_at"],
-      note_addenda: ["created_at"],
-      referrals: ["referred_at", "appointment_at", "admitted_at", "closed_at", "outcome_recorded_at"],
-      tasks: ["due_at", "completed_at"],
-      consents: ["signed_at", "revoked_at"],
-      disclosures: ["disclosed_at"],
-      client_forms: ["completed_at"],
-      client_form_files: ["created_at"],
-      overdose_events: ["occurred_at"],
-      patient_requests: ["received_at", "closed_at"],
-      problems: ["onset_date", "resolved_date", "updated_at"],
-      problem_history: ["created_at"],
-      care_plan_goals: ["start_date", "reviewed_at", "updated_at"],
-      care_plan_steps: ["completed_at", "updated_at"],
-      asam_assessments: ["assessed_at"],
-      outcome_measures: ["administered_at"],
-      court_orders: ["issued_at"],
-      part2_notices: ["given_at"],
-      // A secure referral link the recipient opened or answered is work on the record like the referral itself.
-      referral_links: ["created_at", "opened_at", "ack_at"],
-      // An incoming referral accepted into the record: the programme was asked to see the person then.
-      incoming_referrals: ["received_at"],
-      time_entries: ["work_date"],
-      expenditures: ["spent_at"]
-    };
-    var NOT_ACTIVITY = ["assignments", "breakglass_events", "complaints", "privacy_incident_clients", "intervention_supplies", "client_revisions"];
-    function lastActivitySql() {
-      const parts = [];
-      for (const [t, cols2] of Object.entries(ACTIVITY)) {
-        for (const col of cols2) {
-          if (t === "clients") parts.push(`SELECT substr(c.${col},1,10) d`);
-          else if (t === "note_addenda") parts.push(`SELECT MAX(substr(a.${col},1,10)) FROM note_addenda a JOIN notes n ON n.id=a.note_id WHERE n.client_id=c.id`);
-          else if (t === "client_form_files") parts.push(`SELECT MAX(substr(x.${col},1,10)) FROM client_form_files x JOIN client_forms f ON f.id=x.client_form_id WHERE f.client_id=c.id`);
-          else parts.push(`SELECT MAX(substr(${col},1,10)) FROM ${t} WHERE client_id=c.id`);
-        }
-      }
-      return `(SELECT MAX(d) FROM (${parts.join(" UNION ALL ")}))`;
-    }
-    function expiredClients(years = retentionYears(), now2 = /* @__PURE__ */ new Date()) {
-      const cutoff = require_local_date().localDate(new Date(now2.getTime() - years * 365.25 * 864e5));
-      return db3.all(`SELECT * FROM (
-      SELECT c.id, c.client_code, c.legal_hold, c.status, ${lastActivitySql()} AS ended
-      FROM clients c
-      WHERE c.legal_hold=0
-        AND c.merged_into IS NULL
-        AND (c.status='inactive' OR (c.status IN ('closed','deceased') AND NOT EXISTS (SELECT 1 FROM episodes e WHERE e.client_id=c.id AND e.status='open')))
-    ) WHERE ended IS NOT NULL AND ended <> '' AND ended < ?`, cutoff);
-    }
-    function purgeBlockers(clientId) {
-      const out2 = {};
-      const n = (sql) => db3.one(sql, clientId).n;
-      const referrals = n(`SELECT COUNT(*) n FROM referrals WHERE client_id=? AND status IN ('pending','contacted','accepted','waitlisted','scheduled')`);
-      const tasks = n(`SELECT COUNT(*) n FROM tasks WHERE client_id=? AND status IN ('open','in_progress')`);
-      const requests = n(`SELECT COUNT(*) n FROM patient_requests WHERE client_id=? AND status='open'`);
-      if (referrals) out2.open_referrals = referrals;
-      if (tasks) out2.open_tasks = tasks;
-      if (requests) out2.open_requests = requests;
-      return out2;
-    }
-    function purgeClient(client, { user = { username: "system" }, reason = "retention" } = {}) {
-      const counts = {};
-      db3.transaction(() => {
-        const noteIds = db3.all(`SELECT id FROM notes WHERE client_id=?`, client.id).map((n) => n.id);
-        for (const id of noteIds) {
-          db3.run(`DELETE FROM note_addenda WHERE note_id=?`, id);
-        }
-        counts.notes = db3.run(`DELETE FROM notes WHERE client_id=?`, client.id).changes;
-        for (const id of noteIds) db3.tombstone("notes", id);
-        const inFiles = db3.all(`SELECT DISTINCT source_ref FROM disclosures WHERE client_id=? AND source='caloms' AND source_ref LIKE 'caloms:%'`, client.id).map((r) => r.source_ref.slice("caloms:".length));
-        counts.caloms_files_cleared = inFiles.reduce((n, id) => n + db3.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE id=? AND file_enc IS NOT NULL`, db3.now(), db3.now(), id).changes, 0);
-        counts.caloms_files_cleared += db3.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE status='prepared' AND file_enc IS NOT NULL`, db3.now(), db3.now()).changes;
-        counts.incoming_referral_attempts = db3.run(`DELETE FROM incoming_referral_attempts WHERE referral_id IN (SELECT id FROM incoming_referrals WHERE client_id=?)`, client.id).changes;
-        for (const t of DELETE_TABLES) {
-          const ids = db3.all(`SELECT id FROM ${t} WHERE client_id=?`, client.id).map((r) => r.id);
-          counts[t] = ids.length;
-          if (!ids.length) continue;
-          db3.run(`DELETE FROM ${t} WHERE client_id=?`, client.id);
-          if (!NO_TOMBSTONE.includes(t)) for (const id of ids) db3.tombstone(t, id);
-        }
-        for (const t of UNLINK_TABLES) counts[t] = db3.run(`UPDATE ${t} SET client_id=NULL, updated_at=? WHERE client_id=?`, db3.now(), client.id).changes;
-        counts.privacy_incident_clients = db3.run(
-          `UPDATE privacy_incident_clients SET client_code=COALESCE(client_code, ?), client_purged_at=?, client_id=NULL, updated_at=? WHERE client_id=?`,
-          client.client_code,
-          db3.now(),
-          db3.now(),
-          client.id
-        ).changes;
-        const items = [...new Set([
-          ...db3.all(`SELECT id FROM import_items WHERE suggested_client_id=?`, client.id),
-          ...noteIds.flatMap((id) => db3.all(`SELECT id FROM import_items WHERE note_id=?`, id))
-        ].map((r) => r.id))];
-        counts.import_items = items.length;
-        for (const id of items) {
-          db3.run(`DELETE FROM import_items WHERE id=?`, id);
-          db3.tombstone("import_items", id);
-        }
-        for (const dup of db3.all(`SELECT id, client_code, legal_hold FROM clients WHERE merged_into=?`, client.id)) {
-          if (dup.legal_hold) {
-            db3.run(`UPDATE clients SET merged_into=NULL, updated_at=? WHERE id=?`, db3.now(), dup.id);
-            continue;
-          }
-          purgeClient({ ...dup, ended: client.ended }, { user, reason: `merged into ${client.client_code} (${reason})` });
-          counts.merged_records = (counts.merged_records || 0) + 1;
-        }
-        db3.run(`DELETE FROM clients WHERE id=?`, client.id);
-        db3.tombstone("clients", client.id);
-      });
-      audit3.log({ user, action: "client.purge", entity: "client", entityId: client.id, clientId: client.id, details: { client_code: client.client_code, reason, ended: client.ended, counts } });
-      return counts;
-    }
-    function purgeExpiredClients(opts = {}) {
-      const years = retentionYears();
-      const purged = [];
-      const skipped = [];
-      for (const c of expiredClients(years)) {
-        const blockers = purgeBlockers(c.id);
-        if (Object.keys(blockers).length) {
-          console.warn(`[suds] retention: not purging ${c.client_code}: ${Object.entries(blockers).map(([k, v]) => `${v} ${k.replace("_", " ")}`).join(", ")}`);
-          audit3.log({ user: opts.user || { username: "system" }, action: "client.purge.skipped", entity: "client", entityId: c.id, clientId: c.id, details: { client_code: c.client_code, ...blockers } });
-          skipped.push(c.client_code);
-          continue;
-        }
-        try {
-          purgeClient(c, opts);
-          purged.push(c.client_code);
-        } catch (e) {
-          console.error(`[suds] retention: could not purge ${c.client_code}: ${e.message}`);
-        }
-      }
-      if (purged.length) console.log(`[suds] retention: purged ${purged.length} client record(s) older than ${years} years`);
-      db3.setSetting("client_retention_ran_at", db3.now());
-      return { years, purged, skipped };
-    }
-    function purgeExpiredIncomingReferrals(years = retentionYears(), now2 = /* @__PURE__ */ new Date(), { user = { username: "system" } } = {}) {
-      const cutoff = new Date(now2.getTime() - years * 365.25 * 864e5).toISOString();
-      const ids = db3.all(`SELECT id FROM incoming_referrals WHERE client_id IS NULL AND status NOT IN ('new','contacting') AND COALESCE(closed_at, received_at) < ?`, cutoff).map((r) => r.id);
-      if (!ids.length) return 0;
-      db3.transaction(() => {
-        for (const id of ids) {
-          db3.run(`DELETE FROM incoming_referral_attempts WHERE referral_id=?`, id);
-          db3.run(`DELETE FROM incoming_referrals WHERE id=?`, id);
-        }
-      });
-      audit3.log({ user, action: "incoming_referral.purge", entity: "incoming_referral", details: { referrals: ids.length, years } });
-      return ids.length;
-    }
-    var CALOMS_FILE_DAYS = 90;
-    function clearOldCalomsFiles(days = CALOMS_FILE_DAYS) {
-      const cutoff = new Date(Date.now() - days * 864e5).toISOString();
-      const n = db3.run(`UPDATE caloms_submissions SET file_enc=NULL, file_cleared_at=?, updated_at=? WHERE file_enc IS NOT NULL AND created_at < ?`, db3.now(), db3.now(), cutoff).changes;
-      if (n) audit3.log({ user: { username: "system" }, action: "caloms.submission.file_cleared", details: { files: n, older_than_days: days } });
-      return n;
-    }
-    function clearCommittedImportText() {
-      const n = db3.run(`UPDATE import_items SET content_enc='', title_enc=NULL, metadata_enc=NULL, updated_at=? WHERE status='committed' AND (content_enc<>'' OR title_enc IS NOT NULL OR metadata_enc IS NOT NULL)`, db3.now()).changes;
-      if (n) audit3.log({ user: { username: "system" }, action: "import.committed_text_cleared", entity: "import_item", details: { items: n } });
-      return n;
-    }
-    function runIfDue() {
-      const last = db3.getSetting("client_retention_ran_at", null);
-      if (last && Date.now() - Date.parse(last) < 864e5) return null;
-      try {
-        clearCommittedImportText();
-      } catch (e) {
-        console.error(`[suds] retention: could not clear filed import text: ${e.message}`);
-      }
-      try {
-        clearOldCalomsFiles();
-      } catch (e) {
-        console.error(`[suds] retention: could not clear old CalOMS files: ${e.message}`);
-      }
-      try {
-        purgeExpiredIncomingReferrals();
-      } catch (e) {
-        console.error(`[suds] retention: could not purge old incoming referrals: ${e.message}`);
-      }
-      return purgeExpiredClients();
-    }
-    module.exports = { ACTIVITY, NOT_ACTIVITY, retentionYears, expiredClients, purgeBlockers, purgeClient, purgeExpiredClients, purgeExpiredIncomingReferrals, runIfDue, DELETE_TABLES, UNLINK_TABLES, CALOMS_FILE_DAYS, clearOldCalomsFiles, clearCommittedImportText };
   }
 });
 

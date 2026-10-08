@@ -1,5 +1,5 @@
 import { backupReminderCard, recoveryPromptCard } from './local.js';
-import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, greetingName, prefs, welcomeCard } from '../app.js';
+import { h, route, get, put, post, confirmDialog, loadRefData, state, stat, bars, fmt, badge, statusKind, table, can, nav, pageHead, sparkline, quickActions, emptyState, toast, greetingName, prefs, welcomeCard, reachable } from '../app.js';
 
 // One refresh timer for Home, however often it is drawn (each draw used to start another, and they piled up).
 let homeTimer = null;
@@ -330,7 +330,7 @@ async function drawHome(r) {
     d.addEventListener('toggle', () => { if (!d.open === isFolded(key)) return; prefs.set('home_folded', { ...foldedNow(), [key]: !d.open }); });
     return d;
   };
-  const alertRow = alerts.length ? h('div', { class: `row mb${phone ? ' home-alerts' : ''}`, 'data-home-alerts': '1' }, alerts.map(([k, t, href]) => h('a', { href, class: `badge ${k}`, style: { fontSize: '.9rem', padding: '.4rem .8rem' } }, t))) : null;
+  const alertRow = alerts.length ? h('div', { class: `row mb${phone ? ' home-alerts' : ''}`, 'data-home-alerts': '1' }, alerts.map(([k, t, href]) => h(href && reachable(href) ? 'a' : 'span', { href: href && reachable(href) ? href : null, class: `badge ${k}`, 'data-home-alert': '', style: { fontSize: '.9rem', padding: '.4rem .8rem' } }, t))) : null;
   // At most five rows, overdue first, then "N more" to the to-do list (1.23.1): nine rows pushed "Continue where you
   // left off" off a phone's second screen. The server sends at most ten, so a full ten says "at least".
   const TODAY_MAX = 5;

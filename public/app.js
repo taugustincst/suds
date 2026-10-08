@@ -1,6 +1,6 @@
 // SUDS frontend core: API client, hash router, DOM + form helpers, session/idle handling.
 import { queueChip, autoFlush } from './outreach-queue.js';
-import { NAV, placement, isFrontline, isSupervising } from './nav.js';
+import { NAV, placement, isFrontline, isSupervising, navLabel, secLabel } from './nav.js';
 export const state = { user: null, org: 'SUDS', constants: null, users: [], funds: [], idleMinutes: 15, prefs: {}, local: false };
 // Local mode: the whole server runs inside this page (the offline copy). Requests go to the in-page kernel.
 // window.SUDS_FORCE_LOCAL is set by a small external script tag, before this module loads, on builds
@@ -1578,7 +1578,7 @@ export function flag(content, on, why, kind = 'danger') {
 }
 // A number or bar on Home links to the page it counts only for someone who may open that page: for a
 // read-only oversight account every "Active clients ›" used to land on "Not available for your role".
-function reachable(href) {
+export function reachable(href) {
   const name = String(href).replace(/^#?\/?/, '').split(/[/?]/)[0];
   const item = NAV.find(n => n.name === name);
   return !item || !item.perm || canAny(item.perm);
@@ -2236,7 +2236,7 @@ export function setPageTitle(r = parseHash(), navItem = NAV.find(n => n.name ===
 function navMenu(r) {
   // Sections with nothing to show (a finance account and "Connect clients") are left out, headings and all.
   const groups = []; let cur = null; const more = [];
-  const link = (n) => h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '', 'aria-current': r.name === n.name ? 'page' : null }, h('span', { class: 'ico', 'aria-hidden': 'true' }, n.ico), n.label);
+  const link = (n) => h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '', 'aria-current': r.name === n.name ? 'page' : null }, h('span', { class: 'ico', 'aria-hidden': 'true' }, n.ico), navLabel(n, c));
   const c = navContext();
   for (const n of NAV) {
     if (n.sec) { cur = { sec: n.sec, items: [] }; groups.push(cur); continue; }
@@ -2248,7 +2248,7 @@ function navMenu(r) {
   // A front-line worker's (or a supervisor's) less-used pages, folded into one closed group (open while one of them is showing).
   const moreGroup = more.length ? h('details', { class: 'nav-more', 'data-nav-more': '1', open: more.some(x => x.n.name === r.name) ? true : null },
     h('summary', {}, 'More'), ...more.map(x => x.a)) : null;
-  return h('nav', { class: 'nav', 'aria-label': 'Main' }, groups.filter(g => g.items.length).flatMap(g => [h('div', { class: 'sec' }, g.sec), ...g.items]), moreGroup);
+  return h('nav', { class: 'nav', 'aria-label': 'Main' }, groups.filter(g => g.items.length).flatMap(g => [h('div', { class: 'sec' }, secLabel(g.sec, c)), ...g.items]), moreGroup);
 }
 function sidebar(r) {
   return h('aside', { class: 'sidebar' },
@@ -2278,7 +2278,7 @@ function mobileBar(r, side) {
   mobileBar.onChange = onChange; phone.addEventListener('change', onChange);
   syncInert();
   // The build stamp sits under the page title on a phone: the sidebar foot is below the fold with the menu open.
-  return h('div', { class: 'mobilebar' }, menuBtn, h('div', { class: 'mobilebar-title' }, h('b', {}, item.label), h('span', { class: 'mobilebar-stamp', 'data-build-stamp': '1' }, `SUDS ${SUDS_VERSION}`)), can('clients:read') ? h('a', { href: '#/clients', class: 'btn ghost mobilebar-clients', 'data-mobile-clients': '1' }, h('span', { 'aria-hidden': 'true' }, '👤'), 'Clients') : h('span', { class: 'mobilebar-spacer', 'aria-hidden': 'true' }));
+  return h('div', { class: 'mobilebar' }, menuBtn, h('div', { class: 'mobilebar-title' }, h('b', {}, navLabel(item, navContext())), h('span', { class: 'mobilebar-stamp', 'data-build-stamp': '1' }, `SUDS ${SUDS_VERSION}`)), can('clients:read') ? h('a', { href: '#/clients', class: 'btn ghost mobilebar-clients', 'data-mobile-clients': '1' }, h('span', { 'aria-hidden': 'true' }, '👤'), 'Clients') : h('span', { class: 'mobilebar-spacer', 'aria-hidden': 'true' }));
 }
 function toggleTheme() { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const next = cur === 'dark' ? 'light' : 'dark'; prefs.set('theme', next); applyTheme(); }
 try { const cached = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); if (cached.theme) document.documentElement.dataset.theme = cached.theme; } catch {}

@@ -55,6 +55,14 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **BO14:** `node scripts/update.js --check` crashed with a git error and a stack trace on a release-tag checkout
   (detached HEAD, as `git clone --branch v<version>` leaves it). It now names the tag and the newest release tag
   and says how to move to it; `--apply` refuses to follow a branch from a tag; a git failure is one line.
+* **BO15:** System & backups → About this server said "Keys: Environment variables" on a server using development
+  key files, and "Audit logs are kept 7 years by default. Client records are soft-deleted only." whatever the
+  settings; it now states the key source and the audit and client retention in force (and the retention purge).
+* **BO17:** a Home alert that leads to a page the role cannot open (finance's and a county user's "clients not
+  contacted in 30 days" → "Not available for your role") is plain text, not a link.
+* **BO20:** for a role that records no work (finance, read-only) the menu heading "Record work" reads "Program
+  activity"; for whoever sees everyone's time the menu item "My time" reads "Staff time", as the page does; the
+  stat cards on System & backups no longer stretch to the height of the backups column.
 
 ## 1.25.1 — 2026-10-08
 

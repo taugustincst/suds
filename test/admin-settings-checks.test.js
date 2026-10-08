@@ -52,3 +52,13 @@ test('the SCIM default role is never administrator; the SSO emergency accounts m
   assert.equal(H.db.getSetting('sso_emergency_accounts', null), 'setchk_admin', 'saved trimmed, once');
   assert.equal((await put({ sso_emergency_accounts: '' })).status, 200);
 });
+
+test('BO15: "About this server" is given the retention in force and where the keys come from', async () => {
+  assert.equal((await put({ client_retention_years: '9' })).status, 200);
+  const s = (await admin.get('/api/admin/stats')).data;
+  assert.equal(s.client_retention_years, 9, 'the client retention setting');
+  assert.equal(s.audit_retention_days, require('../server/config').auditRetentionDays, 'the audit retention in force');
+  assert.ok(['env', 'file', 'devfile'].includes(s.key_source), s.key_source);
+  assert.equal((await put({ client_retention_years: '' })).status, 200);
+  assert.equal((await admin.get('/api/admin/stats')).data.client_retention_years, require('../server/config').clientRetentionYears, 'blank: the default');
+});

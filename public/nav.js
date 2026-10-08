@@ -118,6 +118,13 @@ export function placement(n, c) {
  * anything (the main list, and More as one). The order is NAV's, with Supervision straight after Home for a
  * supervisor (app.js sidebar() draws the same).
  */
+// What the menu calls a page or a section for this person (1.25.2, BO20): someone who sees everyone's time (time:all:
+// finance, supervisors, administrators) opens "Staff time", not "My time"; and the "Record work" heading reads
+// "Program activity" for a role that records none of the work under it (finance, read-only).
+const RECORDS = ['interventions:write', 'calls:write', 'notes:admin:write', 'supplies:write', 'overdose:write', 'time:write', 'forms:write'];
+export function navLabel(n, c) { return n.name === 'time' && c.can('time:all') ? 'Staff time' : n.label; }
+export function secLabel(sec, c) { return sec === 'Record work' && !RECORDS.some((p) => c.can(p)) ? 'Program activity' : sec; }
+
 export function menuFor(c) {
   const main = [], more = [];
   for (const n of NAV) { const where = n.name ? placement(n, c) : null; if (where === 'main') main.push(n.name); else if (where === 'more') more.push(n.name); }

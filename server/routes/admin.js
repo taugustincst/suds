@@ -414,6 +414,9 @@ module.exports = (r) => {
     version: config.version,
     key_source: config.keySource,
     keys_backup_at: db.getSetting('keys_backup_at') || '',
+    // "About this server" states the retention in force, not a sentence written once (1.25.2, BO15).
+    audit_retention_days: config.auditRetentionDays,
+    client_retention_years: require('../retention').retentionYears(),
     listener: listener.describe(),
     last_scheduled_backup_at: db.getSetting('last_scheduled_backup_at') || '',
     last_scheduled_backup_status: db.getSetting('last_scheduled_backup_status') || '',

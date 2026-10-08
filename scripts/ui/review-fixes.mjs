@@ -88,6 +88,14 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   // Back as it was: the rest of this script signs notes with the password.
   eq((await admin.api('PUT', '/api/admin/settings', { sign_strong_required: '0' })).status, 200, 'the signing setting is put back');
 
+  // 1.25.2, BO15 and BO20: About this server states the retention and key source in force; the stat cards keep their height.
+  await go(page, 'admin?tab=system');
+  const about = (await page.textContent('.main')).replace(/\s+/g, ' ');
+  ok(/A client's records are kept \d+ years after their last activity, then removed by the retention purge/.test(about) && !/soft-deleted only/.test(about), 'About this server states the retention in force', about.match(/Retention.{0,160}/)?.[0]);
+  const keys = (await admin.api('GET', '/api/admin/stats')).data.key_source;
+  ok(keys !== 'devfile' || /Development key files in the data directory/.test(about), 'and where the keys really come from', keys);
+  const statH = await page.$eval('[data-system-stats] .card.stat', (e) => e.getBoundingClientRect().height).catch(() => 9999);
+  ok(statH < 200, 'the stat cards are not stretched to the height of the backups column', statH);
   // The Security & procurement page on the office server: the administrator's published facts, the rest blank.
   eq((await admin.api('PUT', '/api/admin/settings', { procurement_legal_entity: 'Example Services LLC', procurement_contact_email: 'buyers@example.org', procurement_sla: 'Business-hours support.' })).status, 200, 'an administrator publishes three of the facts');
   await go(page, 'admin?tab=settings&section=procurement');
@@ -193,7 +201,14 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   }
   await go(fin.page, 'dashboard');
   ok(!/need a check-in/.test(await fin.page.textContent('.main')), 'no caseload card for a role with no caseload');
+  // 1.25.2, BO17: an alert about clients is plain text for a role that cannot open the client list.
+  ok(!(await fin.page.$('[data-home-alerts] a[href^="#/clients"]')), 'no Home alert links finance to a client list it cannot open', await fin.page.$$eval('[data-home-alerts] a', as => as.map(a => a.getAttribute('href'))).catch(() => []));
   ok(!(await fin.page.$$eval('.nav .sec', s => s.map(x => x.textContent))).includes('Connect clients'), 'no empty "Connect clients" heading');
+  // 1.25.2, BO20: finance records no work, and its time page is everyone's.
+  const finSecs = await fin.page.$$eval('.nav .sec', s => s.map(x => x.textContent.trim()));
+  ok(!finSecs.includes('Record work') && finSecs.includes('Program activity'), 'finance\'s menu does not say "Record work"', finSecs);
+  const finLinks = await fin.page.$$eval('.nav a', as => as.map(a => a.textContent.trim()));
+  ok(finLinks.some(t => /Staff time$/.test(t)) && !finLinks.some(t => /My time$/.test(t)), 'and calls its time page "Staff time", as the page itself does', finLinks);
   await go(fin.page, 'time');
   ok(!(await fin.page.$('tbody button:has-text("Edit")')), 'no Edit buttons on entries finance cannot edit');
   // 1.25.2, BO13: an expenditure finance changed is not offered to finance to approve; the list says why.
