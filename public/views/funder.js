@@ -246,7 +246,7 @@ route('funder', async (r) => {
       d.attribution.default_fund_set ? null : [' No default funding source is set for the program, so a new visit is charged to none unless the worker chooses one. ',
         can('settings:manage') ? h('a', { href: d.attribution.settings_link, 'data-default-fund-link': '1' }, 'Set a default funding source in Settings') : 'An administrator can set one in Settings → Program → Reporting.']) : null,
     d.attribution.unapproved_minutes ? h('div', { class: 'banner warn small', 'data-unapproved-hours': String(d.attribution.unapproved_minutes) },
-      `${(d.attribution.unapproved_minutes / 60).toFixed(1)} staff hours logged in this period are not yet approved (${(d.attribution.approved_minutes / 60).toFixed(1)} approved). Only approved hours count toward a fund. `,
+      `${fmt.mins(d.attribution.unapproved_minutes)} of staff time logged in this period is not yet approved (${fmt.mins(d.attribution.approved_minutes)} approved). Only approved time counts toward a fund. `,
       can('time:approve') ? h('a', { href: d.attribution.approve_link }, 'Review time sheets') : null) : null,
 
     h('section', { class: 'card' },
@@ -316,8 +316,9 @@ route('funder', async (r) => {
         { label: 'Fiscal year', render: f => [f.fiscal_year_start, f.fiscal_year_end].filter(Boolean).map(fmt.date).join(' – ') || '—' },
         { label: 'People served', render: f => num(f.clients_served), num: true },
         { label: 'Services', render: f => num(f.services), num: true },
-        { label: 'Approved staff hours', render: f => (f.approved_minutes / 60).toFixed(1), num: true },
-        { label: 'Logged, not yet approved', render: f => (f.unapproved_minutes / 60).toFixed(1), num: true },
+        // Hours and minutes, exact: one decimal of an hour per fund did not add up to the total (1.25.2, BO19).
+        { label: 'Approved staff time', render: f => fmt.mins(f.approved_minutes), num: true },
+        { label: 'Logged, not yet approved', render: f => fmt.mins(f.unapproved_minutes), num: true },
       ], d.by_funding_source, { empty: 'No active funding sources.' }),
       h('p', { class: 'small muted' }, 'Staff hours count only time that has been approved, so this matches what a county would invoice; time logged but still waiting for approval is shown beside it. A visit is charged to the worker\'s default fund (Settings → Users) or the program\'s (Settings → Program) unless another is chosen.')));
 });

@@ -20122,8 +20122,9 @@ var require_budget = __commonJS({
     var money = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     function assertRoom(fundId, parentId, amount, { excluding = null } = {}) {
       const siblings = parentId ? db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=? AND id<>?`, parentId, excluding || "").n : db3.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE funding_source_id=? AND parent_id IS NULL AND id<>?`, fundId, excluding || "").n;
-      const holder = parentId ? db3.one(`SELECT COALESCE(label, category) AS name, allocated_amount AS cap FROM budget_lines WHERE id=?`, parentId) : db3.one(`SELECT name, total_amount AS cap FROM funding_sources WHERE id=?`, fundId);
+      const holder = parentId ? db3.one(`SELECT COALESCE(label, category) AS name, label IS NULL AS coded, allocated_amount AS cap FROM budget_lines WHERE id=?`, parentId) : db3.one(`SELECT name, total_amount AS cap FROM funding_sources WHERE id=?`, fundId);
       if (!holder) return;
+      if (holder.coded) holder.name = require_options().humanize(holder.name);
       const total = cents(siblings + amount);
       if (total > cents(holder.cap)) {
         throw badRequest(`That would allocate ${money(total)} against ${holder.name}, which ${parentId ? "is allocated" : "totals"} ${money(holder.cap)}; ${money(cents(holder.cap - siblings))} is left to allocate. Reduce the amount, or raise ${parentId ? "the parent allocation" : "the fund's total"} first.`);
@@ -35156,9 +35157,11 @@ var require_funder_report = __commonJS({
         ["Funding attribution", "Staff hours logged, not yet approved", hours(d.attribution.unapproved_minutes)]
       ].map(([section, measure, value]) => ({ section, measure, value }));
       const who = [];
-      for (const [key, label] of [["by_race_code", "Race"], ["by_ethnicity", "Ethnicity"], ["by_gender", "Gender"], ["by_language", "Language"], ["by_housing", "Housing"], ["by_insurance", "Insurance"]]) for (const x of d.demographics[key]) who.push({ section: label, measure: x.k, value: x.n });
-      for (const x of d.episodes.by_discharge_reason) who.push({ section: "Discharge reason", measure: x.k, value: x.n });
-      for (const x of d.overdose.by_administered_by) who.push({ section: "Naloxone given by", measure: x.k, value: x.n });
+      const O = require_options();
+      const words = (list) => (k) => typeof k === "string" && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(k) ? list ? O.labelOf(list, k) : O.humanize(k) : k;
+      for (const [key, label, say] of [["by_race_code", "Race"], ["by_ethnicity", "Ethnicity"], ["by_gender", "Gender", words()], ["by_language", "Language"], ["by_housing", "Housing", words()], ["by_insurance", "Insurance", words()]]) for (const x of d.demographics[key]) who.push({ section: label, measure: say ? say(x.k) : x.k, value: x.n });
+      for (const x of d.episodes.by_discharge_reason) who.push({ section: "Discharge reason", measure: words("DISCHARGE_REASONS")(x.k), value: x.n });
+      for (const x of d.overdose.by_administered_by) who.push({ section: "Naloxone given by", measure: words("ADMINISTERED_BY")(x.k), value: x.n });
       const funds = d.by_funding_source.map((f) => ({ fund: f.name, grant_number: f.grant_number || "", fiscal_year: [f.fiscal_year_start, f.fiscal_year_end].filter(Boolean).join(" to "), people: f.clients_served, services: f.services, approved_hours: hours(f.approved_minutes), unapproved_hours: hours(f.unapproved_minutes) }));
       const long = [{ key: "section", label: "Section" }, { key: "measure", label: "Measure" }, { key: "value", label: "Value" }];
       return {

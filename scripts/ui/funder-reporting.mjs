@@ -49,6 +49,10 @@ eq(await sup.$eval('[data-run-kind] details[data-counting-details]', d => d.open
 ok(await sup.$('[data-no-fund-row]'), 'By funding source has a "No funding source" row');
 ok(await sup.$('[data-unattributed]'), 'and a warning that services have no funding source');
 ok(await sup.$('[data-prepare-publication]'), 'publication is a separate step: "Prepare a publication release"');
+{ // 1.25.2, BO19: staff time per fund in exact hours and minutes (one decimal of an hour per fund did not add up).
+  const cells = await sup.$$eval('table', ts => { const t = ts.find(x => [...x.querySelectorAll('th')].some(th => th.textContent.trim() === 'Approved staff time')); if (!t) return null; const i = [...t.querySelectorAll('th')].findIndex(th => th.textContent.trim() === 'Approved staff time'); return [...t.querySelectorAll('tbody tr')].map(r => (r.children[i] ? r.children[i].textContent.trim() : '')); });
+  ok(cells && cells.length && cells.every(c => /^(\d+h )?\d+m$/.test(c)), 'By funding source shows approved staff time in hours and minutes', cells);
+}
 const [fx] = await Promise.all([sup.waitForEvent('download'), sup.click('[data-funder-export=xlsx]')]);
 ok(/exact-counts\.xlsx$/.test(fx.suggestedFilename()), 'the exported submission is named for its counting mode', fx.suggestedFilename());
 const fwb = readWorkbook(fs.readFileSync(await fx.path()));

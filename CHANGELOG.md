@@ -72,6 +72,12 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **BO25:** an identified export under each client's consent where no client's consent named the recipient still
   downloaded an "identified" file with nobody in it and said "Exported". It is now refused (409, "Nothing to
   export: …", the clients left out listed by code); no file is made and nothing is disclosed. `test/part2.test.js`.
+* **BO19:** the funder report's per-fund staff hours (one decimal each) did not add up to the total shown (76.3 + 3.3
+  beside 79.5). Staff time is shown in exact hours and minutes, as Funding & spending does.
+* **BO22:** codes in place of words: the over-allocation message named an unlabelled line "client_assistance", and the
+  funder workbook's "Who was served" sheet wrote "male" and "unknown". Both now use the words the screen uses. The
+  column headings of the table exports ("Spent At", "Record Id") and their 0/1 flags are unchanged in this patch: a
+  county's spreadsheet or import may read them by name (proposed for 1.26 with a note in the release).
 
 ## 1.25.1 — 2026-10-08
 

@@ -90,9 +90,11 @@ function assertRoom(fundId, parentId, amount, { excluding = null } = {}) {
     ? db.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE parent_id=? AND id<>?`, parentId, excluding || '').n
     : db.one(`SELECT COALESCE(SUM(allocated_amount),0) n FROM budget_lines WHERE funding_source_id=? AND parent_id IS NULL AND id<>?`, fundId, excluding || '').n;
   const holder = parentId
-    ? db.one(`SELECT COALESCE(label, category) AS name, allocated_amount AS cap FROM budget_lines WHERE id=?`, parentId)
+    ? db.one(`SELECT COALESCE(label, category) AS name, label IS NULL AS coded, allocated_amount AS cap FROM budget_lines WHERE id=?`, parentId)
     : db.one(`SELECT name, total_amount AS cap FROM funding_sources WHERE id=?`, fundId);
   if (!holder) return;
+  // A line with no label of its own is named by its category in words ("Client Assistance", not "client_assistance"; BO22).
+  if (holder.coded) holder.name = require('../options').humanize(holder.name);
   const total = cents(siblings + amount);
   if (total > cents(holder.cap)) {
     throw badRequest(`That would allocate ${money(total)} against ${holder.name}, which ${parentId ? 'is allocated' : 'totals'} ${money(holder.cap)}; ${money(cents(holder.cap - siblings))} is left to allocate. Reduce the amount, or raise ${parentId ? "the parent allocation" : "the fund's total"} first.`);

@@ -575,6 +575,9 @@ test('a budget line with approved spending is not deleted (409); a missing line 
   const spent = await admin.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: child.data.id, spent_at: '2026-03-02', amount: 101.86, category: 'client_assistance' });
   assert.equal(spent.status, 201, JSON.stringify(spent.data));
   H.db.run(`UPDATE expenditures SET status='approved' WHERE id=?`, spent.data.id);
+  // BO22: a line with no label is named by its category in words in the over-allocation message.
+  const over = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'client_assistance', allocated_amount: 700, parent_id: parent.data.id });
+  assert.equal(over.status, 400); assert.match(over.data.error, /against Client Assistance, which is allocated/); assert.doesNotMatch(over.data.error, /client_assistance/);
   for (const id of [parent.data.id, child.data.id]) {
     const r = await admin.del(`/api/budget/lines/${id}`);
     assert.equal(r.status, 409, JSON.stringify(r.data));

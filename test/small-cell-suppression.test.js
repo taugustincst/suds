@@ -108,7 +108,8 @@ test('funder report: no suppressed cell can be recovered as total minus the visi
   }
   // The same data in the exported file: the "Who was served" rows carry the same suppressed values.
   const csv = String((await sup.get(`/api/reports/funder/export?${PERIOD}&purpose=internal&format=csv`)).data);
-  assert.ok(!/Discharge reason,moved,2\b/.test(csv), 'the export is suppressed too');
+  // (Codes are written in words from 1.25.2: "Moved out of the area", not "moved".)
+  assert.ok(!/Discharge reason,(moved|Moved out of the area),2\b/.test(csv), 'the export is suppressed too');
 });
 
 test('funder report: exact counts are unchanged for the programme\'s own submission', async () => {
@@ -117,6 +118,10 @@ test('funder report: exact counts are unchanged for the programme\'s own submiss
   assert.deepEqual(d.overdose.by_month.map(x => [x.month, x.n, x.reversals]), [['2026-03', 13, 11], ['2026-04', 2, 1]]);
   assert.equal(d.episodes.by_discharge_reason.find(x => x.k === 'moved').n, 2);
   assert.equal(d.demographics.by_gender.find(x => x.k === 'female').n, 2);
+  // 1.25.2, BO22: the exported "Who was served" rows write codes in words, as the screen does.
+  const csv = String((await sup.get(`/api/reports/funder/export?${PERIOD}${EXACT}&format=csv`)).data);
+  assert.match(csv, /Gender,Female,2\b/); assert.doesNotMatch(csv, /Gender,female,/);
+  assert.match(csv, /Discharge reason,Moved out of the area,2\b/);
   assert.equal(d.overdose.reversals, 12);
   assert.equal((await ro.get(`/api/reports/funder?${PERIOD}${EXACT}`)).status, 403);
 });
