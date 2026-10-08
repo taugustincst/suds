@@ -2,6 +2,47 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+Fixes from the launch report (SUDS Server live on Lightsail at suds.systems, HANDOFF 2026-10-08) and from the pen test
+of suds.systems. No migration, no new or widened permission and no new route. **Before upgrading suds.systems**, move
+the `www.suds.systems` block appended to `/etc/caddy/Caddyfile` into `/etc/caddy/Caddyfile.d/` (deploy/linux/README.md,
+*Before upgrading suds.systems from 1.25.1*); the upgrade would also move it itself.
+
+### Fixed
+
+- **The installer no longer locks SSH out with `--admin-cidr=0.0.0.0/0`** (the launch report, finding 1). It removed the
+  stale SSH rules (`ufw delete allow OpenSSH/22/tcp/22`) *after* adding the admin rule, and with `0.0.0.0/0` (or `::/0`)
+  the admin rule is the plain "22/tcp from Anywhere", so it was deleted and every new SSH connection dropped once the
+  install session closed. The stale rules now go first, and the installer ends by printing the firewall rules in force,
+  with a loud warning and the fixing command when none allows SSH (`test/deploy-linux-real.test.js`, with a ufw stub that
+  keeps and deletes rules as ufw does).
+- **`www.<domain>` and site-local Caddy configuration** (the launch report, finding 2). The Caddyfile imports
+  `/etc/caddy/Caddyfile.d/*.caddy` at its end (no file there is not an error in the pinned Caddy 2.10.2), which no
+  upgrade touches; `install.sh --www-redirect` writes a permanent redirect from `www.<domain>` to `https://<domain>`
+  there (a redirect, not a second origin: passkeys are bound to the domain). `upgrade.sh`, and a re-run of `install.sh`,
+  no longer replace a locally edited `/etc/caddy/Caddyfile` without a word: before anything is stopped, site blocks
+  appended to the running release's copy are set aside and moved to `Caddyfile.d/local.caddy` (the edited file kept,
+  and put back on a rollback), and any other edit stops the run with the steps to take.
+- **The installer names the first administrator** (the launch report: the operator guessed `admin`). Its closing
+  message says to sign in with the username `guest` and the temporary password; the setup wizard's last page repeats
+  the username chosen there.
+- **Lockout no longer tells which usernames exist** (the pen test of suds.systems, MINOR-1). A locked account answered
+  423 while a name nobody has answered 401 for ever. A name with no active account (nobody, deactivated, a sign-up not
+  approved) now fails and locks the way an account does, counted in a bounded in-memory map, and answers the same 423
+  with the same message once over the threshold. The lockout policy (5 failures, 15 minutes) is unchanged
+  (`test/login-enumeration.test.js`).
+- **`/api/health` gives its warnings only to an administrator or the metrics token** (the pen test of suds.systems,
+  MINOR-2). Anyone else gets `{ ok, uptime_seconds, database }` and the same 200 or 503, so a monitor still sees that
+  an operator must act, without being told which control is down. `suds status` (Windows) sends the server's
+  `METRICS_TOKEN` when it has one; the recovery drill asks again once signed in.
+- **Caddy's `Via` header is removed** (the pen test of suds.systems, INFO-2), alongside `Server`.
+- **File-like paths that are not files answer 404, and other methods than GET or HEAD on a page 405** (the pen test of
+  suds.systems, INFO-3). `/.env`, `/.git/HEAD` and `TRACE /` were answered 200 with the app shell. Extensionless paths
+  (`/`, `/?local=1`, `/app`, old deep links) keep the shell (`test/spa-fallback.test.js`).
+- The public `/version.json` (INFO-1) and the in-process rate limits (INFO-4) stay by design: docs/security/THREAT-MODEL.md,
+  residual risks 23 and 24 (with the lockout's denial-of-service trade-off, the owner's decision).
+
 ## 1.25.2 — 2026-10-08
 
 A patch of 1.25.1 (docs/RELEASE.md, *Record: 1.25.2*): the fixes from testing every position on 1.25.1 (navigators,
