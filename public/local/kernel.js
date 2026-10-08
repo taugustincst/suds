@@ -48530,11 +48530,12 @@ var require_region_pictures = __commonJS({
       }
       return null;
     }
-    var BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+    var VERSION3 = true ? "1.25.0" : null.version;
+    var USER_AGENT = `SUDS/${VERSION3} (+https://github.com/taugustincst/suds) region pictures`;
     var ACCEPT_PAGE = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
     var ACCEPT_PICTURE = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8";
     function fetchChecked(url, { timeoutMs, maxBytes, hops = 4, accept = ACCEPT_PAGE }) {
-      return outbound.fetchChecked(url, { timeoutMs, maxBytes, hops, headers: { "User-Agent": BROWSER_UA, Accept: accept, "Accept-Language": "en-US,en;q=0.9" } });
+      return outbound.fetchChecked(url, { timeoutMs, maxBytes, hops, headers: { "User-Agent": USER_AGENT, Accept: accept, "Accept-Language": "en-US,en;q=0.9" } });
     }
     async function get(url, opts, accept) {
       return (await fetchChecked(url, { ...opts, accept })).buf;
@@ -48588,7 +48589,7 @@ var require_region_pictures = __commonJS({
       if (!region) throw new Error("Unknown region");
       return region.providers.filter((p) => p.image_url || p.website).map((p) => ({ key: p.key, name: p.name, category: p.category, url: p.image_url || null, website: p.website || null }));
     }
-    module.exports = { REGIONS, MAX_PICTURE_BYTES, EXT, sniff, pickImageUrl, assertPublicHttps, get, downloadPicture, downloadFromAddress, regionTargets, describeNetworkError, isPrivateAddress, _setFetchForTests, _setLookupForTests };
+    module.exports = { REGIONS, MAX_PICTURE_BYTES, EXT, USER_AGENT, sniff, pickImageUrl, assertPublicHttps, get, downloadPicture, downloadFromAddress, regionTargets, describeNetworkError, isPrivateAddress, _setFetchForTests, _setLookupForTests };
   }
 });
 

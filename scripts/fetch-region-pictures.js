@@ -9,6 +9,11 @@
 // (server/region-pictures.js). Best effort: a site that fails is listed in the manifest's `failures` and
 // skipped; nothing here ever fails a build. With no network at all it writes nothing and says so.
 //
+// The requests name SUDS in their user agent (server/region-pictures.js, USER_AGENT); they do not pose as a
+// browser. Many provider sites refuse automated downloads (HTTP 401/403), so a build bundles fewer pictures
+// than there are providers. The manifest says so plainly: `summary` counts the bundled, tried and refused,
+// `user_agent` is what was sent, and `note` explains the gap to whoever reads it.
+//
 // The pictures are build output, not repository content (.gitignore): they are other organisations' logos
 // and photos, they change, and committing a few megabytes of them on every refresh would bloat the history.
 //
@@ -18,6 +23,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const pictures = require('../server/region-pictures');
+
+/** How many failures were a site refusing the download (HTTP 401 or 403), as opposed to no picture or no network. */
+const refusedCount = (failures) => Object.values(failures).filter((e) => /\b40[13]\b/.test(String(e))).length;
 
 /**
  * Fetches every region's pictures into outDir/<region>/. Resolves to a summary; never rejects.
@@ -44,7 +52,13 @@ async function fetchAll({ outDir, concurrency = 6, timeoutMs = 12000, budgetMs =
     if (keys.length) {
       fs.mkdirSync(dir, { recursive: true });
       const fetchedAt = new Date().toISOString();
-      const manifest = { region: regionId, fetched_at: fetchedAt, pictures: {}, failures };
+      const refused = refusedCount(failures);
+      const manifest = {
+        region: regionId, fetched_at: fetchedAt, user_agent: pictures.USER_AGENT,
+        summary: { bundled: keys.length, tried: targets.length, refused },
+        note: `${keys.length} of ${targets.length} providers' pictures were downloaded. SUDS identifies itself and does not pose as a browser, so a provider site that refuses automated downloads (${refused} here, HTTP 401/403) is listed under failures and shows no picture.`,
+        pictures: {}, failures,
+      };
       for (const key of keys) {
         const { buf, type, url } = entries[key];
         const file = `${key.replace(/[^a-z0-9-]/gi, '_')}.${pictures.EXT[type]}`;
@@ -53,11 +67,12 @@ async function fetchAll({ outDir, concurrency = 6, timeoutMs = 12000, budgetMs =
       }
       fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 1) + '\n');
     }
-    summary.regions[regionId] = { bundled: keys.length, tried: targets.length, failures };
+    summary.regions[regionId] = { bundled: keys.length, tried: targets.length, refused: refusedCount(failures), failures };
     summary.bundled += keys.length; summary.tried += targets.length;
     const reasons = {}; for (const e of Object.values(failures)) reasons[e] = (reasons[e] || 0) + 1;
     const top = Object.entries(reasons).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([e, n]) => `${n}× ${e}`).join('; ');
-    log(`[suds] region pictures, ${regionId}: ${keys.length} of ${targets.length} bundled${top ? ` (not bundled: ${top})` : ''}`);
+    const refused = refusedCount(failures);
+    log(`[suds] region pictures, ${regionId}: ${keys.length} of ${targets.length} bundled${refused ? `; ${refused} provider sites refused an automated download` : ''}${top ? ` (not bundled: ${top})` : ''}`);
   }
   return summary;
 }

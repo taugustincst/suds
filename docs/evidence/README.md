@@ -17,7 +17,7 @@ all 17 code sets rewritten, yes/no as numeric 1/0, four elements added (LEG-1 cr
 medication prescribed, CID-19 consent for future contact, CID-20 sexual orientation), sex at birth removed, new
 edit checks, and migration 71 remapping stored answers
 ([caloms-dictionary-verification.md](caloms-dictionary-verification.md)); the resource directory shows a picture
-for every one of the 81 providers; and the call/text forms and the resource-directory view are plainer. A minor
+for every provider whose site allows an automated download (40 of the 81 on the published site); and the call/text forms and the resource-directory view are plainer. A minor
 gets an SBOM of its own: `sbom-1.25.0` (a patch has none of its own — 1.24.4 keeps 1.24.0's). 1.24.4, a patch with
 no policy exception, fixed what 1.24.3's exact-commit CI found and published the introductory pricing; it is
 tagged, through the gate, published and marked Latest, and what GitHub Pages serves. 1.24.1 makes SUDS proprietary

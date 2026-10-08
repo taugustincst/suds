@@ -2,6 +2,17 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Fixed
+
+* **Provider pictures: an honest user agent and an honest count.** The picture download names SUDS
+  (`SUDS/<version> (+https://github.com/taugustincst/suds) region pictures`) instead of posing as Chrome,
+  as every other outbound request does. Fewer provider sites allow that, so the static build's manifest now
+  records the user agent sent, a summary (bundled, tried, refused) and a plain note, and the build log names
+  how many sites refused. The "all 81 providers" claim is corrected everywhere: the published site has 40 of
+  the 81.
+
 ## 1.25.0 — 2026-10-05
 
 * **CalOMS Tx 1.25.0 (the owner lifted the feature freeze: "Fix everything now, freeze lifts to 1.25.0").** Dictionary-verified code sets: service types are ADM-4 codes 1–7; referral sources ADM-5 1–14; drug
@@ -26,10 +37,12 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **Open item:** the extract's column names and file layout are SUDS's own and are not dictionary-verified;
   the county converts the CSV files to the DHCS upload format before the first submission
   (docs/compliance/CALOMS.md).
-* **Resource pictures for all 81 providers.** The starter directory's provider-picture download now finds
-  every provider's picture (official websites recorded for the two Sierra providers; better discovery of
-  advertised pictures, a browser user agent, more image sources), so the resource directory cards show a
-  picture for each of the 81 providers.
+* **Better resource pictures.** The starter directory's provider-picture download finds a picture for every
+  provider whose website allows an automated download (official websites recorded for the two Sierra
+  providers; better discovery of advertised pictures, more image sources). *(Corrected 2026-10-08: this entry
+  first said "all 81 providers". That was measured from the owner's network; the published site, built on
+  GitHub's servers, has pictures for 40 of the 81, because many provider sites refuse automated downloads from
+  the build server. 1.25.0 also sent a browser user agent; that is withdrawn, see Unreleased.)*
 * **UI intuitiveness pass.** Plainer call/text form labels ("Client (optional)" with a plain-English help
   line; "Also log this as a time entry" matching the visit form) and an accessible resource-directory
   view toggle (role, labels and pressed state announced).

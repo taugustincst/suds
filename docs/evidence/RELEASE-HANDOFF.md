@@ -35,7 +35,7 @@ git archive --format=zip --prefix=suds-v1.25.0/ -o suds-v1.25.0.zip "$R1250" && 
 
 - Pages: the `Web app` run 37419567221 succeeded (the `tag/` path fix from 1.24.4 held). Live `version.json` reads **1.25.0**.
 
-- Contains: dictionary-verified CalOMS code sets (all 17 from DHCS Oct 2024 v3.0) + migration 71, resource pictures for all 81 providers, UI intuitiveness pass (plainer call-form labels, accessible resource view toggle).
+- Contains: dictionary-verified CalOMS code sets (all 17 from DHCS Oct 2024 v3.0) + migration 71, better resource pictures (every provider whose site allows an automated download; 40 of 81 on the published site, because many provider sites refuse automated downloads from the build server), UI intuitiveness pass (plainer call-form labels, accessible resource view toggle).
 
 ## Completed: v1.24.4 (2026-10-05)
 

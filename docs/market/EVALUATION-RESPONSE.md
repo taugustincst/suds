@@ -29,8 +29,9 @@ time, scheduled device backups, a Security & procurement page with a hardening c
 Windows, *Record: 1.24.0*; 1.24.1, a patch with no exception, made SUDS proprietary under the owner's licence, with
 SUDS on this device free for real use, and fixed what the market evaluation of 1.24.0 found, *Record: 1.24.1*;
 1.25.0, a feature release on the owner's explicit instruction to lift the freeze, corrected the CalOMS Tx code
-sets against the DHCS data dictionary (File Version 3.0, October 2024; migration 71 remaps stored answers), put a
-picture on every one of the 81 resource-directory providers, and made the call/text forms and the resource-directory
+sets against the DHCS data dictionary (File Version 3.0, October 2024; migration 71 remaps stored answers), found
+resource-directory pictures for every provider whose site allows an automated download (40 of the 81 on the
+published site), and made the call/text forms and the resource-directory
 view plainer, *Record: 1.25.0*).
 "Addressed in software"
 means the capability exists and is tested; it does not mean an auditor, a regulator or counsel has confirmed it.
