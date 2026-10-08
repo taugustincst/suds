@@ -485,7 +485,7 @@ function requireBasis(clientId, { consent_id, basis, justification, user, court_
       if (!recipient_override && flag_purpose) purposeUnconfirmed = true;
       else {
         if (!recipient_override) {
-          throw new HttpError(409, `This consent was given for "${consentPurpose}", which does not cover this disclosure's purpose ("${stated}"). Choose a consent given for this purpose, record a new one, or ask a supervisor to override with a written justification.`, { consentPurpose, purposeNotCovered: true });
+          throw new HttpError(409, `This consent states its purpose as "${consentPurpose}", which does not cover this disclosure's purpose ("${stated}"). Choose a consent given for this purpose, record a new one, or ask a supervisor to override with a written justification.`, { consentPurpose, purposeNotCovered: true });
         }
         if (!canOverride) throw forbidden('Only a supervisor or administrator can rely on a consent for a purpose it does not state');
         if (why.length < MIN_JUSTIFICATION) throw badRequest(`Relying on a consent for a purpose it does not state needs a written justification of at least ${MIN_JUSTIFICATION} characters, which is kept with the disclosure record.`);
