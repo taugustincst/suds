@@ -23,7 +23,8 @@ function range(ctx) {
   const { localDate, localMidnight } = require('./budget');
   const to = ctx.query.get('to') || localDate();
   const from = ctx.query.get('from') || addDays(to, -89);
-  if (!DAY.test(to) || !DAY.test(from) || !Number.isFinite(Date.parse(to)) || !Number.isFinite(Date.parse(from))) throw badRequest('from and to must be dates (YYYY-MM-DD)');
+  const { isRealDate } = require('../local-date');
+  if (!isRealDate(to) || !isRealDate(from)) throw badRequest('from and to must be real dates (YYYY-MM-DD)');
   const fromTs = localMidnight(from);
   const toEnd = new Date(Date.parse(localMidnight(addDays(to, 1))) - 1).toISOString();
   // Sargable: the leading range (the earliest and latest of the two forms' bounds) is one index range scan

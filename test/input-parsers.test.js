@@ -45,16 +45,28 @@ test('parseDate: the formats people actually type', () => {
   for (const [input, want] of cases) assert.equal(P.parseDate(input), want, JSON.stringify(input));
 });
 
-test('parseDate: a two-digit year slides: up to next year\'s is this century, later ones the last', () => {
+test('parseDate: a two-digit year slides, into the past only for a field that is never in the future (F2)', () => {
   // Evaluation of 1.25.0, E8: a date of birth typed "7/9/81" was read as 2081 and refused as in the future.
+  // Evaluation of 1.25.1, F2: a consent's expiry typed "10/1/28" was read as 1928 and refused.
   const in2026 = new Date(2026, 9, 8);
   for (const [input, want] of [['7/9/81', '1981-07-09'], ['3/4/15', '2015-03-04'], ['1/1/00', '2000-01-01'], ['10/5/26', '2026-10-05'],
-    ['12/31/27', '2027-12-31'], ['1/1/28', '1928-01-01'], ['6.1.99', '1999-06-01'], ['2/29/28', '1928-02-29']]) assert.equal(P.parseDate(input, in2026), want, JSON.stringify(input));
-  assert.equal(P.parseDate('1/1/28', new Date(2027, 0, 1)), '2028-01-01', 'the pivot moves with the year');
+    ['12/31/27', '2027-12-31'], ['10/1/28', '2028-10-01'], ['10/1/30', '2030-10-01'], ['1/1/46', '2046-01-01'], ['1/1/47', '1947-01-01'],
+    ['6.1.99', '1999-06-01'], ['2/29/28', '2028-02-29']]) assert.equal(P.parseDate(input, in2026), want, `${input}: a forward window of 20 years`);
+  for (const [input, want] of [['7/9/81', '1981-07-09'], ['10/5/26', '2026-10-05'], ['1/5/27', '1927-01-05'], ['1/1/46', '1946-01-01'], ['3/4/15', '2015-03-04']])
+    assert.equal(P.parseDate(input, in2026, { past: true }), want, `${input}: a date of birth`);
+  assert.equal(P.parseDate('1/1/47', new Date(2027, 0, 1)), '2047-01-01', 'the window moves with the year');
   assert.equal(P.parseDate('1/1/99', new Date(2098, 5, 1)), '2099-01-01');
-  assert.equal(P.parseDate('1/1/00', new Date(2099, 5, 1)), '2000-01-01', 'at the end of a century, 00 is still this one');
+  assert.equal(P.parseDate('1/1/00', new Date(2099, 5, 1)), '2100-01-01', 'at the end of a century, 00 is the next one ahead');
+  assert.equal(P.parseDate('1/1/00', new Date(2099, 5, 1), { past: true }), '2000-01-01', 'and this one for a date of birth');
   assert.equal(P.parseDate('7/9/1981', in2026), '1981-07-09', 'four digits are taken as written');
-  assert.equal(P.parseDate('7/9/2081', in2026), '2081-07-09');
+  assert.equal(P.parseDate('7/9/2081', in2026, { past: true }), '2081-07-09');
+  assert.equal(P.fullYear(28, 2026), 2028); assert.equal(P.fullYear(28, 2026, true), 1928);
+});
+
+test('a date box reads a two-digit year by its field: into the past when its max is today (F2)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  assert.match(src, /past: !!f\.past \|\| \(!!f\.max && f\.max <= fmt\.today\(\)\)/);
+  assert.match(src, /parseDate\(t, new Date\(\), opts\)/);
 });
 
 test('parseDate: rejects impossible and malformed dates', () => {

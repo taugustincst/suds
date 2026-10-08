@@ -36,6 +36,7 @@ function checkRecord(entity, rec, ctx) {
   try {
     const v = validate(own, R.partialShape());
     if (entity !== 'clients') rules.assertWrite(entity, rules.toColumns(entity, v), ctx);
+    const dates = DI.dateProblems(entity, v); if (dates.length) throw new Error(dates.join('; '));
   } catch (e) {
     const fields = e.extra && e.extra.fields;
     throw new Error(fields ? Object.entries(fields).map(([k, m]) => `${k} ${m}`).join('; ') : e.message);
@@ -117,7 +118,7 @@ module.exports = (r) => {
     if (entity === 'clients') duplicateCheckLimit(ctx);
     const dups = { shown: 0, hidden: 0 };
     const rows = sheet.rows.slice(0, 2000).map((row, i) => {
-      const { record, errors } = DI.convertRow(entity, normalizedMapping, row);
+      const { record, errors, dates } = DI.convertRow(entity, normalizedMapping, row);
       if (record.client_ref !== undefined) { const id = DI.resolveClient(record.client_ref, ctx, auth); if (record.client_ref && !id) errors.push(`Client "${record.client_ref}" not found (use the client code or "Last, First")`); else if (id === 'ambiguous') errors.push(`Client "${record.client_ref}" matches several clients; use the client code`); else record.client_id = id || null; }
       if (entity === 'expenditures' && record.fund) { const f = db.one(`SELECT id FROM funding_sources WHERE name=? COLLATE NOCASE AND is_active=1`, record.fund); if (!f) errors.push(`Funding source "${record.fund}" not found`); else record.funding_source_id = f.id; }
       if (entity === 'clients' && record.first_name && record.last_name && !errors.length) {
@@ -128,7 +129,7 @@ module.exports = (r) => {
         // asked to look instead, on that record, where the caller does not see the task.
         if (hidden.length && !shown.length) { dups.hidden++; for (const m of hidden) C().reviewTask(ctx.user, m.id, `Possible duplicate: a spreadsheet or EHR import preview named the person on ${m.client_code}; check whether they are being imported again`); }
       }
-      return { n: i + 2, record, errors };
+      return { n: i + 2, record, errors, dates };
     });
     // Counts only: never which names were looked for, nor what they matched.
     audit.log({ user: ctx.user, action: 'import.data.preview', ip: ctx.ip, details: { entity, rows: rows.length, sheet: sheet.name, source: source || undefined, duplicates: entity === 'clients' ? dups : undefined } });

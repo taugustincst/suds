@@ -29,13 +29,25 @@ export function parseTime(s) {
 }
 
 /**
+ * The full year of a two-digit year `yy` typed in `year`. Which century depends on the field (F2): for a date
+ * that can only be in the past (`past`: a date of birth) it is the latest year not after this one ("7/9/81" is
+ * 1981; in 2026, "27" is 1927); for any other date, such as a consent's expiry or a due date, it is within 20
+ * years ahead and 80 behind (in 2026, "28" is 2028, "46" 2046 and "47" 1947), so a typed expiry is not 1928.
+ * server/dataimport.js reads a spreadsheet's two-digit years by the same rule.
+ */
+export function fullYear(yy, year, past = false) {
+  let y = year - (year % 100) + yy;
+  if (past) { if (y > year) y -= 100; } else if (y > year + 20) y -= 100; else if (y <= year - 80) y += 100;
+  return y;
+}
+
+/**
  * Parse a typed date into "YYYY-MM-DD", or null. Accepts "10/5/2026", "10-05-2026", "2026-10-05",
- * "10.5.26", and "20261005". Month/day order is US (month first). A two-digit year slides: up to next
- * year's is this century, anything later the last ("7/9/81" is a date of birth in 1981, not 2081, which
- * was refused as in the future; in 2026, "27" is 2027 and "28" is 1928). `now` is for the unit tests.
+ * "10.5.26", and "20261005". Month/day order is US (month first). A two-digit year is read by fullYear(),
+ * into the past for a field that is never in the future (`{ past: true }`). `now` is for the unit tests.
  * Exported for the unit tests.
  */
-export function parseDate(s, now = new Date()) {
+export function parseDate(s, now = new Date(), { past = false } = {}) {
   const t = String(s || '').trim();
   if (!t) return null;
   let y, mth, d;
@@ -45,7 +57,7 @@ export function parseDate(s, now = new Date()) {
     m = t.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2}|\d{4})$/);
     if (m) {
       mth = +m[1]; d = +m[2]; y = +m[3];
-      if (m[3].length === 2) { const year = now.getFullYear(); const century = year - (year % 100); y += y <= (year % 100) + 1 ? century : century - 100; }
+      if (m[3].length === 2) y = fullYear(y, now.getFullYear(), past);
     }
     else { m = t.match(/^(\d{4})(\d{2})(\d{2})$/); if (!m) return null; y = +m[1]; mth = +m[2]; d = +m[3]; }
   }

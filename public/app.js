@@ -886,11 +886,15 @@ function dateBox(f, v) {
     placeholder: 'M/D/YYYY', maxlength: 10, value: fmtMDY(iso),
     'aria-label': `${f.label} — date, type as month/day/year` });
   const native = h('input', { type: 'date', class: 'date-native', tabindex: '-1', 'aria-hidden': 'true', min: f.min || DATE_MIN, max: f.max || DATE_MAX, value: iso });
-  const syncNative = () => { const p = parseDate(text.value); if (p) native.value = p; };
+  // A field that is never in the future (a date of birth: its max is today) reads a two-digit year into the past;
+  // any other (an expiry, a due date) into the next 20 years (input-parsers.js fullYear, F2).
+  const opts = { past: !!f.past || (!!f.max && f.max <= fmt.today()) };
+  const parse = (t) => parseDate(t, new Date(), opts);
+  const syncNative = () => { const p = parse(text.value); if (p) native.value = p; };
   text.addEventListener('input', syncNative);
-  text.addEventListener('change', () => { const p = parseDate(text.value); if (p && text.value.trim() !== fmtMDY(p)) text.value = fmtMDY(p); syncNative(); });
+  text.addEventListener('change', () => { const p = parse(text.value); if (p && text.value.trim() !== fmtMDY(p)) text.value = fmtMDY(p); syncNative(); });
   native.addEventListener('change', () => { if (native.value) text.value = fmtMDY(native.value); text.focus(); });
-  text.parsedDate = () => { const t = text.value.trim(); return t === '' ? '' : parseDate(t); };
+  text.parsedDate = () => { const t = text.value.trim(); return t === '' ? '' : parse(t); };
   // The calendar button beside the field drives the hidden native control.
   const btn = datePickButton(native, f.label);
   btn.dataset.datePick = f.name;

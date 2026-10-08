@@ -63,6 +63,15 @@ const today = () => localDate();
 /** The calendar date `n` days after `date` (YYYY-MM-DD); calendar arithmetic, so no time zone is involved. */
 const addDays = (date, n) => new Date(Date.parse(`${String(date).slice(0, 10)}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 /**
+ * True for a real calendar date written YYYY-MM-DD. The pattern alone is not enough: V8's Date.parse reads
+ * "2026-09-31" as October 1st and "1990-02-30" as March 2nd, so an impossible date was stored as typed (BO5).
+ */
+function isRealDate(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const t = Date.parse(`${s}T00:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === s;
+}
+/**
  * The programme's date of a stored value: an instant (ISO, UTC) is read on the programme's calendar, so a call at 9pm
  * in Los Angeles is that day's, not the next (its UTC date); a bare YYYY-MM-DD is already a date and is kept.
  */
@@ -72,4 +81,4 @@ function dayOf(at) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : (localDate(s) || s.slice(0, 10));
 }
 
-module.exports = { today, localDate, localMidnight, orgTimezone, validTimezone, addDays, dayOf, formatter };
+module.exports = { today, localDate, localMidnight, orgTimezone, validTimezone, addDays, dayOf, isRealDate, formatter };
