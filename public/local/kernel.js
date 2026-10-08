@@ -8931,6 +8931,91 @@ var require_participant_code = __commonJS({
   }
 });
 
+// server/local-date.js
+var require_local_date = __commonJS({
+  "server/local-date.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    function validTimezone(tz) {
+      if (typeof tz !== "string" || !tz.trim() || tz.length > 64) return false;
+      try {
+        formatter("en-US", { timeZone: tz });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    var formatters = /* @__PURE__ */ new Map();
+    function formatter(locale, opts) {
+      const key = `${locale}|${JSON.stringify(opts)}`;
+      let f = formatters.get(key);
+      if (!f) {
+        f = new Intl.DateTimeFormat(locale, opts);
+        if (formatters.size > 200) formatters.clear();
+        formatters.set(key, f);
+      }
+      return f;
+    }
+    function orgTimezone() {
+      let v = null;
+      try {
+        v = require_db().getSetting("org_timezone", null);
+      } catch {
+      }
+      return v && validTimezone(v) ? v : require_config().orgTimezone;
+    }
+    function localDate(when = /* @__PURE__ */ new Date(), tz = orgTimezone()) {
+      const d = when instanceof Date ? when : new Date(when);
+      if (!Number.isFinite(d.getTime())) return null;
+      try {
+        return formatter("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+      } catch {
+        return d.toISOString().slice(0, 10);
+      }
+    }
+    function localMidnight(date, tz = orgTimezone()) {
+      const guess = Date.parse(`${date}T00:00:00Z`);
+      if (!Number.isFinite(guess)) return null;
+      const offset = (ms) => {
+        try {
+          const p = Object.fromEntries(formatter("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+          return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - ms % 1e3);
+        } catch {
+          return 0;
+        }
+      };
+      const first = guess - offset(guess);
+      return new Date(guess - offset(first)).toISOString();
+    }
+    var today = () => localDate();
+    var addDays = (date, n) => new Date(Date.parse(`${String(date).slice(0, 10)}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
+    function isRealDate(s) {
+      if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+      const t = Date.parse(`${s}T00:00:00Z`);
+      return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === s;
+    }
+    var nextMonth = (m) => {
+      const y = Number(m.slice(0, 4));
+      const mo = Number(m.slice(5, 7));
+      return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`;
+    };
+    function monthSql(col, from, to) {
+      const months = [];
+      for (let m = from; m <= to && months.length < 600; m = nextMonth(m)) months.push(m);
+      if (!months.length) return `substr(${col},1,7)`;
+      const after = localMidnight(`${nextMonth(months[months.length - 1])}-01`);
+      const steps = months.map((m) => `WHEN ${col} >= '${localMidnight(`${m}-01`)}' THEN '${m}'`).reverse().join(" ");
+      return `(CASE WHEN length(${col})=10 OR ${col} >= '${after}' THEN substr(${col},1,7) ${steps} ELSE substr(${col},1,7) END)`;
+    }
+    function dayOf(at) {
+      if (at === null || at === void 0 || at === "") return null;
+      const s = String(at);
+      return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : localDate(s) || s.slice(0, 10);
+    }
+    module.exports = { today, localDate, localMidnight, orgTimezone, validTimezone, addDays, dayOf, isRealDate, monthSql, formatter };
+  }
+});
+
 // server/clients-model.js
 var require_clients_model = __commonJS({
   "server/clients-model.js"(exports, module) {
@@ -9092,7 +9177,7 @@ var require_clients_model = __commonJS({
       return m ? Number(m[1]) : 0;
     }
     function nextClientCode() {
-      const year = (/* @__PURE__ */ new Date()).getFullYear();
+      const year = Number(require_local_date().today().slice(0, 4));
       const prefix = `${require_config().local ? "M" : "C"}${String(year).slice(2)}-`;
       const counterKey = `client_code_counter:${prefix}`;
       const counter = Number(db3.getSetting(counterKey, "0")) || 0;
@@ -9359,73 +9444,6 @@ var require_audit = __commonJS({
       return r;
     }
     module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead, sealHeadAtStart };
-  }
-});
-
-// server/local-date.js
-var require_local_date = __commonJS({
-  "server/local-date.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    function validTimezone(tz) {
-      if (typeof tz !== "string" || !tz.trim() || tz.length > 64) return false;
-      try {
-        formatter("en-US", { timeZone: tz });
-        return true;
-      } catch {
-        return false;
-      }
-    }
-    var formatters = /* @__PURE__ */ new Map();
-    function formatter(locale, opts) {
-      const key = `${locale}|${JSON.stringify(opts)}`;
-      let f = formatters.get(key);
-      if (!f) {
-        f = new Intl.DateTimeFormat(locale, opts);
-        if (formatters.size > 200) formatters.clear();
-        formatters.set(key, f);
-      }
-      return f;
-    }
-    function orgTimezone() {
-      let v = null;
-      try {
-        v = require_db().getSetting("org_timezone", null);
-      } catch {
-      }
-      return v && validTimezone(v) ? v : require_config().orgTimezone;
-    }
-    function localDate(when = /* @__PURE__ */ new Date(), tz = orgTimezone()) {
-      const d = when instanceof Date ? when : new Date(when);
-      if (!Number.isFinite(d.getTime())) return null;
-      try {
-        return formatter("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
-      } catch {
-        return d.toISOString().slice(0, 10);
-      }
-    }
-    function localMidnight(date, tz = orgTimezone()) {
-      const guess = Date.parse(`${date}T00:00:00Z`);
-      if (!Number.isFinite(guess)) return null;
-      const offset = (ms) => {
-        try {
-          const p = Object.fromEntries(formatter("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
-          return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - (ms - ms % 1e3);
-        } catch {
-          return 0;
-        }
-      };
-      const first = guess - offset(guess);
-      return new Date(guess - offset(first)).toISOString();
-    }
-    var today = () => localDate();
-    var addDays = (date, n) => new Date(Date.parse(`${String(date).slice(0, 10)}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
-    function dayOf(at) {
-      if (at === null || at === void 0 || at === "") return null;
-      const s = String(at);
-      return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : localDate(s) || s.slice(0, 10);
-    }
-    module.exports = { today, localDate, localMidnight, orgTimezone, validTimezone, addDays, dayOf, formatter };
   }
 });
 
@@ -11664,14 +11682,22 @@ var require_validate = __commonJS({
             v = v === true || v === 1 || v === "1" || v === "true" ? 1 : 0;
             break;
           case "date":
-            if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v) || isNaN(Date.parse(v))) {
+            if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
               errors[k] = "must be YYYY-MM-DD";
+              continue;
+            }
+            if (!require_local_date().isRealDate(v)) {
+              errors[k] = "is not a real date";
               continue;
             }
             break;
           case "datetime":
             if (typeof v !== "string" || isNaN(Date.parse(v))) {
               errors[k] = "must be an ISO datetime";
+              continue;
+            }
+            if (/^\d{4}-\d{2}-\d{2}/.test(v) && !require_local_date().isRealDate(v.slice(0, 10))) {
+              errors[k] = "is not a real date";
               continue;
             }
             v = /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : new Date(v).toISOString();
@@ -13799,6 +13825,665 @@ var require_client_revisions = __commonJS({
   }
 });
 
+// server/importers/text.js
+var require_text = __commonJS({
+  "server/importers/text.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
+    function decodeEntities(s) {
+      const map = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "\u2013", mdash: "\u2014", hellip: "\u2026", rsquo: "\u2019", lsquo: "\u2018", rdquo: "\u201D", ldquo: "\u201C" };
+      return s.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e) => {
+        if (e[0] === "#") {
+          const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+          return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+        }
+        return map[e] ?? m;
+      });
+    }
+    function htmlToText(html) {
+      let s = String(html);
+      s = s.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "");
+      s = s.replace(/<!--[\s\S]*?-->/g, "");
+      s = s.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, "\n").replace(/<li[^>]*>/gi, "\u2022 ").replace(/<\/td>/gi, "	");
+      s = s.replace(/<[^>]+>/g, "");
+      s = decodeEntities(s);
+      return s.replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    }
+    function extractTitle(html) {
+      const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
+      return m ? htmlToText(m[1]).trim() : "";
+    }
+    function quotedPrintableDecode(s) {
+      return import_buffer.Buffer.from(String(s).replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))), "binary").toString("utf8");
+    }
+    function parseMime(raw) {
+      const text = import_buffer.Buffer.isBuffer(raw) ? raw.toString("latin1") : String(raw);
+      const headerEnd = text.search(/\r?\n\r?\n/);
+      const headers = text.slice(0, headerEnd);
+      const bm = /boundary="?([^"\r\n;]+)"?/i.exec(headers);
+      if (!bm) {
+        return [{ contentType: (/content-type:\s*([^;\r\n]+)/i.exec(headers) || [, "text/html"])[1].trim(), body: decodePart(headers, text.slice(headerEnd).trim()) }];
+      }
+      const parts = text.split(new RegExp("--" + bm[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:--)?\\r?\\n"));
+      const out2 = [];
+      for (const p of parts.slice(1)) {
+        const he = p.search(/\r?\n\r?\n/);
+        if (he < 0) continue;
+        const h = p.slice(0, he);
+        const b = p.slice(he).replace(/^\r?\n\r?\n/, "");
+        const ct = (/content-type:\s*([^;\r\n]+)/i.exec(h) || [, ""])[1].trim().toLowerCase();
+        const loc = (/content-location:\s*([^\r\n]+)/i.exec(h) || [, ""])[1].trim();
+        if (!ct) continue;
+        out2.push({ contentType: ct, location: loc, body: decodePart(h, b) });
+      }
+      return out2;
+    }
+    function decodePart(headers, body) {
+      const enc2 = (/content-transfer-encoding:\s*([^\r\n]+)/i.exec(headers) || [, "7bit"])[1].trim().toLowerCase();
+      if (enc2 === "quoted-printable") return quotedPrintableDecode(body);
+      if (enc2 === "base64") return import_buffer.Buffer.from(body.replace(/\s+/g, ""), "base64");
+      return import_buffer.Buffer.from(body, "latin1").toString("utf8");
+    }
+    function unzip(buf) {
+      const files = /* @__PURE__ */ new Map();
+      const eocd = buf.lastIndexOf(import_buffer.Buffer.from([80, 75, 5, 6]));
+      if (eocd < 0) throw new Error("Not a ZIP archive");
+      const count = buf.readUInt16LE(eocd + 10);
+      let off = buf.readUInt32LE(eocd + 16);
+      for (let i = 0; i < count; i++) {
+        if (buf.readUInt32LE(off) !== 33639248) break;
+        const method = buf.readUInt16LE(off + 10);
+        const csize = buf.readUInt32LE(off + 20);
+        const nlen = buf.readUInt16LE(off + 28), elen = buf.readUInt16LE(off + 30), clen2 = buf.readUInt16LE(off + 32);
+        const lho = buf.readUInt32LE(off + 42);
+        const name = buf.toString("utf8", off + 46, off + 46 + nlen);
+        const lnlen = buf.readUInt16LE(lho + 26), lelen = buf.readUInt16LE(lho + 28);
+        const dataStart = lho + 30 + lnlen + lelen;
+        const data = buf.subarray(dataStart, dataStart + csize);
+        files.set(name, method === 8 ? zlib.inflateRawSync(data) : import_buffer.Buffer.from(data));
+        off += 46 + nlen + elen + clen2;
+      }
+      return files;
+    }
+    function docxToText(buf) {
+      const files = unzip(buf);
+      const xml = files.get("word/document.xml");
+      if (!xml) throw new Error("Not a DOCX file (word/document.xml missing)");
+      let s = xml.toString("utf8");
+      s = s.replace(/<w:tab\/>/g, "	").replace(/<w:br\/>|<w:cr\/>/g, "\n").replace(/<\/w:p>/g, "\n").replace(/<[^>]+>/g, "");
+      return decodeEntities(s).replace(/\n{3,}/g, "\n\n").trim();
+    }
+    function sniffDate(text) {
+      const s = String(text || "");
+      let m = /(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s);
+      if (m) {
+        const d = /* @__PURE__ */ new Date(m[1] + (m[2] ? "T" + m[2] + "Z" : "T12:00:00Z"));
+        if (!isNaN(d)) return d.toISOString();
+      }
+      m = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b(?:,?\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?))?/i.exec(s);
+      if (m) {
+        const y = m[3].length === 2 ? "20" + m[3] : m[3];
+        const d = /* @__PURE__ */ new Date(`${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}T12:00:00Z`);
+        if (!isNaN(d)) return d.toISOString();
+      }
+      m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(s);
+      if (m) {
+        const d = /* @__PURE__ */ new Date(`${m[1].slice(0, 3)} ${m[2]}, ${m[3]} 12:00:00 UTC`);
+        if (!isNaN(d)) return d.toISOString();
+      }
+      return null;
+    }
+    function sniffClientHints(text) {
+      const s = String(text || "");
+      const hints2 = { codes: [], names: [] };
+      for (const m of s.matchAll(/\b([CM]\d{2}-\d{4})\b/gi)) hints2.codes.push(m[1].toUpperCase());
+      const kw = /\b(?:(?:client|participant|pt|patient|re|name|regarding)\s*[:\-]\s*|(?:with|for|regarding)\s+)/gi;
+      const nameRe = /^([A-Z][a-zA-Z'\-]+(?:,\s*|\s+)[A-Z][a-zA-Z'\-]+)/;
+      for (const m of s.matchAll(kw)) {
+        const nm = nameRe.exec(s.slice(m.index + m[0].length));
+        if (nm) hints2.names.push(nm[1].trim());
+      }
+      hints2.codes = [...new Set(hints2.codes)];
+      hints2.names = [...new Set(hints2.names)].slice(0, 5);
+      return hints2;
+    }
+    module.exports = { htmlToText, extractTitle, quotedPrintableDecode, parseMime, unzip, docxToText, sniffDate, sniffClientHints, decodeEntities };
+  }
+});
+
+// server/spreadsheet.js
+var require_spreadsheet = __commonJS({
+  "server/spreadsheet.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
+    var { unzip, decodeEntities } = require_text();
+    function parseCsv(text) {
+      const s = String(text).replace(/^﻿/, "");
+      const rows = [];
+      let row = [];
+      let field = "";
+      let q = false;
+      for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (q) {
+          if (c === '"') {
+            if (s[i + 1] === '"') {
+              field += '"';
+              i++;
+            } else q = false;
+          } else field += c;
+        } else if (c === '"') q = true;
+        else if (c === ",") {
+          row.push(field);
+          field = "";
+        } else if (c === "\n" || c === "\r") {
+          if (c === "\r" && s[i + 1] === "\n") i++;
+          row.push(field);
+          rows.push(row);
+          row = [];
+          field = "";
+        } else field += c;
+      }
+      if (field !== "" || row.length) {
+        row.push(field);
+        rows.push(row);
+      }
+      return rows.filter((r) => r.some((v) => String(v).trim() !== ""));
+    }
+    var FORMULA_START = /^'*[=+\-@\t\r]/;
+    var UNGUARD = /^'+[=+\-@\t\r]/;
+    function toCsv(rows, columns) {
+      const esc = (v) => {
+        if (v === null || v === void 0) return "";
+        if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
+        let t = typeof v === "object" ? JSON.stringify(v) : String(v);
+        if (FORMULA_START.test(t)) return `"'` + t.replace(/"/g, '""') + '"';
+        return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+      };
+      return "\uFEFF" + [columns.map((c) => esc(c.label || c.key || c)).join(","), ...rows.map((r) => columns.map((c) => esc(r[c.key || c])).join(","))].join("\r\n");
+    }
+    function crc32(buf) {
+      let c, crc = 4294967295;
+      for (let n = 0; n < buf.length; n++) {
+        c = (crc ^ buf[n]) & 255;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+        crc = crc >>> 8 ^ c;
+      }
+      return (crc ^ 4294967295) >>> 0;
+    }
+    function zipEntry(name, content, comp, off, local, central) {
+      const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
+      const n = import_buffer.Buffer.from(name);
+      const crc = crc32(data);
+      const lh = import_buffer.Buffer.alloc(30);
+      lh.writeUInt32LE(67324752, 0);
+      lh.writeUInt16LE(20, 4);
+      lh.writeUInt16LE(2048, 6);
+      lh.writeUInt16LE(8, 8);
+      lh.writeUInt32LE(crc, 14);
+      lh.writeUInt32LE(comp.length, 18);
+      lh.writeUInt32LE(data.length, 22);
+      lh.writeUInt16LE(n.length, 26);
+      local.push(lh, n, comp);
+      const ch = import_buffer.Buffer.alloc(46);
+      ch.writeUInt32LE(33639248, 0);
+      ch.writeUInt16LE(20, 4);
+      ch.writeUInt16LE(20, 6);
+      ch.writeUInt16LE(2048, 8);
+      ch.writeUInt16LE(8, 10);
+      ch.writeUInt32LE(crc, 16);
+      ch.writeUInt32LE(comp.length, 20);
+      ch.writeUInt32LE(data.length, 24);
+      ch.writeUInt16LE(n.length, 28);
+      ch.writeUInt32LE(off, 42);
+      central.push(ch, n);
+      return off + 30 + n.length + comp.length;
+    }
+    function zipEnd(entries2, local, central, off) {
+      const cd = import_buffer.Buffer.concat(central);
+      const eocd = import_buffer.Buffer.alloc(22);
+      eocd.writeUInt32LE(101010256, 0);
+      eocd.writeUInt16LE(entries2.length, 8);
+      eocd.writeUInt16LE(entries2.length, 10);
+      eocd.writeUInt32LE(cd.length, 12);
+      eocd.writeUInt32LE(off, 16);
+      return import_buffer.Buffer.concat([...local, cd, eocd]);
+    }
+    var defer = globalThis.setImmediate ? (f) => setImmediate(f) : (f) => setTimeout(f, 0);
+    async function zipAsync(entries2) {
+      const local = [], central = [];
+      let off = 0;
+      const deflate = (buf) => typeof zlib.deflateRaw === "function" ? new Promise((resolve2, reject) => zlib.deflateRaw(buf, (err2, out2) => err2 ? reject(err2) : resolve2(out2))) : new Promise((resolve2) => defer(resolve2)).then(() => zlib.deflateRawSync(buf));
+      for (const [name, content] of entries2) {
+        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
+        off = zipEntry(name, data, await deflate(data), off, local, central);
+      }
+      return zipEnd(entries2, local, central, off);
+    }
+    function zip(entries2) {
+      const local = [], central = [];
+      let off = 0;
+      for (const [name, content] of entries2) {
+        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
+        const comp = zlib.deflateRawSync(data);
+        const n = import_buffer.Buffer.from(name);
+        const crc = crc32(data);
+        const lh = import_buffer.Buffer.alloc(30);
+        lh.writeUInt32LE(67324752, 0);
+        lh.writeUInt16LE(20, 4);
+        lh.writeUInt16LE(2048, 6);
+        lh.writeUInt16LE(8, 8);
+        lh.writeUInt32LE(crc, 14);
+        lh.writeUInt32LE(comp.length, 18);
+        lh.writeUInt32LE(data.length, 22);
+        lh.writeUInt16LE(n.length, 26);
+        local.push(lh, n, comp);
+        const ch = import_buffer.Buffer.alloc(46);
+        ch.writeUInt32LE(33639248, 0);
+        ch.writeUInt16LE(20, 4);
+        ch.writeUInt16LE(20, 6);
+        ch.writeUInt16LE(2048, 8);
+        ch.writeUInt16LE(8, 10);
+        ch.writeUInt32LE(crc, 16);
+        ch.writeUInt32LE(comp.length, 20);
+        ch.writeUInt32LE(data.length, 24);
+        ch.writeUInt16LE(n.length, 28);
+        ch.writeUInt32LE(off, 42);
+        central.push(ch, n);
+        off += 30 + n.length + comp.length;
+      }
+      return zipEnd(entries2, local, central, off);
+    }
+    var EXCEL_EPOCH = Date.UTC(1899, 11, 30);
+    var xmlEsc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+    function colRef(i) {
+      let s = "";
+      i++;
+      while (i > 0) {
+        const m = (i - 1) % 26;
+        s = String.fromCharCode(65 + m) + s;
+        i = Math.floor((i - 1) / 26);
+      }
+      return s;
+    }
+    function writeSheetXml(sh) {
+      const cols2 = sh.columns.map((c) => typeof c === "string" ? { key: c, label: c } : c);
+      const cell = (r, i, v) => {
+        const ref = colRef(i) + r;
+        if (v === null || v === void 0 || v === "") return "";
+        if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"><v>${v}</v></c>`;
+        if (typeof v === "boolean") return `<c r="${ref}" t="b"><v>${v ? 1 : 0}</v></c>`;
+        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+          const t = Date.parse(v + "T00:00:00Z");
+          if (Number.isFinite(t)) return `<c r="${ref}" s="2"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
+        }
+        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
+          const t = Date.parse(v);
+          if (Number.isFinite(t)) return `<c r="${ref}" s="3"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
+        }
+        return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(typeof v === "object" ? JSON.stringify(v) : v)}</t></is></c>`;
+      };
+      const header = `<row r="1">${cols2.map((c, i) => `<c r="${colRef(i)}1" t="inlineStr" s="1"><is><t>${xmlEsc(c.label)}</t></is></c>`).join("")}</row>`;
+      const body = sh.rows.map((row, ri) => `<row r="${ri + 2}">${cols2.map((c, i) => cell(ri + 2, i, row[c.key])).join("")}</row>`).join("");
+      const widths = `<cols>${cols2.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${Math.min(60, Math.max(10, c.width || String(c.label).length + 4))}" customWidth="1"/>`).join("")}</cols>`;
+      return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${widths}<sheetData>${header}${body}</sheetData><autoFilter ref="A1:${colRef(cols2.length - 1)}${sh.rows.length + 1}"/></worksheet>`;
+    }
+    function writeWorkbookParts(sheets) {
+      const files = [];
+      const safeName = (n, i) => String(n).replace(/[\\/*?:\[\]]/g, " ").slice(0, 31) || `Sheet${i + 1}`;
+      files.push(["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`]);
+      files.push(["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`]);
+      files.push(["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(safeName(s.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`]);
+      files.push(["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`]);
+      files.push(["xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/><xf numFmtId="22" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/></cellXfs></styleSheet>`]);
+      sheets.forEach((s, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(s)]));
+      return new Map(files);
+    }
+    function writeWorkbook(sheets) {
+      return zip([...writeWorkbookParts(sheets).entries()]);
+    }
+    async function writeWorkbookAsync(sheets) {
+      const breathe = () => new Promise((resolve2) => defer(resolve2));
+      const parts = writeWorkbookParts(sheets.map((s) => ({ name: s.name, columns: s.columns, rows: [] })));
+      for (let i = 0; i < sheets.length; i++) {
+        parts.set(`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(sheets[i]));
+        await breathe();
+      }
+      const out2 = await zipAsync([...parts.entries()]);
+      return out2;
+    }
+    function readWorkbook(buf) {
+      const files = unzip(buf);
+      const get = (n) => {
+        const f = files.get(n);
+        return f ? f.toString("utf8") : null;
+      };
+      const wb = get("xl/workbook.xml");
+      if (!wb) throw new Error("Not an Excel (.xlsx) file");
+      const rels = get("xl/_rels/workbook.xml.rels") || "";
+      const relMap = {};
+      for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
+        const id = /Id="([^"]+)"/.exec(m[0])?.[1];
+        const t = /Target="([^"]+)"/.exec(m[0])?.[1];
+        if (id && t) relMap[id] = t.replace(/^\/?xl\//, "").replace(/^\//, "");
+      }
+      const shared = [];
+      const ss = get("xl/sharedStrings.xml");
+      if (ss) for (const m of ss.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(decodeEntities([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join("")));
+      const sheets = [];
+      for (const m of wb.matchAll(/<sheet\b[^>]*>/g)) {
+        const name = decodeEntities(/name="([^"]*)"/.exec(m[0])?.[1] || "");
+        const rid = /r:id="([^"]+)"/.exec(m[0])?.[1];
+        const target = relMap[rid] || `worksheets/sheet${sheets.length + 1}.xml`;
+        const xml = get("xl/" + target) || get(target);
+        if (!xml) continue;
+        const rows = [];
+        for (const rm of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+          const row = [];
+          for (const cm of rm[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+            const attrs = cm[1];
+            const inner = cm[2] || "";
+            const ref = /r="([A-Z]+)\d+"/.exec(attrs)?.[1];
+            const type = /t="([^"]+)"/.exec(attrs)?.[1];
+            const idx = ref ? colIndex(ref) : row.length;
+            let v = null;
+            const vm = /<v>([\s\S]*?)<\/v>/.exec(inner);
+            if (type === "s") v = shared[Number(vm?.[1])] ?? "";
+            else if (type === "inlineStr") v = decodeEntities([...inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join(""));
+            else if (type === "b") v = vm?.[1] === "1";
+            else if (vm) {
+              const n = Number(vm[1]);
+              v = Number.isFinite(n) ? n : decodeEntities(vm[1]);
+            }
+            while (row.length < idx) row.push(null);
+            row[idx] = v;
+          }
+          if (row.some((x) => x !== null && x !== "")) rows.push(row);
+        }
+        sheets.push({ name, rows });
+      }
+      return sheets;
+    }
+    function colIndex(letters) {
+      let n = 0;
+      for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
+      return n - 1;
+    }
+    function excelDate(n) {
+      if (typeof n !== "number" || !Number.isFinite(n) || n < 1) return null;
+      const d = new Date(Math.round((n - 25569) * 864e5));
+      return isNaN(d) ? null : d.toISOString().slice(0, 10);
+    }
+    function parseFile(buf, filename = "") {
+      const isZip = buf[0] === 80 && buf[1] === 75;
+      const sheets = isZip ? readWorkbook(buf) : [{ name: filename.replace(/\.[^.]+$/, "") || "Sheet1", rows: parseCsv(buf.toString("utf8")) }];
+      return { sheets: sheets.map((s) => {
+        const [h, ...rest] = s.rows;
+        const headers = (h || []).map((x) => String(x ?? "").trim());
+        return { name: s.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
+      }) };
+    }
+    module.exports = { FORMULA_START, UNGUARD, parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip, defer };
+  }
+});
+
+// server/dataimport.js
+var require_dataimport = __commonJS({
+  "server/dataimport.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var C = require_constants();
+    var { excelDate } = require_spreadsheet();
+    var { blindIndex: blindIndex2 } = require_crypto();
+    var yes = (v) => v === true || /^(1|y|yes|true|x)$/i.test(String(v ?? "").trim());
+    var yesNo = (v) => v === null || v === void 0 || String(v).trim() === "" ? null : yes(v);
+    var LD = () => require_local_date();
+    var fullYear = (yy, past) => {
+      const year = Number(LD().today().slice(0, 4));
+      let y = year - year % 100 + Number(yy);
+      if (past) {
+        if (y > year) y -= 100;
+      } else if (y > year + 20) y -= 100;
+      else if (y <= year - 80) y += 100;
+      return String(y);
+    };
+    var TWO_DIGIT_YEAR = /^\s*\d{1,2}[/.-]\d{1,2}[/.-]\d{2}(?!\d)/;
+    var day = (y, m, d) => {
+      const s = `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      return LD().isRealDate(s) ? s : void 0;
+    };
+    var dateOf = (v, { past = false } = {}) => {
+      if (v === null || v === void 0 || v === "") return null;
+      if (typeof v === "number") return excelDate(v);
+      const s = String(v).trim();
+      const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+      if (iso) return day(iso[1], iso[2], iso[3]);
+      const us = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})$/.exec(s);
+      if (us) return day(us[3].length === 2 ? fullYear(us[3], past) : us[3], us[1], us[2]);
+      if (!/\d{4}/.test(s)) return void 0;
+      const d = new Date(s);
+      return isNaN(d) ? void 0 : day(d.getFullYear(), d.getMonth() + 1, d.getDate());
+    };
+    var pastDateOf = (v) => dateOf(v, { past: true });
+    var datetimeOf = (v) => {
+      if (v === null || v === void 0 || v === "") return null;
+      if (typeof v === "number") {
+        if (!Number.isFinite(v) || v < 1) return void 0;
+        if (v % 1) return new Date(Math.round((v - 25569) * 864e5)).toISOString();
+        const d2 = excelDate(v);
+        return d2 ? (/* @__PURE__ */ new Date(d2 + "T12:00:00")).toISOString() : void 0;
+      }
+      let s = String(v).trim();
+      const us = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})(?!\d)/.exec(s);
+      if (us) {
+        const date2 = dateOf(us[0]);
+        if (!date2) return void 0;
+        s = `${+us[1]}/${+us[2]}/${date2.slice(0, 4)}${s.slice(us[0].length)}`;
+      } else if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        if (!dateOf(s.slice(0, 10))) return void 0;
+      } else if (!/\d{4}/.test(s)) return void 0;
+      const d = new Date(s);
+      if (!isNaN(d)) return d.toISOString();
+      const date = dateOf(v);
+      return date ? (/* @__PURE__ */ new Date(date + "T12:00:00")).toISOString() : void 0;
+    };
+    var enumOf = (list) => (v) => {
+      if (v === null || v === void 0 || v === "") return null;
+      if (typeof list === "string") {
+        const O = require_options();
+        const es = O.entries(list).filter((e) => !e.hidden);
+        const t = String(v).trim().toLowerCase();
+        const byLabel = es.find((e) => e.label.toLowerCase() === t);
+        if (byLabel) return byLabel.code;
+        return enumOf(es.map((e) => e.code))(v);
+      }
+      const k = String(v).trim().toLowerCase().replace(/[\s-]+/g, "_");
+      let hit = list.find((x) => x.toLowerCase() === k) || list.find((x) => x.toLowerCase().replace(/_/g, "") === k.replace(/_/g, ""));
+      if (hit === void 0) {
+        const c = list.filter((x) => x.includes(k) || k.includes(x));
+        if (c.length === 1) hit = c[0];
+      }
+      return hit === void 0 ? void 0 : hit;
+    };
+    var num = (v) => {
+      if (v === null || v === void 0 || v === "") return null;
+      const n = Number(String(v).replace(/[$,]/g, ""));
+      return Number.isFinite(n) ? n : void 0;
+    };
+    var str = (max2) => (v) => v === null || v === void 0 ? null : String(v).trim().slice(0, max2);
+    var F = (key, label, aliases, parse, extra = {}) => ({ key, label, aliases: [label, ...aliases].map((a) => a.toLowerCase()), parse, ...extra });
+    var clientRef = F("client_ref", "Client", ["client code", "client", "code", "client id", "name", "client name"], str(120), { required: true, help: 'Client code (C26-0012), or "Last, First", or "First Last"' });
+    var ENTITIES = {
+      clients: { label: "Clients", table: "clients", fields: [
+        F("first_name", "First name", ["first", "given name", "firstname"], str(100), { required: true }),
+        F("last_name", "Last name", ["last", "surname", "family name", "lastname"], str(100), { required: true }),
+        F("preferred_name", "Preferred name", ["nickname", "goes by"], str(100)),
+        F("dob", "Date of birth", ["dob", "birth date", "birthdate", "birthday"], pastDateOf),
+        F("phone", "Phone", ["phone number", "cell", "mobile", "telephone"], str(40)),
+        F("email", "Email", ["e-mail"], str(200)),
+        F("address", "Address", ["street", "address line"], str(300)),
+        F("city", "City", [], str(100)),
+        F("zip", "ZIP", ["zip code", "postal code"], str(12)),
+        F("gender", "Gender", ["sex"], str(40)),
+        F("preferred_language", "Language", ["preferred language"], str(60)),
+        F("status", "Status", ["program status"], enumOf(["waitlist", "active", "inactive", "closed", "deceased"])),
+        F("intake_date", "Intake date", ["intake", "enrolled", "enrollment date", "start date"], pastDateOf),
+        F("referral_source", "Referral source", ["referred by", "source"], str(120)),
+        F("primary_substance", "Primary substance", ["substance", "drug of choice", "doc"], enumOf("SUBSTANCES")),
+        F("asam_level", "ASAM level", ["asam", "level of care"], str(20)),
+        F("mat_status", "MAT status", ["mat", "moud"], enumOf(["none", "interested", "referred", "active", "discontinued", "unknown"])),
+        F("risk_level", "Risk level", ["risk"], enumOf(["low", "moderate", "high", "critical"])),
+        F("housing_status", "Housing", ["housing status", "living situation"], str(60)),
+        F("insurance", "Insurance", ["payer", "coverage"], str(100)),
+        F("overdose_history", "Overdose history", ["overdose", "od history", "prior overdose"], yesNo),
+        F("naloxone_provided", "Naloxone provided", ["naloxone", "narcan"], yes),
+        F("goals", "Goals", ["client goals"], str(2e3)),
+        F("flags", "Safety flags", ["flags", "alerts"], str(300))
+      ] },
+      resources: { label: "Resource directory", table: "resources", fields: [
+        F("name", "Name", ["program", "resource", "provider", "service name"], str(200), { required: true }),
+        F("category", "Category", ["type", "service type"], enumOf(C.RESOURCE_CATEGORIES), { required: true, help: C.RESOURCE_CATEGORIES.join(", ") }),
+        F("organization", "Organization", ["agency", "org"], str(200)),
+        F("phone", "Phone", ["telephone", "phone number"], str(40)),
+        F("fax", "Fax", [], str(40)),
+        F("email", "Email", [], str(200)),
+        F("website", "Website", ["url", "web"], str(300)),
+        F("address", "Address", ["street"], str(300)),
+        F("city", "City", [], str(100)),
+        F("zip", "ZIP", ["zip code"], str(12)),
+        F("hours", "Hours", [], str(200)),
+        F("eligibility", "Eligibility", ["criteria"], str(1e3)),
+        F("services", "Services", ["description"], str(1e3)),
+        F("languages", "Languages", [], str(200)),
+        F("accepts_medicaid", "Accepts Medicaid", ["medicaid"], yes),
+        F("accepts_uninsured", "Accepts uninsured", ["uninsured", "sliding scale"], yes),
+        F("mat_offered", "MAT offered", ["mat", "moud"], str(200)),
+        F("contact_person", "Contact person", ["contact"], str(200)),
+        F("summary", "Summary", ["overview", "about", "profile"], str(3e3)),
+        F("service_tags", "Service tags", ["tags", "services offered"], str(1e3), { help: "comma separated: " + C.SERVICE_TAGS.join(", ") }),
+        F("levels_of_care", "Levels of care", ["asam levels"], str(200)),
+        F("populations", "Populations served", ["serves", "population"], str(500)),
+        F("intake_process", "Intake process", ["how to refer", "admission process"], str(2e3)),
+        F("cost_notes", "Cost / payment", ["cost", "payment", "fees"], str(1e3)),
+        F("notes", "Notes", [], str(2e3))
+      ] },
+      interventions: { label: "Visits", table: "interventions", fields: [
+        clientRef,
+        F("occurred_at", "Date", ["date of service", "service date", "when", "occurred"], datetimeOf, { required: true }),
+        F("type", "Type", ["service", "intervention", "service type", "intervention type"], enumOf("INTERVENTION_TYPES"), { required: true, help: C.INTERVENTION_TYPES.join(", ") }),
+        F("duration_minutes", "Minutes", ["duration", "duration minutes", "time"], num),
+        F("location", "Location", ["where", "setting"], enumOf("LOCATIONS")),
+        F("modality", "Modality", ["mode"], enumOf("MODALITIES")),
+        F("outcome", "Outcome", ["result"], enumOf("OUTCOMES")),
+        F("naloxone_kits", "Naloxone kits", ["naloxone", "narcan kits"], num),
+        F("fentanyl_strips", "Fentanyl test strips", ["fts", "test strips"], num),
+        F("summary", "Summary", ["notes", "comment", "description"], str(2e3))
+      ] },
+      calls: { label: "Calls", table: "calls", fields: [
+        F("client_ref", "Client", ["client code", "client", "code", "client name", "name"], str(120), { help: "Optional for non-client calls" }),
+        F("started_at", "Date", ["when", "date/time", "call date", "time"], datetimeOf, { required: true }),
+        F("direction", "Direction", ["in/out", "inbound/outbound"], enumOf(["inbound", "outbound"]), { required: true }),
+        F("contact_type", "Who", ["contact type", "with", "caller"], enumOf("CALL_CONTACT_TYPES")),
+        F("contact_name", "Contact name", ["contact"], str(120)),
+        F("phone", "Phone", ["number"], str(40)),
+        F("duration_minutes", "Minutes", ["duration", "length"], num),
+        F("outcome", "Outcome", ["result"], enumOf("CALL_OUTCOMES")),
+        F("purpose", "Purpose", ["reason", "subject"], str(300)),
+        F("summary", "Summary", ["notes", "comment"], str(4e3)),
+        F("crisis", "Crisis", ["crisis call"], yes)
+      ] },
+      time_entries: { label: "Time", table: "time_entries", fields: [
+        F("work_date", "Date", ["work date", "day"], dateOf, { required: true }),
+        F("minutes", "Minutes", ["duration", "time", "mins"], num, { required: true }),
+        F("category", "Category", ["activity", "type"], enumOf("TIME_CATEGORIES")),
+        F("client_ref", "Client", ["client code", "client", "code", "client name"], str(120)),
+        F("billable", "Billable", [], yes),
+        F("description", "Description", ["notes", "comment"], str(500))
+      ] },
+      tasks: { label: "To-dos", table: "tasks", fields: [
+        F("title", "Title", ["task", "to-do", "todo", "reminder", "subject"], str(200), { required: true }),
+        F("client_ref", "Client", ["client code", "client", "code", "client name"], str(120)),
+        F("due_at", "Due", ["due date", "due", "deadline", "when"], datetimeOf),
+        F("priority", "Priority", [], enumOf(["low", "normal", "high", "urgent"])),
+        F("description", "Details", ["description", "notes"], str(2e3))
+      ] },
+      expenditures: { label: "Expenditures", table: "expenditures", perm: "budget:write", fields: [
+        F("spent_at", "Date", ["spent", "purchase date", "when"], dateOf, { required: true }),
+        F("amount", "Amount", ["cost", "total", "$"], num, { required: true }),
+        F("fund", "Funding source", ["fund", "grant", "funding"], str(200), { required: true, help: "Name of an existing funding source" }),
+        F("category", "Category", ["type", "budget line", "line"], enumOf(C.BUDGET_CATEGORIES), { required: true, help: C.BUDGET_CATEGORIES.join(", ") }),
+        F("client_ref", "Client", ["client code", "client", "code", "client name"], str(120)),
+        F("vendor", "Vendor", ["payee", "merchant", "store"], str(200)),
+        F("description", "Description", ["notes", "memo", "purpose"], str(1e3)),
+        F("receipt_ref", "Receipt #", ["receipt", "invoice", "invoice #"], str(200))
+      ] }
+    };
+    var norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    function suggestMapping(entity, headers) {
+      const def = ENTITIES[entity];
+      const used = /* @__PURE__ */ new Set();
+      const mapping = {};
+      for (const h of headers) {
+        const n = norm(h);
+        if (!n) continue;
+        const f = def.fields.find((f2) => !used.has(f2.key) && (f2.aliases.map(norm).includes(n) || norm(f2.key) === n)) || def.fields.find((f2) => !used.has(f2.key) && f2.aliases.some((a) => n.includes(norm(a)) || norm(a).includes(n)) && n.length > 2);
+        if (f) {
+          mapping[h] = f.key;
+          used.add(f.key);
+        }
+      }
+      return mapping;
+    }
+    function resolveClient(ref, ctx, auth3) {
+      const s = String(ref || "").trim();
+      if (!s) return null;
+      let rows;
+      if (/^[CM]\d{2}-\d+(-D)?$/i.test(s)) rows = db3.all(`SELECT id FROM clients WHERE client_code=? AND deleted_at IS NULL`, s.toUpperCase());
+      else {
+        const parts = s.split(/[,\s]+/).filter(Boolean);
+        if (parts.length < 2) rows = db3.all(`SELECT id FROM clients WHERE last_name_idx=? AND deleted_at IS NULL`, blindIndex2(parts[0]));
+        else rows = db3.all(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")));
+      }
+      rows = rows.filter((r) => auth3.canAccessClient(ctx.user, r.id));
+      if (rows.length === 1) return rows[0].id;
+      if (rows.length > 1) return "ambiguous";
+      return null;
+    }
+    function dateProblems(entity, rec) {
+      if (entity !== "clients") return [];
+      const today = LD().today();
+      const out2 = [];
+      if (rec.dob && rec.dob > today) out2.push("Date of birth cannot be in the future");
+      else if (rec.dob && rec.dob < `${Number(today.slice(0, 4)) - 120}${today.slice(4)}`) out2.push("Date of birth is more than 120 years ago");
+      if (rec.intake_date && rec.intake_date > today) out2.push("Intake date cannot be in the future");
+      return out2;
+    }
+    function convertRow(entity, mapping, row) {
+      const def = ENTITIES[entity];
+      const record = {};
+      const errors = [];
+      const dates = [];
+      for (const [header, key] of Object.entries(mapping)) {
+        const f = def.fields.find((x) => x.key === key);
+        if (!f) continue;
+        const raw = row[header];
+        const v = f.parse(raw);
+        const isDate = [dateOf, pastDateOf, datetimeOf].includes(f.parse);
+        if (v === void 0) errors.push(`${f.label}: "${raw}" is not a valid ${isDate ? "date (a real date, with its year)" : "value"}${f.help ? " (" + f.help.slice(0, 80) + ")" : ""}`);
+        else record[key] = v;
+        if (isDate && v && typeof raw === "string" && TWO_DIGIT_YEAR.test(raw)) dates.push({ field: f.label, raw: raw.trim(), value: String(v).slice(0, 10) });
+      }
+      for (const f of def.fields) if (f.required && (record[f.key] === null || record[f.key] === void 0 || record[f.key] === "")) errors.push(`${f.label} is required`);
+      errors.push(...dateProblems(entity, record));
+      return { record, errors, dates };
+    }
+    module.exports = { ENTITIES, suggestMapping, convertRow, resolveClient, dateProblems, dateOf };
+  }
+});
+
 // server/canonical.js
 var require_canonical = __commonJS({
   "server/canonical.js"(exports, module) {
@@ -15336,6 +16021,10 @@ var require_clients = __commonJS({
       require_clients2().notifyPrimary(ctx.user, row.id, Object.keys(v).filter((k) => !REV.same(v[k], was[k])), { revision });
       return { updated_at: stamp2, revision };
     }
+    function typedDob(q) {
+      const s = /^\d{8}$/.test(q) ? `${q.slice(0, 2)}/${q.slice(2, 4)}/${q.slice(4)}` : q;
+      return /^\d{1,2}[/.-]\d{1,2}[/.-](\d{2}|\d{4})$/.test(s) ? require_dataimport().dateOf(s, { past: true }) || null : null;
+    }
     module.exports = (r) => {
       r.get("/api/clients", auth3.requireAuth, auth3.requirePerm("clients:read", "clients:list-deidentified"), (ctx) => {
         const deidentify = !auth3.hasPerm(ctx.user, "clients:read");
@@ -15367,6 +16056,11 @@ var require_clients = __commonJS({
             where.push("c.dob_idx=?");
             params.push(blindIndex2(q));
             searched = ["dob"];
+          } else if (typedDob(q)) {
+            const phone = /^[\d\-() .+]{7,}$/.test(q);
+            where.push(phone ? "(c.dob_idx=? OR c.phone_idx=?)" : "c.dob_idx=?");
+            params.push(blindIndex2(typedDob(q)), ...phone ? [blindIndex2(q.replace(/\D/g, ""))] : []);
+            searched = phone ? ["dob", "phone"] : ["dob"];
           } else if (/^[\d\-() .+]{7,}$/.test(q)) {
             where.push("c.phone_idx=?");
             params.push(blindIndex2(q.replace(/\D/g, "")));
@@ -16030,7 +16724,7 @@ var require_clients2 = __commonJS({
           return;
         }
         const own = (c.session.state.assignments || {}).selfForClient;
-        if ((auth3.caseloadRestricted(c.user) || ["navigator", "clinician"].includes(c.user.role)) && !(own && own.get(row.id))) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), row.id, c.user.id, "primary", (row.intake_date || db3.now()).slice(0, 10), c.user.id);
+        if ((auth3.caseloadRestricted(c.user) || ["navigator", "clinician"].includes(c.user.role)) && !(own && own.get(row.id))) db3.run(`INSERT INTO assignments(id,client_id,user_id,role_on_case,start_date,created_by) VALUES(?,?,?,?,?,?)`, require_crypto().uuid(), row.id, c.user.id, "primary", (row.intake_date || require_local_date().today()).slice(0, 10), c.user.id);
         flagPossibleDuplicate(c.user, row, o.client_code, c.session.warnings);
       }
     });
@@ -18613,6 +19307,22 @@ var require_suprt = __commonJS({
         return null;
       }
     };
+    function dayRange(col, after, through) {
+      const LD = require_local_date();
+      const next = (d) => LD.localMidnight(addDays(d, 1));
+      const bare = [`${col} <= ?`];
+      const inst = [`${col} < ?`];
+      const pb = [through];
+      const pi = [next(through)];
+      if (after) {
+        bare.unshift(`${col} > ?`);
+        pb.unshift(after);
+        inst.unshift(`${col} >= ?`);
+        pi.unshift(next(after));
+      }
+      return [`((length(${col})=10 AND ${bare.join(" AND ")}) OR (length(${col})>10 AND ${inst.join(" AND ")}))`, ...pb, ...pi];
+    }
+    var daysOf = (sql, ...params) => db3.all(sql, ...params).map((r) => require_local_date().dayOf(r.d)).filter(Boolean).sort();
     function reassessmentDays() {
       return db3.getSetting("suprt_reassessment_months", "6") === "3" ? 90 : 180;
     }
@@ -18654,9 +19364,8 @@ var require_suprt = __commonJS({
       return out2;
     }
     function firstServiceDate(clientId) {
-      const r = db3.one(`SELECT MIN(substr(occurred_at,1,10)) d FROM interventions WHERE client_id=?`, clientId);
       const c = db3.one(`SELECT intake_date FROM clients WHERE id=?`, clientId) || {};
-      return [r && r.d, c.intake_date].filter(Boolean).sort()[0] || null;
+      return [daysOf(`SELECT occurred_at d FROM interventions WHERE client_id=?`, clientId)[0], c.intake_date].filter(Boolean).sort()[0] || null;
     }
     var yn = (v) => v === null || v === void 0 ? null : v ? "yes" : "no";
     var CLOSEOUT_FROM_DISCHARGE = { completed: "services_completed", transferred: "transferred", incarcerated: "incarcerated", moved: "moved", lost_contact: "no_contact", declined: "declined_services", deceased: "deceased", other: "other" };
@@ -18675,16 +19384,18 @@ var require_suprt = __commonJS({
         const ep = db3.one(`SELECT discharge_reason FROM episodes WHERE client_id=? AND closed_at IS NOT NULL ORDER BY closed_at DESC LIMIT 1`, clientId);
         const reason = ep && ep.discharge_reason || c.discharge_reason;
         a.A_closeout_reason = CLOSEOUT_FROM_DISCHARGE[reason] || null;
-        const last = db3.one(`SELECT MAX(substr(occurred_at,1,10)) d FROM interventions WHERE client_id=? AND substr(occurred_at,1,10) <= ?`, clientId, date);
-        a.A_last_service_date = last && last.d || null;
+        const [inRange, ...p] = dayRange("occurred_at", null, date);
+        a.A_last_service_date = daysOf(`SELECT occurred_at d FROM interventions WHERE client_id=? AND ${inRange}`, clientId, ...p).pop() || null;
       }
       if (type !== "closeout") {
         a.B_primary_substance = c.primary_substance || null;
         a.B_route_of_use = c.route_of_use && ITEM.B_route_of_use.options.some((o) => o.value === c.route_of_use) ? c.route_of_use : null;
-        const odEver = db3.one(`SELECT COUNT(*) n FROM overdose_events WHERE client_id=? AND substr(occurred_at,1,10) <= ?`, clientId, date).n;
+        const [odTo, ...odToP] = dayRange("occurred_at", null, date);
+        const odEver = db3.one(`SELECT COUNT(*) n FROM overdose_events WHERE client_id=? AND ${odTo}`, clientId, ...odToP).n;
         const neverOd = c.overdose_history === 0 && !c.last_overdose_date;
         a.B_overdose_ever = c.overdose_history || odEver ? "yes" : neverOd ? "no" : null;
-        const odSince = db3.one(`SELECT COUNT(*) n FROM overdose_events WHERE client_id=? AND substr(occurred_at,1,10) > ? AND substr(occurred_at,1,10) <= ?`, clientId, from, date).n;
+        const [odIn, ...odInP] = dayRange("occurred_at", from, date);
+        const odSince = db3.one(`SELECT COUNT(*) n FROM overdose_events WHERE client_id=? AND ${odIn}`, clientId, ...odInP).n;
         const lastOd = c.last_overdose_date && c.last_overdose_date > from && c.last_overdose_date <= date;
         a.B_overdose_since_last = odSince || lastOd ? "yes" : neverOd && !odEver ? "no" : null;
         a.B_moud = c.mat_status ? c.mat_status === "active" ? "yes" : "no" : null;
@@ -18702,9 +19413,11 @@ var require_suprt = __commonJS({
         a.D_stimulant_use_disorder = codes.length ? codes.some((x) => x.startsWith("F14") || x.startsWith("F15")) ? "yes" : "no" : null;
       }
       if (type !== "baseline") {
-        const types = new Set(db3.all(`SELECT DISTINCT type FROM interventions WHERE client_id=? AND substr(occurred_at,1,10) > ? AND substr(occurred_at,1,10) <= ?`, clientId, from, date).map((x) => x.type));
-        const kits = db3.one(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions WHERE client_id=? AND substr(occurred_at,1,10) > ? AND substr(occurred_at,1,10) <= ?`, clientId, from, date).n;
-        const refs = db3.all(`SELECT res.category FROM referrals r LEFT JOIN resources res ON res.id=r.resource_id WHERE r.client_id=? AND substr(r.referred_at,1,10) > ? AND substr(r.referred_at,1,10) <= ?`, clientId, from, date).map((x) => x.category);
+        const [ivIn, ...ivP] = dayRange("occurred_at", from, date);
+        const [refIn, ...refP] = dayRange("r.referred_at", from, date);
+        const types = new Set(db3.all(`SELECT DISTINCT type FROM interventions WHERE client_id=? AND ${ivIn}`, clientId, ...ivP).map((x) => x.type));
+        const kits = db3.one(`SELECT COALESCE(SUM(naloxone_kits),0) n FROM interventions WHERE client_id=? AND ${ivIn}`, clientId, ...ivP).n;
+        const refs = db3.all(`SELECT res.category FROM referrals r LEFT JOIN resources res ON res.id=r.resource_id WHERE r.client_id=? AND ${refIn}`, clientId, ...refP).map((x) => x.category);
         for (const [k, , visitTypes] of SERVICE_CATEGORIES) a[`E_${k}`] = visitTypes.some((t) => types.has(t)) ? "yes" : "no";
         if (kits > 0) a.E_naloxone = "yes";
         if (refs.length) a.E_treatment_referral = "yes";
@@ -18767,410 +19480,6 @@ var require_suprt = __commonJS({
   }
 });
 
-// server/importers/text.js
-var require_text = __commonJS({
-  "server/importers/text.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
-    function decodeEntities(s) {
-      const map = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", ndash: "\u2013", mdash: "\u2014", hellip: "\u2026", rsquo: "\u2019", lsquo: "\u2018", rdquo: "\u201D", ldquo: "\u201C" };
-      return s.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (m, e) => {
-        if (e[0] === "#") {
-          const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
-          return Number.isFinite(code) ? String.fromCodePoint(code) : m;
-        }
-        return map[e] ?? m;
-      });
-    }
-    function htmlToText(html) {
-      let s = String(html);
-      s = s.replace(/<(script|style|head)[\s\S]*?<\/\1>/gi, "");
-      s = s.replace(/<!--[\s\S]*?-->/g, "");
-      s = s.replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, "\n").replace(/<li[^>]*>/gi, "\u2022 ").replace(/<\/td>/gi, "	");
-      s = s.replace(/<[^>]+>/g, "");
-      s = decodeEntities(s);
-      return s.replace(/\r/g, "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
-    }
-    function extractTitle(html) {
-      const m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html);
-      return m ? htmlToText(m[1]).trim() : "";
-    }
-    function quotedPrintableDecode(s) {
-      return import_buffer.Buffer.from(String(s).replace(/=\r?\n/g, "").replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))), "binary").toString("utf8");
-    }
-    function parseMime(raw) {
-      const text = import_buffer.Buffer.isBuffer(raw) ? raw.toString("latin1") : String(raw);
-      const headerEnd = text.search(/\r?\n\r?\n/);
-      const headers = text.slice(0, headerEnd);
-      const bm = /boundary="?([^"\r\n;]+)"?/i.exec(headers);
-      if (!bm) {
-        return [{ contentType: (/content-type:\s*([^;\r\n]+)/i.exec(headers) || [, "text/html"])[1].trim(), body: decodePart(headers, text.slice(headerEnd).trim()) }];
-      }
-      const parts = text.split(new RegExp("--" + bm[1].replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:--)?\\r?\\n"));
-      const out2 = [];
-      for (const p of parts.slice(1)) {
-        const he = p.search(/\r?\n\r?\n/);
-        if (he < 0) continue;
-        const h = p.slice(0, he);
-        const b = p.slice(he).replace(/^\r?\n\r?\n/, "");
-        const ct = (/content-type:\s*([^;\r\n]+)/i.exec(h) || [, ""])[1].trim().toLowerCase();
-        const loc = (/content-location:\s*([^\r\n]+)/i.exec(h) || [, ""])[1].trim();
-        if (!ct) continue;
-        out2.push({ contentType: ct, location: loc, body: decodePart(h, b) });
-      }
-      return out2;
-    }
-    function decodePart(headers, body) {
-      const enc2 = (/content-transfer-encoding:\s*([^\r\n]+)/i.exec(headers) || [, "7bit"])[1].trim().toLowerCase();
-      if (enc2 === "quoted-printable") return quotedPrintableDecode(body);
-      if (enc2 === "base64") return import_buffer.Buffer.from(body.replace(/\s+/g, ""), "base64");
-      return import_buffer.Buffer.from(body, "latin1").toString("utf8");
-    }
-    function unzip(buf) {
-      const files = /* @__PURE__ */ new Map();
-      const eocd = buf.lastIndexOf(import_buffer.Buffer.from([80, 75, 5, 6]));
-      if (eocd < 0) throw new Error("Not a ZIP archive");
-      const count = buf.readUInt16LE(eocd + 10);
-      let off = buf.readUInt32LE(eocd + 16);
-      for (let i = 0; i < count; i++) {
-        if (buf.readUInt32LE(off) !== 33639248) break;
-        const method = buf.readUInt16LE(off + 10);
-        const csize = buf.readUInt32LE(off + 20);
-        const nlen = buf.readUInt16LE(off + 28), elen = buf.readUInt16LE(off + 30), clen2 = buf.readUInt16LE(off + 32);
-        const lho = buf.readUInt32LE(off + 42);
-        const name = buf.toString("utf8", off + 46, off + 46 + nlen);
-        const lnlen = buf.readUInt16LE(lho + 26), lelen = buf.readUInt16LE(lho + 28);
-        const dataStart = lho + 30 + lnlen + lelen;
-        const data = buf.subarray(dataStart, dataStart + csize);
-        files.set(name, method === 8 ? zlib.inflateRawSync(data) : import_buffer.Buffer.from(data));
-        off += 46 + nlen + elen + clen2;
-      }
-      return files;
-    }
-    function docxToText(buf) {
-      const files = unzip(buf);
-      const xml = files.get("word/document.xml");
-      if (!xml) throw new Error("Not a DOCX file (word/document.xml missing)");
-      let s = xml.toString("utf8");
-      s = s.replace(/<w:tab\/>/g, "	").replace(/<w:br\/>|<w:cr\/>/g, "\n").replace(/<\/w:p>/g, "\n").replace(/<[^>]+>/g, "");
-      return decodeEntities(s).replace(/\n{3,}/g, "\n\n").trim();
-    }
-    function sniffDate(text) {
-      const s = String(text || "");
-      let m = /(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2})?))?/.exec(s);
-      if (m) {
-        const d = /* @__PURE__ */ new Date(m[1] + (m[2] ? "T" + m[2] + "Z" : "T12:00:00Z"));
-        if (!isNaN(d)) return d.toISOString();
-      }
-      m = /\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b(?:,?\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?))?/i.exec(s);
-      if (m) {
-        const y = m[3].length === 2 ? "20" + m[3] : m[3];
-        const d = /* @__PURE__ */ new Date(`${y}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}T12:00:00Z`);
-        if (!isNaN(d)) return d.toISOString();
-      }
-      m = /\b(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(s);
-      if (m) {
-        const d = /* @__PURE__ */ new Date(`${m[1].slice(0, 3)} ${m[2]}, ${m[3]} 12:00:00 UTC`);
-        if (!isNaN(d)) return d.toISOString();
-      }
-      return null;
-    }
-    function sniffClientHints(text) {
-      const s = String(text || "");
-      const hints2 = { codes: [], names: [] };
-      for (const m of s.matchAll(/\b([CM]\d{2}-\d{4})\b/gi)) hints2.codes.push(m[1].toUpperCase());
-      const kw = /\b(?:(?:client|participant|pt|patient|re|name|regarding)\s*[:\-]\s*|(?:with|for|regarding)\s+)/gi;
-      const nameRe = /^([A-Z][a-zA-Z'\-]+(?:,\s*|\s+)[A-Z][a-zA-Z'\-]+)/;
-      for (const m of s.matchAll(kw)) {
-        const nm = nameRe.exec(s.slice(m.index + m[0].length));
-        if (nm) hints2.names.push(nm[1].trim());
-      }
-      hints2.codes = [...new Set(hints2.codes)];
-      hints2.names = [...new Set(hints2.names)].slice(0, 5);
-      return hints2;
-    }
-    module.exports = { htmlToText, extractTitle, quotedPrintableDecode, parseMime, unzip, docxToText, sniffDate, sniffClientHints, decodeEntities };
-  }
-});
-
-// server/spreadsheet.js
-var require_spreadsheet = __commonJS({
-  "server/spreadsheet.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
-    var { unzip, decodeEntities } = require_text();
-    function parseCsv(text) {
-      const s = String(text).replace(/^﻿/, "");
-      const rows = [];
-      let row = [];
-      let field = "";
-      let q = false;
-      for (let i = 0; i < s.length; i++) {
-        const c = s[i];
-        if (q) {
-          if (c === '"') {
-            if (s[i + 1] === '"') {
-              field += '"';
-              i++;
-            } else q = false;
-          } else field += c;
-        } else if (c === '"') q = true;
-        else if (c === ",") {
-          row.push(field);
-          field = "";
-        } else if (c === "\n" || c === "\r") {
-          if (c === "\r" && s[i + 1] === "\n") i++;
-          row.push(field);
-          rows.push(row);
-          row = [];
-          field = "";
-        } else field += c;
-      }
-      if (field !== "" || row.length) {
-        row.push(field);
-        rows.push(row);
-      }
-      return rows.filter((r) => r.some((v) => String(v).trim() !== ""));
-    }
-    var FORMULA_START = /^'*[=+\-@\t\r]/;
-    var UNGUARD = /^'+[=+\-@\t\r]/;
-    function toCsv(rows, columns) {
-      const esc = (v) => {
-        if (v === null || v === void 0) return "";
-        if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
-        let t = typeof v === "object" ? JSON.stringify(v) : String(v);
-        if (FORMULA_START.test(t)) return `"'` + t.replace(/"/g, '""') + '"';
-        return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
-      };
-      return "\uFEFF" + [columns.map((c) => esc(c.label || c.key || c)).join(","), ...rows.map((r) => columns.map((c) => esc(r[c.key || c])).join(","))].join("\r\n");
-    }
-    function crc32(buf) {
-      let c, crc = 4294967295;
-      for (let n = 0; n < buf.length; n++) {
-        c = (crc ^ buf[n]) & 255;
-        for (let k = 0; k < 8; k++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
-        crc = crc >>> 8 ^ c;
-      }
-      return (crc ^ 4294967295) >>> 0;
-    }
-    function zipEntry(name, content, comp, off, local, central) {
-      const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
-      const n = import_buffer.Buffer.from(name);
-      const crc = crc32(data);
-      const lh = import_buffer.Buffer.alloc(30);
-      lh.writeUInt32LE(67324752, 0);
-      lh.writeUInt16LE(20, 4);
-      lh.writeUInt16LE(2048, 6);
-      lh.writeUInt16LE(8, 8);
-      lh.writeUInt32LE(crc, 14);
-      lh.writeUInt32LE(comp.length, 18);
-      lh.writeUInt32LE(data.length, 22);
-      lh.writeUInt16LE(n.length, 26);
-      local.push(lh, n, comp);
-      const ch = import_buffer.Buffer.alloc(46);
-      ch.writeUInt32LE(33639248, 0);
-      ch.writeUInt16LE(20, 4);
-      ch.writeUInt16LE(20, 6);
-      ch.writeUInt16LE(2048, 8);
-      ch.writeUInt16LE(8, 10);
-      ch.writeUInt32LE(crc, 16);
-      ch.writeUInt32LE(comp.length, 20);
-      ch.writeUInt32LE(data.length, 24);
-      ch.writeUInt16LE(n.length, 28);
-      ch.writeUInt32LE(off, 42);
-      central.push(ch, n);
-      return off + 30 + n.length + comp.length;
-    }
-    function zipEnd(entries2, local, central, off) {
-      const cd = import_buffer.Buffer.concat(central);
-      const eocd = import_buffer.Buffer.alloc(22);
-      eocd.writeUInt32LE(101010256, 0);
-      eocd.writeUInt16LE(entries2.length, 8);
-      eocd.writeUInt16LE(entries2.length, 10);
-      eocd.writeUInt32LE(cd.length, 12);
-      eocd.writeUInt32LE(off, 16);
-      return import_buffer.Buffer.concat([...local, cd, eocd]);
-    }
-    var defer = globalThis.setImmediate ? (f) => setImmediate(f) : (f) => setTimeout(f, 0);
-    async function zipAsync(entries2) {
-      const local = [], central = [];
-      let off = 0;
-      const deflate = (buf) => typeof zlib.deflateRaw === "function" ? new Promise((resolve2, reject) => zlib.deflateRaw(buf, (err2, out2) => err2 ? reject(err2) : resolve2(out2))) : new Promise((resolve2) => defer(resolve2)).then(() => zlib.deflateRawSync(buf));
-      for (const [name, content] of entries2) {
-        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
-        off = zipEntry(name, data, await deflate(data), off, local, central);
-      }
-      return zipEnd(entries2, local, central, off);
-    }
-    function zip(entries2) {
-      const local = [], central = [];
-      let off = 0;
-      for (const [name, content] of entries2) {
-        const data = import_buffer.Buffer.isBuffer(content) ? content : import_buffer.Buffer.from(content, "utf8");
-        const comp = zlib.deflateRawSync(data);
-        const n = import_buffer.Buffer.from(name);
-        const crc = crc32(data);
-        const lh = import_buffer.Buffer.alloc(30);
-        lh.writeUInt32LE(67324752, 0);
-        lh.writeUInt16LE(20, 4);
-        lh.writeUInt16LE(2048, 6);
-        lh.writeUInt16LE(8, 8);
-        lh.writeUInt32LE(crc, 14);
-        lh.writeUInt32LE(comp.length, 18);
-        lh.writeUInt32LE(data.length, 22);
-        lh.writeUInt16LE(n.length, 26);
-        local.push(lh, n, comp);
-        const ch = import_buffer.Buffer.alloc(46);
-        ch.writeUInt32LE(33639248, 0);
-        ch.writeUInt16LE(20, 4);
-        ch.writeUInt16LE(20, 6);
-        ch.writeUInt16LE(2048, 8);
-        ch.writeUInt16LE(8, 10);
-        ch.writeUInt32LE(crc, 16);
-        ch.writeUInt32LE(comp.length, 20);
-        ch.writeUInt32LE(data.length, 24);
-        ch.writeUInt16LE(n.length, 28);
-        ch.writeUInt32LE(off, 42);
-        central.push(ch, n);
-        off += 30 + n.length + comp.length;
-      }
-      return zipEnd(entries2, local, central, off);
-    }
-    var EXCEL_EPOCH = Date.UTC(1899, 11, 30);
-    var xmlEsc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
-    function colRef(i) {
-      let s = "";
-      i++;
-      while (i > 0) {
-        const m = (i - 1) % 26;
-        s = String.fromCharCode(65 + m) + s;
-        i = Math.floor((i - 1) / 26);
-      }
-      return s;
-    }
-    function writeSheetXml(sh) {
-      const cols2 = sh.columns.map((c) => typeof c === "string" ? { key: c, label: c } : c);
-      const cell = (r, i, v) => {
-        const ref = colRef(i) + r;
-        if (v === null || v === void 0 || v === "") return "";
-        if (typeof v === "number" && Number.isFinite(v)) return `<c r="${ref}"><v>${v}</v></c>`;
-        if (typeof v === "boolean") return `<c r="${ref}" t="b"><v>${v ? 1 : 0}</v></c>`;
-        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
-          const t = Date.parse(v + "T00:00:00Z");
-          if (Number.isFinite(t)) return `<c r="${ref}" s="2"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
-        }
-        if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
-          const t = Date.parse(v);
-          if (Number.isFinite(t)) return `<c r="${ref}" s="3"><v>${(t - EXCEL_EPOCH) / 864e5}</v></c>`;
-        }
-        return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEsc(typeof v === "object" ? JSON.stringify(v) : v)}</t></is></c>`;
-      };
-      const header = `<row r="1">${cols2.map((c, i) => `<c r="${colRef(i)}1" t="inlineStr" s="1"><is><t>${xmlEsc(c.label)}</t></is></c>`).join("")}</row>`;
-      const body = sh.rows.map((row, ri) => `<row r="${ri + 2}">${cols2.map((c, i) => cell(ri + 2, i, row[c.key])).join("")}</row>`).join("");
-      const widths = `<cols>${cols2.map((c, i) => `<col min="${i + 1}" max="${i + 1}" width="${Math.min(60, Math.max(10, c.width || String(c.label).length + 4))}" customWidth="1"/>`).join("")}</cols>`;
-      return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>${widths}<sheetData>${header}${body}</sheetData><autoFilter ref="A1:${colRef(cols2.length - 1)}${sh.rows.length + 1}"/></worksheet>`;
-    }
-    function writeWorkbookParts(sheets) {
-      const files = [];
-      const safeName = (n, i) => String(n).replace(/[\\/*?:\[\]]/g, " ").slice(0, 31) || `Sheet${i + 1}`;
-      files.push(["[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join("")}</Types>`]);
-      files.push(["_rels/.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`]);
-      files.push(["xl/workbook.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(safeName(s.name, i))}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join("")}</sheets></workbook>`]);
-      files.push(["xl/_rels/workbook.xml.rels", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join("")}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`]);
-      files.push(["xl/styles.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border/></borders><cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/><xf numFmtId="14" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/><xf numFmtId="22" fontId="0" fillId="0" borderId="0" applyNumberFormat="1"/></cellXfs></styleSheet>`]);
-      sheets.forEach((s, i) => files.push([`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(s)]));
-      return new Map(files);
-    }
-    function writeWorkbook(sheets) {
-      return zip([...writeWorkbookParts(sheets).entries()]);
-    }
-    async function writeWorkbookAsync(sheets) {
-      const breathe = () => new Promise((resolve2) => defer(resolve2));
-      const parts = writeWorkbookParts(sheets.map((s) => ({ name: s.name, columns: s.columns, rows: [] })));
-      for (let i = 0; i < sheets.length; i++) {
-        parts.set(`xl/worksheets/sheet${i + 1}.xml`, writeSheetXml(sheets[i]));
-        await breathe();
-      }
-      const out2 = await zipAsync([...parts.entries()]);
-      return out2;
-    }
-    function readWorkbook(buf) {
-      const files = unzip(buf);
-      const get = (n) => {
-        const f = files.get(n);
-        return f ? f.toString("utf8") : null;
-      };
-      const wb = get("xl/workbook.xml");
-      if (!wb) throw new Error("Not an Excel (.xlsx) file");
-      const rels = get("xl/_rels/workbook.xml.rels") || "";
-      const relMap = {};
-      for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
-        const id = /Id="([^"]+)"/.exec(m[0])?.[1];
-        const t = /Target="([^"]+)"/.exec(m[0])?.[1];
-        if (id && t) relMap[id] = t.replace(/^\/?xl\//, "").replace(/^\//, "");
-      }
-      const shared = [];
-      const ss = get("xl/sharedStrings.xml");
-      if (ss) for (const m of ss.matchAll(/<si>([\s\S]*?)<\/si>/g)) shared.push(decodeEntities([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join("")));
-      const sheets = [];
-      for (const m of wb.matchAll(/<sheet\b[^>]*>/g)) {
-        const name = decodeEntities(/name="([^"]*)"/.exec(m[0])?.[1] || "");
-        const rid = /r:id="([^"]+)"/.exec(m[0])?.[1];
-        const target = relMap[rid] || `worksheets/sheet${sheets.length + 1}.xml`;
-        const xml = get("xl/" + target) || get(target);
-        if (!xml) continue;
-        const rows = [];
-        for (const rm of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
-          const row = [];
-          for (const cm of rm[1].matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
-            const attrs = cm[1];
-            const inner = cm[2] || "";
-            const ref = /r="([A-Z]+)\d+"/.exec(attrs)?.[1];
-            const type = /t="([^"]+)"/.exec(attrs)?.[1];
-            const idx = ref ? colIndex(ref) : row.length;
-            let v = null;
-            const vm = /<v>([\s\S]*?)<\/v>/.exec(inner);
-            if (type === "s") v = shared[Number(vm?.[1])] ?? "";
-            else if (type === "inlineStr") v = decodeEntities([...inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((x) => x[1]).join(""));
-            else if (type === "b") v = vm?.[1] === "1";
-            else if (vm) {
-              const n = Number(vm[1]);
-              v = Number.isFinite(n) ? n : decodeEntities(vm[1]);
-            }
-            while (row.length < idx) row.push(null);
-            row[idx] = v;
-          }
-          if (row.some((x) => x !== null && x !== "")) rows.push(row);
-        }
-        sheets.push({ name, rows });
-      }
-      return sheets;
-    }
-    function colIndex(letters) {
-      let n = 0;
-      for (const ch of letters) n = n * 26 + (ch.charCodeAt(0) - 64);
-      return n - 1;
-    }
-    function excelDate(n) {
-      if (typeof n !== "number" || !Number.isFinite(n) || n < 1) return null;
-      const d = new Date(Math.round((n - 25569) * 864e5));
-      return isNaN(d) ? null : d.toISOString().slice(0, 10);
-    }
-    function parseFile(buf, filename = "") {
-      const isZip = buf[0] === 80 && buf[1] === 75;
-      const sheets = isZip ? readWorkbook(buf) : [{ name: filename.replace(/\.[^.]+$/, "") || "Sheet1", rows: parseCsv(buf.toString("utf8")) }];
-      return { sheets: sheets.map((s) => {
-        const [h, ...rest] = s.rows;
-        const headers = (h || []).map((x) => String(x ?? "").trim());
-        return { name: s.name, headers, rows: rest.map((r) => Object.fromEntries(headers.map((k, i) => [k, r[i] === void 0 ? null : r[i]]))) };
-      }) };
-    }
-    module.exports = { FORMULA_START, UNGUARD, parseCsv, toCsv, writeWorkbook, writeWorkbookAsync, readWorkbook, parseFile, excelDate, zip, defer };
-  }
-});
-
 // server/routes/suprt.js
 var require_suprt2 = __commonJS({
   "server/routes/suprt.js"(exports, module) {
@@ -19210,8 +19519,8 @@ var require_suprt2 = __commonJS({
     var assessmentsOf = (clientId) => db3.all(`SELECT * FROM suprt_assessments WHERE client_id=? ORDER BY assessment_date, created_at`, clientId);
     var dischargeOf = (c) => c && ["closed", "inactive", "deceased"].includes(c.status) && c.discharge_date ? String(c.discharge_date).slice(0, 10) : null;
     function firstSorService(clientId, after = "") {
-      const r = db3.one(`SELECT MIN(substr(i.occurred_at,1,10)) d FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id WHERE i.client_id=? AND f.source_type='sor_grant' AND substr(i.occurred_at,1,10) > ?`, clientId, after);
-      return r && r.d || null;
+      const { dayOf } = require_local_date();
+      return db3.all(`SELECT i.occurred_at FROM interventions i JOIN funding_sources f ON f.id=i.funding_source_id WHERE i.client_id=? AND f.source_type='sor_grant'`, clientId).map((r) => dayOf(r.occurred_at)).filter((d) => d && d > after).sort()[0] || null;
     }
     function cycleOf(c, rows = assessmentsOf(c.id), on = S.today()) {
       const complete = rows.filter((r) => r.status === "complete");
@@ -24621,16 +24930,13 @@ var require_demo = __commonJS({
         (ids[t] = ids[t] || []).push(id);
         return id;
       };
+      const LD = require_local_date();
       const at = (off, hour = 10) => {
-        const x = new Date(Date.now() - off * 864e5);
-        x.setHours(hour, Math.floor(rand2() * 4) * 15, 0, 0);
-        return x;
+        const date = LD.localDate(new Date(Date.now() - off * 864e5));
+        return new Date(Date.parse(LD.localMidnight(date)) + (hour * 60 + Math.floor(rand2() * 4) * 15) * 6e4);
       };
       const d = (off, hour = 10) => new Date(Math.min(at(off, hour).getTime(), Date.now() - 6e4)).toISOString();
-      const day = (off) => {
-        const x = at(off);
-        return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
-      };
+      const day = (off) => LD.localDate(at(off));
       const nowIso = db3.now();
       db3.transaction(() => {
         const png = require_png();
@@ -24645,7 +24951,7 @@ var require_demo = __commonJS({
           }
           return id;
         });
-        const y = (/* @__PURE__ */ new Date()).getFullYear();
+        const y = Number(LD.today().slice(0, 4));
         const fundStart = `${y}-07-01`;
         const fund = track("funding_sources", uuid2());
         db3.run(`INSERT INTO funding_sources(id,name,source_type,grant_number,fiscal_year_start,fiscal_year_end,total_amount,restrictions,settlement_use,settlement_hiaa) VALUES(?,?,?,?,?,?,?,?,?,?)`, fund, `Opioid Settlement \u2013 Navigation FY${String(y + 1).slice(2)}`, "opioid_settlement", "OS-2026-014", `${y}-07-01`, `${y + 1}-06-30`, 18e4, "Abatement uses only; no indirect above 10%", "approved_c", "hiaa_3");
@@ -30388,7 +30694,8 @@ var require_compliance = __commonJS({
         const today = require_local_date().today();
         const from = ctx.query.get("from") || `${today.slice(0, 4)}-01-01`;
         const to = ctx.query.get("to") || today;
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw badRequest("from and to must be YYYY-MM-DD");
+        const { isRealDate } = require_local_date();
+        if (!isRealDate(from) || !isRealDate(to)) throw badRequest("from and to must be real dates (YYYY-MM-DD)");
         const w = `received_at BETWEEN ? AND ?`;
         const by = (col) => db3.all(`SELECT ${col} k, COUNT(*) n FROM complaints WHERE ${w} GROUP BY ${col} ORDER BY n DESC`, from, to);
         const days = db3.all(`SELECT julianday(resolved_at)-julianday(received_at) d FROM complaints WHERE ${w} AND resolved_at IS NOT NULL ORDER BY d`, from, to).map((x) => x.d);
@@ -34743,7 +35050,8 @@ var require_funder_report = __commonJS({
       COALESCE(SUM(o.naloxone_doses),0) naloxone_doses FROM overdose_events o WHERE ${ts("o.occurred_at")}${scope}`, ...tsP, ...sp);
       return {
         ...od,
-        by_month: db3.all(`SELECT substr(o.occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END) reversals,
+        // By the programme's month (CS5): the period's own months, tsP's from and to.
+        by_month: db3.all(`SELECT ${require_local_date().monthSql("o.occurred_at", String(tsP[4]).slice(0, 7), String(tsP[5]).slice(0, 7))} month, COUNT(*) n, SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN 1 ELSE 0 END) reversals,
         COALESCE(SUM(CASE WHEN ${NALOXONE} AND o.survived=1 THEN o.naloxone_doses ELSE 0 END),0) reversal_doses FROM overdose_events o WHERE ${ts("o.occurred_at")}${scope} GROUP BY month ORDER BY month`, ...tsP, ...sp),
         // Who gave the naloxone in each reversal (as the NDP log counts it), so the rows add up to the reversals.
         by_administered_by: db3.all(`SELECT COALESCE(o.administered_by,'unknown') k, COUNT(*) n FROM overdose_events o WHERE ${ts("o.occurred_at")} AND ${NALOXONE} AND o.survived=1${scope} GROUP BY k ORDER BY n DESC`, ...tsP, ...sp)
@@ -35901,13 +36209,17 @@ var require_reports = __commonJS({
     var CFX = require_client_filters();
     var { defer } = require_spreadsheet();
     var FR = require_funder_report();
-    var DAY = /^\d{4}-\d{2}-\d{2}$/;
+    var dayBounds = (date) => {
+      const { localMidnight } = require_local_date();
+      return [localMidnight(date), localMidnight(addDays(date, 1))];
+    };
     var addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
     function range(ctx) {
       const { localDate, localMidnight } = require_budget();
       const to = ctx.query.get("to") || localDate();
       const from = ctx.query.get("from") || addDays(to, -89);
-      if (!DAY.test(to) || !DAY.test(from) || !Number.isFinite(Date.parse(to)) || !Number.isFinite(Date.parse(from))) throw badRequest("from and to must be dates (YYYY-MM-DD)");
+      const { isRealDate } = require_local_date();
+      if (!isRealDate(to) || !isRealDate(from)) throw badRequest("from and to must be real dates (YYYY-MM-DD)");
       const fromTs = localMidnight(from);
       const toEnd = new Date(Date.parse(localMidnight(addDays(to, 1))) - 1).toISOString();
       const lo = fromTs < from ? fromTs : from;
@@ -35946,31 +36258,53 @@ var require_reports = __commonJS({
       const mo = Number(m.slice(5, 7));
       return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, "0")}`;
     };
+    var localMonth = (col, from) => require_local_date().monthSql(col, from, require_local_date().today().slice(0, 7));
+    function since(col, date) {
+      const t = require_local_date().localMidnight(date);
+      return [`${col} >= ? AND ((length(${col})=10 AND ${col} >= ?) OR (length(${col})>10 AND ${col} >= ?))`, t < date ? t : date, date, t];
+    }
     function* monthlyFigures(user, s) {
+      const LD = require_local_date();
       const out2 = {};
+      const first = s.slice(0, 7);
       out2.intakes = db3.all(`SELECT substr(intake_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND intake_date >= ? GROUP BY month ORDER BY month`, s);
       out2.discharges = db3.all(`SELECT substr(discharge_date,1,7) month, COUNT(*) n FROM clients WHERE deleted_at IS NULL AND discharge_date >= ? GROUP BY month ORDER BY month`, s);
       yield;
       const visits = [];
       const bounds = [];
-      for (let m = s.slice(0, 7); m <= require_local_date().today().slice(0, 7); m = nextMonth(m)) bounds.push(m);
-      for (let i = 0; i < bounds.length; i++) {
-        const hi = i + 1 < bounds.length ? bounds[i + 1] : null;
-        visits.push(...db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips FROM interventions
-      WHERE occurred_at >= ?${hi ? " AND occurred_at < ?" : ""} GROUP BY month ORDER BY month`, i ? bounds[i] : s, ...hi ? [hi] : []));
+      for (let m = first; m <= LD.today().slice(0, 7); m = nextMonth(m)) bounds.push(m);
+      const cols2 = "COUNT(*) n, SUM(duration_minutes) minutes, COUNT(DISTINCT client_id) clients, SUM(naloxone_kits) kits, SUM(fentanyl_strips) strips";
+      for (const m of bounds) {
+        const d0 = m === first ? s : `${m}-01`;
+        const d1 = `${nextMonth(m)}-01`;
+        const t0 = LD.localMidnight(d0);
+        const t1 = LD.localMidnight(d1);
+        const row = db3.one(
+          `SELECT ${cols2} FROM interventions WHERE occurred_at >= ? AND occurred_at < ?
+      AND ((length(occurred_at)=10 AND occurred_at >= ? AND occurred_at < ?) OR (length(occurred_at)>10 AND occurred_at >= ? AND occurred_at < ?))`,
+          t0 < d0 ? t0 : d0,
+          t1 > d1 ? t1 : d1,
+          d0,
+          d1,
+          t0,
+          t1
+        );
+        if (row.n) visits.push({ month: m, ...row });
         yield;
       }
+      const ahead = `${nextMonth(bounds[bounds.length - 1])}-01`;
+      visits.push(...db3.all(`SELECT substr(occurred_at,1,7) month, ${cols2} FROM interventions WHERE (length(occurred_at)=10 AND occurred_at >= ?) OR (length(occurred_at)>10 AND occurred_at >= ?) GROUP BY month ORDER BY month`, ahead, LD.localMidnight(ahead)));
       out2.interventions = visits.map(({ month, n, minutes, clients }) => ({ month, n, minutes, clients }));
       out2.naloxone = visits.map(({ month, kits, strips }) => ({ month, kits, strips }));
       out2.unduplicated_clients = visits.filter((x) => x.clients > 0).map(({ month, clients }) => ({ month, clients }));
       yield;
-      out2.calls = db3.all(`SELECT substr(started_at,1,7) month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE started_at >= ? GROUP BY month ORDER BY month`, s);
-      out2.referrals = db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE referred_at >= ? GROUP BY month ORDER BY month`, s);
+      out2.calls = db3.all(`SELECT ${localMonth("started_at", first)} month, COUNT(*) n, SUM(duration_minutes) minutes FROM calls WHERE ${since("started_at", s)[0]} GROUP BY month ORDER BY month`, ...since("started_at", s).slice(1));
+      out2.referrals = db3.all(`SELECT ${localMonth("referred_at", first)} month, COUNT(*) n, SUM(CASE WHEN status IN ('admitted','completed') THEN 1 ELSE 0 END) successful FROM referrals WHERE ${since("referred_at", s)[0]} GROUP BY month ORDER BY month`, ...since("referred_at", s).slice(1));
       yield;
-      out2.overdose_events = db3.all(`SELECT substr(occurred_at,1,7) month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE occurred_at >= ? GROUP BY month ORDER BY month`, s);
+      out2.overdose_events = db3.all(`SELECT ${localMonth("occurred_at", first)} month, COUNT(*) n, SUM(CASE WHEN naloxone_used=1 AND survived=1 THEN 1 ELSE 0 END) reversals, SUM(CASE WHEN kind='fatal' OR survived=0 THEN 1 ELSE 0 END) fatal FROM overdose_events WHERE ${since("occurred_at", s)[0]} GROUP BY month ORDER BY month`, ...since("occurred_at", s).slice(1));
       out2.episodes = db3.all(`SELECT substr(opened_at,1,7) month, COUNT(*) admissions, (SELECT COUNT(*) FROM episodes x WHERE substr(x.closed_at,1,7)=substr(e.opened_at,1,7)) discharges FROM episodes e WHERE opened_at >= ? GROUP BY month ORDER BY month`, s);
       yield;
-      out2.mat_linkage = db3.all(`SELECT substr(referred_at,1,7) month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND referred_at >= ? GROUP BY month ORDER BY month`, s);
+      out2.mat_linkage = db3.all(`SELECT ${localMonth("referred_at", first)} month, COUNT(*) n FROM referrals r JOIN resources res ON res.id=r.resource_id WHERE res.category IN ('mat_otp','mat_obot') AND r.status IN ('admitted','completed') AND ${since("referred_at", s)[0]} GROUP BY month ORDER BY month`, ...since("referred_at", s).slice(1));
       out2.spend = auth3.hasPerm(user, "budget:read") ? db3.all(`SELECT substr(spent_at,1,7) month, ROUND(SUM(amount),2) amount FROM expenditures WHERE status IN ('approved','reimbursed') AND spent_at >= ? GROUP BY month ORDER BY month`, s) : [];
       out2.time = db3.all(`SELECT substr(work_date,1,7) month, SUM(minutes) minutes FROM time_entries WHERE work_date >= ? GROUP BY month ORDER BY month`, s);
       const order = ["intakes", "discharges", "interventions", "calls", "referrals", "naloxone", "overdose_events", "episodes", "unduplicated_clients", "mat_linkage", "spend", "time"];
@@ -36101,7 +36435,9 @@ var require_reports = __commonJS({
               team: !!team,
               open: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (assigned_to=? OR ?)`, ctx.user.id, team).n,
               overdue: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at < ? ELSE due_at < ? END) AND (assigned_to=? OR ?)`, today, db3.now(), ctx.user.id, team).n,
-              due_today: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND substr(due_at,1,10)=? AND (assigned_to=? OR ?)`, today, ctx.user.id, team).n
+              // A timed to-do is an instant (UTC): due today when it falls within the programme's day, not when its UTC date is
+              // today's, which missed one due this evening and counted it tomorrow instead (CS4).
+              due_today: db3.one(`SELECT COUNT(*) n FROM tasks WHERE status IN ('open','in_progress') AND (CASE WHEN length(due_at)=10 THEN due_at = ? ELSE due_at >= ? AND due_at < ? END) AND (assigned_to=? OR ?)`, today, ...dayBounds(today), ctx.user.id, team).n
             };
           })(),
           time: auth3.hasPerm(ctx.user, "time:read") || auth3.hasPerm(ctx.user, "time:write") ? {
@@ -38827,227 +39163,6 @@ var require_county2 = __commonJS({
   }
 });
 
-// server/dataimport.js
-var require_dataimport = __commonJS({
-  "server/dataimport.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var db3 = require_db();
-    var C = require_constants();
-    var { excelDate } = require_spreadsheet();
-    var { blindIndex: blindIndex2 } = require_crypto();
-    var yes = (v) => v === true || /^(1|y|yes|true|x)$/i.test(String(v ?? "").trim());
-    var yesNo = (v) => v === null || v === void 0 || String(v).trim() === "" ? null : yes(v);
-    var fullYear = (yy) => {
-      const next = Number(require_local_date().today().slice(0, 4)) + 1;
-      const c = Math.floor(next / 100) * 100;
-      return String(Number(yy) <= next % 100 ? c + Number(yy) : c - 100 + Number(yy));
-    };
-    var dateOf = (v) => {
-      if (v === null || v === void 0 || v === "") return null;
-      if (typeof v === "number") return excelDate(v);
-      const s = String(v).trim();
-      const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
-      if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-      const us = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s);
-      if (us) return `${us[3].length === 2 ? fullYear(us[3]) : us[3]}-${us[1].padStart(2, "0")}-${us[2].padStart(2, "0")}`;
-      const d = new Date(s);
-      return isNaN(d) ? void 0 : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    };
-    var datetimeOf = (v) => {
-      if (v === null || v === void 0 || v === "") return null;
-      if (typeof v === "number") {
-        if (!Number.isFinite(v) || v < 1) return void 0;
-        if (v % 1) return new Date(Math.round((v - 25569) * 864e5)).toISOString();
-        const d2 = excelDate(v);
-        return d2 ? (/* @__PURE__ */ new Date(d2 + "T12:00:00")).toISOString() : void 0;
-      }
-      const d = new Date(String(v).trim());
-      if (!isNaN(d)) return d.toISOString();
-      const day = dateOf(v);
-      return day ? (/* @__PURE__ */ new Date(day + "T12:00:00")).toISOString() : void 0;
-    };
-    var enumOf = (list) => (v) => {
-      if (v === null || v === void 0 || v === "") return null;
-      if (typeof list === "string") {
-        const O = require_options();
-        const es = O.entries(list).filter((e) => !e.hidden);
-        const t = String(v).trim().toLowerCase();
-        const byLabel = es.find((e) => e.label.toLowerCase() === t);
-        if (byLabel) return byLabel.code;
-        return enumOf(es.map((e) => e.code))(v);
-      }
-      const k = String(v).trim().toLowerCase().replace(/[\s-]+/g, "_");
-      let hit = list.find((x) => x.toLowerCase() === k) || list.find((x) => x.toLowerCase().replace(/_/g, "") === k.replace(/_/g, ""));
-      if (hit === void 0) {
-        const c = list.filter((x) => x.includes(k) || k.includes(x));
-        if (c.length === 1) hit = c[0];
-      }
-      return hit === void 0 ? void 0 : hit;
-    };
-    var num = (v) => {
-      if (v === null || v === void 0 || v === "") return null;
-      const n = Number(String(v).replace(/[$,]/g, ""));
-      return Number.isFinite(n) ? n : void 0;
-    };
-    var str = (max2) => (v) => v === null || v === void 0 ? null : String(v).trim().slice(0, max2);
-    var F = (key, label, aliases, parse, extra = {}) => ({ key, label, aliases: [label, ...aliases].map((a) => a.toLowerCase()), parse, ...extra });
-    var clientRef = F("client_ref", "Client", ["client code", "client", "code", "client id", "name", "client name"], str(120), { required: true, help: 'Client code (C26-0012), or "Last, First", or "First Last"' });
-    var ENTITIES = {
-      clients: { label: "Clients", table: "clients", fields: [
-        F("first_name", "First name", ["first", "given name", "firstname"], str(100), { required: true }),
-        F("last_name", "Last name", ["last", "surname", "family name", "lastname"], str(100), { required: true }),
-        F("preferred_name", "Preferred name", ["nickname", "goes by"], str(100)),
-        F("dob", "Date of birth", ["dob", "birth date", "birthdate", "birthday"], dateOf),
-        F("phone", "Phone", ["phone number", "cell", "mobile", "telephone"], str(40)),
-        F("email", "Email", ["e-mail"], str(200)),
-        F("address", "Address", ["street", "address line"], str(300)),
-        F("city", "City", [], str(100)),
-        F("zip", "ZIP", ["zip code", "postal code"], str(12)),
-        F("gender", "Gender", ["sex"], str(40)),
-        F("preferred_language", "Language", ["preferred language"], str(60)),
-        F("status", "Status", ["program status"], enumOf(["waitlist", "active", "inactive", "closed", "deceased"])),
-        F("intake_date", "Intake date", ["intake", "enrolled", "enrollment date", "start date"], dateOf),
-        F("referral_source", "Referral source", ["referred by", "source"], str(120)),
-        F("primary_substance", "Primary substance", ["substance", "drug of choice", "doc"], enumOf("SUBSTANCES")),
-        F("asam_level", "ASAM level", ["asam", "level of care"], str(20)),
-        F("mat_status", "MAT status", ["mat", "moud"], enumOf(["none", "interested", "referred", "active", "discontinued", "unknown"])),
-        F("risk_level", "Risk level", ["risk"], enumOf(["low", "moderate", "high", "critical"])),
-        F("housing_status", "Housing", ["housing status", "living situation"], str(60)),
-        F("insurance", "Insurance", ["payer", "coverage"], str(100)),
-        F("overdose_history", "Overdose history", ["overdose", "od history", "prior overdose"], yesNo),
-        F("naloxone_provided", "Naloxone provided", ["naloxone", "narcan"], yes),
-        F("goals", "Goals", ["client goals"], str(2e3)),
-        F("flags", "Safety flags", ["flags", "alerts"], str(300))
-      ] },
-      resources: { label: "Resource directory", table: "resources", fields: [
-        F("name", "Name", ["program", "resource", "provider", "service name"], str(200), { required: true }),
-        F("category", "Category", ["type", "service type"], enumOf(C.RESOURCE_CATEGORIES), { required: true, help: C.RESOURCE_CATEGORIES.join(", ") }),
-        F("organization", "Organization", ["agency", "org"], str(200)),
-        F("phone", "Phone", ["telephone", "phone number"], str(40)),
-        F("fax", "Fax", [], str(40)),
-        F("email", "Email", [], str(200)),
-        F("website", "Website", ["url", "web"], str(300)),
-        F("address", "Address", ["street"], str(300)),
-        F("city", "City", [], str(100)),
-        F("zip", "ZIP", ["zip code"], str(12)),
-        F("hours", "Hours", [], str(200)),
-        F("eligibility", "Eligibility", ["criteria"], str(1e3)),
-        F("services", "Services", ["description"], str(1e3)),
-        F("languages", "Languages", [], str(200)),
-        F("accepts_medicaid", "Accepts Medicaid", ["medicaid"], yes),
-        F("accepts_uninsured", "Accepts uninsured", ["uninsured", "sliding scale"], yes),
-        F("mat_offered", "MAT offered", ["mat", "moud"], str(200)),
-        F("contact_person", "Contact person", ["contact"], str(200)),
-        F("summary", "Summary", ["overview", "about", "profile"], str(3e3)),
-        F("service_tags", "Service tags", ["tags", "services offered"], str(1e3), { help: "comma separated: " + C.SERVICE_TAGS.join(", ") }),
-        F("levels_of_care", "Levels of care", ["asam levels"], str(200)),
-        F("populations", "Populations served", ["serves", "population"], str(500)),
-        F("intake_process", "Intake process", ["how to refer", "admission process"], str(2e3)),
-        F("cost_notes", "Cost / payment", ["cost", "payment", "fees"], str(1e3)),
-        F("notes", "Notes", [], str(2e3))
-      ] },
-      interventions: { label: "Visits", table: "interventions", fields: [
-        clientRef,
-        F("occurred_at", "Date", ["date of service", "service date", "when", "occurred"], datetimeOf, { required: true }),
-        F("type", "Type", ["service", "intervention", "service type", "intervention type"], enumOf("INTERVENTION_TYPES"), { required: true, help: C.INTERVENTION_TYPES.join(", ") }),
-        F("duration_minutes", "Minutes", ["duration", "duration minutes", "time"], num),
-        F("location", "Location", ["where", "setting"], enumOf("LOCATIONS")),
-        F("modality", "Modality", ["mode"], enumOf("MODALITIES")),
-        F("outcome", "Outcome", ["result"], enumOf("OUTCOMES")),
-        F("naloxone_kits", "Naloxone kits", ["naloxone", "narcan kits"], num),
-        F("fentanyl_strips", "Fentanyl test strips", ["fts", "test strips"], num),
-        F("summary", "Summary", ["notes", "comment", "description"], str(2e3))
-      ] },
-      calls: { label: "Calls", table: "calls", fields: [
-        F("client_ref", "Client", ["client code", "client", "code", "client name", "name"], str(120), { help: "Optional for non-client calls" }),
-        F("started_at", "Date", ["when", "date/time", "call date", "time"], datetimeOf, { required: true }),
-        F("direction", "Direction", ["in/out", "inbound/outbound"], enumOf(["inbound", "outbound"]), { required: true }),
-        F("contact_type", "Who", ["contact type", "with", "caller"], enumOf("CALL_CONTACT_TYPES")),
-        F("contact_name", "Contact name", ["contact"], str(120)),
-        F("phone", "Phone", ["number"], str(40)),
-        F("duration_minutes", "Minutes", ["duration", "length"], num),
-        F("outcome", "Outcome", ["result"], enumOf("CALL_OUTCOMES")),
-        F("purpose", "Purpose", ["reason", "subject"], str(300)),
-        F("summary", "Summary", ["notes", "comment"], str(4e3)),
-        F("crisis", "Crisis", ["crisis call"], yes)
-      ] },
-      time_entries: { label: "Time", table: "time_entries", fields: [
-        F("work_date", "Date", ["work date", "day"], dateOf, { required: true }),
-        F("minutes", "Minutes", ["duration", "time", "mins"], num, { required: true }),
-        F("category", "Category", ["activity", "type"], enumOf("TIME_CATEGORIES")),
-        F("client_ref", "Client", ["client code", "client", "code", "client name"], str(120)),
-        F("billable", "Billable", [], yes),
-        F("description", "Description", ["notes", "comment"], str(500))
-      ] },
-      tasks: { label: "To-dos", table: "tasks", fields: [
-        F("title", "Title", ["task", "to-do", "todo", "reminder", "subject"], str(200), { required: true }),
-        F("client_ref", "Client", ["client code", "client", "code", "client name"], str(120)),
-        F("due_at", "Due", ["due date", "due", "deadline", "when"], datetimeOf),
-        F("priority", "Priority", [], enumOf(["low", "normal", "high", "urgent"])),
-        F("description", "Details", ["description", "notes"], str(2e3))
-      ] },
-      expenditures: { label: "Expenditures", table: "expenditures", perm: "budget:write", fields: [
-        F("spent_at", "Date", ["spent", "purchase date", "when"], dateOf, { required: true }),
-        F("amount", "Amount", ["cost", "total", "$"], num, { required: true }),
-        F("fund", "Funding source", ["fund", "grant", "funding"], str(200), { required: true, help: "Name of an existing funding source" }),
-        F("category", "Category", ["type", "budget line", "line"], enumOf(C.BUDGET_CATEGORIES), { required: true, help: C.BUDGET_CATEGORIES.join(", ") }),
-        F("client_ref", "Client", ["client code", "client", "code", "client name"], str(120)),
-        F("vendor", "Vendor", ["payee", "merchant", "store"], str(200)),
-        F("description", "Description", ["notes", "memo", "purpose"], str(1e3)),
-        F("receipt_ref", "Receipt #", ["receipt", "invoice", "invoice #"], str(200))
-      ] }
-    };
-    var norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    function suggestMapping(entity, headers) {
-      const def = ENTITIES[entity];
-      const used = /* @__PURE__ */ new Set();
-      const mapping = {};
-      for (const h of headers) {
-        const n = norm(h);
-        if (!n) continue;
-        const f = def.fields.find((f2) => !used.has(f2.key) && (f2.aliases.map(norm).includes(n) || norm(f2.key) === n)) || def.fields.find((f2) => !used.has(f2.key) && f2.aliases.some((a) => n.includes(norm(a)) || norm(a).includes(n)) && n.length > 2);
-        if (f) {
-          mapping[h] = f.key;
-          used.add(f.key);
-        }
-      }
-      return mapping;
-    }
-    function resolveClient(ref, ctx, auth3) {
-      const s = String(ref || "").trim();
-      if (!s) return null;
-      let rows;
-      if (/^[CM]\d{2}-\d+(-D)?$/i.test(s)) rows = db3.all(`SELECT id FROM clients WHERE client_code=? AND deleted_at IS NULL`, s.toUpperCase());
-      else {
-        const parts = s.split(/[,\s]+/).filter(Boolean);
-        if (parts.length < 2) rows = db3.all(`SELECT id FROM clients WHERE last_name_idx=? AND deleted_at IS NULL`, blindIndex2(parts[0]));
-        else rows = db3.all(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")));
-      }
-      rows = rows.filter((r) => auth3.canAccessClient(ctx.user, r.id));
-      if (rows.length === 1) return rows[0].id;
-      if (rows.length > 1) return "ambiguous";
-      return null;
-    }
-    function convertRow(entity, mapping, row) {
-      const def = ENTITIES[entity];
-      const record = {};
-      const errors = [];
-      for (const [header, key] of Object.entries(mapping)) {
-        const f = def.fields.find((x) => x.key === key);
-        if (!f) continue;
-        const raw = row[header];
-        const v = f.parse(raw);
-        if (v === void 0) errors.push(`${f.label}: "${raw}" is not a valid ${f.key.includes("date") || f.key.endsWith("_at") ? "date" : "value"}${f.help ? " (" + f.help.slice(0, 80) + ")" : ""}`);
-        else record[key] = v;
-      }
-      for (const f of def.fields) if (f.required && (record[f.key] === null || record[f.key] === void 0 || record[f.key] === "")) errors.push(`${f.label} is required`);
-      return { record, errors };
-    }
-    module.exports = { ENTITIES, suggestMapping, convertRow, resolveClient };
-  }
-});
-
 // server/importers/fhir-ehr.js
 var require_fhir_ehr = __commonJS({
   "server/importers/fhir-ehr.js"(exports, module) {
@@ -39219,6 +39334,8 @@ var require_dataimport2 = __commonJS({
       try {
         const v = validate(own, R.partialShape());
         if (entity !== "clients") rules.assertWrite(entity, rules.toColumns(entity, v), ctx);
+        const dates = DI.dateProblems(entity, v);
+        if (dates.length) throw new Error(dates.join("; "));
       } catch (e) {
         const fields = e.extra && e.extra.fields;
         throw new Error(fields ? Object.entries(fields).map(([k, m]) => `${k} ${m}`).join("; ") : e.message);
@@ -39301,7 +39418,7 @@ var require_dataimport2 = __commonJS({
         if (entity === "clients") duplicateCheckLimit(ctx);
         const dups = { shown: 0, hidden: 0 };
         const rows = sheet.rows.slice(0, 2e3).map((row, i) => {
-          const { record, errors } = DI.convertRow(entity, normalizedMapping, row);
+          const { record, errors, dates } = DI.convertRow(entity, normalizedMapping, row);
           if (record.client_ref !== void 0) {
             const id = DI.resolveClient(record.client_ref, ctx, auth3);
             if (record.client_ref && !id) errors.push(`Client "${record.client_ref}" not found (use the client code or "Last, First")`);
@@ -39322,7 +39439,7 @@ var require_dataimport2 = __commonJS({
               for (const m of hidden) C().reviewTask(ctx.user, m.id, `Possible duplicate: a spreadsheet or EHR import preview named the person on ${m.client_code}; check whether they are being imported again`);
             }
           }
-          return { n: i + 2, record, errors };
+          return { n: i + 2, record, errors, dates };
         });
         audit3.log({ user: ctx.user, action: "import.data.preview", ip: ctx.ip, details: { entity, rows: rows.length, sheet: sheet.name, source: source || void 0, duplicates: entity === "clients" ? dups : void 0 } });
         return { entity, sheets, sheet: sheetIdx, headers: sheet.headers, mapping: normalizedMapping, fields: def.fields.map((f) => ({ key: f.key, label: f.label, required: !!f.required })), rows, valid: rows.filter((x) => !x.errors.length).length, invalid: rows.filter((x) => x.errors.length).length, truncated: sheet.rows.length > 2e3 };
@@ -39353,7 +39470,6 @@ var require_dataimport2 = __commonJS({
                 return;
               }
               const id = uuid2();
-              const now2 = db3.now();
               checkRecord(entity, rec, ctx);
               switch (entity) {
                 case "clients": {
@@ -39365,7 +39481,7 @@ var require_dataimport2 = __commonJS({
                   if (same.hidden.length) hiddenDuplicates.push([id, same.hidden]);
                   const enc2 = M.encryptFields(rec);
                   enc2.full_name_idx = blindIndex2((rec.last_name || "") + (rec.first_name || ""));
-                  const cols2 = { id, client_code: M.nextClientCode(), ...enc2, created_by: ctx.user.id, intake_date: rec.intake_date || now2.slice(0, 10) };
+                  const cols2 = { id, client_code: M.nextClientCode(), ...enc2, created_by: ctx.user.id, intake_date: rec.intake_date || require_local_date().today() };
                   for (const f of M.PLAIN_FIELDS) if (rec[f] !== void 0 && rec[f] !== null) cols2[f] = typeof rec[f] === "boolean" ? rec[f] ? 1 : 0 : rec[f];
                   if (cols2.risk_level === void 0) cols2.risk_level = null;
                   M.unaskedAsNull(cols2);
@@ -41153,8 +41269,11 @@ var require_resources2 = __commonJS({
         params: {}
       },
       Consent: {
-        src: `SELECT k.id _fid, 'consent' _kind, k.id _rid, k.client_id _cid, k.updated_at _upd, k.signed_at _date, CASE WHEN k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= '${today()}') THEN 'active' ELSE 'inactive' END _st
-      FROM consents k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT} AND k.type IN (${disclosure.FHIR_CONSENT_TYPES.map((t) => `'${t}'`).join(",")})`,
+        // A getter, so "today" is the programme's date when the search runs, not when this module was loaded (F1).
+        get src() {
+          return `SELECT k.id _fid, 'consent' _kind, k.id _rid, k.client_id _cid, k.updated_at _upd, k.signed_at _date, CASE WHEN k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at >= '${today()}') THEN 'active' ELSE 'inactive' END _st
+      FROM consents k JOIN clients c ON c.id=k.client_id WHERE ${LIVE_CLIENT} AND k.type IN (${disclosure.FHIR_CONSENT_TYPES.map((t) => `'${t}'`).join(",")})`;
+        },
         load: (kind, id) => db3.one(`SELECT * FROM consents WHERE id=?`, id),
         map: mapConsent,
         date: true,
@@ -44333,6 +44452,7 @@ var require_me = __commonJS({
     var { badRequest } = require_http();
     var M = require_clients_model();
     var { withClientName, SELECT: NAME_COLS } = require_client_name();
+    var LD = require_local_date();
     var MAX_PREF_BYTES = 8e3;
     module.exports = (r) => {
       r.get("/api/me", auth3.requireAuth, (ctx) => auth3.publicUser(ctx.user));
@@ -44378,8 +44498,16 @@ var require_me = __commonJS({
       WHERE n.author_id=? AND n.status='draft' AND n.deleted_at IS NULL AND c.deleted_at IS NULL AND ${nf.sql} ORDER BY n.updated_at DESC LIMIT 8`, uid, ...nf.params).map((n) => withClientName(ctx, n)).map((n) => ({ ...n, title: n.title_enc ? require_crypto().decrypt(n.title_enc) : null, title_enc: void 0, client_name: n.client_name || n.client_code }));
         const staged = db3.one(`SELECT COUNT(*) n FROM import_items x JOIN imports i ON i.id=x.import_id WHERE x.status='staged' AND (i.imported_by=? OR i.imported_by IS NULL)`, uid).n;
         const tf = cf("t.client_id");
-        const dueToday = db3.all(`SELECT t.id, t.title_enc, t.description_enc, t.created_by, t.assigned_to, t.due_at, t.priority, t.status, t.client_id, c.client_code, ${NAME_COLS} FROM tasks t LEFT JOIN clients c ON c.id=t.client_id
-      WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND substr(t.due_at,1,10) <= ? AND (t.client_id IS NULL OR ${tf.sql}) ORDER BY t.due_at LIMIT 10`, uid, require_local_date().today(), ...tf.params).map((t) => withClientName(ctx, t)).map(require_tasks2().presentTask).map(({ description, created_by, ...t }) => ({ ...t, sign_reminder: !!t.sign_reminder })).map((t) => t.client_id ? { ...t, client_name: t.client_name || t.client_code } : t);
+        const dueToday = db3.all(
+          `SELECT t.id, t.title_enc, t.description_enc, t.created_by, t.assigned_to, t.due_at, t.priority, t.status, t.client_id, c.client_code, ${NAME_COLS} FROM tasks t LEFT JOIN clients c ON c.id=t.client_id
+      WHERE t.assigned_to=? AND t.status IN ('open','in_progress') AND (CASE WHEN length(t.due_at)=10 THEN t.due_at <= ? ELSE t.due_at < ? END) AND (t.client_id IS NULL OR ${tf.sql}) ORDER BY t.due_at LIMIT 10`,
+          // A timed to-do is an instant (UTC): due by the end of the programme's day, not by its UTC date, which left out
+          // one due this evening (CS4). A date-only one is a calendar day.
+          uid,
+          LD.today(),
+          LD.localMidnight(LD.addDays(LD.today(), 1)),
+          ...tf.params
+        ).map((t) => withClientName(ctx, t)).map(require_tasks2().presentTask).map(({ description, created_by, ...t }) => ({ ...t, sign_reminder: !!t.sign_reminder })).map((t) => t.client_id ? { ...t, client_name: t.client_name || t.client_code } : t);
         const lastSeenElsewhere = db3.one(`SELECT last_seen_at, user_agent FROM sessions WHERE user_id=? AND revoked_at IS NULL AND id<>? ORDER BY last_seen_at DESC LIMIT 1`, uid, ctx.session.id);
         require_audit().log({ user: ctx.user, action: "me.continue", ip: ctx.ip, details: { recent: recent.length, drafts: drafts.length, due_today: dueToday.length } });
         return { recent, drafts, staged_imports: staged, due_today: dueToday, other_device: lastSeenElsewhere ? { last_seen_at: lastSeenElsewhere.last_seen_at, mobile: /Mobi|Android|iPhone|iPad/i.test(lastSeenElsewhere.user_agent || "") } : null };
@@ -49250,6 +49378,21 @@ var require_hardening = __commonJS({
       const pol = auth3.policy();
       const add = (x) => out2.push({ recommended: true, where: "settings", ...x });
       {
+        const LD = require_local_date();
+        const tz = LD.orgTimezone();
+        const chosen = LD.validTimezone(db3.getSetting("org_timezone", "") || "") || !!config2.orgTimezoneConfigured;
+        const utc = isUtcZone(tz);
+        const done = !utc && (chosen || proc.platform === "win32");
+        add({
+          id: "timezone",
+          title: "Choose the program's time zone",
+          done,
+          why: done ? `Dates are on ${tz}'s calendar.` : utc ? `SUDS is using ${tz}, so after 5pm in California (4pm in winter) an intake, a visit or a due date is dated tomorrow and a report puts the evening in the next day or month. Choose the program's time zone.` : `No time zone has been chosen, so SUDS uses this server's (${tz}). A server moved to another machine or a container is often on UTC; choose the program's zone so its dates stay right.`,
+          status: chosen ? tz : `${tz} (this server's; not chosen)`,
+          action: { label: "Choose the time zone", href: "#/admin?tab=settings&field=org_timezone" }
+        });
+      }
+      {
         const missing = PRIVILEGED.filter((r) => !pol.mfaRequiredRoles.includes(r));
         const rep = require_security_status().mfaReport();
         const notEnrolled = rep.without.filter((u) => PRIVILEGED.includes(u.role));
@@ -49424,11 +49567,12 @@ var require_hardening = __commonJS({
       }
       return out2;
     }
+    var isUtcZone = (tz) => /^(Etc\/)?(UTC|UCT|GMT|Universal|Zulu|Greenwich|GMT[+-]0|GMT0)$/i.test(String(tz || ""));
     function summary() {
       const all = items();
       return { items: all, open: all.filter((i) => i.recommended && !i.done).length, done: all.filter((i) => i.done).length, total: all.length };
     }
-    module.exports = { items, summary, PRIVILEGED };
+    module.exports = { items, summary, PRIVILEGED, isUtcZone };
   }
 });
 
@@ -49862,9 +50006,13 @@ var require_setup = __commonJS({
           // category (Exhibit E allowable use, California HIAA), as Funding & spending asks.
           main_fund_type: { type: "string", enum: C.FUNDING_TYPES },
           main_fund_settlement_use: { type: "string", enum: C.SETTLEMENT_USES.map((x) => x.code) },
-          main_fund_settlement_hiaa: { type: "string", enum: [...C.SETTLEMENT_HIAA.map((x) => x.code), "none"] }
+          main_fund_settlement_hiaa: { type: "string", enum: [...C.SETTLEMENT_HIAA.map((x) => x.code), "none"] },
+          // The programme's time zone (F4): the wizard offers the browser's, which on the computer running SUDS is the
+          // county's. Omitted, the server's own zone stays in use (Security status then asks for one).
+          org_timezone: { type: "string", maxLen: 64 }
           // port omitted → 'auto' (standard port with fallback)
         });
+        if (v.org_timezone && !require_local_date().validTimezone(v.org_timezone)) throw badRequest("org_timezone must be a time zone name such as America/Los_Angeles", { fields: { org_timezone: "is not a time zone this server knows" } });
         const pwProblem = auth3.passwordProblem(v.admin_password, { username: v.admin_username, display_name: v.admin_display_name });
         if (pwProblem) throw badRequest(pwProblem, { fields: { admin_password: pwProblem } });
         if (config2.keySource !== "env" && !fs.existsSync(config2.keysJsonPath)) {
@@ -49882,6 +50030,7 @@ var require_setup = __commonJS({
           if (v.county_name) db3.setSetting("county_name", v.county_name);
           if (v.program_contact) db3.setSetting("program_contact", v.program_contact);
           db3.setSetting("caseload_restriction", "1");
+          if (v.org_timezone) db3.setSetting("org_timezone", v.org_timezone);
           db3.setSetting("programme_profile", v.programme_profile || require_programme().DEFAULT_PROFILE);
           if (v.participant_code_default === true && (v.programme_profile || require_programme().DEFAULT_PROFILE) === "harm_reduction") db3.setSetting("participant_code_default", "1");
           mainFund = require_budget().createProgrammeFund(v.main_fund_name, { type: v.main_fund_type || "other", settlement_use: v.main_fund_settlement_use || null, settlement_hiaa: v.main_fund_settlement_hiaa || null });
@@ -49903,7 +50052,7 @@ var require_setup = __commonJS({
         } else if (proc.env.TLS_CERT_PATH) tls = "custom";
         const localMode = v.local_mode === true;
         if (!config2.localModeFromEnv) config2.localModeEnabled = localMode;
-        audit3.log({ user: { username: v.admin_username }, action: "setup.complete", ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config2.localModeEnabled, programme_profile: require_programme().profile(), defaults, main_fund: mainFund } });
+        audit3.log({ user: { username: v.admin_username }, action: "setup.complete", ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config2.localModeEnabled, programme_profile: require_programme().profile(), org_timezone: v.org_timezone || void 0, defaults, main_fund: mainFund } });
         let desc;
         try {
           desc = await listener.relisten({ host, port, certPath: tls === "selfsigned" ? path.join(config2.dataDir, "certs", "suds.crt") : config2.tls.cert || "", keyPath: tls === "selfsigned" ? path.join(config2.dataDir, "certs", "suds.key") : config2.tls.key || "" });
@@ -49966,10 +50115,6 @@ var require_supervision = __commonJS({
       return ids === null || ids.includes(workerId);
     }
     var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    var day = (d) => {
-      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || "");
-      return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : d;
-    };
     var appDay = (d) => {
       const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(d || "");
       return m ? `${MONTHS[Number(m[2]) - 1]} ${Number(m[3])}, ${m[1]}` : d;
@@ -50083,7 +50228,7 @@ var require_supervision = __commonJS({
       };
       function tellWorker(ctx, workerId, entries2, note, reopened) {
         if (!workerId || !entries2.length) return null;
-        const what = entries2.length === 1 ? `your time for ${day(entries2[0].work_date)} (${mins(entries2[0].minutes)})` : `${entries2.length} of your time entries (${entries2.map((e) => day(e.work_date)).filter((x, i, a) => a.indexOf(x) === i).slice(0, 3).join(", ")}${entries2.length > 3 ? "\u2026" : ""})`;
+        const what = entries2.length === 1 ? `your time for ${appDay(entries2[0].work_date)} (${mins(entries2[0].minutes)})` : `${entries2.length} of your time entries (${entries2.map((e) => appDay(e.work_date)).filter((x, i, a) => a.indexOf(x) === i).slice(0, 3).join("; ")}${entries2.length > 3 ? "\u2026" : ""})`;
         const title = `Correct ${what}: ${reopened ? "reopened" : "returned"} by ${ctx.user.display_name || "your supervisor"}`;
         const desc = `${reopened ? "Reopened" : "Returned"}: ${note}
 Open My time, correct ${entries2.length === 1 ? "the entry" : "them"} and submit again.`;
@@ -55977,20 +56122,22 @@ function scheduleState(lastIso, everyDays = DEFAULT_EVERY_DAYS, now2 = Date.now(
   const every = SCHEDULES.includes(Number(everyDays)) ? Number(everyDays) : DEFAULT_EVERY_DAYS;
   const days = daysSince(lastIso, now2);
   const p = (n) => String(n).padStart(2, "0");
-  const ymd = (d) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  const ymd2 = (d) => `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   if (days === null) {
     const since = daysSince(sinceIso, now2);
-    return { every_days: every, days: null, due: true, overdue: since === null || since >= 1, next_due: since === null ? null : ymd(new Date(Date.parse(sinceIso))) };
+    return { every_days: every, days: null, due: true, overdue: since === null || since >= 1, next_due: since === null ? null : ymd2(new Date(Date.parse(sinceIso))) };
   }
   const t = new Date(Date.parse(lastIso));
   const next = new Date(t.getFullYear(), t.getMonth(), t.getDate() + every);
-  return { every_days: every, days, due: days >= every, overdue: days > every, next_due: ymd(next) };
+  return { every_days: every, days, due: days >= every, overdue: days > every, next_due: ymd2(next) };
 }
 var FILE_RE = /^suds-device-backup-(\d{4}-\d{2}-\d{2})(?:-(\d{6}))?\.sudsbackup$/;
+var p2 = (n) => String(n).padStart(2, "0");
+var ymd = (d) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+var downloadName = (iso) => `suds-device-backup-${ymd(new Date(iso))}.sudsbackup`;
 function fileName(iso) {
   const d = new Date(iso);
-  const p = (n) => String(n).padStart(2, "0");
-  return `suds-device-backup-${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}-${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}.sudsbackup`;
+  return `suds-device-backup-${ymd(d)}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}.sudsbackup`;
 }
 var isBackupName = (name) => FILE_RE.test(String(name || ""));
 var sortKey = (n) => {
@@ -57112,7 +57259,7 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
       putBack("last_backup_to", previousTo);
       throw e;
     }
-    const name = `suds-device-backup-${at.slice(0, 10)}.sudsbackup`;
+    const name = downloadName(at);
     ctx.res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Disposition": `attachment; filename="${name}"` });
     ctx.res.end(import_buffer.Buffer.from(file));
   });
