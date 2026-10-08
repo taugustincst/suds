@@ -261,6 +261,7 @@ extract) and always hold the record back from the extract. **Warnings** are list
 | `inpatient_over_30` | warning | Hospital nights + psychiatric inpatient days > 30 |
 | `health_days_zero` | fatal | ER visits or hospital nights reported but 0 days with physical health problems (MED-4 rule 3) |
 | `admission_date_differs` | warning | CalOMS admission date differs from the episode's start date |
+| `ntp_medication_none` | warning | Narcotic Treatment Program (ADM-4 `7`) with medication `1` None (MED-7 is the NTP client's medication, ADM-4 note p.13) |
 | `discharge_before_admission` | fatal | Discharge date before the admission date |
 | `last_service_outside_episode` | fatal | Date of last service outside admission – discharge |
 | `annual_update_too_early` | fatal | Annual update more than 60 days before the first anniversary |
@@ -274,7 +275,9 @@ extract) and always hold the record back from the extract. **Warnings** are list
 **Not validated**: DHCS's own cross-submission edits (duplicate admissions across providers, a discharge for
 an admission DHCS never accepted, transaction sequencing — TRN-1 resubmission/deletion types 2, 3, 5, 6, 8, 9,
 which SUDS does not produce), the place-of-birth and identifier elements SUDS does not collect, and the exact
-submission deadlines.
+submission deadlines. Nor does SUDS warn about an admission of type `2` (Transfer or Change in Service, ADM-2 p.11)
+with no earlier episode in SUDS: the dictionary sets no rule for it, and the transfer may come from another provider,
+whose episode SUDS never holds (1.25.2, CS11).
 
 ## Validation report
 
