@@ -308,6 +308,21 @@ after the previous one" (the gate measured from when v1.24.0's tag was pushed, 2
 gate with no `policy_exception`, published the Release as Latest with a zip equal to the checksum recorded before the
 tag, and its `Web app` run published 1.25.1 to GitHub Pages. No tag is owed.
 
+**Record: 1.25.2 is a patch with the fixes from testing every position on 1.25.1.** 1.25.2, stamped 2026-10-08, is
+a patch of 1.25.1 inside 1.25.0's 28 days, which a patch may be (*Stabilisation*, point 1). On the owner's request
+("Test all positions", then "fix all the findings and release 1.25.2"), every position was tested in a browser on the
+released 1.25.1, and the release was evaluated (HANDOFF.md, 2026-10-08). 1.25.2 fixes what a patch may carry: the
+restored-database locking (BO1), the CalOMS special answers in the episode dialogs (CS1), the setup wizard's dropped
+answers (BO2), an administrator's self-granted clinical-note access (BO3), spreadsheet-import and API dates (BO4,
+BO5), finance's ledger export (BO6), and the other findings FL1–FL16, CS2–CS18, BO7–BO25 and F1–F8. A sound-alike
+index for first names (FL5) needs a migration, and renaming export column headings (BO22) could break a county's
+import, so both wait for 1.26. No migration, no new or widened permission and no new route, 754 lines added
+outside docs, tests and generated files (`node scripts/release-policy.js --version 1.25.2 --previous v1.25.1`), so it
+passes the release policy with no exception. It is the first patch with an SBOM of its own (F6): the release is two
+commits, "Release 1.25.2" (the stamp) and "SBOM of the 1.25.2 stamp", and the tag goes on the second, the commit CI
+passes. The owner pushes `v1.25.2` ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); its `release.yml`
+run, whose gate passes with no `policy_exception`, is the Latest release and starts the `Web app` run that publishes it.
+
 ### Supported versions
 
 | Line | Gets | For how long |
@@ -465,6 +480,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.24.1 | none of the policy (a patch within the patch rules: no migration, permission or route, 311 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once the owner has pushed the tags; it went live first, on 2026-10-03, by a direct push to `gh-pages` at the owner's request (*Record: 1.24.1*) | the licence change the owner decided on 2026-10-03 (proprietary, AugustInnovations LLC, SUDS on this device free for real use under section 2A) and the fixes from the market evaluation of 1.24.0 (D1 to D7); the tags owed since 1.16.3 are not yet pushed (*Stabilisation*, point 4) | no exception to approve; the direct push was at the owner's request (*Record: 1.24.1*, above) |
 | 1.25.0 | monthly limit and the feature freeze (*Stabilisation*, point 1: a feature release two days after 1.24.0, migration 71; no new permission or route); not a security fix, so no `Security exception:` line — the owner's explicit instruction to lift the freeze, recorded in *Record: 1.25.0* and passed as `policy_exception` when the tag's release runs | the CalOMS Tx dictionary verification (all 17 code sets rewritten from the DHCS Data Dictionary v3.0; migration 71 remapping stored answers), better resource-directory pictures (40 of the 81 providers on the published site; many provider sites refuse automated downloads), and the UI intuitiveness pass, on the owner's instruction of 2026-10-05 ("Fix everything now, freeze lifts to 1.25.0") | owner (`policy_exception`, *Record: 1.25.0*, above) |
 | 1.25.1 | none of the policy (a patch within the patch rules: no new migration, permission or route, 412 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged by the owner and released through the gate on 2026-10-08 (*Record: 1.25.1*) | the fixes from the evaluation of 1.25.0 (E1 to E11): one programme-local "today", typed dates and times, repeated CalOMS codes, honest provider-picture and release records, one pricing source of truth (*Record: 1.25.1*, above) | no exception to approve |
+| 1.25.2 | none of the policy (a patch within the patch rules: no migration, permission or route, 754 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once the owner has pushed `v1.25.2` | the fixes from testing every position on 1.25.1 and from the evaluation of 1.25.1 (FL1–FL16, CS1–CS18, BO1–BO25, F1–F8, less FL5's index and BO22's headings), with its own SBOM (*Record: 1.25.2*, above) | no exception to approve |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as

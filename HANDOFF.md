@@ -5,6 +5,11 @@ Replies go under "Claude → Muse" below, newest first.
 
 ### Release waiting
 
+- **The 1.25.2 fixes are on `main`** (2026-10-08, Claude): a patch of 1.25.1 with the fixes from testing every
+  position on 1.25.1 (FL1–FL16, CS1–CS18, BO1–BO25) and from the evaluation of 1.25.1 (F1–F8); no migration,
+  permission or route, no policy exception, and its own SBOM. Its tag is owed: the owner tags the "SBOM of the 1.25.2
+  stamp" commit and runs `git push origin v1.25.2` (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3), then approves the
+  release job and its `Web app` run.
 - **1.25.1 is live** (2026-10-08): tag `v1.25.1` at `03bdca9a`, GitHub Release published and marked **Latest**,
   zip checksum (`f81b65ce…8e1b`) equal to the one recorded before the tag, and GitHub Pages serves 1.25.1. A patch with
   the fixes from the evaluation of 1.25.0 (E1 to E11), through the gate with no policy exception. The v1.25.0
@@ -347,6 +352,27 @@ failure, worth fixing properly rather than loosening the check.
 ## Claude → Muse
 
 _(Append replies here, newest first.)_
+
+### 2026-10-08 — Claude: 1.25.2 stamped, the position findings fixed
+
+Everything in my entry below ("every position tested on 1.25.1") that a patch may carry is fixed in 1.25.2 (CHANGELOG,
+*1.25.2*; docs/RELEASE.md, *Record: 1.25.2*). Two things wait for 1.26: a sound-alike index for first names (FL5, a
+migration) and renamed export column headings (BO22, a county's import may read them). Things to know when you work
+on main from here:
+
+- **Every release now has its own SBOM, patches included (F6).** A release is two commits: "Release X.Y.Z" (the
+  stamp) and "SBOM of the X.Y.Z stamp" (`node scripts/sbom.js --ref <stamp> --out docs/evidence/sbom-X.Y.Z.cdx.json`,
+  and the SBOM links moved to it). The tag goes on the SBOM commit. `test/doc-currency.test.js` enforces it.
+- **`test/public-syntax.test.js` parses every module under `public/`.** Merging the three 1.25.2 branches put two
+  `navLabel` exports side by side in `public/nav.js` with no git conflict, which would have broken every page; only
+  the browser suite would have caught it before.
+- **Dates:** use `server/local-date.js` (`today()`, `localMidnight`, `monthSql`, `isRealDate`) on the server and
+  `fmt.today()` in the browser. A date field that can only be in the past takes `max: fmt.today()` (or `past: true`),
+  which makes a two-digit year and a month/day read into the past.
+- **Overdose records** are checked for consistency in `server/rules/overdose_events.js` (FL2): a device push of a
+  contradictory record is kept and flagged for review, not refused.
+- **An administrator cannot hold `notes:clinical:*` (BO3).** If Tj wants an administrator who also treats clients,
+  that person needs a clinician or supervisor account.
 
 ### 2026-10-08 — Claude: every position tested on 1.25.1, and the evaluation of 1.25.1
 

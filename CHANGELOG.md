@@ -2,10 +2,58 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.25.2 — 2026-10-08
+
+A patch of 1.25.1 (docs/RELEASE.md, *Record: 1.25.2*): the fixes from testing every position on 1.25.1 (navigators,
+clinician, supervisor, administrator, finance, read-only, county user, device-only user and county IT; FL1–FL16,
+CS1–CS18, BO1–BO25) and from the evaluation of 1.25.1 (F1–F8). No migration, no new or widened permission and no new
+route (`node scripts/release-policy.js --version 1.25.2 --previous v1.25.1` passes: 754 lines added outside
+docs, tests and generated files, of the 1,500 a patch may add). It passes the release policy with no exception.
+Upgrading needs nothing beyond replacing the files and restarting. What an upgrading administrator should know:
+
+* **A restored database is repaired at the next start (BO1).** If this server was ever restored from a downloaded or
+  `npm run backup` backup, it has been running without write-ahead logging and may have answered "database is
+  locked" under load. 1.25.2 turns it back on when the server starts; nothing to do.
+* **Administrators no longer read clinical notes through a permission grant (BO3).** An administrator who was given
+  `notes:clinical:read` or `notes:clinical:write` loses it: an administrator reads a clinical note only by break-glass
+  (docs/HIPAA.md). Someone who also treats clients needs a clinician or supervisor account.
+* **Finance's spending and staff-time exports carry exact dates, vendor and receipt number for rows with no client
+  (BO6).** Rows linked to a client stay de-identified as before. Your privacy officer may want to note it.
+* **New refusals:** an overdose record that contradicts itself (FL2); deleting a budget line with approved spending
+  (BO8, 409); approving your own expenditure is now 403, not 400 (BO13); an identified export that would leave out
+  every client (BO25, 409); impossible dates such as 2026-09-31 anywhere in the API (BO5).
+* **Home's "Finish setting up" may show "Choose the program's time zone" (F4)** on a Linux or Docker server with no
+  time zone chosen. Choose it in Settings: the programme's "today" and months follow it.
+* **Not in this patch (need a migration or would change a county's import):** a sound-alike index for first names
+  (FL5) and renamed export column headings (BO22). Both are proposed for 1.26.
 
 ### Fixed
 
+* **BO1 (Critical):** a database restored from "Download encrypted backup" or `npm run backup` (a `VACUUM INTO` copy)
+  stayed in rollback-journal mode, so a read snapshot held the main connection's writes and the server answered
+  500 "database is locked" and lost audit entries under load. Every writable open now sets WAL (a PRAGMA, not a
+  migration), which also repairs a database restored by an earlier version at its next start; a read snapshot is
+  not taken on a database that could not be put in WAL mode. `test/backup-wal.test.js`.
+* **CalOMS special answers in the Start an episode and Discharge dialogs (CS1, CS18).** Choosing a 999xx special answer
+  ("Client unable to answer") now fills its number box and is saved, as in the Edit dialog; an administrative discharge
+  no longer drops it silently. The help names the list beside the box instead of saying "below".
+* **BO2 (High):** the setup wizard stored every "Yes" to the offline copy and to participant codes as No
+  (`validate()` turns a boolean into 1; the route compared with `true`). `test/setup-answers.test.js` and
+  `scripts/ui/setup-same-origin.mjs` now finish the wizard with Yes.
+* **BO3 (High):** an administrator could grant themselves (or another administrator) `notes:clinical:read` or
+  `notes:clinical:write` and read clinical notes without break-glass. Neither is grantable to the administrator
+  role any more, and a grant row left from before is ignored at request time and shown as having no effect
+  (narrowing only; break-glass is unchanged). `test/admin-self-permissions.test.js`.
+* **BO6 (High):** finance's "Export to Excel" of spending and of staff time had every date cut to the year and
+  no vendor or receipt number, so it could not be reconciled. Spending and time **with no client** are the
+  programme's own books, not health information: they now keep their exact date, vendor and receipt number.
+  Every row linked to a client is de-identified exactly as before (year only, vendor and receipt left out, a
+  random record id), and no description is written to a de-identified file. The file's classification says so.
+  `test/finance-ledger.test.js`; docs/HIPAA.md.
+* **Spreadsheet import dates (BO4, F3).** An impossible date (2/30/90), a date with no year ("10/8" became 2001), and a
+  date of birth or intake in the future or a date of birth over 120 years ago are the row's error in the preview and
+  again at commit. The preview lists every two-digit year with what it was read as. A client with no intake date is
+  dated the programme's today, not the UTC date.
 * **Past-only dates read a two-digit year into the past (F2).** Last overdose date, naloxone last given, a
   resource's last verified date and a problem's onset date cannot be in the future, so "30" there is 1930's,
   not 2030's, and a future date is refused as for a date of birth.
@@ -13,10 +61,6 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   consent matched `status=active` until a restart while its own status said inactive.
 * **Real dates only (BO5).** The API took impossible dates such as 2026-09-31 (stored, and read as October 1st by a
   spreadsheet) for expenditures, time entries, report periods and every other date: they are refused as "not a real date".
-* **Spreadsheet import dates (BO4, F3).** An impossible date (2/30/90), a date with no year ("10/8" became 2001), and a
-  date of birth or intake in the future or a date of birth over 120 years ago are the row's error in the preview and
-  again at commit. The preview lists every two-digit year with what it was read as. A client with no intake date is
-  dated the programme's today, not the UTC date.
 * **Two-digit years and short dates by field (F2, FL3).** A date of birth (a field never in the future) reads "1/5/27"
   as 1927; any other date takes up to 20 years ahead, so a consent expiry "10/1/28" is 2028, not 1928. A month and
   day alone ("10/8") is accepted: this year's, last year's for a date of birth still to come, next year's for a
@@ -36,9 +80,6 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   has passed, not "after that"; the "Correct your time" to-do and the monthly trend use the app's date and month
   format; a form's earlier error is cleared, not only hidden, when it is submitted again.
 * **Tests (F8).** Five tests whose fixtures assumed a US zone pass in any zone (`H.localAt`).
-* **CalOMS special answers in the Start an episode and Discharge dialogs (CS1, CS18).** Choosing a 999xx special answer
-  ("Client unable to answer") now fills its number box and is saved, as in the Edit dialog; an administrative discharge
-  no longer drops it silently. The help names the list beside the box instead of saying "below".
 * **Caseload transfer (CS3).** A receiving worker whose assignment was ended earlier that day gets the client (it
   counted as "already assigned", and the client was left with nobody); one who held the client as secondary takes over
   as primary; a departing worker's end date is never before their start; the result's wording is corrected.
@@ -69,27 +110,9 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **Phone and wording (FL6, FL9, FL11, FL14).** The phone's top bar keeps its height on short pages; the offline
   message says the entry is only on this screen; closing a dialog opened from "Add…" puts focus back on "Add…"; a
   secondary substance stored as a code reads as its label.
-* **BO1 (Critical):** a database restored from "Download encrypted backup" or `npm run backup` (a `VACUUM INTO` copy)
-  stayed in rollback-journal mode, so a read snapshot held the main connection's writes and the server answered
-  500 "database is locked" and lost audit entries under load. Every writable open now sets WAL (a PRAGMA, not a
-  migration), which also repairs a database restored by an earlier version at its next start; a read snapshot is
-  not taken on a database that could not be put in WAL mode. `test/backup-wal.test.js`.
-* **BO2 (High):** the setup wizard stored every "Yes" to the offline copy and to participant codes as No
-  (`validate()` turns a boolean into 1; the route compared with `true`). `test/setup-answers.test.js` and
-  `scripts/ui/setup-same-origin.mjs` now finish the wizard with Yes.
 * **BO10:** the wizard no longer preselects Yes for the offline copy on a harm-reduction programme: No is the
   default for every profile, as docs/DEPLOYMENT.md's checklist says ("left off unless a field-work need is
   documented"); the question says when to answer Yes.
-* **BO3 (High):** an administrator could grant themselves (or another administrator) `notes:clinical:read` or
-  `notes:clinical:write` and read clinical notes without break-glass. Neither is grantable to the administrator
-  role any more, and a grant row left from before is ignored at request time and shown as having no effect
-  (narrowing only; break-glass is unchanged). `test/admin-self-permissions.test.js`.
-* **BO6 (High):** finance's "Export to Excel" of spending and of staff time had every date cut to the year and
-  no vendor or receipt number, so it could not be reconciled. Spending and time **with no client** are the
-  programme's own books, not health information: they now keep their exact date, vendor and receipt number.
-  Every row linked to a client is de-identified exactly as before (year only, vendor and receipt left out, a
-  random record id), and no description is written to a de-identified file. The file's classification says so.
-  `test/finance-ledger.test.js`; docs/HIPAA.md.
 * **BO7:** the client list a de-identified role (finance, read-only) gets carried full intake, referral and
   engagement dates, the last-contact time, city, substance, MAT status, risk and the assigned staff. It now carries
   the client code and status only, which is all its client picker and search show. `test/security-1154.test.js`.

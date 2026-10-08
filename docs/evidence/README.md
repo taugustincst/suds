@@ -9,9 +9,10 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
-**Version.** It describes 1.25.1: the commit "Release 1.25.1", a patch of 1.25.0 with the fixes from the
-evaluation of 1.25.0 (E1 to E11) and no policy exception ([../RELEASE.md](../RELEASE.md), *Record: 1.25.1*; tagged
-and released 2026-10-08, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). It keeps 1.25.0's SBOM. 1.25.0 is a feature release on the owner's explicit
+**Version.** It describes 1.25.2: the commit "Release 1.25.2", a patch of 1.25.1 with the fixes from testing every
+position on 1.25.1 and no policy exception ([../RELEASE.md](../RELEASE.md), *Record: 1.25.2*; its tag is owed,
+[RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)), and the first patch with an SBOM of its own, `sbom-1.25.2`. 1.25.1, a patch of
+1.25.0 with the fixes from the evaluation of 1.25.0 (E1 to E11), kept 1.25.0's SBOM. 1.25.0 is a feature release on the owner's explicit
 instruction ("Fix everything now, freeze lifts to 1.25.0"), inside 1.24.0's 28 days — not a security exception
 ([../RELEASE.md](../RELEASE.md), *Record: 1.25.0*; the tag hand-off record is [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)).
 1.25.0 corrects the CalOMS Tx code sets against the DHCS Data Dictionary v3.0 (File Version 3.0, October 2024):
