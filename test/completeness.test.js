@@ -36,7 +36,7 @@ test('a fatal overdose goes through discharge: the open episode closes as deceas
   assert.equal(episodeRow(c.episode_id).status, 'open');
   const task = await nav.post('/api/tasks', { client_id: c.id, title: 'Call back about housing', due_date: '2026-10-01' });
   assert.equal(task.status, 201);
-  const ev = await nav.post('/api/overdose-events', { client_id: c.id, occurred_at: '2026-09-20T03:00:00Z', kind: 'fatal' });
+  const ev = await nav.post('/api/overdose-events', { client_id: c.id, occurred_at: '2026-09-20T19:00:00Z', kind: 'fatal' }); // noon in California: the 20th in any US zone
   assert.equal(ev.status, 201);
   assert.deepEqual(clientRow(c.id), { status: 'deceased', discharge_date: '2026-09-20', discharge_reason: 'deceased' });
   assert.deepEqual(episodeRow(c.episode_id), { status: 'closed', discharge_reason: 'deceased', closed_at: '2026-09-20' });
