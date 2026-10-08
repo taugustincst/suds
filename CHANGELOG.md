@@ -46,6 +46,12 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **BO12:** the SCIM default role could be set to administrator, and the SSO emergency accounts could name users
   who do not exist. The default role is never administrator, and each emergency account must be an active
   administrator whenever the list is saved, not only when SSO is turned on. `test/admin-settings-checks.test.js`.
+* **BO13:** approving your own expenditure was refused with 400 while every other separation-of-duties refusal is
+  403; it is 403 now. The spending list offered Approve on an item the approver had changed (then refused it); each
+  pending row now says whether you changed it (`you_changed`), and such a row shows "Waiting for someone else to
+  review" instead.
+* **BO21:** the dialogs that reject spending or return or reopen time said the reason is "recorded in audit log";
+  it is stored encrypted with the entry and shown to the person who submitted it, and the label now says so.
 
 ## 1.25.1 — 2026-10-08
 

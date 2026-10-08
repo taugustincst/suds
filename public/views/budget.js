@@ -37,7 +37,7 @@ export function expenditureTable(rows, { showClient = true, onChange } = {}) {
   // an undo, and county money deserves at least the same care as deleting a to-do gets.
   const approve = async (r, status) => {
     let note; let proof = { body: {} };
-    if (status === 'rejected') { note = await confirmDialog('Reject this expenditure', `Reject ${fmt.money(r.amount)}${r.vendor ? ` to ${r.vendor}` : ''} submitted by ${r.worker}? They will see your reason.`, { danger: true, okText: 'Reject', requireReason: true }); if (!note) return; }
+    if (status === 'rejected') { note = await confirmDialog('Reject this expenditure', `Reject ${fmt.money(r.amount)}${r.vendor ? ` to ${r.vendor}` : ''} submitted by ${r.worker}? They will see your reason.`, { danger: true, okText: 'Reject', requireReason: true, reasonLabel: 'Reason (the submitter will see it; kept encrypted with the entry)' }); if (!note) return; }
     else {
       // With a passkey here the approval can be confirmed with a fingerprint (docs/FINGERPRINT.md), in the same
       // dialog that asks "Approve?"; without one, the plain confirmation as before.
@@ -64,9 +64,9 @@ export function expenditureTable(rows, { showClient = true, onChange } = {}) {
     showClient ? { label: 'Client', render: r => r.client_id ? (can('clients:read') ? h('a', { href: `#/client/${r.client_id}` }, r.client_code) : h('span', { class: 'mono' }, r.client_code)) : '—' } : null, { label: 'Amount', render: r => fmt.money(r.amount), num: true },
     { label: 'Vendor / description', render: r => h('span', { class: 'small' }, r.vendor ? h('b', {}, r.vendor, ' ') : null, r.description || '', r.receipt_ref ? h('span', { class: 'muted' }, ` #${r.receipt_ref}`) : null) },
     { label: 'Status', render: r => [badge(fmt.label(r.status), statusKind(r.status)), r.approver ? h('div', { class: 'small muted' }, r.approver) : null, r.approval_note ? h('div', { class: 'small', title: 'Reviewer\'s note' }, `“${r.approval_note}”`) : null] }, { label: 'By', key: 'worker' },
-    { label: '', render: r => h('div', { class: 'row nowrap' }, r.status === 'pending' && can('budget:approve') && r.user_id !== state.user.id ? [h('button', { class: 'btn sm primary', onClick: () => approve(r, 'approved') }, 'Approve'), h('button', { class: 'btn sm', onClick: () => approve(r, 'rejected') }, 'Reject')] : null,
+    { label: '', render: r => h('div', { class: 'row nowrap' }, r.status === 'pending' && can('budget:approve') && r.user_id !== state.user.id && !r.you_changed ? [h('button', { class: 'btn sm primary', onClick: () => approve(r, 'approved') }, 'Approve'), h('button', { class: 'btn sm', onClick: () => approve(r, 'rejected') }, 'Reject')] : null,
       // Separation of duties, said out loud: the buttons are missing on purpose, not broken.
-      r.status === 'pending' && can('budget:approve') && r.user_id === state.user.id ? h('span', { class: 'small muted', 'data-self-review': '1' }, 'Waiting for someone else to review') : null, r.status === 'approved' && can('budget:approve') ? h('button', { class: 'btn sm', onClick: () => approve(r, 'reimbursed') }, 'Mark reimbursed') : null,
+      r.status === 'pending' && can('budget:approve') && (r.user_id === state.user.id || r.you_changed) ? h('span', { class: 'small muted', 'data-self-review': '1', title: r.you_changed ? 'You recorded or changed this expenditure, so someone else approves it' : null }, 'Waiting for someone else to review') : null, r.status === 'approved' && can('budget:approve') ? h('button', { class: 'btn sm', onClick: () => approve(r, 'reimbursed') }, 'Mark reimbursed') : null,
       r.status === 'pending' && (r.user_id === state.user.id || can('budget:approve')) ? [h('button', { class: 'btn sm', onClick: () => openExpenditureForm(r, { onDone: onChange }) }, 'Edit'), h('button', { class: 'btn sm ghost', 'aria-label': 'Delete this expenditure', onClick: async () => { if (await confirmDialog('Delete', 'Delete this pending expenditure?', { danger: true, okText: 'Delete' })) { await del(`/api/budget/expenditures/${r.id}`); onChange && onChange(); } } }, '✕')] : null) },
   ].filter(Boolean), rows, { empty: 'No expenditures.' });
 }

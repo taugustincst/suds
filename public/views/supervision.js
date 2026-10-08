@@ -234,7 +234,7 @@ route('supervision', async (r) => {
       // sees it on their My time page, and there is no undo for a mis-click on "Return".
       let note;
       if (decision === 'rejected') {
-        note = await confirmDialog(ids.length === 1 ? 'Return this entry' : `Return ${ids.length} entries`, `Send ${ids.length === 1 ? 'it' : 'them'} back to be corrected? The worker will see your reason.`, { okText: 'Return', requireReason: true });
+        note = await confirmDialog(ids.length === 1 ? 'Return this entry' : `Return ${ids.length} entries`, `Send ${ids.length === 1 ? 'it' : 'them'} back to be corrected? The worker will see your reason.`, { okText: 'Return', requireReason: true, reasonLabel: 'Reason (the worker will see it; kept encrypted with the entry)' });
         if (!note) return;
       }
       // Approving may be confirmed with a fingerprint (docs/FINGERPRINT.md): offered when this person has a passkey

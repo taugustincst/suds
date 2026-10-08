@@ -203,7 +203,17 @@ module.exports = (r) => {
     // otherwise be recorded in-period and then moved outside it, or into the future, once nobody was looking.
     beforeInsert: (ctx, v) => { v.amount = cents(v.amount); encDescription(v); },
     beforeUpdate: (ctx, v) => { if (v.amount !== undefined && v.amount !== null) v.amount = cents(v.amount); encDescription(v); },
-    afterLoad: (ctx, x) => presentExpenditure(x),
+    // you_changed: a pending item this person recorded for someone else or changed, which they may not approve
+    // (the approve route's recordedOrChanged rule): the list shows "Waiting for someone else" instead of Approve
+    // (1.25.2, BO13). One audit query per request, for the pending items of others on the page.
+    afterLoad: (ctx, x) => {
+      const o = presentExpenditure(x);
+      if (o.status === 'pending' && o.user_id !== ctx.user.id && auth.hasPerm(ctx.user, 'budget:approve')) {
+        if (!ctx._expChanged) ctx._expChanged = new Set(db.all(`SELECT DISTINCT entity_id FROM audit_log WHERE user_id=? AND ((entity='expenditure' AND action IN ('expenditure.create','expenditure.update','expenditure.merge')) OR (entity='expenditures' AND action IN ('sync.overwrite','sync.record')))`, ctx.user.id).map(r => r.entity_id));
+        o.you_changed = ctx._expChanged.has(o.id);
+      }
+      return o;
+    },
   });
   // The approval state machine: pending -> approved | rejected, approved -> reimbursed, nothing else. A
   // second "approve" used to overwrite the first approver's name and date; a rejected item could be
@@ -221,7 +231,8 @@ module.exports = (r) => {
       throw new HttpError(409, `This expenditure is already ${e.status}${by ? ` (by ${by.display_name})` : ''}; it cannot be marked ${status}`, { current_status: e.status, approved_by: e.approved_by || null });
     }
     // No role is exempt: an administrator's own claim waits for someone else exactly like anyone's.
-    if (e.user_id === ctx.user.id && status === 'approved') throw badRequest('Separation of duties: you cannot approve your own expenditure; another approver must review it');
+    // 403 like every other separation-of-duties refusal (it was 400 up to 1.25.1; 1.25.2, BO13).
+    if (e.user_id === ctx.user.id && status === 'approved') throw forbidden('Separation of duties: you cannot approve your own expenditure; another approver must review it');
     // Nor one they recorded for someone else, or whose amount or details they changed (security review of 1.16.0, M7).
     if (status === 'approved' && require('../rules/shared').recordedOrChanged('expenditure', 'expenditures', e.id, ctx.user.id)) throw forbidden('Separation of duties: you recorded or changed this expenditure, so another approver must review it');
     // A rejection with no reason leaves the submitter guessing, and there is no undo for a mis-click.

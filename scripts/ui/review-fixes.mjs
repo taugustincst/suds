@@ -168,6 +168,7 @@ const admin = await session('admin', 'AdminPassw0rd!x');
     await returnBtn.click();
     const dialog = await until(() => fin.page.$('.modal input'));
     ok(dialog, 'Return asks for a reason before anything happens');
+    ok(/the worker will see it/.test(await fin.page.textContent('.modal label').catch(() => '')), 'and its label says the worker sees the reason, not "recorded in audit log" (1.25.2, BO21)');
     await fin.page.click('.modal button:has-text("Cancel")');
     await until(async () => !(await fin.page.$('.modal-bg')));
     const entryRow = async () => (await fin.api('GET', `/api/time/${entry.data.id}`)).data.row;
@@ -195,6 +196,22 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   ok(!(await fin.page.$$eval('.nav .sec', s => s.map(x => x.textContent))).includes('Connect clients'), 'no empty "Connect clients" heading');
   await go(fin.page, 'time');
   ok(!(await fin.page.$('tbody button:has-text("Edit")')), 'no Edit buttons on entries finance cannot edit');
+  // 1.25.2, BO13: an expenditure finance changed is not offered to finance to approve; the list says why.
+  {
+    const navS = await session('mrivera', 'Navigator2026!!');
+    const funds = (await navS.api('GET', '/api/budget/funds')).data.funds || [];
+    const today = new Date(); const ymd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const fund = funds.find(f => f.is_active && f.fiscal_year_start <= ymd && f.fiscal_year_end >= ymd);
+    const exp = fund ? await navS.api('POST', '/api/budget/expenditures', { funding_source_id: fund.id, spent_at: ymd, amount: 12.34, category: 'other', vendor: 'BO13 check vendor' }) : { status: 0 };
+    eq(exp.status, 201, 'a navigator records an expenditure');
+    await navS.close();
+    eq((await fin.api('PUT', `/api/budget/expenditures/${exp.data && exp.data.id}`, { amount: 12.35 })).status, 200, 'finance changes it');
+    await go(fin.page, 'budget');
+    const row = await until(() => fin.page.$('tr:has-text("BO13 check vendor")'));
+    ok(row && !(await row.$('button:has-text("Approve")')), 'finance is not offered Approve on an expenditure it changed');
+    ok(row && await row.$('[data-self-review]'), 'the row says it waits for someone else instead');
+    eq((await fin.api('POST', `/api/budget/expenditures/${exp.data && exp.data.id}/approve`, { status: 'approved' })).status, 403, 'and the server refuses it with 403');
+  }
   await fin.close();
 }
 

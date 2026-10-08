@@ -20260,7 +20260,17 @@ var require_budget = __commonJS({
           if (v.amount !== void 0 && v.amount !== null) v.amount = cents(v.amount);
           encDescription(v);
         },
-        afterLoad: (ctx, x) => presentExpenditure(x)
+        // you_changed: a pending item this person recorded for someone else or changed, which they may not approve
+        // (the approve route's recordedOrChanged rule): the list shows "Waiting for someone else" instead of Approve
+        // (1.25.2, BO13). One audit query per request, for the pending items of others on the page.
+        afterLoad: (ctx, x) => {
+          const o = presentExpenditure(x);
+          if (o.status === "pending" && o.user_id !== ctx.user.id && auth3.hasPerm(ctx.user, "budget:approve")) {
+            if (!ctx._expChanged) ctx._expChanged = new Set(db3.all(`SELECT DISTINCT entity_id FROM audit_log WHERE user_id=? AND ((entity='expenditure' AND action IN ('expenditure.create','expenditure.update','expenditure.merge')) OR (entity='expenditures' AND action IN ('sync.overwrite','sync.record')))`, ctx.user.id).map((r2) => r2.entity_id));
+            o.you_changed = ctx._expChanged.has(o.id);
+          }
+          return o;
+        }
       });
       const TRANSITIONS = { pending: ["approved", "rejected"], approved: ["reimbursed"] };
       r.post("/api/budget/expenditures/:id/approve", auth3.requireAuth, auth3.requirePerm("budget:approve"), async (ctx) => {
@@ -20281,7 +20291,7 @@ var require_budget = __commonJS({
           const by = e.approved_by ? db3.one(`SELECT display_name FROM users WHERE id=?`, e.approved_by) : null;
           throw new HttpError3(409, `This expenditure is already ${e.status}${by ? ` (by ${by.display_name})` : ""}; it cannot be marked ${status}`, { current_status: e.status, approved_by: e.approved_by || null });
         }
-        if (e.user_id === ctx.user.id && status === "approved") throw badRequest("Separation of duties: you cannot approve your own expenditure; another approver must review it");
+        if (e.user_id === ctx.user.id && status === "approved") throw forbidden("Separation of duties: you cannot approve your own expenditure; another approver must review it");
         if (status === "approved" && require_shared().recordedOrChanged("expenditure", "expenditures", e.id, ctx.user.id)) throw forbidden("Separation of duties: you recorded or changed this expenditure, so another approver must review it");
         if (status === "rejected" && !note) throw badRequest("Say why this expenditure is being rejected, so the person who submitted it knows what to fix");
         const details = { note_recorded: note ? true : void 0, amount: e.amount };
