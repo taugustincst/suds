@@ -137,6 +137,15 @@ ok(await page.$('a[data-procurement-link][href="procurement.html"]'), 'the phone
   ok(!/\bdemo\b|evaluation copy/i.test((await page.textContent('main')).replace(/organizations evaluating/i, '')), 'no demo or evaluation-copy wording about SUDS itself');
   eq(asked.length, 0, 'the page asked no server API for anything', asked);
   page.off('request', onReq);
+  // With JavaScript off (a crawler, a print to PDF, a reviewer's fetch) the page shows the same published facts.
+  const published = await page.$$eval('[data-field]', els => Object.fromEntries(els.map(e => [e.dataset.field, e.textContent.trim()])));
+  const noJs = await browser.newContext({ javaScriptEnabled: false });
+  const plain = await noJs.newPage();
+  await plain.goto(base + '/procurement.html');
+  const shown = await plain.$$eval('[data-field]', els => Object.fromEntries(els.map(e => [e.dataset.field, e.textContent.trim()])));
+  ok(/90-DAY PILOT — \$2,500 flat/.test(shown.pricing || '') && /2 business days/.test(shown.sla || ''), 'without JavaScript the page shows the published pricing and support terms', shown);
+  eq(JSON.stringify(shown), JSON.stringify(published), 'without JavaScript every fact reads exactly as the script renders it');
+  await noJs.close();
 }
 // every way into that page uses the file name: the login screen's tip, the offline banner, the admin card
 await page.goto(base + '/'); await signInAgain(page, 'staticnav', 'Navigator2026!!');

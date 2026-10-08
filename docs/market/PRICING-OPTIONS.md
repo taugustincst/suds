@@ -1,5 +1,11 @@
 # SUDS pricing options (for the owner to decide)
 
+> **Superseded (2026-10-08) by the published tiers.** SUDS's prices are the introductory tiers published on
+> the procurement page: a 90-day pilot at $2,500 flat, Program at $4,800 a year, Multi-site at $12,000 a year and
+> County-wide at custom annual pricing, with the paid-plan support terms beside them. The single source is
+> [`public/procurement.json`](../../public/procurement.json), shown on the app's [Security and procurement page](../../public/procurement.html). Where this
+> document differs, the published tiers win; it is kept below unchanged as the record of how pricing was worked out.
+
 **Status: options, not a price list.** Nothing here is decided, quoted or offered. Every value in the worksheet
 is **[owner to decide]**. Until the owner decides, the published hypothesis is
 [templates/PRICING.md](templates/PRICING.md) (free evaluation; production under a signed licence agreement, with

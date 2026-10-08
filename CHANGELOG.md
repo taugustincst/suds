@@ -2,6 +2,40 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Fixed
+
+* **Provider pictures: an honest user agent and an honest count.** The picture download names SUDS
+  (`SUDS/<version> (+https://github.com/taugustincst/suds) region pictures`) instead of posing as Chrome,
+  as every other outbound request does. Fewer provider sites allow that, so the static build's manifest now
+  records the user agent sent, a summary (bundled, tried, refused) and a plain note, and the build log names
+  how many sites refused. The "all 81 providers" claim is corrected everywhere: the published site has 40 of
+  the 81.
+* **1.25.0's release record describes what shipped.** `docs/evidence/sbom-1.25.0.cdx.json` is regenerated from
+  the tag `v1.25.0` (`82f92a00`, kernel `91a14310…`), not the "Release 1.25.0" commit `1474829e`, whose kernel
+  was 1.24.4's; the hand-off's recheck command archives the tag; and both 1.25.0 SHA-256 values are recorded
+  (source zip `3a5002ad…c379`, Windows zip `489ee896…0754`).
+* **The tags without a GitHub Release are named.** docs/RELEASE.md, *Tags without a GitHub Release*, lists the 13
+  pushed tags that have none (v1.17.0–v1.24.0, but not v1.23.2 or v1.23.6), why (v1.24.0's gate refused it on red
+  exact-commit CI; the other twelve runs were cancelled), how to rebuild their zips from the tag, and that
+  v1.24.2's tag is mis-stamped and superseded. HANDOFF.md's "dispatched and queued" and "notes published" carry a
+  dated correction.
+* **One pricing source of truth.** The procurement page carries the published pricing and support terms as static
+  HTML, word for word `public/procurement.json`'s (a test keeps them equal), so a crawler, a print to PDF or a
+  reader with JavaScript off no longer sees "Not yet published by the maintainer" for them; the contact lines still
+  say so. The pilot tier promises "CalOMS code-set validation against the DHCS dictionary; file layout confirmed
+  with your county" instead of "CalOMS extract validation", since the file layout is not verified.
+  docs/market/templates/PRICING.md and PRICING-OPTIONS.md are marked superseded by the published tiers, and the
+  questionnaire and market documents say the pricing is published.
+* **A referral's consent message quotes the purpose once.** "The consent naming … was given for “For treatment,
+  payment, and health care operations”" read "for For"; it now says the consent "states its purpose as “…”".
+* **README-WINDOWS.txt no longer heads the service install "for real records".** The heading is "Install it as a
+  Windows service (production, under a signed licence agreement)", as the licence requires.
+* **Documentation.** The 1.24.4 entry's repeated pricing bullet is removed; docs/RELEASE.md no longer calls 1.25.0
+  "the one tag owed"; HANDOFF.md no longer carries the owner's personal admin notes, and names prospective
+  contacts by role.
+
 ## 1.25.0 — 2026-10-05
 
 * **CalOMS Tx 1.25.0 (the owner lifted the feature freeze: "Fix everything now, freeze lifts to 1.25.0").** Dictionary-verified code sets: service types are ADM-4 codes 1–7; referral sources ADM-5 1–14; drug
@@ -26,10 +60,12 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **Open item:** the extract's column names and file layout are SUDS's own and are not dictionary-verified;
   the county converts the CSV files to the DHCS upload format before the first submission
   (docs/compliance/CALOMS.md).
-* **Resource pictures for all 81 providers.** The starter directory's provider-picture download now finds
-  every provider's picture (official websites recorded for the two Sierra providers; better discovery of
-  advertised pictures, a browser user agent, more image sources), so the resource directory cards show a
-  picture for each of the 81 providers.
+* **Better resource pictures.** The starter directory's provider-picture download finds a picture for every
+  provider whose website allows an automated download (official websites recorded for the two Sierra
+  providers; better discovery of advertised pictures, more image sources). *(Corrected 2026-10-08: this entry
+  first said "all 81 providers". That was measured from the owner's network; the published site, built on
+  GitHub's servers, has pictures for 40 of the 81, because many provider sites refuse automated downloads from
+  the build server. 1.25.0 also sent a browser user agent; that is withdrawn, see Unreleased.)*
 * **UI intuitiveness pass.** Plainer call/text form labels ("Client (optional)" with a plain-English help
   line; "Also log this as a time entry" matching the visit form) and an accessible resource-directory
   view toggle (role, labels and pressed state announced).
@@ -56,11 +92,6 @@ nobody is left to remind).
 * **Tag hand-off retired.** All twenty tags `v1.16.3`–`v1.24.3` are pushed; docs/evidence/RELEASE-HANDOFF.md
   is now the record of the push, and docs/RELEASE.md, the evidence README, the security questionnaire and
   HANDOFF.md say so (`scripts/release-state.js` is clean).
-
-* **Published introductory pricing and support terms.** `public/procurement.json` now carries the pricing
-  tiers (90-day pilot, Program, Multi-site, County-wide) and the paid-plan support terms, so the
-  procurement page shows a buyer a price instead of "Not yet published by the maintainer". Contact
-  name, email and website are still unpublished — they need the owner's business contact.
 
 ## 1.24.3 — 2026-10-05
 

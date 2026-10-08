@@ -272,13 +272,17 @@ tag's release with `policy_exception` set to this instruction, which the release
 notes. It carries the CalOMS Tx dictionary verification (all 17 code sets rewritten from the DHCS Data Dictionary
 v3.0, File Version 3.0, October 2024; yes/no as numeric 1/0; LEG-1 criminal justice status, MED-7 medication
 prescribed, CID-19 consent for future contact and CID-20 sexual orientation added; sex at birth removed; new edit
-checks; migration 71 remapping stored answers), a picture for every one of the 81 resource-directory providers,
-and the UI intuitiveness pass (plainer call/text form labels, an accessible resource-directory view toggle). The
-SBOM, `docs/evidence/sbom-1.25.0.cdx.json`, is committed on `main` with the stamp preparation. The owner tags the
-stamp commit: `v1.25.0` (step 2 of [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); it is the newest
-tag, and its `release.yml` run is the Latest release, attaches the Windows server zip (unsigned until the owner
-adds the code-signing secrets, `WINDOWS_CERT_PFX_BASE64` and `WINDOWS_CERT_PASSWORD`) and starts the `Web app`
-run. Until the owner pushes the tag, 1.25.0 is the one tag owed.
+checks; migration 71 remapping stored answers), better resource-directory pictures (a picture for every
+provider whose site allows an automated download; the published site has 40 of the 81, because many provider
+sites refuse automated downloads from the build server), and the UI intuitiveness pass (plainer call/text form labels, an accessible resource-directory view toggle). The
+SBOM, `docs/evidence/sbom-1.25.0.cdx.json`, was first committed with the stamp preparation from `1474829e`
+("Release 1.25.0"), whose kernel was still 1.24.4's; it is regenerated from the tag (`node scripts/sbom.js --ref
+v1.25.0`, 2026-10-08) and describes the shipped commit. The stamp was split over three commits, so the tag
+`v1.25.0` is on `82f92a00` ("Rebuild public assets for the 1.25.0 stamp"), not on "Release 1.25.0"
+([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)). The tag was pushed
+and released on 2026-10-06: its `release.yml` run is the Latest release, attaches the Windows server zip (unsigned
+until the owner adds the code-signing secrets, `WINDOWS_CERT_PFX_BASE64` and `WINDOWS_CERT_PASSWORD`) and started
+the `Web app` run, and GitHub Pages serves 1.25.0. No tag is owed.
 
 ### Supported versions
 
@@ -435,7 +439,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.23.6 | a widened permission in a patch during the feature freeze, and an exception that is not a security fix (*Stabilisation*, points 1 and 2): an administrator may change their own permissions, role and account. The release-policy check passes (no migration, permission name or route; 224 lines), so the exception is recorded by hand | the owner asked that an administrator be able to change all permissions, their own included, and chose to ship it in 1.23.6 rather than wait for 1.24.0; safeguards: the lockout guard, a confirmation before each change to one's own access, `self: true` in the audit, and a deny on an administrator now advisory. Released without a tag, a GitHub Release or the `release` environment's approval, published to GitHub Pages by a direct push to `gh-pages`, because the tags owed since 1.16.3 were not yet pushed (*Stabilisation*, point 4) | owner (a request, no workflow record; *Record: 1.23.6*, above) |
 | 1.24.0 | monthly limit and the feature freeze (*Stabilisation*, point 1: a feature release two days after 1.23.0, migrations 68, 69 and 70, the permissions `intake:read` and `intake:write`, 22 routes), under the security exception point 2 allows; the gate refuses it on the feature interval, so its tag needs *Run workflow* with `policy_exception` | the fixes of the owner-authorised white-box pen test of 1.23.6 (M1, M2 and seven Low findings), released at once on the owner's instruction to lift the freeze, with the feature work done for 1.24.0 and `suds.exe` (owner decision of 2026-10-03); `Security exception:` recorded, so CI's `release-policy` job passes | owner (a request, no workflow record; *Record: 1.24.0*, above) |
 | 1.24.1 | none of the policy (a patch within the patch rules: no migration, permission or route, 311 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once the owner has pushed the tags; it went live first, on 2026-10-03, by a direct push to `gh-pages` at the owner's request (*Record: 1.24.1*) | the licence change the owner decided on 2026-10-03 (proprietary, AugustInnovations LLC, SUDS on this device free for real use under section 2A) and the fixes from the market evaluation of 1.24.0 (D1 to D7); the tags owed since 1.16.3 are not yet pushed (*Stabilisation*, point 4) | no exception to approve; the direct push was at the owner's request (*Record: 1.24.1*, above) |
-| 1.25.0 | monthly limit and the feature freeze (*Stabilisation*, point 1: a feature release two days after 1.24.0, migration 71; no new permission or route); not a security fix, so no `Security exception:` line — the owner's explicit instruction to lift the freeze, recorded in *Record: 1.25.0* and passed as `policy_exception` when the tag's release runs | the CalOMS Tx dictionary verification (all 17 code sets rewritten from the DHCS Data Dictionary v3.0; migration 71 remapping stored answers), a picture for every one of the 81 resource-directory providers, and the UI intuitiveness pass, on the owner's instruction of 2026-10-05 ("Fix everything now, freeze lifts to 1.25.0") | owner (`policy_exception`, *Record: 1.25.0*, above) |
+| 1.25.0 | monthly limit and the feature freeze (*Stabilisation*, point 1: a feature release two days after 1.24.0, migration 71; no new permission or route); not a security fix, so no `Security exception:` line — the owner's explicit instruction to lift the freeze, recorded in *Record: 1.25.0* and passed as `policy_exception` when the tag's release runs | the CalOMS Tx dictionary verification (all 17 code sets rewritten from the DHCS Data Dictionary v3.0; migration 71 remapping stored answers), better resource-directory pictures (40 of the 81 providers on the published site; many provider sites refuse automated downloads), and the UI intuitiveness pass, on the owner's instruction of 2026-10-05 ("Fix everything now, freeze lifts to 1.25.0") | owner (`policy_exception`, *Record: 1.25.0*, above) |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as
@@ -1164,6 +1168,35 @@ Every release is a tag `v<version>` at the released commit. GitHub serves a zip 
 Until 1.16.2 each release also had a branch `release/v<version>`; none is made since 1.16.3 (a branch can be moved,
 a protected tag cannot, and each old branch carries the workflow files of its day). Those that exist can be deleted
 (*Owner: repository settings*, step 7).
+
+### Tags without a GitHub Release
+
+Every release tag up to `v1.25.0` is on origin, but these 13 have **no GitHub Release** (checked 2026-10-08
+against the Releases and tags lists): `v1.17.0`, `v1.17.1`, `v1.18.0`, `v1.19.0`, `v1.20.0`, `v1.21.0`, `v1.22.0`,
+`v1.23.0`, `v1.23.1`, `v1.23.3`, `v1.23.4`, `v1.23.5` and `v1.24.0`.
+
+- **Why.** The tags were pushed on 2026-10-05 and each one's `release.yml` was started by hand
+  (`workflow_dispatch`) that evening. None of those runs reached the `release` job. `v1.24.0`'s gate refused it:
+  CI on its exact commit (`d2fd1725`, run 37095105535) was red, and the gate step "CI passed for this exact commit"
+  failed (run 37366113296). The other twelve runs were cancelled before anything was built: eight gates were
+  cancelled while still queued, and for `v1.20.0`, `v1.23.0`, `v1.23.1` and `v1.23.3` the gate passed and the
+  `verify` job was cancelled.
+  They are not re-run with overrides: each version was superseded by a later release that has one (1.23.2, 1.23.6,
+  1.24.1, 1.24.4 and 1.25.0), and a Release created now would carry today's date for a version nobody should install.
+- **Their zips can still be rebuilt from the tag**, byte for byte what the release job would have published
+  (`git archive` is reproducible; *Cutting a release*, "The zip's SHA-256 in two places"):
+
+  ```bash
+  git fetch origin tag vX.Y.Z
+  git archive --format=zip --prefix=suds-vX.Y.Z/ -o suds-vX.Y.Z.zip vX.Y.Z && sha256sum suds-vX.Y.Z.zip
+  ```
+
+  Each result equals the SHA-256 recorded for that tag in [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)
+  (all 13 rechecked on 2026-10-08).
+- **`v1.24.2` is mis-stamped and superseded.** Its tag holds `package.json` 1.24.2, but `SUDS_VERSION`,
+  `public/version.json` and the service-worker stamp at 1.24.1 and a stale kernel. It stays as it is (a pushed tag is
+  never moved); it has no Release and never will. 1.24.3 superseded it, and 1.24.4 superseded 1.24.3 (whose tag has
+  no Release either, on purpose).
 
 ## How users get it
 - **Download:** the zip from the Releases page — unzip, then start the server (see `docs/INSTALL.md`; as a service per `docs/DEPLOYMENT.md`).

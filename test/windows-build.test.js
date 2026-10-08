@@ -114,7 +114,9 @@ test('README-WINDOWS.txt and THIRD-PARTY-NOTICES.txt: the five steps, the folder
   const r = W.readmeText('1.24.0', pins);
   for (const s of ['C:\\Program Files\\SUDS', 'suds service install', 'suds service start', 'setup wizard', 'C:\\ProgramData\\SUDS', 'keys.json', 'BitLocker', 'firewall', 'suds try', 'suds logs --errors']) assert.ok(r.includes(s), s);
   assert.ok(!/\r?\n/.test(r.replace(/\r\n/g, '')), 'Windows line endings, for Notepad');
-  assert.match(r, /app\\LICENSE/); assert.match(r, /90 days with fictional data/); assert.doesNotMatch(r, /SUDS[^\r\n]*MIT/);
+  assert.match(r, /app\\LICENSE/); assert.match(r, /90 days with fictional data/);
+  // The install heading does not read as permission: real records on the office server need a signed agreement.
+  assert.match(r, /Install it as a Windows service \(production, under a signed licence agreement\)/); assert.doesNotMatch(r, /\(for real records\)/); assert.doesNotMatch(r, /SUDS[^\r\n]*MIT/);
   const n = W.noticesText(pins, 'Node.js is licensed for use as follows:\n\nCopyright Node.js contributors.\n');
   assert.match(n, /Node\.js v22\.\d+\.\d+/); assert.ok(n.includes(pins.nodeWinSha256)); assert.ok(n.includes(pins.winswSha256));
   assert.match(n, /SUDS itself is proprietary \(Copyright \(c\) 2026 AugustInnovations LLC\): app\\LICENSE/); assert.match(n, /app\\NOTICE/);
