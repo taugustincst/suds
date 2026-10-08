@@ -165,18 +165,26 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: 'authz.denied', ip: ctx.ip, success: false, details: { perms: ['graph:import'], path: ctx.path } });
     throw forbidden('Importing from the shared OneNote notebook is for supervisors and administrators. Export your own pages from OneNote and upload them instead.');
   };
-  r.get('/api/imports/onenote/status', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => ({ configured: !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user), user: config.msGraph.user ? config.msGraph.user.replace(/(.{2}).+(@.+)/, '$1***$2') : null, shared_allowed: auth.hasPerm(ctx.user, 'graph:import') }));
-  r.get('/api/imports/onenote/notebooks', auth.requireAuth, auth.requirePerm('imports:write'), sharedNotebook, async (ctx) => {
+  // The shared notebook needs the server's Graph credentials: without them it is a setting not made, not Microsoft
+  // failing, so 409 with what to do, never 502 (1.25.2, CS15). A worker's own token (X-MS-Access-Token) needs none.
+  const graphConfigured = () => !!(config.msGraph.tenantId && config.msGraph.clientId && config.msGraph.clientSecret && config.msGraph.user);
+  const needGraph = (ctx) => {
+    if (ctx.headers['x-ms-access-token'] || graphConfigured()) return;
+    throw new HttpError(409, 'OneNote import is not set up on this server: Microsoft Graph has no credentials (MS_TENANT_ID, MS_CLIENT_ID, MS_CLIENT_SECRET, MS_ONENOTE_USER). Ask your administrator to set it up, or export the pages from OneNote and upload the file instead.');
+  };
+  r.get('/api/imports/onenote/status', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => ({ configured: graphConfigured(), user: config.msGraph.user ? config.msGraph.user.replace(/(.{2}).+(@.+)/, '$1***$2') : null, shared_allowed: auth.hasPerm(ctx.user, 'graph:import') }));
+  r.get('/api/imports/onenote/notebooks', auth.requireAuth, auth.requirePerm('imports:write'), sharedNotebook, needGraph, async (ctx) => {
     try { return { notebooks: await onenote.listNotebooks({ token: ctx.headers['x-ms-access-token'] }) }; }
     catch (e) { throw new HttpError(502, e.message); }
   });
-  r.get('/api/imports/onenote/sections/:id/pages', auth.requireAuth, auth.requirePerm('imports:write'), sharedNotebook, async (ctx) => {
+  r.get('/api/imports/onenote/sections/:id/pages', auth.requireAuth, auth.requirePerm('imports:write'), sharedNotebook, needGraph, async (ctx) => {
     try { return { pages: await onenote.listPages(ctx.params.id, { token: ctx.headers['x-ms-access-token'], since: ctx.query.get('since') || undefined }) }; }
     catch (e) { throw new HttpError(502, e.message); }
   });
   r.post('/api/imports/onenote/fetch', auth.requireAuth, auth.requirePerm('imports:write'), sharedNotebook, async (ctx) => {
     const { page_ids } = validate(ctx.body, { page_ids: { type: 'array', required: true } });
     if (!page_ids.length || page_ids.length > 200) throw badRequest('Select 1–200 pages');
+    needGraph(ctx);
     let items;
     try { items = await onenote.fetchPages(page_ids.map(String), { token: ctx.headers['x-ms-access-token'] }); }
     catch (e) { throw new HttpError(502, e.message); }

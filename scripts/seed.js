@@ -19,7 +19,8 @@ function user(username, display_name, role, title, hourly) {
 }
 const nav1 = user('mrivera', 'Maria Rivera', 'navigator', 'SUD Navigator', 42);
 const nav2 = user('dchen', 'David Chen', 'navigator', 'Peer Navigator', 35);
-const clin = user('kpatel', 'Dr. Kiran Patel', 'clinician', 'LCSW, Clinical Supervisor', 65);
+// A clinician by role, who does not countersign: a clinical supervisor is a clinician granted notes:cosign (1.25.2, CS7).
+const clin = user('kpatel', 'Dr. Kiran Patel', 'clinician', 'LCSW, Clinician', 65);
 const sup = user('jwalker', 'Jordan Walker', 'supervisor', 'Program Manager', 58);
 user('afinance', 'Alex Finance', 'finance', 'Fiscal Analyst', 40);
 user('rreader', 'Robin Reader', 'readonly', 'County Analyst', 0);

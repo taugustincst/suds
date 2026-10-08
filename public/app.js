@@ -1,6 +1,6 @@
 // SUDS frontend core: API client, hash router, DOM + form helpers, session/idle handling.
 import { queueChip, autoFlush } from './outreach-queue.js';
-import { NAV, placement, isFrontline, isSupervising } from './nav.js';
+import { NAV, placement, isFrontline, isSupervising, navLabel } from './nav.js';
 export const state = { user: null, org: 'SUDS', constants: null, users: [], funds: [], idleMinutes: 15, prefs: {}, local: false };
 // Local mode: the whole server runs inside this page (the offline copy). Requests go to the in-page kernel.
 // window.SUDS_FORCE_LOCAL is set by a small external script tag, before this module loads, on builds
@@ -215,7 +215,8 @@ export const get = (p, o) => api('GET', p, undefined, o), post = (p, b, o) => ap
 // Office mode has no offline store (PHI never sits in browser storage), so the one honest thing to do when
 // the network goes is say so, loudly, everywhere -- including on a sign-in screen served from the cached
 // shell, which used to just bounce back to the form as if the password were wrong.
-export const OFFLINE_MESSAGE = 'You appear to be offline. Your entry has been kept in this form — try again when you have signal.';
+// Truthful about where the entry is (1.25.2, FL9): only on this screen, never in the device's storage (no PHI there).
+export const OFFLINE_MESSAGE = 'You appear to be offline. Not saved yet: keep this screen open and press Save again when you have signal. Leaving or reloading SUDS loses what you typed.';
 let offlineBanner = null;
 export function setOffline(on) {
   if (state.local) return; // the on-device copy keeps working without a network
@@ -2225,7 +2226,7 @@ function restoreFocus(root, k) {
 // client's name, which would sit in the browser's history and tab list.
 const TITLES = { client: 'Client record', caloms: 'State reporting', resource: 'Resource profile', profile: 'My profile', sync: 'This device', 'recovery-code': 'Recovery code', mfa: 'Two-step verification', setup: 'Set up SUDS', 'county-connect': 'County connections' };
 export function setPageTitle(r = parseHash(), navItem = NAV.find(n => n.name === r.name)) {
-  let page = TITLES[r.name] || navItem?.label;
+  let page = TITLES[r.name] || (navItem && navLabel(navItem, navContext()));
   if (!page) page = document.querySelector('.main h1')?.textContent.trim() || (document.querySelector('[data-not-found]') ? 'Page not found' : 'SUDS');
   const section = document.querySelector('.main nav.tabs [aria-current=page]')?.textContent.replace(/\s*\(\d+\)\s*$/, '').trim();
   const parts = [section && section !== page ? `${section} · ${page}` : page, 'SUDS'];
@@ -2236,7 +2237,7 @@ export function setPageTitle(r = parseHash(), navItem = NAV.find(n => n.name ===
 function navMenu(r) {
   // Sections with nothing to show (a finance account and "Connect clients") are left out, headings and all.
   const groups = []; let cur = null; const more = [];
-  const link = (n) => h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '', 'aria-current': r.name === n.name ? 'page' : null }, h('span', { class: 'ico', 'aria-hidden': 'true' }, n.ico), n.label);
+  const link = (n) => h('a', { href: '#/' + n.name, class: r.name === n.name ? 'active' : '', 'aria-current': r.name === n.name ? 'page' : null }, h('span', { class: 'ico', 'aria-hidden': 'true' }, n.ico), navLabel(n, c));
   const c = navContext();
   for (const n of NAV) {
     if (n.sec) { cur = { sec: n.sec, items: [] }; groups.push(cur); continue; }
@@ -2278,7 +2279,7 @@ function mobileBar(r, side) {
   mobileBar.onChange = onChange; phone.addEventListener('change', onChange);
   syncInert();
   // The build stamp sits under the page title on a phone: the sidebar foot is below the fold with the menu open.
-  return h('div', { class: 'mobilebar' }, menuBtn, h('div', { class: 'mobilebar-title' }, h('b', {}, item.label), h('span', { class: 'mobilebar-stamp', 'data-build-stamp': '1' }, `SUDS ${SUDS_VERSION}`)), can('clients:read') ? h('a', { href: '#/clients', class: 'btn ghost mobilebar-clients', 'data-mobile-clients': '1' }, h('span', { 'aria-hidden': 'true' }, '👤'), 'Clients') : h('span', { class: 'mobilebar-spacer', 'aria-hidden': 'true' }));
+  return h('div', { class: 'mobilebar' }, menuBtn, h('div', { class: 'mobilebar-title' }, h('b', {}, navLabel(item, navContext())), h('span', { class: 'mobilebar-stamp', 'data-build-stamp': '1' }, `SUDS ${SUDS_VERSION}`)), can('clients:read') ? h('a', { href: '#/clients', class: 'btn ghost mobilebar-clients', 'data-mobile-clients': '1' }, h('span', { 'aria-hidden': 'true' }, '👤'), 'Clients') : h('span', { class: 'mobilebar-spacer', 'aria-hidden': 'true' }));
 }
 function toggleTheme() { const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); const next = cur === 'dark' ? 'light' : 'dark'; prefs.set('theme', next); applyTheme(); }
 try { const cached = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); if (cached.theme) document.documentElement.dataset.theme = cached.theme; } catch {}

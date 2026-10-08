@@ -224,6 +224,8 @@ async function renderPermissionsSection(box, userId) {
   const own = ' They add their own work to any client and change only their own visits, calls, notes, referrals and to-dos: changing or deleting another worker\'s (Manage other workers\' records) is for supervisors and administrators. Client records are shared: they may update any client they see, and the client\'s primary worker is notified.';
   box.append(h('div', {}, h('h3', {}, `Role baseline — ${fmt.label(data.role)}`), ROLE_SUMMARY[data.role] ? h('p', { class: 'small', 'data-perm-role-summary': data.role }, ROLE_SUMMARY[data.role]) : null,
     widened ? h('p', { class: 'small muted', 'data-perm-role-note': data.role }, `${widened}${own} To hold this person to their own caseload, deny See every client below (clients:all)${data.role === 'navigator' ? '; to keep clinical notes from them, deny Read clinical notes (notes:clinical:read)' : ''}. Their devices follow at their next sync.`) : null,
+    // A clinical supervisor (an LCSW who supervises associates) is a clinician who countersigns: a grant, not a role (1.25.2, CS7).
+    data.role === 'clinician' && !(data.overrides || []).some((o) => o.mode === 'grant' && o.permission === 'notes:cosign') ? h('p', { class: 'small', 'data-perm-cosign-hint': '1' }, 'Clinical supervisor? A clinician does not countersign notes by role. If this person supervises associates or trainees, grant Countersign notes (notes:cosign) below: they then countersign their notes and get the Supervision page.') : null,
     h('div', { 'data-perm-baseline': '1' }, permNamespaceGroups(data.role_permissions || []).map(([ns, names]) =>
       h('details', {}, h('summary', {}, `${ns} (${names.length})`),
         h('ul', {}, names.map((n) => h('li', {}, label(n), h('code', { class: 'small muted' }, ` ${n}`)))))))));
@@ -1023,7 +1025,7 @@ export async function transferCard(fromId) {
     clear(result);
     result.append(h('div', { class: 'banner ok', role: 'status' },
       `${r.transferred} client${r.transferred === 1 ? '' : 's'} moved from ${r.from} to ${r.to}${r.tasks_reassigned ? `, and ${r.tasks_reassigned} to-do(s) reassigned` : ''}.`));
-    if (r.skipped && r.skipped.length) result.append(h('p', { class: 'small muted' }, `${r.skipped.length} were already assigned to the receiving worker.`));
+    if (r.skipped && r.skipped.length) result.append(h('p', { class: 'small muted' }, `${r.skipped.length === 1 ? '1 client was' : `${r.skipped.length} clients were`} already on ${r.to}'s caseload: ${r.skipped.length === 1 ? 'it stays' : 'they stay'} with ${r.to}${r.skipped.some(x => x.promoted) ? `, as primary worker where ${r.from} was` : ''}.`));
     // A sign reminder is cancelled, not handed on (1.23.4); the result says so (market evaluation of 1.23.4, D5).
     if (r.reminders_cancelled) result.append(h('p', { class: 'small', 'data-reminders-cancelled': String(r.reminders_cancelled) }, `${r.reminders_cancelled} reminder${r.reminders_cancelled === 1 ? '' : 's'} to finish and sign draft notes cancelled: the drafts stay ${r.from}'s, and are not moved.`));
     toast('Caseload transferred', 'ok');

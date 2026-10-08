@@ -277,15 +277,16 @@ test('GET /api/imports and discarding a staged item: own imports only, unless a 
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='import.discard' AND entity_id=?`, items[0].id));
 });
 
-test('the OneNote (Microsoft Graph) routes report "not configured" instead of failing when Graph is not set up', async () => {
+test('the OneNote (Microsoft Graph) routes report "not set up" instead of failing when Graph is not set up', async () => {
   const s = await sup.get('/api/imports/onenote/status');
   assert.equal(s.status, 200); assert.deepEqual(s.data, { configured: false, user: null, shared_allowed: true });
+  // 409 with what to do, not 502 as if Microsoft were down (1.25.2, CS15).
   const nb = await sup.get('/api/imports/onenote/notebooks');
-  assert.equal(nb.status, 502); assert.match(nb.data.error, /not configured/);
+  assert.equal(nb.status, 409); assert.match(nb.data.error, /not set up on this server/);
   const pg = await sup.get('/api/imports/onenote/sections/abc/pages');
-  assert.equal(pg.status, 502); assert.match(pg.data.error, /not configured/);
+  assert.equal(pg.status, 409); assert.match(pg.data.error, /not set up on this server/);
   const f = await sup.post('/api/imports/onenote/fetch', { page_ids: ['p1'] });
-  assert.equal(f.status, 502); assert.match(f.data.error, /not configured/);
+  assert.equal(f.status, 409); assert.match(f.data.error, /not set up on this server/);
   assert.equal((await sup.post('/api/imports/onenote/fetch', { page_ids: [] })).status, 400, 'at least one page');
   // Security review of 1.12.4, 8(b): the shared notebook the server's Graph credentials open holds every
   // worker's pages. Listing and fetching it is for supervisors and administrators (graph:import); a navigator

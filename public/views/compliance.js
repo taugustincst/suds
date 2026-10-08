@@ -220,7 +220,21 @@ route('compliance', async (r) => {
     },
   };
   body.append(await T[tab]());
-  return h('div', {}, pageHead('Privacy & Part 2'), tabStrip(tabs, tab, (k) => nav(`compliance?tab=${k}`)), body);
+  // Reporting a privacy concern (1.25.2, CS8): someone who may not open the incident register gives a supervisor or
+  // administrator a high-priority to-do (POST /api/tasks; a to-do's title and details are encrypted) to look into it.
+  const reportConcern = () => {
+    const keepers = (state.users || []).filter(u => u.is_active !== 0 && ['supervisor', 'admin'].includes(u.role) && u.id !== state.user.id);
+    const f = form([
+      { name: 'assigned_to', label: 'Tell', type: 'user', required: true, value: (keepers.find(u => u.role === 'supervisor') || keepers[0] || {}).id, exceptRoles: ['navigator', 'clinician', 'finance', 'readonly'], help: 'A supervisor or administrator: they record it in the incident and breach register.' },
+      { name: 'what', label: 'What happened', type: 'textarea', required: true, span: true, rows: 4, maxLen: 1800, help: 'For example a lost phone, or a fax or email sent to the wrong person: when, and what information may have been seen. Stored encrypted.' },
+    ], { submitText: 'Send report', onCancel: () => m.close(), onSubmit: async (v) => {
+      await post('/api/tasks', { title: 'Privacy concern reported: look into it and record it in the incident register', description: `${v.what}\n\nReported by ${state.user.display_name} from Privacy & Part 2.`, assigned_to: v.assigned_to, priority: 'high', due_at: fmt.today() });
+      m.close(); toast('Reported: they have a to-do to look into it.', 'ok');
+    } });
+    const m = modal('Report a privacy concern', h('div', { 'data-report-concern': '1' }, h('p', { class: 'small muted' }, 'Anything that may have exposed client information, even if you are not sure. Report it as soon as you know: the clock for notifying people starts then.'), f));
+  };
+  const concern = !can('incidents:write') && can('tasks:write') ? h('button', { class: 'btn sm', 'data-report-concern-open': '1', onClick: reportConcern }, 'Report a privacy concern') : null;
+  return h('div', {}, pageHead('Privacy & Part 2', concern), tabStrip(tabs, tab, (k) => nav(`compliance?tab=${k}`)), body);
 });
 
 async function openIncident(id, onDone) {
