@@ -36316,6 +36316,10 @@ var require_reports = __commonJS({
             excludedCodes = db3.all(`SELECT client_code FROM clients WHERE id IN (${g.excluded.map(() => "?").join(",")})`, ...g.excluded).map((r2) => r2.client_code).sort();
             aboutSheet.rows.push({ k: "Left out (no consent on file naming this recipient for this purpose)", v: excludedCodes.join(", ") });
           }
+          if (ids.length && g.excluded.length >= ids.length) {
+            audit3.log({ user: ctx.user, action: "report.export.refused", ip: ctx.ip, success: false, details: { kind, basis: gate.basis, clients: ids.length, reason: "every client left out" } });
+            throw new (require_http()).HttpError(409, `Nothing to export: no client in this file has a consent on file naming this recipient for this purpose (${excludedCodes.length} left out). No file was made and nothing was disclosed.`, { excluded: excludedCodes });
+          }
           return g;
         };
         const accountFor = (kind, ids, g) => {

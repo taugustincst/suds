@@ -177,9 +177,17 @@ test('identified exports state a lawful basis, carry the §2.32 notice, and are 
   assert.equal((await sup.get(`/api/reports/export/clients?identified=1&${q}`)).status, 400, 'no basis');
   assert.equal((await sup.get(`/api/reports/export/clients?identified=1&basis=other&${q}`)).status, 400, 'not an export basis');
   assert.equal((await sup.get(`/api/reports/export/clients?identified=1&basis=audit_evaluation&legal_proceeding=1&${q}`)).status, 400, 'a proceeding is never a bulk export');
-  // Under consent, a client with no consent naming the recipient is left out of the file and listed by code.
+  // Under consent, a client with no consent naming the recipient is left out of the file and listed by code; when that
+  // is every client, no file is made at all (1.25.2, BO25: an "identified" file with nobody in it used to download).
+  const disclosed = () => H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE source='export'`).n;
+  const before = disclosed();
   const noConsent = await sup.get(`/api/reports/export/clients?identified=1&basis=consent&restriction_reviewed=1&${q}`);
-  assert.equal(noConsent.status, 200); assert.ok(noConsent.headers.get('x-suds-export-excluded').split(',').length > 0, 'names the clients left out, by code');
+  assert.equal(noConsent.status, 409, 'nobody qualifies: nothing to export');
+  assert.match(noConsent.data.error, /^Nothing to export: no client in this file has a consent on file naming this recipient/);
+  assert.ok(noConsent.data.excluded.length > 0, 'names the clients left out, by code');
+  assert.equal(disclosed(), before, 'and nothing was disclosed');
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='report.export.refused' AND details LIKE '%every client left out%'`), 'the refusal is audited');
+  assert.equal((await sup.get(`/api/reports/export/workbook?identified=1&basis=consent&restriction_reviewed=1&${q}`)).status, 409, 'nor a workbook');
   const needsReview = await sup.get(`/api/reports/export/clients?identified=1&basis=audit_evaluation&${q}`);
   assert.equal(needsReview.status, 400, 'a client in the file has an agreed restriction'); assert.equal(needsReview.data.restrictionReview, true);
   assert.ok(audited('report.export.refused'));

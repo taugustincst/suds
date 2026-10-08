@@ -375,6 +375,12 @@ module.exports = (r) => {
         excludedCodes = db.all(`SELECT client_code FROM clients WHERE id IN (${g.excluded.map(() => '?').join(',')})`, ...g.excluded).map(r => r.client_code).sort();
         aboutSheet.rows.push({ k: 'Left out (no consent on file naming this recipient for this purpose)', v: excludedCodes.join(', ') });
       }
+      // Every client left out (no consent names this recipient for this purpose): there is nothing to disclose, so no
+      // file, rather than an "identified" download with nobody in it and "Exported" (1.25.2, BO25).
+      if (ids.length && g.excluded.length >= ids.length) {
+        audit.log({ user: ctx.user, action: 'report.export.refused', ip: ctx.ip, success: false, details: { kind, basis: gate.basis, clients: ids.length, reason: 'every client left out' } });
+        throw new (require('../http').HttpError)(409, `Nothing to export: no client in this file has a consent on file naming this recipient for this purpose (${excludedCodes.length} left out). No file was made and nothing was disclosed.`, { excluded: excludedCodes });
+      }
       return g;
     };
     // One accounting row per client per export file: the workbook is one disclosure of everything it

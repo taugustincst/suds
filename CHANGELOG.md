@@ -69,6 +69,9 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **BO24:** read-only and finance were told "This client is not on your caseload" when a note or record was refused;
   they have no caseload. They are now told "Your role cannot open client records or notes."
   `test/deidentified-roles.test.js`.
+* **BO25:** an identified export under each client's consent where no client's consent named the recipient still
+  downloaded an "identified" file with nobody in it and said "Exported". It is now refused (409, "Nothing to
+  export: …", the clients left out listed by code); no file is made and nothing is disclosed. `test/part2.test.js`.
 
 ## 1.25.1 — 2026-10-08
 
