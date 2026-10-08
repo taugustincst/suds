@@ -1322,7 +1322,9 @@ test('a remote wipe is delivered before the credentials are judged, so deactivat
   const again = await H.client().post('/api/auth/login', { username: u2.username, password: 'wrong-password' }, sync2);
   assert.equal(again.status, 403); assert.equal(again.data.deviceRevoked, true); assert.equal(again.data.wipeRequested, true);
   // A device the server has never seen gets the ordinary answer: nothing about the account leaks through the device path
-  const fresh = await H.client().post('/api/auth/login', { username: 'nobody-here', password: 'nope' }, { 'X-Sync-Client': '1', 'X-Device-Id': 'device-never-seen' });
+  // (Another made-up name: 'nobody-here' has failed five times in this file by now, and a name nobody has locks as an
+  // account does, 1.25.3: test/login-enumeration.test.js.)
+  const fresh = await H.client().post('/api/auth/login', { username: 'nobody-here-either', password: 'nope' }, { 'X-Sync-Client': '1', 'X-Device-Id': 'device-never-seen' });
   assert.equal(fresh.status, 401);
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM devices WHERE id='device-never-seen'`).n, 0, 'an unknown device is only recorded once its holder has signed in');
 });

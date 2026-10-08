@@ -53044,6 +53044,47 @@ var require_auth2 = __commonJS({
       const u = String(username || "");
       return `unknown:${u.slice(0, 8)}${u.length > 8 ? "\u2026" : ""}#${sha2562(u).slice(0, 12)}`;
     }
+    var NAME_FAILURES_MAX = 1e4;
+    var NAME_FAILURES_TTL = 7 * 864e5;
+    var nameFailures = /* @__PURE__ */ new Map();
+    function nameFailure(name, now2) {
+      const key = sha2562(name), e = nameFailures.get(key);
+      if (e && e.expires <= now2) {
+        nameFailures.delete(key);
+        return { key, e: null };
+      }
+      return { key, e: e || null };
+    }
+    function nameLocked(name) {
+      const now2 = Date.now();
+      const { e } = nameFailure(name, now2);
+      return !!(e && e.lockedUntil > now2);
+    }
+    function recordNameFailure(name) {
+      const now2 = Date.now();
+      let { key, e } = nameFailure(name, now2);
+      if (!e) {
+        if (nameFailures.size >= NAME_FAILURES_MAX) {
+          for (const [k, x] of nameFailures) if (x.expires <= now2) nameFailures.delete(k);
+          for (const [k, x] of nameFailures) {
+            if (nameFailures.size < NAME_FAILURES_MAX) break;
+            if (!(x.lockedUntil > now2)) nameFailures.delete(k);
+          }
+          for (const k of nameFailures.keys()) {
+            if (nameFailures.size < NAME_FAILURES_MAX) break;
+            nameFailures.delete(k);
+          }
+        }
+        e = { attempts: 0, lockedUntil: 0 };
+      }
+      if (++e.attempts >= config2.lockout.maxAttempts) {
+        e.attempts = 0;
+        e.lockedUntil = now2 + config2.lockout.minutes * 6e4;
+      }
+      e.expires = Math.max(e.lockedUntil, now2 + NAME_FAILURES_TTL);
+      nameFailures.delete(key);
+      nameFailures.set(key, e);
+    }
     async function login({ username, password, ctx }) {
       const user = db3.one(`SELECT * FROM users WHERE username=?`, String(username || "").trim());
       const devices = require_devices();
@@ -53074,24 +53115,31 @@ var require_auth2 = __commonJS({
         if (pendingWipe) wipeRequired(false);
         throw unauthorized("Invalid username or password");
       };
+      const locked = (u) => {
+        audit3.log({ user: u, action: "auth.login.locked", ip: ctx.ip, success: false });
+        if (pendingWipe) wipeRequired(false);
+        throw new HttpError3(423, "Account locked. Try again later or contact an administrator.");
+      };
+      const name = String(username || "").trim().toLowerCase();
+      if ((!user || !user.is_active) && nameLocked(name)) locked(who);
+      const failName = (reason) => {
+        recordNameFailure(name);
+        fail(reason);
+      };
       if (!user) {
         await verifyPasswordAsync(password || "", "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA==");
-        fail("unknown user");
+        failName("unknown user");
       }
       if (!user.is_active && (user.access_status === "pending" || user.access_status === "declined") && !pendingWipe) {
-        if (!await verifyPasswordAsync(password || "", user.password_hash)) fail("bad password");
+        if (!await verifyPasswordAsync(password || "", user.password_hash)) failName("bad password");
         audit3.log({ user: who, action: "auth.login.access_" + user.access_status, ip: ctx.ip, success: false });
         throw new HttpError3(403, user.access_status === "pending" ? "Your request is waiting for an administrator to approve it. You can sign in once it has been approved." : "Your request for an account was not approved. Ask your administrator if you think this is a mistake.", { accessPending: user.access_status === "pending", accessDeclined: user.access_status === "declined" });
       }
       if (!user.is_active) {
-        if (pendingWipe && await verifyPasswordAsync(password || "", user.password_hash)) wipeRequired(true);
-        fail("inactive");
+        if (await verifyPasswordAsync(password || "", user.password_hash) && pendingWipe) wipeRequired(true);
+        failName("inactive");
       }
-      if (isLocked(user)) {
-        audit3.log({ user, action: "auth.login.locked", ip: ctx.ip, success: false });
-        if (pendingWipe) wipeRequired(false);
-        throw new HttpError3(423, "Account locked. Try again later or contact an administrator.");
-      }
+      if (isLocked(user)) locked(user);
       if (!await verifyPasswordAsync(password || "", user.password_hash)) {
         fail(recordPasswordFailure(user) ? "locked after failures" : "bad password");
       }

@@ -736,6 +736,36 @@ function auditUsername(username) {
   const u = String(username || '');
   return `unknown:${u.slice(0, 8)}${u.length > 8 ? '…' : ''}#${sha256(u).slice(0, 12)}`;
 }
+// Failed sign-ins for a name with no active account (nobody, deactivated, or a sign-up not approved) are counted the
+// way an account's are (config.lockout), so that the 423 a locked account answers no longer tells a guesser the name
+// exists: before 1.25.3 a real account locked and a made-up name answered 401 for ever (pen test of suds.systems,
+// MINOR-1). In memory, keyed by a hash of the name as the lookup matches it (trimmed, any case), at most
+// NAME_FAILURES_MAX names, each forgotten a week after its last failure or lock; a restart forgets them, as it does
+// the rate limits. When full, expired names go first, then the oldest that is not locked, so filling the map with
+// other names does not unlock one.
+const NAME_FAILURES_MAX = 10000, NAME_FAILURES_TTL = 7 * 86400000;
+const nameFailures = new Map();
+function nameFailure(name, now) {
+  const key = sha256(name), e = nameFailures.get(key);
+  if (e && e.expires <= now) { nameFailures.delete(key); return { key, e: null }; }
+  return { key, e: e || null };
+}
+function nameLocked(name) { const now = Date.now(); const { e } = nameFailure(name, now); return !!(e && e.lockedUntil > now); }
+function recordNameFailure(name) {
+  const now = Date.now(); let { key, e } = nameFailure(name, now);
+  if (!e) {
+    if (nameFailures.size >= NAME_FAILURES_MAX) {
+      for (const [k, x] of nameFailures) if (x.expires <= now) nameFailures.delete(k);
+      for (const [k, x] of nameFailures) { if (nameFailures.size < NAME_FAILURES_MAX) break; if (!(x.lockedUntil > now)) nameFailures.delete(k); }
+      for (const k of nameFailures.keys()) { if (nameFailures.size < NAME_FAILURES_MAX) break; nameFailures.delete(k); }
+    }
+    e = { attempts: 0, lockedUntil: 0 };
+  }
+  // As recordPasswordFailure: the count starts again from nothing once it locks.
+  if (++e.attempts >= config.lockout.maxAttempts) { e.attempts = 0; e.lockedUntil = now + config.lockout.minutes * 60000; }
+  e.expires = Math.max(e.lockedUntil, now + NAME_FAILURES_TTL);
+  nameFailures.delete(key); nameFailures.set(key, e);
+}
 // Async because scrypt costs ~90ms: doing it synchronously stalls every other request in the process, and a
 // few staff signing in at once is enough to be noticed.
 async function login({ username, password, ctx }) {
@@ -788,12 +818,22 @@ async function login({ username, password, ctx }) {
     if (pendingWipe) wipeRequired(false);
     throw unauthorized('Invalid username or password');
   };
+  /** The one answer a locked account gets, before its password is looked at (no hashing, for an account or not). */
+  const locked = (u) => {
+    audit.log({ user: u, action: 'auth.login.locked', ip: ctx.ip, success: false });
+    if (pendingWipe) wipeRequired(false);
+    throw new HttpError(423, 'Account locked. Try again later or contact an administrator.');
+  };
+  // A name with no active account fails, and locks, the way an account does (nameLocked, above).
+  const name = String(username || '').trim().toLowerCase();
+  if ((!user || !user.is_active) && nameLocked(name)) locked(who);
+  const failName = (reason) => { recordNameFailure(name); fail(reason); };
   // An unknown username still pays the hashing cost, so response time does not reveal who has an account.
-  if (!user) { await verifyPasswordAsync(password || '', 'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA=='); fail('unknown user'); }
+  if (!user) { await verifyPasswordAsync(password || '', 'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA=='); failName('unknown user'); }
   if (!user.is_active && (user.access_status === 'pending' || user.access_status === 'declined') && !pendingWipe) {
     // A self sign-up an administrator has not approved (yet). Only someone who knows the password they
     // chose is told where the request stands; anyone else gets the same answer as for any bad sign-in.
-    if (!(await verifyPasswordAsync(password || '', user.password_hash))) fail('bad password');
+    if (!(await verifyPasswordAsync(password || '', user.password_hash))) failName('bad password');
     audit.log({ user: who, action: 'auth.login.access_' + user.access_status, ip: ctx.ip, success: false });
     throw new HttpError(403, user.access_status === 'pending'
       ? 'Your request is waiting for an administrator to approve it. You can sign in once it has been approved.'
@@ -801,15 +841,12 @@ async function login({ username, password, ctx }) {
   }
   if (!user.is_active) {
     // With a wipe pending, a correct password on the deactivated account is still proof that the phone is
-    // in the hands of the person the account belonged to — enough to consume the wipe.
-    if (pendingWipe && await verifyPasswordAsync(password || '', user.password_hash)) wipeRequired(true);
-    fail('inactive');
+    // in the hands of the person the account belonged to — enough to consume the wipe. Checked either way, so a
+    // deactivated account costs the hashing an unknown name does.
+    if (await verifyPasswordAsync(password || '', user.password_hash) && pendingWipe) wipeRequired(true);
+    failName('inactive');
   }
-  if (isLocked(user)) {
-    audit.log({ user, action: 'auth.login.locked', ip: ctx.ip, success: false });
-    if (pendingWipe) wipeRequired(false);
-    throw new HttpError(423, 'Account locked. Try again later or contact an administrator.');
-  }
+  if (isLocked(user)) locked(user);
   if (!(await verifyPasswordAsync(password || '', user.password_hash))) {
     fail(recordPasswordFailure(user) ? 'locked after failures' : 'bad password');
   }
