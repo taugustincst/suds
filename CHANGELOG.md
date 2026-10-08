@@ -34,6 +34,12 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   deleting a line that was not there answered 200. A line with approved or reimbursed spending on it or under it is
   now refused with 409 and the amount ("move it to another line first"), by the REST route and for a device's
   tombstone alike (`server/rules/budget_lines.js`); a missing line is 404; the confirmation says what happens.
+* **BO9:** an office server's public Security & procurement page showed AugustInnovations LLC as the legal entity
+  that signs a BAA or QSOA, and the vendor's pricing and SLA, as if they were the programme's own. The page now
+  keeps the two parties apart: *This program* (office servers only) carries what the programme's administrator
+  published, "Not yet published by this program" when blank; *The software vendor* carries AugustInnovations LLC's
+  published licence terms, pricing and support from `procurement.json`, which are accurate on any copy as the
+  vendor's. SUDS on this device shows only the vendor's part, unchanged.
 
 ## 1.25.1 — 2026-10-08
 
