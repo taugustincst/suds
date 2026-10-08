@@ -205,6 +205,45 @@ jobs:
       - name: Test on Node 24
         working-directory: src
         run: npm test
+  # npm test again on a California evening (scripts/test-evening.sh): TZ=America/Los_Angeles, the clock at 21:00
+  # local today, when the UTC date is already tomorrow's, whatever the time CI runs. A "today" taken as the UTC
+  # date fails here (evaluation of 1.25.0, E1: after 5pm an intake was dated tomorrow, and CalOMS refused its
+  # admission as in the future). The clock is libfaketime's, from the runner's Ubuntu archive (apt checks its
+  # signature): a test tool on the runner, not a dependency of SUDS. Not advisory: a red run fails CI, so the
+  # release gate refuses the commit.
+  evening:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: Install Node 22 (pinned version, pinned checksum)
+        run: |
+          file="node-${NODE22_VERSION}-linux-x64.tar.xz"
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://nodejs.org/dist/${NODE22_VERSION}/${file}"
+          echo "${NODE22_SHA256}  ${file}" | sha256sum -c - || { echo "::error::${file} does not match the SHA-256 pinned in the workflow"; exit 1; }
+          mkdir -p node22 && tar -xJf "$file" -C node22 --strip-components=1
+          echo "$RUNNER_TEMP/node22/bin" >> "$GITHUB_PATH"
+      - name: Node is the pinned release, of the major .nvmrc names
+        working-directory: src
+        run: |
+          want="$(tr -d '[:space:]' < .nvmrc)"; have="$(node -p 'process.versions.node.split(".")[0]')"
+          node --version; [ "$have" = "$want" ] || { echo "::error::Node $have is running but .nvmrc pins major $want"; exit 1; }
+          [ "$(node --version)" = "$NODE22_VERSION" ] || { echo "::error::$(node --version) is running, not the pinned $NODE22_VERSION"; exit 1; }
+      - name: Install libfaketime
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends faketime && faketime --version | head -1
+      - name: Install
+        working-directory: src
+        run: npm ci --no-audit --no-fund
+      - name: Fetch the release tags
+        working-directory: src
+        run: git fetch --quiet --depth 1 origin '+refs/tags/v*:refs/tags/v*'
+      - name: Test at 9pm in Los Angeles
+        working-directory: src
+        env:
+          SUDS_REQUIRE_RELEASE_TAGS: '1'
+        run: scripts/test-evening.sh
   # Backup and restore, exercised on every push: seed a throwaway database, take an encrypted backup through
   # the scheduled-backup path, run the recovery drill with an escrowed key file (restore into a temporary
   # directory, separate process, schema/row counts/audit chain/anchors/decrypt/sign-in checks), restore again

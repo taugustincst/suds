@@ -150,6 +150,25 @@ test('ci.yml: every job the release gate requires exists and is not advisory; on
   assert.ok(!REQUIRED_JOBS.includes('release-state'));
 });
 
+test('ci.yml: the evening job runs npm test at 9pm in Los Angeles (scripts/test-evening.sh), and is not advisory', () => {
+  // Evaluation of 1.25.0, E1: "today" taken as the UTC date dated an evening intake tomorrow. CI runs in UTC, where
+  // the two dates agree, so the suite also runs with the local date behind the UTC one.
+  const job = wf('ci.yml').jobs.evening;
+  assert.ok(job, 'ci.yml has an evening job');
+  assert.ok(!job['continue-on-error'], 'a red run fails CI, so the release gate refuses the commit');
+  assert.equal(job.permissions, undefined, 'the top-level read-only token');
+  const runs = job.steps.map((s) => s.run || '').join('\n');
+  assert.match(runs, /sha256sum -c -/, 'the pinned Node 22, checked');
+  assert.match(runs, /apt-get install [^\n]*\bfaketime\b/, 'libfaketime from the runner\'s archive, not npm');
+  assert.ok(!/npm (install|i) /.test(runs), 'no npm package is added for it');
+  assert.equal(job.steps[job.steps.length - 1].run, 'scripts/test-evening.sh');
+  const script = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'test-evening.sh'), 'utf8');
+  assert.match(script, /SUDS_EVENING_TZ:-America\/Los_Angeles/); assert.match(script, /SUDS_EVENING_AT:-21:00/);
+  assert.match(script, /local === utc/, 'it refuses to pass when the local date is the UTC one');
+  assert.match(script, /set -- 'test\/\*\.test\.js'/, 'npm test\'s glob by default');
+  assert.ok(JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8')).scripts.test.includes('"test/*.test.js"'), 'which is still npm test\'s');
+});
+
 test('ci.yml: the windows job runs npm run try and the OS-sensitive tests on the pinned Node 22, with no npm install, and is not advisory', () => {
   const ci = wf('ci.yml');
   const job = ci.jobs.windows;
