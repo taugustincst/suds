@@ -37,6 +37,17 @@ test('readonly cannot open a client\'s filled forms, their PDF or their attachme
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE user_id=? AND action='authz.denied'`, ro.id), 'the refusals are audited');
 });
 
+test('1.25.2, BO24: read-only and finance are told their role opens no client records or notes, not "not on your caseload"', async () => {
+  const note = H.db.one(`SELECT id FROM notes WHERE deleted_at IS NULL LIMIT 1`);
+  assert.ok(note, 'the demo data has a note');
+  for (const u of [ro, fin]) {
+    const c = H.client(); await c.login(u.username, u.password);
+    const r = await c.get(`/api/notes/${note.id}`);
+    assert.equal(r.status, 403, u.username);
+    assert.equal(r.data.error, 'Your role cannot open client records or notes.', u.username);
+  }
+});
+
 test('a navigator still opens the forms of a client on their caseload, and not of one off it', async () => {
   const c = H.client(); await c.login(nav1.username, nav1.password);
   const mine = H.db.one(`SELECT f.id FROM client_forms f JOIN assignments a ON a.client_id=f.client_id AND a.user_id=? LIMIT 1`, nav1.id);

@@ -88,15 +88,28 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   // Back as it was: the rest of this script signs notes with the password.
   eq((await admin.api('PUT', '/api/admin/settings', { sign_strong_required: '0' })).status, 200, 'the signing setting is put back');
 
+  // 1.25.2, BO15 and BO20: About this server states the retention and key source in force; the stat cards keep their height.
+  await go(page, 'admin?tab=system');
+  const about = (await page.textContent('.main')).replace(/\s+/g, ' ');
+  ok(/A client's records are kept \d+ years after their last activity, then removed by the retention purge/.test(about) && !/soft-deleted only/.test(about), 'About this server states the retention in force', about.match(/Retention.{0,160}/)?.[0]);
+  const keys = (await admin.api('GET', '/api/admin/stats')).data.key_source;
+  ok(keys !== 'devfile' || /Development key files in the data directory/.test(about), 'and where the keys really come from', keys);
+  const statH = await page.$eval('[data-system-stats] .card.stat', (e) => e.getBoundingClientRect().height).catch(() => 9999);
+  ok(statH < 200, 'the stat cards are not stretched to the height of the backups column', statH);
   // The Security & procurement page on the office server: the administrator's published facts, the rest blank.
   eq((await admin.api('PUT', '/api/admin/settings', { procurement_legal_entity: 'Example Services LLC', procurement_contact_email: 'buyers@example.org', procurement_sla: 'Business-hours support.' })).status, 200, 'an administrator publishes three of the facts');
   await go(page, 'admin?tab=settings&section=procurement');
   ok(await page.$eval('input[name=procurement_legal_entity]', el => el.value === 'Example Services LLC' && el.closest('details').open), 'Settings shows them in the opened Security & procurement page section');
-  await page.goto(base + '/procurement.html'); await page.waitForSelector('[data-field="sla"][data-published]', { timeout: 10000 });
-  eq(await page.textContent('[data-field="legal_entity"]'), 'Example Services LLC', 'the page shows the published legal entity');
-  eq(await page.getAttribute('[data-field="contact_email"] a', 'href'), 'mailto:buyers@example.org', 'the email as a mail link');
-  eq(await page.getAttribute('[data-field="pricing"]', 'data-published'), '1', 'the published pricing shows (procurement.json, 1.24.4)');
+  await page.goto(base + '/procurement.html'); await page.waitForSelector('[data-office-field="sla"][data-published]', { timeout: 10000 });
+  // 1.25.2, BO9: the programme's facts under "This program", the software vendor's apart from them.
+  ok(await page.isVisible('[data-office-section]'), 'an office server\'s page has a "This program" section');
+  eq(await page.textContent('[data-office-field="legal_entity"]'), 'Example Services LLC', 'the page shows the published legal entity as the program\'s');
+  eq(await page.getAttribute('[data-office-field="contact_email"] a', 'href'), 'mailto:buyers@example.org', 'the email as a mail link');
+  eq(await page.textContent('[data-office-field="pricing"]'), 'Not yet published by this program', 'a blank program field says so, never showing the vendor\'s pricing as the program\'s');
+  eq(await page.textContent('[data-field="legal_entity"]'), 'AugustInnovations LLC', 'the software vendor\'s legal entity is shown as the vendor\'s');
+  eq(await page.getAttribute('[data-field="pricing"]', 'data-published'), '1', 'the vendor\'s published pricing shows (procurement.json, 1.24.4)');
   ok(/90-DAY PILOT/.test(await page.textContent('[data-field="pricing"]')), 'and it names the pilot tier');
+  ok(/The software vendor/.test(await page.textContent('#contact-heading')), 'under a heading that says whose it is');
   ok((await page.$$eval('a[data-doc]', as => as.map(a => a.href))).every(h => /^https:\/\/github\.com\/.+\/blob\/main\/docs\//.test(h)), 'its documents link to the repository on the default branch');
   await page.goto(base + '/');
   await page.waitForSelector('.layout', { timeout: 10000 });
@@ -163,6 +176,7 @@ const admin = await session('admin', 'AdminPassw0rd!x');
     await returnBtn.click();
     const dialog = await until(() => fin.page.$('.modal input'));
     ok(dialog, 'Return asks for a reason before anything happens');
+    ok(/the worker will see it/.test(await fin.page.textContent('.modal label').catch(() => '')), 'and its label says the worker sees the reason, not "recorded in audit log" (1.25.2, BO21)');
     await fin.page.click('.modal button:has-text("Cancel")');
     await until(async () => !(await fin.page.$('.modal-bg')));
     const entryRow = async () => (await fin.api('GET', `/api/time/${entry.data.id}`)).data.row;
@@ -187,9 +201,32 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   }
   await go(fin.page, 'dashboard');
   ok(!/need a check-in/.test(await fin.page.textContent('.main')), 'no caseload card for a role with no caseload');
+  // 1.25.2, BO17: an alert about clients is plain text for a role that cannot open the client list.
+  ok(!(await fin.page.$('[data-home-alerts] a[href^="#/clients"]')), 'no Home alert links finance to a client list it cannot open', await fin.page.$$eval('[data-home-alerts] a', as => as.map(a => a.getAttribute('href'))).catch(() => []));
   ok(!(await fin.page.$$eval('.nav .sec', s => s.map(x => x.textContent))).includes('Connect clients'), 'no empty "Connect clients" heading');
+  // 1.25.2, BO20: finance records no work, and its time page is everyone's.
+  const finSecs = await fin.page.$$eval('.nav .sec', s => s.map(x => x.textContent.trim()));
+  ok(!finSecs.includes('Record work') && finSecs.includes('Program activity'), 'finance\'s menu does not say "Record work"', finSecs);
+  const finLinks = await fin.page.$$eval('.nav a', as => as.map(a => a.textContent.trim()));
+  ok(finLinks.some(t => /Staff time$/.test(t)) && !finLinks.some(t => /My time$/.test(t)), 'and calls its time page "Staff time", as the page itself does', finLinks);
   await go(fin.page, 'time');
   ok(!(await fin.page.$('tbody button:has-text("Edit")')), 'no Edit buttons on entries finance cannot edit');
+  // 1.25.2, BO13: an expenditure finance changed is not offered to finance to approve; the list says why.
+  {
+    const navS = await session('mrivera', 'Navigator2026!!');
+    const funds = (await navS.api('GET', '/api/budget/funds')).data.funds || [];
+    const today = new Date(); const ymd = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const fund = funds.find(f => f.is_active && f.fiscal_year_start <= ymd && f.fiscal_year_end >= ymd);
+    const exp = fund ? await navS.api('POST', '/api/budget/expenditures', { funding_source_id: fund.id, spent_at: ymd, amount: 12.34, category: 'other', vendor: 'BO13 check vendor' }) : { status: 0 };
+    eq(exp.status, 201, 'a navigator records an expenditure');
+    await navS.close();
+    eq((await fin.api('PUT', `/api/budget/expenditures/${exp.data && exp.data.id}`, { amount: 12.35 })).status, 200, 'finance changes it');
+    await go(fin.page, 'budget?tab=expenditures&status=pending');
+    const row = await until(() => fin.page.$('tr:has-text("BO13 check vendor")'));
+    ok(row && !(await row.$('button:has-text("Approve")')), 'finance is not offered Approve on an expenditure it changed');
+    ok(row && await row.$('[data-self-review]'), 'the row says it waits for someone else instead');
+    eq((await fin.api('POST', `/api/budget/expenditures/${exp.data && exp.data.id}/approve`, { status: 'approved' })).status, 403, 'and the server refuses it with 403');
+  }
   await fin.close();
 }
 
@@ -321,6 +358,9 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   ok(!(await page.$('button:has-text("+ Line")')), 'nor "+ Line"');
   eq((await navS.api('POST', '/api/budget/funds', { name: 'x', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 1 })).status, 403, 'and the server refuses it regardless');
 
+  // 1.25.2, FL5: the search box promises misspellings for the last name only (no sound-alike index for first names yet).
+  await go(page, 'clients');
+  ok(/^Last name \(partial or misspelled OK\), first or preferred name/.test(await page.getAttribute('.main input[type=search]', 'placeholder').catch(() => '') || ''), 'the client search says a misspelling is found in the last name');
   // validation names the field the way the form does
   await go(page, 'interventions');
   await page.click('text=+ Log');

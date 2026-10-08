@@ -220,3 +220,16 @@ test('the programme\'s usual consent: a supervisor saves it, anyone recording co
   assert.equal((await fin.get('/api/consent-template')).status, 403, 'finance does not record consents');
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='consent.template.save'`));
 });
+
+test('1.25.2, FL16: refusals on notes say why, not a bare "Forbidden"', async () => {
+  // Another worker's draft: only its author (or a supervisor or administrator) deletes it.
+  const nav2 = H.client(); H.makeUser('flnav16', 'navigator'); await nav2.login('flnav16', PW);
+  const theirs = await draft(nav);
+  const del = await nav2.del(`/api/notes/${theirs}`);
+  assert.equal(del.status, 403); assert.match(del.data.error, /Only the author of a draft note, or a supervisor or administrator, can delete it/);
+  // A clinical note: a navigator (who reads them) cannot add an addendum.
+  const clinical = (await trainee.post('/api/notes', { client_id: clientId, kind: 'clinical', title: 'Session', content: 'Clinical content', occurred_at: new Date().toISOString() })).data.id;
+  assert.ok(clinical);
+  const add = await nav.post(`/api/notes/${clinical}/addenda`, { content: 'A late entry' });
+  assert.equal(add.status, 403); assert.match(add.data.error, /Your role cannot write clinical notes/);
+});

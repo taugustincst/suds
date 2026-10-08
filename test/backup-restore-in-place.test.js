@@ -49,11 +49,14 @@ test('--restore-in-place puts the backup back over a database a newer release mi
 
   r = node(['scripts/backup.js', '--restore-in-place', file]);
   assert.equal(r.status, 0, r.stdout + r.stderr);
+  // Checked before this test reads the file: the restored database is in WAL mode (1.25.2, BO1), and a read-only
+  // reader of a WAL database leaves its own -wal/-shm beside it.
+  assert.ok(!fs.existsSync(`${dbFile}-wal`) && !fs.existsSync(`${dbFile}-shm`), 'no journal of the replaced database beside the restored one');
+  assert.equal(sql('PRAGMA journal_mode')[0].journal_mode, 'wal', 'the restored database is in WAL mode');
   assert.match(r.stdout, new RegExp(`Restored .* \\(\\d+ clients, schema ${schema}\\)`));
   assert.equal(Number(sql(`SELECT value FROM settings WHERE key='schema_version'`)[0].value), schema, 'the schema of the backup');
   assert.equal(sql(`SELECT value FROM settings WHERE key='org_name'`)[0].value, 'Before the upgrade');
   assert.equal(sql(`SELECT name FROM sqlite_master WHERE name='from_the_future'`).length, 0);
-  assert.ok(!fs.existsSync(`${dbFile}-wal`) && !fs.existsSync(`${dbFile}-shm`), 'no journal of the replaced database beside the restored one');
   assert.ok(sql(`SELECT action FROM audit_log WHERE action='backup.restore'`).length >= 1, 'recorded in the audit log');
   assert.ok(fs.readdirSync(anchors).length >= 1, 'a restore anchor was written');
   const aside = fs.readdirSync(data).find((f) => f.startsWith('suds.db.replaced-'));

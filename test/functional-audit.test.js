@@ -153,7 +153,20 @@ test('M5: nobody approves their own expenditure, administrators included', async
   const e = await admin.post('/api/budget/expenditures', { funding_source_id: f.data.id, spent_at: '2026-03-05', amount: 25, category: 'other' });
   assert.equal(e.status, 201);
   const r = await admin.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' });
-  assert.equal(r.status, 400); assert.match(r.data.error, /your own/);
+  assert.equal(r.status, 403, 'a separation-of-duties refusal is 403, like the others (1.25.2, BO13)'); assert.match(r.data.error, /your own/);
+  assert.equal((await sup.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' })).status, 200);
+});
+
+test('BO13: an approver who changed a colleague\'s pending expenditure is told so in the list, and refused with 403', async () => {
+  const f = await admin.post('/api/budget/funds', { name: 'Changed by approver', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 1000 });
+  const e = await nav.post('/api/budget/expenditures', { funding_source_id: f.data.id, spent_at: '2026-03-06', amount: 30, category: 'other' });
+  assert.equal(e.status, 201, JSON.stringify(e.data));
+  const row = async (c) => (await c.get(`/api/budget/expenditures?fund=${f.data.id}&limit=10`)).data.rows.find(x => x.id === e.data.id);
+  assert.equal((await row(fin)).you_changed, false, 'untouched: finance may approve it');
+  assert.equal((await fin.put(`/api/budget/expenditures/${e.data.id}`, { amount: 31 })).status, 200);
+  assert.equal((await row(fin)).you_changed, true, 'after finance changed it, the list says so');
+  assert.equal((await row(sup)).you_changed, false, 'and only for finance');
+  assert.equal((await fin.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' })).status, 403);
   assert.equal((await sup.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' })).status, 200);
 });
 

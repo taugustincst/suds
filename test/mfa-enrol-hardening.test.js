@@ -102,3 +102,34 @@ test('forced enrolment after the grace period still works', async () => {
     assert.equal((await c.get('/api/clients')).status, 200);
   } finally { H.db.run(`DELETE FROM settings WHERE key='mfa_required_roles'`); }
 });
+
+test('1.25.2, FL1: a wrong or reused code at the second step is answered with its reason and code_refused; the sign-in stands', async () => {
+  const u = enrolled('mfacoderefused');
+  const c = H.client();
+  await c.login(u.username, u.password);
+  const wrong = await c.post('/api/auth/mfa/verify', { code: '000000' });
+  assert.equal(wrong.status, 401);
+  assert.equal(wrong.data.code_refused, true, 'the app keeps the person on the code screen');
+  assert.match(wrong.data.error, /^Invalid verification code/);
+  const code = totp(u.secret, Date.now() + 30_000);
+  assert.equal((await c.post('/api/auth/mfa/verify', { code })).status, 200, 'the same sign-in then finishes with the right code');
+  const d = H.client(); await d.login(u.username, u.password);
+  const replay = await d.post('/api/auth/mfa/verify', { code });
+  assert.equal(replay.status, 401); assert.equal(replay.data.code_refused, true);
+  assert.match(replay.data.error, /already been used/);
+  const none = await H.client().post('/api/auth/mfa/verify', { code: '000000' });
+  assert.equal(none.status, 401); assert.equal(none.data.code_refused, undefined, 'no sign-in at all is not a refused code');
+  H.db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL WHERE id=?`, u.id);
+});
+
+test('1.25.2, FL12: the app asks "is anyone signed in?" without a 401; a sign-in owing its second step is still refused elsewhere', async () => {
+  const anon = H.client();
+  const r = await anon.get('/api/auth/me?optional=1');
+  assert.equal(r.status, 200); assert.deepEqual(r.data, { user: null });
+  assert.equal((await anon.get('/api/auth/me')).status, 401, 'without ?optional=1, as before');
+  const u = enrolled('mfaoptional');
+  const c = H.client(); await c.login(u.username, u.password);
+  const pending = await c.get('/api/auth/me?optional=1');
+  assert.equal(pending.status, 200); assert.equal(pending.data.mfaPending, true, 'a pending sign-in is described as before');
+  assert.equal((await c.get('/api/me/prefs')).status, 401, 'and everything else still waits for the second step');
+});

@@ -38,6 +38,10 @@ try {
   await page.fill('input[name=admin_password]', 'SetupPassw0rd!x'); await page.fill('input[name=confirm]', 'SetupPassw0rd!x');
   await page.selectOption('select[name=network]', 'local');
   await page.uncheck('input[name=https]');
+  // This run answers Yes to both opt-in questions, which setup.mjs answers No: up to 1.25.1 the server dropped
+  // every Yes (validate() turns a boolean into 1, the route compared with true; 1.25.2, BO2).
+  await page.selectOption('select[name=local_mode]', 'yes');
+  await page.selectOption('select[name=participant_code_default]', 'yes');
   await page.click('button[type=submit]');
   ok(await until(() => page.textContent('#app').then(t => /Setup complete/.test(t)), { timeout: 20000 }), 'the wizard completes');
   const link = await page.getAttribute('a.btn.primary', 'href');
@@ -55,6 +59,9 @@ try {
   await page.click('button[type=submit]', { timeout: 5000 }).catch(() => {});
   ok(await page.waitForSelector('.layout', { timeout: 10000 }).then(() => true).catch(() => false), 'the new administrator signs in straight away');
   eq(tooMany, 0, 'without a single 429 along the way');
+  const me = await page.evaluate(() => fetch('/api/auth/me', { headers: { 'X-Requested-With': 'suds' } }).then(r => r.json()));
+  eq(me.programme && me.programme.participant_code_default, true, 'the wizard\'s Yes to participant codes is stored');
+  eq((await page.request.get(base + '/local/kernel.js')).status(), 200, 'and its Yes to the offline copy: the kernel is served');
 } finally {
   await browser.close();
   server.kill();

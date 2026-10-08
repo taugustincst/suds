@@ -63,3 +63,35 @@ test('checkForUpdate raises a clear error on a bad response', async () => {
   await assert.rejects(() => checkForUpdate({ feedUrl: feedBase, currentVersion: '1.8.0' }), /did not report a version/);
   releasePayload = { tag_name: 'v1.9.0', html_url: null, published_at: null };
 });
+
+// 1.25.2, BO14: on a checkout of a release tag (detached HEAD, as docs/RELEASE.md's `git clone --branch v<version>`
+// leaves it) --check compared HEAD with origin/HEAD and crashed with a stack trace. It now names the tag and the
+// newest release tag, and --apply refuses to follow a branch. Run in a throwaway repository holding only the
+// script, never against this checkout.
+test('scripts/update.js --check on a release-tag checkout names the newest release instead of crashing', () => {
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path');
+  const { execFileSync, spawnSync } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-update-tag-'));
+  try {
+    const origin = path.join(dir, 'origin'); const work = path.join(dir, 'work');
+    const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.org', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.org' } });
+    fs.mkdirSync(path.join(origin, 'scripts'), { recursive: true }); fs.mkdirSync(path.join(origin, 'server'));
+    fs.copyFileSync(path.join(__dirname, '..', 'scripts', 'update.js'), path.join(origin, 'scripts', 'update.js'));
+    fs.copyFileSync(path.join(__dirname, '..', 'server', 'update.js'), path.join(origin, 'server', 'update.js'));
+    git(origin, 'init', '-q', '-b', 'main'); git(origin, 'add', '.'); git(origin, 'commit', '-qm', 'one'); git(origin, 'tag', 'v1.9.0');
+    fs.writeFileSync(path.join(origin, 'x.txt'), '2'); git(origin, 'add', '.'); git(origin, 'commit', '-qm', 'two'); git(origin, 'tag', 'v1.10.0');
+    git(dir, 'clone', '-q', '--branch', 'v1.9.0', origin, work);
+    const run = (...args) => spawnSync(process.execPath, ['scripts/update.js', ...args], { cwd: work, encoding: 'utf8' });
+    let r = run('--check');
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /You are on release tag v1\.9\.0\. The newest release is v1\.10\.0\./);
+    assert.match(r.stdout, /git checkout v1\.10\.0/);
+    assert.doesNotMatch(r.stdout + r.stderr, /ambiguous argument|at .*\(node:/, 'no git error and no stack trace');
+    r = run('--apply');
+    assert.notEqual(r.status, 0, '--apply does not follow a branch from a tag checkout');
+    assert.match(r.stderr, /release-tag checkout is upgraded to the next tag/);
+    git(work, 'checkout', '-q', 'v1.10.0');
+    r = run('--check');
+    assert.match(r.stdout, /You are on release tag v1\.10\.0, the newest release\./);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

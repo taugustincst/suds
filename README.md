@@ -41,8 +41,9 @@ and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How
   (unmappable answers are dropped so the edit checks flag them for the worker to re-ask). The extract's column
   names and file layout are SUDS's own and still need the county's check before the first submission.
 * **Better resource pictures**: the starter directory's provider-picture download finds a picture for every
-  provider whose website allows an automated download. The published site has pictures for 40 of the 81
-  providers: many provider sites refuse automated downloads from the build server.
+  provider whose website allows an automated download. Many provider sites refuse automated downloads from the
+  build server, so the published site has pictures for fewer providers than it tries: how many, for each build, is
+  the `summary` in the site's `region-pictures/<region>/manifest.json`.
 * **UI intuitiveness pass**: plainer call and text form labels ("Client (optional)" with a plain-English help
   line; "Also log this as a time entry" matching the visit form) and an accessible resource-directory view
   toggle (role, labels and pressed state announced). On the owner's explicit instruction to lift the feature

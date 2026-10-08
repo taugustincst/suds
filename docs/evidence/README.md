@@ -19,7 +19,8 @@ all 17 code sets rewritten, yes/no as numeric 1/0, four elements added (LEG-1 cr
 medication prescribed, CID-19 consent for future contact, CID-20 sexual orientation), sex at birth removed, new
 edit checks, and migration 71 remapping stored answers
 ([caloms-dictionary-verification.md](caloms-dictionary-verification.md)); the resource directory shows a picture
-for every provider whose site allows an automated download (40 of the 81 on the published site); and the call/text forms and the resource-directory view are plainer. A minor
+for every provider whose site allows an automated download (fewer on the published site, where many provider sites refuse automated
+downloads: each build's count is the `summary` in its `region-pictures/<region>/manifest.json`); and the call/text forms and the resource-directory view are plainer. A minor
 gets an SBOM of its own: `sbom-1.25.0` (a patch has none of its own — 1.25.1 keeps it, as 1.24.4 kept 1.24.0's). 1.24.4, a patch with
 no policy exception, fixed what 1.24.3's exact-commit CI found and published the introductory pricing; it is
 tagged, through the gate and published. 1.24.1 makes SUDS proprietary
@@ -38,8 +39,10 @@ this device, the Security & procurement page and the hardening checklist, and th
 installer evidence below was run on the released 1.23.0 and has not been run again on 1.24.0, 1.24.1 or 1.25.0.
 The SBOMs for 1.24.0 (`d109d32`), 1.23.0 (`48cc586`), 1.22.0 (`74852e5`), 1.21.0 (`f58128c`), 1.20.0 (`66a616b`),
 1.19.0 (`3dc20dc`), 1.17.0 (`485548c`) and 1.16.4 (`6491308`) stay in this folder as history; none was made for
-1.17.1 or 1.18.0. `test/doc-currency.test.js` fails when this line, the questionnaire's *Checked against* or the
-newest SBOM falls behind the minor line of the version `package.json` stamps. (Until the review of the 1.17.0
+1.17.1 or 1.18.0. From 1.25.2 every release, patches included, has an SBOM of its own (up to 1.25.1 a patch kept
+its minor's; [../RELEASE.md](../RELEASE.md), *Stamp checklist*). `test/doc-currency.test.js` fails when this line,
+the questionnaire's *Checked against* or the newest SBOM falls behind the minor line of the version `package.json`
+stamps, and from 1.25.2 when the newest SBOM is not the stamped version's own. (Until the review of the 1.17.0
 candidate this page named `d95b69a`, an earlier "Release 1.16.4" commit that is not on `main`, whose CI failed,
 and that was never published.)
 

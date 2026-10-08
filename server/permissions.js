@@ -43,6 +43,11 @@ function grantProblem(role, roleDefaults, permission) {
   if (PRIVILEGED_PERMISSIONS.includes(permission) && role !== 'admin') return `"${permission}" can only be granted to an administrator — change their role instead`;
   const deidentified = defaults.includes('clients:list-deidentified') && !defaults.some(p => IDENTIFYING.includes(p));
   if (deidentified && IDENTIFYING.includes(permission)) return `A ${role} account knows clients by client code only (de-identified), so it cannot be granted "${permission}", which would let it identify them. If this person needs to open client records, give them a role that does.`;
+  // An administrator is not treating staff: they read a clinical note only by break-glass, which records a reason and
+  // queues it for a supervisor's review (docs/HIPAA.md). Up to 1.25.1 an administrator could grant themselves (or
+  // another administrator) routine clinical-note access instead, audited only as a permission grant (1.25.2, BO3).
+  // Refused for the role, so a grant left from before is ignored at request time too (auth.js permsFrom).
+  if (role === 'admin' && (permission === 'notes:clinical:read' || permission === 'notes:clinical:write')) return `An administrator reads a clinical note only by break-glass (a reason, recorded and reviewed by a supervisor), so "${permission}" cannot be granted to an administrator. Someone who also treats clients needs a clinician or supervisor account for that work.`;
   if (permission === 'records:manage-others' && !defaults.includes('clients:write')) return `"${permission}" can only be granted to a role that records client work (navigator, clinician, supervisor, administrator)`;
   if (permission === 'ai:draft' && !defaults.includes('clients:write')) return `"${permission}" can only be granted to a role that documents client work (navigator, clinician, supervisor, administrator)`;
   // The county view's figures are exact, small counts included, and not for publication: only a role that sees exact

@@ -127,6 +127,7 @@ ok(await page.$('a[data-procurement-link][href="procurement.html"]'), 'the phone
   await page.goto(base + '/procurement.html'); await page.waitForSelector('[data-field="sla"][data-published]', { timeout: 10000 }).catch(() => {});
   eq(await page.title(), 'Security and procurement — SUDS', 'procurement.html is in the build and opens');
   ok(await page.evaluate(() => window.SUDS_STATIC_HOST === true), 'it knows it is the static build');
+  ok(!(await page.isVisible('[data-office-section]')), 'SUDS on this device has no office program: only the software vendor\'s terms are shown (1.25.2, BO9)');
   const docs = await page.$$eval('a[data-doc]', as => as.map(a => a.href));
   ok(docs.length >= 10 && docs.every(h => /^https:\/\/github\.com\/[^/]+\/[^/]+\/blob\/main\/docs\/.+\.md$/.test(h)), 'every document link points at the repository\'s docs on its default branch', docs.slice(0, 3));
   ok(docs.some(h => /PEN-TEST-SCOPE/.test(h)) && docs.some(h => /BAA-QSOA-DRAFT/.test(h)) && docs.some(h => /PILOT-KIT/.test(h)) && docs.some(h => /QUESTIONNAIRE/.test(h)), 'including the pen-test scope, the BAA/QSOA template, the pilot kit and the questionnaire');

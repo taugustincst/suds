@@ -103,7 +103,9 @@ test('API: determinism - asking again, or for the export, serves the identical r
   // The files print the same cells.
   const csv = String((await sup.get(`/api/reports/funder/export?${AUG}${PUB}&format=csv&reviewed=1`)).data);
   assert.match(csv, /publication/i);
-  for (const x of first.pub.funder.demographics.by_gender) assert.ok(csv.includes(`Gender,${x.k},${x.n}`), `${x.k} ${x.n}`);
+  // Codes in words in the file (1.25.2, BO22): "female" is written "Female".
+  const say = (k) => require('../server/options').humanize(k);
+  for (const x of first.pub.funder.demographics.by_gender) assert.ok(csv.includes(`Gender,${say(x.k)},${x.n}`), `${x.k} ${x.n}`);
   const sx = await sup.raw(`/api/reports/opioid-settlement/export?${AUG}${PUB}&format=xlsx&reviewed=1`);
   const wb = require('../server/spreadsheet').readWorkbook(Buffer.from(await sx.arrayBuffer()));
   const services = wb.find(s => s.name === 'Services');

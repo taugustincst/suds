@@ -32,6 +32,8 @@ function linkedProblems(ctx, n) {
 }
 
 function kindPerm(kind, rw) { return `notes:${kind}:${rw}`; }
+// Said instead of a bare "Forbidden" (1.25.2, FL16): which kind of note this role may not write.
+const noWrite = (kind) => (kind === 'clinical' ? 'Your role cannot write clinical notes, so it cannot change, sign or add an addendum to one.' : 'Your role cannot write notes.');
 // The electronic-signature act: the signer's confirmation of the attestation, with their identity proved
 // by the password (or authenticator code) given now or within the last few minutes (auth.verifySigner), or by a
 // fingerprint: a passkey assertion over a challenge bound to exactly this signature (`purpose` and its parameters:
@@ -192,7 +194,7 @@ module.exports = (r) => {
 
   r.put('/api/notes/:id', auth.requireAuth, (ctx) => {
     const n = load(ctx, ctx.params.id);
-    if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
+    if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden(noWrite(n.kind));
     if (n.status !== 'draft') throw badRequest(require('../rules/notes').SIGNED_MESSAGE); // as a device's push is told (rules/notes.js)
     rules.assertEditable('notes', ctx, n); // a draft is its author's, or a manager's
     require('../crud').assertFresh(ctx, n, 'note');
@@ -224,7 +226,7 @@ module.exports = (r) => {
   // note is otherwise immutable, which is why this is its own route rather than part of the draft edit.
   r.post('/api/notes/:id/request-cosign', auth.requireAuth, (ctx) => {
     const n = load(ctx, ctx.params.id);
-    if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
+    if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden(noWrite(n.kind));
     if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'records:manage-others')) throw forbidden('Only the author can ask for a review of their note');
     if (n.cosigned_at) throw badRequest('This note has already been countersigned');
     const { cosign_requested } = validate(ctx.body || {}, { cosign_requested: { type: 'boolean' } });
@@ -256,7 +258,7 @@ module.exports = (r) => {
   // Electronic signature: locks the note and records a content hash
   r.post('/api/notes/:id/sign', auth.requireAuth, async (ctx) => {
     const n = load(ctx, ctx.params.id);
-    if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
+    if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden(noWrite(n.kind));
     if (n.status !== 'draft') throw badRequest('Note is already signed');
     // Only the person who wrote the note may sign it. A supervisor approving a trainee's work countersigns
     // (POST /cosign) — signing on their behalf would erase who actually provided the service.
@@ -341,7 +343,7 @@ module.exports = (r) => {
 
   r.post('/api/notes/:id/addenda', auth.requireAuth, (ctx) => {
     const n = load(ctx, ctx.params.id);
-    if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
+    if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden(noWrite(n.kind));
     const { content, reason } = validate(ctx.body, require('../rules').forTable('note_addenda').shape());
     const id = uuid();
     db.run(`INSERT INTO note_addenda(id,note_id,author_id,content_enc,reason_enc) VALUES(?,?,?,?,?)`, id, n.id, ctx.user.id, encrypt(content), reason ? encrypt(reason) : null);
@@ -352,9 +354,9 @@ module.exports = (r) => {
 
   r.delete('/api/notes/:id', auth.requireAuth, (ctx) => {
     const n = load(ctx, ctx.params.id);
-    if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden();
+    if (!auth.hasPerm(ctx.user, kindPerm(n.kind, 'write'))) throw forbidden(noWrite(n.kind));
     if (n.status !== 'draft') throw badRequest('Signed notes are part of the legal record and cannot be deleted');
-    if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'records:manage-others')) throw forbidden();
+    if (n.author_id !== ctx.user.id && !auth.hasPerm(ctx.user, 'records:manage-others')) throw forbidden('Only the author of a draft note, or a supervisor or administrator, can delete it.');
     db.run(`UPDATE notes SET deleted_at=?, updated_at=? WHERE id=?`, db.now(), db.now(), n.id);
     // The author's last draft on this record gone: a reminder to sign their drafts here has nothing left to ask (review of 1.23.2).
     const reminders = require('../rules/notes').closeSignReminders(n.author_id, n.id, n.client_id, { cause: 'deleted' });

@@ -27,10 +27,24 @@ function npm(args, env = process.env) {
 }
 function out(cmd, args) { return execFileSync(cmd, args, { cwd: ROOT }).toString('utf8').trim(); }
 
-/** What would change: the branch, how many commits behind, and their one-line summaries. Fetches, but never writes. */
+/** The newest release tag (v<major>.<minor>.<patch>) of a list of tag names, or null. */
+function newestRelease(tags) {
+  const { compareVersions } = require('../server/update');
+  return tags.filter((t) => /^v\d+\.\d+\.\d+$/.test(t)).sort((a, b) => compareVersions(a.slice(1), b.slice(1))).pop() || null;
+}
+
+/** What would change: the branch, how many commits behind, and their one-line summaries. Fetches, but never writes.
+ *  A checkout of a release tag (`git clone --branch v<version>`, docs/RELEASE.md) has no branch: it is compared with
+ *  the newest release tag instead, never with the tip of main ({ detached, tag, newest }). Up to 1.25.1 it asked git
+ *  for HEAD..origin/HEAD and crashed (1.25.2, BO14). */
 function checkGit() {
-  run('git', ['fetch', '--quiet']);
   const branch = out('git', ['rev-parse', '--abbrev-ref', 'HEAD']);
+  if (branch === 'HEAD') {
+    run('git', ['fetch', '--quiet', '--tags']);
+    let tag = null; try { tag = out('git', ['describe', '--tags', '--exact-match', 'HEAD']); } catch { /* not on a tag */ }
+    return { detached: true, tag, newest: newestRelease(out('git', ['tag', '--list', 'v*']).split('\n')) };
+  }
+  run('git', ['fetch', '--quiet']);
   const behind = Number(out('git', ['rev-list', '--count', `HEAD..origin/${branch}`]));
   const commits = behind === 0 ? [] : out('git', ['log', '--oneline', `HEAD..origin/${branch}`]).split('\n').filter(Boolean);
   return { branch, behind, commits };
@@ -60,7 +74,17 @@ function main(argv = process.argv.slice(2)) {
     process.exitCode = 1; return;
   }
 
-  const info = checkGit();
+  let info;
+  try { info = checkGit(); }
+  catch (e) { console.error(`Could not ask git what has changed: ${String((e && e.stderr && e.stderr.toString().trim()) || (e && e.message) || e).split('\n')[0]}`); process.exitCode = 1; return; }
+  if (info.detached) {
+    const here = info.tag ? `release tag ${info.tag}` : 'a commit that is not on a branch (detached HEAD)';
+    if (info.tag && info.newest === info.tag) { console.log(`You are on ${here}, the newest release.`); return; }
+    console.log(`You are on ${here}.${info.newest ? ` The newest release is ${info.newest}.` : ''}`);
+    if (info.newest) console.log(`To upgrade, take a backup (npm run backup), then: git checkout ${info.newest} && npm ci && npm run build:local, run the tests, and restart (docs/DEPLOYMENT.md -> Upgrades).`);
+    if (opts.apply) { console.error('--apply follows a branch; a release-tag checkout is upgraded to the next tag as above.'); process.exitCode = 1; }
+    return;
+  }
   if (info.behind === 0) { console.log('Already up to date.'); return; }
   console.log(`${info.behind} commit(s) behind origin/${info.branch}:`);
   for (const c of info.commits) console.log(`  ${c}`);
@@ -98,5 +122,5 @@ function main(argv = process.argv.slice(2)) {
   }
 }
 
-module.exports = { checkGit, parseArgs, isGitCheckout, main };
+module.exports = { checkGit, newestRelease, parseArgs, isGitCheckout, main };
 if (require.main === module) main();

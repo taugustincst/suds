@@ -13,6 +13,7 @@ function open(dbPath = config.dbPath) {
   try {
     db.exec('PRAGMA busy_timeout = 5000');
     db.exec(SECURE_DELETE);
+    if (dbPath !== ':memory:') ensureWal(db);
     initialise(db, readSchemaFile(), dbPath);
     sealSnapshots(dbPath);
   } catch (e) {
@@ -25,6 +26,20 @@ function open(dbPath = config.dbPath) {
   if (dbPath !== ':memory:') for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) { try { fs.chmodSync(f, 0o600); } catch {} }
   openedPath = dbPath;
   return db;
+}
+
+// Every writable open puts the file in WAL mode. schema.sql sets it only when it creates a database, and a
+// copy made with VACUUM INTO (Download encrypted backup, `npm run backup`) is a rollback-journal file: restored,
+// it stayed one, and readSnapshot's second connection then held the main one's writes (audit entries included)
+// for busy_timeout at a time -- 500 "database is locked" under ordinary load (1.25.2, BO1). A PRAGMA at open,
+// not a migration: the journal mode lives in the file header, not the schema.
+let walMode = false;
+function ensureWal(d) {
+  let mode = '';
+  try { mode = String(Object.values(d.prepare('PRAGMA journal_mode = WAL').get() || {})[0] || '').toLowerCase(); } catch (e) { mode = `error: ${e && e.message}`; }
+  walMode = mode === 'wal';
+  if (!walMode) console.warn(`[suds] ${JSON.stringify({ event: 'db.wal_unavailable', journal_mode: mode.slice(0, 120) })}`);
+  return walMode;
 }
 
 // A read-only handle on an existing database, for tools that inspect a live server's database from outside
@@ -1272,7 +1287,8 @@ try { const { AsyncLocalStorage } = require('node:async_hooks'); if (typeof Asyn
 let openedPath = null;
 async function readSnapshot(fn) {
   const file = db && openedPath && openedPath !== ':memory:' ? openedPath : null;
-  if (!snapshotStore || !file || txDepth > 0 || snapshotStore.getStore()) return fn(false);
+  // Without WAL a second reader's SHARED lock would hold the main connection's writes: read on the main one.
+  if (!snapshotStore || !file || !walMode || txDepth > 0 || snapshotStore.getStore()) return fn(false);
   let conn;
   try {
     conn = new DatabaseSync(file, { readOnly: true });

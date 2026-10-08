@@ -73,7 +73,7 @@ module.exports = (r) => {
       admin_username: { type: 'string', required: true, maxLen: 60, pattern: /^[a-zA-Z0-9._@-]+$/ }, admin_display_name: { type: 'string', required: true, maxLen: 120 }, admin_password: { type: 'string', required: true, maxLen: 500 },
       network: { type: 'string', required: true, enum: ['local', 'lan'] }, port: { type: 'number', integer: true, min: 1, max: 65535 }, https: { type: 'boolean' }, extra_hosts: { type: 'string', maxLen: 300 },
       // "Allow staff to keep an offline copy on their devices?" — omitted means No: without an answer local mode stays off
-      // (the wizard itself recommends Yes for a harm-reduction programme and No for a treatment-adjacent one).
+      // (the wizard preselects No for every programme profile: an offline copy is an opt-in for a documented field-work need).
       local_mode: { type: 'boolean' },
       // What kind of programme this is (server/programme.js); omitted means harm reduction & outreach.
       programme_profile: { type: 'string', enum: Object.keys(require('../programme').PROFILES) },
@@ -114,7 +114,7 @@ module.exports = (r) => {
       db.setSetting('caseload_restriction', '1');
       if (v.org_timezone) db.setSetting('org_timezone', v.org_timezone);
       db.setSetting('programme_profile', v.programme_profile || require('../programme').DEFAULT_PROFILE);
-      if (v.participant_code_default === true && (v.programme_profile || require('../programme').DEFAULT_PROFILE) === 'harm_reduction') db.setSetting('participant_code_default', '1');
+      if (v.participant_code_default === 1 && (v.programme_profile || require('../programme').DEFAULT_PROFILE) === 'harm_reduction') db.setSetting('participant_code_default', '1');
       mainFund = require('./budget').createProgrammeFund(v.main_fund_name, { type: v.main_fund_type || 'other', settlement_use: v.main_fund_settlement_use || null, settlement_hiaa: v.main_fund_settlement_hiaa || null });
     });
     const defaults = applyProductionDefaults();
@@ -136,7 +136,7 @@ module.exports = (r) => {
     
     // The offline copy (/?local=1): stored in server.json and honoured from now on, unless LOCAL_MODE_ENABLED
     // in the environment decides it — then the environment keeps winning and the answer is only recorded.
-    const localMode = v.local_mode === true;
+    const localMode = v.local_mode === 1; // validate() turns a boolean into 1/0: `=== true` dropped every Yes (1.25.2, BO2)
     if (!config.localModeFromEnv) config.localModeEnabled = localMode;
     audit.log({ user: { username: v.admin_username }, action: 'setup.complete', ip: ctx.ip, details: { network: v.network, port, tls, local_mode: config.localModeEnabled, programme_profile: require('../programme').profile(), org_timezone: v.org_timezone || undefined, defaults, main_fund: mainFund } });
     // (network switch below persists the final port)

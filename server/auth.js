@@ -327,8 +327,10 @@ function canAccessClient(user, clientId, { deidentified = false } = {}) {
 }
 function assertClientAccess(ctx, clientId, opts) {
   if (!canAccessClient(ctx.user, clientId, opts)) {
-    audit.log({ user: ctx.user, action: 'authz.denied', entity: 'client', entityId: clientId, clientId, ip: ctx.ip, success: false, details: { reason: 'not on caseload' } });
-    throw forbidden('This client is not on your caseload');
+    // A role with no client records at all (finance, read-only) has no caseload to be off (1.25.2, BO24).
+    const noRecords = !hasPerm(ctx.user, 'clients:read');
+    audit.log({ user: ctx.user, action: 'authz.denied', entity: 'client', entityId: clientId, clientId, ip: ctx.ip, success: false, details: { reason: noRecords ? 'role opens no client records' : 'not on caseload' } });
+    throw forbidden(noRecords ? 'Your role cannot open client records or notes.' : 'This client is not on your caseload');
   }
 }
 // SQL fragment restricting a client column to the user's caseload
@@ -901,7 +903,9 @@ function verifyMfa(ctx, code) {
   if (r !== 'ok') {
     const locked = recordPasswordFailure(user);
     audit.log({ user, action: 'auth.mfa.failed', ip: ctx.ip, success: false, details: r === 'replay' ? { reason: 'replay', ...(locked ? { locked: true } : {}) } : locked ? { reason: 'locked after failures' } : undefined });
-    throw unauthorized(r === 'replay' ? 'That code has already been used. Wait for the next code from your authenticator app.' : 'Invalid verification code');
+    // code_refused: the session is fine and the person stays on the code screen with this reason (1.25.2, FL1: the app
+    // took every 401 here for an expired session and sent them back to the password).
+    throw new HttpError(401, r === 'replay' ? 'That code has already been used. Wait for the next code from your authenticator app.' : 'Invalid verification code. Check the code in your authenticator app and try again.', { code_refused: true });
   }
   clearFailures(user.id);
   db.run(`UPDATE sessions SET mfa_pending=0, reauth_at=?, reauth_method='totp' WHERE id=?`, db.now(), ctx.session.id);

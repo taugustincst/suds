@@ -87,6 +87,9 @@ module.exports = (r) => {
   });
 
   r.get('/api/auth/me', (ctx) => {
+    // ?optional=1: "is anyone signed in?" asked by the app as it starts, answered { user: null } rather than a 401
+    // that every load of the sign-in page logged as a console error (1.25.2, FL12). Without it, 401 as before.
+    if (!ctx.user && ctx.query && ctx.query.get('optional') === '1') return { user: null };
     if (!ctx.user) throw unauthorized();
     const u = db.one(`SELECT * FROM users WHERE id=?`, ctx.user.id);
     // default_fund_id: what the visit form pre-fills its funding source with (the worker's, else the programme's).

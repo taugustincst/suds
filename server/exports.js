@@ -168,6 +168,16 @@ const DEID_COLUMNS = {
   overdose_events: ['occurred_at', 'record_id', 'kind', 'naloxone_used', 'naloxone_doses', 'administered_by', 'ems_called', 'hospitalized', 'survived'],
   expenditures: ['spent_at', 'fund', 'line', 'category', 'amount', 'status', 'record_id', 'worker', 'approver'],
 };
+// ---- The programme's own books: spending and staff time ----
+// An expenditure or a time entry with no client is the programme's bookkeeping, not health information about
+// anyone: its exact date, and for spending the vendor and receipt number, are what finance reconciles a month
+// and an invoice by. Up to 1.25.1 every row was cut to the year with vendor and receipt left out, so finance had
+// no usable ledger (1.25.2, BO6). A row linked to a client is about that client (the date they were given a
+// ride or a motel night) and keeps Safe Harbor exactly as before: year only, vendor and receipt left out (they
+// are typed by hand and can name the client), a random record id. The description, free text, is never written
+// to a de-identified file; finance reads it in Funding & spending.
+const LEDGER = { expenditures: ['vendor', 'receipt_ref'], time: [] };
+const LEDGER_LABEL = 'Spending and staff time with no client are the programme\'s own books, not health information: they keep their exact dates, vendor and receipt number. Every row linked to a client is de-identified (HIPAA Safe Harbor): its date reduced to the year, vendor and receipt number left out, and the client code replaced by a random record id drawn for each export. Descriptions are never written.';
 // ---- Documentation choices, in words ----
 // A coded column that comes from a documentation list goes out with the label the programme gave it under
 // Settings → Lists ("Warm handoff", or whatever it was renamed to), and a programme's own choice — which
@@ -267,6 +277,13 @@ function datasets(ctx, { from, to, ts, tsP, identified }) {
     if (identified || d.noClients) { d.rows = () => labelRows(kind, read()); continue; }
     const allowed = DEID_COLUMNS[kind];
     if (!allowed) throw new Error(`No de-identified column list is defined for the ${kind} dataset`);
+    if (LEDGER[kind]) {
+      const books = [...allowed, ...LEDGER[kind]];
+      d.columns = d.columns.map(c => (c === 'client_code' ? 'record_id' : c)).filter(c => books.includes(c));
+      d.rows = () => labelRows(kind, codeRows(kind, read()))
+        .map(r => (r._client_id ? projectRow({ ...deidentifyRow(r), record_id: pseudo(r._client_id) }, allowed) : projectRow({ ...r, record_id: '' }, books)));
+      continue;
+    }
     d.columns = d.columns.map(c => (c === 'client_code' ? 'record_id' : c)).filter(c => allowed.includes(c));
     d.rows = () => labelRows(kind, codeRows(kind, read()))
       .map(r => projectRow({ ...deidentifyRow(r), record_id: pseudo(r._client_id) }, allowed));
@@ -278,4 +295,4 @@ function clientIdsOf(rows) { return [...new Set(rows.map(r => r._client_id).filt
 /** Drop the internal columns before anything is written to a file. */
 function publicRows(rows) { return rows.map(r => { const o = { ...r }; delete o._client_id; return o; }); }
 
-module.exports = { LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, pseudonymizer, zip3, toYear, codeRows, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, DEID_CODED, RESTRICTED_ZIP3, cents };
+module.exports = { LEDGER, LEDGER_LABEL, LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, pseudonymizer, zip3, toYear, codeRows, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, DEID_CODED, RESTRICTED_ZIP3, cents };

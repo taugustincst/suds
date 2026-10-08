@@ -51,7 +51,7 @@ export const NAV = [
   // but not visits (finance, read-only) gets its activity summary alone.
   { name: 'prevention', label: 'Prevention', ico: '☂', perm: ['interventions:read', 'reports:read'], front: 'more', help: 'Group and community prevention events — presentations, trainings, community events, campaigns — with their CSAP strategy, IOM population category, hours and attendance (counts, never names), and the prevention activity summary.' },
   { name: 'forms', label: 'Forms', ico: '🧾', perm: 'forms:read', front: 'more', help: 'County forms (releases, intake sheets, assistance requests). Fill one out from a client record: it is pre-filled from the chart, printable, and holds the signed copy.' },
-  { name: 'time', hideIn: ['part2_layer'], label: 'My time', ico: '◷', perm: 'time:read', front: 'more', help: 'Your hours by activity. A call adds its time, and a visit does when you tick "Also log this as a time entry"; log meetings, travel and paperwork here.' },
+  { name: 'time', hideIn: ['part2_layer'], label: 'My time', labelFor: (c) => (c.can('time:all') ? 'Staff time' : 'My time'), ico: '◷', perm: 'time:read', front: 'more', help: 'Your hours by activity. A call adds its time, and a visit does when you tick "Also log this as a time entry"; log meetings, travel and paperwork here.' },
   { sec: 'Connect clients' },
   { name: 'referrals', team: true, label: 'Referrals', ico: '⇢', perm: 'referrals:read', help: 'Track each referral from "sent" to "admitted" so nothing falls through the cracks.' },
   // Incoming referrals (1.24.0): the intake queue of people referred to the programme. A supervisor's team page; a
@@ -121,6 +121,12 @@ export function placement(n, c) {
  * anything (the main list, and More as one). The order is NAV's, with Supervision straight after Home for a
  * supervisor (app.js sidebar() draws the same).
  */
+// What the menu calls a section for this person (1.25.2, BO20): the "Record work" heading reads "Program activity"
+// for a role that records none of the work under it (finance, read-only). Someone who sees everyone's time
+// (time:all: finance, supervisors, administrators) opens "Staff time", not "My time" (the time entry's labelFor).
+const RECORDS = ['interventions:write', 'calls:write', 'notes:admin:write', 'supplies:write', 'overdose:write', 'time:write', 'forms:write'];
+export function secLabel(sec, c) { return sec === 'Record work' && !RECORDS.some((p) => c.can(p)) ? 'Program activity' : sec; }
+
 export function menuFor(c) {
   const main = [], more = [];
   for (const n of NAV) { const where = n.name ? placement(n, c) : null; if (where === 'main') main.push(n.name); else if (where === 'more') more.push(n.name); }

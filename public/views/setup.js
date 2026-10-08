@@ -6,9 +6,11 @@ const OFFLINE_TRADEOFF = 'The copy is encrypted under each person\'s own passwor
   // What a copy holds (1.16.0 defaults): said here, where the choice is made, as the IT guide says it.
   ' A copy holds every record its user may see: with the default roles, navigators and clinicians see every client, so each device holds the whole program\'s records, clinical notes included. To keep a device to one caseload, deny that person "See every client" (Settings → Users & permissions) before their device first syncs.';
 const OFFLINE = {
-  harm_reduction: { value: 'yes', label: 'Allow staff to keep an offline copy on their devices? Recommended: Yes',
-    options: [{ value: 'yes', label: 'Yes — outreach staff may keep an encrypted offline copy in their browser and sync it later (recommended for field work)' }, { value: 'no', label: 'No — staff use SUDS only while connected to this server' }],
-    help: `Outreach happens where there is no signal: an offline copy lets staff record visits and supplies there and sync when back in range. ${OFFLINE_TRADEOFF}` },
+  // Off unless IT opts in (docs/DEPLOYMENT.md: "Local mode left off unless a field-work need is documented"):
+  // up to 1.25.1 the harm-reduction profile preselected Yes (1.25.2, BO10).
+  harm_reduction: { value: 'no', label: 'Allow staff to keep an offline copy on their devices? Off unless you have a field-work need',
+    options: [{ value: 'no', label: 'No — staff use SUDS only while connected to this server (the default)' }, { value: 'yes', label: 'Yes — outreach staff may keep an encrypted offline copy in their browser and sync it later (for field work without signal)' }],
+    help: `Outreach often happens where there is no signal: an offline copy lets staff record visits and supplies there and sync when back in range. Say Yes for that documented need, on devices with a passcode and remote wipe. ${OFFLINE_TRADEOFF}` },
   treatment: { value: 'no', label: 'Allow staff to keep an offline copy on their devices? Recommended: No',
     options: [{ value: 'no', label: 'No — staff use SUDS while connected to this server (recommended)' }, { value: 'yes', label: 'Yes — navigators may keep an encrypted offline copy in their browser and sync it later' }],
     help: `Only say Yes for a documented field-work need, on county-managed devices with a passcode and remote wipe. ${OFFLINE_TRADEOFF}` },

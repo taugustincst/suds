@@ -106,3 +106,17 @@ test('placementFor: a profile, phone or clinician key wins over the default, and
   assert.equal(M.placementFor({ phone: 'more', clinician: 'more' }, { phone: true, clinician: false }), 'more');
   assert.equal(M.placementFor({ phone: 'more', clinician: 'more' }, { phone: false, clinician: false }), 'main');
 });
+
+test('1.25.2, BO20: "Staff time" for whoever sees everyone\'s time; no "Record work" heading for a role that records nothing', () => {
+  const time = M.NAV.find((n) => n.name === 'time');
+  for (const role of Object.keys(PERMS)) {
+    const can = canFor(role);
+    assert.equal(M.navLabel(time, { can }), can('time:all') ? 'Staff time' : 'My time', role);
+    const records = ['interventions:write', 'calls:write', 'notes:admin:write', 'time:write'].some((p) => can(p));
+    assert.equal(M.secLabel('Record work', { can }), records ? 'Record work' : 'Program activity', role);
+  }
+  assert.equal(M.secLabel('Record work', { can: canFor('finance') }), 'Program activity');
+  assert.equal(M.secLabel('Record work', { can: canFor('readonly') }), 'Program activity');
+  assert.equal(M.secLabel('Record work', { can: canFor('navigator') }), 'Record work');
+  assert.equal(M.secLabel('My day', { can: canFor('finance') }), 'My day', 'other headings are unchanged');
+});

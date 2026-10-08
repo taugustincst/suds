@@ -149,7 +149,12 @@ function decide(ctx, approve) {
 
 function routes(r) {
   r.get('/api/me/field-device', auth.requireAuth, (ctx) => status(ctx.user));
-  r.post('/api/me/field-device/request', auth.requireAuth, (ctx) => request(ctx));
+  // Only a role that can sync client records to a device (sync's own test: clients:read) has a device to set up for the
+  // field: finance and read-only filed requests no administrator could usefully approve (1.25.2, BO16).
+  r.post('/api/me/field-device/request', auth.requireAuth, (ctx) => {
+    if (!auth.hasPerm(ctx.user, 'clients:read')) throw new HttpError(403, 'Your role does not keep client records on a device, so there is no field device to set up.');
+    return request(ctx);
+  });
   r.get('/api/admin/field-requests', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => ({ requests: pending(ctx.user) }));
   r.post('/api/admin/field-requests/:userId/approve', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => decide(ctx, true));
   r.post('/api/admin/field-requests/:userId/decline', auth.requireAuth, auth.requirePerm('users:manage'), (ctx) => decide(ctx, false));

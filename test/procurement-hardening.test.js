@@ -115,7 +115,10 @@ test('the hardening checklist is for administrators only and ticks itself off fr
   assert.match(item(s, 'backups').action.href, /field=backup_offsite_dir/);
   for (const id of ['session_idle', 'sign_strong', 'dr_drill']) assert.equal(item(s, id).done, true, `${id} done`);
   H.db.run(`UPDATE users SET mfa_enabled=1 WHERE role IN ('admin','supervisor')`);
-  assert.equal((await admin.put('/api/admin/settings', { backup_offsite_dir: '/mnt/offsite' })).status, 200);
+  // An existing folder SUDS can write to (checked as it is saved, from 1.25.2: BO11).
+  const offsite = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'suds-hardening-offsite-'));
+  after(() => fs.rmSync(offsite, { recursive: true, force: true }));
+  assert.equal((await admin.put('/api/admin/settings', { backup_offsite_dir: offsite })).status, 200);
   s = await get();
   assert.equal(item(s, 'mfa_privileged').done, true);
   assert.equal(item(s, 'backups').done, true);

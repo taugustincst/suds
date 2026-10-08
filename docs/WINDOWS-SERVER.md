@@ -24,11 +24,13 @@ it. Every CI run also builds one, as the run's artifact `suds-windows-x64`.
 | `README-WINDOWS.txt` | A one-page quick start. |
 | `THIRD-PARTY-NOTICES.txt` | The licences of Node.js (with the libraries built into it) and WinSW. |
 
-Check the download before you unzip it:
+Check the download before you unzip it, in the folder that holds the zip and its `.sha256` file (only the one
+release there):
 
 ```powershell
-(Get-FileHash .\suds-1.24.0-windows-x64.zip -Algorithm SHA256).Hash.ToLower()
-Get-Content .\suds-1.24.0-windows-x64.zip.sha256
+$zip = Get-Item .\suds-*-windows-x64.zip
+(Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+Get-Content "$($zip.FullName).sha256"
 ```
 
 The two hashes must be the same. Release builds are signed with Authenticode when the project has a
@@ -212,8 +214,9 @@ Backups are encrypted with a key derived from `SUDS_ENCRYPTION_KEY`. Keep `keys.
 * To install a release: download `suds-<version>-windows-x64.zip` **and** its `.sha256` file into one folder, then
   in an elevated terminal:
   ```powershell
-  .\suds update --from C:\Users\me\Downloads\suds-1.25.0-windows-x64.zip
+  .\suds update --from C:\Users\me\Downloads\suds-VERSION-windows-x64.zip
   ```
+  with `VERSION` replaced by the version in the file name you downloaded.
   It checks the zip against the `.sha256` and takes a backup. Then it stops the service, replaces `app\` (the old
   one is kept as `app.previous`) and `suds.exe` (the old one becomes `suds.exe.old`), and starts the service
   again. An older release is refused, because a migrated database may not open in it.

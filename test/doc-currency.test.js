@@ -47,7 +47,11 @@ function newestSbom(files) {
   const v = files.map(f => (f.match(/^sbom-(\d+\.\d+\.\d+)\.cdx\.json$/) || [])[1]).filter(Boolean).sort(cmp);
   return v.length ? v[v.length - 1] : null;
 }
-/** Problems with the three against the target version: [] when each is on its minor line and not above it. */
+// From 1.25.2 every release, patches included, has an SBOM of its own (evaluation of 1.25.1, F6: county supply-chain
+// reviewers expect one per shipped artifact, and 1.25.1 shipped with 1.25.0's). Before it a patch kept its minor's.
+const SBOM_EVERY_RELEASE_FROM = '1.25.2';
+/** Problems with the three against the target version: [] when each is on its minor line and not above it, and (from
+ *  SBOM_EVERY_RELEASE_FROM) the newest SBOM is the target version's own. */
 function problems({ version, questionnaire, evidence, sbom }) {
   const out = [];
   const check = (what, v) => {
@@ -57,6 +61,7 @@ function problems({ version, questionnaire, evidence, sbom }) {
   check('docs/security/QUESTIONNAIRE.md "Checked against"', questionnaire);
   check('docs/evidence/README.md "Version."', evidence);
   check('the newest docs/evidence/sbom-*.cdx.json', sbom);
+  if (sbom && cmp(version, SBOM_EVERY_RELEASE_FROM) >= 0 && sbom !== version) out.push(`the newest docs/evidence/sbom-*.cdx.json names ${sbom}, not ${version}: from ${SBOM_EVERY_RELEASE_FROM} every release, patches included, has its own SBOM (docs/RELEASE.md, stamp checklist)`);
   return out;
 }
 
@@ -108,4 +113,10 @@ test('the rule finds what it is for', () => {
   assert.equal(problems({ version: '1.20.0', questionnaire: '1.19.0', evidence: '1.20.0', sbom: '1.20.0' }).length, 1);
   assert.equal(problems({ version: '1.19.0', questionnaire: '1.19.1', evidence: '1.19.0', sbom: '1.19.0' }).length, 1);
   assert.equal(problems({ version: '1.19.0', questionnaire: null, evidence: '1.19.0', sbom: '1.19.0' }).length, 1);
+  // From 1.25.2 a patch has its own SBOM: keeping its minor's is refused (F6); 1.25.1 kept 1.25.0's under the old rule.
+  assert.deepEqual(problems({ version: '1.25.1', questionnaire: '1.25.1', evidence: '1.25.1', sbom: '1.25.0' }), []);
+  const kept = problems({ version: '1.25.2', questionnaire: '1.25.2', evidence: '1.25.2', sbom: '1.25.0' });
+  assert.equal(kept.length, 1); assert.match(kept[0], /names 1\.25\.0, not 1\.25\.2: from 1\.25\.2 every release, patches included/);
+  assert.deepEqual(problems({ version: '1.25.2', questionnaire: '1.25.2', evidence: '1.25.2', sbom: '1.25.2' }), []);
+  assert.equal(problems({ version: '1.26.3', questionnaire: '1.26.3', evidence: '1.26.3', sbom: '1.26.0' }).length, 1);
 });

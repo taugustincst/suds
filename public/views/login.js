@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, startPage, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink, roleOptions, roleSummary } from '../app.js';
+import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, startPage, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink, roleOptions, roleSummary, NOT_SAVED } from '../app.js';
 import { restoreBackupButton, requestPersistentStorage, showRecoveryCode, resetRecoveryPrompt } from './local.js';
 import { passkeysPossible, platformAvailable, conditionalAvailable, getPasskey, signInWithPasskey, passkeyErrorMessage, withFingerprint, fingerprintIcon } from '../passkey.js';
 
@@ -359,7 +359,13 @@ route('mfa', async () => {
   const withPasskey = hasPasskey && passkeysPossible() && await platformAvailable();
   const done = async () => { state.mfaPending = false; await loadSession(); await loadRefData(); navAndRender(startPage()); };
   const f = withCode ? form([{ name: 'code', label: 'Authenticator code', required: true, placeholder: '123456', autocomplete: 'one-time-code', pattern: '[0-9]{6}' }], { submitText: 'Verify', onSubmit: async (d) => {
-    await post('/api/auth/mfa/verify', d);
+    // A wrong or reused code is a 401 with its reason (code_refused): shown here, on the code screen. Only a sign-in
+    // that has really ended goes back to the password (1.25.2, FL1).
+    try { await post('/api/auth/mfa/verify', d, { quiet: true }); }
+    catch (e) {
+      if (e.status === 401 && !(e.data && e.data.code_refused)) { state.mfaPending = false; state.user = null; toast('Your sign-in has ended. Please sign in again.', 'error'); nav('login'); return NOT_SAVED; }
+      throw e;
+    }
     await done();
   } }) : null;
   let fpBox = null;

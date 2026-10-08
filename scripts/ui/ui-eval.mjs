@@ -322,7 +322,7 @@ try {
     eq(sb.main.slice(0, 2).join(', '), 'Home, Supervision', 'a supervisor\'s sidebar starts with Home and Supervision');
     ok(sb.main.length <= 11, `with ${sb.main.length} pages in the main list, not 23`, sb.main);
     for (const want of ['Clients', 'Waitlist', 'To-dos', 'Visits', 'Notes', 'Referrals', 'Supervision tools']) ok(sb.main.includes(want), `the main list has ${want}`, sb.main);
-    for (const want of ['Reports', 'Funder report', 'Funding & spending', 'Policies & contracts', 'Resource directory', 'Supplies', 'My time', 'Privacy & Part 2', 'Import']) ok(sb.more.includes(want), `${want} is under More`, sb.more);
+    for (const want of ['Reports', 'Funder report', 'Funding & spending', 'Policies & contracts', 'Resource directory', 'Supplies', 'Staff time', 'Privacy & Part 2', 'Import']) ok(sb.more.includes(want), `${want} is under More`, sb.more);
     ok(sb.main.length + sb.more.length >= 21, 'nothing is gone: the main list and More together hold every page', sb);
     const adminSb = await (async () => { const a = await session('admin', 'AdminPassw0rd!x'); const x = await sidebar(a.page); await a.ctx.close(); return x; })();
     eq(adminSb.more.length, 0, 'an administrator\'s sidebar is unchanged (no More)');

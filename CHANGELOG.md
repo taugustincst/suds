@@ -69,6 +69,100 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **Phone and wording (FL6, FL9, FL11, FL14).** The phone's top bar keeps its height on short pages; the offline
   message says the entry is only on this screen; closing a dialog opened from "Add…" puts focus back on "Add…"; a
   secondary substance stored as a code reads as its label.
+* **BO1 (Critical):** a database restored from "Download encrypted backup" or `npm run backup` (a `VACUUM INTO` copy)
+  stayed in rollback-journal mode, so a read snapshot held the main connection's writes and the server answered
+  500 "database is locked" and lost audit entries under load. Every writable open now sets WAL (a PRAGMA, not a
+  migration), which also repairs a database restored by an earlier version at its next start; a read snapshot is
+  not taken on a database that could not be put in WAL mode. `test/backup-wal.test.js`.
+* **BO2 (High):** the setup wizard stored every "Yes" to the offline copy and to participant codes as No
+  (`validate()` turns a boolean into 1; the route compared with `true`). `test/setup-answers.test.js` and
+  `scripts/ui/setup-same-origin.mjs` now finish the wizard with Yes.
+* **BO10:** the wizard no longer preselects Yes for the offline copy on a harm-reduction programme: No is the
+  default for every profile, as docs/DEPLOYMENT.md's checklist says ("left off unless a field-work need is
+  documented"); the question says when to answer Yes.
+* **BO3 (High):** an administrator could grant themselves (or another administrator) `notes:clinical:read` or
+  `notes:clinical:write` and read clinical notes without break-glass. Neither is grantable to the administrator
+  role any more, and a grant row left from before is ignored at request time and shown as having no effect
+  (narrowing only; break-glass is unchanged). `test/admin-self-permissions.test.js`.
+* **BO6 (High):** finance's "Export to Excel" of spending and of staff time had every date cut to the year and
+  no vendor or receipt number, so it could not be reconciled. Spending and time **with no client** are the
+  programme's own books, not health information: they now keep their exact date, vendor and receipt number.
+  Every row linked to a client is de-identified exactly as before (year only, vendor and receipt left out, a
+  random record id), and no description is written to a de-identified file. The file's classification says so.
+  `test/finance-ledger.test.js`; docs/HIPAA.md.
+* **BO7:** the client list a de-identified role (finance, read-only) gets carried full intake, referral and
+  engagement dates, the last-contact time, city, substance, MAT status, risk and the assigned staff. It now carries
+  the client code and status only, which is all its client picker and search show. `test/security-1154.test.js`.
+* **BO8:** deleting a budget line silently detached its approved spending (and deleted its sub-allocations), and
+  deleting a line that was not there answered 200. A line with approved or reimbursed spending on it or under it is
+  now refused with 409 and the amount ("move it to another line first"), by the REST route and for a device's
+  tombstone alike (`server/rules/budget_lines.js`); a missing line is 404; the confirmation says what happens.
+* **BO9:** an office server's public Security & procurement page showed AugustInnovations LLC as the legal entity
+  that signs a BAA or QSOA, and the vendor's pricing and SLA, as if they were the programme's own. The page now
+  keeps the two parties apart: *This program* (office servers only) carries what the programme's administrator
+  published, "Not yet published by this program" when blank; *The software vendor* carries AugustInnovations LLC's
+  published licence terms, pricing and support from `procurement.json`, which are accurate on any copy as the
+  vendor's. SUDS on this device shows only the vendor's part, unchanged.
+* **BO11:** Settings saved an offsite backup folder that was relative, missing or a file, and backup intervals of
+  0.5 or 100000 hours; each failed only at the next backup. The folder must now be an absolute, existing directory
+  SUDS can write to (the rule a provisioning file already met), and the interval 0 (off) or 1 to 168 whole hours.
+* **BO12:** the SCIM default role could be set to administrator, and the SSO emergency accounts could name users
+  who do not exist. The default role is never administrator, and each emergency account must be an active
+  administrator whenever the list is saved, not only when SSO is turned on. `test/admin-settings-checks.test.js`.
+* **BO13:** approving your own expenditure was refused with 400 while every other separation-of-duties refusal is
+  403; it is 403 now. The spending list offered Approve on an item the approver had changed (then refused it); each
+  pending row now says whether you changed it (`you_changed`), and such a row shows "Waiting for someone else to
+  review" instead.
+* **BO21:** the dialogs that reject spending or return or reopen time said the reason is "recorded in audit log";
+  it is stored encrypted with the entry and shown to the person who submitted it, and the label now says so.
+* **BO14:** `node scripts/update.js --check` crashed with a git error and a stack trace on a release-tag checkout
+  (detached HEAD, as `git clone --branch v<version>` leaves it). It now names the tag and the newest release tag
+  and says how to move to it; `--apply` refuses to follow a branch from a tag; a git failure is one line.
+* **BO15:** System & backups → About this server said "Keys: Environment variables" on a server using development
+  key files, and "Audit logs are kept 7 years by default. Client records are soft-deleted only." whatever the
+  settings; it now states the key source and the audit and client retention in force (and the retention purge).
+* **BO17:** a Home alert that leads to a page the role cannot open (finance's and a county user's "clients not
+  contacted in 30 days" → "Not available for your role") is plain text, not a link.
+* **BO20:** for a role that records no work (finance, read-only) the menu heading "Record work" reads "Program
+  activity"; for whoever sees everyone's time the menu item "My time" reads "Staff time", as the page does; the
+  stat cards on System & backups no longer stretch to the height of the backups column.
+* **BO16:** finance and read-only could file field-device requests, which reached every administrator although those
+  roles cannot sync client records. `POST /api/me/field-device/request` now needs `clients:read`, the test sync
+  itself applies (narrowing only). `test/outreach-queue.test.js`.
+* **BO24:** read-only and finance were told "This client is not on your caseload" when a note or record was refused;
+  they have no caseload. They are now told "Your role cannot open client records or notes."
+  `test/deidentified-roles.test.js`.
+* **BO25:** an identified export under each client's consent where no client's consent named the recipient still
+  downloaded an "identified" file with nobody in it and said "Exported". It is now refused (409, "Nothing to
+  export: …", the clients left out listed by code); no file is made and nothing is disclosed. `test/part2.test.js`.
+* **BO19:** the funder report's per-fund staff hours (one decimal each) did not add up to the total shown (76.3 + 3.3
+  beside 79.5). Staff time is shown in exact hours and minutes, as Funding & spending does.
+* **BO22:** codes in place of words: the over-allocation message named an unlabelled line "client_assistance", and the
+  funder workbook's "Who was served" sheet wrote "male" and "unknown". Both now use the words the screen uses. The
+  column headings of the table exports ("Spent At", "Record Id") and their 0/1 flags are unchanged in this patch: a
+  county's spreadsheet or import may read them by name (proposed for 1.26 with a note in the release).
+* **BO23:** docs/WINDOWS-SERVER.md's checksum example still named the 1.24.0 zip, and its update example 1.25.0; both
+  are now version-free. (The executables themselves stay unsigned until the project has a code-signing
+  certificate, as the page says: an owner item.)
+* **F5:** README, the security questionnaire, the evidence index, docs/RELEASE.md and the evaluation response said the
+  published site has provider pictures for "40 of the 81" — 1.25.0's build; 1.25.1's bundled 61. They now point to
+  the `summary` in the published `region-pictures/<region>/manifest.json`, which changes with every build (1.25.0's
+  record keeps its number, as that build's).
+* **F6:** from 1.25.2 every release, patches included, has an SBOM of its own, made by the stamp as a minor's is
+  (two commits: the stamp, then "SBOM of the X.Y.Z stamp"). docs/RELEASE.md's checklists say so and
+  `test/doc-currency.test.js` fails a stamped release from 1.25.2 whose newest SBOM is not its own.
+* **FL1 (Medium):** a wrong or reused 2-step code at sign-in sent the person back to the password with "Session
+  expired". The code screen now keeps them there with the reason ("Invalid verification code…", "That code has
+  already been used…"); the server marks such a refusal `code_refused`, and only a sign-in that has really ended
+  goes back to the password. `test/mfa-enrol-hardening.test.js`, `scripts/ui/r9.mjs`.
+* **FL12:** the sign-in page logged a 401 for `/api/auth/me` on every load, and the 2-step step asked for
+  preferences, staff, funds and lists it was refused. The app asks `GET /api/auth/me?optional=1` (answered
+  `{ user: null }` when nobody is signed in) and loads nothing else until the second step is done.
+* **FL16:** a bare "Forbidden" for deleting another worker's draft note and for changing, signing or adding to a
+  note of a kind the role cannot write now says why; County connections shows the standard "Not available for
+  your role" page.
+* **FL5:** the client search said a misspelled name is found; only a last name is (first names have no sound-alike
+  index, and adding one is a schema change, proposed for 1.26). The search box now says so.
 
 ## 1.25.1 — 2026-10-08
 

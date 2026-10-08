@@ -561,9 +561,13 @@ function sheets(d, ctx, fundName) {
     ['Funding attribution', 'Services with no funding source', d.attribution.unattributed_services], ['Funding attribution', 'Approved staff hours', hours(d.attribution.approved_minutes)], ['Funding attribution', 'Staff hours logged, not yet approved', hours(d.attribution.unapproved_minutes)],
   ].map(([section, measure, value]) => ({ section, measure, value }));
   const who = [];
-  for (const [key, label] of [['by_race_code', 'Race'], ['by_ethnicity', 'Ethnicity'], ['by_gender', 'Gender'], ['by_language', 'Language'], ['by_housing', 'Housing'], ['by_insurance', 'Insurance']]) for (const x of d.demographics[key]) who.push({ section: label, measure: x.k, value: x.n });
-  for (const x of d.episodes.by_discharge_reason) who.push({ section: 'Discharge reason', measure: x.k, value: x.n });
-  for (const x of d.overdose.by_administered_by) who.push({ section: 'Naloxone given by', measure: x.k, value: x.n });
+  // Codes in words, as the screen shows them ("Male", "Unknown", the list's own wording), not "male" (1.25.2, BO22).
+  // Race and ethnicity codes and language names are written as recorded.
+  const O = require('./options');
+  const words = (list) => (k) => (typeof k === 'string' && /^[a-z][a-z0-9]*(_[a-z0-9]+)*$/.test(k) ? (list ? O.labelOf(list, k) : O.humanize(k)) : k);
+  for (const [key, label, say] of [['by_race_code', 'Race'], ['by_ethnicity', 'Ethnicity'], ['by_gender', 'Gender', words()], ['by_language', 'Language'], ['by_housing', 'Housing', words()], ['by_insurance', 'Insurance', words()]]) for (const x of d.demographics[key]) who.push({ section: label, measure: say ? say(x.k) : x.k, value: x.n });
+  for (const x of d.episodes.by_discharge_reason) who.push({ section: 'Discharge reason', measure: words('DISCHARGE_REASONS')(x.k), value: x.n });
+  for (const x of d.overdose.by_administered_by) who.push({ section: 'Naloxone given by', measure: words('ADMINISTERED_BY')(x.k), value: x.n });
   const funds = d.by_funding_source.map(f => ({ fund: f.name, grant_number: f.grant_number || '', fiscal_year: [f.fiscal_year_start, f.fiscal_year_end].filter(Boolean).join(' to '), people: f.clients_served, services: f.services, approved_hours: hours(f.approved_minutes), unapproved_hours: hours(f.unapproved_minutes) }));
   const long = [{ key: 'section', label: 'Section' }, { key: 'measure', label: 'Measure' }, { key: 'value', label: 'Value' }];
   return {

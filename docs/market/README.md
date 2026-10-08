@@ -37,7 +37,9 @@ the legal entity (AugustInnovations LLC), the introductory pricing tiers and the
 1.24.4; the page also carries them as static text, so they read the same without JavaScript). Contact name, email
 and web page read *Not yet published by the maintainer* until the owner fills them: the three empty keys of
 `public/procurement.json` for the published SUDS on this device, and Settings › Program › Security & procurement
-page (the `procurement_*` settings) on an office server. **Owner item:** fill them; SUDS invents none of them.
+page (the `procurement_*` settings) on an office server, where from 1.25.2 they appear under *This program*, apart
+from the vendor's terms (*Not yet published by this program* when blank). **Owner item:** fill the vendor's three; SUDS
+invents none of them.
 
 ## Index
 
