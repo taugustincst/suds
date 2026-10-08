@@ -113,7 +113,7 @@ function* monthlyFigures(user, s) {
     yield;
   }
   const ahead = `${nextMonth(bounds[bounds.length - 1])}-01`;
-  visits.push(...db.all(`SELECT substr(occurred_at,1,7) month, ${cols} FROM interventions WHERE (length(occurred_at)=10 AND occurred_at >= ?) OR (length(occurred_at)>10 AND occurred_at >= ?) GROUP BY month ORDER BY month`, ahead, LD.localMidnight(ahead)));
+  visits.push(...db.all(`SELECT substr(occurred_at,1,7) month, ${cols} FROM interventions WHERE ${since('occurred_at', ahead)[0]} GROUP BY month ORDER BY month`, ...since('occurred_at', ahead).slice(1)));
   out.interventions = visits.map(({ month, n, minutes, clients }) => ({ month, n, minutes, clients }));
   out.naloxone = visits.map(({ month, kits, strips }) => ({ month, kits, strips }));
   out.unduplicated_clients = visits.filter(x => x.clients > 0).map(({ month, clients }) => ({ month, clients }));
