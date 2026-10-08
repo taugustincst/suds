@@ -178,6 +178,9 @@ module.exports = (r) => {
     // learned the children were gone (so they'd keep showing them, permanently diverged, until a push on one
     // of those phantom rows hit the FK and got rejected with no way to reconcile short of a full resync), and
     // an arbitrarily large sub-tree could be destroyed under a single audit-log entry.
+    if (!db.one(`SELECT 1 FROM budget_lines WHERE id=?`, ctx.params.id)) throw notFound('Budget line not found');
+    const no = require('../rules/budget_lines').deleteProblem(ctx.params.id);
+    if (no) { audit.log({ user: ctx.user, action: 'budget_line.delete', entity: 'budget_line', entityId: ctx.params.id, ip: ctx.ip, success: false, details: { reason: 'approved spending' } }); throw new HttpError(409, no); }
     const ids = db.all(`WITH RECURSIVE sub(id) AS (SELECT id FROM budget_lines WHERE id=? UNION ALL SELECT b.id FROM budget_lines b JOIN sub ON b.parent_id=sub.id) SELECT id FROM sub`, ctx.params.id).map(row => row.id);
     db.run(`DELETE FROM budget_lines WHERE id=?`, ctx.params.id); // cascades to the rest of `ids`
     for (const id of ids) {

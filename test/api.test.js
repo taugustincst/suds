@@ -444,7 +444,10 @@ test('budget: nested allocations roll up, and cannot be re-parented into a cycle
   const otherLine = await admin.post(`/api/budget/funds/${other.data.id}/lines`, { category: 'other', allocated_amount: 500 });
   const crossFund = await admin.put(`/api/budget/lines/${item1.data.id}`, { parent_id: otherLine.data.id });
   assert.equal(crossFund.status, 400);
-  // Deleting the parent cascades to its sub-allocations (ON DELETE CASCADE).
+  // Approved spending under it holds the line (1.25.2, BO8); once that spending is on no line of the subtree,
+  // deleting the parent cascades to its sub-allocations (ON DELETE CASCADE).
+  assert.equal((await admin.del(`/api/budget/lines/${program.data.id}`)).status, 409, 'approved spending under it holds the line');
+  H.db.run(`UPDATE expenditures SET budget_line_id=NULL WHERE id=?`, e.data.id);
   assert.equal((await admin.del(`/api/budget/lines/${program.data.id}`)).status, 200);
   assert.equal(H.db.one(`SELECT COUNT(*) n FROM budget_lines WHERE id IN (?,?)`, item1.data.id, item2.data.id).n, 0);
 });
@@ -563,6 +566,30 @@ test('deleting a budget line with sub-allocations tombstones and audit-logs ever
     assert.equal(H.db.one(`SELECT COUNT(*) n FROM tombstones WHERE table_name='budget_lines' AND id=?`, id).n, 1, 'each descendant got its own tombstone, not just the named line');
     assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='budget_line.delete' AND entity_id=?`, id).n, 1, 'each descendant got its own audit entry');
   }
+});
+
+test('a budget line with approved spending is not deleted (409); a missing line is 404; pending spending keeps its fund (1.25.2, BO8)', async () => {
+  const f = await admin.post('/api/budget/funds', { name: 'Line delete guard', source_type: 'other', fiscal_year_start: '2026-01-01', fiscal_year_end: '2026-12-31', total_amount: 5000 });
+  const parent = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'client_assistance', allocated_amount: 1000 });
+  const child = await admin.post(`/api/budget/funds/${f.data.id}/lines`, { category: 'client_assistance', allocated_amount: 400, parent_id: parent.data.id });
+  const spent = await admin.post('/api/budget/expenditures', { funding_source_id: f.data.id, budget_line_id: child.data.id, spent_at: '2026-03-02', amount: 101.86, category: 'client_assistance' });
+  assert.equal(spent.status, 201, JSON.stringify(spent.data));
+  H.db.run(`UPDATE expenditures SET status='approved' WHERE id=?`, spent.data.id);
+  for (const id of [parent.data.id, child.data.id]) {
+    const r = await admin.del(`/api/budget/lines/${id}`);
+    assert.equal(r.status, 409, JSON.stringify(r.data));
+    assert.match(r.data.error, /1 approved expenditure \(101\.86\).*Move it to another line first/);
+  }
+  assert.equal(H.db.one(`SELECT budget_line_id FROM expenditures WHERE id=?`, spent.data.id).budget_line_id, child.data.id, 'the spending keeps its line');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM budget_lines WHERE id IN (?,?)`, parent.data.id, child.data.id).n, 2);
+  // The same rule refuses a device's tombstone for the line (server/rules/budget_lines.js beforeDelete).
+  assert.throws(() => require('../server/rules/budget_lines').beforeDelete({ id: parent.data.id }), /approved expenditure/);
+  // Pending spending does not hold a line: it keeps its fund and loses the line.
+  H.db.run(`UPDATE expenditures SET status='pending' WHERE id=?`, spent.data.id);
+  assert.equal((await admin.del(`/api/budget/lines/${parent.data.id}`)).status, 200);
+  assert.deepEqual({ ...H.db.one(`SELECT budget_line_id, funding_source_id FROM expenditures WHERE id=?`, spent.data.id) }, { budget_line_id: null, funding_source_id: f.data.id });
+  assert.equal((await admin.del(`/api/budget/lines/${parent.data.id}`)).status, 404, 'a line that is not there is 404, not 200');
+  assert.equal((await admin.del('/api/budget/lines/no-such-line')).status, 404);
 });
 
 test('a brand-new account can get as far as the change-password page', async () => {

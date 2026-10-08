@@ -30,6 +30,10 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **BO7:** the client list a de-identified role (finance, read-only) gets carried full intake, referral and
   engagement dates, the last-contact time, city, substance, MAT status, risk and the assigned staff. It now carries
   the client code and status only, which is all its client picker and search show. `test/security-1154.test.js`.
+* **BO8:** deleting a budget line silently detached its approved spending (and deleted its sub-allocations), and
+  deleting a line that was not there answered 200. A line with approved or reimbursed spending on it or under it is
+  now refused with 409 and the amount ("move it to another line first"), by the REST route and for a device's
+  tombstone alike (`server/rules/budget_lines.js`); a missing line is 404; the confirmation says what happens.
 
 ## 1.25.1 — 2026-10-08
 

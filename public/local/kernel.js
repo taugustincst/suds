@@ -13630,8 +13630,19 @@ var require_budget_lines = __commonJS({
     var C = require_constants();
     var { define: define2, refuse } = require_core();
     var money = (n) => Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    function deleteProblem(id) {
+      const n = db3.one(`WITH RECURSIVE sub(id) AS (SELECT id FROM budget_lines WHERE id=? UNION ALL SELECT b.id FROM budget_lines b JOIN sub ON b.parent_id=sub.id)
+    SELECT COUNT(*) n, COALESCE(SUM(amount),0) total FROM expenditures WHERE budget_line_id IN (SELECT id FROM sub) AND status IN ('approved','reimbursed')`, id);
+      if (!n.n) return null;
+      return `This line has ${n.n} approved expenditure${n.n === 1 ? "" : "s"} (${money(n.total)}) on it or its sub-allocations. Move ${n.n === 1 ? "it" : "them"} to another line first, so the record of which line paid for what is kept.`;
+    }
     module.exports = define2({
       table: "budget_lines",
+      deleteProblem,
+      beforeDelete(existing) {
+        const no = deleteProblem(existing.id);
+        if (no) throw new Error(no);
+      },
       fields: { category: { type: "string", required: true, enum: C.BUDGET_CATEGORIES }, label: { type: "string", maxLen: 200 }, allocated_amount: { type: "number", required: true, min: 0 }, notes: { type: "string", maxLen: 1e3 }, parent_id: { type: "string" } },
       check(row, c) {
         const B2 = require_budget();
@@ -20203,6 +20214,12 @@ var require_budget = __commonJS({
         return { ok: true, updated_at: stamp2 };
       });
       r.delete("/api/budget/lines/:id", auth3.requireAuth, auth3.requirePerm("budget:manage"), (ctx) => {
+        if (!db3.one(`SELECT 1 FROM budget_lines WHERE id=?`, ctx.params.id)) throw notFound("Budget line not found");
+        const no = require_budget_lines().deleteProblem(ctx.params.id);
+        if (no) {
+          audit3.log({ user: ctx.user, action: "budget_line.delete", entity: "budget_line", entityId: ctx.params.id, ip: ctx.ip, success: false, details: { reason: "approved spending" } });
+          throw new HttpError3(409, no);
+        }
         const ids = db3.all(`WITH RECURSIVE sub(id) AS (SELECT id FROM budget_lines WHERE id=? UNION ALL SELECT b.id FROM budget_lines b JOIN sub ON b.parent_id=sub.id) SELECT id FROM sub`, ctx.params.id).map((row) => row.id);
         db3.run(`DELETE FROM budget_lines WHERE id=?`, ctx.params.id);
         for (const id of ids) {

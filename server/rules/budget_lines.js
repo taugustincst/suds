@@ -8,8 +8,22 @@ const { define, refuse } = require('./core');
 
 const money = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Deleting a line (and, by ON DELETE CASCADE, its sub-allocations) set its spending's budget_line_id to NULL: the
+// record of which line paid for approved money was lost without a word (1.25.2, BO8). A line, or any line under
+// it, with approved or reimbursed spending is not deleted; that spending is moved to another line first. Pending
+// or rejected spending keeps its fund and loses the line, as the confirmation says. The REST route and a pushed
+// tombstone (beforeDelete) both ask this.
+function deleteProblem(id) {
+  const n = db.one(`WITH RECURSIVE sub(id) AS (SELECT id FROM budget_lines WHERE id=? UNION ALL SELECT b.id FROM budget_lines b JOIN sub ON b.parent_id=sub.id)
+    SELECT COUNT(*) n, COALESCE(SUM(amount),0) total FROM expenditures WHERE budget_line_id IN (SELECT id FROM sub) AND status IN ('approved','reimbursed')`, id);
+  if (!n.n) return null;
+  return `This line has ${n.n} approved expenditure${n.n === 1 ? '' : 's'} (${money(n.total)}) on it or its sub-allocations. Move ${n.n === 1 ? 'it' : 'them'} to another line first, so the record of which line paid for what is kept.`;
+}
+
 module.exports = define({
   table: 'budget_lines',
+  deleteProblem,
+  beforeDelete(existing) { const no = deleteProblem(existing.id); if (no) throw new Error(no); },
   fields: { category: { type: 'string', required: true, enum: C.BUDGET_CATEGORIES }, label: { type: 'string', maxLen: 200 }, allocated_amount: { type: 'number', required: true, min: 0 }, notes: { type: 'string', maxLen: 1000 }, parent_id: { type: 'string' } },
   check(row, c) {
     const B = require('../routes/budget');
