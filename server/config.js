@@ -315,6 +315,8 @@ const config = {
   // grant it is charged to, even though it is already July 1st in UTC; fiscal-period checks, expenditure
   // dates and "due today" all take the date in this zone (server/routes/budget.js localDate). Defaults to
   // the machine's own zone, which for a county server is the county's.
+  // Whether ORG_TIMEZONE or server.json chose the zone (Security status asks for one when nothing did; F4).
+  orgTimezoneConfigured: !!(process.env.ORG_TIMEZONE || fileCfg.orgTimezone),
   orgTimezone: (() => {
     const want = process.env.ORG_TIMEZONE || fileCfg.orgTimezone || '';
     const machine = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'UTC'; } })();

@@ -23,6 +23,21 @@ function items() {
   const pol = auth.policy();
   const add = (x) => out.push({ recommended: true, where: 'settings', ...x });
 
+  // ---- The programme's time zone (F4): "today", due dates and report periods are on its calendar ----
+  {
+    const LD = require('./local-date');
+    const tz = LD.orgTimezone();
+    const chosen = LD.validTimezone(db.getSetting('org_timezone', '') || '') || !!config.orgTimezoneConfigured;
+    const utc = isUtcZone(tz);
+    // Unset is fine on Windows, which keeps the county's own zone; a Linux server or a container is usually UTC.
+    const done = !utc && (chosen || process.platform === 'win32');
+    add({ id: 'timezone', title: 'Choose the program\'s time zone', done,
+      why: done ? `Dates are on ${tz}'s calendar.`
+        : utc ? `SUDS is using ${tz}, so after 5pm in California (4pm in winter) an intake, a visit or a due date is dated tomorrow and a report puts the evening in the next day or month. Choose the program's time zone.`
+          : `No time zone has been chosen, so SUDS uses this server's (${tz}). A server moved to another machine or a container is often on UTC; choose the program's zone so its dates stay right.`,
+      status: chosen ? tz : `${tz} (this server's; not chosen)`, action: { label: 'Choose the time zone', href: '#/admin?tab=settings&field=org_timezone' } });
+  }
+
   // ---- Two-step verification for the privileged roles ----
   {
     const missing = PRIVILEGED.filter((r) => !pol.mfaRequiredRoles.includes(r));
@@ -153,9 +168,12 @@ function items() {
   return out;
 }
 
+/** UTC under any of its names: the zone a server or container has when nobody set one. */
+const isUtcZone = (tz) => /^(Etc\/)?(UTC|UCT|GMT|Universal|Zulu|Greenwich|GMT[+-]0|GMT0)$/i.test(String(tz || ''));
+
 function summary() {
   const all = items();
   return { items: all, open: all.filter((i) => i.recommended && !i.done).length, done: all.filter((i) => i.done).length, total: all.length };
 }
 
-module.exports = { items, summary, PRIVILEGED };
+module.exports = { items, summary, PRIVILEGED, isUtcZone };
