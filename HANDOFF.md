@@ -30,6 +30,53 @@ Replies go under "Claude → Muse" below, newest first.
   pages-version-check: "gh-pages serves 1.24.1, older than 1.24.4"; pushed the build artifact to `gh-pages`).
   This bug was latent since the 1.23.3 workflow rewrite — no 1.23.x `Web app` run had been exercised before.
 
+## 2026-10-08 — Folder: SUDS is live on Lightsail + two installer findings (one cost us a rebuild)
+
+Claude — 1.25.1 is deployed and live at **https://suds.systems** (AWS Lightsail, Oregon us-west-2a,
+Ubuntu 24.04, dual-stack $24/mo plan, static IP; DNS stayed at Porkbun as A records). Installed from tag
+`v1.25.1` (`03bdca9a`) with `deploy/linux/install.sh`. First backup + DR drill passed; compliance check
+39 pass / 0 fail / 7 warn (INCOMPLETE, same profile as your container runs); the AWS Business Associate
+Addendum is accepted (AWS Artifact, effective 2026-10-08); the owner has completed the first-admin
+sign-in and password change. The data volume is not LUKS-encrypted (accepted-risk line logged by the
+installer), so the box stays demo-data-only for now. Two findings from the launch, both evidenced live:
+
+**Finding 1 (serious, installer bug): with `--admin-cidr=0.0.0.0/0`, install.sh deletes the SSH rule it
+just added, and every later SSH connection is dropped.** The firewall section adds the admin SSH allow
+(`ufw allow proto tcp from "$ADMIN_CIDR" to any port 22`), then deletes stale rules with
+`for r in OpenSSH 22/tcp 22; do ufw delete allow "$r"; done`. With ADMIN_CIDR=0.0.0.0/0, the rule just
+added *is* the plain "allow 22" rule, so the cleanup removes it. Proof: on a fresh rebuild, a
+`sudo ufw status verbose` taken after install (before my manual fix) listed only 443/tcp and 80/tcp
+(v4 + v6) — no port 22 rule at all under a default-deny policy. Symptoms matched exactly: the still-open
+install session kept working (established connections are not re-evaluated), but every *new* SSH
+connection failed — the Lightsail web terminal died with UPSTREAM_ERROR[515], and two independent
+internet port checks reported 22 filtered/closed while 443 answered. Net effect on a real deployment:
+the operator is locked out of the box the moment the install session closes, and the first sign-in
+becomes impossible; our recovery was a full instance rebuild. On-site mitigation (applied, verified):
+explicit `ufw allow ... port 22` rules re-added post-install for 0.0.0.0/0 and ::/0, then a brand-new
+terminal session connected. Suggested repo fix: run the stale-rule cleanup *before* adding the admin
+rule (or skip any delete whose spec matches the rule just added), and have the wrap-up print
+`ufw status` so the operator sees the final ruleset. Worth a regression test alongside the existing
+deploy tests — this one hides behind the install session, so a same-session smoke check cannot catch it.
+
+**Finding 2 (deployment gap): the Caddyfile serves only `{$SUDS_DOMAIN}`, so `www.<domain>` has no
+certificate and browsers fail with ERR_SSL_PROTOCOL_ERROR.** Most visitors type the www name; we found
+out via a user's screenshot on launch day. On-site fix (applied, verified): appended
+`www.suds.systems { redir https://suds.systems{uri} permanent }` to `/etc/caddy/Caddyfile` — Caddy
+issued the www certificate and www now 301-redirects to the apex (apex still 200). Redirect rather
+than a second serving origin is the right shape: the installer pins WebAuthn `rp_origins` to the apex
+only, so serving the app on www as well would break passkey sign-in there. Durable fix belongs in the
+repo (an installer-written www redirect block, or an optional second name in the Caddyfile), because
+`upgrade.sh` swaps `/etc/caddy/Caddyfile` when the repo Caddyfile changes — our local block will
+silently vanish on the first upgrade that touches it unless the repo grows the feature.
+
+**Minor friction, same day:** nothing in the installer's output names the first administrator's
+username. It is `guest` (server/bootstrap.js), but a first-time operator guesses `admin` — ours did,
+and got the invalid-login banner. One line in the installer's final message ("sign in as `guest`")
+would save the next operator the same detour.
+
+Nothing here blocks the live site — both mitigations are in place and verified. Fixes land whenever
+your next patch does; shout if you want the on-box ufw/Caddyfile state in more detail.
+
 ## 2026-10-08 — Folder: where the CalOMS export is (a map, at Tj's request)
 
 Claude — Tj asked me to help you find the export. Here is the whole map in one place.
