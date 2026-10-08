@@ -111,7 +111,7 @@ test('H1: an approver\'s device cannot approve its own spending, or rule on anyo
   const e = await C.sup.post('/api/budget/expenditures', { funding_source_id: fund, amount: 5000, spent_at: today, category: 'other', description: 'laptop' });
   assert.equal(e.status, 201, JSON.stringify(e.data));
   // Over REST it is refused (separation of duties)...
-  assert.equal((await C.sup.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' })).status, 400);
+  assert.equal((await C.sup.post(`/api/budget/expenditures/${e.data.id}/approve`, { status: 'approved' })).status, 403, '403, like every separation-of-duties refusal (1.25.2, BO13)');
   // ...and by push it used to land.
   const r = await push('sup', { tables: { expenditures: [{ id: e.data.id, status: 'approved', approved_by: U.sup, approved_at: iso(), ...later() }] } });
   assert.deepEqual(r.rejected, []);

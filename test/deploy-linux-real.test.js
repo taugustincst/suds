@@ -325,12 +325,14 @@ test('upgrade.sh for real: the new release migrates the database and never becom
   const cmds = h.commands();
   assert.match(cmds, /MIGRATED to schema/, 'the new release did migrate the database before failing');
   assert.ok(cmds.indexOf('scripts/backup.js --restore-in-place') > cmds.indexOf('MIGRATED'), 'restored after the migration');
+  // Checked before this test reads the file: the restored database is in WAL mode (1.25.2, BO1), and a read-only
+  // reader of a WAL database leaves its own -wal/-shm beside it.
+  assert.ok(!fs.existsSync(path.join(R, 'var/lib/suds/suds.db-wal')) && !fs.existsSync(path.join(R, 'var/lib/suds/suds.db-shm')), 'no journal of the migrated database beside the restored one');
   assert.equal(fs.readlinkSync(path.join(R, 'opt/suds/current')), OLD, 'the old code is live');
   assert.equal(fs.readlinkSync(path.join(R, 'opt/caddy/current')), CADDY_V, 'and the old Caddy');
   assert.equal(Number(q(`SELECT value FROM settings WHERE key='schema_version'`)[0].value), schema, 'the database is the pre-upgrade backup');
   assert.equal(q(`SELECT value FROM settings WHERE key='org_name'`)[0].value, 'County SUD programme');
   assert.equal(q(`SELECT name FROM sqlite_master WHERE name='migrated_by_the_new_release'`).length, 0);
-  assert.ok(!fs.existsSync(path.join(R, 'var/lib/suds/suds.db-wal')) && !fs.existsSync(path.join(R, 'var/lib/suds/suds.db-shm')), 'no journal of the migrated database beside the restored one');
   const aside = fs.readdirSync(path.join(R, 'var/lib/suds')).find((f) => f.startsWith('suds.db.replaced-'));
   assert.ok(aside && fs.readdirSync(path.join(R, 'var/lib/suds', aside)).includes('suds.db.enc'), 'the migrated database is kept aside, sealed');
   assert.match(fs.readFileSync(path.join(R, 'etc/suds/suds-server.conf'), 'utf8'), new RegExp(`^SUDS_VERSION=${OLD.replace(/\./g, '\\.')}$`, 'm'));
