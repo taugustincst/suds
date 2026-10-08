@@ -327,8 +327,10 @@ function canAccessClient(user, clientId, { deidentified = false } = {}) {
 }
 function assertClientAccess(ctx, clientId, opts) {
   if (!canAccessClient(ctx.user, clientId, opts)) {
-    audit.log({ user: ctx.user, action: 'authz.denied', entity: 'client', entityId: clientId, clientId, ip: ctx.ip, success: false, details: { reason: 'not on caseload' } });
-    throw forbidden('This client is not on your caseload');
+    // A role with no client records at all (finance, read-only) has no caseload to be off (1.25.2, BO24).
+    const noRecords = !hasPerm(ctx.user, 'clients:read');
+    audit.log({ user: ctx.user, action: 'authz.denied', entity: 'client', entityId: clientId, clientId, ip: ctx.ip, success: false, details: { reason: noRecords ? 'role opens no client records' : 'not on caseload' } });
+    throw forbidden(noRecords ? 'Your role cannot open client records or notes.' : 'This client is not on your caseload');
   }
 }
 // SQL fragment restricting a client column to the user's caseload

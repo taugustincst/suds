@@ -21139,7 +21139,10 @@ var require_field_request = __commonJS({
     }
     function routes(r) {
       r.get("/api/me/field-device", auth3.requireAuth, (ctx) => status(ctx.user));
-      r.post("/api/me/field-device/request", auth3.requireAuth, (ctx) => request(ctx));
+      r.post("/api/me/field-device/request", auth3.requireAuth, (ctx) => {
+        if (!auth3.hasPerm(ctx.user, "clients:read")) throw new HttpError3(403, "Your role does not keep client records on a device, so there is no field device to set up.");
+        return request(ctx);
+      });
       r.get("/api/admin/field-requests", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => ({ requests: pending(ctx.user) }));
       r.post("/api/admin/field-requests/:userId/approve", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => decide(ctx, true));
       r.post("/api/admin/field-requests/:userId/decline", auth3.requireAuth, auth3.requirePerm("users:manage"), (ctx) => decide(ctx, false));
@@ -52512,8 +52515,9 @@ var require_auth2 = __commonJS({
     }
     function assertClientAccess(ctx, clientId, opts) {
       if (!canAccessClient(ctx.user, clientId, opts)) {
-        audit3.log({ user: ctx.user, action: "authz.denied", entity: "client", entityId: clientId, clientId, ip: ctx.ip, success: false, details: { reason: "not on caseload" } });
-        throw forbidden("This client is not on your caseload");
+        const noRecords = !hasPerm(ctx.user, "clients:read");
+        audit3.log({ user: ctx.user, action: "authz.denied", entity: "client", entityId: clientId, clientId, ip: ctx.ip, success: false, details: { reason: noRecords ? "role opens no client records" : "not on caseload" } });
+        throw forbidden(noRecords ? "Your role cannot open client records or notes." : "This client is not on your caseload");
       }
     }
     function caseloadFilter(user, col = "c.id") {

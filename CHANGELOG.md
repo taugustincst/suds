@@ -63,6 +63,12 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 * **BO20:** for a role that records no work (finance, read-only) the menu heading "Record work" reads "Program
   activity"; for whoever sees everyone's time the menu item "My time" reads "Staff time", as the page does; the
   stat cards on System & backups no longer stretch to the height of the backups column.
+* **BO16:** finance and read-only could file field-device requests, which reached every administrator although those
+  roles cannot sync client records. `POST /api/me/field-device/request` now needs `clients:read`, the test sync
+  itself applies (narrowing only). `test/outreach-queue.test.js`.
+* **BO24:** read-only and finance were told "This client is not on your caseload" when a note or record was refused;
+  they have no caseload. They are now told "Your role cannot open client records or notes."
+  `test/deidentified-roles.test.js`.
 
 ## 1.25.1 — 2026-10-08
 

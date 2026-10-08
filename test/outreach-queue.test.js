@@ -211,3 +211,15 @@ test('the list of requests reads only field_request: settings (`_` is not a wild
   H.db.setSetting(`fieldXrequest:${otherId}`, JSON.stringify({ status: 'open', at: H.db.now(), tasks: [] }));
   assert.ok(!ok(await admin.get('/api/admin/field-requests'), 200).requests.some(x => x.user_id === otherId));
 });
+
+test('a role that cannot sync client records (finance, read-only) cannot file a field-device request (1.25.2, BO16)', async () => {
+  H.makeUser('oq_fin', 'finance'); H.makeUser('oq_ro', 'readonly');
+  for (const u of ['oq_fin', 'oq_ro']) {
+    const c = H.client(); await c.login(u, 'StaffPassw0rd!x');
+    const r = await c.post('/api/me/field-device/request', {});
+    assert.equal(r.status, 403, `${u}: ${JSON.stringify(r.data)}`);
+    assert.match(r.data.error, /does not keep client records on a device/);
+  }
+  const listed = ok(await admin.get('/api/admin/field-requests'), 200).requests;
+  assert.ok(!listed.some((x) => ['oq_fin', 'oq_ro'].includes(x.username)), 'no request reaches the administrators');
+});
