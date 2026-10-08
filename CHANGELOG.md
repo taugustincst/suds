@@ -16,6 +16,11 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   the tag `v1.25.0` (`82f92a00`, kernel `91a14310…`), not the "Release 1.25.0" commit `1474829e`, whose kernel
   was 1.24.4's; the hand-off's recheck command archives the tag; and both 1.25.0 SHA-256 values are recorded
   (source zip `3a5002ad…c379`, Windows zip `489ee896…0754`).
+* **The tags without a GitHub Release are named.** docs/RELEASE.md, *Tags without a GitHub Release*, lists the 13
+  pushed tags that have none (v1.17.0–v1.24.0, but not v1.23.2 or v1.23.6), why (v1.24.0's gate refused it on red
+  exact-commit CI; the other twelve runs were cancelled), how to rebuild their zips from the tag, and that
+  v1.24.2's tag is mis-stamped and superseded. HANDOFF.md's "dispatched and queued" and "notes published" carry a
+  dated correction.
 
 ## 1.25.0 — 2026-10-05
 
