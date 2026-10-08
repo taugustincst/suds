@@ -886,9 +886,12 @@ function dateBox(f, v) {
     placeholder: 'M/D/YYYY', maxlength: 10, value: fmtMDY(iso),
     'aria-label': `${f.label} — date, type as month/day/year` });
   const native = h('input', { type: 'date', class: 'date-native', tabindex: '-1', 'aria-hidden': 'true', min: f.min || DATE_MIN, max: f.max || DATE_MAX, value: iso });
-  // A field that is never in the future (a date of birth: its max is today) reads a two-digit year into the past;
-  // any other (an expiry, a due date) into the next 20 years (input-parsers.js fullYear, F2).
-  const opts = { past: !!f.past || (!!f.max && f.max <= fmt.today()) };
+  // A field that is never in the future (a date of birth: its max is today) reads a two-digit year, and a month and
+  // day alone, into the past; any other (an expiry, a due date) a two-digit year into the next 20 years
+  // (input-parsers.js fullYear, F2). A due or follow-up date (it offers quick choices, or its min is today) reads a
+  // month and day alone as the next one (FL3).
+  const past = !!f.past || (!!f.max && f.max <= fmt.today());
+  const opts = { past, future: !past && (!!f.future || !!f.quick || (!!f.min && f.min >= fmt.today())) };
   const parse = (t) => parseDate(t, new Date(), opts);
   const syncNative = () => { const p = parse(text.value); if (p) native.value = p; };
   text.addEventListener('input', syncNative);

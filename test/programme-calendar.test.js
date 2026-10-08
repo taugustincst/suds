@@ -111,3 +111,19 @@ test('SUPRT reads an evening visit on the programme\'s day, not the next UTC day
   const re = S.derive(c.data.id, { type: 'reassessment', date: day, since: LD.addDays(day, -1) });
   assert.equal(re.answers.E_naloxone, 'yes', 'the visit is within the period that ends that day');
 });
+
+test('client search finds a date of birth typed as month/day/year (FL4)', async () => {
+  const c = await nav.post('/api/clients', { first_name: 'Dee', last_name: 'Obee', dob: '1993-07-23', phone: '916-555-0177', confirm_duplicate: true });
+  assert.equal(c.status, 201, JSON.stringify(c.data));
+  for (const q of ['1993-07-23', '7/23/1993', '07/23/1993', '7/23/93', '7-23-1993', '7.23.93', '07231993']) {
+    const r = await nav.get(`/api/clients?status=all&q=${encodeURIComponent(q)}`);
+    assert.equal(r.status, 200);
+    assert.ok(r.data.clients.some(x => x.id === c.data.id), q);
+  }
+  assert.ok((await nav.get(`/api/clients?status=all&q=${encodeURIComponent('916-555-0177')}`)).data.clients.some(x => x.id === c.data.id), 'a phone number is still a phone number');
+  assert.ok(!(await nav.get(`/api/clients?status=all&q=${encodeURIComponent('7/32/1993')}`)).data.clients.some(x => x.id === c.data.id), 'not a real date: no match');
+  await nav.get(`/api/clients?status=all&q=${encodeURIComponent('7/23/1993')}`);
+  const a = H.db.one(`SELECT details FROM audit_log WHERE action='client.list' ORDER BY id DESC LIMIT 1`);
+  assert.match(a.details, /"searched":\["dob"\]/, 'audited as a date-of-birth search');
+  assert.ok(!/1993/.test(a.details), 'without what was typed');
+});

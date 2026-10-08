@@ -166,6 +166,12 @@ function updateClient(ctx, row, v, { reverts = null } = {}) {
   return { updated_at: stamp, revision };
 }
 
+/** A date of birth typed in a search box as M/D/YYYY, M-D-YY or MMDDYYYY, as YYYY-MM-DD; or null (FL4). */
+function typedDob(q) {
+  const s = /^\d{8}$/.test(q) ? `${q.slice(0, 2)}/${q.slice(2, 4)}/${q.slice(4)}` : q;
+  return /^\d{1,2}[/.-]\d{1,2}[/.-](\d{2}|\d{4})$/.test(s) ? require('../dataimport').dateOf(s, { past: true }) || null : null;
+}
+
 module.exports = (r) => {
   r.get('/api/clients', auth.requireAuth, auth.requirePerm('clients:read', 'clients:list-deidentified'), (ctx) => {
     const deidentify = !auth.hasPerm(ctx.user, 'clients:read');
@@ -188,6 +194,13 @@ module.exports = (r) => {
       if (deidentify && !isCode) { where.push('0'); searchRefused = 'identifier'; }
       else if (isCode) { where.push('c.client_code=?'); params.push(q.toUpperCase()); searched = ['client_code']; }
       else if (/^\d{4}-\d{2}-\d{2}$/.test(q)) { where.push('c.dob_idx=?'); params.push(blindIndex(q)); searched = ['dob']; }
+      // A date of birth typed as every date box takes one (FL4): 7/23/1993, 7-23-93, 07231993, its two-digit year read
+      // into the past. "7-23-1993" and "07231993" could be a phone number too, so those look in both.
+      else if (typedDob(q)) {
+        const phone = /^[\d\-() .+]{7,}$/.test(q);
+        where.push(phone ? '(c.dob_idx=? OR c.phone_idx=?)' : 'c.dob_idx=?'); params.push(blindIndex(typedDob(q)), ...(phone ? [blindIndex(q.replace(/\D/g, ''))] : []));
+        searched = phone ? ['dob', 'phone'] : ['dob'];
+      }
       else if (/^[\d\-() .+]{7,}$/.test(q)) { where.push('c.phone_idx=?'); params.push(blindIndex(q.replace(/\D/g, ''))); searched = ['phone']; }
       // A participant code typed as the person gives it (1.21.0): "code ABC123", or a code-shaped word that matches one.
       else if (/^code\s+\S+$/i.test(q)) { const PC = require('../participant-code'); where.push('c.participant_code_idx=?'); params.push(PC.index(q.replace(/^code\s+/i, '')) || ''); searched = ['participant_code']; }

@@ -145,4 +145,4 @@ function convertRow(entity, mapping, row) {
   return { record, errors, dates };
 }
 
-module.exports = { ENTITIES, suggestMapping, convertRow, resolveClient, dateProblems };
+module.exports = { ENTITIES, suggestMapping, convertRow, resolveClient, dateProblems, dateOf };

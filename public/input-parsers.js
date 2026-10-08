@@ -43,16 +43,23 @@ export function fullYear(yy, year, past = false) {
 
 /**
  * Parse a typed date into "YYYY-MM-DD", or null. Accepts "10/5/2026", "10-05-2026", "2026-10-05",
- * "10.5.26", and "20261005". Month/day order is US (month first). A two-digit year is read by fullYear(),
- * into the past for a field that is never in the future (`{ past: true }`). `now` is for the unit tests.
- * Exported for the unit tests.
+ * "10.5.26", "20261005", and a month and day alone, "10/8". Month/day order is US (month first). A two-digit
+ * year is read by fullYear(), into the past for a field that is never in the future (`{ past: true }`). A
+ * month and day alone is this year's (FL3); for a past-only field, last year's when this year's is still to
+ * come, and for a field that looks ahead (`{ future: true }`: a due or follow-up date) next year's when this
+ * year's has gone. `now` is for the unit tests. Exported for the unit tests.
  */
-export function parseDate(s, now = new Date(), { past = false } = {}) {
+export function parseDate(s, now = new Date(), { past = false, future = false } = {}) {
   const t = String(s || '').trim();
   if (!t) return null;
   let y, mth, d;
   let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
   if (m) { y = +m[1]; mth = +m[2]; d = +m[3]; }
+  else if ((m = t.match(/^(\d{1,2})[\/.\-](\d{1,2})$/))) {
+    mth = +m[1]; d = +m[2]; y = now.getFullYear();
+    const typed = mth * 100 + d; const today = (now.getMonth() + 1) * 100 + now.getDate();
+    if (past && typed > today) y -= 1; else if (future && typed < today) y += 1;
+  }
   else {
     m = t.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2}|\d{4})$/);
     if (m) {

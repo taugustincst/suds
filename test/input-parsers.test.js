@@ -65,15 +65,34 @@ test('parseDate: a two-digit year slides, into the past only for a field that is
 
 test('a date box reads a two-digit year by its field: into the past when its max is today (F2)', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
-  assert.match(src, /past: !!f\.past \|\| \(!!f\.max && f\.max <= fmt\.today\(\)\)/);
+  assert.match(src, /const past = !!f\.past \|\| \(!!f\.max && f\.max <= fmt\.today\(\)\)/);
   assert.match(src, /parseDate\(t, new Date\(\), opts\)/);
 });
 
 test('parseDate: rejects impossible and malformed dates', () => {
-  for (const input of ['', '   ', 'abc', '13/1/2026', '0/5/2026', '2/30/2026', '2/29/2026', '2026-13-01', '2026-02-30', '10/5', '2026/10/05', '5-Oct-2026'])
+  for (const input of ['', '   ', 'abc', '13/1/2026', '0/5/2026', '2/30/2026', '2/29/2026', '2026-13-01', '2026-02-30', '13/5', '2/30', '2026/10/05', '5-Oct-2026'])
     assert.equal(P.parseDate(input), null, JSON.stringify(input));
   // 2024 was a leap year: Feb 29 parses there.
   assert.equal(P.parseDate('2/29/2024'), '2024-02-29');
+});
+
+test('parseDate: a month and day alone is this year\'s, or the nearest past or next one by field (FL3)', () => {
+  const oct8 = new Date(2026, 9, 8, 21, 0);
+  for (const [input, want] of [['10/8', '2026-10-08'], ['10/15', '2026-10-15'], ['1/5', '2026-01-05'], ['12-31', '2026-12-31'], ['3.4', '2026-03-04']])
+    assert.equal(P.parseDate(input, oct8), want, input);
+  assert.equal(P.parseDate('10/8', oct8, { past: true }), '2026-10-08', 'today is not the future');
+  assert.equal(P.parseDate('10/15', oct8, { past: true }), '2025-10-15', 'a date of birth or a date given: the last one');
+  assert.equal(P.parseDate('1/5', oct8, { past: true }), '2026-01-05');
+  assert.equal(P.parseDate('10/8', oct8, { future: true }), '2026-10-08', 'today is a follow-up date');
+  assert.equal(P.parseDate('1/5', oct8, { future: true }), '2027-01-05', 'a follow-up: the next one');
+  assert.equal(P.parseDate('10/15', oct8, { future: true }), '2026-10-15');
+  assert.equal(P.parseDate('2/29', new Date(2027, 0, 1)), null, 'no February 29th this year');
+  assert.equal(P.parseDate('2/29', new Date(2028, 0, 1)), '2028-02-29');
+});
+
+test('a date box looks ahead for a due or follow-up date (FL3)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+  assert.match(src, /future: !past && \(!!f\.future \|\| !!f\.quick \|\| \(!!f\.min && f\.min >= fmt\.today\(\)\)\)/);
 });
 
 test('fmtMDY: ISO in, M/D/YYYY out', () => {
