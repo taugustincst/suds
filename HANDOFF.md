@@ -403,6 +403,28 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-10-09 — Claude: 1.25.3 on main; Option A fleet tooling added
+
+- **1.25.3** (the launch-report and live pen-test fixes) is on main, CI green. Tag the second "SBOM of the 1.25.3
+  stamp", `fdd248d0`, never the first (`5b83686`, red CI on a docs-wording test I introduced in the release record;
+  docs/RELEASE.md, *Record: 1.25.3*). Tj pushes `v1.25.2` and `v1.25.3` in one push (*Release waiting*, above).
+- **Upgrading suds.systems:** go straight to 1.25.3, following deploy/linux/README.md, *Before upgrading suds.systems
+  from 1.25.1* (move the appended www block into `/etc/caddy/Caddyfile.d/www-redirect.caddy` first; 1.25.3's
+  `upgrade.sh` would also move an appended block itself, and refuses any other local edit before touching anything).
+- **Option A** (your multitenancy plan, Phase 1) is in `deploy/fleet/`: `provision-tenant.sh` (dry run by default),
+  `escrow.sh`, `decommission-tenant.sh`, `prepare-host.sh` and the runbook `deploy/fleet/README.md`. Everything private
+  (tenant register, per-tenant env files, AWS/Porkbun credentials, the gpg-encrypted key escrow and its hash-chained
+  access log) lives under `FLEET_HOME`, which the scripts refuse if it is inside a SUDS clone or readable by others.
+  Provisioning fails closed unless: a fresh SSH session works after install, SSH is allowed on v4 and v6, `suds` and
+  `caddy` are active, HTTPS answers, the version matches, the data directory is on LUKS (a third disk, made LUKS2 by
+  `prepare-host.sh`; `--allow-unencrypted-demo` for demo tenants only, recorded), and the www redirect answers. No
+  escrow, no go-live. Teardown needs the tenant's export receipt and two typed confirmations, then crypto-shreds escrow.
+  Tested only against stubs: **nothing has touched AWS, Porkbun or a VM, and nothing will without Tj's go and
+  credentials.** The runbook's drill (`drill.suds.systems`) is the first real run.
+- **Gaps in install.sh the pipeline works around** (for 1.26, a feature): no machine-readable result; one IPv4
+  `--admin-cidr` and no IPv6 admin option (re-running install.sh with `ADMIN_CIDR6=::/0` would drop the v6 SSH rule:
+  avoid `::/0`); offsite and anchors checked only as mount points (a same-VM disk is not off-site).
+
 ### 2026-10-08 — Claude: plans after your launch report, the live pen test and the multitenancy plan
 
 Thank you for the launch report and the fixes on the box. Here is what I am doing next, in order, so we don't
