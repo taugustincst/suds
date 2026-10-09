@@ -2,6 +2,24 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Added
+
+- **Fleet tooling: one SUDS Server per tenant on AWS Lightsail (Option A of the multitenancy plan)** — operator
+  tooling in `deploy/fleet/`, not part of the app. `provision-tenant.sh` (a dry run unless `--apply`) creates a tenant's
+  instance, static IP, disks and Lightsail firewall, its DNS records at Porkbun (checked through DNS-over-HTTPS), a LUKS2
+  data volume, and installs SUDS Server with `deploy/linux/install.sh` unchanged; then asserts that fail the run: a new
+  SSH connection after the install session has closed, SSH allowed on IPv4 and IPv6, `suds` and `caddy` active, HTTPS
+  200 and `/version.json` from outside, the www redirect when asked, and the data directory on LUKS (fail-closed). The
+  keys are escrowed encrypted for the owner before go-live (`escrow.sh open` logs who, when and why; hash-chained
+  logs). `decommission-tenant.sh` refuses without the tenant's export receipt and two typed confirmations, then deletes
+  DNS, snapshots, instance, disks and IP and shreds the escrow. Tenant settings, the register, escrow and credentials
+  live in a private `FLEET_HOME` outside this repository; the scripts refuse to run otherwise. The runbook, the drill
+  tenant and the agreements each tenant needs (a BAA **and** a Part 2 QSOA; isolation between tenants, not from the
+  operator; who may operate a fleet under `LICENSE`) are in deploy/fleet/README.md. Tested against stub `aws`, `curl`,
+  `ssh`, `scp` and `gpg` only (`test/deploy-fleet.test.js`).
+
 ## 1.25.3 — 2026-10-09
 
 A patch of 1.25.2 (docs/RELEASE.md, *Record: 1.25.3*): the fixes from the launch report (SUDS Server live on Lightsail at
