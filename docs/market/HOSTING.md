@@ -57,7 +57,7 @@ All of these, not most of them:
 | 7 | **Insurance**: cyber liability and technology E&O at the limits counties ask for | Contract requirement; protects both sides | Not started |
 | 8 | **Independent penetration test** of the application and the hosting environment, findings fixed | County IT gate | Not started ([docs/security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md) ready) |
 | 9 | Hardened image, patch process, access control to the hosting account (MFA, least privilege, access log) | SOC 2 CC6/CC7 | Documented for county installs; not built for vendor hosting |
-| 10 | Key custody procedure and escrow option | The vendor would hold PHI keys | Not started |
+| 10 | Key custody procedure and escrow option | The vendor would hold PHI keys | Tooling: [deploy/fleet](../../deploy/fleet/README.md) escrows each tenant's keys encrypted for the owner and logs every access; no custody procedure adopted |
 | 11 | BAA/QSOA and DPA templates reviewed by the vendor's counsel | Every hosted contract needs them | Drafts in [templates/](templates/) |
 | 12 | SOC 2 Type 1 scoped to the hosted service (can follow the first customers, but must be planned) | Larger buyers | Readiness self-assessment only |
 

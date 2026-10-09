@@ -334,6 +334,8 @@ Run exactly one instance: a container platform must not scale it out (`server/in
 
 What this does not give you: automatic failover or zero data loss. Anything entered after the last backup is lost in a site failure; shorten the backup interval to shorten that window.
 
+**D. One server per tenant, run by an operator.** Where one operator runs SUDS Server for several programmes, each programme (tenant) gets its own VM, disks, keys, database and name: never one install shared between them. [`deploy/fleet/`](../deploy/fleet/README.md) provisions and tears down such a tenant on AWS Lightsail with SUDS Server's installer, checks the result (a new SSH connection, the firewall on IPv4 and IPv6, HTTPS and the version from outside, the data directory on LUKS) and escrows its keys for the owner, with every access logged. Before any real data each tenant needs a HIPAA BAA **and** a 42 CFR Part 2 QSOA with the operator (the cloud provider's BAA covers only the infrastructure); the isolation is between tenants, not from the operator, who holds root on each VM and the escrowed keys, and sales and agreement wording must say so; and who may operate such a fleet is set by `LICENSE`, section 3 (deploy/fleet/README.md, *Agreements, isolation and who operates the fleet*).
+
 ## 4b. Monitoring and logs
 
 Three unauthenticated endpoints, for three different questions. Use the right one: a probe that restarts SUDS on an operational warning puts it in a restart loop that fixes nothing.
