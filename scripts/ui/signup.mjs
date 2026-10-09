@@ -378,13 +378,15 @@ const selected = (page) => page.$eval('[role=tablist] [aria-selected=true]', b =
     ok(await until(async () => (await k('GET', '/api/local/device')).data.backup.keep === 3, { timeout: 5000 }), 'folder: keep the newest 3');
     // Home after a sign-in: the due backup is written to the folder there and then, with no prompt.
     await pg.goto(device + '/#/dashboard?_=b2'); await settle(pg);
-    const written = await until(() => pg.getAttribute('[data-backup-written]', 'data-backup-written').catch(() => null), { timeout: 20000 });
+    // The backup is encrypted in the page; on a loaded machine that takes longer than 20 s (seen once, 1.25.3).
+    const written = await until(() => pg.getAttribute('[data-backup-written]', 'data-backup-written').catch(() => null), { timeout: 60000 });
     ok(written && TIMED.test(written), 'folder: Home writes the due backup to the folder by itself, and says so', written);
     ok(!(await pg.$('[data-backup-reminder]')), 'folder: with no reminder');
     const files = await inFolder(pg);
     ok(files.includes(written) && files.includes('notes.txt'), 'folder: the new backup is in the folder, and the file that is not SUDS\'s is untouched', files);
     ok(!files.includes('suds-device-backup-2026-01-01-000000.sudsbackup') && files.includes('suds-device-backup-2026-01-02.sudsbackup'), 'folder: the oldest backup beyond the three kept is removed', files);
     eq(files.filter(n => n.endsWith('.sudsbackup')).length, 3, 'folder: three backups left');
+    if (!written) throw new Error('folder: no backup was written, so the folder checks below cannot run');
     const bytes = await readFromFolder(pg, written);
     ok(!bytes.includes(Buffer.from('SQLite format 3')) && !bytes.includes(Buffer.from('Gamma')), 'folder: the file is encrypted: no database or name readable in it');
     const opened = await backupMod.open(Uint8Array.from(bytes), BPASS);
