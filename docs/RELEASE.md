@@ -332,11 +332,14 @@ owner-authorised black-box and code-review test of that live install (MINOR-1, l
 MINOR-2, anonymous health warnings; INFO-2 and INFO-3). No migration, no new or widened permission and no new route,
 210 lines added outside docs, tests and generated files (`node scripts/release-policy.js --version 1.25.3
 --previous v1.25.2`), so it passes the release policy with no exception. Like 1.25.2 it is two commits, "Release 1.25.3"
-and "SBOM of the 1.25.3 stamp", the tag on the second. `v1.25.2` was not yet tagged when it was stamped, so the owner
-pushes both tags in one push ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); `v1.25.3`, the newest, is
+and "SBOM of the 1.25.3 stamp", the tag on the second. `v1.25.2` had not been pushed when 1.25.3 was stamped, so the
+owner pushes both tags in one push ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); `v1.25.3`, the newest, is
 the Latest release and its `Web app` run publishes 1.25.3. **Upgrade suds.systems to 1.25.3, not 1.25.2**: before
 1.25.3 an upgrade replaces the hand-edited Caddyfile and drops the www redirect (deploy/linux/README.md, *Before
-upgrading suds.systems from 1.25.1*).
+upgrading suds.systems from 1.25.1*). The first "Release 1.25.3" (`d12ab47`, with its SBOM commit `5b83686`) was never
+tagged: its own record used a phrase `test/release-wording.test.js` refuses, and its exact-commit CI was red. A second
+"Release 1.25.3" corrects that sentence and nothing else, and its SBOM commit is the one tagged (the release job's
+"not the version stamp" note is expected: `d12ab47` set the version).
 
 ### Supported versions
 
