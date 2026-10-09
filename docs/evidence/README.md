@@ -11,7 +11,7 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 
 **Version.** It describes 1.25.3: the commit "Release 1.25.3", a patch of 1.25.2 with the fixes from the launch of
 suds.systems and the pen test of the live install, no policy exception and an SBOM of its own, `sbom-1.25.3`
-([../RELEASE.md](../RELEASE.md), *Record: 1.25.3*; its tag is owed, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.25.2,
+([../RELEASE.md](../RELEASE.md), *Record: 1.25.3*; tagged and released 2026-10-09, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.25.2,
 a patch of 1.25.1 with the fixes from testing every position on 1.25.1, was the first patch with an SBOM of its own,
 `sbom-1.25.2`. 1.25.1, a patch of
 1.25.0 with the fixes from the evaluation of 1.25.0 (E1 to E11), kept 1.25.0's SBOM. 1.25.0 is a feature release on the owner's explicit

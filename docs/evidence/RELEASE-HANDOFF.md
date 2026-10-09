@@ -1,67 +1,36 @@
-# Release hand-off: tags v1.25.2 to v1.25.3, then the record
+# Release hand-off: v1.25.3 released, then the record
 
-> **The one owner action: run step 1, then step 2's tag commands and their one push.** It publishes 1.25.2 and
-> 1.25.3: each tag starts its own `release.yml` run (gate, verify, approval in the `release` environment); `v1.25.3`,
-> the newest, is marked Latest and its `Web app` run republishes GitHub Pages. 1.25.1 below is released; its record
-> follows. A session's tag push is refused (HTTP 403): the `v*` tag ruleset lets only the owner make release tags,
-> as intended.
->
-> **Upgrade suds.systems to 1.25.3, not 1.25.2** (docs/RELEASE.md, *Record: 1.25.3*).
+> 1.25.2 and 1.25.3 are released (2026-10-09): tags `v1.25.2` at `cfafd6a3` and `v1.25.3` at `fdd248d0`, pushed by the
+> owner in one push; both GitHub Releases are published, `v1.25.3` is marked **Latest**; both zips equal the checksums
+> recorded before the tags; GitHub Pages serves 1.25.3. The v1.25.1 release below is the superseded record. No tag is
+> owed.
 
-1.25.2 is a patch of 1.25.1 (*Record: 1.25.2*): the fixes from testing every position on 1.25.1. 1.25.3 is a patch of
-1.25.2 (*Record: 1.25.3*): the fixes from the launch of suds.systems and the pen test of the live install. Neither has a
-migration, a new or widened permission or a new route. Each has an SBOM of its own, so each tag goes on the commit after
-its "Release X.Y.Z": "SBOM of the X.Y.Z stamp".
+## v1.25.3 and v1.25.2: released
 
-## The two releases
-
-| Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
+| Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 |
 | --- | --- | --- | --- |
-| `v1.25.2` | `cfafd6a3f68ff29482937d28bfe5577e68f2b869` ("SBOM of the 1.25.2 stamp", after the stamp `72a0daa`; exact-commit CI run 37850128724, all 12 jobs green) | 2026-10-08 | `acc777aad2908d8b111bb7d02cb9f96c9a0f60f3b6c664ba7a4daa21a7870d61` |
-| `v1.25.3` | `fdd248d00e996c534d34619968dc5161e55edf75` ("SBOM of the 1.25.3 stamp", after the stamp `224b74a`; exact-commit CI run 37868178692, every required job green) | 2026-10-09 | `d70101e1d0332beff63beef329cea7089bbe1afd4f58e34beb845a1e556239cc` |
-
-Each SHA-256 above was rebuilt twice from its commit, identical. The first "Release 1.25.3" (`d12ab47`) and its SBOM
-commit (`5b83686`) are not to be tagged: their CI was red (docs/RELEASE.md, *Record: 1.25.3*). A zip is a function of its commit (`git archive`, as
-below); the release job refuses to publish a Release whose zip is not byte for byte its own build
-(`scripts/release-existing.js`). Compare each `.sha256` beside a published zip with a rebuild before recording it:
+| `v1.25.3` | `fdd248d0` (the second "SBOM of the 1.25.3 stamp") | 2026-10-09 | `d70101e1d0332beff63beef329cea7089bbe1afd4f58e34beb845a1e556239cc` (recorded before the tag; the release asset matches) |
+| `v1.25.2` | `cfafd6a3` ("SBOM of the 1.25.2 stamp") | 2026-10-08 | `acc777aad2908d8b111bb7d02cb9f96c9a0f60f3b6c664ba7a4daa21a7870d61` (recorded before the tag; the release asset matches) |
 
 ```bash
-R1253=fdd248d00e996c534d34619968dc5161e55edf75
-git archive --format=zip --prefix=suds-v1.25.2/ -o suds-v1.25.2.zip cfafd6a3f68ff29482937d28bfe5577e68f2b869 && sha256sum suds-v1.25.2.zip
-git archive --format=zip --prefix=suds-v1.25.3/ -o suds-v1.25.3.zip "$R1253" && sha256sum suds-v1.25.3.zip
+git fetch origin tag v1.25.3
+git archive --format=zip --prefix=suds-v1.25.3/ -o suds-v1.25.3.zip v1.25.3 && sha256sum suds-v1.25.3.zip
+# d70101e1d0332beff63beef329cea7089bbe1afd4f58e34beb845a1e556239cc  suds-v1.25.3.zip
 ```
 
-## 1. Check (the owner, from any clone)
+## Completed: v1.25.2 and v1.25.3 (2026-10-09)
 
-```bash
-git fetch origin
-R1253=fdd248d00e996c534d34619968dc5161e55edf75
-for c in cfafd6a3f68ff29482937d28bfe5577e68f2b869 $R1253; do
-  git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
-done
-git show -s --format='%h %s' $R1253   # "SBOM of the 1.25.3 stamp"
-git show origin/main:package.json | grep '"version"'                            # 1.25.3
-gh run list --workflow ci.yml --commit $R1253 --event push --limit 1   # completed, success
-git ls-remote --tags origin | grep -E 'v1\.25\.[23]'   # not there yet: the tags are what this hand-off is for
-```
-
-## 2. Tag, and push both in one push
-
-```bash
-git tag -a v1.25.2 cfafd6a3f68ff29482937d28bfe5577e68f2b869 -m "SUDS 1.25.2"
-git tag -a v1.25.3 "$R1253" -m "SUDS 1.25.3"
-git push origin v1.25.2 v1.25.3
-```
-
-**Never push `v1.25.2` alone after `v1.25.3`:** an older tag pushed on its own would be marked Latest. In one push with
-`v1.25.3`, the newest is Latest.
-
-## 3. What the tags' runs do, and what to approve
-
-| Tag | Its gate (main's scripts) | Latest? Web app? | What the owner does |
-| --- | --- | --- | --- |
-| `v1.25.2` | **Passes**: a patch of `v1.25.1` (*Record: 1.25.2*) | Not Latest (an older tag than `v1.25.3`); it attaches its zips, Windows included | Approve the release job |
-| `v1.25.3` | **Passes**: a patch of `v1.25.2` (*Record: 1.25.3*) | **Latest**, and it starts a `Web app` run; it attaches its zips, the Windows zip unsigned while the certificate secrets are not set | Approve the release job, then **approve its `Web app` run**, which publishes 1.25.3 to GitHub Pages |
+- `v1.25.2` — commit `cfafd6a3f68ff29482937d28bfe5577e68f2b869` ("SBOM of the 1.25.2 stamp", after the stamp `72a0daa`;
+  CHANGELOG 2026-10-08), zip SHA-256 `acc777aad2908d8b111bb7d02cb9f96c9a0f60f3b6c664ba7a4daa21a7870d61`; exact-commit CI 37850128724.
+- `v1.25.3` — commit `fdd248d00e996c534d34619968dc5161e55edf75` (the second "SBOM of the 1.25.3 stamp", after the stamp
+  `224b74a`; CHANGELOG 2026-10-09), zip SHA-256 `d70101e1d0332beff63beef329cea7089bbe1afd4f58e34beb845a1e556239cc`; exact-commit CI 37868178692 (every required job green). The
+  first pair, `d12ab47`/`5b83686`, was never tagged (docs/RELEASE.md, *Record: 1.25.3*).
+- The owner pushed both tags in one push on 2026-10-09. Release runs for `v1.25.2` and `v1.25.3` succeeded; both GitHub
+  Releases were published at 16:15 UTC with their source and Windows zips (the Windows zips unsigned: the code-signing
+  secrets are not set), `v1.25.3` marked **Latest**. Each published `.sha256` equals the value recorded before the tag,
+  and a download of each zip hashes to it.
+- Pages: `v1.25.3`'s `Web app` run succeeded; `gh-pages`' `version.json` reads **1.25.3**.
+- SBOMs: `sbom-1.25.2` and `sbom-1.25.3`, each generated from its stamp (the first patches with SBOMs of their own).
 
 ## v1.25.1: released
 

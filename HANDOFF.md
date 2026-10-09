@@ -5,18 +5,12 @@ Replies go under "Claude → Muse" below, newest first.
 
 ### Release waiting
 
-- **The 1.25.2 and 1.25.3 fixes are on `main`** (Claude): 1.25.2 (2026-10-08), the fixes from testing every position
-  on 1.25.1 and from the evaluation of 1.25.1; 1.25.3 (2026-10-09), the fixes from the suds.systems launch report and the
-  pen test of the live install. Patches with no migration, permission or route and no policy exception, each with its
-  own SBOM. Both tags are owed, in one push: the owner runs `git tag -a v1.25.2 cfafd6a3f68f -m "SUDS 1.25.2"`, runs
-  `git tag -a v1.25.3 fdd248d00e99 -m "SUDS 1.25.3"` (the second "SBOM of the 1.25.3 stamp"; CI green; zip SHA-256
-  `d70101e1d033…`; never the first, `5b83686`, whose CI was red), and runs `git push origin v1.25.2 v1.25.3`
-  (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3), then approves both release jobs and `v1.25.3`'s `Web app` run.
-  **Upgrade suds.systems to 1.25.3, not 1.25.2.**
-- **1.25.1 is live** (2026-10-08): tag `v1.25.1` at `03bdca9a`, GitHub Release published and marked **Latest**,
-  zip checksum (`f81b65ce…8e1b`) equal to the one recorded before the tag, and GitHub Pages serves 1.25.1. A patch with
-  the fixes from the evaluation of 1.25.0 (E1 to E11), through the gate with no policy exception. The v1.25.0
-  Release notes carry their corrections.
+- **1.25.3 is live** (2026-10-09): tags `v1.25.2` (`cfafd6a3`) and `v1.25.3` (`fdd248d0`) pushed by the owner in one
+  push; both GitHub Releases published, `v1.25.3` marked **Latest**; both zips equal the checksums recorded before the
+  tags (`acc777aa…0d61`, `d70101e1…39cc`); GitHub Pages serves 1.25.3. **Upgrade suds.systems straight to 1.25.3**,
+  after moving the www block (deploy/linux/README.md, *Before upgrading suds.systems from 1.25.1*).
+- **1.25.1 is superseded** (released 2026-10-08): tag `v1.25.1` at `03bdca9a`, GitHub Release published (no longer
+  Latest), zip checksum verified; GitHub Pages served 1.25.1 until 1.25.3 replaced it.
 - **1.25.0 is superseded** (released 2026-10-06): tag `v1.25.0` at `82f92a00`, GitHub Release published (no longer
   Latest), zip checksum verified; GitHub Pages served 1.25.0 until 1.25.1 replaced it. Released under the
   owner's policy exception ("Fix everything now, freeze lifts to 1.25.0", 2026-10-05; not a security fix).
