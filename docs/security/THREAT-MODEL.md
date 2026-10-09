@@ -444,7 +444,7 @@ These are open. Each is a reason for a county to add a control of its own, or to
 
    Keep write collaborators to none, and verify a release's checksum against the one you recorded. **Owner action.**
 2. **There is one maintainer, the code is AI-assisted, and there is no independent review.** Most commits are written with an AI coding assistant and merged by the owner. No second person has reviewed sync, disclosure or audit end to end. Security releases wait for the owner to push a tag, and no backup releaser is named. **Owner action:** an independent reviewer and a backup releaser.
-3. **There has been no penetration test.** Every finding above came from the project's own reviews. [PEN-TEST-SCOPE.md](PEN-TEST-SCOPE.md) is ready for a county or the vendor to commission one.
+3. **There has been no independent penetration test.** The tests so far were commissioned or run by the vendor: an owner-authorised white-box test of 1.23.6 (fixed in 1.24.0), and on 2026-10-08 a black-box and code-review test of the live production install at suds.systems (1.25.1), which found no critical, high or medium issue; its two minor findings are fixed in 1.25.3. Neither is a third party's attestation. [PEN-TEST-SCOPE.md](PEN-TEST-SCOPE.md) is ready for a county or the vendor to commission one.
 4. **Shared devices protect accounts from each other by rule, not by cryptography.** Every account on a device unwraps the same database key. The per-account rules decide what a person sees on that device:
    - caseload denies;
    - counseling notes kept only for their readers (1.16.4 N1).

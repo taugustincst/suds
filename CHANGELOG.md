@@ -2,10 +2,12 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.25.3 — 2026-10-09
 
-Fixes from the launch report (SUDS Server live on Lightsail at suds.systems, HANDOFF 2026-10-08) and from the pen test
-of suds.systems. No migration, no new or widened permission and no new route. **Before upgrading suds.systems**, move
+A patch of 1.25.2 (docs/RELEASE.md, *Record: 1.25.3*): the fixes from the launch report (SUDS Server live on Lightsail at
+suds.systems, HANDOFF 2026-10-08) and from the pen test of suds.systems. No migration, no new or widened permission and
+no new route (`node scripts/release-policy.js --version 1.25.3 --previous v1.25.2` passes: 210 lines added outside
+docs, tests and generated files, of the 1,500 a patch may add). It passes the release policy with no exception. **Before upgrading suds.systems**, move
 the `www.suds.systems` block appended to `/etc/caddy/Caddyfile` into `/etc/caddy/Caddyfile.d/` (deploy/linux/README.md,
 *Before upgrading suds.systems from 1.25.1*); the upgrade would also move it itself.
 

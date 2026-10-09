@@ -163,8 +163,9 @@ recorded in the exceptions table ([../../RELEASE.md](../../RELEASE.md), *The exc
 `v1.24.2` and `v1.24.3` are tagged but superseded and will never publish. 1.24.4 is tagged, has been through
 the gate, and its GitHub Release is published (2026-10-05). 1.25.0 is tagged, has been through the gate, and its
 GitHub Release is published (2026-10-06). 1.25.1 is tagged, has been through the gate, and its GitHub Release is
-published and marked Latest (2026-10-08) (docs/evidence/RELEASE-HANDOFF.md). 1.25.2, stamped 2026-10-08, waits for the
-owner's tag; until the tag is pushed it is not published, and there is no tag or published zip to check it against. Verify against the commit instead. Each
+published and marked Latest (2026-10-08) (docs/evidence/RELEASE-HANDOFF.md). 1.25.2 and 1.25.3, stamped 2026-10-08 and
+2026-10-09, wait for the owner's tags; until they are pushed they are not published, and there is no tag or published
+zip to check them against. Verify against the commit instead. Each
 commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
 release zip, which anyone can rebuild with `git archive` and compare. `scripts/release-site-check.js` checks a
 published web app byte for byte against the commit's build. The steps are in

@@ -1,59 +1,66 @@
-# Release hand-off: v1.25.2 to tag, then the record
+# Release hand-off: tags v1.25.2 to v1.25.3, then the record
 
-> **The one owner action: run step 1, then step 2's tag command and its push.** It publishes 1.25.2:
-> the tag starts `release.yml` (gate, verify, approval in the `release` environment), the release marks
-> `v1.25.2` Latest, and its `Web app` run republishes GitHub Pages. Until the tag exists, 1.25.2 has no
-> GitHub Release and no gate approval. 1.25.1 below is released; its record follows.
-> A session tried the tag push on 2026-10-08 and was refused (HTTP 403): the `v*` tag ruleset lets only the owner
-> make release tags, as intended.
+> **The one owner action: run step 1, then step 2's tag commands and their one push.** It publishes 1.25.2 and
+> 1.25.3: each tag starts its own `release.yml` run (gate, verify, approval in the `release` environment); `v1.25.3`,
+> the newest, is marked Latest and its `Web app` run republishes GitHub Pages. 1.25.1 below is released; its record
+> follows. A session's tag push is refused (HTTP 403): the `v*` tag ruleset lets only the owner make release tags,
+> as intended.
+>
+> **Upgrade suds.systems to 1.25.3, not 1.25.2** (docs/RELEASE.md, *Record: 1.25.3*).
 
-1.25.2 is a patch of 1.25.1 (docs/RELEASE.md, *Record: 1.25.2*): the fixes from testing every position on 1.25.1 and
-from the evaluation of 1.25.1. No migration, no new or widened permission and no new route. It is the first patch with
-an SBOM of its own, so the tag goes on the commit after "Release 1.25.2": "SBOM of the 1.25.2 stamp".
+1.25.2 is a patch of 1.25.1 (*Record: 1.25.2*): the fixes from testing every position on 1.25.1. 1.25.3 is a patch of
+1.25.2 (*Record: 1.25.3*): the fixes from the launch of suds.systems and the pen test of the live install. Neither has a
+migration, a new or widened permission or a new route. Each has an SBOM of its own, so each tag goes on the commit after
+its "Release X.Y.Z": "SBOM of the X.Y.Z stamp".
 
-## The one release
+## The two releases
 
 | Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
 | --- | --- | --- | --- |
 | `v1.25.2` | `cfafd6a3f68ff29482937d28bfe5577e68f2b869` ("SBOM of the 1.25.2 stamp", after the stamp `72a0daa`; exact-commit CI run 37850128724, all 12 jobs green) | 2026-10-08 | `acc777aad2908d8b111bb7d02cb9f96c9a0f60f3b6c664ba7a4daa21a7870d61` |
+| `v1.25.3` | the commit after `Release 1.25.3` ("SBOM of the 1.25.3 stamp": `git log -1 --format=%H --grep='^SBOM of the 1.25.3 stamp$' origin/main`) | 2026-10-09 | `<filled after the SBOM commit>`; rebuild it with the command below |
 
-The SHA-256 above was rebuilt twice from the commit, identical. The zip is a function of the commit (`git archive`, as below); the release job refuses to publish a Release whose
-zip is not byte for byte its own build (`scripts/release-existing.js`). Compare the `.sha256` beside the published
-zip with a rebuild before recording it anywhere:
+The 1.25.2 SHA-256 was rebuilt twice from its commit, identical. A zip is a function of its commit (`git archive`, as
+below); the release job refuses to publish a Release whose zip is not byte for byte its own build
+(`scripts/release-existing.js`). Compare each `.sha256` beside a published zip with a rebuild before recording it:
 
 ```bash
-R1252=$(git log -1 --format=%H --grep='^SBOM of the 1.25.2 stamp$' origin/main)
-git archive --format=zip --prefix=suds-v1.25.2/ -o suds-v1.25.2.zip "$R1252" && sha256sum suds-v1.25.2.zip
+R1253=$(git log -1 --format=%H --grep='^SBOM of the 1.25.3 stamp$' origin/main)
+git archive --format=zip --prefix=suds-v1.25.2/ -o suds-v1.25.2.zip cfafd6a3f68ff29482937d28bfe5577e68f2b869 && sha256sum suds-v1.25.2.zip
+git archive --format=zip --prefix=suds-v1.25.3/ -o suds-v1.25.3.zip "$R1253" && sha256sum suds-v1.25.3.zip
 ```
 
 ## 1. Check (the owner, from any clone)
 
 ```bash
 git fetch origin
-R1252=$(git log -1 --format=%H --grep='^SBOM of the 1.25.2 stamp$' origin/main)
-for c in $R1252; do
+R1253=$(git log -1 --format=%H --grep='^SBOM of the 1.25.3 stamp$' origin/main)
+for c in cfafd6a3f68ff29482937d28bfe5577e68f2b869 $R1253; do
   git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
 done
-git show -s --format='%h %s' $R1252   # "SBOM of the 1.25.2 stamp"
-git show origin/main:package.json | grep '"version"'                            # 1.25.2
-gh run list --workflow ci.yml --commit $R1252 --event push --limit 1   # completed, success
-git ls-remote --tags origin | grep 'v1.25.2'   # not there yet: the tag is what this hand-off is for
+git show -s --format='%h %s' $R1253   # "SBOM of the 1.25.3 stamp"
+git show origin/main:package.json | grep '"version"'                            # 1.25.3
+gh run list --workflow ci.yml --commit $R1253 --event push --limit 1   # completed, success
+git ls-remote --tags origin | grep -E 'v1\.25\.[23]'   # not there yet: the tags are what this hand-off is for
 ```
 
-## 2. Tag, and push
+## 2. Tag, and push both in one push
 
 ```bash
-git tag -a v1.25.2 "$R1252" -m "SUDS 1.25.2"
-git push origin v1.25.2
+git tag -a v1.25.2 cfafd6a3f68ff29482937d28bfe5577e68f2b869 -m "SUDS 1.25.2"
+git tag -a v1.25.3 "$R1253" -m "SUDS 1.25.3"
+git push origin v1.25.2 v1.25.3
 ```
 
-`v1.25.2` is newer than every tag on origin, so its push is safe on its own.
+**Never push `v1.25.2` alone after `v1.25.3`:** an older tag pushed on its own would be marked Latest. In one push with
+`v1.25.3`, the newest is Latest.
 
-## 3. What the tag's run does, and what to approve
+## 3. What the tags' runs do, and what to approve
 
 | Tag | Its gate (main's scripts) | Latest? Web app? | What the owner does |
 | --- | --- | --- | --- |
-| `v1.25.2` | **Passes**: a patch of `v1.25.1` with no migration, permission or route, within the size limit (*Record: 1.25.2*) | **Latest**, and it starts a `Web app` run: the newest tag. Its run also builds and attaches the Windows server zip, unsigned while the certificate secrets are not set | Nothing to dispatch: the tag push runs it. Approve the release job, then **approve its `Web app` run**, which publishes 1.25.2 to GitHub Pages |
+| `v1.25.2` | **Passes**: a patch of `v1.25.1` (*Record: 1.25.2*) | Not Latest (an older tag than `v1.25.3`); it attaches its zips, Windows included | Approve the release job |
+| `v1.25.3` | **Passes**: a patch of `v1.25.2` (*Record: 1.25.3*) | **Latest**, and it starts a `Web app` run; it attaches its zips, the Windows zip unsigned while the certificate secrets are not set | Approve the release job, then **approve its `Web app` run**, which publishes 1.25.3 to GitHub Pages |
 
 ## v1.25.1: released
 

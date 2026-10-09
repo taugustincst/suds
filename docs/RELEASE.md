@@ -323,6 +323,21 @@ commits, "Release 1.25.2" (the stamp) and "SBOM of the 1.25.2 stamp", and the ta
 passes. The owner pushes `v1.25.2` ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); its `release.yml`
 run, whose gate passes with no `policy_exception`, is the Latest release and starts the `Web app` run that publishes it.
 
+**Record: 1.25.3 is a patch with the fixes from the launch of suds.systems.** 1.25.3, stamped 2026-10-09, is a patch of
+1.25.2 inside 1.25.0's 28 days, which a patch may be (*Stabilisation*, point 1). It fixes the two installer findings of
+the launch of the production install at suds.systems on 2026-10-08 (the SSH rule the firewall clean-up deleted with
+`--admin-cidr=0.0.0.0/0`; `www.<domain>` with no certificate, and upgrades that replaced a locally edited Caddyfile
+without a word) and the first administrator's username missing from the installer's output, and the findings of the
+owner-authorised black-box and code-review test of that live install (MINOR-1, lockout telling which usernames exist;
+MINOR-2, anonymous health warnings; INFO-2 and INFO-3). No migration, no new or widened permission and no new route,
+210 lines added outside docs, tests and generated files (`node scripts/release-policy.js --version 1.25.3
+--previous v1.25.2`), so it passes the release policy with no exception. Like 1.25.2 it is two commits, "Release 1.25.3"
+and "SBOM of the 1.25.3 stamp", the tag on the second. `v1.25.2` was not yet tagged when it was stamped, so the owner
+pushes both tags in one push ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); `v1.25.3`, the newest, is
+the Latest release and its `Web app` run publishes 1.25.3. **Upgrade suds.systems to 1.25.3, not 1.25.2**: before
+1.25.3 an upgrade replaces the hand-edited Caddyfile and drops the www redirect (deploy/linux/README.md, *Before
+upgrading suds.systems from 1.25.1*).
+
 ### Supported versions
 
 | Line | Gets | For how long |
@@ -481,6 +496,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.25.0 | monthly limit and the feature freeze (*Stabilisation*, point 1: a feature release two days after 1.24.0, migration 71; no new permission or route); not a security fix, so no `Security exception:` line — the owner's explicit instruction to lift the freeze, recorded in *Record: 1.25.0* and passed as `policy_exception` when the tag's release runs | the CalOMS Tx dictionary verification (all 17 code sets rewritten from the DHCS Data Dictionary v3.0; migration 71 remapping stored answers), better resource-directory pictures (40 of the 81 providers on the published site; many provider sites refuse automated downloads), and the UI intuitiveness pass, on the owner's instruction of 2026-10-05 ("Fix everything now, freeze lifts to 1.25.0") | owner (`policy_exception`, *Record: 1.25.0*, above) |
 | 1.25.1 | none of the policy (a patch within the patch rules: no new migration, permission or route, 412 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged by the owner and released through the gate on 2026-10-08 (*Record: 1.25.1*) | the fixes from the evaluation of 1.25.0 (E1 to E11): one programme-local "today", typed dates and times, repeated CalOMS codes, honest provider-picture and release records, one pricing source of truth (*Record: 1.25.1*, above) | no exception to approve |
 | 1.25.2 | none of the policy (a patch within the patch rules: no migration, permission or route, 754 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once the owner has pushed `v1.25.2` | the fixes from testing every position on 1.25.1 and from the evaluation of 1.25.1 (FL1–FL16, CS1–CS18, BO1–BO25, F1–F8, less FL5's index and BO22's headings), with its own SBOM (*Record: 1.25.2*, above) | no exception to approve |
+| 1.25.3 | none of the policy (a patch within the patch rules: no migration, permission or route, 210 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once the owner has pushed `v1.25.2` and `v1.25.3` | the fixes from the launch of suds.systems and the pen test of the live install (installer SSH rule, site-local Caddy configuration and the www redirect, the first administrator's username, MINOR-1, MINOR-2, INFO-2, INFO-3; *Record: 1.25.3*, above) | no exception to approve |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as
