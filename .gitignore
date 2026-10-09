@@ -24,3 +24,16 @@ SUDS_KEYSTORE_BASE64.txt
 # Provider pictures downloaded by scripts/fetch-region-pictures.js for the static build: other
 # organisations' logos and photos, refreshed at each build, never committed (docs/WEB_APP.md).
 /_region-pictures/
+
+# deploy/fleet: tenant settings, the register, escrow and credentials live in the private FLEET_HOME, never in this
+# repository (every fleet script refuses a FLEET_HOME inside it; this is the second guard). deploy/fleet/README.md.
+/deploy/fleet/*.env
+/deploy/fleet/*/
+/fleet-home/
+register/
+escrow/
+credentials/
+*.tar.gpg
+*.tenant.env
+porkbun*.env
+known_hosts
