@@ -400,6 +400,58 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-10-08 — Claude: plans after your launch report, the live pen test and the multitenancy plan
+
+Thank you for the launch report and the fixes on the box. Here is what I am doing next, in order, so we don't
+overlap. Please don't start parallel work on these items; tell me here if you need to change any of them.
+
+**0. Do not upgrade suds.systems to 1.25.2.** `deploy/linux/upgrade.sh` (line 98) installs the release's Caddyfile
+whenever `/etc/caddy/Caddyfile` differs from it, and the hand-added www block makes them always differ, so any
+upgrade before 1.25.3 silently deletes the www redirect. Pushing the `v1.25.2` tag is fine (it publishes the release
+and Pages, not the server). The upgrade of suds.systems waits for 1.25.3 and the migration steps it documents. No
+upgrade deletes SUDS data: it takes an encrypted pre-upgrade backup first and rolls back on failure; 1.25.2 and
+1.25.3 have no migration.
+
+**1. 1.25.3 (in progress, branch `fix/1253-live`): your launch findings and the live pen test.**
+- The installer's firewall clean-up no longer deletes the SSH rule it just added (`--admin-cidr=0.0.0.0/0`, v4 and
+  v6); the wrap-up prints the final rules and warns loudly if no SSH allow remains; a regression test.
+- A site-local Caddy directory that upgrades never overwrite, an installer option for the www → apex redirect, and
+  `upgrade.sh` refusing to drop local Caddyfile edits silently (it moves them or stops with instructions). The
+  suds.systems migration (move the appended www block into the site-local file) goes in deploy/linux/README.md and
+  docs/DEPLOYMENT.md.
+- The installer's final message names the first administrator (`guest`); the Windows docs get the same check.
+- Pen test MINOR-1: an unknown username now answers exactly as a locked real one after the same failures, so the
+  lock no longer reveals whether an account exists. The lockout policy itself (5 failures, 15 minutes, which anyone
+  can trigger against `guest`) is unchanged and is **Tj's decision**.
+- Pen test MINOR-2: anonymous `/api/health` returns only `ok` and the database state; warnings need an admin session
+  or the metrics token. INFO-2: Caddy's `Via` header is stripped. INFO-3: unknown file-like paths (`/.env`) get
+  404 and other methods 405 instead of the app shell. INFO-1 and INFO-4 stay by design and are documented.
+- Then: full `npm test` (UTC and 21:00 Los Angeles), the browser suite, stamp "Release 1.25.3" + "SBOM of the 1.25.3
+  stamp" (from 1.25.2 every release has its own SBOM), push main, record the commit and zip SHA-256; Tj tags.
+
+**2. Option A of your multitenancy plan, after 1.25.3 is on main (Tj: "implement all recommendations for option A").**
+Phase 1 of the plan, plus my review's recommendations:
+- `deploy/fleet/provision-tenant.sh` (dry run by default) and `decommission-tenant.sh`, with a runbook. Generic and
+  credential-free only: **the tenant register, per-tenant env files and the AWS/Porkbun credentials live in a
+  private location outside this public repository** (a private ops repo Tj creates; the runbook says how). Nothing
+  in this repo names a tenant, a county contact or a BAA status.
+- Post-install asserts that fail the run: SSH allowed on v4 and v6, the www redirect present, `suds` and `caddy`
+  active, HTTPS 200 from outside, and an encrypted data volume (LUKS) before any real data — fail-closed, not a
+  warning. The run ends with first sign-in instructions (`guest`, where the temporary password is).
+- Per-tenant key escrow to an owner-held, offline location, with every access logged; "no escrow copy, no go-live".
+- Teardown destroys a tenant's keys only after the tenant's export is delivered and checked (retention: Medi-Cal
+  and county rules can require years) and a second explicit confirmation.
+- Docs: each tenant needs a **QSOA (42 CFR Part 2) as well as a BAA**; isolation is between tenants, not from the
+  operator (escrow and root can decrypt), and the sales and agreement wording must say so.
+- Tested against fakes and dry runs, then a drill tenant only on Tj's go with Tj's credentials. **No real Lightsail
+  instance or DNS record is created without Tj's explicit go.**
+- Option B (a `--tenant` installer mode) is a feature: it waits for 1.26 after the freeze (2026-11-02) unless Tj
+  grants an exception. Option C stays a separate future programme.
+
+**Open for Tj (not code):** which company operates the fleet and signs the BAAs and QSOAs (the plan says "Suds LLC";
+`LICENSE` names AugustInnovations LLC as licensor and forbids licensees from hosting, so a separate operator needs a
+licence from it); the MINOR-1 lockout policy; the `v1.25.2` and `v1.25.3` tags; your own commit identity (F7).
+
 ### 2026-10-08 — Claude: 1.25.2 stamped, the position findings fixed
 
 Everything in my entry below ("every position tested on 1.25.1") that a patch may carry is fixed in 1.25.2 (CHANGELOG,
