@@ -4,6 +4,13 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Fixed
+
+- **A preference changed with no signal is no longer lost at the next reload (G3, evaluation of 1.25.3).** A change the
+  office has not confirmed waits in that browser under the account (`suds.prefs.pending`, UI state, never PHI); the next
+  load lays it over the office's older copy and sends it, as does the first answer from the office after no signal.
+  "Same as last contact" no longer offers the bundle before one entered offline (`scripts/ui/offline-outreach.mjs` 4b).
+
 ### Added
 
 - **Fleet tooling: one SUDS Server per tenant on AWS Lightsail (Option A of the multitenancy plan)** — operator

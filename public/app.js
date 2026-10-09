@@ -11,22 +11,46 @@ export const state = { user: null, org: 'SUDS', constants: null, users: [], fund
 export function isLocalMode() { try { return new URLSearchParams(location.search).get('local') === '1' || location.protocol === 'file:' || window.SUDS_FORCE_LOCAL === true || !!window.SUDS_LOCAL; } catch { return false; } }
 
 // ---------- workspace preferences (follow the user across devices) ----------
-let prefsTimer; const prefsDirty = {};
+// A change the office has not confirmed yet also waits in localStorage under the account's id (`suds.prefs.pending`;
+// UI state such as "Same as last contact", never PHI), so that a reload cannot lose it: load() lays it over the office's
+// older copy and sends it, and so does the first answer from the office after no signal (1.25.4, G3: a bundle changed
+// offline was replaced by the previous one at the next reload, and "Same as last contact" offered that).
+let prefsTimer; const prefsDirty = {}; const PENDING = 'suds.prefs.pending';
+const pendingAll = () => { try { return JSON.parse(localStorage.getItem(PENDING) || '{}') || {}; } catch { return {}; } };
+const pendingMine = () => (state.user && pendingAll()[state.user.id]) || {};
+function editPending(fn) {
+  if (!state.user) return;
+  try { const all = pendingAll(); const mine = fn({ ...(all[state.user.id] || {}) }); if (Object.keys(mine).length) all[state.user.id] = mine; else delete all[state.user.id]; localStorage.setItem(PENDING, JSON.stringify(all)); } catch { /* prefsDirty still holds it */ }
+}
+const sameValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 export const prefs = {
   get: (k, d) => (state.prefs[k] === undefined ? d : state.prefs[k]),
-  set(k, v) { state.prefs[k] = v; prefsDirty[k] = v; try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {} // The pending save counts as work in progress (see activity below), so "has the page finished?" covers it.
+  set(k, v) { state.prefs[k] = v; prefsDirty[k] = v; editPending(p => ({ ...p, [k]: v })); try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {} // The pending save counts as work in progress (see activity below), so "has the page finished?" covers it.
     if (prefsTimer) clearTimeout(prefsTimer); else busy(1);
     prefsTimer = setTimeout(() => { prefsTimer = null; busy(-1); prefs.flush(); }, 800); },
   async flush() {
-    const body = { ...prefsDirty };
-    if (!Object.keys(body).length || !state.user) return;
+    // Not as a session this tab only remembers (restoreTabSession): the office has not said yet who is signed in.
+    if (!state.user || state.signedInOffline) return;
+    const body = { ...pendingMine(), ...prefsDirty };
+    if (!Object.keys(body).length) return;
     for (const k of Object.keys(body)) delete prefsDirty[k];
-    // On failure the change stays pending rather than being dropped, so the next save retries it — this
-    // used to lose a filter or a theme choice with no sign anything had happened.
-    try { await put('/api/me/prefs', body, { quiet: true }); }
-    catch { Object.assign(prefsDirty, body); }
+    // On failure the change stays pending rather than being dropped, so the next save, the next answer from the
+    // office or the next load retries it. A key changed again meanwhile keeps its newer value.
+    try { await put('/api/me/prefs', body, { quiet: true }); editPending(p => { for (const k of Object.keys(body)) if (sameValue(p[k], body[k])) delete p[k]; return p; }); }
+    catch (e) {
+      if (e && e.status === 400) { editPending(p => { for (const k of Object.keys(body)) delete p[k]; return p; }); return; } // refused: retrying cannot help
+      for (const k of Object.keys(body)) if (!(k in prefsDirty)) prefsDirty[k] = body[k];
+    }
   },
-  async load() { try { state.prefs = (await get('/api/me/prefs', { quiet: true })).prefs || {}; try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {} } catch { try { state.prefs = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); } catch { state.prefs = {}; } } applyTheme(); },
+  async load() {
+    let fresh = true;
+    try { state.prefs = (await get('/api/me/prefs', { quiet: true })).prefs || {}; } catch { fresh = false; try { state.prefs = JSON.parse(localStorage.getItem('suds.prefs') || '{}'); } catch { state.prefs = {}; } }
+    // A change made here that the office has not confirmed is newer than the office's copy.
+    const mine = pendingMine(); Object.assign(state.prefs, mine);
+    try { localStorage.setItem('suds.prefs', JSON.stringify(state.prefs)); } catch {}
+    applyTheme();
+    if (fresh && Object.keys(mine).length) prefs.flush();
+  },
 };
 function applyTheme() { const t = state.prefs.theme; if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; }
 
@@ -236,7 +260,7 @@ export function setOffline(on) {
     if (offlineBanner && state.user) offlineBanner.firstChild.append(' ', h('a', { href: '#/field-phone', 'data-field-phone-link': '1' }, 'Working offline'));
   } else {
     document.querySelectorAll('#banners [data-banner="offline"]').forEach(b => b.remove());
-    if (offlineBanner) { toast('Back online', 'ok'); offlineBanner = null; autoFlush(); }
+    if (offlineBanner) { toast('Back online', 'ok'); offlineBanner = null; autoFlush(); prefs.flush(); }
   }
 }
 window.addEventListener('offline', () => setOffline(true));
@@ -2378,11 +2402,12 @@ export async function loadSession() {
     // Nobody signed in: the sign-in page, with no request that needs a session (1.25.2, FL12).
     if (!me || !me.user) { state.user = null; state.signedInOffline = false; return; }
     state.user = me.user; state.org = me.org_name; state.mfaPending = me.mfaPending; state.idleMinutes = me.idle_minutes || 15; state.programme = me.programme || null;
+    state.signedInOffline = false; // the office has said who is signed in: preferences waiting here may be sent
     // The fund a new visit is pre-filled with (the worker's own default, else the programme's).
     state.defaultFundId = me.default_fund_id || null;
     // A sign-in still owing its second step is refused everything else: nothing is loaded until it is done (FL12).
     if (!state.mfaPending) await Promise.all([loadRefData(), prefs.load()]);
-    keepTabSession(me); state.signedInOffline = false;
+    keepTabSession(me);
     // Drafts typed by someone else in this tab are not theirs to see; this person's own kept drafts come back.
     claimDrafts();
     if (!state.mfaPending && !state.user.must_change_password) offerKeptDrafts();
