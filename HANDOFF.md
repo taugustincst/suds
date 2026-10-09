@@ -397,6 +397,74 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-10-09 — Claude: please upgrade suds.systems to 1.25.3 (Tj's request)
+
+1.25.3 is released (tag `v1.25.3` at `fdd248d0`, GitHub Release Latest, Pages serves it). Tj asks you to upgrade the
+live server at suds.systems from 1.25.1 straight to 1.25.3 (1.25.3 contains 1.25.2; there is no migration in either).
+The upgrade keeps all SUDS data: it takes an encrypted backup first and rolls back by itself if 1.25.3 does not become
+ready. Please follow these steps in order and report back here.
+
+**0. Before anything** (the box is demo-data-only, but do it anyway):
+- Copy the server's keys (`/etc/suds/credentials`) to Tj's owner-held escrow, off the box, if that is not done yet:
+  a pre-upgrade backup can only be restored with them.
+- Keep the current SSH session open until step 4 confirms a fresh session works.
+
+**1. Move the hand-added www block** (deploy/linux/README.md, *Before upgrading suds.systems from 1.25.1*):
+```bash
+sudo install -d -m 0755 /etc/caddy/Caddyfile.d
+sudo tee /etc/caddy/Caddyfile.d/www-redirect.caddy >/dev/null <<'CADDY'
+www.suds.systems {
+	import {$SUDS_CADDY_TLS:/dev/null}
+	header -Server
+	redir https://suds.systems{uri} permanent
+}
+CADDY
+sudo cp /etc/caddy/Caddyfile /root/Caddyfile.launch-day
+sudo cp /opt/suds/1.25.1/Caddyfile /etc/caddy/Caddyfile
+sudo cmp /opt/suds/1.25.1/Caddyfile /etc/caddy/Caddyfile && echo ready
+```
+**Do not restart Caddy** between this step and the upgrade (1.25.1's Caddyfile does not import `Caddyfile.d`; the
+upgrade installs 1.25.3's, which does, and restarts Caddy). If you skip this step, 1.25.3's `upgrade.sh` moves an
+appended block like this one itself, and refuses any other local edit before stopping anything.
+
+**2. Get and check the release** (two channels must agree):
+```bash
+cd /root
+curl -fsSLO https://github.com/taugustincst/suds/releases/download/v1.25.3/suds-v1.25.3.zip
+curl -fsSLO https://github.com/taugustincst/suds/releases/download/v1.25.3/suds-v1.25.3.zip.sha256
+sha256sum suds-v1.25.3.zip; cat suds-v1.25.3.zip.sha256
+# both must be d70101e1d0332beff63beef329cea7089bbe1afd4f58e34beb845a1e556239cc
+# (recorded on main before the tag: docs/evidence/RELEASE-HANDOFF.md)
+unzip -q suds-v1.25.3.zip
+```
+
+**3. Upgrade** (the new release's own script):
+```bash
+sudo /root/suds-v1.25.3/deploy/linux/upgrade.sh 1.25.3 --source=/root/suds-v1.25.3.zip \
+  --release-sha256=d70101e1d0332beff63beef329cea7089bbe1afd4f58e34beb845a1e556239cc --dry-run
+# read the plan, then the same command without --dry-run
+```
+It stages and checks the release, stops SUDS, takes the encrypted backup (`/var/lib/suds/backups/pre-upgrade-<time>`),
+swaps the code and the Caddyfile, starts, waits for `/api/health/ready`, restarts Caddy, and runs the compliance check.
+
+**4. Verify, and paste the results here:**
+```bash
+curl -s https://suds.systems/version.json                       # {"version":"1.25.3"}
+curl -sI https://www.suds.systems/ | head -3                     # 301, Location: https://suds.systems/
+curl -sI https://suds.systems/ | grep -ci '^via:'                # 0 (Via header gone, INFO-2)
+curl -s https://suds.systems/api/health                          # only ok, uptime_seconds, database (MINOR-2)
+curl -s -o /dev/null -w '%{http_code}\n' https://suds.systems/.env   # 404 (INFO-3)
+sudo ufw status verbose | grep -E '22/tcp'                       # SSH still allowed, v4 and v6
+```
+Then open a **new** SSH session (not the install one) and sign in to the app as the administrator.
+
+**If it rolls back:** the script restores 1.25.1 and its database by itself and puts 1.25.1's Caddyfile back. Then
+restore the www block: `sudo cp /root/Caddyfile.launch-day /etc/caddy/Caddyfile && sudo systemctl restart caddy`, and
+post the upgrade's output here so I can find the cause.
+
+**Afterwards:** `/root/Caddyfile.launch-day` and the unpacked release in `/root` can be removed once you have checked
+the steps above. Future upgrades keep `Caddyfile.d/` untouched.
+
 ### 2026-10-09 — Claude: 1.25.3 on main; Option A fleet tooling added
 
 - **1.25.3** (the launch-report and live pen-test fixes) is on main, CI green. Tag the second "SBOM of the 1.25.3
