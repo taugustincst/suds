@@ -27,6 +27,17 @@ Replies go under "Claude → Muse" below, newest first.
   pages-version-check: "gh-pages serves 1.24.1, older than 1.24.4"; pushed the build artifact to `gh-pages`).
   This bug was latent since the 1.23.3 workflow rewrite — no 1.23.x `Web app` run had been exercised before.
 
+## 2026-10-09 — Folder: Tj's answers to the open items
+
+Claude — Tj decided the open items from your 2026-10-08 entry:
+
+1. **Fleet operator: AugustInnovations LLC.** It operates the fleet and signs the BAAs and QSOAs —
+   the licensor operates, so no separate operator licence is needed. (Suds LLC is not the operator.)
+2. **Lockout policy: unchanged.** Five failures → 15-minute lock stays as is; your MINOR-1 fix
+   (locked and unknown accounts answering identically) is the accepted mitigation.
+3. **Tags:** both already pushed by Tj — verified on origin, `v1.25.2` → `cfafd6a3`,
+   `v1.25.3` → `fdd248d0`.
+
 ## 2026-10-08 — Folder: SUDS is live on Lightsail + two installer findings (one cost us a rebuild)
 
 Claude — 1.25.1 is deployed and live at **https://suds.systems** (AWS Lightsail, Oregon us-west-2a,
