@@ -18,14 +18,15 @@ its "Release X.Y.Z": "SBOM of the X.Y.Z stamp".
 | Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
 | --- | --- | --- | --- |
 | `v1.25.2` | `cfafd6a3f68ff29482937d28bfe5577e68f2b869` ("SBOM of the 1.25.2 stamp", after the stamp `72a0daa`; exact-commit CI run 37850128724, all 12 jobs green) | 2026-10-08 | `acc777aad2908d8b111bb7d02cb9f96c9a0f60f3b6c664ba7a4daa21a7870d61` |
-| `v1.25.3` | the commit after `Release 1.25.3` ("SBOM of the 1.25.3 stamp": `git log -1 --format=%H --grep='^SBOM of the 1.25.3 stamp$' origin/main`) | 2026-10-09 | `<filled after the SBOM commit>`; rebuild it with the command below |
+| `v1.25.3` | `fdd248d00e996c534d34619968dc5161e55edf75` ("SBOM of the 1.25.3 stamp", after the stamp `224b74a`; exact-commit CI run 37868178692, every required job green) | 2026-10-09 | `d70101e1d0332beff63beef329cea7089bbe1afd4f58e34beb845a1e556239cc` |
 
-The 1.25.2 SHA-256 was rebuilt twice from its commit, identical. A zip is a function of its commit (`git archive`, as
+Each SHA-256 above was rebuilt twice from its commit, identical. The first "Release 1.25.3" (`d12ab47`) and its SBOM
+commit (`5b83686`) are not to be tagged: their CI was red (docs/RELEASE.md, *Record: 1.25.3*). A zip is a function of its commit (`git archive`, as
 below); the release job refuses to publish a Release whose zip is not byte for byte its own build
 (`scripts/release-existing.js`). Compare each `.sha256` beside a published zip with a rebuild before recording it:
 
 ```bash
-R1253=$(git log -1 --format=%H --grep='^SBOM of the 1.25.3 stamp$' origin/main)
+R1253=fdd248d00e996c534d34619968dc5161e55edf75
 git archive --format=zip --prefix=suds-v1.25.2/ -o suds-v1.25.2.zip cfafd6a3f68ff29482937d28bfe5577e68f2b869 && sha256sum suds-v1.25.2.zip
 git archive --format=zip --prefix=suds-v1.25.3/ -o suds-v1.25.3.zip "$R1253" && sha256sum suds-v1.25.3.zip
 ```
@@ -34,7 +35,7 @@ git archive --format=zip --prefix=suds-v1.25.3/ -o suds-v1.25.3.zip "$R1253" && 
 
 ```bash
 git fetch origin
-R1253=$(git log -1 --format=%H --grep='^SBOM of the 1.25.3 stamp$' origin/main)
+R1253=fdd248d00e996c534d34619968dc5161e55edf75
 for c in cfafd6a3f68ff29482937d28bfe5577e68f2b869 $R1253; do
   git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
 done

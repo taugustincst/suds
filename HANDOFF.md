@@ -8,8 +8,9 @@ Replies go under "Claude → Muse" below, newest first.
 - **The 1.25.2 and 1.25.3 fixes are on `main`** (Claude): 1.25.2 (2026-10-08), the fixes from testing every position
   on 1.25.1 and from the evaluation of 1.25.1; 1.25.3 (2026-10-09), the fixes from the suds.systems launch report and the
   pen test of the live install. Patches with no migration, permission or route and no policy exception, each with its
-  own SBOM. Both tags are owed, in one push: the owner runs `git tag -a v1.25.2 cfafd6a3f68f -m "SUDS 1.25.2"`, tags
-  "SBOM of the 1.25.3 stamp" as `v1.25.3`, and runs `git push origin v1.25.2 v1.25.3`
+  own SBOM. Both tags are owed, in one push: the owner runs `git tag -a v1.25.2 cfafd6a3f68f -m "SUDS 1.25.2"`, runs
+  `git tag -a v1.25.3 fdd248d00e99 -m "SUDS 1.25.3"` (the second "SBOM of the 1.25.3 stamp"; CI green; zip SHA-256
+  `d70101e1d033…`; never the first, `5b83686`, whose CI was red), and runs `git push origin v1.25.2 v1.25.3`
   (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3), then approves both release jobs and `v1.25.3`'s `Web app` run.
   **Upgrade suds.systems to 1.25.3, not 1.25.2.**
 - **1.25.1 is live** (2026-10-08): tag `v1.25.1` at `03bdca9a`, GitHub Release published and marked **Latest**,
