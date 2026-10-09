@@ -408,6 +408,52 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-10-09 — Claude: market-readiness evaluation of 1.25.3
+
+Tj asked for a full market-readiness evaluation of the released 1.25.3. An independent pass was run against the tag,
+the published Pages branch and the release zips (the live suds.systems was not reachable from my sandbox; its state is
+taken from your launch report and the pen-test summary).
+
+**Headline: 3.0 / 5, unchanged.** The software improved; the items that block a purchase are owner and business
+actions. Lens scores, 1.25.1 → 1.25.3: Frontline 4.75 (=); Supervisor/clinical 4.5 → 4.75; CBO director 3.75 (=);
+County 3.5 (=); Device-only 3.25 (=); Security/compliance 3.5 → 3.75; Windows/county IT 3.0 → 3.25. Lens mean 3.75 →
+3.86. Verified: `npm test` 2107/2107 in UTC and at 21:00 Los Angeles; 18 browser scripts (12,001 checks, no WCAG
+finding); the zips match their checksums and rebuild from the tags; the Windows zip's `app\` equals the tag (both
+`.exe` unsigned); Pages equals the tag; the important 1.25.2/1.25.3 fixes hold (BO1 repaired a forced rollback-journal
+database, 3,000 concurrent requests with no 500).
+
+**By buyer:** a device-only team, free for real use at the official address; a CBO with an IT partner, a free pilot
+with fictional data only; a county, a sandbox or 90-day evaluation. No paid pilot or production purchase yet: no
+procurement contact, no agreement text to sign, no insurance, no reference, no independent pen test, unsigned binaries,
+unconfirmed CalOMS layout.
+
+**Findings (G1–G11):**
+- **G1 (Medium): main's required CI is intermittently red.** 6 of the last 12 main runs failed, each a different job
+  (browser twice, evening once, test once, …), including `cfafd6a`'s main run (v1.25.2; its mirror-branch run was green,
+  which is the one I read — my mistake). main is red now. One cause found: a test that uses a two-step code from the
+  previous 30-second window. **Please do not push to main to "re-run" it; I will root-cause these.**
+- **G2 (Medium):** a WebKit CI run on code identical to v1.25.3 failed signing back in to the device app after a reload
+  with "malformed database schema (audit_log) - string or blob too big". Our records call WebKit failures flakes; this
+  one needs a real iPhone/Safari check before recommending the device app on iPhones.
+- **G3 (Low):** a preference changed offline is lost at the next online reload (`public/app.js` 15–29), so "Same as
+  last contact" can offer the previous bundle.
+- **G4/G5 (Low): buyer documents lag.** docs/market/HOSTING.md still says the legal entity is "not started" (Tj
+  decided on 2026-10-09: AugustInnovations LLC operates the fleet, your entry above); QUESTIONNAIRE #38 does not mention
+  the black-box test of suds.systems, which exists only as prose (no report, no named tester).
+- **G6/G7 (Low):** the first 1.25.3 stamp reached main with red CI (my error, recorded in docs/RELEASE.md); release
+  tags are unsigned; F7 (your commit identity) is still open.
+- **G8–G11 (Low/Info):** client-linked finance rows are year-only in the export (by design, BO6); no IPv6 SSH option in
+  the installer; stored install/recovery-drill evidence stops at 1.23.0; **G9:** LICENSE requires a signed agreement for
+  every paid use, but there is no agreement text yet.
+
+**Path forward.** Engineering (worth about +0.1, but it protects the score): stabilise CI (G1), investigate G2, fix G3,
+bring the documents up to date (G4, G5, G11). Owner actions: a procurement contact and a counsel-reviewed agreement
+(+0.25); an independent pen test with fixes released (+0.25 to +0.5); code signing and a Windows run (+0.1 to +0.25);
+CalOMS layout confirmation (+0.1 to +0.25); insurance and counsel review (about +0.1 each); a reference pilot (+0.25 to
++0.5, over months); a priced hosted tier now that the operator is decided. **3.5** needs the contact and agreement, the
+independent pen test, and stable CI; **4.0** adds signing, CalOMS confirmation, insurance, reviewed agreements and one
+reference pilot in production.
+
 ### 2026-10-09 — Claude: please upgrade suds.systems to 1.25.3 (Tj's request)
 
 1.25.3 is released (tag `v1.25.3` at `fdd248d0`, GitHub Release Latest, Pages serves it). Tj asks you to upgrade the
