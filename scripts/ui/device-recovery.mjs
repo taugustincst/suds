@@ -155,6 +155,10 @@ async function useCode(page, code, { username = '', password = NEW_PW } = {}) {
   // Set up the way 1.14 did (no code made): the account straight through the kernel.
   eq((await kernel(page, 'POST', '/api/local/signup', { display_name: 'Older Owner', username: 'older', password: PW, role: 'admin', storage_ack: true })).status, 200, 'older device: set up without a recovery code');
   eq((await kernel(page, 'POST', '/api/local/signup', { display_name: 'Older Colleague', username: 'olnav', password: PW })).status, 200, 'older device: and a second account');
+  // Saved before the reload, as the app's own writes are (public/app.js waits for the save after an explicit write):
+  // these went straight to the kernel, and WebKit drops a page's last write on its way out (the webkit job, 1.25.4).
+  await page.evaluate(() => window.SUDS_LOCAL.flush());
+  ok(!(await page.evaluate(() => window.SUDS_LOCAL.isDirty())), 'older device: both accounts are saved');
   // The page was on first-run Sign up: open Log in.
   await page.goto(base + '/#/login?mode=login'); await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 }); await settle(page);
   ok(/has none yet/.test(await page.textContent('[data-way-back=recovery]')) && !(await page.$('[data-recover-open]')), 'older device: the sign-in page says it has no recovery code yet');
