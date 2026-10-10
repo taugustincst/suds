@@ -51,7 +51,7 @@ jobs:
   # and dr-drill jobs all green (scripts/release-gate.js; docs/RELEASE.md, "Release gate"). It waits for CI
   # still running on the commit, up to an hour. WebKit stays advisory.
   gate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: github.event_name == 'push' || github.event.inputs.confirm == 'release'
     permissions:
       contents: read
@@ -129,7 +129,7 @@ jobs:
   # job makes is used by another: the release job builds the zip itself.
   verify:
     needs: gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -173,12 +173,12 @@ jobs:
             exit 1
           }
   # The Windows server zip, from the gated commit (docs/RELEASE.md, "The Windows server zip"): scripts/build-windows.js
-  # on windows-latest with the pins ci.yml's windows-exe job holds (the same values here; test/workflow-yaml.test.js
+  # on windows-2025 with the pins ci.yml's windows-exe job holds (the same values here; test/workflow-yaml.test.js
   # checks they agree), a read-only token and no secret. It stages the files and does not zip them: signing comes
   # next, in a job that runs no npm package and no third-party code (postject runs here).
   windows-exe:
     needs: gate
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 30
     permissions:
       contents: read
@@ -235,7 +235,7 @@ jobs:
   # --pack: Node built-ins only) and handed to the release job.
   windows-sign:
     needs: windows-exe
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 15
     permissions:
       contents: read
@@ -308,7 +308,7 @@ jobs:
   # main's scripts/release-existing.js (from the gate's main commit) on the runner's own Node.
   release:
     needs: [gate, verify, windows-sign]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release
     if: github.event_name == 'push' || github.event.inputs.confirm == 'release'
     permissions:

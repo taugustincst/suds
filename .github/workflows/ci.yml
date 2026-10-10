@@ -24,7 +24,7 @@ env:
   TEST_REPORTERS: --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./scripts/ci-annotate.js --test-reporter-destination=stdout
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out
@@ -84,7 +84,7 @@ jobs:
   # SUDS_THOROUGH (timing budgets), and the pure performance checks in test/thorough/, which npm test does
   # not run so that a busy runner cannot flake the required `test` job.
   thorough:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Check out
@@ -118,7 +118,7 @@ jobs:
   # slower runner would have failed the release on a timeout, not a finding. Their own job, with room to spare;
   # required by the release gate like `thorough`.
   thorough-sdc:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Check out
@@ -147,7 +147,7 @@ jobs:
           NODE_OPTIONS: ${{ env.TEST_REPORTERS }}
         run: node scripts/test-thorough.js --part sdc
   browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Measured on CI (1.17.0 candidate, runs 36612230830 and 36614997483): the whole job 27.9 min, the 51 scripts
     # 23 to 27 min, accessibility alone 595 to 634 s. 50 minutes is about 1.8 times that; a hang costs 50, not 75.
     timeout-minutes: 50
@@ -191,7 +191,7 @@ jobs:
   # https://nodejs.org/dist/v<version>/SHASUMS256.txt (after checking its signature, SHASUMS256.txt.asc) and
   # change both lines below in one commit. test/release-gate.test.js checks their shape.
   node24:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       NODE24_VERSION: v24.21.0
@@ -222,7 +222,7 @@ jobs:
   # signature): a test tool on the runner, not a dependency of SUDS. Not advisory: a red run fails CI, so the
   # release gate refuses the commit.
   evening:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out
@@ -263,7 +263,7 @@ jobs:
   # (scripts/dr-exercise.js; docs/security/BACKUP-AND-DR.md). Required by the release gate. The repository
   # uses no actions at all (not even actions/upload-artifact), so the signed report is printed into this log.
   dr-drill:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out
@@ -300,7 +300,7 @@ jobs:
   # while offline) are reported as SKIP here, with their diagnostics, and checked on an iPhone instead
   # (scripts/ui/assert.mjs PLAYWRIGHT_WEBKIT_LINUX); every other check in the two scripts still counts.
   webkit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     continue-on-error: true
     steps:
@@ -325,7 +325,7 @@ jobs:
   # History without file contents (--filter=blob:none), as the release gate clones, so it can ask whether each
   # hand-off commit is on main; no npm install (Node built-ins and git only).
   release-state:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     continue-on-error: true
     steps:
@@ -356,7 +356,7 @@ jobs:
   # gate refuses the commit. One commit deep plus the tags (each one deep); the script fetches the hand-off commit
   # it compares with by its SHA (--fetch). No npm install: Node built-ins and git only, as in the gate.
   release-policy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Check out, with the release tags
@@ -374,7 +374,7 @@ jobs:
       - name: Release policy against the newest release (tag or hand-off commit)
         working-directory: src
         run: node scripts/release-policy-ci.js --fetch
-  # Windows (1.24): the path a tester takes on a Windows 11 PC (docs/TRY-ON-WINDOWS.md), on windows-latest with the
+  # Windows (1.24): the path a tester takes on a Windows 11 PC (docs/TRY-ON-WINDOWS.md), on windows-2025 with the
   # pinned Node 22. The checkout goes through Git for Windows (core.autocrlf), so .gitattributes is tested too. No
   # npm install, because the doc tells a tester none is needed. `npm run try` is started on a free port in a temporary
   # data folder, signs in with a sample account, lists clients and is stopped the way Ctrl+C does
@@ -383,7 +383,7 @@ jobs:
   # not advisory: a red job fails the run, as release-policy does. The same smoke test runs on Linux in npm test.
   # NODE22_WIN_SHA256 is the win-x64.zip line of the same SHASUMS256.txt as NODE22_SHA256: bump both together.
   windows:
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 15
     env:
       NODE22_WIN_SHA256: 2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71
@@ -442,7 +442,7 @@ jobs:
   # together); WinSW-x64.exe of the WinSW release, by SHA-256; postject's npm tarball, by its registry integrity
   # (SHA-512), used as a build-time library only (docs/RELEASE.md, "The Windows server zip").
   windows-exe:
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 30
     env:
       NODE22_WIN_SHA256: 2b0ff57b049cda1bbcea2240eec20467018713c1efe1f7360c2681859b90ed71

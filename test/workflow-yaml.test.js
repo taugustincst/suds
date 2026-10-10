@@ -83,11 +83,29 @@ test('every workflow parses, and every job runs on a hosted runner with named st
       // The Windows jobs are the exceptions: ci.yml's windows job (the path a Windows tester takes, docs/TRY-ON-WINDOWS.md),
       // and the Windows server zip's build in ci.yml and release.yml, and its signing (docs/WINDOWS-SERVER.md).
       const windows = (f === 'ci.yml' && ['windows', 'windows-exe'].includes(name)) || (f === 'release.yml' && ['windows-exe', 'windows-sign'].includes(name));
-      assert.equal(job['runs-on'], windows ? 'windows-latest' : 'ubuntu-latest', `${f} ${name}`);
+      assert.equal(job['runs-on'], windows ? 'windows-2025' : 'ubuntu-24.04', `${f} ${name}`);
       assert.ok(Array.isArray(job.steps) && job.steps.length, `${f} ${name}: steps`);
       for (const s of job.steps) assert.ok(s.run || s.uses, `${f} ${name}: a step runs something`);
     }
   }
+});
+
+test('no job runs on a moving `-latest` runner label: each names its image (owner decision of 2026-10-10)', () => {
+  // ubuntu-latest moves to Ubuntu 26.04 from 2026-10-19 (GitHub's notice on every run; evaluation of 1.25.4, H6), and the
+  // suite that vouches for the Ubuntu 24.04 installer, the evening job and the browser dependencies would have moved
+  // with it, untested. SUDS stays on 24.04; a move is its own planned change (docs/RELEASE.md, "Runner images").
+  const labels = [];
+  for (const f of fs.readdirSync(DIR).filter((x) => /\.ya?ml$/.test(x))) {
+    for (const [name, job] of Object.entries(wf(f).jobs)) {
+      for (const l of [].concat(job['runs-on'])) {
+        assert.doesNotMatch(String(l), /-latest\b|\$\{\{/, `${f} ${name}: runs-on ${l} is a label that moves`);
+        labels.push(l);
+      }
+    }
+    const code = fs.readFileSync(path.join(DIR, f), 'utf8').split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+    assert.doesNotMatch(code, /\b(ubuntu|windows|macos)-latest\b/, `${f}: no -latest label outside comments`);
+  }
+  assert.deepEqual([...new Set(labels)].sort(), ['ubuntu-24.04', 'windows-2025']);
 });
 
 test('the only actions are GitHub\'s own artifact actions, pinned to a full commit SHA, in the jobs that hand files on', () => {
@@ -172,7 +190,7 @@ test('ci.yml: the evening job runs npm test at 9pm in Los Angeles (scripts/test-
 test('ci.yml: the windows job runs npm run try and the OS-sensitive tests on the pinned Node 22, with no npm install, and is not advisory', () => {
   const ci = wf('ci.yml');
   const job = ci.jobs.windows;
-  assert.equal(job['runs-on'], 'windows-latest');
+  assert.equal(job['runs-on'], 'windows-2025');
   assert.ok(!job['continue-on-error'], 'a red Windows run fails CI');
   const runs = job.steps.map((s) => s.run || '').join('\n');
   assert.match(runs, /nodejs\.org\/dist\/\$env:NODE22_VERSION\/\$file/, 'the release ci.yml pins for every Node 22 job');
@@ -188,7 +206,7 @@ test('ci.yml: the windows job runs npm run try and the OS-sensitive tests on the
 test('ci.yml: windows-exe builds the Windows server zip from pinned inputs, smoke-tests it and uploads it; not advisory, not a required job', () => {
   const ci = wf('ci.yml');
   const job = ci.jobs['windows-exe'];
-  assert.equal(job['runs-on'], 'windows-latest');
+  assert.equal(job['runs-on'], 'windows-2025');
   assert.ok(!job['continue-on-error'], 'a red Windows build fails CI');
   assert.ok(!REQUIRED_JOBS.includes('windows-exe'), 'not in the release gate\'s required list (the release builds the zip itself)');
   assert.equal(job.permissions, undefined, 'the top-level read-only token');

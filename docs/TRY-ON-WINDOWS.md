@@ -147,5 +147,5 @@ settings:
 
 Local mode (`/?local=1`) is off, as it is on any office server by default. The scripts testers use also work on
 Windows: `npm run dev` no longer needs a POSIX shell, and `npm run seed`, `create-admin`, `reset-admin` and
-`backup` are plain `node` commands. CI runs this whole path on `windows-latest` on every push
+`backup` are plain `node` commands. CI runs this whole path on `windows-2025` on every push
 (`.github/workflows/ci.yml`, *Windows: npm run try*).

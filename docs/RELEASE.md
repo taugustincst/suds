@@ -1369,7 +1369,7 @@ The remaining kernel libraries (`@noble/*`, `fflate`, `buffer`) come as one grou
 By owner decision of 2026-10-03 (PLATFORM.md), each release also carries `suds-<version>-windows-x64.zip` and its
 `.sha256` ([WINDOWS-SERVER.md](WINDOWS-SERVER.md)). It is built only in CI, by `scripts/build-windows.js`:
 
-* **On every push**, `ci.yml`'s `windows-exe` job (windows-latest) builds it unsigned, unzips it and runs
+* **On every push**, `ci.yml`'s `windows-exe` job (windows-2025) builds it unsigned, unzips it and runs
   `scripts/windows/smoke-test.ps1`: `suds version`, `suds try` with a sample sign-in, `suds status --json`, the
   Windows service (install, start, health, a clean stop checked in the log and the instance lock, restart,
   uninstall) and `suds logs`. The zip is the run's artifact **`suds-windows-x64`** (kept 30 days): open the run
@@ -1411,6 +1411,15 @@ HSM cannot be exported to a `.pfx`: then signing needs that provider's signing t
 the signing step of `windows-sign` receives the secrets. It runs `signtool sign /fd SHA256 /tr
 http://timestamp.digicert.com /td SHA256` and `signtool verify /pa`, and deletes the `.pfx` afterwards. CI builds
 on push are never signed.
+
+## Runner images
+Every job names its runner image: `runs-on: ubuntu-24.04` for the Linux jobs and `windows-2025` for the Windows ones
+(1.25.5; evaluation of 1.25.4, H6), never `ubuntu-latest` or `windows-latest`, which GitHub moves to a new release on
+its own schedule (`ubuntu-latest` becomes Ubuntu 26.04 from 2026-10-19). **Owner decision of 2026-10-10: SUDS stays on
+Ubuntu 24.04**, the release SUDS Server's installer supports and the `evening` job's libfaketime and the browser
+suite's dependencies are tested on. A move to 26.04 is its own planned change, tested first: a job on `ubuntu-26.04`
+beside the 24.04 ones, the installer and docs/SELF-HOSTING.md updated, then the labels changed in one commit.
+`test/workflow-yaml.test.js` refuses a `-latest` label in any workflow.
 
 ## Bumping the pinned Node versions
 Every CI job installs an exact Node release checked against a SHA-256 written in the workflow, not whatever

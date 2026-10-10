@@ -1,6 +1,6 @@
 'use strict';
 // `npm run try` (scripts/try-local.js, docs/TRY-ON-WINDOWS.md): SUDS on one computer for testing, with the
-// fictional sample data. Run on Linux in `npm test`, and on windows-latest in CI (.github/workflows/ci.yml,
+// fictional sample data. Run on Linux in `npm test`, and on windows-2025 in CI (.github/workflows/ci.yml,
 // "Windows: npm run try"), where it is the proof that the path a Windows tester takes works there.
 //
 // The smoke test starts the script as `npm run try` runs it (package.json's "try" is checked to be exactly that),
