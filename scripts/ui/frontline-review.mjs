@@ -83,6 +83,23 @@ eq(prov.status, 201, 'a provider');
   const refs = (await api('GET', `/api/referrals?client_id=${clientId}&limit=50`)).data.rows;
   eq(refs.length, 1, 'the referral saves as "contacted" under that consent');
   eq(refs[0] && refs[0].consent_id, consents[0].id, 'citing it');
+  // 1.25.4 (G1, a CI flake of accessibility.mjs): a consent the worker chooses while the newly chosen provider's
+  // consents are still loading is theirs: the late answer does not clear it (it did, and the referral was saved
+  // relying on no consent), it only says the consent does not cover this provider.
+  await page.evaluate(async ({ id }) => (await import('./views/referrals.js')).openReferralForm(null, { clientId: id, clientDisplay: 'Quintero-Vasquez, Rosalind' }), { id: clientId });
+  await until(() => page.$('.modal select[name=resource_id]'));
+  let release; const held = new Promise((r) => { release = r; });
+  const late = /\/api\/clients\/[^/]+\/consents\?resource_id=/;
+  await page.route(late, async (route) => { await held; await route.continue(); });
+  const other = await page.$$eval('.modal select[name=resource_id] option', (os) => (os.find((o) => o.value && !o.value.startsWith('__') && !/Hope Street/.test(o.textContent)) || {}).value);
+  await page.selectOption('.modal select[name=resource_id]', other);
+  await page.selectOption('.modal select[name=consent_id]', consents[0].id);
+  const answered = page.waitForResponse(late); release(); await answered;
+  await until(async () => /does not cover/.test(await text(page, '.modal [data-consent-used]')), { timeout: 5000 });
+  eq(await page.inputValue('.modal select[name=consent_id]'), consents[0].id, 'a consent chosen while the provider\'s consents load stays chosen when they arrive');
+  ok(/does not cover this referral/.test(await text(page, '.modal [data-consent-used]')), 'and the form says it does not cover this provider');
+  await page.unroute(late);
+  await page.click('.modal button:has-text("Cancel")'); await until(async () => !(await page.$('.modal-bg')));
 }
 // The Home checklist: the program's usual consent, filled in from the directory.
 {
