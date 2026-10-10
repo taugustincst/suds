@@ -178,6 +178,14 @@ const DEID_COLUMNS = {
 // to a de-identified file; finance reads it in Funding & spending.
 const LEDGER = { expenditures: ['vendor', 'receipt_ref'], time: [] };
 const LEDGER_LABEL = 'Spending and staff time with no client are the programme\'s own books, not health information: they keep their exact dates, vendor and receipt number. Every row linked to a client is de-identified (HIPAA Safe Harbor): its date reduced to the year, vendor and receipt number left out, and the client code replaced by a random record id drawn for each export. Descriptions are never written.';
+// The same boundary in the About sheet, in plain words for finance: which rows give the year only, why, and where
+// they are reconciled (1.25.4, G8). No monthly total of client-linked spending is added: with each row's exact
+// amount in the same file, a month's total shows which month a client's row fell in.
+const LEDGER_ABOUT = [
+  { k: 'Rows with the year only', v: 'Spending and staff time linked to a client: every Expenditures or Time row with a Record Id. Their date is the year only, and spending\'s vendor and receipt number are left out. Rows with no Record Id are the programme\'s own books, with exact date, vendor and receipt number.' },
+  { k: 'Why', v: 'A row linked to a client is about that client: the day of their ride or motel night is a date about them, and a vendor or receipt typed by hand can name them. So it is de-identified (HIPAA Safe Harbor), like every export finance can run. For the same reason there is no monthly total of these rows: next to each row\'s exact amount, it would show which month each client\'s row fell in.' },
+  { k: 'Where to reconcile them', v: 'In SUDS, row by row: Funding & spending > Expenditures lists each expenditure with its exact date, fund, budget line, vendor and receipt number, and Staff time each entry with its date. Funding & spending > Analysis gives the total spent each month. Reading them there is the programme\'s own payment and operations work; nothing leaves SUDS.' },
+];
 // ---- Documentation choices, in words ----
 // A coded column that comes from a documentation list goes out with the label the programme gave it under
 // Settings → Lists ("Warm handoff", or whatever it was renamed to), and a programme's own choice — which
@@ -295,4 +303,4 @@ function clientIdsOf(rows) { return [...new Set(rows.map(r => r._client_id).filt
 /** Drop the internal columns before anything is written to a file. */
 function publicRows(rows) { return rows.map(r => { const o = { ...r }; delete o._client_id; return o; }); }
 
-module.exports = { LEDGER, LEDGER_LABEL, LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, pseudonymizer, zip3, toYear, codeRows, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, DEID_CODED, RESTRICTED_ZIP3, cents };
+module.exports = { LEDGER, LEDGER_LABEL, LEDGER_ABOUT, LIST_COLUMNS, labelRows, datasets, ageBand, deidentifyRow, pseudonymizer, zip3, toYear, codeRows, clientIdsOf, publicRows, DEID_LABEL, DEID_COLUMNS, DEID_CODED, RESTRICTED_ZIP3, cents };

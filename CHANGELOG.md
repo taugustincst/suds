@@ -17,6 +17,13 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   when no rule allows SSH over IPv6. The lock-out check accepts an IPv6 session with `::/0`. The fleet tooling passes
   `--admin-cidr6` instead of adding the rule itself, and so needs `SUDS_VERSION` 1.25.4 or later. Tested with the ufw
   stub (`test/deploy-linux-real.test.js`: an install with `--admin-cidr6=::/0` and each re-run end with the IPv6 SSH rule).
+- **Finance's spending and time exports say which rows give the year only, why, and where to reconcile them (G8).**
+  The de-identification is unchanged (client-linked rows stay year-only under Safe Harbor, 1.25.2 BO6). The About sheet
+  of a file with spending or time now names those rows (the ones with a Record Id), the reason (the date is about the
+  client), and where finance reconciles them row by row (Funding & spending › Expenditures, Staff time); the
+  Expenditures tab and the time page say the same beside Export to Excel; docs/HIPAA.md states the rule. No monthly
+  total of client-linked spending is added: beside each row's exact amount it would show which month a client's row
+  fell in (`test/finance-ledger.test.js`, `scripts/ui/review-fixes.mjs`).
 
 ### Added
 

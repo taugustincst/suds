@@ -223,5 +223,7 @@ route('time', async (r) => {
     h('div', { class: 'grid cols-3 mb' }, h('div', { class: 'card' }, h('h2', {}, 'By category'), bars(sum.by_category, { valueKey: 'minutes', labelKey: 'category', format: fmt.mins, list: 'TIME_CATEGORIES' })),
       h('div', { class: 'card' }, h('h2', {}, 'By worker'), bars(sum.by_worker, { valueKey: 'minutes', labelKey: 'worker', format: fmt.mins })),
       h('div', { class: 'card' }, h('h2', {}, 'By funding source'), bars(sum.by_fund, { valueKey: 'minutes', labelKey: 'fund', format: fmt.mins }))),
+    // 1.25.4, G8: the export's boundary, said where finance works (server/exports.js LEDGER_ABOUT).
+    can('export:read') ? h('p', { class: 'small muted', 'data-export-year-only': '1' }, 'In Export to Excel, time linked to a client has its year only (its date is about that client, so the file is de-identified); each entry here keeps its date.') : null,
     timeTable(data.rows, { onChange: refresh }));
 });

@@ -76,8 +76,25 @@ test('the workbook carries the same ledger, and an identified export is unchange
   const books = sp.rows.slice(1).find(x => String(x[header.indexOf('Vendor')]) === 'Valley Medical Supply');
   assert.ok(books, 'the workbook\'s Expenditures sheet has the vendor');
   assert.ok(JSON.stringify(sheets.find(s => s.name === 'About').rows).includes('own books'), 'and its About sheet says why');
+  // 1.25.4, G8: the About sheet says which rows are year-only, why, and where finance reconciles them.
+  const about = new Map(sheets.find(s => s.name === 'About').rows.slice(1).map(r => [String(r[0]), String(r[1])]));
+  assert.match(about.get('Rows with the year only') || '', /linked to a client: every Expenditures or Time row with a Record Id/);
+  assert.match(about.get('Why') || '', /about that client.*HIPAA Safe Harbor.*no monthly total/s);
+  assert.match(about.get('Where to reconcile them') || '', /Funding & spending > Expenditures.*exact date, fund, budget line, vendor and receipt number/);
+  assert.ok(!sheets.some(s => /month/i.test(s.name)), 'and no monthly total of client-linked spending is added');
   // Finance cannot ask for an identified export (no export:identified): the request is answered de-identified.
   const id = await fin.get(`/api/reports/export/expenditures?identified=1&recipient=x&purpose=y&basis=audit_evaluation&${RANGE}`);
   assert.equal(id.status, 200);
   assert.ok(!String(id.data).includes('Ledger Person'), 'still nothing that names the client');
+});
+
+test('the year-only rows are explained in a single export\'s About sheet too, and only where the file has such rows', async () => {
+  const bearer = (await H.client().post('/api/auth/login', { username: 'lgfin', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' })).data.token;
+  const about = async (kind) => {
+    const res = await fetch(`${await H.start()}/api/reports/export/${kind}?${RANGE}&format=xlsx`, { headers: { Authorization: `Bearer ${bearer}` } });
+    assert.equal(res.status, 200, kind);
+    return require('../server/spreadsheet').readWorkbook(Buffer.from(await res.arrayBuffer())).find(s => s.name === 'About').rows.map(r => String(r[0]));
+  };
+  for (const kind of ['expenditures', 'time']) assert.ok((await about(kind)).includes('Where to reconcile them'), kind);
+  assert.ok(!(await about('referrals')).includes('Rows with the year only'), 'a file with no spending or time says nothing about them');
 });
