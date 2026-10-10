@@ -46,12 +46,19 @@ replaces the old rule, and `--admin-cidr6=none` removes it. As with `--admin-cid
 `OpenSSH`/`22`, the previous networks) is deleted *before* the new rules are added: ufw stores `::/0` as
 `22/tcp (v6) ALLOW Anywhere (v6)`, which `ufw delete allow 22/tcp` would remove if it ran after. The firewall section
 names both networks, the rules in force are printed at the end, and a warning says so if no rule then allows SSH over
-IPv6. The lock-out check accepts an IPv6 SSH session only with `--admin-cidr6=::/0`; inside a narrower IPv6 network it
-cannot compare the address, and refuses unless you pass `--console-access`.
+IPv6 while `--admin-cidr6` asked for it, **or while one did before the run** (a first install removes the cloud
+image's own open IPv6 SSH rule, as it does the IPv4 one). The lock-out check accepts an IPv6 SSH session only with
+`--admin-cidr6=::/0`; inside a narrower IPv6 network it cannot compare the address, and refuses unless you pass
+`--console-access`.
 
-**Before 1.25.4** the installer had no IPv6 option, and a re-run deleted an IPv6 SSH rule added by hand (the plain
-`22/tcp` rule went with the image's open ones). On a host where such a rule was added (suds.systems, on launch day),
-pass `--admin-cidr6` with that network the next time `install.sh` runs; `upgrade.sh` does not touch the firewall.
+**An IPv6 SSH rule added by hand** (`ufw allow proto tcp from ::/0 to any port 22`, listed as `22/tcp (v6) ALLOW
+Anywhere (v6)`): up to 1.25.4 a re-run without `--admin-cidr6` deleted it with the image's open rules, and said nothing
+(evaluation of 1.25.4, H7). From 1.25.5 a re-run reads `ufw status` before it deletes anything, keeps such a rule when
+it would not add it back itself, and says so on stderr (`… is KEPT …`), naming `--admin-cidr6=::/0` (or your IPv6
+network) to make it the installer's own and `--admin-cidr6=none` to remove it, as `upgrade.sh` names a hand-edited
+Caddyfile. A rule from a narrower IPv6 network was never deleted, and on RHEL (firewalld) a hand-added IPv6 rich rule
+stays too. On suds.systems (such a rule since launch day) prefer passing `--admin-cidr6` with that network the next
+time `install.sh` runs; `upgrade.sh` does not touch the firewall.
 
 ## Site-local Caddy configuration
 
