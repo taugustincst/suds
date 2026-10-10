@@ -359,6 +359,23 @@ the offsite copies (deploy/linux/README.md, *Check your offsite backups*). The o
 release run passed the gate, the GitHub Release is published and marked Latest, its zip equals the checksum recorded
 before the tag, and its `Web app` run published 1.25.4 to GitHub Pages ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
+**Record: 1.25.5 is a patch with the fixes from the market-readiness evaluation of 1.25.4.** 1.25.5, stamped
+2026-10-10, is a patch of 1.25.4 inside 1.25.0's 28 days, which a patch may be (*Stabilisation*, point 1). It fixes the
+evaluation's findings H1–H9: on SUDS on this device, a sign-in asks a fresh engine once more before it calls the
+records damaged, says the first time that it may be the browser, puts the ways back in order and lets *Restore from a
+backup* take the saved damaged copy (H1), and a stored copy whose seal fails is handled as that damage instead of a
+generic error (H2); an offsite backup folder inside the data directory is refused and one on the same disk reported
+(H3); a new CI job, `service-sandbox`, runs SUDS Server inside its own systemd unit and drives a backup, drill and
+restore (H4); buyer documents give suds.systems' later compliance run (H5); every runner image is pinned (H6); a
+re-run of the installer keeps a hand-added IPv6 SSH rule (H7); the release gate requires `evening`, the Release
+carries its SBOM, and the questionnaire's version paragraph is cut (H8); offsite copies are compared by SHA-256 and
+stale `.part` files pruned (H9). It also adds the business work plan and its templates (docs/market/). No migration,
+no new or widened permission and no new route, 735 lines added outside docs, tests and generated files (`node
+scripts/release-policy.js --version 1.25.5 --previous v1.25.4`), so it passes the release policy with no exception. It
+is two commits, "Release 1.25.5" and "SBOM of the 1.25.5 stamp", the tag on the second, and the full suite, the
+evening run and the browser suite ran on the stamped tree before the push (*Stamp checklist*). Not done here and
+recorded as owed: a real-iPhone record (docs/ADOPTION.md §4) and a measured WebKit failure rate.
+
 
 ### Supported versions
 
@@ -520,6 +537,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.25.2 | none of the policy (a patch within the patch rules: no migration, permission or route, 754 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged by the owner and released through the gate on 2026-10-09, with `v1.25.3` (*Record: 1.25.2*) | the fixes from testing every position on 1.25.1 and from the evaluation of 1.25.1 (FL1–FL16, CS1–CS18, BO1–BO25, F1–F8, less FL5's index and BO22's headings), with its own SBOM (*Record: 1.25.2*, above) | no exception to approve |
 | 1.25.3 | none of the policy (a patch within the patch rules: no migration, permission or route, 210 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged by the owner and released through the gate on 2026-10-09 (*Record: 1.25.3*) | the fixes from the launch of suds.systems and the pen test of the live install (installer SSH rule, site-local Caddy configuration and the www redirect, the first administrator's username, MINOR-1, MINOR-2, INFO-2, INFO-3; *Record: 1.25.3*, above) | no exception to approve |
 | 1.25.4 | none of the policy (a patch within the patch rules: no migration, permission or route, 935 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged by the owner and released through the gate on 2026-10-10, the Latest release (*Record: 1.25.4*) | the fixes from the market-readiness evaluation of 1.25.3 (G1–G11), the empty offsite backup copies found on suds.systems, and the Option A fleet tooling (*Record: 1.25.4*, above) | no exception to approve |
+| 1.25.5 | none of the policy (a patch within the patch rules: no migration, permission or route, 735 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once the owner has pushed `v1.25.5` | the fixes from the market-readiness evaluation of 1.25.4 (H1–H9) and the business work plan (*Record: 1.25.5*, above) | no exception to approve |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as

@@ -2,7 +2,24 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.25.5 — 2026-10-10
+
+A patch of 1.25.4 (docs/RELEASE.md, *Record: 1.25.5*): the fixes from the market-readiness evaluation of 1.25.4
+(H1–H9). No migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.25.5
+--previous v1.25.4` passes: 735 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It
+passes the release policy with no exception. Upgrading needs nothing beyond replacing the files and restarting. What an
+upgrading administrator should know:
+
+* **An offsite backup folder inside the server's own data directory or backups folder is now refused**, as it is
+  saved, from a provisioning file and at each scheduled run, and a folder on the same disk as the data is reported
+  as "not an offsite copy" (Security status, the hardening checklist, the compliance check). If yours was set that way
+  before 1.25.5, Security status says so after the upgrade: point it at a share on another disk or machine.
+* **Re-running `install.sh` without `--admin-cidr6` no longer removes an IPv6 SSH rule you added by hand**; it keeps
+  it and says how to adopt it (`--admin-cidr6=::/0`) or remove it (`--admin-cidr6=none`).
+* **SUDS on this device:** when the records will not open, the sign-in now says it may be the browser rather than the
+  records the first time, offers the steps in order (save the damaged copy, close the browser and log in again,
+  restore), and **Restore from a backup** accepts the saved damaged copy (in another browser, or here after Start
+  over).
 
 ### Fixed
 
@@ -28,6 +45,31 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   that no longer reads back), and the temporary `.part` file of a copy stopped part-way is removed once a day old.
 - **Docs:** a preference changed offline and sent later replaces a newer change made meanwhile on another device
   (docs/USER_GUIDE.md, docs/security/DATA-INVENTORY.md).
+
+### Changed (CI and release)
+
+- **SUDS Server is now tested inside its own systemd unit** (H4). A new CI job, `service-sandbox`, installs the
+  release's `deploy/linux/suds.service` unchanged on a disposable runner, starts SUDS as the `suds` user under the
+  unit's sandbox (its system-call filter included), and drives Back up now with an offsite share, a timer snapshot, an
+  audit anchor, a recovery drill from the offsite copy and a restore; it fails on any `SIGSYS`, `status=31/SYS` or
+  restart. Until now every installer run backed up from the command line, outside the unit, which is how the empty
+  offsite copies of 1.18.0–1.25.3 went unseen (docs/RELEASE.md, *The service-sandbox job*).
+- **Every CI and release job names its runner image** (H6): `ubuntu-24.04` and `windows-2025`, never `-latest`, so
+  GitHub's move of `ubuntu-latest` to Ubuntu 26 on 2026-10-19 does not change what vouches for a 24.04 install
+  (the owner's decision of 2026-10-10; docs/RELEASE.md, *Runner images*).
+- **The release gate requires the `evening` job** (H8), and each Release carries its SBOM (`sbom-X.Y.Z.cdx.json`) as an
+  asset. The hour `release-state` is red between a tag and its records commit is documented as expected.
+
+### Docs
+
+- The buyer documents give suds.systems' later compliance run (38 pass, 2 fail: SSH open to the world, the empty
+  offsite copies fixed in 1.25.4) beside the launch-day one, both as reported by the operator (H5); every WebKit failure
+  on `main` since 1.25.3 is in the flake register (H1); the security questionnaire's "Checked against" paragraph is
+  cut to its essentials (H8); the CalOMS documentation cites the DHCS 2026 CalOMS Tx and DATAR FAQ as the source to
+  read first; a real-device (iPhone) check template (docs/evidence/REAL-DEVICE-CHECK-TEMPLATE.md).
+- **Business work plan** (docs/market/BUSINESS-WORKPLAN.md): the owner actions that move market readiness, in order,
+  with drafts for counsel review, a vendor-neutral pen-test RFP, insurance quotes, CalOMS confirmation, code signing,
+  the hosted offer's costs and opioid-settlement reporting collateral (docs/market/templates/).
 
 ## 1.25.4 — 2026-10-10
 
