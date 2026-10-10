@@ -24,6 +24,22 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   Expenditures tab and the time page say the same beside Export to Excel; docs/HIPAA.md states the rule. No monthly
   total of client-linked spending is added: beside each row's exact amount it would show which month a client's row
   fell in (`test/finance-ledger.test.js`, `scripts/ui/review-fixes.mjs`).
+- **CI names its failures (G1).** The node:test jobs and the browser suite (`browser`, `webkit`) write one `::error`
+  annotation per failing test or browser check, and a list in the job summary (`scripts/ci-annotate.js`,
+  `scripts/ui/run-all.sh`), so a red run is readable through the GitHub API without its log.
+- **Flaky tests fixed at the cause (G1).** Tests that signed in with an authenticator code of the previous 30-second
+  step failed when a step boundary fell inside the request; they now use codes a boundary cannot invalidate. The
+  accessibility script's "referral … relying on the consent — got [null]" was a product race: on the referral form, a
+  consent chosen while the provider's consents were still loading was cleared when they arrived, and the referral was
+  saved relying on none. The choice is now kept, with the form saying whether it covers the provider.
+- **A device database that will not open is reported, kept and never written over (G2).** At sign-in, SUDS on this
+  device checks the unsealed database (length against its header, then SQLite's quick_check) before using it. If it is
+  damaged, the person is told plainly, nothing is opened or overwritten, a copy is kept on the device and can be saved
+  as a file, and the way back (Start over, then Restore from a backup) is named. Before, the sign-in answered only
+  "Something went wrong on this device".
+- **Release checklist (G6).** The full `npm test` (and the browser suite when the UI changed) runs on the exact stamped
+  tree before the push, and only `main`'s own CI run of a commit counts as green for tagging (docs/RELEASE.md, with a
+  flake register).
 
 ### Added
 

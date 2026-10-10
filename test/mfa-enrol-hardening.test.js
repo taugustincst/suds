@@ -41,7 +41,7 @@ test('an account with two-step verification on cannot re-enrol from a full sessi
   const u = enrolled('mfareenrol');
   const c = H.client();
   await c.login(u.username, u.password);
-  assert.equal((await c.post('/api/auth/mfa/verify', { code: totp(u.secret, Date.now() - 30_000) })).status, 200);
+  assert.equal((await c.post('/api/auth/mfa/verify', { code: totp(u.secret) })).status, 200);
   assert.equal((await c.post('/api/auth/mfa/setup', {})).status, 400);
   assert.equal((await c.post('/api/auth/mfa/enable', { code: '123456' })).status, 400);
 });

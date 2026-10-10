@@ -728,7 +728,7 @@ test('MFA enrollment and verification flow', async () => {
   assert.equal(setup.status, 200);
   // This was 'assert.equal(x === 400 || true, true)' — it asserted nothing at all.
   assert.equal((await nav.post('/api/auth/mfa/enable', { code: '000000' })).status, 400, 'a wrong code must not enable two-step verification');
-  const en = await nav.post('/api/auth/mfa/enable', { code: c.totp(setup.data.secret, Date.now() - 30_000) });
+  const en = await nav.post('/api/auth/mfa/enable', { code: await H.totpPreviousStep(setup.data.secret) });
   assert.equal(en.status, 200);
   const fresh = H.client();
   const login = await fresh.login('nav1', 'StaffPassw0rd!x');

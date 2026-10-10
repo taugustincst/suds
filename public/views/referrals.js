@@ -195,19 +195,24 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
       : c ? [h('b', {}, 'This referral will rely on: '), consentOption(c).label, autoPicked ? ' — the one consent on file that names this provider.' : '']
       : consentState.valid.length ? ['No consent chosen. Choose one before the provider is told who this client is.'] : []));
   };
-  const rebuildConsents = (st) => {
+  // `pickedSince`: the worker chose a consent after this reload started (it answered late, on a slow device or
+  // network). That choice was made for the provider now chosen, so it is kept even when it does not cover the
+  // referral (the line below then says so); only a choice made for an earlier provider is cleared. Until 1.25.4 a
+  // late answer cleared it silently and the referral was saved relying on no consent (G1: accessibility.mjs, CI).
+  const rebuildConsents = (st, { pickedSince = false } = {}) => {
     consentState = st;
     const keep = consentSel.value;
     while (consentSel.firstChild) consentSel.firstChild.remove();
     consentSel.append(h('option', { value: '' }, st.expiredOnly ? '(expired)' : '—'), ...st.valid.map(c => { const o = consentOption(c); return h('option', { value: o.value }, o.label); }));
-    const kept = st.valid.some(c => c.id === keep && !notCovering(c)) && !(autoPicked && keep !== st.suggested);
+    const kept = st.valid.some(c => c.id === keep && (pickedSince || !notCovering(c))) && !(autoPicked && keep !== st.suggested);
     consentSel.value = kept ? keep : '';
     if (!kept) autoPicked = false;
     if (!consentSel.value && st.suggested && st.valid.some(c => c.id === st.suggested)) { consentSel.value = st.suggested; autoPicked = true; }
     if (consentHelpEl) { while (consentHelpEl.firstChild) consentHelpEl.firstChild.remove(); consentHelpEl.append(h('span', { 'data-consent-help': '1' }, consentHelpContent(st))); }
     showUsed();
   };
-  consentSel.addEventListener('change', () => { autoPicked = false; showUsed(); });
+  let picks = 0;
+  consentSel.addEventListener('change', () => { autoPicked = false; picks++; showUsed(); });
   // A new referral (or one with no consent yet) takes the suggestion the first read came back with.
   if (!values?.consent_id && consentState.suggested) { consentSel.value = consentState.suggested; autoPicked = consentSel.value === consentState.suggested; }
   // A choice brought back by a saved draft of a new referral is not kept when it does not cover this referral.
@@ -215,12 +220,12 @@ export async function openReferralForm(values, { clientId, clientDisplay, resour
   showUsed();
   let seq = 0;
   const reloadConsents = async () => {
-    const id = f.inputs.client_id.value; const mine = ++seq;
+    const id = f.inputs.client_id.value; const mine = ++seq; const picksBefore = picks;
     if (sel.value !== ADD) providerId = sel.value;
     if (!id) { rebuildConsents(consentStateFor(null, [])); return; }
     try {
       const r = await get(consentsUrl(id, sel.value));
-      if (mine === seq) rebuildConsents(consentStateFor(id, Object.assign(r.consents || [], { suggested_consent_id: r.suggested_consent_id })));
+      if (mine === seq) rebuildConsents(consentStateFor(id, Object.assign(r.consents || [], { suggested_consent_id: r.suggested_consent_id })), { pickedSince: picks !== picksBefore });
     } catch (e) { if (mine === seq) rebuildConsents(consentStateFor(id, [])); toast(e.message || 'Could not load this client\'s consents', 'error'); }
   };
   f.inputs.client_id.addEventListener('change', reloadConsents);

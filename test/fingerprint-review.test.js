@@ -37,7 +37,7 @@ async function person(role = 'navigator', { totpSecret = null } = {}) {
   const u = H.makeUser(`fpr_${role}_${++seq}`, role);
   if (totpSecret) H.db.run(`UPDATE users SET mfa_enabled=1, mfa_secret_enc=? WHERE id=?`, encrypt(totpSecret), u.id);
   const c = H.client(); const l = await c.login(u.username, PW);
-  if (l.mfaPending) assert.equal((await c.post('/api/auth/mfa/verify', { code: totp(totpSecret, Date.now() - 30_000) })).status, 200);
+  if (l.mfaPending) assert.equal((await c.post('/api/auth/mfa/verify', { code: totp(totpSecret) })).status, 200);
   return { u, c };
 }
 async function enrol(c, a, { password = PW, code, name = 'Test phone', bend } = {}) {

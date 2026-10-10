@@ -132,7 +132,7 @@ test('enrolment: the password again, then the device\'s new key; only the public
 test('enrolment with two-step verification on needs the authenticator code as well', async () => {
   const { u, c } = await person('fp_enrol_totp');
   const secret = (await c.post('/api/auth/mfa/setup', {})).data.secret;
-  assert.equal((await c.post('/api/auth/mfa/enable', { code: totp(secret, Date.now() - 30_000) })).status, 200);
+  assert.equal((await c.post('/api/auth/mfa/enable', { code: await H.totpPreviousStep(secret) })).status, 200);
   const c2 = H.client(); await c2.login('fp_enrol_totp', PW); await c2.post('/api/auth/mfa/verify', { code: totp(secret) });
   assert.equal((await c2.post('/api/auth/passkeys/register/options', { password: PW })).status, 400, 'the password alone is not enough');
   assert.equal((await c2.post('/api/auth/passkeys/register/options', { password: PW, code: '000000' })).status, 403, 'a wrong code is refused');

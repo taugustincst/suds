@@ -108,7 +108,8 @@ async function loginPanel(r, noAccount, back = '', status = {}) {
     // A device account with no key to the encrypted records yet (one made before they were encrypted, or
     // restored from a backup) is let in by someone who has one: the two extra fields appear.
     try { r2 = await post('/api/auth/login', d); }
-    catch (e) { if (e.data && e.data.sponsorRequired && showSponsor && !d.sponsor_username) { showSponsor(true); if (!e.data.droppedAfterRestore) e.message += ' If your account has not been used on this device since its records were encrypted, someone who can already log in here can let you in below.'; e.labelled = true; } throw e; }
+    catch (e) { if (e.data && e.data.deviceDamaged && !f.parentNode.querySelector('[data-device-damaged]')) f.before(damagedNotice());
+      if (e.data && e.data.sponsorRequired && showSponsor && !d.sponsor_username) { showSponsor(true); if (!e.data.droppedAfterRestore) e.message += ' If your account has not been used on this device since its records were encrypted, someone who can already log in here can let you in below.'; e.labelled = true; } throw e; }
     await loadSession();
     resetRecoveryPrompt();
     let to;
@@ -180,6 +181,21 @@ function fingerprintSignIn(f, back) {
     h('div', { class: 'small muted center mb' }, '— or —'), btn,
     h('p', { class: 'small muted center' }, 'Uses fingerprint sign-in on this device: your fingerprint, or its screen lock. Set it up under My profile after signing in. SUDS never receives your fingerprint.'),
     status);
+}
+
+// The device's database would not open (1.25.4, G2; local/kernel.js damagedDevice): the kernel keeps the damaged
+// copy, and this saves it as a file (still encrypted) before anyone starts over, so nothing is lost unseen.
+function damagedNotice() {
+  const save = async () => {
+    const text = await window.SUDS_LOCAL.damagedCopy();
+    if (!text) { toast('No damaged copy is kept on this device.', 'error'); return; }
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const a = h('a', { href: url, download: `suds-damaged-device-copy-${new Date().toISOString().slice(0, 10)}.json` }); document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  };
+  return h('div', { class: 'banner danger', role: 'alert', 'data-device-damaged': '1' }, h('div', {},
+    h('p', {}, h('b', {}, 'The records stored on this device could not be opened. '), 'Starting over erases the damaged copy too, so save it first. The file stays encrypted: only an account’s password from this device opens it.'),
+    h('button', { type: 'button', class: 'btn', 'data-damaged-save': '1', onClick: save }, 'Save the damaged copy')));
 }
 
 // ---- a device: "Can't sign in?" — every way back in, and what each does to the records ----

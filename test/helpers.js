@@ -130,4 +130,19 @@ function throwawayKeys(config, keys = { SUDS_ENCRYPTION_KEY: 'c'.repeat(64) }) {
  * May 2nd whatever zone the suite runs in. A fixed UTC instant such as T18:00:00Z is the next day east of UTC (F8).
  */
 function localAt(date, hour = 12) { const LD = require('../server/local-date'); return new Date(Date.parse(LD.localMidnight(date)) + hour * 3600000).toISOString(); }
-module.exports = { localAt, throwawayKeys, start, stop, client, makeUser, makeCaseloadUser, deny, agreement, db, asAttacker };
+/**
+ * An authenticator code from the time-step BEFORE the current one, for a test that then needs two later steps of its
+ * own (each code is accepted once, in increasing steps, within ±1 step of the server's clock: server/auth.js useTotp).
+ * Such a code stays inside the server's window only until the current step ends; made in the last moments of a step it
+ * was two steps old by the time the request arrived, and the server rightly refused it (1.25.4, G1: a 401 on main's CI
+ * that the same commit did not show elsewhere). So it is made at the start of a step when fewer than 10 s of this one
+ * remain: a request to the in-process server takes milliseconds, and 10 s is ample on a loaded CI runner. A test that
+ * needs only two codes uses the current step and then the next one (Date.now() + 30_000) instead, which a step
+ * boundary cannot invalidate.
+ */
+async function totpPreviousStep(secret) {
+  const left = 30_000 - (Date.now() % 30_000);
+  if (left < 10_000) await new Promise((r) => setTimeout(r, left + 20));
+  return require('../server/crypto').totp(secret, Date.now() - 30_000);
+}
+module.exports = { localAt, totpPreviousStep, throwawayKeys, start, stop, client, makeUser, makeCaseloadUser, deny, agreement, db, asAttacker };
