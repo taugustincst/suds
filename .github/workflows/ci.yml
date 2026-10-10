@@ -17,6 +17,11 @@ permissions:
 env:
   NODE22_VERSION: v22.23.3
   NODE22_SHA256: df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de
+  # The node:test jobs' reporters, set as NODE_OPTIONS on their test step (1.25.4, G1): the spec output as before, and
+  # scripts/ci-annotate.js, which writes one ::error annotation per failing test (job, file, test, first line of the
+  # error) and lists them in the step summary. The API serves annotations when a log cannot be read; a red check run
+  # said only "Process completed with exit code 1". The browser suite's run-all.sh annotates its own failures.
+  TEST_REPORTERS: --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./scripts/ci-annotate.js --test-reporter-destination=stdout
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -53,6 +58,7 @@ jobs:
         working-directory: src
         env:
           SUDS_REQUIRE_RELEASE_TAGS: '1'
+          NODE_OPTIONS: ${{ env.TEST_REPORTERS }}
         run: npm test
       # The release zip is built with `git archive`, so it ships the *committed* kernel, not the one built
       # during the release. A stale commit therefore reaches local-mode devices silently. Fail the build instead.
@@ -104,6 +110,7 @@ jobs:
         working-directory: src
         env:
           SUDS_THOROUGH: '1'
+          NODE_OPTIONS: ${{ env.TEST_REPORTERS }}
         run: node scripts/test-thorough.js --part rest
   # The statistical-disclosure-control attacker sweeps at full size (scripts/test-thorough.js SDC_SWEEPS: the
   # random-programme property test, the algorithm-aware attacker at thresholds 3 and 5, the refusal sweep, the
@@ -137,6 +144,7 @@ jobs:
         working-directory: src
         env:
           SUDS_THOROUGH: '1'
+          NODE_OPTIONS: ${{ env.TEST_REPORTERS }}
         run: node scripts/test-thorough.js --part sdc
   browser:
     runs-on: ubuntu-latest
@@ -204,6 +212,8 @@ jobs:
         run: node --version && npm ci --no-audit --no-fund
       - name: Test on Node 24
         working-directory: src
+        env:
+          NODE_OPTIONS: ${{ env.TEST_REPORTERS }}
         run: npm test
   # npm test again on a California evening (scripts/test-evening.sh): TZ=America/Los_Angeles, the clock at 21:00
   # local today, when the UTC date is already tomorrow's, whatever the time CI runs. A "today" taken as the UTC
@@ -243,6 +253,7 @@ jobs:
         working-directory: src
         env:
           SUDS_REQUIRE_RELEASE_TAGS: '1'
+          NODE_OPTIONS: ${{ env.TEST_REPORTERS }}
         run: scripts/test-evening.sh
   # Backup and restore, exercised on every push: seed a throwaway database, take an encrypted backup through
   # the scheduled-backup path, run the recovery drill with an escrowed key file (restore into a temporary

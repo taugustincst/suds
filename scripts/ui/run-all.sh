@@ -130,5 +130,22 @@ for r in "${rows[@]}"; do IFS='|' read -r n c res sec <<< "$r"; printf '%-20s %9
 # Why each failed script failed, repeated here at the end: a CI log is read from its tail, and a crash (an
 # uncaught error rather than a FAIL line) would otherwise sit thousands of lines up, above the accessibility audit.
 for s in "${failed[@]}"; do echo; echo "---- $s: last lines of its output"; grep -v '^\[2m' $T/suds-ui-$s.log | grep -vE '^ *ok ' | tail -20; done
+# In GitHub Actions (1.25.4, G1): one ::error annotation per failing check of each failed script (its FAIL lines, at most
+# five, or how it ended when it printed none) and a list in the step summary, which the GitHub API serves when the log
+# cannot be read. Without them the check run said only "Process completed with exit code 1".
+if [ -n "${GITHUB_ACTIONS:-}" ] && [ ${#failed[@]} -gt 0 ]; then
+  suite="${GITHUB_JOB:-browser} (${SUDS_BROWSER:-chromium})"
+  [ -n "${GITHUB_STEP_SUMMARY:-}" ] && printf '### %s: %d failing script(s)\n\n' "$suite" "${#failed[@]}" >> "$GITHUB_STEP_SUMMARY"
+  for s in "${failed[@]}"; do
+    why=$(grep -E '^ *FAIL ' $T/suds-ui-$s.log | sed -E 's/^ *FAIL +//' | head -5)
+    [ -n "$why" ] || why=$(grep -v '^\[2m' $T/suds-ui-$s.log | grep -E 'TIMED OUT|[A-Za-z]*Error\b' | head -1)
+    [ -n "$why" ] || why=$(grep -v '^\[2m' $T/suds-ui-$s.log | grep -v '^\s*$' | tail -1)
+    while IFS= read -r l; do
+      l=${l//%/%25}; l=${l//$'\r'/}
+      echo "::error file=scripts/ui/$s.mjs,title=$suite::$s: $l"
+      [ -n "${GITHUB_STEP_SUMMARY:-}" ] && printf -- '- `%s`: %s\n' "$s" "${l//%25/%}" >> "$GITHUB_STEP_SUMMARY"
+    done <<< "$why"
+  done
+fi
 echo "total $((SECONDS - suite_start)) s (of which $reset_secs s reseeding the office server between scripts); $( [ $fail = 0 ] && echo 'all passed' || echo 'FAILURES above' )"
 exit $fail
