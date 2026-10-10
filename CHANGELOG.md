@@ -2,10 +2,49 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.25.4 — 2026-10-10
+
+A patch of 1.25.3 (docs/RELEASE.md, *Record: 1.25.4*): the fixes from the market-readiness evaluation of 1.25.3
+(G1–G11), the offsite-backup defect found on suds.systems after its upgrade to 1.25.3, and the Option A fleet tooling.
+No migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.25.4
+--previous v1.25.3` passes: 935 lines added outside docs, tests and generated files, of the 1,500 a patch may
+add). It passes the release policy with no exception. Upgrading needs nothing beyond replacing the files and
+restarting. What an upgrading administrator should know:
+
+* **SUDS Server on Linux: your offsite backup copies may be empty — check them after upgrading.** Under the service's
+  system-call filter, every scheduled offsite copy in 1.25.3 and earlier stopped SUDS before writing a byte (it was
+  restarted five seconds later), leaving a 0-byte file in the offsite directory and nothing in the log. 1.25.4 copies
+  safely, checks every copy's size and SHA-256, logs each run, and re-copies empty offsite files whose local backup
+  still exists. After upgrading, press **Back up now** (Settings → System & backups) or wait for the next scheduled
+  backup, then compare the sizes (deploy/linux/README.md, *Check your offsite backups*); older empty files whose
+  local backups were pruned cannot be repaired and can be deleted. Until then, the offsite leg gave no protection.
+* **Fleet tooling needs 1.25.4 or later** (`deploy/fleet/`: it passes the new `--admin-cidr6` to the installer).
+* **A device database that will not open** now gives a plain message and a "Save the damaged copy" button at sign-in
+  instead of "Something went wrong"; restoring a backup still needs the device to be started over first
+  (docs/architecture/ADR-0008-device-encryption.md).
 
 ### Fixed
 
+- **Offsite backup copies were empty (the suds.systems report, 2026-10-09).** On SUDS Server every scheduled
+  backup's copy on the offsite share was 0 bytes. The cause: the copy used Node's `fs.copyFile`, which (libuv
+  `uv_fs_copyfile`) creates the file and then calls `fchown()` on it before copying a byte, and SUDS Server's unit
+  denies `fchown` (`deploy/linux/suds.service`, `SystemCallFilter=~@privileged`), so systemd killed SUDS with
+  `SIGSYS` at that point and restarted it. The run never finished: nothing was logged, `last_scheduled_backup_at`
+  stayed at the installer's first backup (taken outside the unit, which is why the compliance check's
+  `app.backups` said "last 2026-10-08T21:51:50.377Z"), and a backup was due again at every hourly pass, hence the
+  hourly series. Reproduced off the box by running the 1.25.3 code under a seccomp filter that kills on `fchown`:
+  an empty `-rw-------` offsite file and a killed process. Now (`server/scheduled-backup.js` `copyVerified`) the
+  copy is streamed to a temporary name on the share, synced, renamed, then read back and compared with the backup
+  (size and SHA-256); a copy that does not match is deleted and reported (status, audit entry, Security status,
+  the hardening checklist). Each run logs a start line and a result line containing "backup" (bytes, verified,
+  the offsite result). The next run copies again every offsite file whose size differs from the local backup of
+  the same name (the count is logged; local backups are never deleted). The compliance check fails an empty or
+  short offsite copy (`host.backup_files`, `app.offsite`) and its "last backup" is the newest backup file on
+  disk; the recovery drill refuses an empty or short offsite copy as its source. A restore from the
+  Administration page no longer uses `fs.copyFileSync` either (the same kill). **After upgrading:** check that
+  the offsite files are the same sizes as the local ones (deploy/linux/README.md, *Check your offsite backups*)
+  once the first scheduled backup (or **Back up now** under Settings → System & backups) has run, and that the
+  compliance check's backup rules (`app.backups`, `app.offsite`, `host.backup_files`) pass.
 - **A preference changed with no signal is no longer lost at the next reload (G3, evaluation of 1.25.3).** A change the
   office has not confirmed waits in that browser under the account (`suds.prefs.pending`, UI state, never PHI); the next
   load lays it over the office's older copy and sends it, as does the first answer from the office after no signal.
@@ -40,47 +79,6 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 - **Release checklist (G6).** The full `npm test` (and the browser suite when the UI changed) runs on the exact stamped
   tree before the push, and only `main`'s own CI run of a commit counts as green for tagging (docs/RELEASE.md, with a
   flake register).
-- **Offsite backup copies were empty (the suds.systems report, 2026-10-09).** On SUDS Server every scheduled
-  backup's copy on the offsite share was 0 bytes. The cause: the copy used Node's `fs.copyFile`, which (libuv
-  `uv_fs_copyfile`) creates the file and then calls `fchown()` on it before copying a byte, and SUDS Server's unit
-  denies `fchown` (`deploy/linux/suds.service`, `SystemCallFilter=~@privileged`), so systemd killed SUDS with
-  `SIGSYS` at that point and restarted it. The run never finished: nothing was logged, `last_scheduled_backup_at`
-  stayed at the installer's first backup (taken outside the unit, which is why the compliance check's
-  `app.backups` said "last 2026-10-08T21:51:50.377Z"), and a backup was due again at every hourly pass, hence the
-  hourly series. Reproduced off the box by running the 1.25.3 code under a seccomp filter that kills on `fchown`:
-  an empty `-rw-------` offsite file and a killed process. Now (`server/scheduled-backup.js` `copyVerified`) the
-  copy is streamed to a temporary name on the share, synced, renamed, then read back and compared with the backup
-  (size and SHA-256); a copy that does not match is deleted and reported (status, audit entry, Security status,
-  the hardening checklist). Each run logs a start line and a result line containing "backup" (bytes, verified,
-  the offsite result). The next run copies again every offsite file whose size differs from the local backup of
-  the same name (the count is logged; local backups are never deleted). The compliance check fails an empty or
-  short offsite copy (`host.backup_files`, `app.offsite`) and its "last backup" is the newest backup file on
-  disk; the recovery drill refuses an empty or short offsite copy as its source. A restore from the
-  Administration page no longer uses `fs.copyFileSync` either (the same kill). **After upgrading:** check that
-  the offsite files are the same sizes as the local ones (deploy/linux/README.md, *Check your offsite backups*)
-  once the first scheduled backup (or **Back up now** under Settings → System & backups) has run, and that the
-  compliance check's backup rules (`app.backups`, `app.offsite`, `host.backup_files`) pass.
-
-### Added
-
-- **Fleet tooling: one SUDS Server per tenant on AWS Lightsail (Option A of the multitenancy plan)** — operator
-  tooling in `deploy/fleet/`, not part of the app. `provision-tenant.sh` (a dry run unless `--apply`) creates a tenant's
-  instance, static IP, disks and Lightsail firewall, its DNS records at Porkbun (checked through DNS-over-HTTPS), a LUKS2
-  data volume, and installs SUDS Server with `deploy/linux/install.sh` unchanged; then asserts that fail the run: a new
-  SSH connection after the install session has closed, SSH allowed on IPv4 and IPv6, `suds` and `caddy` active, HTTPS
-  200 and `/version.json` from outside, the www redirect when asked, and the data directory on LUKS (fail-closed). The
-  keys are escrowed encrypted for the owner before go-live (`escrow.sh open` logs who, when and why; hash-chained
-  logs). `decommission-tenant.sh` refuses without the tenant's export receipt and two typed confirmations, then deletes
-  DNS, snapshots, instance, disks and IP and shreds the escrow. Tenant settings, the register, escrow and credentials
-  live in a private `FLEET_HOME` outside this repository; the scripts refuse to run otherwise. The runbook, the drill
-  tenant and the agreements each tenant needs (a BAA **and** a Part 2 QSOA; isolation between tenants, not from the
-  operator; who may operate a fleet under `LICENSE`) are in deploy/fleet/README.md. Tested against stub `aws`, `curl`,
-  `ssh`, `scp` and `gpg` only (`test/deploy-fleet.test.js`).
-
-### Fixed
-
-Buyer documents and evidence, from the market-readiness evaluation of 1.25.3 (no change to the app):
-
 - **G4 — buyer documents state what is real today.** docs/market/HOSTING.md (a *real today / planned* table), the
   market README, buyer guides, county kit, procurement guide, RFI answers, questionnaire #2 and #6a, README and
   deploy/fleet/README.md now say: AugustInnovations LLC would operate a hosted service and sign its BAAs and QSOAs (owner
@@ -102,6 +100,22 @@ Buyer documents and evidence, from the market-readiness evaluation of 1.25.3 (no
   1.23.0, 1.24.0 and 1.25.1 (`upgrade-drill-2026-10-10-v1.25.3`, the first stored evidence for migrations 68–71) and the
   installer run in a systemd container with the upgrade from 1.25.1 (`installer-container-run-2026-10-10-v1.25.3`, the
   first hand-over between two real releases); docs/evidence/README.md says what still cannot be produced here and why.
+
+### Added
+
+- **Fleet tooling: one SUDS Server per tenant on AWS Lightsail (Option A of the multitenancy plan)** — operator
+  tooling in `deploy/fleet/`, not part of the app. `provision-tenant.sh` (a dry run unless `--apply`) creates a tenant's
+  instance, static IP, disks and Lightsail firewall, its DNS records at Porkbun (checked through DNS-over-HTTPS), a LUKS2
+  data volume, and installs SUDS Server with `deploy/linux/install.sh` unchanged; then asserts that fail the run: a new
+  SSH connection after the install session has closed, SSH allowed on IPv4 and IPv6, `suds` and `caddy` active, HTTPS
+  200 and `/version.json` from outside, the www redirect when asked, and the data directory on LUKS (fail-closed). The
+  keys are escrowed encrypted for the owner before go-live (`escrow.sh open` logs who, when and why; hash-chained
+  logs). `decommission-tenant.sh` refuses without the tenant's export receipt and two typed confirmations, then deletes
+  DNS, snapshots, instance, disks and IP and shreds the escrow. Tenant settings, the register, escrow and credentials
+  live in a private `FLEET_HOME` outside this repository; the scripts refuse to run otherwise. The runbook, the drill
+  tenant and the agreements each tenant needs (a BAA **and** a Part 2 QSOA; isolation between tenants, not from the
+  operator; who may operate a fleet under `LICENSE`) are in deploy/fleet/README.md. Tested against stub `aws`, `curl`,
+  `ssh`, `scp` and `gpg` only (`test/deploy-fleet.test.js`).
 
 ## 1.25.3 — 2026-10-09
 

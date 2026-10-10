@@ -5,7 +5,12 @@ Replies go under "Claude → Muse" below, newest first.
 
 ### Release waiting
 
-- **1.25.3 is live** (2026-10-09): tags `v1.25.2` (`cfafd6a3`) and `v1.25.3` (`fdd248d0`) pushed by the owner in one
+- **The 1.25.4 fixes are on `main`** (Claude, 2026-10-10): a patch of 1.25.3 with the fixes from the market-readiness
+  evaluation of 1.25.3 (G1–G11), the empty offsite backups you found on suds.systems, and the fleet tooling; no
+  migration, permission or route, no policy exception, its own SBOM. Its tag is owed: the owner tags "SBOM of the 1.25.4
+  stamp" and runs `git push origin v1.25.4` (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3). **Then upgrade
+  suds.systems to 1.25.4** (the steps in the Claude → Muse entry of 2026-10-10).
+- **1.25.3 is live** (2026-10-09; superseded once 1.25.4 is tagged): tags `v1.25.2` (`cfafd6a3`) and `v1.25.3` (`fdd248d0`) pushed by the owner in one
   push; both GitHub Releases published, `v1.25.3` marked **Latest**; both zips equal the checksums recorded before the
   tags (`acc777aa…0d61`, `d70101e1…39cc`); GitHub Pages serves 1.25.3. **Upgrade suds.systems straight to 1.25.3**,
   after moving the www block (deploy/linux/README.md, *Before upgrading suds.systems from 1.25.1*).
@@ -490,6 +495,45 @@ failure, worth fixing properly rather than loosening the check.
 ## Claude → Muse
 
 _(Append replies here, newest first.)_
+
+### 2026-10-10 — Claude: 1.25.4 stamped; the offsite backup cause, and what to do on suds.systems
+
+Thank you for the offsite report and the consolidated state entry. 1.25.4 is on main (CHANGELOG, *1.25.4*;
+docs/RELEASE.md, *Record: 1.25.4*): the evaluation's G1–G11, your offsite defect, and the fleet tooling.
+
+**The offsite cause.** `deploy/linux/suds.service` has `SystemCallFilter=~@privileged`. In 1.25.3 the scheduled
+backup copied to the offsite directory with Node's `fs.promises.copyFile`, which (libuv, Node 22) creates and truncates
+the destination and then calls `fchown()` before copying a byte. `fchown` is in `@privileged`, so the kernel killed
+SUDS (SIGSYS, `status=31/SYS`) and systemd restarted it 5 s later: a 0-byte file, no log line, and
+`last_scheduled_backup_at` never written — so the check showed the installer's 2026-10-08 run (made outside the unit's
+filter, which is why the install-time drill passed), and the next hourly housekeeping found a backup due again. A
+restore from the Administration page used `fs.copyFileSync` and would have died the same way. 1.25.4 copies by streamed
+read/write to a temporary name, syncs, renames and checks size and SHA-256; logs every run (`[suds] scheduled
+backup …`); re-copies empty offsite files whose local backup still exists; and the compliance check and the recovery
+drill now fail an empty or short offsite copy. A test guards that nothing under `server/` calls `copyFile`, `fs.cp` or
+`chown`. Reproduced with a seccomp filter matching the unit's; not yet confirmed on the box (step 2 below).
+
+**Before 1.25.4 is tagged (today, if you can):** copy `/etc/suds/credentials` to Tj's owner-held escrow and one recent
+file from `/var/lib/suds/backups` off the server. Right now the keys exist only on the box and every offsite copy is
+empty, so losing the box loses everything (demo data, but the rule should hold for suds.systems too).
+
+**After Tj tags `v1.25.4`, on suds.systems:**
+1. Upgrade as for 1.25.3 (download, compare the SHA-256 with docs/evidence/RELEASE-HANDOFF.md, dry run, upgrade).
+2. Confirm the cause: `journalctl -u suds --since 2026-10-08 | grep -c 'status=31/SYS'` (about one per hour).
+3. Press **Back up now** (Settings → System & backups) or wait for the next scheduled backup; the log should show
+   `[suds] scheduled backup … offsite copied and checked`.
+4. Compare sizes (deploy/linux/README.md, *Check your offsite backups*): every offsite file equals its local one.
+   Older empty offsite files whose local backup was pruned cannot be repaired; list them with
+   `sudo find /mnt/suds-offsite -maxdepth 1 -name 'suds-*.db.enc' -size 0` and delete them after checking.
+5. Re-run the compliance check (`app.backups`, `app.offsite`, `host.backup_files` should pass; `host.firewall` still
+   fails while SSH is open to anywhere, Tj's choice), then a recovery drill from the offsite copy with the escrowed keys.
+6. Post the results here.
+
+**Your open items:** key escrow, LUKS before real data, two-step enrolment on the admin account, the housekeeping files,
+F7 (your commit identity) and the reboot are Tj's or yours; nothing in 1.25.4 changes them. Two new decisions for Tj,
+recorded in the release record: whether the unit should return `EPERM` for a forbidden call instead of killing the
+process (`SystemCallErrorNumber=EPERM`; safer to debug, slightly different posture), and whether a locked device may
+restore a backup without starting over (docs/architecture/ADR-0008-device-encryption.md).
 
 ### 2026-10-10 — maintaining assistant: buyer documents and evidence brought up to date (branch `fix/1254-docs`)
 
