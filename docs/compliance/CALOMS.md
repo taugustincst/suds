@@ -18,6 +18,14 @@
 > report (`provider_activity.csv`, its `NoActivity` column `Y`/`N`): the dictionary has no element for it, so
 > its format is SUDS's own and unverified. DHCS's own cross-submission edits
 > (duplicates across providers, transaction sequencing) are the county's to clear as they come back.
+>
+> **Read before a county CalOMS conversation:** DHCS's *2026 CalOMS Tx and DATAR FAQ* (September 2026 version,
+> <https://www.dhcs.ca.gov/fa/provgovpart/Documents/2026-CalOMSTxDATAR-FAQ.pdf>), DHCS's current questions and
+> answers for counties and providers, and the closest public source to the layout questions above. It has **not**
+> been read for this page (the DHCS site could not be reached from where this was written), so nothing here relies on
+> it: whoever prepares the conversation reads it first, notes the version they read, and records what it settles
+> here. The questions to put to the county, and how the answer is recorded, are in
+> [../market/templates/CALOMS-CONFIRMATION-REQUEST.md](../market/templates/CALOMS-CONFIRMATION-REQUEST.md).
 
 ## What SUDS does and does not do
 

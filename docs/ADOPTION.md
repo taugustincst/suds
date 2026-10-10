@@ -67,7 +67,12 @@ versions if possible), against the release on the pilot server:
 - [ ] Idle sign-out after the configured minutes; sign-in again resumes where the person was.
 - [ ] Certificate: no warning on devices that have the county CA (or the SUDS certificate) installed.
 
-Record who ran it, on which devices and OS versions, and the result, with the release.
+Record who ran it, on which devices and OS versions, and the result, with the release. For SUDS on this device, the
+step-by-step checklist and the table to record it in (sign-up, recovery code, offline reload and unlock, a passphrase
+backup and restore, the damaged-copy path, the home-screen install) are
+[evidence/REAL-DEVICE-CHECK-TEMPLATE.md](evidence/REAL-DEVICE-CHECK-TEMPLATE.md); no run on a real iPhone is recorded
+yet, and the advisory WebKit job's sign-in failures on `main` ([RELEASE.md](RELEASE.md), *Flake register*) make it
+owed before SUDS on this device is recommended for iPhones beyond a pilot.
 
 ## 5. Drills
 

@@ -161,6 +161,14 @@ does not store is the password its people type.
   in, or no account on the device (`mayRestore`), and a damaged database lets nobody sign in; hence Start over first.
   (On any locked device the kernel answers *Can't sign in? → Restore from a backup* with 401 "This device is locked"
   for the same reason: found in 1.25.4, left for a decision on who may restore without signing in.)
+  **A misread by the engine is retried once before damage is declared (1.25.5;** evaluation of 1.25.4, H1). WebKit
+  CI runs on `main` failed device sign-ins with a second engine-level error, `RuntimeError: Out of bounds memory
+  access` in the SQLite WASM at `POST /api/auth/login`, on app code identical to 1.25.3, which points at the second
+  possibility above. So a failed check or open is tried again on a fresh engine instance before the database is called
+  damaged, and the kept damaged copy can be restored. Whether these errors happen on iOS Safari, and not only in
+  Playwright's WebKit on Linux, is not yet established: [docs/RELEASE.md](../RELEASE.md)'s flake register lists each
+  run, and the real-iPhone record of [docs/ADOPTION.md](../ADOPTION.md) §4
+  ([checklist](../evidence/REAL-DEVICE-CHECK-TEMPLATE.md)) is owed.
 - While someone is signed in, the database and its key are in the page's memory, as any running app's are.
 - A page load always needs a sign-in, including the reload after a new release and "Use SUDS in this window".
 - Holding the store is now callback-free for image saves. Before this, an ordinary save issued its put from the
