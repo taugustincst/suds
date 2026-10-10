@@ -378,7 +378,9 @@ test('the county view\'s tidy CSV, imported again, gives back exactly the figure
     const entered = {};
     for (const p of [A, B]) {
       const made = Array.from({ length: 1 + rng.int(3) }, (_, k) => validFormFund(rng, k));
-      for (const m of made) { m.fund.name = K.cleanText(`${rng.pick([...FORMULA_TEXT, ...NASTY.filter(x => K.cleanText(x, 200) && K.cleanText(x, 200).toLowerCase() !== E.TOTAL_FUND.toLowerCase())])} ${made.indexOf(m)}`, 200); m.fund.grant_number = rng.chance(0.5) ? K.cleanText(rng.pick([...FORMULA_TEXT, 'G-1, "x"']), 100) : ''; }
+      // The picked text is cut to 190 first, so the index survives the 200-character limit and the funds stay distinct
+      // (a 300-character pick once cut the index off and made two funds the same one; seed 1298200799).
+      for (const m of made) { m.fund.name = K.cleanText(`${K.cleanText(rng.pick([...FORMULA_TEXT, ...NASTY.filter(x => K.cleanText(x, 200) && K.cleanText(x, 200).toLowerCase() !== E.TOTAL_FUND.toLowerCase())]), 190)} ${made.indexOf(m)}`, 200); m.fund.grant_number = rng.chance(0.5) ? K.cleanText(rng.pick([...FORMULA_TEXT, 'G-1, "x"']), 100) : ''; }
       const out = E.enter(p.id, { ...period, source_ref: '=cmd|\' /C calc\'!A0 report', funds: made.map(m => m.fund) }, null, { today });
       entered[p.id] = JSON.parse(require('../server/crypto').decrypt(K.subById(out.submission.id).payload_enc));
     }
