@@ -11,12 +11,25 @@
 //  * A failed write. The dirty flag is cleared only after IndexedDB confirms the save, and a failure is
 //    surfaced to the user instead of going to the console where nobody will see it.
 //  * An erased store. A store cleared under a running page ("Reset this device") is never written back.
-let SQL = null;
+let SQL = null; let wasmAt = null;
 const STORE = 'suds-local';
 export async function init(wasmUrl) {
   if (SQL) return SQL;
+  wasmAt = wasmUrl;
   const initSqlJs = (await import('sql.js')).default;
   SQL = await initSqlJs({ locateFile: () => wasmUrl });
+  return SQL;
+}
+/**
+ * Replace the SQLite engine with a new one: another WebAssembly instance, with a heap of its own (1.25.5, H1). A
+ * sign-in whose database will not open asks once more on it before calling the records damaged (local/kernel.js
+ * unlockWith). Databases opened from now on use it. sql.js keeps its one instance in its module, so the bundle
+ * wraps that module in a function that `fresh` runs again (scripts/kernel-build-options.js).
+ */
+export async function freshEngine() {
+  const mod = (await import('sql.js')).default;
+  if (!wasmAt || typeof mod.fresh !== 'function') throw new Error('this build cannot start a second SQLite engine');
+  SQL = await mod.fresh()({ locateFile: () => wasmAt });
   return SQL;
 }
 
@@ -541,4 +554,4 @@ export class DatabaseSync {
   close() { if (current === this.db) { current = null; dirty = false; clearTimeout(saveTimer); saveTimer = null; } try { this.db.close(); } catch {} }
   export() { return this.db.export(); }
 }
-export default { DatabaseSync, init, loadBytes, saveBytes, putMeta, getMeta, entries, readCurrent, setSealer, hasSealer, hasPendingExtra, setOpenAllowed, saveStats, wipe, isWiped, replaceWith, imageProblem, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
+export default { DatabaseSync, init, freshEngine, loadBytes, saveBytes, putMeta, getMeta, entries, readCurrent, setSealer, hasSealer, hasPendingExtra, setOpenAllowed, saveStats, wipe, isWiped, replaceWith, imageProblem, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };

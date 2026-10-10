@@ -161,6 +161,22 @@ does not store is the password its people type.
   in, or no account on the device (`mayRestore`), and a damaged database lets nobody sign in; hence Start over first.
   (On any locked device the kernel answers *Can't sign in? → Restore from a backup* with 401 "This device is locked"
   for the same reason: found in 1.25.4, left for a decision on who may restore without signing in.)
+- **1.25.5 (evaluation of 1.25.4, H1 and H2).** An image whose seal no longer checks (AES-GCM fails under a key that
+  has just opened the vault's column keys, so the key is right) is the same damage: kept, 503 `deviceDamaged` with
+  `integrity: true`, "failed its integrity check"; a wrong password still fails at the wrap, as a wrong password.
+  WebKit has also failed sign-ins inside the engine ("Out of bounds memory access" in the SQLite WebAssembly), so when
+  `quick_check` or the open fails, `unlockWith` asks once more on a new engine (`freshEngine`: another WebAssembly
+  instance with its own heap; the bundle wraps sql.js's module so it can be evaluated again,
+  `scripts/kernel-build-options.js`) before it calls the records damaged; a wrong length or header (plain
+  JavaScript) is not asked again. The first time an image is called damaged the answer says it may be this browser
+  rather than the records, and the ways back come in order: save the copy, close the browser and log in again, then
+  Restore from a backup with the latest backup or the saved copy (in another browser, or here after Start over);
+  the same image again (`repeated: true`) drops "may be this browser". *Restore from a backup* takes the saved copy
+  (`openDamagedCopy`): the password of an account from that device (any account's wrap is tried, or the recovery
+  code) opens its vault, the image is unsealed and checked as at a sign-in, and a copy that fails any of it is
+  refused whole (400, nothing changes). One that opens is restored as a backup is: its wraps carried by
+  `vault.backupRecord`, so its accounts sign in with the passwords they had and the device moves to a key of its own
+  at the first sign-in; the audit entry says `from: damaged_copy`.
 - While someone is signed in, the database and its key are in the page's memory, as any running app's are.
 - A page load always needs a sign-in, including the reload after a new release and "Use SUDS in this window".
 - Holding the store is now callback-free for image saves. Before this, an ordinary save issued its put from the
@@ -188,7 +204,9 @@ vouching fields), [docs/security/ENCRYPTION-AND-KEYS.md](../security/ENCRYPTION-
 ## Tests that pin it
 
 `test/device-damaged-db.test.js` (a validly sealed damaged image, five kinds, refused and kept, never written
-over) and browser `scripts/ui/device-recovery.mjs` section 6 (the same in Chromium, then Start over and restore);
+over; a flipped byte in the seal; an engine that fails once, and every time; the saved copy restored, or refused
+whole) and browser `scripts/ui/device-recovery.mjs` section 6 (the same in Chromium, the order of the ways back, then
+Start over and restore, the saved copy refused here and restored in another browser);
 `test/device-vault.test.js` (sealing, wraps, iterations, per-wrap salts, key sealing, the backup chain, the
 key rotation after a restore, plaintext detection, the recovery wrap — under Node's WebCrypto);
 `test/device-recovery.test.js` (the kernel in Node: set-up, a code, lock, recover, records open, wrong codes

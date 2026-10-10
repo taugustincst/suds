@@ -57,8 +57,9 @@ export const backupButton = (onDone) => h('button', { type: 'button', class: 'bt
 
 /** "Restore from a backup": choose the file, type the passphrase, see what is in it, type RESTORE. */
 export function openRestoreDialog() {
-  const file = h('input', { type: 'file', name: 'backup_file', accept: '.sudsbackup,application/octet-stream', 'aria-label': 'Backup file' });
-  const pass = h('input', { type: 'password', name: 'backup_passphrase', autocomplete: 'off', id: 'restore-passphrase' });
+  // A backup file, or the copy saved when this device's records would not open (1.25.5: opened with an account's password).
+  const file = h('input', { type: 'file', name: 'backup_file', accept: '.sudsbackup,.json,application/octet-stream,application/json', 'aria-label': 'Backup file' });
+  const pass = h('input', { type: 'password', name: 'backup_passphrase', autocomplete: 'off', id: 'restore-passphrase', 'aria-describedby': 'restore-passphrase-help' });
   const out = h('div', { class: 'mt' });
   let fileB64 = null;
   const read = () => new Promise((resolve, reject) => {
@@ -73,7 +74,7 @@ export function openRestoreDialog() {
       const info = await post('/api/local/restore/preview', { file_b64: fileB64, passphrase: pass.value });
       let typed; let go;
       clear(out).append(
-        h('div', { class: 'banner warn', role: 'status', 'data-restore-preview': '1' }, h('div', {}, 'Nothing has changed yet. Check this is the backup you meant.')),
+        h('div', { class: 'banner warn', role: 'status', 'data-restore-preview': info.damaged_copy ? 'damaged-copy' : '1' }, h('div', {}, info.damaged_copy ? 'Nothing has changed yet. This is the copy saved when the records could not be opened, and it opens here. Check it is the one you meant.' : 'Nothing has changed yet. Check this is the backup you meant.')),
         kv([['Made', fmt.dt(info.created_at)], ['Clients', h('span', { 'data-restore-clients': String(info.clients) }, String(info.clients))], ['Accounts', String(info.users)], ['Program', info.org_name || '—'], ['SUDS version', info.app_version || '—']]),
         h('p', { class: 'small' }, info.current.clients ? `Restoring replaces everything on this device now (${info.current.clients} client${info.current.clients === 1 ? '' : 's'}) with the backup. ` : 'Restoring puts these records on this device. ', 'Afterwards you log in with an account from the backup.'),
         h('div', { class: 'field' }, h('label', { for: 'restore-confirm' }, 'Type RESTORE to confirm *'), typed = h('input', { id: 'restore-confirm', name: 'restore_confirm', autocomplete: 'off', onInput: () => { go.disabled = typed.value.trim() !== 'RESTORE'; } })),
@@ -94,7 +95,8 @@ export function openRestoreDialog() {
   const m = modal('Restore from a backup', h('div', {},
     h('p', {}, 'Put a SUDS device backup back onto this device. Everything on the device now is replaced by what is in the backup.'),
     h('div', { class: 'field' }, h('label', {}, 'Backup file *'), file),
-    h('div', { class: 'field' }, h('label', { for: 'restore-passphrase' }, 'Backup passphrase *'), pass),
+    h('div', { class: 'field' }, h('label', { for: 'restore-passphrase' }, 'Backup passphrase *'), pass,
+      h('div', { class: 'help', id: 'restore-passphrase-help' }, 'For a damaged copy you saved from the sign-in page, type the password of an account from that device instead.')),
     h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn', onClick: () => m.close() }, 'Cancel'), h('button', { type: 'button', class: 'btn primary', 'data-restore-check': '1', onClick: check }, 'Check this backup')),
     out));
   return m;
