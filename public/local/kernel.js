@@ -21909,7 +21909,7 @@ var require_compliance_rules = __commonJS({
       { id: "host.node", title: "Node.js is the pinned, checksum-verified release", rules: ["hipaa-308a1iiB"], remediation: "Install the release pinned in deploy/linux/pins (the one CI tests) with deploy/linux/install.sh or upgrade.sh." },
       { id: "host.suds_version", title: "SUDS release is supported", rules: ["hipaa-308a1iiB", "hipaa-308a5iiB"], remediation: 'Upgrade to the latest minor release (docs/RELEASE.md, "Supported versions") with deploy/linux/upgrade.sh.' },
       { id: "host.release_integrity", title: "SUDS release checked against an independently published checksum", rules: ["hipaa-308a1iiB", "hipaa-308a5iiB"], remediation: "Upgrade with --release-sha256=<hex> taken from a channel other than the download: the SHA-256 published in the GitHub Release notes and recorded in that version's CHANGELOG section on the main branch, which must agree (not at the release tag: the zip is built from the tagged commit, so its checksum is added after it; docs/SELF-HOSTING.md, Upgrading). Not --trust-release-checksum." },
-      { id: "host.backup_files", title: "Latest backup is recent and the offsite copy exists", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Scheduled backups (Settings \u2192 Scheduled backups) with the offsite directory on the mounted offsite share; check the share is mounted." },
+      { id: "host.backup_files", title: "Latest backup is recent and the offsite copy is complete", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Scheduled backups (Settings \u2192 Scheduled backups) with the offsite directory on the mounted offsite share; check the share is mounted. An empty or short offsite copy (SUDS 1.25.3 and earlier on SUDS Server) is copied again by the next scheduled backup after upgrading to 1.25.4." },
       { id: "host.dr_evidence", title: "Recovery drill within 90 days, signed report verifies", rules: ["hipaa-308a7iiD", "hipaa-308a7iiB"], remediation: "Run a recovery drill with the escrowed key file against the offsite copy (Settings \u2192 System & backups, or npm run dr-drill); turn the monthly drill on." },
       { id: "host.audit_verify", title: "Audit chain and external anchors verify now", rules: ["hipaa-312b", "hipaa-312c1", "hipaa-312c2", "cmia-56101b1B", "part2-16a2iii"], remediation: 'A failure is a possible incident: follow docs/security/INCIDENT-RESPONSE.md. "Could not check" means the check ran without the index key (run it as root, or from suds-compliance.service).' }
     ];
@@ -23065,6 +23065,19 @@ try {
         release();
       }
     }
+    function copyBytesSync(src, dest) {
+      const a = fs.openSync(src, "r");
+      let b = null;
+      try {
+        b = fs.openSync(dest, "w", 384);
+        const buf = import_buffer.Buffer.alloc(SLICE);
+        for (let pos = 0, n; n = fs.readSync(a, buf, 0, buf.length, pos); pos += n) fs.writeSync(b, buf, 0, n);
+        fs.fsyncSync(b);
+      } finally {
+        fs.closeSync(a);
+        if (b !== null) fs.closeSync(b);
+      }
+    }
     function restoreHeld(plainBytes) {
       const info = inspect2(plainBytes);
       const dbPath = config2.dbPath;
@@ -23086,7 +23099,7 @@ try {
         }
         try {
           if (fs.existsSync(aside)) {
-            fs.copyFileSync(aside, dbPath);
+            copyBytesSync(aside, dbPath);
             dropJournal();
           }
         } catch (e) {
@@ -23105,7 +23118,7 @@ try {
       }
       db3.close();
       try {
-        if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, aside);
+        if (fs.existsSync(dbPath)) copyBytesSync(dbPath, aside);
         fs.writeFileSync(dbPath, plainBytes, { mode: 384 });
         dropJournal();
       } catch (e) {
@@ -23225,6 +23238,7 @@ var require_scheduled_backup = __commonJS({
     init_globals_inject();
     var fs = (init_fs(), __toCommonJS(fs_exports));
     var path = (init_path(), __toCommonJS(path_exports));
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
     var config2 = require_config();
     var db3 = require_db();
     var audit3 = require_audit();
@@ -23283,6 +23297,7 @@ var require_scheduled_backup = __commonJS({
       let verifyError = null;
       let kept = 0;
       let method = null;
+      console.log(`[suds] scheduled backup ${path.basename(file)} starting${offsiteDir ? `, with an offsite copy to ${offsiteDir}` : ""}`);
       try {
         fs.mkdirSync(dir, { recursive: true, mode: 448 });
         prune(dir, Math.max(0, retain - 1));
@@ -23311,6 +23326,7 @@ var require_scheduled_backup = __commonJS({
       let offsiteOk = null;
       let offsiteError = null;
       let offsiteFile = null;
+      let repaired = 0;
       if (offsiteDir) {
         try {
           let st = null;
@@ -23319,21 +23335,95 @@ var require_scheduled_backup = __commonJS({
           } catch {
           }
           if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
+          await copyVerified(file, offsiteDir);
           offsiteFile = path.join(offsiteDir, path.basename(file));
-          await fs.promises.copyFile(file, offsiteFile);
           offsiteOk = true;
+          repaired = await repairOffsite(dir, offsiteDir);
         } catch (e) {
           offsiteOk = false;
           offsiteError = String(e && e.message || e);
-          console.error("[suds] offsite backup copy failed:", offsiteError);
         }
       }
+      (verified && offsiteOk !== false ? console.log : console.error)(`[suds] scheduled backup ${path.basename(file)}: ${bytes3} bytes, ${verified ? "verified" : "NOT verified"}; offsite ${!offsiteDir ? "not configured" : offsiteOk ? "copied and checked (size and SHA-256)" : `copy FAILED: ${offsiteError}`}${repaired ? `; ${repaired} earlier offsite cop${repaired === 1 ? "y" : "ies"} that did not match copied again` : ""}`);
       if (!config2.local) require_audit_anchor().safeWrite("backup");
       kept = prune(dir, retain);
       db3.setSetting("last_scheduled_backup_at", db3.now());
       db3.setSetting("last_scheduled_backup_status", !verified ? `backup written but could not be read back \u2014 ${verifyError}` : offsiteDir && offsiteOk === false ? `ok (verified) \u2014 offsite copy failed: ${offsiteError}; local backup kept` : "ok (verified)");
-      audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3, method, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || void 0, kept, verified } });
-      return { file, bytes: bytes3, method, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, verified, verifyError };
+      audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3, method, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || void 0, offsite_repaired: repaired || void 0, kept, verified } });
+      return { file, bytes: bytes3, method, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, repaired, verified, verifyError };
+    }
+    async function digest(file) {
+      const h = crypto3.createHash("sha256");
+      let bytes3 = 0;
+      for await (const c of fs.createReadStream(file)) {
+        h.update(c);
+        bytes3 += c.length;
+      }
+      return { bytes: bytes3, sha256: h.digest("hex") };
+    }
+    async function copyVerified(src, destDir) {
+      const dest = path.join(destDir, path.basename(src));
+      const tmp = path.join(destDir, `.${path.basename(src)}.${crypto3.randomBytes(4).toString("hex")}.part`);
+      try {
+        const out2 = await fs.promises.open(tmp, "wx", 384);
+        try {
+          for await (const c of fs.createReadStream(src)) await out2.write(c);
+          await out2.sync();
+        } finally {
+          await out2.close();
+        }
+        await fs.promises.rename(tmp, dest);
+      } catch (e) {
+        await fs.promises.rm(tmp, { force: true });
+        throw e;
+      }
+      const [a, b] = await Promise.all([digest(src), digest(dest)]);
+      if (a.bytes === b.bytes && a.sha256 === b.sha256) return b;
+      await fs.promises.rm(dest, { force: true });
+      throw new Error(`the offsite copy of ${path.basename(src)} did not match the backup (${b.bytes} of ${a.bytes} bytes${a.bytes === b.bytes ? ", different SHA-256" : ""}) and was deleted`);
+    }
+    async function repairOffsite(localDir, offsiteDir) {
+      let n = 0;
+      for (const f of fs.readdirSync(offsiteDir).filter((x) => FILE_RE2.test(x))) {
+        let a;
+        let b;
+        try {
+          a = fs.lstatSync(path.join(localDir, f));
+          b = fs.lstatSync(path.join(offsiteDir, f));
+        } catch {
+          continue;
+        }
+        if (a.isFile() && b.isFile() && a.size !== b.size) {
+          await copyVerified(path.join(localDir, f), offsiteDir);
+          n++;
+        }
+      }
+      return n;
+    }
+    function newest(dir) {
+      let names;
+      try {
+        names = fs.readdirSync(dir).filter((f) => FILE_RE2.test(f)).sort();
+      } catch (e) {
+        return { error: e.code || e.message };
+      }
+      for (let i = names.length - 1; i >= 0; i--) {
+        try {
+          const s = fs.lstatSync(path.join(dir, names[i]));
+          if (s.isFile()) return { newest: { file: names[i], mtime: s.mtimeMs, size: s.size }, count: names.length };
+        } catch {
+        }
+      }
+      return { newest: null, count: names.length };
+    }
+    function copyProblem(name, size) {
+      if (!size) return `the offsite copy ${name} is empty (0 bytes): it is not a backup`;
+      let local = null;
+      try {
+        local = fs.lstatSync(path.join(config2.dataDir, "backups", name)).size;
+      } catch {
+      }
+      return local !== null && local !== size ? `the offsite copy ${name} is ${size} bytes, but the local backup of that name is ${local} bytes` : null;
     }
     async function snapshotIfDue(now2 = Date.now()) {
       const s = settings();
@@ -23407,7 +23497,7 @@ var require_scheduled_backup = __commonJS({
       }
       return Math.min(files.length, retain);
     }
-    module.exports = { runIfDue, run: run2, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, FILE_RE: FILE_RE2, SNAP_RE };
+    module.exports = { runIfDue, run: run2, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, copyVerified, newest, copyProblem, FILE_RE: FILE_RE2, SNAP_RE };
   }
 });
 
@@ -23861,11 +23951,17 @@ var require_dr_drill = __commonJS({
             } catch {
             }
             const off = st && st.isDirectory() ? latestBackup(sched.offsiteDir) : null;
-            if (off) {
+            let size = null;
+            try {
+              size = off ? fs.statSync(off).size : null;
+            } catch {
+            }
+            const whole = off && require_scheduled_backup().copyProblem(path.basename(off), size);
+            if (off && !whole) {
               file = off;
               source = { ...source, copy: "offsite", dir: sched.offsiteDir };
             } else {
-              offsiteProblem = !sched.offsiteDir ? "an offsite copy was asked for but no offsite directory is configured" : !st ? `the offsite directory ${sched.offsiteDir} is not reachable (is the share mounted?), so the offsite copy could not be restored` : `the offsite directory ${sched.offsiteDir} holds no backup`;
+              offsiteProblem = whole ? `${whole}, so it was not restored` : !sched.offsiteDir ? "an offsite copy was asked for but no offsite directory is configured" : !st ? `the offsite directory ${sched.offsiteDir} is not reachable (is the share mounted?), so the offsite copy could not be restored` : `the offsite directory ${sched.offsiteDir} holds no backup`;
               step("The offsite copy is not available; restoring the local copy instead");
             }
           }
@@ -24254,12 +24350,15 @@ var require_security_status = __commonJS({
       const sb = require_scheduled_backup();
       const sched = sb.settings();
       const firstBackup = sb.firstRunPending();
+      const newestLocal = sb.newest(path.join(config2.dataDir, "backups")).newest;
+      const newestAt = newestLocal ? new Date(newestLocal.mtime).toISOString() : null;
+      const unfinished = newestAt && (!lastBackup || Date.parse(newestAt) - Date.parse(lastBackup) > 6e5) ? ` The newest backup file is newer than the last backup run that finished (${lastBackup || "never"}): a later run stopped before it finished (is SUDS being restarted? journalctl -u suds), or that file was taken by hand.` : "";
       add(
         "Backups and recovery",
         "Scheduled encrypted backups",
         !hours ? "bad" : firstBackup ? "warn" : stale || !/^ok/.test(lastStatus) ? "bad" : "ok",
-        hours ? `every ${hours} h; last ${lastBackup || (firstBackup ? `never: ${PENDING_FIRST_RUN}` : "never")}` : "off",
-        hours ? firstBackup ? `Scheduled since ${firstBackup.since}: the first backup runs at the next hourly check. Until ${firstBackup.until} (twice the interval) "never" is expected; after that it is a failure. Or back up now from System & backups.` : lastStatus : `${config2.isProd ? "This is a production server with nothing backing it up. " : ""}Turn on under Settings \u2192 Scheduled backups (every 4 hours is the production default).`,
+        hours ? `every ${hours} h; last ${newestAt ? `${newestAt} (${newestLocal.file})` : lastBackup || (firstBackup ? `never: ${PENDING_FIRST_RUN}` : "never")}` : "off",
+        hours ? firstBackup ? `Scheduled since ${firstBackup.since}: the first backup runs at the next hourly check. Until ${firstBackup.until} (twice the interval) "never" is expected; after that it is a failure. Or back up now from System & backups.` : `${lastStatus}${unfinished}` : `${config2.isProd ? "This is a production server with nothing backing it up. " : ""}Turn on under Settings \u2192 Scheduled backups (every 4 hours is the production default).`,
         "server/scheduled-backup.js"
       );
       const lastSnap = db3.getSetting("last_snapshot_at", null);
@@ -24284,7 +24383,9 @@ var require_security_status = __commonJS({
         "server/scheduled-backup.js rpo"
       );
       const offsite = db3.getSetting("backup_offsite_dir", "") || "";
-      add("Backups and recovery", "Offsite copy", !offsite ? "warn" : /offsite copy failed/.test(lastStatus) ? "bad" : "ok", offsite ? offsite : "not configured", offsite ? /offsite copy failed/.test(lastStatus) ? lastStatus : "Each scheduled backup is copied here after it is verified." : "Set an offsite directory (a mounted share on another host or site).", "server/scheduled-backup.js");
+      const offNewest = offsite ? sb.newest(offsite).newest : null;
+      const offBad = /offsite copy failed/.test(lastStatus) ? lastStatus : offNewest && sb.copyProblem(offNewest.file, offNewest.size);
+      add("Backups and recovery", "Offsite copy", !offsite ? "warn" : offBad ? "bad" : "ok", offsite ? offsite : "not configured", offsite ? offBad || "Each scheduled backup is copied here after it is verified, and the copy is checked against it (size and SHA-256)." : "Set an offsite directory (a mounted share on another host or site).", "server/scheduled-backup.js");
       const drill = require_dr_drill().lastDrill();
       const drillAge = drill ? ageDays(drill.at) : null;
       const firstDrill = drill ? null : require_dr_drill().firstDrillPending();
@@ -49554,12 +49655,13 @@ var require_hardening = __commonJS({
       {
         const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
         const offsite = db3.getSetting("backup_offsite_dir", "") || "";
+        const failing = /offsite copy failed/.test(db3.getSetting("last_scheduled_backup_status", "") || "");
         add({
           id: "backups",
           title: hours ? "Copy each backup off this server" : "Turn on scheduled backups",
-          done: !!(hours && offsite),
-          why: !hours ? "Nothing is backing this database up automatically. Set how often (every 4 hours is the production default), and a folder on another machine for a copy." : !offsite ? `Backups run every ${hours} hour${hours === 1 ? "" : "s"}, but only onto this server's own disk: a failed disk or a stolen server takes them with it. Name a mounted network share or drive for a second copy.` : `Every ${hours} hour${hours === 1 ? "" : "s"}, with a copy in ${offsite}.`,
-          status: !hours ? "off" : !offsite ? `every ${hours} h, local only` : `every ${hours} h, copied offsite`,
+          done: !!(hours && offsite) && !failing,
+          why: !hours ? "Nothing is backing this database up automatically. Set how often (every 4 hours is the production default), and a folder on another machine for a copy." : !offsite ? `Backups run every ${hours} hour${hours === 1 ? "" : "s"}, but only onto this server's own disk: a failed disk or a stolen server takes them with it. Name a mounted network share or drive for a second copy.` : failing ? `The last backup's copy to ${offsite} failed: ${db3.getSetting("last_scheduled_backup_status", "")}` : `Every ${hours} hour${hours === 1 ? "" : "s"}, with a copy in ${offsite}.`,
+          status: !hours ? "off" : !offsite ? `every ${hours} h, local only` : failing ? `every ${hours} h, offsite copy failing` : `every ${hours} h, copied offsite`,
           action: { label: hours ? "Set the offsite folder" : "Set up backups", href: settingsLink("backups", hours ? "backup_offsite_dir" : "backup_schedule_hours") }
         });
       }

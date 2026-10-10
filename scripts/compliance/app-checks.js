@@ -56,14 +56,6 @@ function fromStatus(st) {
 
 const nc = (id, evidence) => ({ id, result: 'not-checked', evidence, source: 'app' });
 
-function newestIn(dir, re) {
-  let names; try { names = fs.readdirSync(dir).filter((f) => re.test(f)); } catch (e) { return { error: e.code || e.message }; }
-  let best = null;
-  // lstat: a symlink planted among the backups is not followed, and does not count as a backup.
-  for (const f of names) { try { const s = fs.lstatSync(path.join(dir, f)); if (!s.isFile()) continue; if (!best || s.mtimeMs > best.mtime) best = { file: f, mtime: s.mtimeMs }; } catch {} }
-  return { newest: best, count: names.length };
-}
-
 /** Hours since SUDS Server was installed (suds-server.conf SUDS_INSTALLED_AT), or null when unknown. */
 function installedHoursAgo(conf, now) {
   const t = Date.parse((conf && conf.installedAt) || '');
@@ -76,7 +68,7 @@ function backupFiles({ config, db, now, conf }) {
   const sb = require('../../server/scheduled-backup');
   const s = sb.settings();
   const policyH = s.hours ? 2 * s.hours : 24;
-  const local = newestIn(path.join(config.dataDir, 'backups'), sb.FILE_RE);
+  const local = sb.newest(path.join(config.dataDir, 'backups')); // lstat: a planted symlink is neither followed nor counted
   const bits = []; const bad = [];
   if (local.error === 'ENOENT') bad.push('there is no backups directory: no backup has ever been taken');
   else if (local.error) return nc(id, `the backups directory cannot be read (${local.error})`);
@@ -85,11 +77,16 @@ function backupFiles({ config, db, now, conf }) {
   if (!s.hours) bad.push('scheduled backups are off');
   if (!s.offsiteDir) bad.push('no offsite directory is configured');
   else {
-    const off = newestIn(s.offsiteDir, sb.FILE_RE);
+    const off = sb.newest(s.offsiteDir);
     if (off.error === 'ENOENT') bad.push(`the offsite directory ${s.offsiteDir} does not exist (is the share mounted?)`);
     else if (off.error) return nc(id, `the offsite directory ${s.offsiteDir} cannot be read by this user (${off.error}); ${bits.join('; ')}`);
     else if (!off.newest) bad.push(`no backup on the offsite share ${s.offsiteDir}`);
-    else { const h = (now - off.newest.mtime) / 3600_000; bits.push(`newest offsite ${off.newest.file} (${h.toFixed(1)} h old)`); if (h > policyH) bad.push(`the newest offsite copy is ${h.toFixed(1)} h old (policy ${policyH} h)`); }
+    else {
+      const h = (now - off.newest.mtime) / 3600_000; bits.push(`newest offsite ${off.newest.file} (${h.toFixed(1)} h old, ${off.newest.size} bytes)`);
+      if (h > policyH) bad.push(`the newest offsite copy is ${h.toFixed(1)} h old (policy ${policyH} h)`);
+      const problem = sb.copyProblem(off.newest.file, off.newest.size); // an empty copy "exists" but is no backup
+      if (problem) bad.push(problem);
+    }
   }
   void db;
   // A new server has no backup yet: the first scheduled one runs within the interval. Until twice the

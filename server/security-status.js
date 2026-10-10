@@ -172,9 +172,14 @@ function status({ host = true } = {}) {
   const sched = sb.settings();
   // Day one (sb.firstRunPending): scheduled, never run yet, and not yet overdue — a warning, as in the host check.
   const firstBackup = sb.firstRunPending();
+  // "last" is the newest backup file on disk; the level still follows the last run that finished. A newer file than
+  // that run is a run that stopped part-way (on suds.systems, 1.25.3: killed by the unit's system-call filter).
+  const newestLocal = sb.newest(path.join(config.dataDir, 'backups')).newest;
+  const newestAt = newestLocal ? new Date(newestLocal.mtime).toISOString() : null;
+  const unfinished = newestAt && (!lastBackup || Date.parse(newestAt) - Date.parse(lastBackup) > 600_000) ? ` The newest backup file is newer than the last backup run that finished (${lastBackup || 'never'}): a later run stopped before it finished (is SUDS being restarted? journalctl -u suds), or that file was taken by hand.` : '';
   add('Backups and recovery', 'Scheduled encrypted backups', !hours ? 'bad' : firstBackup ? 'warn' : stale || !/^ok/.test(lastStatus) ? 'bad' : 'ok',
-    hours ? `every ${hours} h; last ${lastBackup || (firstBackup ? `never: ${PENDING_FIRST_RUN}` : 'never')}` : 'off',
-    hours ? (firstBackup ? `Scheduled since ${firstBackup.since}: the first backup runs at the next hourly check. Until ${firstBackup.until} (twice the interval) "never" is expected; after that it is a failure. Or back up now from System & backups.` : lastStatus) : `${config.isProd ? 'This is a production server with nothing backing it up. ' : ''}Turn on under Settings → Scheduled backups (every 4 hours is the production default).`, 'server/scheduled-backup.js');
+    hours ? `every ${hours} h; last ${newestAt ? `${newestAt} (${newestLocal.file})` : lastBackup || (firstBackup ? `never: ${PENDING_FIRST_RUN}` : 'never')}` : 'off',
+    hours ? (firstBackup ? `Scheduled since ${firstBackup.since}: the first backup runs at the next hourly check. Until ${firstBackup.until} (twice the interval) "never" is expected; after that it is a failure. Or back up now from System & backups.` : `${lastStatus}${unfinished}`) : `${config.isProd ? 'This is a production server with nothing backing it up. ' : ''}Turn on under Settings → Scheduled backups (every 4 hours is the production default).`, 'server/scheduled-backup.js');
   const lastSnap = db.getSetting('last_snapshot_at', null); const snapStatus = db.getSetting('last_snapshot_status', '') || '';
   const snapStale = sched.minutes && (!lastSnap || ageDays(lastSnap) * 1440 > 3 * sched.minutes);
   add('Backups and recovery', 'Frequent online snapshots', !sched.minutes ? 'info' : snapStale || /^failed/.test(snapStatus) ? 'bad' : 'ok',
@@ -186,7 +191,10 @@ function status({ host = true } = {}) {
     rpo ? `${rpo.minutes < 120 ? `${rpo.minutes} min` : `${Math.round(rpo.minutes / 6) / 10} h`} (${rpo.by}); target ${rpoTarget < 2 ? `${Math.round(rpoTarget * 60)} min` : `${rpoTarget} h`}` : 'unbounded: nothing is scheduled',
     rpo ? 'A loss just before the next copy runs costs one whole interval. The last recovery drill measures the age of the copy it restored.' : 'With no schedule, everything since the last manual backup would be lost.', 'server/scheduled-backup.js rpo');
   const offsite = db.getSetting('backup_offsite_dir', '') || '';
-  add('Backups and recovery', 'Offsite copy', !offsite ? 'warn' : /offsite copy failed/.test(lastStatus) ? 'bad' : 'ok', offsite ? offsite : 'not configured', offsite ? (/offsite copy failed/.test(lastStatus) ? lastStatus : 'Each scheduled backup is copied here after it is verified.') : 'Set an offsite directory (a mounted share on another host or site).', 'server/scheduled-backup.js');
+  // The newest copy on the share is looked at, not only the last run's word for it: an empty or short copy fails.
+  const offNewest = offsite ? sb.newest(offsite).newest : null;
+  const offBad = /offsite copy failed/.test(lastStatus) ? lastStatus : offNewest && sb.copyProblem(offNewest.file, offNewest.size);
+  add('Backups and recovery', 'Offsite copy', !offsite ? 'warn' : offBad ? 'bad' : 'ok', offsite ? offsite : 'not configured', offsite ? (offBad || 'Each scheduled backup is copied here after it is verified, and the copy is checked against it (size and SHA-256).') : 'Set an offsite directory (a mounted share on another host or site).', 'server/scheduled-backup.js');
   const drill = require('./dr-drill').lastDrill();
   const drillAge = drill ? ageDays(drill.at) : null;
   // Day one (dr-drill.js firstDrillPending): the monthly drill is on and has not had its first turn — a warning.

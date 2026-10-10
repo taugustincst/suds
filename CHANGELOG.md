@@ -4,6 +4,29 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Fixed
+
+- **Offsite backup copies were empty (the suds.systems report, 2026-10-09).** On SUDS Server every scheduled
+  backup's copy on the offsite share was 0 bytes. The cause: the copy used Node's `fs.copyFile`, which (libuv
+  `uv_fs_copyfile`) creates the file and then calls `fchown()` on it before copying a byte, and SUDS Server's unit
+  denies `fchown` (`deploy/linux/suds.service`, `SystemCallFilter=~@privileged`), so systemd killed SUDS with
+  `SIGSYS` at that point and restarted it. The run never finished: nothing was logged, `last_scheduled_backup_at`
+  stayed at the installer's first backup (taken outside the unit, which is why the compliance check's
+  `app.backups` said "last 2026-10-08T21:51:50.377Z"), and a backup was due again at every hourly pass, hence the
+  hourly series. Reproduced off the box by running the 1.25.3 code under a seccomp filter that kills on `fchown`:
+  an empty `-rw-------` offsite file and a killed process. Now (`server/scheduled-backup.js` `copyVerified`) the
+  copy is streamed to a temporary name on the share, synced, renamed, then read back and compared with the backup
+  (size and SHA-256); a copy that does not match is deleted and reported (status, audit entry, Security status,
+  the hardening checklist). Each run logs a start line and a result line containing "backup" (bytes, verified,
+  the offsite result). The next run copies again every offsite file whose size differs from the local backup of
+  the same name (the count is logged; local backups are never deleted). The compliance check fails an empty or
+  short offsite copy (`host.backup_files`, `app.offsite`) and its "last backup" is the newest backup file on
+  disk; the recovery drill refuses an empty or short offsite copy as its source. A restore from the
+  Administration page no longer uses `fs.copyFileSync` either (the same kill). **After upgrading:** check that
+  the offsite files are the same sizes as the local ones (deploy/linux/README.md, *Check your offsite backups*)
+  once the first scheduled backup (or **Back up now** under Settings → System & backups) has run, and that the
+  compliance check's backup rules (`app.backups`, `app.offsite`, `host.backup_files`) pass.
+
 ### Added
 
 - **Fleet tooling: one SUDS Server per tenant on AWS Lightsail (Option A of the multitenancy plan)** — operator
