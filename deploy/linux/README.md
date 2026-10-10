@@ -100,6 +100,23 @@ with `Location: https://suds.systems/`, and that `https://suds.systems/` answers
 rolls back, it puts 1.25.1's Caddyfile back and restarts Caddy: put `/root/Caddyfile.launch-day` back too
 (`sudo cp /root/Caddyfile.launch-day /etc/caddy/Caddyfile && sudo systemctl restart caddy`).
 
+## Check your offsite backups (upgrading from 1.25.3 or earlier)
+
+Up to 1.25.3, SUDS Server's copy of each scheduled backup to the offsite share was an empty file: the copy was
+killed by the unit's system-call filter (CHANGELOG, 1.25.4). `journalctl -u suds | grep -c 'status=31/SYS'` counts
+the kills. After upgrading, wait for the first scheduled backup (or press **Back up now** under Settings → System &
+backups): it copies the newest backup and copies again every offsite file whose local backup still exists. Then
+compare sizes, local and offsite, name by name (replace `/mnt/suds-offsite` with your `--offsite` path):
+
+```bash
+sudo bash -c 'cd /var/lib/suds/backups && for f in suds-*.db.enc; do echo "$f $(stat -c %s "$f") $(stat -c %s "/mnt/suds-offsite/$f" 2>/dev/null || echo missing)"; done'
+```
+
+The two numbers must be equal on every line. Empty offsite files older than the local backups kept
+(`sudo find /mnt/suds-offsite -maxdepth 1 -name 'suds-*.db.enc' -size 0`) have nothing left to be copied from and
+are not backups; delete them when you have checked the list. The compliance check's `host.backup_files` and
+`app.offsite` now fail on an empty or short offsite copy, and `app.backups` passes once a backup run has finished.
+
 ## Testing it
 
 `test/deploy-linux.test.js` runs `install.sh` and `upgrade.sh` with `--dry-run` against a fake root (`SUDS_INSTALL_ROOT`)

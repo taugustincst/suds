@@ -223,9 +223,13 @@ async function runJob(job, { backupFile = null, fresh = false, by = 'system', tr
       if (copy === 'offsite' || (copy === 'auto' && sched.offsiteDir)) {
         let st = null; try { st = sched.offsiteDir ? fs.statSync(sched.offsiteDir) : null; } catch {}
         const off = st && st.isDirectory() ? latestBackup(sched.offsiteDir) : null;
-        if (off) { file = off; source = { ...source, copy: 'offsite', dir: sched.offsiteDir }; }
+        // An empty copy, or one whose size differs from the local backup of its name, is refused as a source (the
+        // empty offsite files of 1.25.3 and earlier, server/scheduled-backup.js copyVerified): the drill fails.
+        let size = null; try { size = off ? fs.statSync(off).size : null; } catch {}
+        const whole = off && require('./scheduled-backup').copyProblem(path.basename(off), size);
+        if (off && !whole) { file = off; source = { ...source, copy: 'offsite', dir: sched.offsiteDir }; }
         else {
-          offsiteProblem = !sched.offsiteDir ? 'an offsite copy was asked for but no offsite directory is configured' : !st ? `the offsite directory ${sched.offsiteDir} is not reachable (is the share mounted?), so the offsite copy could not be restored` : `the offsite directory ${sched.offsiteDir} holds no backup`;
+          offsiteProblem = whole ? `${whole}, so it was not restored` : !sched.offsiteDir ? 'an offsite copy was asked for but no offsite directory is configured' : !st ? `the offsite directory ${sched.offsiteDir} is not reachable (is the share mounted?), so the offsite copy could not be restored` : `the offsite directory ${sched.offsiteDir} holds no backup`;
           step('The offsite copy is not available; restoring the local copy instead');
         }
       }

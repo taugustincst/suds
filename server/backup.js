@@ -389,6 +389,18 @@ async function restoreWhenIdle(plainBytes, { waitMs } = {}) {
   try { return restoreHeld(plainBytes); } finally { release(); }
 }
 
+// Not fs.copyFileSync: libuv's copyfile calls fchown(), which SUDS Server's unit denies, so systemd would kill SUDS
+// in the middle of a restore (server/scheduled-backup.js copyVerified).
+function copyBytesSync(src, dest) {
+  const a = fs.openSync(src, 'r'); let b = null;
+  try {
+    b = fs.openSync(dest, 'w', 0o600);
+    const buf = Buffer.alloc(SLICE);
+    for (let pos = 0, n; (n = fs.readSync(a, buf, 0, buf.length, pos)); pos += n) fs.writeSync(b, buf, 0, n);
+    fs.fsyncSync(b);
+  } finally { fs.closeSync(a); if (b !== null) fs.closeSync(b); }
+}
+
 function restoreHeld(plainBytes) {
   const info = inspect(plainBytes);
   const dbPath = config.dbPath;
@@ -400,7 +412,7 @@ function restoreHeld(plainBytes) {
   // or not the swap had happened yet. Closed first: the file is never copied over while it is open.
   const rollBack = (cause) => {
     try { db.close(); } catch {}
-    try { if (fs.existsSync(aside)) { fs.copyFileSync(aside, dbPath); dropJournal(); } } catch (e) { cause.message += ` (and the previous database could not be put back from ${aside}: ${e.message})`; }
+    try { if (fs.existsSync(aside)) { copyBytesSync(aside, dbPath); dropJournal(); } } catch (e) { cause.message += ` (and the previous database could not be put back from ${aside}: ${e.message})`; }
     try { db.open(); } catch (e) { cause.message += ` (the previous database could not be reopened either: ${e.message})`; }
   };
   // Checkpoint and close so the copy set aside is the whole database, not a file plus a write-ahead log.
@@ -408,7 +420,7 @@ function restoreHeld(plainBytes) {
   try { db.get().exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (e) { console.warn('[suds] restore: WAL checkpoint before setting the current database aside failed:', e && e.message); }
   db.close();
   try {
-    if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, aside);
+    if (fs.existsSync(dbPath)) copyBytesSync(dbPath, aside);
     fs.writeFileSync(dbPath, plainBytes, { mode: 0o600 });
     // The write-ahead log belongs to the database we just replaced; leaving it would corrupt the new one.
     dropJournal();

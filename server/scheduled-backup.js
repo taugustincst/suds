@@ -5,6 +5,7 @@
 // (server/index.js), self-throttled against last_scheduled_backup_at the same way audit verification is.
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const config = require('./config');
 const db = require('./db');
 const audit = require('./audit');
@@ -91,6 +92,7 @@ async function runOnce({ retain = 14, offsiteDir = '' } = {}) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const file = path.join(dir, `suds-${stamp}.db.enc`);
   let bytes; let verified = false; let verifyError = null; let kept = 0; let method = null;
+  console.log(`[suds] scheduled backup ${path.basename(file)} starting${offsiteDir ? `, with an offsite copy to ${offsiteDir}` : ''}`);
   try {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     // Prune first: the oldest copies beyond the retention count go before the new one is written, so a
@@ -116,7 +118,7 @@ async function runOnce({ retain = 14, offsiteDir = '' } = {}) {
     return { file: null, bytes: 0, offsiteOk: null, verified: false, verifyError: reason, failed: true, error: reason };
   }
 
-  let offsiteOk = null; let offsiteError = null; let offsiteFile = null;
+  let offsiteOk = null; let offsiteError = null; let offsiteFile = null; let repaired = 0;
   if (offsiteDir) {
     // A missing or unreachable offsite path (an unmounted network share, most likely) must not lose the
     // local backup that already succeeded — it is recorded as a status, not thrown. The directory is
@@ -125,22 +127,78 @@ async function runOnce({ retain = 14, offsiteDir = '' } = {}) {
     try {
       let st = null; try { st = await fs.promises.stat(offsiteDir); } catch {}
       if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
+      await copyVerified(file, offsiteDir);
       offsiteFile = path.join(offsiteDir, path.basename(file));
-      await fs.promises.copyFile(file, offsiteFile);
       offsiteOk = true;
-    } catch (e) {
-      offsiteOk = false; offsiteError = String(e && e.message || e);
-      console.error('[suds] offsite backup copy failed:', offsiteError);
-    }
+      repaired = await repairOffsite(dir, offsiteDir);
+    } catch (e) { offsiteOk = false; offsiteError = String(e && e.message || e); }
   }
+  // One line per run, whatever happened, so the server log answers "did the backups run?" (no PHI: a file name,
+  // sizes and outcomes).
+  (verified && offsiteOk !== false ? console.log : console.error)(`[suds] scheduled backup ${path.basename(file)}: ${bytes} bytes, ${verified ? 'verified' : 'NOT verified'}; offsite ${!offsiteDir ? 'not configured' : offsiteOk ? 'copied and checked (size and SHA-256)' : `copy FAILED: ${offsiteError}`}${repaired ? `; ${repaired} earlier offsite cop${repaired === 1 ? 'y' : 'ies'} that did not match copied again` : ''}`);
 
   // Every backup is also an audit anchor: the chain head it contains, sealed outside the database.
   if (!config.local) require('./audit-anchor').safeWrite('backup');
   kept = prune(dir, retain);
   db.setSetting('last_scheduled_backup_at', db.now());
   db.setSetting('last_scheduled_backup_status', !verified ? `backup written but could not be read back — ${verifyError}` : offsiteDir && offsiteOk === false ? `ok (verified) — offsite copy failed: ${offsiteError}; local backup kept` : 'ok (verified)');
-  audit.log({ user: { username: 'system' }, action: 'backup.scheduled', details: { bytes, method, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || undefined, kept, verified } });
-  return { file, bytes, method, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, verified, verifyError };
+  audit.log({ user: { username: 'system' }, action: 'backup.scheduled', details: { bytes, method, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || undefined, offsite_repaired: repaired || undefined, kept, verified } });
+  return { file, bytes, method, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, repaired, verified, verifyError };
+}
+
+/** Size and SHA-256 of a file, streamed. */
+async function digest(file) {
+  const h = crypto.createHash('sha256'); let bytes = 0;
+  for await (const c of fs.createReadStream(file)) { h.update(c); bytes += c.length; }
+  return { bytes, sha256: h.digest('hex') };
+}
+
+/**
+ * Copy a backup into `destDir` and prove the copy: streamed to a temporary name there, flushed to disk, renamed
+ * into place, then read back and compared with the backup (size and SHA-256); a copy that does not match is
+ * deleted and the error says so. Not fs.copyFile: libuv's copyfile calls fchown() on the new file before it
+ * copies a byte, SUDS Server's unit denies fchown (deploy/linux/suds.service, SystemCallFilter=~@privileged), and
+ * systemd killed SUDS there with SIGSYS on every run, leaving an empty offsite file (suds.systems, 1.25.3).
+ */
+async function copyVerified(src, destDir) {
+  const dest = path.join(destDir, path.basename(src));
+  const tmp = path.join(destDir, `.${path.basename(src)}.${crypto.randomBytes(4).toString('hex')}.part`);
+  try {
+    const out = await fs.promises.open(tmp, 'wx', 0o600);
+    try { for await (const c of fs.createReadStream(src)) await out.write(c); await out.sync(); } finally { await out.close(); }
+    await fs.promises.rename(tmp, dest);
+  } catch (e) { await fs.promises.rm(tmp, { force: true }); throw e; }
+  const [a, b] = await Promise.all([digest(src), digest(dest)]);
+  if (a.bytes === b.bytes && a.sha256 === b.sha256) return b;
+  await fs.promises.rm(dest, { force: true });
+  throw new Error(`the offsite copy of ${path.basename(src)} did not match the backup (${b.bytes} of ${a.bytes} bytes${a.bytes === b.bytes ? ', different SHA-256' : ''}) and was deleted`);
+}
+
+/** Copy again each offsite backup whose size differs from the local backup of the same name (the empty files
+ *  1.25.3 and earlier left on SUDS Server). Local backups are only read. Resolves to how many were copied. */
+async function repairOffsite(localDir, offsiteDir) {
+  let n = 0;
+  for (const f of fs.readdirSync(offsiteDir).filter((x) => FILE_RE.test(x))) {
+    let a; let b; try { a = fs.lstatSync(path.join(localDir, f)); b = fs.lstatSync(path.join(offsiteDir, f)); } catch { continue; }
+    if (a.isFile() && b.isFile() && a.size !== b.size) { await copyVerified(path.join(localDir, f), offsiteDir); n++; }
+  }
+  return n;
+}
+
+/** The newest scheduled backup in `dir` by its name (a timestamp): { newest: { file, mtime, size } | null, count },
+ *  or { error } when `dir` cannot be read. lstat: a symlink planted among the backups is not followed, nor counted. */
+function newest(dir) {
+  let names; try { names = fs.readdirSync(dir).filter((f) => FILE_RE.test(f)).sort(); } catch (e) { return { error: e.code || e.message }; }
+  for (let i = names.length - 1; i >= 0; i--) { try { const s = fs.lstatSync(path.join(dir, names[i])); if (s.isFile()) return { newest: { file: names[i], mtime: s.mtimeMs, size: s.size }, count: names.length }; } catch {} }
+  return { newest: null, count: names.length };
+}
+
+/** Why the offsite copy `name` of `size` bytes is not a whole backup, or null: it is empty, or its size differs
+ *  from the local backup of that name (the compliance check, Security status and the recovery drill ask). */
+function copyProblem(name, size) {
+  if (!size) return `the offsite copy ${name} is empty (0 bytes): it is not a backup`;
+  let local = null; try { local = fs.lstatSync(path.join(config.dataDir, 'backups', name)).size; } catch {}
+  return local !== null && local !== size ? `the offsite copy ${name} is ${size} bytes, but the local backup of that name is ${local} bytes` : null;
 }
 
 // ---- frequent online snapshots (lower RPO without new dependencies) ----
@@ -212,4 +270,4 @@ function prune(dir, retain) {
   return Math.min(files.length, retain);
 }
 
-module.exports = { runIfDue, run, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, FILE_RE, SNAP_RE };
+module.exports = { runIfDue, run, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, copyVerified, newest, copyProblem, FILE_RE, SNAP_RE };
