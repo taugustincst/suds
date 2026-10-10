@@ -57238,6 +57238,11 @@ async function unlockWith(dekRaw) {
         }
         first = e;
         console.warn("[suds-local] the device database would not open; trying once more on a new SQLite engine:", String(e.message).slice(0, 300));
+        try {
+          await sqlite_default.freshEngine();
+        } catch (e2) {
+          console.warn("[suds-local] no new SQLite engine:", e2.message);
+        }
       }
     }
     plain.fill(0);
