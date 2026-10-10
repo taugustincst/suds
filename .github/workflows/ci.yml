@@ -291,6 +291,46 @@ jobs:
           f="$RUNNER_TEMP/dr-evidence/summary.json"
           [ -f "$f" ] || exit 0
           { echo "### Recovery drill (development exercise, fictional data)"; echo '```json'; cat "$f"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+  # SUDS Server under its own systemd unit (1.25.5; evaluation of 1.25.4, H4). From 1.18.0 to 1.25.3 the unit's
+  # SystemCallFilter=~@privileged killed SUDS (SIGSYS, status=31/SYS) at every scheduled offsite copy, because
+  # fs.copyFile called fchown, and nothing ran the server under its unit: the tests, dr-drill and the installer runs
+  # all backed up outside it. scripts/service-sandbox-check.js lays the runner out as deploy/linux/install.sh does
+  # (the release zip at /opt/suds/<version>, the pinned Node at /opt/suds/node, the suds account, root-only keys given
+  # with LoadCredential=, tmpfs shares), installs the release's deploy/linux/suds.service unchanged with install.sh's
+  # drop-in, checks that systemd applies its sandbox, then drives it over HTTP as the first administrator: Back up now
+  # (offsite and local copies compared, size and SHA-256), a snapshot, an anchor, the chain verified, a recovery drill
+  # from the offsite copy, a restore, Back up now again; and fails on status=31/SYS, SIGSYS or a seccomp kill in the
+  # journal, a restart (NRestarts) or an unclean stop. A GitHub-hosted runner has systemd as PID 1 and passwordless
+  # sudo. Not advisory; not in the release gate's required list yet (docs/RELEASE.md, "The service-sandbox job").
+  service-sandbox:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        run: git clone --depth 1 "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" src && cd src && git fetch --depth 1 origin "${GITHUB_SHA}" && git checkout "${GITHUB_SHA}"
+      - name: Install Node 22 (pinned version, pinned checksum)
+        run: |
+          file="node-${NODE22_VERSION}-linux-x64.tar.xz"
+          cd "$RUNNER_TEMP"
+          curl -fsSLO "https://nodejs.org/dist/${NODE22_VERSION}/${file}"
+          echo "${NODE22_SHA256}  ${file}" | sha256sum -c - || { echo "::error::${file} does not match the SHA-256 pinned in the workflow"; exit 1; }
+          mkdir -p node22 && tar -xJf "$file" -C node22 --strip-components=1
+          echo "$RUNNER_TEMP/node22/bin" >> "$GITHUB_PATH"
+      - name: Node is the pinned release, of the major .nvmrc names
+        working-directory: src
+        run: |
+          want="$(tr -d '[:space:]' < .nvmrc)"; have="$(node -p 'process.versions.node.split(".")[0]')"
+          node --version; [ "$have" = "$want" ] || { echo "::error::Node $have is running but .nvmrc pins major $want"; exit 1; }
+          [ "$(node --version)" = "$NODE22_VERSION" ] || { echo "::error::$(node --version) is running, not the pinned $NODE22_VERSION"; exit 1; }
+      - name: SUDS Server under its own unit, driven as an administrator (backup with offsite copy, snapshot, anchor, drill, restore)
+        working-directory: src
+        run: |
+          systemctl --version | head -1
+          node scripts/package.js "$RUNNER_TEMP/suds.zip"
+          sudo "$(command -v node)" scripts/service-sandbox-check.js --disposable-host --release-zip "$RUNNER_TEMP/suds.zip" --node-dir "$RUNNER_TEMP/node22"
+      - name: The unit's journal
+        if: always()
+        run: sudo journalctl -u suds.service --no-pager -o short-precise -n 400 || true
   # The browser suite drives Chromium; iPhones run WebKit. This smoke subset runs the two phone-shaped
   # scripts (the static build and the tester's retest, both on an iPhone 13 profile) in Playwright's WebKit, and
   # device-recovery (1.25.4, G2: a damaged device database is refused, kept and saved as a file, in WebKit too).

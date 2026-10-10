@@ -10,7 +10,7 @@ The files that install and run SUDS Server on Ubuntu 24.04 LTS or RHEL/Rocky/Alm
 | `uninstall.sh` | Removes the service and the software; never the data, the keys or the shares |
 | `lib.sh` | Shared by the three scripts |
 | `pins` | The exact Node.js and Caddy releases and their checksums (Node's must equal `.github/workflows/ci.yml`'s; `test/deploy-linux.test.js` checks) |
-| `suds.service` | The systemd unit — the one copy; docs/DEPLOYMENT.md refers to it |
+| `suds.service` | The systemd unit — the one copy; docs/DEPLOYMENT.md refers to it. CI runs SUDS under it, unchanged, on every push and drives a backup, a drill and a restore through it (`service-sandbox`, `scripts/service-sandbox-check.js`; docs/RELEASE.md, *The service-sandbox job*) |
 | `suds-compliance.service`, `suds-compliance.timer` | The weekly compliance check (`scripts/compliance-check.js`) |
 | `caddy.service` | Caddy terminating TLS with the repository's `Caddyfile` |
 

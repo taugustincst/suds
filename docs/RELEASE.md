@@ -902,6 +902,27 @@ QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` r
 
 1.11.0 itself was published while its `browser` job had failed — the case this gate now refuses.
 
+#### The service-sandbox job
+`service-sandbox` (1.25.5; evaluation of 1.25.4, H4) runs SUDS Server the way it runs on a county's VM: under the
+release's own `deploy/linux/suds.service`, unchanged, as the non-root `suds` user, with every sandbox setting the unit
+sets in force (it checks them with `systemctl show`, including a system-call filter that refuses `fchown`).
+`scripts/service-sandbox-check.js` lays the runner out as `deploy/linux/install.sh` does (the release zip at
+`/opt/suds/<version>`, the pinned Node at `/opt/suds/node`, root-only keys loaded with `LoadCredential=`, install.sh's
+drop-in for the offsite and anchor shares, two tmpfs mounts as those shares), then signs in as the first administrator
+over HTTP and presses what an office presses: *Back up now* with the offsite share configured (the offsite and local
+copies compared, size and SHA-256), an online snapshot written to the share by the server's own timer, an audit anchor
+and the chain verified against the anchors, a recovery drill from the offsite copy, a restore of that copy through
+Settings, and *Back up now* again. It fails if the journal or the kernel's log shows `status=31/SYS`, `SIGSYS` or a
+seccomp kill, if the service restarted (`NRestarts`), or if it does not stop cleanly. **Why:** from 1.18.0 to 1.25.3
+every scheduled offsite copy on a real server was an empty file, because `fs.copyFile` calls `fchown`, the unit's
+`SystemCallFilter=~@privileged` refuses it, and the kernel killed SUDS before a byte was copied; `Restart=always`
+brought it back each time, and no test, `dr-drill` run or installer run ever took a backup inside the unit. 1.25.4
+fixed the copy and added only a source check (`test/offsite-backup-copy.test.js`), which cannot see a refused call made
+by Node itself or a dependency. The job is not advisory; it joins the gate's `REQUIRED_JOBS` once it has been green on
+`main`. It runs only on a disposable host (it refuses where `/etc/suds`, `/opt/suds` or `/var/lib/suds` exists); to
+run it by hand on a throwaway Ubuntu 24.04 VM: `node scripts/package.js /tmp/suds.zip && sudo node
+scripts/service-sandbox-check.js --disposable-host --release-zip /tmp/suds.zip --node-dir <the pinned Node>`.
+
 **The gate runs main's copy of its scripts** (1.16.1). It checks out the commit being released, but runs
 `scripts/release-gate.js` and `scripts/release-policy.js` from **`main`'s copy** (`git archive <main commit> …`
 into a temporary directory; `release-policy.js --root src` then reads the released tree), so that a commit that

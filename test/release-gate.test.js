@@ -120,7 +120,7 @@ test('every Node 22 job, and the release, runs an exact pinned Node 22 checked a
   const nvmrc = fs.readFileSync(path.join(__dirname, '..', '.nvmrc'), 'utf8').trim();
   assert.equal(a.v.split('.')[0], `v${nvmrc}`, 'of the major .nvmrc names');
   const job = (y, name, next) => y.slice(y.indexOf(`\n  ${name}:`), next ? y.indexOf(`\n  ${next}:`) : undefined);
-  const jobs = [['test', job(ci, 'test', 'thorough')], ['thorough', job(ci, 'thorough', 'thorough-sdc')], ['thorough-sdc', job(ci, 'thorough-sdc', 'browser')], ['browser', job(ci, 'browser', 'node24')], ['evening', job(ci, 'evening', 'dr-drill')], ['dr-drill', job(ci, 'dr-drill', 'webkit')], ['verify', job(rel, 'verify', 'release')]];
+  const jobs = [['test', job(ci, 'test', 'thorough')], ['thorough', job(ci, 'thorough', 'thorough-sdc')], ['thorough-sdc', job(ci, 'thorough-sdc', 'browser')], ['browser', job(ci, 'browser', 'node24')], ['evening', job(ci, 'evening', 'dr-drill')], ['dr-drill', job(ci, 'dr-drill', 'service-sandbox')], ['verify', job(rel, 'verify', 'release')]];
   for (const [name, text] of jobs) {
     assert.match(text, /curl -fsSLO "https:\/\/nodejs\.org\/dist\/\$\{NODE22_VERSION\}\/\$\{file\}"/, `${name}: downloads the pinned release`);
     assert.match(text, /echo "\$\{NODE22_SHA256\}  \$\{file\}" \| sha256sum -c -/, `${name}: checks it against the pinned checksum`);
