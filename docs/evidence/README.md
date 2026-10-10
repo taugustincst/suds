@@ -190,7 +190,7 @@ sandbox on 2026-10-09 and 2026-10-10. These could not be, and why:
 
 - **Documents:** [SDLC.md](../security/SDLC.md); [../RELEASE.md](../RELEASE.md) (the gate, the policy, the owner settings); `.github/CODEOWNERS`.
 - **Tests:** `release-gate`, `release-policy`, `release-existing`, `release-site-check`, `migrations`, `migration-order`, `release-wording` `doc-currency` and `doc-content-currency` (the documents, and their content, keep up with a stamped release), and `release-state` (the release documents against the CHANGELOG, `main`, the tags and GitHub Pages; 1.21.0).
-- **CI:** Every push: `test`, `thorough`, `thorough-sdc`, `browser`, `node24` and `dr-drill` (the gate's `REQUIRED_JOBS`); `webkit` is advisory.
+- **CI:** Every push: `test`, `thorough`, `thorough-sdc`, `browser`, `node24`, `dr-drill` and `evening` (the gate's `REQUIRED_JOBS`); `webkit` is advisory.
 - **Status:** The gate is designed and enforced by the workflow. **Owner-pending:** the repository settings that make the approval and the tag rules binding (not in force); an independent reviewer (708 of the 727 commits up to the 1.21.0 documentation pass were written with an AI assistant; method in [QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md) #36a); signed releases.
 
 ### Threat model and penetration testing

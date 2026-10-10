@@ -8,7 +8,9 @@ name: Release
 # publish the web app for that tag. The native apps and desktop launchers were removed in 1.9.3
 # (docs/PLATFORM.md). Since the owner decision of 2026-10-03 (docs/PLATFORM.md, docs/WINDOWS-SERVER.md) the release also
 # carries the Windows server zip, suds-<version>-windows-x64.zip and its .sha256, built by the windows-exe and
-# windows-sign jobs; nothing else is built or attached.
+# windows-sign jobs. Since 1.25.5 (evaluation of 1.25.4, H8) it also attaches the release's SBOM,
+# sbom-<version>.cdx.json, as committed at the tag (docs/evidence/); a tag without one is refused. Nothing else is
+# built or attached.
 #
 # Three jobs since 1.16.4 (engineering review of 1.16.3, M5 and H1), and two for the Windows zip since 1.24. `gate` checks CI, the release policy and any
 # GitHub Release already made for the tag, with a read-only token. `verify` runs npm ci, the tests and the kernel
@@ -47,9 +49,9 @@ permissions:
   contents: read
 jobs:
   # The release gate. Nothing is built or published unless CI (ci.yml) concluded success for this exact
-  # commit, with the test, browser (the whole browser suite: accessibility, a11y-round4 and the rest), node24
-  # and dr-drill jobs all green (scripts/release-gate.js; docs/RELEASE.md, "Release gate"). It waits for CI
-  # still running on the commit, up to an hour. WebKit stays advisory.
+  # commit, with the test, browser (the whole browser suite: accessibility, a11y-round4 and the rest), node24,
+  # dr-drill, thorough, thorough-sdc and evening jobs all green (scripts/release-gate.js REQUIRED_JOBS; docs/RELEASE.md,
+  # "Release gate"). It waits for CI still running on the commit, up to an hour. WebKit stays advisory.
   gate:
     runs-on: ubuntu-24.04
     if: github.event_name == 'push' || github.event.inputs.confirm == 'release'
@@ -122,6 +124,9 @@ jobs:
           mkdir -p "$RUNNER_TEMP/pkg"
           git archive --format=zip --prefix="suds-$ver/" -o "$RUNNER_TEMP/pkg/suds-$ver.zip" "${GITHUB_SHA}"
           (cd "$RUNNER_TEMP/pkg" && sha256sum "suds-$ver.zip" > "suds-$ver.zip.sha256")
+          # The SBOM committed at the tag (a release asset from 1.25.5): refused here, before the approval, if missing.
+          v="${ver#v}"
+          git show "${GITHUB_SHA}:docs/evidence/sbom-${v}.cdx.json" > "$RUNNER_TEMP/pkg/sbom-${v}.cdx.json" || { echo "::error::The tagged commit has no docs/evidence/sbom-${v}.cdx.json. Every release, patches included, commits its SBOM (scripts/sbom.js) before the tag (docs/RELEASE.md, stamp checklist): stamp again with it."; exit 1; }
           node "$RUNNER_TEMP/main/scripts/release-existing.js" --tag "$ver" --dir "$RUNNER_TEMP/pkg" --repo "${GITHUB_REPOSITORY}"
   # npm and the tests run here, before the approval, with a read-only token, no environment and no secret (1.16.4;
   # engineering review of 1.16.3, M5: they ran in the release job, where a dependency could reach the packaging
@@ -349,6 +354,9 @@ jobs:
           git archive --format=zip --prefix="suds-$ver/" -o "$RUNNER_TEMP/pkg/suds-$ver.zip" "${GITHUB_SHA}"
           # A checksum beside the zip: docs/DEPLOYMENT.md tells an installer to compare it before unpacking.
           (cd "$RUNNER_TEMP/pkg" && sha256sum "suds-$ver.zip" > "suds-$ver.zip.sha256")
+          # The release's SBOM, as committed at the tag (docs/evidence/sbom-X.Y.Z.cdx.json), attached beside the zips.
+          v="${ver#v}"
+          git show "${GITHUB_SHA}:docs/evidence/sbom-${v}.cdx.json" > "$RUNNER_TEMP/pkg/sbom-${v}.cdx.json" || { echo "::error::The tagged commit has no docs/evidence/sbom-${v}.cdx.json. Every release, patches included, commits its SBOM (scripts/sbom.js) before the tag (docs/RELEASE.md, stamp checklist): stamp again with it."; exit 1; }
           # main's copy of the check, from the very commit the gate ran (not main's tip now).
           git fetch --quiet origin "${MAIN_SHA}"
           git show "${MAIN_SHA}:scripts/release-existing.js" > "$RUNNER_TEMP/release-existing.js"
@@ -376,7 +384,7 @@ jobs:
         env:
           ACTION: ${{ steps.existing.outputs.action }}
           PUBLISH_DRAFT: ${{ steps.existing.outputs.publish_draft }}
-          # The files the release does not carry yet (the check names them): the source zip pair and the Windows pair.
+          # The files the release does not carry yet (the check names them): the source zip pair, the Windows pair, the SBOM.
           MISSING: ${{ steps.existing.outputs.missing }}
           POLICY_NOTES: ${{ needs.gate.outputs.policy_notes }}
         run: |
@@ -398,10 +406,10 @@ jobs:
             create)
               # --verify-tag: the tag exists already (the owner pushed it); this workflow never creates one.
               # Every file at once: an immutable release takes no file after it is published.
-              gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" "suds-${ver#v}-windows-x64.zip" "suds-${ver#v}-windows-x64.zip.sha256" --verify-tag "$latest_flag" --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}" ;;
+              gh release create "$ver" "suds-$ver.zip" "suds-$ver.zip.sha256" "suds-${ver#v}-windows-x64.zip" "suds-${ver#v}-windows-x64.zip.sha256" "sbom-${ver#v}.cdx.json" --verify-tag "$latest_flag" --title "SUDS $ver" --notes "${notes:-See CHANGELOG.md}" ;;
             # Only what is missing (a published file is never replaced). MISSING holds plain file names, no spaces.
             upload) gh release upload "$ver" ${MISSING} ;;
-            none) echo "The release $ver already has its zips and checksums, the ones built from the tag; nothing is replaced." ;;
+            none) echo "The release $ver already has its zips, checksums and SBOM, the ones built from the tag; nothing is replaced." ;;
             *) echo "::error::Unknown action '${ACTION}'"; exit 1 ;;
           esac
           # A draft this workflow left behind (a create interrupted before it published) is published now that its

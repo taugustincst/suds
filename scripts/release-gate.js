@@ -12,8 +12,9 @@
 // commit is still running (a tag pushed together with its commit), it waits, up to RELEASE_GATE_WAIT_MINUTES
 // (default 60). The `evaluate` function is pure and tested in test/release-gate.test.js.
 
-// Jobs that must have succeeded. `webkit` is advisory (continue-on-error in ci.yml) and deliberately absent.
-const REQUIRED_JOBS = ['test', 'browser', 'node24', 'dr-drill', 'thorough', 'thorough-sdc'];
+// Jobs that must have succeeded. `webkit` and `release-state` are advisory (continue-on-error in ci.yml) and deliberately
+// absent. `evening` (npm test at 9pm in Los Angeles, the E1 date-bug class) is required from 1.25.5 (evaluation of 1.25.4, H8).
+const REQUIRED_JOBS = ['test', 'browser', 'node24', 'dr-drill', 'thorough', 'thorough-sdc', 'evening'];
 
 /**
  * Decide from CI runs for one commit (newest first, as the API lists them) and their jobs.

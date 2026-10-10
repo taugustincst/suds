@@ -13,12 +13,18 @@ const jobs = (overrides = {}) => [...REQUIRED_JOBS, 'webkit'].map((name) => ({ n
 
 test('passes only when a push run for the exact commit succeeded with every required job green', () => {
   assert.equal(evaluate(SHA, [run(1)], { 1: jobs() }).decision, 'pass');
-  assert.deepEqual(REQUIRED_JOBS.slice().sort(), ['browser', 'dr-drill', 'node24', 'test', 'thorough', 'thorough-sdc'], 'the browser suite, Node 24, the recovery drill, the thorough checks and the SDC disclosure sweeps are required');
+  assert.deepEqual(REQUIRED_JOBS.slice().sort(), ['browser', 'dr-drill', 'evening', 'node24', 'test', 'thorough', 'thorough-sdc'], 'the browser suite, Node 24, the recovery drill, the thorough checks, the SDC disclosure sweeps and the 9pm-in-Los-Angeles run are required');
 });
 
 test('refuses when the browser suite failed, even if the run as a whole is marked success', () => {
   const out = evaluate(SHA, [run(1)], { 1: jobs({ browser: 'failure' }) });
   assert.equal(out.decision, 'fail'); assert.match(out.reason, /browser/);
+});
+
+test('refuses a run whose evening job (npm test at 9pm in Los Angeles) failed, or that has none (1.25.5, evaluation of 1.25.4, H8)', () => {
+  const out = evaluate(SHA, [run(1)], { 1: jobs({ evening: 'failure' }) });
+  assert.equal(out.decision, 'fail'); assert.match(out.reason, /not successful: evening/);
+  assert.match(evaluate(SHA, [run(1)], { 1: jobs().filter((j) => j.name !== 'evening') }).reason, /missing job\(s\) evening/);
 });
 
 test('refuses when the run failed; WebKit (advisory) failing alone does not block', () => {
