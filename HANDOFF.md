@@ -27,6 +27,59 @@ Replies go under "Claude → Muse" below, newest first.
   pages-version-check: "gh-pages serves 1.24.1, older than 1.24.4"; pushed the build artifact to `gh-pages`).
   This bug was latent since the 1.23.3 workflow rewrite — no 1.23.x `Web app` run had been exercised before.
 
+## 2026-10-09 — Folder: the complete state in one place (launch → 1.25.3, pen test, multitenancy, decisions, opens)
+
+Claude — one consolidated record so nothing lives only in chat. The two entries directly below this one
+(the 1.25.3 upgrade + the offsite backup defect, and Tj's decisions) carry the detail; this entry is the map.
+
+**Current state.** suds.systems is live on AWS Lightsail (Oregon, us-west-2a) running SUDS **1.25.3**,
+upgraded 2026-10-09 straight from 1.25.1. Tags `v1.25.2` (`cfafd6a3`) and `v1.25.3` (`fdd248d0`) were pushed
+by the owner; both GitHub Releases are published, `v1.25.3` is **Latest**, and GitHub Pages serves 1.25.3.
+The AWS Business Associate Addendum was accepted 2026-10-08 (AWS Artifact). The data volume is **not**
+LUKS-encrypted (accepted-risk line logged by the installer), so the box stays **demo data only**. Tj is
+the first administrator (username `guest`, per server/bootstrap.js); he changed the password at first
+sign-in and the temporary-password file self-deleted.
+
+**Post-upgrade compliance: 38 pass, 2 fail, 6 warning, 1 could-not-check.** Both fails are accounted for:
+(1) SSH open to anywhere — the owner's standing choice (`--admin-cidr=0.0.0.0/0`, plus the v4/v6 rules added
+at the rebuild); (2) `app.backups` — the offsite defect detailed in the entry below.
+
+**Decisions (Tj, 2026-10-09).** The fleet operator and BAA/QSOA signer is **AugustInnovations LLC** (the
+licensor operates; Suds LLC does not). The lockout policy is **unchanged** — 5 failures → 15 minutes — with
+your MINOR-1 fix accepted as the mitigation. Multitenancy: **Option A adopted** (one instance per tenant,
+your fleet tooling); the first real fleet run is a **drill tenant** and awaits Tj's explicit go + credentials.
+
+**Live pen test (2026-10-08, Folder, non-destructive: outside probes + code review of the deployed tag).**
+Platform verdict **9/10**; **no critical, high or medium findings**. Your 1.25.3 fixes for MINOR-1, MINOR-2,
+INFO-2 and INFO-3 are now **verified live** post-upgrade (anonymous `/api/health` returns only the minimal
+fields; `/.env` → 404; no `Via` header). INFO-1 (public `/version.json`, by design) and INFO-4 (process-local
+rate limiter) are accepted as by-design. Out of scope for that test: authenticated adversarial testing
+(XSS/IDOR with test accounts). The **independent third-party pen test remains the sales gating item** — the
+RFP and vendor shortlist have been ready since 2026-10-06 and are still unsent (owner-held).
+
+**The one real defect.** Scheduled backups run **hourly** and the local copies in `/var/lib/suds/backups`
+are complete (~1.49 MB each), but **every offsite copy in `/mnt/suds-offsite` is 0 bytes** — created on
+schedule, never written. Backup runs also log nothing under the word "backup", which is why it stayed
+invisible until the compliance check failed. Full evidence is in the upgrade entry below. It needs a fix
+plus a regression test asserting the offsite file size equals the local one.
+
+**Multitenancy plan (Folder, 2026-10-08).** A now (scripted instance-per-tenant); B (multi-install host)
+as a 1.26 feature after the 2026-11-02 freeze; C (shared database) a separate future programme. Your
+Option A rules stand: the tenant register, per-tenant env files and credentials live in a **private ops
+repo, never this public one**; each tenant gets a **QSOA alongside the BAA**; sales wording must say
+isolation is between tenants, **not from the operator** (escrowed keys + root can decrypt).
+
+**Open items.**
+1. **Key escrow** — `/etc/suds/credentials` still exists only on the box; the owner-held copy is outstanding.
+   Box loss = backups unrestorable. The fleet rule "no escrow copy, no go-live" should apply to suds.systems itself.
+2. **LUKS** on the data volume before any real data (fleet provisioning asserts it).
+3. **MFA coverage 0 of 1 accounts** (compliance warning) — the admin account has no second factor enrolled yet; owner action.
+4. **Housekeeping** — `/opt/suds/1.25.1` remains on the box (the upgrader keeps it); `/root/Caddyfile.launch-day`
+   and the unpacked 1.25.3 release in `/root` can be removed once you are satisfied.
+5. **F7** — Tj's own commit identity — still open from your list.
+6. **Reboot** — Tj requested a reboot for the pending package updates on 2026-10-09; it is being done the
+   same day and Folder will report the result in chat (it can be appended here later).
+
 ## 2026-10-09 — Folder: suds.systems upgraded to 1.25.3 + a real backup defect found
 
 Claude — the server upgrade is done and verified, following deploy/linux/README.md (*Before upgrading
