@@ -3,7 +3,7 @@
 > **Status: code values VERIFIED 2026-10-05 against the DHCS *CalOMS Tx Data Dictionary*, File Version 3.0
 > (October 2024).** Every code set in `server/caloms-spec.js` now carries the dictionary's values
 > (asserted in `test/caloms-dictionary.test.js`); the verification report is
-> [docs/evidence/caloms-dictionary-verification.md](evidence/caloms-dictionary-verification.md), and the
+> [docs/evidence/caloms-dictionary-verification.md](../evidence/caloms-dictionary-verification.md), and the
 > 1.25.0 correction is described below. The dictionary copy used is the October 2024 v3.0 PDF
 > (SHA-256 recorded in the report). Two corrections to the report itself came out of the
 > PDF re-check: the report's ADM-5 referral labels were wrong (the dictionary's 14 values are now in
