@@ -144,6 +144,7 @@ does not hold.
 
 | Exhibit | Notes | Starting point |
 | --- | --- | --- |
+| **Licence and subscription agreement** | The signed agreement `LICENSE` requires for every use beyond SUDS on this device and the 90-day evaluation: the plan and fees, support, data ownership, export on termination, retention, warranty, liability and insurance. A county's own contract form usually replaces it; then it lists the terms SUDS needs. | [templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md](templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md) (draft for counsel) |
 | **Business Associate Agreement (HIPAA)** | Required when the vendor creates, receives, maintains or transmits PHI — vendor hosting, or support staff who can see production data. | [templates/BAA-QSOA-DRAFT.md](templates/BAA-QSOA-DRAFT.md) |
 | **42 CFR Part 2 Qualified Service Organization Agreement** | For Part 2 programmes; the vendor agrees to be bound by Part 2 and to resist unauthorised access in judicial proceedings. Usually combined with the BAA. | [templates/BAA-QSOA-DRAFT.md](templates/BAA-QSOA-DRAFT.md) |
 | **Data processing / data protection addendum** | Data ownership, US data location, subprocessors, return and deletion, breach notice timing, no secondary use. | [templates/DPA-DRAFT.md](templates/DPA-DRAFT.md) |

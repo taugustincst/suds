@@ -163,9 +163,9 @@ Agree the targets before starting; record the baseline with the current process 
 | Evidence index (each review question → document, test, CI job, artefact) | [../evidence/README.md](../evidence/README.md) | Written |
 | SBOM and recovery-drill evidence | [../evidence/](../evidence/README.md) | Development drills, not production drills |
 | Data inventory and lifecycle | [../security/DATA-INVENTORY.md](../security/DATA-INVENTORY.md), [../security/DATA-LIFECYCLE.md](../security/DATA-LIFECYCLE.md) | Written |
-| Penetration test scope | [../security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md) | A scope for a county-commissioned test; **no test done** |
+| Penetration test scope | [../security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md) | A scope for a county-commissioned test; **no independent test done** (the vendor's own, not independent: [../evidence/pentest-suds-systems-2026-10-08.md](../evidence/pentest-suds-systems-2026-10-08.md)) |
 | Accessibility conformance report | [../accessibility/ACR-WCAG21.md](../accessibility/ACR-WCAG21.md) | Self-assessment, not a third-party review |
-| BAA / Part 2 QSOA and DPA | [templates/BAA-QSOA-DRAFT.md](templates/BAA-QSOA-DRAFT.md), [templates/DPA-DRAFT.md](templates/DPA-DRAFT.md) | Drafts; not reviewed by counsel. Needed where the vendor can reach a CBO's PHI; the county server holds none |
+| Licence agreement, BAA / Part 2 QSOA and DPA | [templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md](templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md), [templates/BAA-QSOA-DRAFT.md](templates/BAA-QSOA-DRAFT.md), [templates/DPA-DRAFT.md](templates/DPA-DRAFT.md) | Drafts; not reviewed by counsel. Needed where the vendor can reach a CBO's PHI; the county server holds none |
 | Support terms | [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md), [../SUPPORT.md](../SUPPORT.md) | Template |
 | Pilot plan per CBO | [PILOT-KIT.md](PILOT-KIT.md) | Written |
 | Pricing | [PRICING-OPTIONS.md](PRICING-OPTIONS.md) (model C, county site licence; model D, services) | Nothing decided |
