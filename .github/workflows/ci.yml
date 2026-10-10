@@ -292,7 +292,8 @@ jobs:
           [ -f "$f" ] || exit 0
           { echo "### Recovery drill (development exercise, fictional data)"; echo '```json'; cat "$f"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
   # The browser suite drives Chromium; iPhones run WebKit. This smoke subset runs the two phone-shaped
-  # scripts (the static build and the tester's retest, both on an iPhone 13 profile) in Playwright's WebKit.
+  # scripts (the static build and the tester's retest, both on an iPhone 13 profile) in Playwright's WebKit, and
+  # device-recovery (1.25.4, G2: a damaged device database is refused, kept and saved as a file, in WebKit too).
   # Advisory while it beds in (continue-on-error). Playwright's WebKit on Linux is not iOS Safari, so the
   # real-device release checklist (docs/ADOPTION.md) still applies. Two service-worker cache checks that
   # Playwright's WebKit on Linux cannot reproduce (an upgraded persistent profile's shell cache; a page fetch
@@ -312,7 +313,7 @@ jobs:
         working-directory: src
         env:
           SUDS_BROWSER: webkit
-          SCRIPTS: static-site qa-retest
+          SCRIPTS: static-site qa-retest device-recovery
           SUDS_REGION_PICTURES: 'off'
         run: npm run build:local && scripts/ui/run-all.sh
   # What the release documents say (the questionnaire, the evidence index, RELEASE.md's supported versions and

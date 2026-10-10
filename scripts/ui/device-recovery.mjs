@@ -5,7 +5,7 @@
 // the records and shows a new code; the old password and the used code stop working; a device set up
 // before this release (no code) is asked for one on Home until it has one; and when the device administrator is
 // deactivated, their code stops working and the administrator who took over is asked for a new one (1.15.4).
-import { chromium } from 'playwright';
+import * as pw from 'playwright';
 import fs from 'node:fs';
 import { makeChecks, until, settle, saved, passRecoveryCode } from './assert.mjs';
 
@@ -13,7 +13,8 @@ const base = process.env.SUDS_STATIC_URL || 'http://127.0.0.1:8878';
 const { ok, eq, finish } = makeChecks('device-recovery');
 const PW = 'Navigator2026!!'; const NEW_PW = 'Recovered-Pass-2026!';
 const CODE = /^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){6}$/;
-const browser = await chromium.launch();
+// SUDS_BROWSER=webkit runs it in WebKit: CI's advisory webkit job does, for section 6 (1.25.4, G2).
+const browser = await pw[process.env.SUDS_BROWSER || 'chromium'].launch();
 const errors = [];
 const watch = (page, tag) => {
   page.on('pageerror', e => errors.push(`PAGEERROR (${tag}) ${e.message}`));
