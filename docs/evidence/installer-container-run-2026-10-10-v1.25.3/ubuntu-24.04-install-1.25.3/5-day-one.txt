@@ -1,0 +1,57 @@
+
+$ version running
+1.25.3
+
+$ curl https://suds.county.test/api/health (anonymous: only ok, uptime_seconds, database — MINOR-2)
+{"ok":true,"uptime_seconds":21,"database":"ok"}
+HTTP 200
+
+$ curl -I http://suds.county.test/
+HTTP 308 -> https://suds.county.test/
+
+$ response headers of https://suds.county.test/: HSTS, and no Via or Server header (INFO-2)
+strict-transport-security: max-age=31536000; includeSubDomains; preload
+  Via headers: 0
+
+$ file-like paths and other methods (INFO-3): /.env, /.git/HEAD, POST /
+  GET /.env HTTP 404
+  GET /.git/HEAD HTTP 404
+  POST / HTTP 405
+
+$ grep -E 'RELEASE_CHECKSUM|SUDS_VERSION' /etc/suds/suds-server.conf
+SUDS_VERSION=1.25.3
+SUDS_RELEASE_CHECKSUM_SOURCE=operator
+
+$ cat /opt/suds/current/.suds-release-checksum
+operator
+
+$ grep -E 'WEBAUTHN|TRUST_PROXY' /etc/suds/suds.env
+TRUST_PROXY=1
+WEBAUTHN_RP_ID=suds.county.test
+WEBAUTHN_ORIGINS=https://suds.county.test
+
+$ ls -l /mnt/suds-offsite /var/lib/suds/backups (first backup and drill, made by the installer)
+/mnt/suds-offsite:
+total 1452
+-rw------- 1 suds suds 1482780 Oct 10 00:10 suds-2026-10-10T00-10-29-928Z.db.enc
+
+/var/lib/suds/backups:
+total 1464
+-rw------- 1 suds suds    6715 Oct 10 00:10 dr-drill-2026-10-10T00-10-29-926Z.json
+-rw------- 1 suds suds    2503 Oct 10 00:10 dr-drill-2026-10-10T00-10-29-926Z.txt
+-rw------- 1 suds suds 1482780 Oct 10 00:10 suds-2026-10-10T00-10-29-928Z.db.enc
+
+$ ls -la /etc/caddy/Caddyfile.d; tail -n 3 /etc/caddy/Caddyfile
+total 8
+drwxr-xr-x 2 root root 4096 Oct 10 00:10 .
+drwxr-xr-x 4 root root 4096 Oct 10 00:10 ..
+}
+
+import /etc/caddy/Caddyfile.d/*.caddy
+
+$ first administrator (guest, the temporary password from /var/lib/suds/first-admin-password.txt, not printed) signs in over HTTPS
+"username":"guest"
+"role":"admin"
+"must_change_password":true
+"mfaPending":false
+HTTP 200

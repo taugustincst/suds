@@ -1,0 +1,208 @@
+$ readlink /opt/suds/current   (before)
+1.25.1
+$ cmp the installed upgrade.sh and lib.sh with 1.25.3's (the hand-over happens only when one differs)
+  upgrade.sh: differs
+  lib.sh: differs
+$ /opt/suds/current/deploy/linux/upgrade.sh 1.25.3 --source=/root/suds-v1.25.3.zip --release-sha256=d70101e1d0332beff63beef329cea7089bbe1afd4f58e34beb845a1e556239cc --node-tarball=/root/node-v22.23.3-linux-x64.tar.xz --caddy-tarball=/root/caddy_2.10.2_linux_amd64.tar.gz --dry-run
+SUDS Server upgrade: 1.25.1 -> 1.25.3
+
+== 1. Stage 1.25.3 ==
+  - suds-v1.25.3.zip: sha256 matches the checksum given with --release-sha256
++ unzip -q /tmp/tmp.anGMoU8Qcg/suds-v1.25.3.zip -d /tmp/tmp.anGMoU8Qcg
++ install -d -m 0755 -o root -g root /opt/suds /opt/suds/1.25.3.partial
++ copy /tmp/tmp.anGMoU8Qcg/suds-v1.25.3 into /opt/suds/1.25.3.partial (without .git, node_modules, data, test), record how its zip was checked (operator) in .suds-release-checksum, write its manifest
++ chown -R root:root /opt/suds/1.25.3.partial
++ chmod -R u=rwX\,go=rX /opt/suds/1.25.3.partial
++ chmod -R a-w /opt/suds/1.25.3.partial
++ mv -T /opt/suds/1.25.3.partial /opt/suds/1.25.3
++ if SUDS 1.25.3's own upgrade.sh or lib.sh differs from this one, hand over to it (/opt/suds/1.25.3/deploy/linux/upgrade.sh) with the same arguments: the steps below are then that upgrader's
+  - Node.js v22.23.3 already installed
+  - Caddy 2.10.2 already installed
++ ln -sfn 2.10.2 /opt/caddy/current.new
++ mv -Tf /opt/caddy/current.new /opt/caddy/current
+
+== 2-3. Stop SUDS and take a backup ==
++ systemctl stop suds.service
++ install -d -m 0700 -o suds -g suds /var/lib/suds/backups /var/lib/suds/backups/pre-upgrade-20261010T001211Z
++ systemd-run --quiet --wait --pipe --collect --uid=suds --gid=suds --working-directory=/opt/suds/current -p EnvironmentFile=/etc/suds/suds.env -E SUDS_ENV=production -E SUDS_DATA_DIR=/var/lib/suds -p UMask=0077 -p LoadCredential=suds_encryption_key:/etc/suds/credentials/suds_encryption_key -p LoadCredential=suds_index_key:/etc/suds/credentials/suds_index_key -p LoadCredential=suds_backup_key:/etc/suds/credentials/suds_backup_key -p LoadCredential=suds_signing_key:/etc/suds/credentials/suds_signing_key /opt/suds/node/bin/node --no-warnings=ExperimentalWarning scripts/backup.js /var/lib/suds/backups/pre-upgrade-20261010T001211Z
+
+== 4. Switch to 1.25.3 ==
++ ln -sfn node-v22.23.3 /opt/suds/node.new
++ mv -Tf /opt/suds/node.new /opt/suds/node
++ ln -sfn 1.25.3 /opt/suds/current.new
++ mv -Tf /opt/suds/current.new /opt/suds/current
++ install -m 0644 -o root -g root /tmp/tmp.anGMoU8Qcg/suds-v1.25.3/deploy/linux/suds.service /etc/systemd/system/suds.service
++ install -m 0644 -o root -g root /tmp/tmp.anGMoU8Qcg/suds-v1.25.3/deploy/linux/suds-compliance.service /etc/systemd/system/suds-compliance.service
++ install -m 0644 -o root -g root /tmp/tmp.anGMoU8Qcg/suds-v1.25.3/deploy/linux/suds-compliance.timer /etc/systemd/system/suds-compliance.timer
++ install -m 0644 -o root -g root /tmp/tmp.anGMoU8Qcg/suds-v1.25.3/deploy/linux/caddy.service /etc/systemd/system/caddy.service
++ install -m 0644 -o root -g root /tmp/tmp.anGMoU8Qcg/suds-v1.25.3/Caddyfile /etc/caddy/Caddyfile
++ set SUDS_VERSION=1.25.3 in /etc/suds/suds-server.conf
++ set SUDS_RELEASE_CHECKSUM_SOURCE=operator in /etc/suds/suds-server.conf
+  - passkeys: WEBAUTHN_RP_ID/WEBAUTHN_ORIGINS in /etc/suds/suds.env kept as set
++ systemctl daemon-reload
+
+== 5. Start and check ==
++ systemctl start suds.service
++ wait up to 300s for http://127.0.0.1:8080/api/health/ready
+  - SUDS 1.25.3 is ready
+  - Caddy is now 2.10.2 and has a new Caddyfile: restarting it
++ systemctl restart caddy.service
+
+== Compliance check ==
++ wait up to 90s for https://suds.county.test/api/health/ready (through Caddy)
++ (the compliance check below runs with every KEY=value line of /etc/suds/suds.env in its environment, as suds-compliance.service does)
++ env TRUST_PROXY=1 LOCAL_MODE_ENABLED=false MFA_REQUIRED_ROLES=admin\,supervisor\,clinician\,navigator\,finance\,readonly AUDIT_ANCHOR_DIR=/mnt/worm/suds-anchors SUDS_PROVISION_FILE=/etc/suds/provision.json SUDS_SKIP_SETUP=1 SUDS_COMPLIANCE_DIR=/var/lib/suds-compliance SUDS_COMPLIANCE_PUBLIC_KEY_FILE=/etc/suds/compliance-signing-key.pub.pem WEBAUTHN_RP_ID=suds.county.test WEBAUTHN_ORIGINS=https://suds.county.test SUDS_ENV=production SUDS_DATA_DIR=/var/lib/suds /opt/suds/node/bin/node --no-warnings=ExperimentalWarning /opt/suds/current/scripts/compliance-check.js
+
+Upgraded to 1.25.3. The previous release stays in /opt/suds/1.25.1 until you remove it; the pre-upgrade backup is /var/lib/suds/backups/pre-upgrade-20261010T001211Z.
+dry-run exit 0
++ /opt/suds/current/deploy/linux/upgrade.sh 1.25.3 --source=/root/suds-v1.25.3.zip --release-sha256=d70101e1d0332beff63beef329cea7089bbe1afd4f58e34beb845a1e556239cc --node-tarball=/root/node-v22.23.3-linux-x64.tar.xz --caddy-tarball=/root/caddy_2.10.2_linux_amd64.tar.gz
+SUDS Server upgrade: 1.25.1 -> 1.25.3
+
+== 1. Stage 1.25.3 ==
+  - suds-v1.25.3.zip: sha256 matches the checksum given with --release-sha256
+  - SUDS 1.25.3 has its own upgrade.sh: handing over to it (/opt/suds/1.25.3/deploy/linux/upgrade.sh)
+SUDS Server upgrade: 1.25.1 -> 1.25.3
+
+== 1. Stage 1.25.3 ==
+  - SUDS 1.25.3 already at /opt/suds/1.25.3 (complete; every file matches its manifest)
+  - its zip was checked when staged: operator
+  - /etc/caddy/Caddyfile has site blocks added after the release's own: they will be moved to /etc/caddy/Caddyfile.d/local.caddy, which the new Caddyfile imports
+  - Node.js v22.23.3 already installed
+  - Caddy 2.10.2 already installed
+  - Caddy answers v2.10.2
+
+== 2-3. Stop SUDS and take a backup ==
+Encrypted backup written: /var/lib/suds/backups/pre-upgrade-20261010T001212Z/suds-2026-10-10T00-12-12-894Z.db.enc (1444 KB)
+  - backup: /var/lib/suds/backups/pre-upgrade-20261010T001212Z/suds-2026-10-10T00-12-12-894Z.db.enc
+
+== 4. Switch to 1.25.3 ==
+  - your site blocks are now in /etc/caddy/Caddyfile.d/local.caddy (your Caddyfile as it was: /etc/caddy/Caddyfile.local-20261010T001212Z)
+  - passkeys: WEBAUTHN_RP_ID/WEBAUTHN_ORIGINS in /etc/suds/suds.env kept as set
+
+== 5. Start and check ==
+  - SUDS 1.25.3 is ready
+  - Caddy  has a new Caddyfile: restarting it
+
+== Compliance check ==
+SUDS compliance check — 2aed2a07588e — 2026-10-10T00:12:15.672Z
+Result: FAIL  (38 pass, 1 fail, 6 warning, 2 could not check)
+  [FAIL           ] host.time_sync         Clock synchronised (audit timestamps)
+      observed: the clock is not synchronised (NTP=no, NTPSynchronized=no); audit timestamps depend on it
+      fix: Enable chrony (RHEL) or systemd-timesyncd/chrony (Ubuntu) against the county time source: timedatectl set-ntp true.
+  [COULD NOT CHECK] host.disk_encryption   Data on an encrypted block device
+      observed: /var/lib/suds is on overlay filesystem from overlay: encryption at rest belongs to that storage and cannot be seen from this host
+      fix: Put the data directory on a LUKS (dm-crypt) volume. This cannot be done in place: attach a new encrypted disk, stop SUDS, move /var/lib/suds onto it and start SUDS again (docs/SELF-HOSTING.md, "Prerequisites").
+  [COULD NOT CHECK] host.suds_version      SUDS release is supported
+      observed: SUDS 1.25.3, released 2026-10-09; no release feed to compare with (set UPDATE_FEED_URL, or pass --latest-version)
+      fix: Upgrade to the latest minor release (docs/RELEASE.md, "Supported versions") with deploy/linux/upgrade.sh.
+  [WARNING        ] host.auditd            Linux audit daemon (recommended)
+      observed: auditd is inactive (recommended, not required)
+      fix: Recommended, not required: install and enable auditd so logins, sudo and changes to /etc/suds are recorded by the OS as well.
+  [WARNING        ] host.dr_evidence       Recovery drill within 90 days, signed report verifies
+      observed: last drill passed 2026-10-10 (0 days ago), 11/11 checks, the offsite copy, keys from server memory; report dr-drill-2026-10-10T00-12-04-987Z.json verifies with this server's signing key; run the next one with the escrowed key file against the offsite copy
+      fix: Run a recovery drill with the escrowed key file against the offsite copy (Settings → System & backups, or npm run dr-drill); turn the monthly drill on.
+  [WARNING        ] app.mfa_coverage       Identity: Two-step verification coverage
+      observed: 0% (0 of 1 active accounts) — 1 without it — see "Accounts without two-step verification" below.
+      fix: Have every active account enrol in two-step verification (Settings → Security status lists who has not).
+  [WARNING        ] app.sso                Identity: Single sign-on (OIDC)
+      observed: not configured — Set OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and OIDC_REDIRECT_URI to sign in through the county identity provider (docs/DEPLOYMENT.md).
+      fix: Configure OIDC against the county identity provider (docs/DEPLOYMENT.md, "Single sign-on").
+  [WARNING        ] app.deprovisioning     Identity: Deprovisioning
+      observed: no SCIM provisioning; accounts not seen at the identity provider are not disabled automatically — 0 active accounts linked to the identity provider. Create a SCIM token (Provisioning below) or set "Disable single sign-on accounts not seen for (days)".
+      fix: Create a SCIM token or set "Disable single sign-on accounts not seen for (days)".
+  [WARNING        ] app.audit_chain        Audit: Audit chain verification
+      observed: not yet verified — Hash chain keyed with the index key; verified daily (incremental) and weekly (full).
+      fix: A failure is a possible incident (docs/security/INCIDENT-RESPONSE.md).
+  [PASS           ] host.os                Supported operating system
+  [PASS           ] host.data_dir          Data directory and database file permissions
+  [PASS           ] host.keys              Keys kept out of readable files and the environment
+  [PASS           ] host.service           Service sandboxing (systemd unit)
+  [PASS           ] host.tls               HTTPS: TLS 1.2 or newer, valid certificate, HSTS
+  [PASS           ] host.http_redirect     Plain HTTP only redirects to HTTPS
+  [PASS           ] host.bind              SUDS listens on this machine only (127.0.0.1)
+  [PASS           ] host.firewall          Host firewall active with only the expected ports
+  [PASS           ] host.security_updates  Automatic security updates
+  [PASS           ] host.journald          System journal persistent and retained
+  [PASS           ] host.node              Node.js is the pinned, checksum-verified release
+  [PASS           ] host.release_integrity SUDS release checked against an independently published checksum
+  [PASS           ] host.backup_files      Latest backup is recent and the offsite copy exists
+  [PASS           ] host.audit_verify      Audit chain and external anchors verify now
+  [PASS           ] app.mfa_required       Identity: Two-step verification required for
+  [PASS           ] app.passkeys           Identity: Fingerprint sign-in (passkeys)
+  [PASS           ] app.authenticator_allowlist Identity: Authenticator allow-list (passkeys)
+  [PASS           ] app.password_signin    Identity: Password sign-in
+  [PASS           ] app.password_policy    Identity: Password policy
+  [PASS           ] app.session_timeout    Identity: Session timeouts
+  [PASS           ] app.backups            Backups and recovery: Scheduled encrypted backups
+  [PASS           ] app.snapshots          Backups and recovery: Frequent online snapshots
+  [PASS           ] app.rpo                Backups and recovery: Recovery point objective (worst case)
+  [PASS           ] app.offsite            Backups and recovery: Offsite copy
+  [PASS           ] app.dr_drill           Backups and recovery: Last recovery drill
+  [PASS           ] app.dr_monthly         Backups and recovery: Monthly recovery drill
+  [PASS           ] app.plaintext_copies   Backups and recovery: Unencrypted database copies
+  [PASS           ] app.backup_key         Backups and recovery: Backup encryption key
+  [PASS           ] app.audit_anchors      Audit: Audit anchors outside the database
+  [PASS           ] app.audit_retention    Audit: Audit retention
+  [PASS           ] app.phi_key            Encryption and keys: PHI encryption key
+  [PASS           ] app.signing_key        Encryption and keys: Evidence signing key (Ed25519)
+  [PASS           ] app.index_key          Encryption and keys: Index key (blind indexes, audit chain)
+  [PASS           ] app.client_retention   Data lifecycle: Client record retention
+  [PASS           ] app.https              Platform: HTTPS
+  [PASS           ] app.local_mode         Platform: Local mode (offline copies on devices)
+  [PASS           ] app.version            Platform: Version
+  [PASS           ] app.monitoring         Platform: Monitoring
+Signed (Ed25519, the compliance check's own key (root-only), key id 8dfbe33bf1e39379).
+Wrote /var/lib/suds-compliance/compliance-2026-10-10T00-12-15-672Z.json
+Wrote /var/lib/suds-compliance/compliance-2026-10-10T00-12-15-672Z.html
+WARNING: the compliance check reported failures (above): fix them, then run: systemctl start suds-compliance. On a new server a first backup or recovery drill that has not run yet shows as "pending first run (expected on day one)", a warning.
+
+Upgraded to 1.25.3. The previous release stays in /opt/suds/1.25.1 until you remove it; the pre-upgrade backup is /var/lib/suds/backups/pre-upgrade-20261010T001212Z.
++ rc=0
++ set +x
+upgrade.sh exit 0
+$ readlink /opt/suds/current
+1.25.3
+$ grep -E 'SUDS_VERSION|RELEASE_CHECKSUM' /etc/suds/suds-server.conf
+SUDS_VERSION=1.25.3
+SUDS_RELEASE_CHECKSUM_SOURCE=operator
+$ ls -la /etc/caddy /etc/caddy/Caddyfile.d
+/etc/caddy:
+total 36
+drwxr-xr-x 4 root root  4096 Oct 10 00:12 .
+drwxr-xr-x 1 root root  4096 Oct 10 00:11 ..
+-rw-r--r-- 1 root root  2432 Oct 10 00:12 Caddyfile
+drwxr-xr-x 2 root root  4096 Oct 10 00:12 Caddyfile.d
+-rw-r--r-- 1 root root  2089 Oct 10 00:12 Caddyfile.local-20261010T001212Z
+-rw-r--r-- 1 root root    80 Oct 10 00:11 suds-tls.caddy
+-rw-r--r-- 1 root root   120 Oct 10 00:11 suds.env
+drwxr-x--- 2 root caddy 4096 Oct 10 00:11 tls
+
+/etc/caddy/Caddyfile.d:
+total 12
+drwxr-xr-x 2 root root 4096 Oct 10 00:12 .
+drwxr-xr-x 4 root root 4096 Oct 10 00:12 ..
+-rw-r--r-- 1 root root  402 Oct 10 00:12 local.caddy
+$ cat /etc/caddy/Caddyfile.d/local.caddy
+# Moved here from the end of /etc/caddy/Caddyfile by deploy/linux/upgrade.sh (20261010T001212Z): the SUDS Caddyfile is replaced by every
+# upgrade, and imports the *.caddy files in this directory, which no upgrade touches. The whole file as it was: /etc/caddy/Caddyfile.local-20261010T001212Z
+
+www.suds.county.test {
+	import {$SUDS_CADDY_TLS:/dev/null}
+	redir https://suds.county.test{uri} permanent
+}
+$ cmp /opt/suds/1.25.3/Caddyfile /etc/caddy/Caddyfile
+identical
+$ curl -sI https://www.suds.county.test/foo   (the moved redirect, after the upgrade restarted Caddy)
+HTTP/2 301 
+location: https://suds.county.test/foo
+upgrade report compliance-2026-10-10T00-12-15-672Z.json: {"pass":38,"not-checked":2,"fail":1,"warn":6}
+  host.disk_encryption: not-checked — /var/lib/suds is on overlay filesystem from overlay: encryption at rest belongs to that storage and cannot be seen from this host
+  host.time_sync: fail — the clock is not synchronised (NTP=no, NTPSynchronized=no); audit timestamps depend on it
+  host.auditd: warn — auditd is inactive (recommended, not required)
+  host.suds_version: not-checked — SUDS 1.25.3, released 2026-10-09; no release feed to compare with (set UPDATE_FEED_URL, or pass --latest-version)
+  host.dr_evidence: warn — last drill passed 2026-10-10 (0 days ago), 11/11 checks, the offsite copy, keys from server memory; report dr-drill-2026-10-10T00-12-04-987Z.json verifies with this server's signing key; run the next one with the escrowed key file against the offsite copy
+  app.mfa_coverage: warn — 0% (0 of 1 active accounts) — 1 without it — see "Accounts without two-step verification" below.
+  app.sso: warn — not configured — Set OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET and OIDC_REDIRECT_URI to sign in through the county identity provider (docs/DEPLOYMENT.md).
+  app.deprovisioning: warn — no SCIM provisioning; accounts not seen at the identity provider are not disabled automatically — 0 active accounts linked to the identity provider. Create a SCIM token (Provisioning below) or set "Disable single sign-on accounts not seen for (days)".
+  app.audit_chain: warn — not yet verified — Hash chain keyed with the index key; verified daily (incremental) and weekly (full).
+exit 0

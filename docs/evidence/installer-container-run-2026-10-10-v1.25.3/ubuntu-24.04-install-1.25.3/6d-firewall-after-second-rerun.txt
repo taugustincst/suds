@@ -1,0 +1,13 @@
+$ ufw status verbose
+Status: active
+Logging: on (low)
+Default: deny (incoming), allow (outgoing), deny (routed)
+New profiles: skip
+
+To                         Action      From
+--                         ------      ----
+443/tcp                    ALLOW IN    Anywhere                   # SUDS Server: HTTPS
+22/tcp                     ALLOW IN    10.20.0.0/16               # SUDS Server: SSH from the administration network
+
+
+SSH (22) allow rules in force: 1

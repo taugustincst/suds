@@ -1,0 +1,90 @@
+{
+  "kind": "suds-dr-exercise",
+  "ok": true,
+  "environment": "development exercise on a throwaway seeded database (fictional data); not a production drill",
+  "started_at": "2026-10-09T23:50:42.537Z",
+  "finished_at": "2026-10-09T23:51:14.991Z",
+  "host": {
+    "node": "v22.23.3",
+    "platform": "linux 6.18.44-fc-v114",
+    "cpus": 4,
+    "memory_gb": 16
+  },
+  "suds_version": "1.25.3",
+  "steps": [
+    {
+      "name": "Seed a fresh database with the fictional sample data (npm run seed)",
+      "ms": 1491,
+      "ok": true,
+      "detail": "Seeded 12 clients, 140 visits, 70 calls, 45 notes, 15 resources."
+    },
+    {
+      "name": "Add 20000 fictional clients with 8 visits each, every creation audited",
+      "ms": 14514,
+      "ok": true,
+      "detail": "20012 clients, 20001 audit entries"
+    },
+    {
+      "name": "Seal an audit anchor outside the database (AUDIT_ANCHOR_DIR) before the backup",
+      "ms": 651,
+      "ok": true,
+      "detail": "anchor-2026-10-09T23-50-58-834Z-000000020001.json"
+    },
+    {
+      "name": "Encrypted backup through the scheduled-backup path (online copy, AES-256-GCM, read back and verified)",
+      "ms": 5585,
+      "ok": true,
+      "detail": "suds-2026-10-09T23-50-59-296Z.db.enc, 176564 KB, sqlite-online-backup, verified=true"
+    },
+    {
+      "name": "Recovery drill: npm run dr-drill -- --backup <file> --keys-file <escrowed keys.json>",
+      "ms": 6645,
+      "ok": true,
+      "detail": "11/11 checks passed; RTO 5.6 s; RPO 6 s; audit entries verified 20001"
+    },
+    {
+      "name": "Host restore procedure into a fresh data directory (node scripts/backup.js --restore)",
+      "ms": 2683,
+      "ok": true,
+      "detail": "Restored to /tmp/suds-dr-exercise-MGZU75/fresh-data/suds.db (20012 clients, schema 71)."
+    },
+    {
+      "name": "The restored copy serves: SUDS started on the fresh data directory and answered /api/health",
+      "ms": 3056,
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "Row counts in the fresh data directory equal the source at backup time",
+      "ms": 244,
+      "ok": true,
+      "detail": "81 tables; clients 20012, interventions 160140, notes 45, audit_log 20001 -> 20001"
+    },
+    {
+      "name": "Audit hash chain verifies end to end in the restored copy",
+      "ms": 0,
+      "ok": true,
+      "detail": "{\"ok\":true,\"checked\":20001,\"anchoredAt\":1,\"lastId\":20001,\"checkpointed\":true,\"checkpointId\":20001,\"checkpointAt\":\"2026-10-09T23:51:14.247Z\",\"truncated\":false}"
+    },
+    {
+      "name": "Signed drill report verifies with the signing public key only (npm run verify-dr-report)",
+      "ms": 46,
+      "ok": true,
+      "detail": "public key: supplied (key id 77266bc2beaa1431); VERIFIED"
+    }
+  ],
+  "drill": {
+    "ok": true,
+    "rto_seconds": 5.6,
+    "rpo_seconds": 6,
+    "rto_target_minutes": 60,
+    "rpo_target_hours": 24,
+    "checks_passed": 11,
+    "checks_total": 11,
+    "audit_entries_verified": 20001,
+    "report_sha256": "06f596932cb750d67ea5db53f706a89babfa85af6488ca96e59f632d0f9bc742",
+    "signing_key_id": "77266bc2beaa1431"
+  },
+  "host_restore_to_health_seconds": 3.1,
+  "report_file": "dr-drill-2026-10-09T23-51-05-085Z.json"
+}

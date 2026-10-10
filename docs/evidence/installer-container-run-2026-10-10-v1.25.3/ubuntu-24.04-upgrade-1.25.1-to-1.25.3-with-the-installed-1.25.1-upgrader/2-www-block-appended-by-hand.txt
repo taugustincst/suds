@@ -1,0 +1,13 @@
+$ cmp /opt/suds/1.25.1/Caddyfile /etc/caddy/Caddyfile   (before: the release copy)
+identical
+$ tail -n 5 /etc/caddy/Caddyfile
+
+www.suds.county.test {
+	import {$SUDS_CADDY_TLS:/dev/null}
+	redir https://suds.county.test{uri} permanent
+}
+$ systemctl restart caddy
+active
+$ curl -sI https://www.suds.county.test/foo
+HTTP/2 301 
+location: https://suds.county.test/foo

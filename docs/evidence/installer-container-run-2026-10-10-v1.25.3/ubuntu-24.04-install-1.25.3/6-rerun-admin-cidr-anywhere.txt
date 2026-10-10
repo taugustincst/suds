@@ -1,0 +1,112 @@
++ exec deploy/linux/install.sh --domain=suds.county.test --admin-cidr=10.20.0.0/16 --offsite=/mnt/suds-offsite --anchors=/mnt/worm/suds-anchors --tls=county-cert --cert=/root/pki/site.pem --key=/root/pki/site.key --ca-file=/root/pki/ca.pem --source=/root/suds-v1.25.3.zip --release-sha256=d70101e1d0332beff63beef329cea7089bbe1afd4f58e34beb845a1e556239cc --node-tarball=/root/node-v22.23.3-linux-x64.tar.xz --caddy-tarball=/root/caddy_2.10.2_linux_amd64.tar.gz --ntp-server=time.county.test '--accept-unencrypted-disk=installer drill in a systemd container: no LUKS volume attached' --console-access --admin-cidr=0.0.0.0/0 --skip-compliance-check
+SUDS Server installer — SUDS 1.25.3
+
+== Checking the host ==
+  - Ubuntu 24.04.5 LTS (debian family)
+  - data volume: /var/lib/suds is on overlay from overlay (not a local block device)
+WARNING: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+WARNING: !!! /var/lib/suds IS NOT ON AN ENCRYPTED VOLUME. Client records will sit on this disk unencrypted at rest
+WARNING: !!! (only the PHI fields SUDS encrypts itself are protected). Accepted by the operator: installer drill in a systemd container: no LUKS volume attached
+WARNING: !!! Every compliance report will carry this as RISK ACCEPTED until the data is moved to a LUKS volume.
+WARNING: !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  - --console-access: the SSH lock-out check is skipped (you are at the console)
+  - the shares are writable by suds: /mnt/worm/suds-anchors /mnt/suds-offsite
+
+== Packages ==
+Ign:1 https://archive.ubuntu.com/ubuntu noble InRelease
+Ign:2 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+Ign:3 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+Ign:4 https://security.ubuntu.com/ubuntu noble-security InRelease
+Ign:4 https://security.ubuntu.com/ubuntu noble-security InRelease
+Ign:1 https://archive.ubuntu.com/ubuntu noble InRelease
+Ign:2 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+Ign:3 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+Ign:4 https://security.ubuntu.com/ubuntu noble-security InRelease
+Ign:1 https://archive.ubuntu.com/ubuntu noble InRelease
+Ign:2 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+Ign:3 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+Err:1 https://archive.ubuntu.com/ubuntu noble InRelease
+  Temporary failure resolving 'archive.ubuntu.com'
+Err:2 https://archive.ubuntu.com/ubuntu noble-updates InRelease
+  Temporary failure resolving 'archive.ubuntu.com'
+Err:4 https://security.ubuntu.com/ubuntu noble-security InRelease
+  Temporary failure resolving 'security.ubuntu.com'
+Err:3 https://archive.ubuntu.com/ubuntu noble-backports InRelease
+  Temporary failure resolving 'archive.ubuntu.com'
+Reading package lists...
+W: Failed to fetch https://archive.ubuntu.com/ubuntu/dists/noble/InRelease  Temporary failure resolving 'archive.ubuntu.com'
+W: Failed to fetch https://archive.ubuntu.com/ubuntu/dists/noble-updates/InRelease  Temporary failure resolving 'archive.ubuntu.com'
+W: Failed to fetch https://archive.ubuntu.com/ubuntu/dists/noble-backports/InRelease  Temporary failure resolving 'archive.ubuntu.com'
+W: Failed to fetch https://security.ubuntu.com/ubuntu/dists/noble-security/InRelease  Temporary failure resolving 'security.ubuntu.com'
+W: Some index files failed to download. They have been ignored, or old ones used instead.
+Reading package lists...
+Building dependency tree...
+Reading state information...
+ca-certificates is already the newest version (20260601~24.04.1).
+xz-utils is already the newest version (5.6.1+really5.4.5-1ubuntu0.3).
+unzip is already the newest version (6.0-28ubuntu4.1).
+ufw is already the newest version (0.36.2-6).
+unattended-upgrades is already the newest version (2.9.1+nmu4ubuntu1).
+systemd-timesyncd is already the newest version (255.4-1ubuntu8.17).
+0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+
+== Staging SUDS 1.25.3 ==
+  - SUDS 1.25.3 already at /opt/suds/1.25.3 (complete; every file matches its manifest)
+  - its zip was checked when staged: operator
+
+== Node.js (pinned: v22.23.3) ==
+  - Node.js v22.23.3 already installed
+
+== Caddy (pinned: 2.10.2) ==
+  - Caddy 2.10.2 already installed
+  - Caddy answers v2.10.2
+
+== Service account and directories ==
+  - user suds exists
+  - user caddy exists
+
+== SUDS 1.25.3 ==
+
+== Keys ==
+  - suds_encryption_key exists: kept (keys are never regenerated)
+  - suds_index_key exists: kept (keys are never regenerated)
+  - suds_backup_key exists: kept (keys are never regenerated)
+  - suds_signing_key exists: kept (keys are never regenerated)
+  - compliance-signing-key exists: kept (keys are never regenerated)
+  - compliance signing key id 314ddcaf0a7e09d1 (public key /etc/suds/compliance-signing-key.pub.pem: give it to your auditor)
+
+== Configuration ==
+  - passkeys: the WEBAUTHN_RP_ID/WEBAUTHN_ORIGINS already in /etc/suds/suds.env are kept
+
+== Firewall (443; SSH from 0.0.0.0/0 only) ==
+Default incoming policy changed to 'deny'
+(be sure to update your rules accordingly)
+Default outgoing policy changed to 'allow'
+(be sure to update your rules accordingly)
+  - removing the previous SSH rule for 10.20.0.0/16
+Rule added
+Skipping adding existing rule
+Firewall is active and enabled on system startup
+
+== Time synchronisation (audit timestamps depend on it) ==
+
+== Automatic security updates (security only) ==
+
+== System journal: persistent, kept 400 days, at most 8G ==
+  - recommended, not required: install auditd so the OS records logins, sudo and changes to /etc/suds
+
+== Services ==
+  - SUDS is up on 127.0.0.1:8080, served at https://suds.county.test
+
+First sign-in: open https://suds.county.test and sign in with the username "guest" (the first administrator) and the temporary password in /var/lib/suds/first-admin-password.txt (sudo cat it once; it is deleted when changed). You are asked to change it, then to enrol two-step verification.
+
+== Firewall rules in force ==
+  Status: active
+  
+  To                         Action      From
+  --                         ------      ----
+  443/tcp                    ALLOW       Anywhere                   # SUDS Server: HTTPS
+  22/tcp                     ALLOW       Anywhere                   # SUDS Server: SSH from the administration network
+
+Done. On a new server the installer runs the first backup and recovery drill itself; if they could not run, they show as "pending first run" (a warning) until SUDS has run them, within the hour. Upgrade with deploy/linux/upgrade.sh <version>; the weekly compliance report is on Settings > Security status.
+exit 0

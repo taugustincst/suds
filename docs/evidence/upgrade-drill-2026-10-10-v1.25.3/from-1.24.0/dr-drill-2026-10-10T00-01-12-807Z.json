@@ -1,0 +1,233 @@
+{
+  "report": {
+    "kind": "suds-dr-drill",
+    "version": 1,
+    "signed_by": {
+      "algorithm": "Ed25519",
+      "key_id": "d117ad5e859afa35"
+    },
+    "ok": true,
+    "started_at": "2026-10-10T00:01:12.807Z",
+    "finished_at": "2026-10-10T00:01:17.671Z",
+    "trigger": "cli",
+    "by": {
+      "username": "cli"
+    },
+    "server": {
+      "version": "1.25.3",
+      "host": "vm",
+      "schema_version": 71
+    },
+    "backup": {
+      "file": "suds-2026-10-10T00-01-07-554Z.db.enc",
+      "copy": "given",
+      "dir": "/tmp/suds-upgrade-drill-unPEtv/data/backups",
+      "offsite_configured": false,
+      "taken_at": "2026-10-10T00:01:07.554Z",
+      "made_for_drill": false,
+      "decrypted_bytes": 180731904,
+      "latest_record_at": "2026-10-10T00:01:01.105Z"
+    },
+    "keys": {
+      "source": "escrow file",
+      "file": "escrowed-keys.json",
+      "encryption_key_fingerprint": "faac865d25ea",
+      "index_key_fingerprint": "280753dcc51f",
+      "backup_key": true,
+      "same_as_running_server": true
+    },
+    "rto": {
+      "seconds": 4.1,
+      "target_minutes": 60,
+      "met": true,
+      "measures": "from starting the restore (reading and decrypting the backup) to the restored copy answering /api/health"
+    },
+    "rpo": {
+      "seconds": 5,
+      "target_hours": 24,
+      "met": true,
+      "measures": "age of the newest backup at the time of the drill: what a loss at that moment would have cost"
+    },
+    "elapsed_seconds": 4.9,
+    "schema": {
+      "restored_from": 71,
+      "now": 71
+    },
+    "counts": {
+      "restored": {
+        "ai_usage": 0,
+        "api_keys": 0,
+        "asam_assessments": 0,
+        "assignments": 21,
+        "audit_log": 20083,
+        "audit_maintenance": 0,
+        "authenticator_metadata": 1,
+        "breakglass_events": 0,
+        "budget_lines": 12,
+        "calls": 71,
+        "caloms_records": 4,
+        "caloms_submission_events": 0,
+        "caloms_submissions": 0,
+        "care_plan_goals": 0,
+        "care_plan_steps": 0,
+        "client_form_files": 1,
+        "client_forms": 6,
+        "client_revisions": 0,
+        "clients": 20012,
+        "complaints": 0,
+        "consents": 16,
+        "county_connect_sends": 0,
+        "county_connect_tokens": 0,
+        "county_connection": 0,
+        "county_programme_keys": 1,
+        "county_programmes": 3,
+        "county_publication_consents": 3,
+        "county_publication_inputs": 3,
+        "county_publications": 4,
+        "county_signing_keys": 2,
+        "county_submissions": 5,
+        "court_orders": 0,
+        "devices": 3,
+        "disclosure_agreements": 0,
+        "disclosures": 33,
+        "episodes": 11,
+        "expenditures": 24,
+        "fhir_jwt_assertions": 0,
+        "field_accounts": 1,
+        "form_templates": 3,
+        "funding_sources": 2,
+        "idempotency_keys": 0,
+        "import_items": 0,
+        "import_rows": 0,
+        "imports": 0,
+        "incoming_referral_attempts": 0,
+        "incoming_referrals": 0,
+        "intervention_supplies": 0,
+        "interventions": 160141,
+        "note_addenda": 0,
+        "notes": 47,
+        "option_overrides": 0,
+        "outcome_measures": 0,
+        "overdose_events": 0,
+        "part2_notices": 9,
+        "passkeys": 2,
+        "patient_requests": 0,
+        "policy_documents": 0,
+        "prevention_events": 7,
+        "privacy_incident_clients": 0,
+        "privacy_incidents": 0,
+        "problem_history": 0,
+        "problems": 0,
+        "referral_links": 0,
+        "referrals": 27,
+        "resource_photos": 23,
+        "resources": 15,
+        "sessions": 19,
+        "settings": 24,
+        "signature_evidence": 0,
+        "supply_items": 6,
+        "supply_ledger": 7,
+        "supply_sites": 1,
+        "suprt_assessments": 0,
+        "tasks": 30,
+        "time_entries": 132,
+        "tombstones": 0,
+        "user_permission_overrides": 0,
+        "user_prefs": 0,
+        "users": 7,
+        "webauthn_challenges": 6
+      },
+      "live_minus_backup": {
+        "clients": 0,
+        "notes": 0,
+        "interventions": 0,
+        "referrals": 0,
+        "tasks": 0,
+        "audit_log": 1
+      }
+    },
+    "audit": {
+      "entries_verified": 20083,
+      "anchors": {
+        "total": 3,
+        "matched": 3,
+        "newer": 0,
+        "other_key": 0,
+        "purged": 0,
+        "bad": 0
+      }
+    },
+    "decrypt_sample": {
+      "tried": 175,
+      "failed": 0
+    },
+    "checks": [
+      {
+        "name": "The escrowed key file opens the backup",
+        "ok": true,
+        "detail": "escrow file escrowed-keys.json; encryption key faac865d25ea, index key 280753dcc51f"
+      },
+      {
+        "name": "The restored file passes SQLite integrity_check",
+        "ok": true,
+        "detail": "ok"
+      },
+      {
+        "name": "The encryption key in custody opens this backup",
+        "ok": true,
+        "detail": null
+      },
+      {
+        "name": "Schema is at this build's version (71)",
+        "ok": true,
+        "detail": "schema 71"
+      },
+      {
+        "name": "Every table holds the rows the backup was taken with",
+        "ok": true,
+        "detail": "81 tables"
+      },
+      {
+        "name": "The audit chain verifies end to end",
+        "ok": true,
+        "detail": "20083 entries"
+      },
+      {
+        "name": "The restored audit chain matches the anchors written before the backup",
+        "ok": true,
+        "detail": "3 matched, 0 written after this backup"
+      },
+      {
+        "name": "A sample of encrypted fields decrypts",
+        "ok": true,
+        "detail": "175 values across every *_enc column"
+      },
+      {
+        "name": "The application serves from the restored copy (/api/health)",
+        "ok": true,
+        "detail": "healthy"
+      },
+      {
+        "name": "Password and second-factor sign-in work",
+        "ok": true,
+        "detail": "login HTTP 200, MFA HTTP 200"
+      },
+      {
+        "name": "An authenticated read returns the restored records",
+        "ok": true,
+        "detail": "HTTP 200, 20012 clients"
+      }
+    ],
+    "adjustments": [],
+    "failures": [],
+    "live_database_untouched": true
+  },
+  "integrity": {
+    "sha256": "41b2adef5a06c202b3dedda06438acbc007be803613de22900fc6b574a6d4ab1",
+    "hmac_sha256": "fea9053c46bbae222a4e4792093524303da98913f935b30e359e810b9c4e49f3",
+    "ed25519_signature": "4fE6556bKhLaMKQ+sGOlEC21QK/rcozyso0zCodj1aeNtwo4HuWQw3uqyCG3kP0hGz7mTb1gTbXiPpEy64PODA==",
+    "signing_key_id": "d117ad5e859afa35",
+    "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAFE+VwWy4r1CDd6iYc+49yutbghvxEyCTiw0KjdHrA7o=\n-----END PUBLIC KEY-----\n",
+    "algorithm": "SHA-256, HMAC-SHA256 (index key) and an Ed25519 signature (signing key) over the canonical JSON of \"report\" (keys sorted)"
+  }
+}
