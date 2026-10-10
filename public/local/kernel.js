@@ -13118,7 +13118,7 @@ var require_scheduled_backup = __commonJS({
           if (inside) throw new Error(`offsite directory ${inside}`);
           prunePartials(offsiteDir);
           await copyVerified(file, offsiteDir);
-          offsiteMatched.set(path.basename(file), Date.now());
+          offsiteMatched.set(path.join(offsiteDir, path.basename(file)), Date.now());
           offsiteFile = path.join(offsiteDir, path.basename(file));
           offsiteOk = true;
           repaired = await repairOffsite(dir, offsiteDir);
@@ -13181,12 +13181,12 @@ var require_scheduled_backup = __commonJS({
         } catch {
           continue;
         }
-        if (!a.isFile() || !b.isFile() || a.size === b.size && now2 - (offsiteMatched.get(f) || 0) < RECHECK_MS) continue;
+        if (!a.isFile() || !b.isFile() || a.size === b.size && now2 - (offsiteMatched.get(dest) || 0) < RECHECK_MS) continue;
         if (a.size === b.size) {
           const id = `${f}:${a.size}:${a.mtimeMs}`;
           if (!localSums.has(id)) localSums.set(id, (await digest(src)).sha256);
           if ((await digest(dest)).sha256 === localSums.get(id)) {
-            offsiteMatched.set(f, now2);
+            offsiteMatched.set(dest, now2);
             continue;
           }
         }
@@ -13197,7 +13197,7 @@ var require_scheduled_backup = __commonJS({
           continue;
         }
         await copyVerified(src, offsiteDir);
-        offsiteMatched.set(f, now2);
+        offsiteMatched.set(dest, now2);
         n++;
       }
       return n;
