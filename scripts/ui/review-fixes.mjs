@@ -211,6 +211,11 @@ const admin = await session('admin', 'AdminPassw0rd!x');
   ok(finLinks.some(t => /Staff time$/.test(t)) && !finLinks.some(t => /My time$/.test(t)), 'and calls its time page "Staff time", as the page itself does', finLinks);
   await go(fin.page, 'time');
   ok(!(await fin.page.$('tbody button:has-text("Edit")')), 'no Edit buttons on entries finance cannot edit');
+  // 1.25.4, G8: where finance works, the export's year-only rows are explained, with where to reconcile them.
+  ok(/time linked to a client has its year only/.test(await fin.page.$eval('[data-export-year-only]', e => e.textContent).catch(() => '')), 'Staff time says which exported rows are year-only, and why');
+  await go(fin.page, 'budget?tab=expenditures');
+  const yearOnly = await fin.page.$eval('[data-export-year-only]', e => e.textContent).catch(() => '');
+  ok(/spending linked to a client has its year only/.test(yearOnly) && /Reconcile those rows here/.test(yearOnly), 'Expenditures says which exported rows are year-only, why, and to reconcile them here', yearOnly);
   // 1.25.2, BO13: an expenditure finance changed is not offered to finance to approve; the list says why.
   {
     const navS = await session('mrivera', 'Navigator2026!!');

@@ -66,6 +66,8 @@ async function axe(page, where) {
 }
 const toastSays = (page, re) => until(async () => re.test((await page.$$eval('.toast', els => els.map(e => e.textContent))).join(' | ')));
 const chipCount = (page) => page.$eval('[data-queue-chip]', e => (e.hidden ? 0 : Number(e.dataset.queueChip))).catch(() => 0);
+// Sends what the page has not saved at the office yet, so a reset through the API is not overtaken by it.
+const settlePrefs = (page) => page.evaluate(async () => (await import('./app.js')).prefs.flush());
 const waitingInBrowser = (page) => page.evaluate(async () => { const q = await import('./outreach-queue.js'); return (await q.waiting()).map(x => x.payload); });
 
 try {
@@ -171,9 +173,10 @@ try {
 
   // ---- 4. Undo puts "Same as last contact" back ----
   await nav.go('outreach');
-  // What it offers now: the last contact entered (the one kept without its notes, a test strip).
+  // What it offers now: the last contact entered, the kit kept with no signal in 3b. Until 1.25.4 that change was lost
+  // when the worker signed in again, and the test strip of the contact before it was offered (G3); it passed or failed by timing.
   const sameBefore = await nav.page.$eval('[data-outreach-same]', e => (e.hidden ? '' : e.textContent));
-  ok(sameBefore.includes(strip.name.slice(0, 8)), 'Same as last contact offers the last contact entered', sameBefore);
+  ok(sameBefore.includes(kit.name.slice(0, 8)) && !sameBefore.includes(strip.name.slice(0, 8)), 'Same as last contact offers the last contact entered (the kit kept offline in 3b)', sameBefore);
   await plus(kit.id); await plus(kit.id);
   await nav.page.click('[data-outreach-save]');
   ok(await toastSays(nav.page, /Contact saved/), 'a contact with two kits is saved');
@@ -181,7 +184,8 @@ try {
   await nav.page.click('.undo-toast [data-undo]');
   ok(await toastSays(nav.page, /Undone/), 'Undo takes it back');
   ok(await until(async () => (await nav.page.$eval('[data-outreach-same]', e => (e.hidden ? '' : e.textContent))) === sameBefore), 'and Same as last contact is the bundle before it again', await nav.page.$eval('[data-outreach-same]', e => e.textContent));
-  // With no bundle before: hidden after Undo.
+  // With no bundle before: hidden after Undo. (What this page has not saved yet would otherwise be laid over the reset.)
+  await settlePrefs(nav.page);
   await nav.api('PUT', '/api/me/prefs', { outreach_last: null });
   await nav.fresh('outreach');
   ok(await nav.page.$eval('[data-outreach-same]', e => e.hidden), 'with no last contact there is no Same as last contact');
@@ -190,6 +194,33 @@ try {
   ok(await until(() => nav.page.$eval('[data-outreach-same]', e => !e.hidden)), 'after a save it is offered');
   await nav.page.click('.undo-toast [data-undo]');
   ok(await until(() => nav.page.$eval('[data-outreach-same]', e => e.hidden)), 'Undo of the only contact hides it again');
+
+  // ---- 4b. a preference changed with no signal survives the next reload (1.25.4, evaluation of 1.25.3, G3) ----
+  // Before, the change was kept only in the page's memory, and the reload put the office's older copy in its place:
+  // "Same as last contact" offered the bundle before. Now it waits under the account in localStorage until the office has it.
+  const setLast = (given) => nav.page.evaluate(async (g) => { const { prefs } = await import('./app.js'); prefs.set('outreach_last', { type: 'outreach', location: 'street', given: g }); await prefs.flush(); }, given);
+  const officeLast = async () => ((await nav.api('GET', '/api/me/prefs')).data.prefs.outreach_last || {}).given;
+  const sameText = () => nav.page.$eval('[data-outreach-same]', e => (e.hidden ? '' : e.textContent));
+  await nav.go('outreach');
+  await setLast({ [kit.id]: 1 });
+  eq(JSON.stringify(await officeLast()), JSON.stringify({ [kit.id]: 1 }), 'online, the last bundle (a kit) is saved at the office');
+  await nav.ctx.setOffline(true); offline = true;
+  await setLast({ [strip.id]: 2 });
+  eq(JSON.stringify(await nav.page.evaluate(async () => ((await import('./app.js')).prefs.get('outreach_last') || {}).given)), JSON.stringify({ [strip.id]: 2 }), 'offline, the page has the new bundle (two strips)');
+  const waitingPref = await nav.page.evaluate(() => localStorage.getItem('suds.prefs.pending') || '');
+  ok(waitingPref.includes(strip.id), 'the change waits in this browser under the account', waitingPref);
+  // Back online, the save is held up (it would otherwise race the reload), and the page is reloaded.
+  await nav.ctx.route('**/api/me/prefs', (r) => (r.request().method() === 'PUT' ? r.abort('internetdisconnected') : r.continue()));
+  await nav.ctx.setOffline(false);
+  await nav.fresh('outreach');
+  eq(JSON.stringify(await officeLast()), JSON.stringify({ [kit.id]: 1 }), 'with the save held up, the office still has the older bundle');
+  ok((await sameText()).includes(strip.name.slice(0, 8)) && !(await sameText()).includes(kit.name.slice(0, 8)), 'and the reload kept the newer one: Same as last contact still offers the two strips', await sameText());
+  await nav.ctx.unroute('**/api/me/prefs'); offline = false;
+  await nav.fresh('outreach');
+  ok(await until(async () => JSON.stringify(await officeLast()) === JSON.stringify({ [strip.id]: 2 })), 'once the office answers, the change is sent: the office has the two strips', await officeLast());
+  ok((await sameText()).includes(strip.name.slice(0, 8)), 'and the page still offers them', await sameText());
+  ok(await until(async () => (await nav.page.evaluate(() => localStorage.getItem('suds.prefs.pending'))) === '{}'), 'nothing is left waiting', await nav.page.evaluate(() => localStorage.getItem('suds.prefs.pending')));
+  await nav.api('PUT', '/api/me/prefs', { outreach_last: null });
 
   // ---- 5. Set up this phone for the field ----
   await nav.go('field-phone');

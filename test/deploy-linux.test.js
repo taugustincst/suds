@@ -170,6 +170,24 @@ test('Rocky 9: firewalld with https/http, SSH only through a rich rule from the 
   fs.rmSync(fx.dir, { recursive: true, force: true });
 });
 
+test('--admin-cidr6 (1.25.4, G10): SSH from an IPv6 network too, added after every stale rule is deleted; firewalld gets an ipv6 rich rule', () => {
+  let fx = fixture();
+  let r = run('install.sh', [...BASE, '--admin-cidr6=::/0'], fx);
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.out, /== Firewall \(443 and 80; SSH from 10\.20\.0\.0\/16 and ::\/0 only\) ==/);
+  const v6 = "+ ufw allow proto tcp from ::/0 to any port 22 comment SUDS\\ Server:\\ SSH\\ from\\ the\\ IPv6\\ administration\\ network";
+  assert.ok(r.out.includes(`${v6}\n`), r.out);
+  assert.ok(r.out.lastIndexOf('+ ufw delete allow') < r.out.indexOf('+ ufw allow proto tcp from 10.20.0.0/16'), 'every delete comes before the SSH rules (::/0 is stored as "22/tcp (v6) Anywhere")');
+  assert.ok(r.out.indexOf(v6) < r.out.indexOf('+ ufw --force enable'), 'and before the firewall is enabled');
+  for (const bad of ['--admin-cidr6=10.0.0.0/8', '--admin-cidr6=2001:db8::', '--admin-cidr6=2001:db8::/48;id']) assert.match(run('install.sh', [...BASE, bad], fx).err, /REFUSED: --admin-cidr6 must be an IPv6 network/, bad);
+  fs.rmSync(fx.dir, { recursive: true, force: true });
+  fx = fixture({ os: 'rocky' });
+  r = run('install.sh', [...BASE, '--admin-cidr6=2001:db8:1::/48'], fx);
+  assert.equal(r.code, 0, r.all);
+  assert.ok(r.out.includes('+ firewall-cmd --permanent --zone=public --add-rich-rule=rule\\ family=\\"ipv6\\"\\ source\\ address=\\"2001:db8:1::/48\\"\\ service\\ name=\\"ssh\\"\\ accept'), r.out);
+  fs.rmSync(fx.dir, { recursive: true, force: true });
+});
+
 test('--tls=county-cert: the certificate goes to Caddy, port 80 stays closed', () => {
   const fx = fixture();
   const cert = path.join(fx.dir, 'cert.pem'); const key = path.join(fx.dir, 'key.pem');
@@ -290,6 +308,11 @@ test('SSH lock-out: under sudo (no SSH_CONNECTION) the session is found through 
   r = run('install.sh', BASE, fx, { SS_OUT: '0      0      10.20.1.5:22      10.20.3.3:50000\n0      0      [::ffff:10.20.4.4]:22      [::ffff:10.20.4.5]:41000' });
   assert.equal(r.code, 0, r.all);
   r = run('install.sh', BASE, fx, { SS_OUT: '0      0      [2001:db8::5]:22      [2001:db8::9]:41000' });
+  assert.match(r.err, /cannot be compared with --admin-cidr/);
+  // With --admin-cidr6=::/0 every IPv6 address is inside (1.25.4, G10); any other IPv6 network still cannot be compared.
+  r = run('install.sh', [...BASE, '--admin-cidr6=::/0'], fx, { SS_OUT: '0      0      [2001:db8::5]:22      [2001:db8::9]:41000' });
+  assert.equal(r.code, 0, r.all);
+  r = run('install.sh', [...BASE, '--admin-cidr6=2001:db8::/32'], fx, { SS_OUT: '0      0      [2001:db8::5]:22      [2001:db8::9]:41000' });
   assert.match(r.err, /cannot be compared with --admin-cidr/);
   // Nothing can say where the administrator is: refused, unless they are at the console.
   r = run('install.sh', BASE, fx, { SS_FAIL: '1' });

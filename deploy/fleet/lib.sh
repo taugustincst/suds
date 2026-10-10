@@ -73,7 +73,8 @@ load_tenant() {
   [[ "$AVAILABILITY_ZONE" =~ ^${REGION}[a-z]$ ]] || die "AVAILABILITY_ZONE must be in $REGION (e.g. ${REGION}a)"
   LIGHTSAIL_BLUEPRINT=${LIGHTSAIL_BLUEPRINT:-ubuntu_24_04}; SSH_USER=${SSH_USER:-ubuntu}
   for k in LIGHTSAIL_BUNDLE LIGHTSAIL_BLUEPRINT LIGHTSAIL_KEY_PAIR SSH_USER; do [[ "${!k}" =~ ^[A-Za-z0-9._-]+$ ]] || die "$k must be set (letters, digits, . _ -)"; done
-  [[ "$SUDS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "SUDS_VERSION must be X.Y.Z (pinned per tenant)"
+  [[ "$SUDS_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || die "SUDS_VERSION must be X.Y.Z (pinned per tenant)"
+  (( 10#${BASH_REMATCH[1]} * 1000000 + 10#${BASH_REMATCH[2]} * 1000 + 10#${BASH_REMATCH[3]} >= 1025004 )) || die "SUDS_VERSION must be 1.25.4 or later: the fleet passes install.sh --admin-cidr6 (SSH on IPv6), which earlier releases do not take"
   RELEASE_SHA256=${RELEASE_SHA256,,}; [[ "$RELEASE_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "RELEASE_SHA256 must be the 64-hex SHA-256 of suds-v$SUDS_VERSION.zip, from the GitHub Release notes AND the version's CHANGELOG section on main"
   DATA_DISK_GB=${DATA_DISK_GB:-64} OFFSITE_DISK_GB=${OFFSITE_DISK_GB:-32} ANCHORS_DISK_GB=${ANCHORS_DISK_GB:-8}
   for k in DATA_DISK_GB OFFSITE_DISK_GB ANCHORS_DISK_GB; do valid_digits "${!k}" || die "$k must be a number of GB"; done

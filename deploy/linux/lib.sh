@@ -192,22 +192,24 @@ ssh_established_peers() {
   [[ -n "$out" ]] || return 0
   awk 'NF >= 4 {print $4}' <<< "$out" | sed -e 's/:[0-9]*$//' -e 's/^\[//' -e 's/\]$//' -e 's/^::ffff://'
 }
-# Refuse to enable a firewall that allows SSH only from ADMIN_CIDR while anyone is connected from outside it,
-# or when it cannot be told where the administrator is connected from (unless --console-access).
+# peer_inside IP CIDR [CIDR6] — ip_in_cidr; any IPv6 address is also inside --admin-cidr6=::/0 (others cannot be compared).
+peer_inside() { if [[ "${1#::ffff:}" == *:* && "${3:-}" == ::/0 ]]; then return 0; fi; ip_in_cidr "$1" "$2"; }
+# Refuse to enable a firewall that allows SSH only from ADMIN_CIDR (and ADMIN_CIDR6) while anyone is connected from
+# outside it, or when it cannot be told where the administrator is connected from (unless --console-access).
 ssh_lockout_guard() {
-  local cidr=$1 console=$2 me='' est p inside unknown=0
+  local cidr=$1 console=$2 cidr6=${3:-} me='' est p inside unknown=0
   if (( console )); then note "--console-access: the SSH lock-out check is skipped (you are at the console)"; return 0; fi
   me=$(admin_ssh_peer) || me=''
   if est=$(ssh_established_peers); then :; else est=''; [[ -z "$me" ]] && unknown=1; fi
   if [[ -n "$me" ]]; then
-    set +e; ip_in_cidr "$me" "$cidr"; inside=$?; set -e
+    set +e; peer_inside "$me" "$cidr" "$cidr6"; inside=$?; set -e
     (( inside == 1 )) && die "this SSH session comes from $me, outside --admin-cidr=$cidr: the firewall would lock it out. Run from the administration network, fix --admin-cidr, or pass --console-access if you have console access."
-    (( inside == 2 )) && die "could not tell whether this SSH session's address $me is inside --admin-cidr=$cidr (only IPv4 can be compared): run from the console with --console-access, or from an IPv4 address in the administration network."
+    (( inside == 2 )) && die "could not tell whether this SSH session's address $me is inside --admin-cidr=$cidr (only IPv4 can be compared, or any IPv6 address with --admin-cidr6=::/0): run from the console with --console-access, or from an IPv4 address in the administration network."
     note "this session comes from $me, inside $cidr"
   fi
   while IFS= read -r p; do
     [[ -n "$p" ]] || continue
-    set +e; ip_in_cidr "$p" "$cidr"; inside=$?; set -e
+    set +e; peer_inside "$p" "$cidr" "$cidr6"; inside=$?; set -e
     (( inside == 1 )) && die "an established SSH session comes from $p, outside --admin-cidr=$cidr: the firewall would cut it off. End it, fix --admin-cidr, or pass --console-access."
     (( inside == 2 )) && die "an established SSH session comes from $p, which cannot be compared with --admin-cidr=$cidr (only IPv4): pass --console-access if that is intended."
   done <<< "$est"

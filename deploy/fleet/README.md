@@ -114,7 +114,7 @@ $FLEET_HOME/                        mode 0700, a private git repository (see bel
 
 1. `cp deploy/fleet/tenant.env.example "$FLEET_HOME/tenants/<slug>.env"` and fill it. `ADMIN_CIDR`/`ADMIN_CIDR6` are
    the networks you run the scripts from (`curl -4 https://checkip.amazonaws.com`); install.sh refuses to run if this
-   SSH session comes from outside `ADMIN_CIDR`.
+   SSH session comes from outside `ADMIN_CIDR` (or over IPv6, unless `ADMIN_CIDR6` is `::/0`).
 2. **Dry run:** `deploy/fleet/provision-tenant.sh "$FLEET_HOME/tenants/<slug>.env"`. It prints every step and command
    and calls nothing. Read it.
 3. **Only with the owner's go** (it creates billable resources): the same command with `--apply`. In order:
@@ -129,8 +129,9 @@ $FLEET_HOME/                        mode 0700, a private git repository (see bel
    - **6. The VM**: SSH, the zip and `prepare-host.sh` copied over, the zip's SHA-256 checked again on the VM, the data
      disk made a LUKS2 volume at `/var/lib/suds` (and `suds.service` made to require that mount), the share disks at
      `/mnt/suds-offsite` and `/mnt/suds-anchors`.
-   - **7. install.sh** with `--domain`, `--admin-cidr`, `--offsite`, `--anchors`, `--tls=caddy`, `--version`,
-     `--source` and `--release-sha256` (and `--www-redirect`, `--acme-email` when set); then the IPv6 SSH rule.
+   - **7. install.sh** with `--domain`, `--admin-cidr`, `--admin-cidr6`, `--offsite`, `--anchors`, `--tls=caddy`,
+     `--version`, `--source` and `--release-sha256` (and `--www-redirect`, `--acme-email` when set). install.sh adds the
+     IPv6 SSH rule itself (from 1.25.4, so `SUDS_VERSION` must be 1.25.4 or later), and keeps it on every re-run.
    - **8. Asserts** — each failure fails the run (exit 1, `STATUS=failed-asserts`, nothing escrowed, no go-live):
      a **brand-new SSH connection succeeds after the install session has closed** (the launch-day lock-out only showed
      in the next connection); `ufw status` allows port 22 on **IPv4 and IPv6**; `systemctl is-active suds caddy`;

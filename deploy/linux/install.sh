@@ -11,6 +11,8 @@
 #   --domain=NAME                the DNS name staff use (required)
 #   --admin-cidr=CIDR            the only network SSH is allowed from (required; a re-run with another CIDR
 #                                removes the previous rule)
+#   --admin-cidr6=CIDR           also allow SSH from this IPv6 network (e.g. 2001:db8:1::/48, or ::/0 for any); kept
+#                                when a re-run leaves it out; --admin-cidr6=none removes it
 #   --offsite=DIR                a mounted share on another host/site for the scheduled backups (required)
 #   --anchors=DIR                a mounted write-once (WORM) share for audit anchors, outside /var/lib/suds (required)
 #   --tls=caddy                  Caddy obtains the certificate (ACME; ports 443 and 80) — the default
@@ -45,7 +47,7 @@ SRC=$(cd "$HERE/../.." && pwd)
 # shellcheck source=deploy/linux/lib.sh
 . "$HERE/lib.sh"
 
-DOMAIN='' ADMIN_CIDR='' OFFSITE='' ANCHORS='' TLS_MODE=caddy TLS_CERT='' TLS_KEY='' ACME_EMAIL='' VERSION=''
+DOMAIN='' ADMIN_CIDR='' ADMIN_CIDR6='' OFFSITE='' ANCHORS='' TLS_MODE=caddy TLS_CERT='' TLS_KEY='' ACME_EMAIL='' VERSION=''
 LOG_DAYS=400 JOURNAL_MAX=8G METRICS=0 WWW_REDIRECT=0 ACCEPT_UNENC='' CONSOLE=0 SKIP_CHECK=0 CA_FILE='' CONNECT_HOST='' NTP_SERVERS=''
 RELEASE_ZIP='' RELEASE_SHA256='' NODE_TARBALL='' CADDY_TARBALL='' TRUST_RELEASE_CHECKSUM=0 RELEASE_CHECKSUM_SOURCE=''
 for arg in "$@"; do
@@ -53,6 +55,7 @@ for arg in "$@"; do
     --dry-run) DRY=1 ;;
     --domain=*) DOMAIN=${arg#*=} ;;
     --admin-cidr=*) ADMIN_CIDR=${arg#*=} ;;
+    --admin-cidr6=*) ADMIN_CIDR6=${arg#*=} ;;
     --offsite=*) OFFSITE=${arg#*=} ;;
     --anchors=*) ANCHORS=${arg#*=} ;;
     --tls=*) TLS_MODE=${arg#*=} ;;
@@ -94,6 +97,7 @@ detect_arch
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "--version must be X.Y.Z"
 [[ "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] || die "--domain=<the DNS name staff use> is required (e.g. suds.county.gov)"
 [[ "$ADMIN_CIDR" =~ ^[0-9a-fA-F:.]+(/[0-9]{1,3})?$ ]] || die "--admin-cidr=<network SSH is allowed from> is required (e.g. 10.20.0.0/16)"
+[[ -z "$ADMIN_CIDR6" || "$ADMIN_CIDR6" == none || "$ADMIN_CIDR6" =~ ^[0-9a-fA-F]*:[0-9a-fA-F:]*/[0-9]{1,3}$ ]] || die "--admin-cidr6 must be an IPv6 network such as 2001:db8:1::/48 (or ::/0, or none)"
 if ! { valid_digits "$LOG_DAYS" && (( LOG_DAYS >= 30 )); }; then die "--log-retention-days must be a number of days (digits), at least 30"; fi
 valid_size "$JOURNAL_MAX" || die "--journal-max-use must be a size such as 8G (digits and an optional K, M, G or T)"
 [[ -z "$ACME_EMAIL" ]] || valid_email "$ACME_EMAIL" || die "--acme-email must be an e-mail address (got: $(printf '%q' "$ACME_EMAIL"))"
@@ -143,7 +147,9 @@ fi
 # The firewall will allow SSH from --admin-cidr only: refuse to cut off this session, or any other SSH session.
 # Under sudo SSH_CONNECTION is gone (env_reset): lib.sh ssh_lockout_guard also asks who -m, the parent
 # processes and ss; if none can say, it refuses unless --console-access.
-ssh_lockout_guard "$ADMIN_CIDR" "$CONSOLE"
+# An --admin-cidr6 not given again is the previous run's (read here so that the guard knows it).
+PREV_ADMIN_CIDR6=$(conf_get SUDS_ADMIN_CIDR6); [[ -n "$ADMIN_CIDR6" ]] || ADMIN_CIDR6=$PREV_ADMIN_CIDR6; [[ "$ADMIN_CIDR6" != none ]] || ADMIN_CIDR6=''
+ssh_lockout_guard "$ADMIN_CIDR" "$CONSOLE" "$ADMIN_CIDR6"
 
 # The shares must be writable by the service user, tested as that user (nothing is written there by this
 # script). Both are checked and refused together, with the commands that fix them; the account is created
@@ -283,7 +289,7 @@ put_file "$(P "$ETC/provision.json")" 0644 root:root <<EOF
 }
 EOF
 if [[ -n "$CA_FILE" ]]; then act install -m 0644 -o root -g root "$CA_FILE" "$(P "$ETC/ca.pem")"; fi
-managed=(SUDS_VERSION SUDS_DOMAIN SUDS_TLS_MODE SUDS_ADMIN_CIDR SUDS_DATA_DIR SUDS_ANCHOR_DIR SUDS_OFFSITE_DIR SUDS_CREDENTIALS_DIR SUDS_CREDENTIALS
+managed=(SUDS_VERSION SUDS_DOMAIN SUDS_TLS_MODE SUDS_ADMIN_CIDR SUDS_ADMIN_CIDR6 SUDS_DATA_DIR SUDS_ANCHOR_DIR SUDS_OFFSITE_DIR SUDS_CREDENTIALS_DIR SUDS_CREDENTIALS
   SUDS_NODE_BIN SUDS_LOG_RETENTION_DAYS SUDS_JOURNAL_MAX_USE SUDS_ACCEPT_UNENCRYPTED_DISK SUDS_INSTALLED_AT SUDS_LAST_INSTALL_RUN SUDS_COMPLIANCE_DIR
   SUDS_COMPLIANCE_SIGNING_KEY_FILE SUDS_CA_FILE SUDS_CONNECT_HOST SUDS_NTP_SERVERS SUDS_RELEASE_CHECKSUM_SOURCE)
 kept=$(conf_unmanaged "${managed[@]}")
@@ -294,6 +300,7 @@ SUDS_VERSION=$VERSION
 SUDS_DOMAIN=$DOMAIN
 SUDS_TLS_MODE=$TLS_MODE
 SUDS_ADMIN_CIDR=$ADMIN_CIDR
+SUDS_ADMIN_CIDR6=$ADMIN_CIDR6
 SUDS_DATA_DIR=$DATA_DIR
 SUDS_ANCHOR_DIR=$ANCHORS
 SUDS_OFFSITE_DIR=$OFFSITE
@@ -363,7 +370,8 @@ fi
 
 # ---- 8. Host hardening: firewall, time, updates, journal ----
 ports='443'; if [[ $TLS_MODE == caddy ]]; then ports='443 and 80'; fi
-say ""; say "== Firewall ($ports; SSH from $ADMIN_CIDR only) =="
+ssh_from=$ADMIN_CIDR; [[ -z "$ADMIN_CIDR6" ]] || ssh_from+=" and $ADMIN_CIDR6"
+say ""; say "== Firewall ($ports; SSH from $ssh_from only) =="
 # quiet_act: a best-effort command whose failure (e.g. a rule that is not there) is expected; shown in a dry run.
 quiet_act() { if (( DRY )); then act "$@"; else "$@" >/dev/null 2>&1 || true; fi; }
 if [[ $OS_FAMILY == debian ]]; then
@@ -373,9 +381,12 @@ if [[ $OS_FAMILY == debian ]]; then
   # rule is added, never after it: with --admin-cidr=0.0.0.0/0 (or ::/0) ufw stores the admin rule as the plain
   # "22/tcp from Anywhere", which `ufw delete allow 22/tcp` removes. 1.25.1 deleted it after adding it, and every
   # new SSH connection was dropped once the install session closed (the Lightsail launch, HANDOFF 2026-10-08).
+  # The same holds for --admin-cidr6=::/0, stored as "22/tcp (v6) from Anywhere (v6)": deleted first, then added.
   for r in OpenSSH 22/tcp 22; do quiet_act ufw delete allow "$r"; done
   if [[ -n "$PREV_ADMIN_CIDR" && "$PREV_ADMIN_CIDR" != "$ADMIN_CIDR" ]]; then note "removing the previous SSH rule for $PREV_ADMIN_CIDR"; quiet_act ufw delete allow proto tcp from "$PREV_ADMIN_CIDR" to any port 22; fi
+  if [[ -n "$PREV_ADMIN_CIDR6" && "$PREV_ADMIN_CIDR6" != "$ADMIN_CIDR6" ]]; then note "removing the previous SSH rule for $PREV_ADMIN_CIDR6"; quiet_act ufw delete allow proto tcp from "$PREV_ADMIN_CIDR6" to any port 22; fi
   act ufw allow proto tcp from "$ADMIN_CIDR" to any port 22 comment 'SUDS Server: SSH from the administration network'
+  [[ -z "$ADMIN_CIDR6" ]] || act ufw allow proto tcp from "$ADMIN_CIDR6" to any port 22 comment 'SUDS Server: SSH from the IPv6 administration network'
   act ufw allow 443/tcp comment 'SUDS Server: HTTPS'
   if [[ $TLS_MODE == caddy ]]; then act ufw allow 80/tcp comment 'SUDS Server: redirect and ACME'; else quiet_act ufw delete allow 80/tcp; fi
   act ufw --force enable
@@ -386,7 +397,10 @@ else
   act firewall-cmd --permanent --zone="$zone" --add-service=https
   if [[ $TLS_MODE == caddy ]]; then act firewall-cmd --permanent --zone="$zone" --add-service=http; else act firewall-cmd --permanent --zone="$zone" --remove-service=http; fi
   act firewall-cmd --permanent --zone="$zone" --add-rich-rule="$(rich "$ADMIN_CIDR")"
-  if [[ -n "$PREV_ADMIN_CIDR" && "$PREV_ADMIN_CIDR" != "$ADMIN_CIDR" ]]; then note "removing the previous SSH rule for $PREV_ADMIN_CIDR"; quiet_act firewall-cmd --permanent --zone="$zone" --remove-rich-rule="$(rich "$PREV_ADMIN_CIDR")"; fi
+  [[ -z "$ADMIN_CIDR6" ]] || act firewall-cmd --permanent --zone="$zone" --add-rich-rule="$(rich "$ADMIN_CIDR6")"
+  for prev in "$PREV_ADMIN_CIDR" "$PREV_ADMIN_CIDR6"; do
+    if [[ -n "$prev" && "$prev" != "$ADMIN_CIDR" && "$prev" != "$ADMIN_CIDR6" ]]; then note "removing the previous SSH rule for $prev"; quiet_act firewall-cmd --permanent --zone="$zone" --remove-rich-rule="$(rich "$prev")"; fi
+  done
   act firewall-cmd --permanent --zone="$zone" --remove-service=ssh
   act firewall-cmd --permanent --zone="$zone" --remove-service=cockpit
   act firewall-cmd --reload
@@ -394,16 +408,19 @@ fi
 # The rules as the firewall now has them, shown again at the end: an SSH lock-out does not show in this session
 # (an established connection is not checked again), only in the next one.
 firewall_summary() {
-  local out line ssh=0
+  local out line ssh=0 ssh6=0
   if (( DRY )); then printf '+ show the firewall rules now in force, and warn if none allows SSH\n'; return 0; fi
   if [[ $OS_FAMILY == debian ]]; then
     out=$(ufw status 2>&1) || true
     grep -Eq '^(22(/tcp)?|OpenSSH)( \(v6\))? +(ALLOW|LIMIT)' <<< "$out" && ssh=1
+    grep -Eq '^(22(/tcp)?|OpenSSH)( \(v6\))? +(ALLOW|LIMIT)( IN)? +([0-9a-fA-F]*:|Anywhere \(v6\))' <<< "$out" && ssh6=1
   else
     out=$(firewall-cmd --zone="$zone" --list-all 2>&1) || true
     grep -Eq 'service name="ssh" accept|services:.* ssh( |$)' <<< "$out" && ssh=1
+    grep -Eq 'family="ipv6".*service name="ssh" accept|services:.* ssh( |$)' <<< "$out" && ssh6=1
   fi
   say ""; say "== Firewall rules in force =="; while IFS= read -r line; do say "  $line"; done <<< "$out"
+  if (( ssh && ! ssh6 )) && [[ -n "$ADMIN_CIDR6" ]]; then warn "!!! NO FIREWALL RULE ALLOWS SSH OVER IPv6 from --admin-cidr6=$ADMIN_CIDR6: add it before an IPv6-only client needs it."; fi
   if (( ! ssh )); then
     warn "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     warn "!!! NO FIREWALL RULE ALLOWS SSH (port 22). This session still works; the next SSH connection will not."

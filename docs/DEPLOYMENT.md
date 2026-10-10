@@ -397,7 +397,7 @@ On SUDS Server every line below that can be checked on the host is checked by `n
 - [ ] Local mode left off (`LOCAL_MODE_ENABLED` unset or `false`, wizard answer *No*) unless a field-work need is documented; if on, only county-managed devices with a passcode, disk encryption and MDM remote wipe.
 - [ ] `PUBLIC_APP_INFO` and `ALLOW_STATIC_SYNC` left off unless there is a reason; `/api/setup/status` and `/api/health` give their detail only to a session or the metrics token.
 - [ ] Data directory permissions `0700`, database `0600`, owned by the service user.
-- [ ] Host firewall allows only 443 from the county network / VPN.
+- [ ] Host firewall allows only 443 from the county network / VPN, and SSH only from the administration network, on IPv4 and on IPv6 if the host has an IPv6 address (SUDS Server: `--admin-cidr`, and `--admin-cidr6` from 1.25.4).
 - [ ] OS disk encryption enabled; screen lock policies on workstations.
 - [ ] MFA required for all roles (`MFA_REQUIRED_ROLES`, or the "every role" switch in Settings); grace period (`MFA_GRACE_DAYS`, default 3 days, counted from account creation or access-request approval; 0 = at first sign-in) set to what your policy allows.
 - [ ] Keys in a secrets manager; key custodian documented.

@@ -4,6 +4,27 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Fixed
+
+- **A preference changed with no signal is no longer lost at the next reload (G3, evaluation of 1.25.3).** A change the
+  office has not confirmed waits in that browser under the account (`suds.prefs.pending`, UI state, never PHI); the next
+  load lays it over the office's older copy and sends it, as does the first answer from the office after no signal.
+  "Same as last contact" no longer offers the bundle before one entered offline (`scripts/ui/offline-outreach.mjs` 4b).
+- **SUDS Server's installer takes `--admin-cidr6` (G10).** `deploy/linux/install.sh --admin-cidr6=<IPv6 network>` (or
+  `::/0`) allows SSH over IPv6 as well; it is kept in `suds-server.conf`, so a re-run without it keeps the rule, another
+  network replaces it and `none` removes it. Stale SSH rules are still deleted before any is added, so `::/0` survives a
+  re-run (before, a re-run deleted an IPv6 SSH rule added by hand). The firewall summary names both networks and warns
+  when no rule allows SSH over IPv6. The lock-out check accepts an IPv6 session with `::/0`. The fleet tooling passes
+  `--admin-cidr6` instead of adding the rule itself, and so needs `SUDS_VERSION` 1.25.4 or later. Tested with the ufw
+  stub (`test/deploy-linux-real.test.js`: an install with `--admin-cidr6=::/0` and each re-run end with the IPv6 SSH rule).
+- **Finance's spending and time exports say which rows give the year only, why, and where to reconcile them (G8).**
+  The de-identification is unchanged (client-linked rows stay year-only under Safe Harbor, 1.25.2 BO6). The About sheet
+  of a file with spending or time now names those rows (the ones with a Record Id), the reason (the date is about the
+  client), and where finance reconciles them row by row (Funding & spending › Expenditures, Staff time); the
+  Expenditures tab and the time page say the same beside Export to Excel; docs/HIPAA.md states the rule. No monthly
+  total of client-linked spending is added: beside each row's exact amount it would show which month a client's row
+  fell in (`test/finance-ledger.test.js`, `scripts/ui/review-fixes.mjs`).
+
 ### Added
 
 - **Fleet tooling: one SUDS Server per tenant on AWS Lightsail (Option A of the multitenancy plan)** — operator
