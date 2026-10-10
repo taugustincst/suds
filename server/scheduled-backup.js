@@ -147,7 +147,7 @@ async function runOnce({ retain = 14, offsiteDir = '' } = {}) {
       const inside = offsitePlacement(offsiteDir).inside;
       if (inside) throw new Error(`offsite directory ${inside}`);
       prunePartials(offsiteDir);
-      await copyVerified(file, offsiteDir); offsiteMatched.set(path.basename(file), Date.now());
+      await copyVerified(file, offsiteDir); offsiteMatched.set(path.join(offsiteDir, path.basename(file)), Date.now());
       offsiteFile = path.join(offsiteDir, path.basename(file));
       offsiteOk = true;
       repaired = await repairOffsite(dir, offsiteDir);
@@ -194,7 +194,7 @@ async function copyVerified(src, destDir) {
   throw new Error(`the offsite copy of ${path.basename(src)} did not match the backup (${b.bytes} of ${a.bytes} bytes${a.bytes === b.bytes ? ', different SHA-256' : ''}) and was deleted`);
 }
 
-// When each offsite copy last matched its local backup (name -> ms), and the local backups' SHA-256 (they are never
+// When each offsite copy last matched its local backup (its path -> ms), and the local backups' SHA-256 (they are never
 // changed once written, so keyed by name, size and time): each copy is read back at most once a day.
 const offsiteMatched = new Map(); const localSums = new Map();
 const RECHECK_MS = 24 * 3600_000;
@@ -209,14 +209,14 @@ async function repairOffsite(localDir, offsiteDir, now = Date.now()) {
   for (const f of fs.readdirSync(offsiteDir).filter((x) => FILE_RE.test(x))) {
     const src = path.join(localDir, f); const dest = path.join(offsiteDir, f);
     let a; let b; try { a = fs.lstatSync(src); b = fs.lstatSync(dest); } catch { continue; }
-    if (!a.isFile() || !b.isFile() || (a.size === b.size && now - (offsiteMatched.get(f) || 0) < RECHECK_MS)) continue;
+    if (!a.isFile() || !b.isFile() || (a.size === b.size && now - (offsiteMatched.get(dest) || 0) < RECHECK_MS)) continue;
     if (a.size === b.size) {
       const id = `${f}:${a.size}:${a.mtimeMs}`;
       if (!localSums.has(id)) localSums.set(id, (await digest(src)).sha256);
-      if ((await digest(dest)).sha256 === localSums.get(id)) { offsiteMatched.set(f, now); continue; }
+      if ((await digest(dest)).sha256 === localSums.get(id)) { offsiteMatched.set(dest, now); continue; }
     }
     try { await backup.verifyFileAsync(src); } catch (e) { console.error(`[suds] the offsite copy ${f} does not match its local backup, which no longer reads back either (${e.message}): neither is replaced`); continue; }
-    await copyVerified(src, offsiteDir); offsiteMatched.set(f, now); n++;
+    await copyVerified(src, offsiteDir); offsiteMatched.set(dest, now); n++;
   }
   return n;
 }
