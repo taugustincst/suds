@@ -78,7 +78,7 @@ test('with two-step verification on, a stale session re-authenticates with the a
   const u = H.makeUser('flmfa', 'navigator');
   const c = H.client(); await c.login('flmfa', PW);
   const setup = await c.post('/api/auth/mfa/setup', {});
-  assert.equal((await c.post('/api/auth/mfa/enable', { code: totp(setup.data.secret, Date.now() - 30_000) })).status, 200);
+  assert.equal((await c.post('/api/auth/mfa/enable', { code: await H.totpPreviousStep(setup.data.secret) })).status, 200);
   await admin.post(`/api/clients/${clientId}/assignments`, { user_id: u.id, role_on_case: 'secondary' });
   makeStale(u.id);
   const id = await draft(c);

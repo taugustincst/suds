@@ -57,8 +57,9 @@ test('an authenticator code is accepted once: not again for signing, nor for a s
   const { u, c } = await staff('sigtotp');
   const setup = await c.post('/api/auth/mfa/setup', {});
   const secret = setup.data.secret;
-  assert.equal((await c.post('/api/auth/mfa/enable', { code: totp(secret, step(-1)) })).status, 200);
-  assert.equal((await c.post('/api/auth/mfa/enable', { code: totp(secret, step(-1)) })).status, 400, 'the enrolment code cannot be replayed either');
+  const first = await H.totpPreviousStep(secret);
+  assert.equal((await c.post('/api/auth/mfa/enable', { code: first })).status, 200);
+  assert.equal((await c.post('/api/auth/mfa/enable', { code: first })).status, 400, 'the enrolment code cannot be replayed either');
   makeStale(u.id);
   const a = await draft(c), b = await draft(c);
   const code = totp(secret, step(0));
@@ -83,7 +84,7 @@ test('an authenticator code is accepted once: not again for signing, nor for a s
 test('authenticator attempts at signing share the per-user limit with the sign-in\'s second step', async () => {
   const { u, c } = await staff('sigtotplimit');
   const setup = await c.post('/api/auth/mfa/setup', {});
-  await c.post('/api/auth/mfa/enable', { code: totp(setup.data.secret, step(-1)) });
+  assert.equal((await c.post('/api/auth/mfa/enable', { code: totp(setup.data.secret, step(0)) })).status, 200);
   makeStale(u.id);
   const id = await draft(c);
   let last;
@@ -98,7 +99,7 @@ test('authenticator attempts at signing share the per-user limit with the sign-i
 test('wrong authenticator codes at signing count toward the account lockout', async () => {
   const { u, c } = await staff('sigtotplock');
   const setup = await c.post('/api/auth/mfa/setup', {});
-  await c.post('/api/auth/mfa/enable', { code: totp(setup.data.secret, step(-1)) });
+  assert.equal((await c.post('/api/auth/mfa/enable', { code: totp(setup.data.secret, step(0)) })).status, 200);
   makeStale(u.id);
   const id = await draft(c);
   let last;

@@ -29,7 +29,7 @@ async function person(role = 'navigator', { totpSecret = null } = {}) {
   const u = H.makeUser(`fpr2_${role}_${++seq}`, role);
   if (totpSecret) H.db.run(`UPDATE users SET mfa_enabled=1, mfa_secret_enc=? WHERE id=?`, encrypt(totpSecret), u.id);
   const c = H.client(); const l = await c.login(u.username, PW);
-  if (l.mfaPending) assert.equal((await c.post('/api/auth/mfa/verify', { code: totp(totpSecret, Date.now() - 30_000) })).status, 200);
+  if (l.mfaPending) assert.equal((await c.post('/api/auth/mfa/verify', { code: totp(totpSecret) })).status, 200);
   return { u, c };
 }
 async function enrol(c, a, { password = PW, code } = {}) {
@@ -105,7 +105,7 @@ test('N1: with an authenticator app as well as a passkey, a device sign-in asks 
   try {
     const plain = await person('clinician', { totpSecret: s });
     const withKey = await person('clinician', { totpSecret: s });
-    await enrol(withKey.c, key(), { code: totp(s, Date.now()) });
+    await enrol(withKey.c, key(), { code: totp(s, Date.now() + 30_000) });
     const a = await deviceSync(plain.u.username);
     const b = await deviceSync(withKey.u.username);
     for (const r of [a, b]) {
