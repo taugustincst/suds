@@ -234,7 +234,7 @@ async function unlockWith(dekRaw) {
         if (first || sqlite.imageProblem(plain)) { plain.fill(0); throw await damagedDevice(sealed, first && first.message !== e.message ? new Error(`${first.message}; on a new engine: ${e.message}`) : e); }
         first = e;
         console.warn('[suds-local] the device database would not open; trying once more on a new SQLite engine:', String(e.message).slice(0, 300));
-        try { await sqlite.freshEngine(); } catch (e2) { console.warn('[suds-local] no new SQLite engine:', e2.message); }
+        /* DIAGNOSTIC (session branch only): no new engine, to see whether it is what crashes WebKit at a later reload. */
       }
     }
     plain.fill(0);
