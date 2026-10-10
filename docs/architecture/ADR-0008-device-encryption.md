@@ -147,6 +147,20 @@ does not store is the password its people type.
   price of nobody else holding a key. On an office-synced device, an administrator's reset at the office reaches the device only
   through a sync by someone who can unlock it; otherwise the device is erased and set up again, and the
   caseload is re-downloaded from the office (anything not yet synced is lost).
+- **A database that opens under the right key but not as a database is reported and kept, never replaced**
+  (1.25.4; evaluation of 1.25.3, G2: a WebKit CI run failed a sign-in after a reload with "malformed database schema
+  (audit_log) - string or blob too big"). AES-GCM rules out a store write cut short (that fails as `tampered`), so
+  what can reach SQLite is a valid seal over a bad image, or an engine that misreads a good one. At sign-in
+  `unlockWith` checks the unsealed image against its own header (`imageProblem` in `local/shims/sqlite.js`: page
+  size, page count, length) and runs `PRAGMA quick_check` on a copy before the schema and migrations touch it. If
+  either fails, or opening fails anyway, nothing is opened or written (no sealer is set), the sealed image stays
+  under its epoch key, and a copy of it with the vault that opens it is kept under `damaged_db`, which a restore
+  leaves alone and only *Start over* erases; the sign-in answers 503 `deviceDamaged` saying so, and the sign-in page
+  offers the copy as a file (`damagedCopy`) before Start over and Restore from a backup. The check costs one extra
+  read of the image at sign-in, next to PBKDF2's 600,000 iterations. A restore needs the device administrator signed
+  in, or no account on the device (`mayRestore`), and a damaged database lets nobody sign in; hence Start over first.
+  (On any locked device the kernel answers *Can't sign in? → Restore from a backup* with 401 "This device is locked"
+  for the same reason: found in 1.25.4, left for a decision on who may restore without signing in.)
 - While someone is signed in, the database and its key are in the page's memory, as any running app's are.
 - A page load always needs a sign-in, including the reload after a new release and "Use SUDS in this window".
 - Holding the store is now callback-free for image saves. Before this, an ordinary save issued its put from the
@@ -173,6 +187,8 @@ vouching fields), [docs/security/ENCRYPTION-AND-KEYS.md](../security/ENCRYPTION-
 
 ## Tests that pin it
 
+`test/device-damaged-db.test.js` (a validly sealed damaged image, five kinds, refused and kept, never written
+over) and browser `scripts/ui/device-recovery.mjs` section 6 (the same in Chromium, then Start over and restore);
 `test/device-vault.test.js` (sealing, wraps, iterations, per-wrap salts, key sealing, the backup chain, the
 key rotation after a restore, plaintext detection, the recovery wrap — under Node's WebCrypto);
 `test/device-recovery.test.js` (the kernel in Node: set-up, a code, lock, recover, records open, wrong codes

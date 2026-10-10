@@ -750,6 +750,29 @@ alone. CI runs it on every push as the advisory `release-state` job, not in the 
 a tag is pushed or the site republished, without a commit, and at a tag's own release run the hand-off still lists
 that tag. Tested in `test/release-state.test.js`.
 
+**Stamp checklist: the tests run on the stamped tree, and main's run is the green one** (1.25.4; evaluation of 1.25.3,
+G6 and G1). The 1.25.3 stamp was pushed without the suite that would have refused it, and went red on `main`. So:
+1. After the documents pass (the three checklists above) and **before the push**, run the full `npm test` on the exact
+   tree being stamped: the `Release X.Y.Z` commit, and again on the SBOM commit after it (`git status` clean, nothing
+   edited between the run and the commit). When the release changed anything under `public/`, `local/` or
+   `scripts/ui/`, also run `scripts/ui/run-all.sh` in full on that tree. A red run is fixed and the stamp made again;
+   it is never pushed to see what CI says.
+2. The commit recorded for tagging (the hand-off's row, HANDOFF.md's *Release waiting*) is one whose **`ci.yml` run on
+   `main`** (a `push` run on the `main` branch) concluded success. A green run of the same commit on a mirror or work
+   branch does not count, and neither does a red `main` run re-run until it passes without a reason: a job that failed
+   on `main` gets its failure read first (each failing test or browser check is an `::error` annotation on the run and
+   a line in the job summary, `scripts/ci-annotate.js` and `run-all.sh`, readable through the API when the log is not),
+   and is fixed or recorded in the flake register below before the commit is handed over.
+
+**Flake register.** A test or script that failed on `main` and passed on a re-run of the same commit is recorded here
+with its cause and its fix; "known flaky" without a cause is not an entry.
+
+| Seen | Where | Cause | Fixed |
+| --- | --- | --- | --- |
+| `2e4ecac` node24 | `test/fingerprint-review.test.js` "401 == 200" (and the same pattern in eight files) | an authenticator code of the previous 30-second step, refused when a step boundary fell inside the request | 1.25.4: the current step then the next; `H.totpPreviousStep` for the tests that need three steps |
+| `147fddd` browser | `accessibility.mjs` "the referral is saved, relying on the consent — got [null]" | a product race: the provider's consents answering after the worker chose a consent cleared the choice | 1.25.4: `public/views/referrals.js` keeps a choice made during the reload; checked in `frontline-review.mjs` |
+| `cfafd6a` test, `c3a54bd` evening | one failing test each, not named in what the API returns | unknown: the CI log was not readable from where it was investigated | 1.25.4 annotates every failure, so the next one is named |
+
 #### Handing a release to the owner
 Whoever prepares a release (a maintainer, or the maintaining assistant) stamps it on `main` and then hands it over;
 the owner tags it. **The maintaining assistant cannot push tags at all** (its environment's proxy refuses a tag
