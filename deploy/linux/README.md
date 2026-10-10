@@ -29,13 +29,29 @@ The files that install and run SUDS Server on Ubuntu 24.04 LTS or RHEL/Rocky/Alm
 | `/etc/suds/compliance-signing-key.pub.pem` | root, 0644 | Its public half: SUDS verifies reports with it (`SUDS_COMPLIANCE_PUBLIC_KEY_FILE`); give it to the auditor |
 | `/etc/suds/suds.env` | root, 0644 | Non-secret settings (`TRUST_PROXY`, `LOCAL_MODE_ENABLED=false`, `MFA_REQUIRED_ROLES`, `AUDIT_ANCHOR_DIR`, `SUDS_COMPLIANCE_DIR`, `WEBAUTHN_RP_ID`/`WEBAUTHN_ORIGINS` from `--domain` unless already set, …). Rewritten on a re-run, keeping an operator's `WEBAUTHN_*`; `upgrade.sh` adds `WEBAUTHN_*` when neither is there. The installer runs its compliance check with these, as `suds-compliance.service` does |
 | `/etc/suds/provision.json` | root, 0644 | Database settings applied where unset, and only if they tighten: backups every 4 h to the offsite share, monthly drill, MFA for every role (server/provision.js) |
-| `/etc/suds/suds-server.conf` | root, 0644 | Site facts for the compliance check (domain, shares, admin network, `SUDS_CA_FILE`, `SUDS_CONNECT_HOST`, NTP servers, how the release was checked, first install date, accepted risks). Lines the installer does not manage are kept on a re-run |
+| `/etc/suds/suds-server.conf` | root, 0644 | Site facts for the compliance check (domain, shares, admin networks, `SUDS_CA_FILE`, `SUDS_CONNECT_HOST`, NTP servers, how the release was checked, first install date, accepted risks). Lines the installer does not manage are kept on a re-run |
 | `/etc/suds/ca.pem` | root, 0644 | `--ca-file`: the county CA, for the compliance check's TLS test |
 | `/etc/systemd/system/suds.service.d/10-site.conf` | root, 0644 | The anchor mount (`RequiresMountsFor`), `ReadWritePaths=<anchors> -<offsite>` (the offsite share optional: its outage never stops SUDS), the metrics credential |
 | `/etc/caddy/Caddyfile`, `suds.env`, `suds-tls.caddy` | root, 0644 | The repository's Caddyfile and its site values; TLS 1.2+. Replaced by every upgrade: do not edit it (below) |
 | `/etc/caddy/Caddyfile.d/*.caddy` | root, 0644 (directory 0755) | Site-local Caddy configuration, imported at the end of the Caddyfile; never changed by an upgrade. `www-redirect.caddy` with `--www-redirect` |
 | `/etc/systemd/journald.conf.d/suds.conf` | root, 0644 | Persistent journal, `MaxRetentionSec`, `SystemMaxUse` (`--journal-max-use`, default 8G) |
 | `/etc/systemd/timesyncd.conf.d/suds.conf`, `/etc/chrony/sources.d/suds.sources`, `/etc/chrony.d/suds.conf` | root, 0644 | `--ntp-server`: the county time source (chrony is kept where installed) |
+
+## SSH over IPv6 (`--admin-cidr6`, from 1.25.4)
+
+`--admin-cidr` is the network SSH is allowed from; `--admin-cidr6=<IPv6 network>` allows SSH from an IPv6 network as
+well (`2001:db8:1::/48`, or `::/0` for any IPv6 address: prefer your own network). It is written to
+`/etc/suds/suds-server.conf` (`SUDS_ADMIN_CIDR6`), so a re-run without it keeps it; a re-run with another network
+replaces the old rule, and `--admin-cidr6=none` removes it. As with `--admin-cidr`, every stale SSH rule (the image's
+`OpenSSH`/`22`, the previous networks) is deleted *before* the new rules are added: ufw stores `::/0` as
+`22/tcp (v6) ALLOW Anywhere (v6)`, which `ufw delete allow 22/tcp` would remove if it ran after. The firewall section
+names both networks, the rules in force are printed at the end, and a warning says so if no rule then allows SSH over
+IPv6. The lock-out check accepts an IPv6 SSH session only with `--admin-cidr6=::/0`; inside a narrower IPv6 network it
+cannot compare the address, and refuses unless you pass `--console-access`.
+
+**Before 1.25.4** the installer had no IPv6 option, and a re-run deleted an IPv6 SSH rule added by hand (the plain
+`22/tcp` rule went with the image's open ones). On a host where such a rule was added (suds.systems, on launch day),
+pass `--admin-cidr6` with that network the next time `install.sh` runs; `upgrade.sh` does not touch the firewall.
 
 ## Site-local Caddy configuration
 

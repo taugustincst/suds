@@ -278,24 +278,28 @@ test('install.sh run again: idempotent — keys kept, first install date kept, o
 
 /**
  * A ufw that keeps its rules (in <host>/ufw-rules.json) and deletes the way the real one does: a rule is stored by
- * protocol, source and port, and a source of 0.0.0.0/0 or ::/0 is stored as Anywhere, so `ufw delete allow 22/tcp`
- * removes `allow proto tcp from 0.0.0.0/0 to any port 22` (the 1.25.1 launch: HANDOFF 2026-10-08, finding 1).
- * Commands are logged like the other stubs'.
+ * protocol, source and port, and a source of 0.0.0.0/0 or ::/0 is stored as Anywhere or Anywhere (v6), so
+ * `ufw delete allow 22/tcp` removes `allow proto tcp from 0.0.0.0/0 to any port 22` (the 1.25.1 launch: HANDOFF
+ * 2026-10-08, finding 1) and `... from ::/0 ...` too (1.25.4, G10). A rule with no source is one for each family, as
+ * `ufw status` lists it. Commands are logged like the other stubs'.
  */
+// A Lightsail Ubuntu image's own open SSH rules, and the web ports the installer opens, as `ufw status` lists them.
+const IMAGE_RULES = ['22', 'OpenSSH'].flatMap((port) => [{ port, from: 'Anywhere' }, { port, from: 'Anywhere (v6)' }]);
+const OPEN_443_80 = ['443/tcp', '80/tcp'].flatMap((port) => [{ port, from: 'Anywhere' }, { port, from: 'Anywhere (v6)' }]);
 function statefulUfw(h, rules = []) {
   const file = path.join(h.dir, 'ufw-rules.json'); fs.writeFileSync(file, JSON.stringify(rules));
   js(path.join(h.bin, 'ufw'), `const fs = require('fs'); const a = process.argv.slice(2);
     fs.appendFileSync(${JSON.stringify(h.log)}, 'ufw ' + a.join(' ') + '\\n');
     const file = ${JSON.stringify(file)}; let rules = JSON.parse(fs.readFileSync(file, 'utf8'));
-    const any = (s) => (!s || s === 'any' || s === '0.0.0.0/0' || s === '::/0' ? 'Anywhere' : s);
+    const froms = (s) => (!s || s === 'any' ? ['Anywhere', 'Anywhere (v6)'] : [s === '0.0.0.0/0' ? 'Anywhere' : s === '::/0' ? 'Anywhere (v6)' : s]);
     const parse = (w) => { const c = w.indexOf('comment'); if (c >= 0) w = w.slice(0, c);
-      if (w[0] === 'proto') { const g = (k) => w[w.indexOf(k) + 1]; return { port: g('port') + '/' + g('proto'), from: any(g('from')) }; }
+      if (w[0] === 'proto') { const g = (k) => w[w.indexOf(k) + 1]; return froms(g('from')).map((from) => ({ port: g('port') + '/' + g('proto'), from })); }
       if (w.length !== 1) process.exit(2);
-      return { port: w[0] === 'OpenSSH' ? 'OpenSSH' : w[0], from: 'Anywhere' }; };
+      return froms().map((from) => ({ port: w[0], from })); };
     const same = (x, y) => x.port === y.port && x.from === y.from;
-    if (a[0] === 'allow') { const r = parse(a.slice(1)); if (!rules.some((x) => same(x, r))) rules.push(r); }
-    else if (a[0] === 'delete' && a[1] === 'allow') { const r = parse(a.slice(2)); const n = rules.length; rules = rules.filter((x) => !same(x, r)); if (rules.length === n) { console.error('Could not delete non-existent rule'); process.exit(1); } }
-    else if (a[0] === 'status') { console.log('Status: active\\n\\nTo                         Action      From\\n--                         ------      ----'); for (const r of rules) console.log(r.port.padEnd(27) + 'ALLOW       ' + r.from); process.exit(0); }
+    if (a[0] === 'allow') { for (const r of parse(a.slice(1))) if (!rules.some((x) => same(x, r))) rules.push(r); }
+    else if (a[0] === 'delete' && a[1] === 'allow') { const del = parse(a.slice(2)); const n = rules.length; rules = rules.filter((x) => !del.some((r) => same(x, r))); if (rules.length === n) { console.error('Could not delete non-existent rule'); process.exit(1); } }
+    else if (a[0] === 'status') { console.log('Status: active\\n\\nTo                         Action      From\\n--                         ------      ----'); for (const r of rules) console.log((r.port + (r.from === 'Anywhere (v6)' ? ' (v6)' : '')).padEnd(27) + 'ALLOW       ' + r.from); process.exit(0); }
     fs.writeFileSync(file, JSON.stringify(rules));`);
   return () => JSON.parse(fs.readFileSync(file, 'utf8'));
 }
@@ -303,10 +307,10 @@ function statefulUfw(h, rules = []) {
 test('install.sh for real with --admin-cidr=0.0.0.0/0: the SSH rule it adds is still there at the end (1.25.1 deleted it), and the rules are shown', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
   const h = host(); const t = tree(VERSION);
   // A cloud image's own open rules, as Lightsail's Ubuntu has them.
-  const rules = statefulUfw(h, [{ port: '22', from: 'Anywhere' }, { port: 'OpenSSH', from: 'Anywhere' }]);
+  const rules = statefulUfw(h, IMAGE_RULES);
   const r = run(h, 'install.sh', t, INSTALL.map((a) => (a.startsWith('--admin-cidr') ? '--admin-cidr=0.0.0.0/0' : a)), { HARNESS_HEALTHY: VERSION });
   assert.equal(r.code, 0, r.all);
-  assert.deepEqual(rules(), [{ port: '22/tcp', from: 'Anywhere' }, { port: '443/tcp', from: 'Anywhere' }, { port: '80/tcp', from: 'Anywhere' }], 'SSH stays allowed: the stale rules went first');
+  assert.deepEqual(rules(), [{ port: '22/tcp', from: 'Anywhere' }, ...OPEN_443_80], 'SSH stays allowed: the stale rules went first');
   const cmds = h.commands();
   assert.ok(cmds.lastIndexOf('ufw delete allow') < cmds.indexOf('ufw allow proto tcp from 0.0.0.0/0 to any port 22'), 'every delete comes before the admin rule');
   assert.match(r.out, /== Firewall rules in force ==\n(?:.*\n)*? {2}22\/tcp +ALLOW +Anywhere\n/, 'the final rules are printed');
@@ -314,7 +318,36 @@ test('install.sh for real with --admin-cidr=0.0.0.0/0: the SSH rule it adds is s
   assert.doesNotMatch(r.err, /NO FIREWALL RULE ALLOWS SSH/);
   // And ::/0 the same way, run again over the first install (the previous 0.0.0.0/0 rule is replaced, not kept).
   const v6 = run(h, 'install.sh', t, INSTALL.map((a) => (a.startsWith('--admin-cidr') ? '--admin-cidr=::/0' : a)), { HARNESS_HEALTHY: VERSION });
-  assert.ok(rules().some((x) => x.port === '22/tcp'), `IPv6 anywhere keeps its SSH rule too:\n${v6.all}`);
+  assert.ok(rules().some((x) => x.port === '22/tcp' && x.from === 'Anywhere (v6)'), `IPv6 anywhere keeps its SSH rule too:\n${v6.all}`);
+});
+
+test('install.sh for real with --admin-cidr6=::/0 (1.25.4, G10): SSH on IPv4 and IPv6 at the end, and still after every re-run', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  const h = host(); const t = tree(VERSION);
+  const rules = statefulUfw(h, IMAGE_RULES);
+  const args = (...extra) => [...INSTALL.map((a) => (a.startsWith('--admin-cidr') ? '--admin-cidr=203.0.113.10/32' : a)), ...extra];
+  const v4 = { port: '22/tcp', from: '203.0.113.10/32' }; const v6 = { port: '22/tcp', from: 'Anywhere (v6)' };
+  const ssh = () => rules().filter((x) => /^(22|OpenSSH)/.test(x.port));
+  const conf = () => fs.readFileSync(path.join(h.root, 'etc/suds/suds-server.conf'), 'utf8');
+  let r = run(h, 'install.sh', t, args('--admin-cidr6=::/0'), { HARNESS_HEALTHY: VERSION });
+  assert.equal(r.code, 0, r.all);
+  assert.deepEqual(ssh(), [v4, v6], 'the image\'s open rules are gone; SSH from the IPv4 network and from any IPv6 address');
+  assert.deepEqual(rules().filter((x) => !/^(22|OpenSSH)/.test(x.port)), OPEN_443_80);
+  assert.match(conf(), /^SUDS_ADMIN_CIDR6=::\/0$/m);
+  assert.match(r.out, /== Firewall rules in force ==\n(?:.*\n)*? {2}22\/tcp \(v6\) +ALLOW +Anywhere \(v6\)\n/, 'the IPv6 rule is printed with the rules in force');
+  assert.doesNotMatch(r.err, /NO FIREWALL RULE ALLOWS SSH/);
+  // A re-run with the same option, and one without it (kept from the settings): the rule survives both.
+  for (const extra of [['--admin-cidr6=::/0'], []]) {
+    r = run(h, 'install.sh', t, args(...extra), { HARNESS_HEALTHY: VERSION });
+    assert.equal(r.code, 0, r.all);
+    assert.deepEqual(ssh(), [v4, v6], `re-run ${extra.join(' ') || 'without --admin-cidr6'}: SSH on IPv6 is still allowed`);
+  }
+  // Another IPv6 network replaces it; none removes it.
+  r = run(h, 'install.sh', t, args('--admin-cidr6=2001:db8:10::/48'), { HARNESS_HEALTHY: VERSION });
+  assert.equal(r.code, 0, r.all);
+  assert.deepEqual(ssh(), [v4, { port: '22/tcp', from: '2001:db8:10::/48' }]);
+  r = run(h, 'install.sh', t, args('--admin-cidr6=none'), { HARNESS_HEALTHY: VERSION });
+  assert.equal(r.code, 0, r.all);
+  assert.deepEqual(ssh(), [v4]); assert.match(conf(), /^SUDS_ADMIN_CIDR6=$/m);
 });
 
 test('install.sh for real: when no rule allows SSH at the end, it says so loudly, with the command that fixes it', { skip: !canRun && 'xz, unzip or tar missing' }, () => {

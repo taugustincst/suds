@@ -22,7 +22,7 @@ const work = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-fleet-'));
 after(() => fs.rmSync(work, { recursive: true, force: true }));
 
 const UFW_V4 = '22/tcp                     ALLOW       203.0.113.10/32            # SUDS Server: SSH from the administration network';
-const UFW_V6 = '22/tcp                     ALLOW       2001:db8:10::/48           # SUDS fleet: SSH from the IPv6 administration network';
+const UFW_V6 = '22/tcp                     ALLOW       2001:db8:10::/48           # SUDS Server: SSH from the IPv6 administration network';
 const UFW = (lines) => ['Status: active', '', 'To                         Action      From', '--                         ------      ----',
   ...lines, '443/tcp                    ALLOW       Anywhere', '80/tcp                     ALLOW       Anywhere', '443/tcp (v6)               ALLOW       Anywhere (v6)', '80/tcp (v6)                ALLOW       Anywhere (v6)'].join('\n');
 
@@ -101,8 +101,8 @@ function fixture({ www = 'yes', data = 64, homeMode = 0o700 } = {}) {
   const home = path.join(dir, 'home'); const bin = path.join(dir, 'bin'); const state = path.join(dir, 'state'); const box = path.join(dir, 'box');
   for (const d of [home, bin, state, path.join(box, 'etc/suds/credentials'), path.join(box, 'etc/suds-luks')]) fs.mkdirSync(d, { recursive: true, mode: 0o700 });
   for (const d of ['tenants', 'keys', 'credentials', 'releases']) fs.mkdirSync(path.join(home, d), { mode: 0o700 });
-  const zip = Buffer.from('a stand-in for suds-v1.25.3.zip\n');
-  fs.writeFileSync(path.join(home, 'releases/suds-v1.25.3.zip'), zip);
+  const zip = Buffer.from('a stand-in for suds-v1.25.4.zip\n');
+  fs.writeFileSync(path.join(home, 'releases/suds-v1.25.4.zip'), zip);
   fs.writeFileSync(path.join(home, 'keys/suds-fleet.pem'), 'not a real key\n', { mode: 0o600 });
   fs.writeFileSync(path.join(home, 'credentials/porkbun.env'), `PORKBUN_API_KEY=pk1_testkey\nPORKBUN_SECRET_API_KEY=${SECRET}\n`, { mode: 0o600 });
   for (const k of ['suds_encryption_key', 'suds_index_key', 'suds_backup_key', 'suds_signing_key']) fs.writeFileSync(path.join(box, 'etc/suds/credentials', k), `${k}-value\n`);
@@ -110,8 +110,8 @@ function fixture({ www = 'yes', data = 64, homeMode = 0o700 } = {}) {
   const envFile = path.join(home, 'tenants/drill.env');
   fs.writeFileSync(envFile, [
     'TENANT_SLUG=drill', `WWW_REDIRECT=${www}`, 'ADMIN_CIDR=203.0.113.10/32', 'ADMIN_CIDR6=2001:db8:10::/48', 'REGION=us-west-2',
-    'AVAILABILITY_ZONE=us-west-2a', 'LIGHTSAIL_BUNDLE=medium_3_0', 'LIGHTSAIL_KEY_PAIR=suds-fleet', 'SUDS_VERSION=1.25.3',
-    `RELEASE_SHA256=${sha256(zip)}`, 'RELEASE_ZIP=releases/suds-v1.25.3.zip', `DATA_DISK_GB=${data}  # the LUKS volume`,
+    'AVAILABILITY_ZONE=us-west-2a', 'LIGHTSAIL_BUNDLE=medium_3_0', 'LIGHTSAIL_KEY_PAIR=suds-fleet', 'SUDS_VERSION=1.25.4',
+    `RELEASE_SHA256=${sha256(zip)}`, 'RELEASE_ZIP=releases/suds-v1.25.4.zip', `DATA_DISK_GB=${data}  # the LUKS volume`,
     'SSH_KEY_FILE=keys/suds-fleet.pem', 'PORKBUN_CREDENTIALS=credentials/porkbun.env', `ESCROW_GPG_RECIPIENT=${FPR.toLowerCase()}`, ''].join('\n'));
   for (const [name, body] of Object.entries(STUBS)) fs.writeFileSync(path.join(bin, name), `#!/bin/bash\n${body.replaceAll('\\${', '${')}\n`, { mode: 0o755 });
   fs.chmodSync(home, homeMode);
@@ -122,7 +122,7 @@ function fixture({ www = 'yes', data = 64, homeMode = 0o700 } = {}) {
 function run(fx, script, args, env = {}, input = '') {
   const e = {
     ...process.env, PATH: `${path.join(fx.dir, 'bin')}:${process.env.PATH}`, FLEET_HOME: fx.home, FLEET_POLL_SECONDS: '0', FLEET_POLL_TRIES: '3', FLEET_OPERATOR: 'tester',
-    FAKE_LOG: fx.log, FAKE_PB: fx.pb, FAKE_STATE: fx.state, FAKE_BOX: fx.box, FAKE_VERSION: '1.25.3', FAKE_UFW: UFW([UFW_V4, UFW_V6]), FAKE_LSBLK: 'suds-data crypt\\nnvme1n1 disk', ...env,
+    FAKE_LOG: fx.log, FAKE_PB: fx.pb, FAKE_STATE: fx.state, FAKE_BOX: fx.box, FAKE_VERSION: '1.25.4', FAKE_UFW: UFW([UFW_V4, UFW_V6]), FAKE_LSBLK: 'suds-data crypt\\nnvme1n1 disk', ...env,
   };
   const r = spawnSync('bash', [path.join(FLEET, script), ...args], { env: e, encoding: 'utf8', input, timeout: 60000 });
   return { code: r.status, out: r.stdout, err: r.stderr, all: r.stdout + r.stderr };
@@ -173,11 +173,12 @@ test('the dry run prints the plan and every command, and calls nothing', () => {
     'create-disk --disk-name suds-drill-anchors --availability-zone us-west-2a --size-in-gb 8', 'attach-disk --disk-name suds-drill-anchors --instance-name suds-drill --disk-path /dev/xvdh',
     'put-instance-public-ports --instance-name suds-drill --port-infos fromPort=22\\,toPort=22\\,protocol=tcp\\,cidrs=203.0.113.10/32\\,ipv6Cidrs=2001:db8:10::/48',
     'https://api.porkbun.com/api/json/v3/dns/create/suds.systems', '"name":"drill"', '"name":"www.drill"', 'https://dns.google/resolve?name=drill.suds.systems&type=A',
-    'prepare-host.sh 64 32 8', 'install.sh --domain=drill.suds.systems --admin-cidr=203.0.113.10/32 --offsite=/mnt/suds-offsite --anchors=/mnt/suds-anchors --tls=caddy --version=1.25.3',
-    `--release-sha256=${sha256(Buffer.from('a stand-in for suds-v1.25.3.zip\n'))} --www-redirect`, 'ufw allow proto tcp from 2001:db8:10::/48 to any port 22',
+    'prepare-host.sh 64 32 8', 'install.sh --domain=drill.suds.systems --admin-cidr=203.0.113.10/32 --admin-cidr6=2001:db8:10::/48 --offsite=/mnt/suds-offsite --anchors=/mnt/suds-anchors --tls=caddy --version=1.25.4',
+    `--release-sha256=${sha256(Buffer.from('a stand-in for suds-v1.25.4.zip\n'))} --www-redirect`,
     '+ assert: a NEW SSH connection succeeds after the install session closed', '+ assert: ufw allows SSH (22) on IPv4 and on IPv6', '+ assert: /var/lib/suds is on an encrypted (LUKS/dm-crypt) volume',
     `--recipient ${FPR}`, 'sign in as "guest"', '/var/lib/suds/first-admin-password.txt']) assert.ok(r.out.includes(s), `the plan shows: ${s}`);
   assert.ok(!r.all.includes(SECRET), 'the Porkbun secret is never printed');
+  assert.ok(!r.out.includes('ufw allow proto'), 'no SSH rule added beside install.sh: it takes --admin-cidr6 itself (1.25.4, G10)');
   const steps = [...r.out.matchAll(/^== (\d+)\. /gm)].map((m) => Number(m[1]));
   assert.deepEqual(steps, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 });
@@ -190,7 +191,7 @@ test('--apply runs the steps in order, passes every assert, escrows the keys and
   order(calls, 'gpg --batch --list-keys', 'lightsail create-instances', 'instance.state.name', 'allocate-static-ip', 'attach-static-ip', 'staticIp.ipAddress',
     'create-disk --disk-name suds-drill-data', 'attach-disk --disk-name suds-drill-data', 'create-disk --disk-name suds-drill-anchors', 'attach-disk --disk-name suds-drill-anchors',
     'put-instance-public-ports', 'get-instance-port-states', 'retrieveByNameType/suds.systems/A/drill', 'dns/create/suds.systems', 'dns.google/resolve?name=drill.suds.systems',
-    'dns.google/resolve?name=www.drill.suds.systems', 'ssh echo suds-fleet-ssh-ok', 'scp', 'sha256sum -c', 'prepare-host.sh 64 32 8', 'deploy/linux/install.sh', 'ufw allow proto tcp from 2001:db8:10::/48',
+    'dns.google/resolve?name=www.drill.suds.systems', 'ssh echo suds-fleet-ssh-ok', 'scp', 'sha256sum -c', 'prepare-host.sh 64 32 8', 'deploy/linux/install.sh --domain=drill.suds.systems --admin-cidr=203.0.113.10/32 --admin-cidr6=2001:db8:10::/48',
     'ssh echo suds-fleet-ssh-ok', 'ufw status', 'systemctl is-active suds caddy', 'curl -sS -o /dev/null', 'version.json', 'findmnt', 'www-redirect.caddy', 'https://www.drill.suds.systems/',
     'find /etc/suds/credentials');
   // The copy streams from ssh into gpg (a pipe: the two start together), after the key count.
@@ -204,7 +205,7 @@ test('--apply runs the steps in order, passes every assert, escrows the keys and
   const enc = fs.readFileSync(path.join(fx.home, file));
   assert.ok(enc.subarray(0, 9).toString() === 'FAKEGPG1\n', 'encrypted (by the gpg stub) for the owner');
   assert.match(rec, new RegExp(`^ESCROW_SHA256=${sha256(enc)}$`, 'm'));
-  for (const l of ['STATUS=active', 'STATIC_IP=203.0.113.50', 'INSTANCE_NAME=suds-drill', 'TENANT_DOMAIN=drill.suds.systems', 'SUDS_VERSION=1.25.3', 'LUKS=yes', 'DEMO_ONLY=no', 'BAA_STATUS=', 'QSOA_STATUS=']) assert.match(rec, new RegExp(`^${l}`, 'm'));
+  for (const l of ['STATUS=active', 'STATIC_IP=203.0.113.50', 'INSTANCE_NAME=suds-drill', 'TENANT_DOMAIN=drill.suds.systems', 'SUDS_VERSION=1.25.4', 'LUKS=yes', 'DEMO_ONLY=no', 'BAA_STATUS=', 'QSOA_STATUS=']) assert.match(rec, new RegExp(`^${l}`, 'm'));
   const access = fs.readFileSync(path.join(fx.home, 'escrow/access.log'), 'utf8');
   assert.match(access, new RegExp(`^\\S+Z by=tester@\\S+ put slug=drill file=${file} sha256=${sha256(enc)} keys=4 prev=0{64}$`, 'm'));
   assert.equal(fs.statSync(path.join(fx.home, file)).mode & 0o777, 0o400);
@@ -219,9 +220,9 @@ test('--apply runs the steps in order, passes every assert, escrows the keys and
   assert.equal(fx.calls().filter((c) => c.includes('dns/create/')).length, 2, 'the records are edited, not created again');
   assert.equal(run(fx, 'escrow.sh', ['verify']).code, 0);
   // Another version in the settings file is an upgrade: refused, it goes through upgrade.sh.
-  fs.writeFileSync(fx.envFile, fs.readFileSync(fx.envFile, 'utf8').replace('SUDS_VERSION=1.25.3', 'SUDS_VERSION=1.25.4'));
+  fs.writeFileSync(fx.envFile, fs.readFileSync(fx.envFile, 'utf8').replace('SUDS_VERSION=1.25.4', 'SUDS_VERSION=1.25.5'));
   const up = provision(fx);
-  assert.equal(up.code, 1); assert.match(up.err, /drill runs 1\.25\.3 \(its record\) and SUDS_VERSION is 1\.25\.4: upgrade with deploy\/linux\/upgrade\.sh/);
+  assert.equal(up.code, 1); assert.match(up.err, /drill runs 1\.25\.4 \(its record\) and SUDS_VERSION is 1\.25\.5: upgrade with deploy\/linux\/upgrade\.sh/);
 });
 
 for (const [name, env, args, msg] of [
@@ -229,7 +230,7 @@ for (const [name, env, args, msg] of [
   ['no IPv4 SSH rule in ufw', { FAKE_UFW: UFW([UFW_V6]) }, [], /ufw allows SSH \(22\) on IPv4 and on IPv6: IPv4/],
   ['a new SSH connection fails after the install session closed', { FAKE_FRESH_SSH_FAIL: '1' }, [], /a NEW SSH connection succeeds after the install session closed/],
   ['the data directory is not on an encrypted volume', { FAKE_LSBLK: 'nvme0n1p1 part\\nnvme0n1 disk' }, [], /\/var\/lib\/suds is on an encrypted/],
-  ['the site serves another version', { FAKE_VERSION: '1.25.2' }, [], /version\.json is 1\.25\.3/],
+  ['the site serves another version', { FAKE_VERSION: '1.25.2' }, [], /version\.json is 1\.25\.4/],
   ['caddy is not active', { FAKE_CADDY: 'failed' }, [], /systemctl is-active suds caddy/],
 ]) {
   test(`a post-install assert fails the run: ${name}`, () => {
@@ -270,7 +271,7 @@ test('refusals: FLEET_HOME inside the repository, world-readable, a settings fil
   assert.equal(r.code, 1); assert.match(r.err, /inside this repository's working tree/);
   r = provision(fx, ['--apply'], { FAKE_NO_ESCROW_KEY: '1' });
   assert.equal(r.code, 1); assert.match(r.err, /no escrow, no go-live/);
-  fs.appendFileSync(path.join(fx.home, 'releases/suds-v1.25.3.zip'), 'tampered');
+  fs.appendFileSync(path.join(fx.home, 'releases/suds-v1.25.4.zip'), 'tampered');
   r = provision(fx);
   assert.equal(r.code, 1); assert.match(r.err, /SHA-256 is not RELEASE_SHA256/);
   assert.ok(!fx.calls().some((c) => c.startsWith('aws') || c.startsWith('curl')), 'refused before any infrastructure call');
@@ -280,6 +281,12 @@ test('refusals: FLEET_HOME inside the repository, world-readable, a settings fil
   fs.writeFileSync(fx.envFile, fs.readFileSync(fx.envFile, 'utf8').replace('ADMIN_CIDR6=2001:db8:10::/48\n', ''));
   r = provision(fx, []);
   assert.equal(r.code, 1); assert.match(r.err, /ADMIN_CIDR6 must be an IPv6 network/);
+  // A release before 1.25.4 has no install.sh --admin-cidr6: refused before anything runs.
+  const old = fixture();
+  fs.writeFileSync(old.envFile, fs.readFileSync(old.envFile, 'utf8').replace('SUDS_VERSION=1.25.4', 'SUDS_VERSION=1.25.3'));
+  r = provision(old, []);
+  assert.equal(r.code, 1); assert.match(r.err, /SUDS_VERSION must be 1\.25\.4 or later/);
+  assert.deepEqual(old.calls(), []);
 });
 
 test('escrow.sh open logs who, when and why before decrypting, and every failure', () => {

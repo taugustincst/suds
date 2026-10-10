@@ -10,6 +10,13 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   office has not confirmed waits in that browser under the account (`suds.prefs.pending`, UI state, never PHI); the next
   load lays it over the office's older copy and sends it, as does the first answer from the office after no signal.
   "Same as last contact" no longer offers the bundle before one entered offline (`scripts/ui/offline-outreach.mjs` 4b).
+- **SUDS Server's installer takes `--admin-cidr6` (G10).** `deploy/linux/install.sh --admin-cidr6=<IPv6 network>` (or
+  `::/0`) allows SSH over IPv6 as well; it is kept in `suds-server.conf`, so a re-run without it keeps the rule, another
+  network replaces it and `none` removes it. Stale SSH rules are still deleted before any is added, so `::/0` survives a
+  re-run (before, a re-run deleted an IPv6 SSH rule added by hand). The firewall summary names both networks and warns
+  when no rule allows SSH over IPv6. The lock-out check accepts an IPv6 session with `::/0`. The fleet tooling passes
+  `--admin-cidr6` instead of adding the rule itself, and so needs `SUDS_VERSION` 1.25.4 or later. Tested with the ufw
+  stub (`test/deploy-linux-real.test.js`: an install with `--admin-cidr6=::/0` and each re-run end with the IPv6 SSH rule).
 
 ### Added
 

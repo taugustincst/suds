@@ -108,13 +108,11 @@ box "echo '$RELEASE_SHA256  $W/suds-v$SUDS_VERSION.zip' | sha256sum -c --quiet"
 box "sudo bash $W/prepare-host.sh $DATA_DISK_GB $OFFSITE_DISK_GB $ANCHORS_DISK_GB"
 
 step "7. SUDS Server $SUDS_VERSION with deploy/linux/install.sh (unchanged)"
-iargs="--domain=$TENANT_DOMAIN --admin-cidr=$ADMIN_CIDR --offsite=/mnt/suds-offsite --anchors=/mnt/suds-anchors --tls=caddy --version=$SUDS_VERSION --source=$W/suds-v$SUDS_VERSION.zip --release-sha256=$RELEASE_SHA256"
+iargs="--domain=$TENANT_DOMAIN --admin-cidr=$ADMIN_CIDR --admin-cidr6=$ADMIN_CIDR6 --offsite=/mnt/suds-offsite --anchors=/mnt/suds-anchors --tls=caddy --version=$SUDS_VERSION --source=$W/suds-v$SUDS_VERSION.zip --release-sha256=$RELEASE_SHA256"
 [[ -z "$ACME_EMAIL" ]] || iargs+=" --acme-email=$ACME_EMAIL"
 [[ $WWW_REDIRECT == no ]] || iargs+=" --www-redirect"
 (( DEMO && DATA_DISK_GB == 0 )) && iargs+=" '--accept-unencrypted-disk=demo-only tenant, no real data (fleet --allow-unencrypted-demo)'"
 box "cd $W && rm -rf src && mkdir src && unzip -q suds-v$SUDS_VERSION.zip -d src && sudo bash src/suds-v$SUDS_VERSION/deploy/linux/install.sh $iargs"
-# install.sh takes one --admin-cidr (IPv4); the IPv6 administration network is added beside it.
-box "sudo ufw allow proto tcp from $ADMIN_CIDR6 to any port 22 comment 'SUDS fleet: SSH from the IPv6 administration network'"
 
 step "8. Post-install asserts (any failure fails the run)"
 A=('a NEW SSH connection succeeds after the install session closed' 'ufw allows SSH (22) on IPv4 and on IPv6' 'systemctl is-active suds caddy'
