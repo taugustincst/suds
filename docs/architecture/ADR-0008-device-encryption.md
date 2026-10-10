@@ -177,6 +177,10 @@ does not store is the password its people type.
   refused whole (400, nothing changes). One that opens is restored as a backup is: its wraps carried by
   `vault.backupRecord`, so its accounts sign in with the passwords they had and the device moves to a key of its own
   at the first sign-in; the audit entry says `from: damaged_copy`.
+  The WebKit runs that failed this way are each in [docs/RELEASE.md](../RELEASE.md)'s flake register (one of them on
+  app code identical to 1.25.3). Whether these engine errors happen on iOS Safari, and not only in Playwright's
+  WebKit on Linux, is not yet established: the real-iPhone record of [docs/ADOPTION.md](../ADOPTION.md) §4
+  ([checklist](../evidence/REAL-DEVICE-CHECK-TEMPLATE.md)) is owed.
 - While someone is signed in, the database and its key are in the page's memory, as any running app's are.
 - A page load always needs a sign-in, including the reload after a new release and "Use SUDS in this window".
 - Holding the store is now callback-free for image saves. Before this, an ordinary save issued its put from the

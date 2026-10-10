@@ -90,6 +90,7 @@ and that was never published.)
 | [upgrade-drill-2026-09-30/](upgrade-drill-2026-09-30/README.md) | Upgrade drill to 1.19.0: databases written by 1.16.2 and by 1.18.0 (each with 20,000 fictional clients, a signed and countersigned note and a TOTP user), opened by 1.19.0 (migrations 49–59, and 58–59): schema identical to a fresh install, no rows lost, every sampled value decrypts, the note and the audit chain verify; then backed up and drilled, 11 of 11 each. Transcripts, summaries, signed reports and public keys | As above, per folder |
 | [installer-container-run-2026-09-30/](installer-container-run-2026-09-30/README.md) | `deploy/linux/install.sh`, and `upgrade.sh` from 1.18.0 to 1.19.0, run for real on Ubuntu 24.04 with systemd, **in a container, not a VM**; a drill on the installed server; the signed compliance reports. RHEL 9 could not be run. Four findings for the owner, all fixed in 1.20.0 (verified by the 1.20.0 run) | `npm run verify-compliance-report -- <report>.json --public-key <its folder>/compliance-signing-key.pub.pem` |
 | [INSTALLER-VM-RUN.md](INSTALLER-VM-RUN.md) | **Owner-pending.** The runbook for the installer run on fresh Ubuntu 24.04 and RHEL 9 VMs: commands, expected output, the compliance report to collect, what to commit back | — |
+| [REAL-DEVICE-CHECK-TEMPLATE.md](REAL-DEVICE-CHECK-TEMPLATE.md) | **Owner-pending.** The checklist for the real-device run of SUDS on this device on two iPhones that [../ADOPTION.md](../ADOPTION.md) §4 asks for before a release goes beyond a pilot: each step, the device, iOS and Safari versions, who ran it (by role) and where the screenshots are kept. None is recorded yet | Each completed copy is stored beside it, named by date and release |
 | [dr-drill-2026-09-29.md](dr-drill-2026-09-29.md) and [its folder](dr-drill-2026-09-29/) | Recovery drill on the released 1.16.2 at 20,000 fictional clients: 11 of 11 checks, drill RTO 3.8 s. A signed JSON report, the text report and the public key | `npm run verify-dr-report -- dr-drill-2026-09-29/<report>.json --public-key dr-drill-2026-09-29/suds-signing-key.pem` |
 | [dr-drill-2026-09-25.md](dr-drill-2026-09-25.md) and [its folder](dr-drill-2026-09-25/) | The earlier drill (1.11.0 branch, schema 37) | As above |
 
@@ -108,15 +109,26 @@ and that was never published.)
 The 1.25.3 recovery drill, upgrade drill and container installer run above were regenerated in the development
 sandbox on 2026-10-09 and 2026-10-10. These could not be, and why:
 
-- **The real-VM install of suds.systems (1.25.1, Ubuntu 24.04 on AWS Lightsail, 2026-10-08).** Its install output, its
-  compliance report (39 pass, 0 fail, 7 warnings), its first recovery drill and the live test are reported in the
-  project's prose (the test's summary is stored: [pentest-suds-systems-2026-10-08.md](pentest-suds-systems-2026-10-08.md)),
-  but no signed report from that server is in this folder. They can only be copied off the server by its operator:
-  the sandbox cannot reach suds.systems (its outbound proxy refuses the host) and has no shell on it. To add:
-  `/var/lib/suds-compliance/compliance-*.json` with `/etc/suds/compliance-signing-key.pub.pem`, and
-  `/var/lib/suds/backups/dr-drill-*.json` with the evidence public key (Settings → Security status), each verified with
-  `npm run verify-compliance-report` / `verify-dr-report` before committing. The server's upgrade to 1.25.3 is not
-  reported yet either.
+- **The real-VM install of suds.systems (1.25.1, Ubuntu 24.04 on AWS Lightsail, 2026-10-08) and its upgrade to 1.25.3
+  (2026-10-09).** Its install output, its compliance runs, its first recovery drill and the live test are reported in
+  the project's prose (the test's summary is stored: [pentest-suds-systems-2026-10-08.md](pentest-suds-systems-2026-10-08.md)),
+  but no signed report from that server is in this folder. The compliance runs, **as reported by the operator** (not
+  stored artefacts):
+
+  | Date | Release | Result | Fails, and their status |
+  | --- | --- | --- | --- |
+  | 2026-10-08 (launch) | 1.25.1 | 39 pass, 0 fail, 7 warnings; first backup and recovery drill passed | None. The firewall pass was taken while the 1.25.1 installer had dropped the SSH rule it had just added (fixed in 1.25.3) |
+  | 2026-10-09 (after the upgrade) | 1.25.3 | 38 pass, **2 fail**, 6 warnings, 1 could not check; two-step sign-in on 0 of 1 accounts | `host.firewall`: SSH open to `0.0.0.0/0` and `::/0`, the owner's choice, open. `app.backups`: every scheduled offsite copy was empty, the defect fixed in 1.25.4; the server's upgrade to 1.25.4 is requested and pending |
+
+  The signed compliance and recovery-drill reports from the 1.25.4 upgrade will be stored here when the operator
+  provides them. They can only be copied off the server by its operator: the sandbox cannot reach suds.systems (its
+  outbound proxy refuses the host) and has no shell on it. To add: `/var/lib/suds-compliance/compliance-*.json` with
+  `/etc/suds/compliance-signing-key.pub.pem`, and `/var/lib/suds/backups/dr-drill-*.json` with the evidence public key
+  (Settings → Security status), each verified with `npm run verify-compliance-report` / `verify-dr-report` before
+  committing.
+- **A real-iPhone run of SUDS on this device.** [ADOPTION.md](../ADOPTION.md) §4 asks for one on two iPhones before a
+  release goes beyond a pilot; none is recorded yet (CI's WebKit is Playwright's on Linux, not iOS Safari). The checklist
+  to record it with is [REAL-DEVICE-CHECK-TEMPLATE.md](REAL-DEVICE-CHECK-TEMPLATE.md).
 - **Any VM run, and RHEL 9 at all.** The sandbox has no virtualisation (no `/dev/kvm`), so the installer runs in a
   systemd container, which cannot show a LUKS volume, SSH, IPv6 firewall rules, ACME or a reboot; and its egress policy
   refuses the RHEL-family package mirrors, so the installer stops at `dnf install` on AlmaLinux 9

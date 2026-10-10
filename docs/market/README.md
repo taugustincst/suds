@@ -46,6 +46,7 @@ invents none of them.
 
 | Document | For | What it covers |
 | --- | --- | --- |
+| [BUSINESS-WORKPLAN.md](BUSINESS-WORKPLAN.md) | Owner, the owner's business assistant | The ordered owner and business actions that move market readiness (evaluation of 1.25.4): what exists, each **DECISION FOR TJ**, the steps, who to send what to, when it is done and where the result is recorded |
 | [STRATEGY.md](STRATEGY.md) | Owner, partners, sponsors | The 1.17.0 go-to-market strategy: segments, wedges, sequencing (copilot first), the FDE model, built vs planned, risks, metrics |
 | [PRICING-OPTIONS.md](PRICING-OPTIONS.md) | Owner | Pricing models to decide between (per active user, per organisation, county site licence, FDE services, support tiers), with a worksheet; nothing decided |
 | [DATA-NETWORK.md](DATA-NETWORK.md) | Owner, counsel, county privacy | The outcomes dataset and referral network as moats: a design (Tier 1, the county view, released in 1.18.0; the rest not built) with the HIPAA, Part 2 and California analysis and what counsel must review |
@@ -67,6 +68,13 @@ invents none of them.
 | [templates/PRICING.md](templates/PRICING.md) | Buyers, vendor | Free evaluation; production licence (price to decide); paid services at flat annual amounts per programme (**unvalidated hypothesis**) |
 | [templates/ROI-CALCULATOR.md](templates/ROI-CALCULATOR.md) | Programme directors | Worksheet: staff time, report hours, supply waste — with measured pilot numbers only |
 | [templates/CASE-STUDY-TEMPLATE.md](templates/CASE-STUDY-TEMPLATE.md) | Vendor, reference CBOs | Structure for the first CBO case studies |
+| [templates/COUNSEL-REVIEW-BRIEF.md](templates/COUNSEL-REVIEW-BRIEF.md) | Owner, counsel | Cover brief for counsel's review of the licence and the agreement drafts: documents in priority order, the questions, what is out of scope (**draft to be completed**) |
+| [templates/PEN-TEST-RFP.md](templates/PEN-TEST-RFP.md) | Owner, testing firms | Vendor-neutral request for proposal for an independent penetration test, from the pen-test scope, with an evaluation rubric (**draft to be completed**) |
+| [templates/INSURANCE-QUOTE-BRIEF.md](templates/INSURANCE-QUOTE-BRIEF.md) | Owner, brokers | The facts an underwriter asks for cyber liability and technology E&O quotes, with evidence links and questions for brokers (**draft to be completed**) |
+| [templates/CALOMS-CONFIRMATION-REQUEST.md](templates/CALOMS-CONFIRMATION-REQUEST.md) | Owner, county CalOMS coordinators | A request to a county to confirm the CalOMS Tx file layout SUDS produces: the open layout questions, the fictional sample, how the answer is recorded (**draft to be completed**) |
+| [templates/CODE-SIGNING-SETUP.md](templates/CODE-SIGNING-SETUP.md) | Owner | Obtaining a code-signing certificate or service, the repository secrets `release.yml` expects, verifying a signed `suds.exe` (**owner checklist**) |
+| [templates/HOSTED-OFFER-WORKSHEET.md](templates/HOSTED-OFFER-WORKSHEET.md) | Owner | Cost worksheet and pricing questions for the planned hosted offer (**inputs to be filled from real quotes**) |
+| [templates/OSF-REPORTING-ONE-PAGER.md](templates/OSF-REPORTING-ONE-PAGER.md) | Counties, CBO directors | How SUDS supports the DHCS opioid settlement expenditure report (**draft collateral; check against the current DHCS form before each cycle**) |
 
 The product documentation these point to: [README](../../README.md) · [PLATFORM](../PLATFORM.md) ·
 [INSTALL](../INSTALL.md) · [DEPLOYMENT](../DEPLOYMENT.md) · [ADOPTION](../ADOPTION.md) · [HIPAA](../HIPAA.md) ·

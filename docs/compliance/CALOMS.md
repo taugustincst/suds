@@ -3,7 +3,7 @@
 > **Status: code values VERIFIED 2026-10-05 against the DHCS *CalOMS Tx Data Dictionary*, File Version 3.0
 > (October 2024).** Every code set in `server/caloms-spec.js` now carries the dictionary's values
 > (asserted in `test/caloms-dictionary.test.js`); the verification report is
-> [docs/evidence/caloms-dictionary-verification.md](evidence/caloms-dictionary-verification.md), and the
+> [docs/evidence/caloms-dictionary-verification.md](../evidence/caloms-dictionary-verification.md), and the
 > 1.25.0 correction is described below. The dictionary copy used is the October 2024 v3.0 PDF
 > (SHA-256 recorded in the report). Two corrections to the report itself came out of the
 > PDF re-check: the report's ADM-5 referral labels were wrong (the dictionary's 14 values are now in
@@ -18,6 +18,14 @@
 > report (`provider_activity.csv`, its `NoActivity` column `Y`/`N`): the dictionary has no element for it, so
 > its format is SUDS's own and unverified. DHCS's own cross-submission edits
 > (duplicates across providers, transaction sequencing) are the county's to clear as they come back.
+>
+> **Read before a county CalOMS conversation:** DHCS's *2026 CalOMS Tx and DATAR FAQ* (September 2026 version,
+> <https://www.dhcs.ca.gov/fa/provgovpart/Documents/2026-CalOMSTxDATAR-FAQ.pdf>), DHCS's current questions and
+> answers for counties and providers, and the closest public source to the layout questions above. It has **not**
+> been read for this page (the DHCS site could not be reached from where this was written), so nothing here relies on
+> it: whoever prepares the conversation reads it first, notes the version they read, and records what it settles
+> here. The questions to put to the county, and how the answer is recorded, are in
+> [../market/templates/CALOMS-CONFIRMATION-REQUEST.md](../market/templates/CALOMS-CONFIRMATION-REQUEST.md).
 
 ## What SUDS does and does not do
 
