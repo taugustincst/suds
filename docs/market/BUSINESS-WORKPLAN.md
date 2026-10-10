@@ -28,8 +28,8 @@ with what exists, what the owner must decide, the steps, and where each result i
 | --- | --- | --- | --- | --- | --- |
 | 0 | Legal entity: which LLC is filed and licenses SUDS | Tj | Open: the LLC is not filed yet (HANDOFF 2026-10-10); `LICENSE` names AugustInnovations LLC | **DECISION FOR TJ**, then file, then EIN | None on its own; items 1, 2, 6, 7 and 8 depend on it |
 | 1 | Publish a procurement contact | Tj decides, Muse fills | Not done: the three contact fields are empty | **DECISION FOR TJ**: which role address and page | +0.25 together with item 2 |
-| 2 | Counsel review: licence, agreement, BAA/QSOA, DPA, SLA | Tj engages, Muse prepares | Drafts only, unreviewed | Brief ready: [templates/COUNSEL-REVIEW-BRIEF.md](templates/COUNSEL-REVIEW-BRIEF.md) | +0.25 together with item 1 |
-| 3 | Independent penetration test | Tj approves and pays, Muse runs the process | Not started; Muse's RFP and shortlist are unsent | **DECISION FOR TJ**: approve the send | +0.25 to +0.5 |
+| 2 | Counsel review: licence, agreement, BAA/QSOA, DPA, SLA | Tj engages, Muse prepares | Drafts only, unreviewed; owner-side v2 drafts reconciled with the repository's | Brief ready: [templates/COUNSEL-REVIEW-BRIEF.md](templates/COUNSEL-REVIEW-BRIEF.md) | +0.25 together with item 1 |
+| 3 | Independent penetration test | Tj approves and pays, Muse runs the process | Not started; Muse's RFP is send-ready (HANDOFF, later 2026-10-10) and unsent | **DECISION FOR TJ**: approve the send | +0.25 to +0.5 |
 | 4 | Code signing for the Windows server | Tj | Not done: `suds.exe` and `suds-service.exe` unsigned | **DECISION FOR TJ**: certificate or signing service | +0.1 to +0.25 (with a county-like Windows run) |
 | 5 | CalOMS layout confirmed with a county | Muse, with Tj's approval to send | Not done | Read the DHCS 2026 FAQ; send [templates/CALOMS-CONFIRMATION-REQUEST.md](templates/CALOMS-CONFIRMATION-REQUEST.md) | +0.1 to +0.25 |
 | 6 | Insurance: cyber liability and technology E&O | Tj | None | Quotes with [templates/INSURANCE-QUOTE-BRIEF.md](templates/INSURANCE-QUOTE-BRIEF.md), after item 0 | +0.1 |
@@ -44,15 +44,20 @@ with what exists, what the owner must decide, the steps, and where each result i
 2026-10-10): a pen-test RFP with a vendor shortlist and a recommended first send, a 90-day pilot agreement template, a
 BAA template, an executive one-pager, a pilot evaluation framework, a county outreach email draft and a
 business-readiness checklist. They are not duplicated here. Each is reconciled with the in-repository document it
-overlaps before either is used:
+overlaps before either is used. **Progress (HANDOFF, later on 2026-10-10):** the pen-test RFP is send-ready, and the
+pilot agreement and BAA have been reconciled into **v2 drafts** in the owner's workspace, built on this repository's
+licence and subscription agreement and BAA/QSOA templates, with the owner drafts' pilot evaluation and day-90 report,
+an honest-limits section, a 10-business-day export for a pilot that does not continue, de-identification only at
+written direction and a Part 2 non-circumvention sentence folded in, and a reconciliation memo listing the open owner
+decisions (item 2).
 
 | Muse's draft (outside the repository) | Reconcile with | Who wins where they differ |
 | --- | --- | --- |
 | Pen-test RFP and vendor shortlist | [templates/PEN-TEST-RFP.md](templates/PEN-TEST-RFP.md) and [../security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md) | Muse's RFP (with the vendor choice) is the one sent once Tj approves; the in-repository RFP is the public, vendor-neutral scope reference it must not contradict |
-| 90-day pilot agreement template | [templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md](templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md) (section 4, the pilot), [PILOT-KIT.md](PILOT-KIT.md) and the published pilot tier (`public/procurement.json`) | Counsel decides (item 2); until then, neither is offered |
-| BAA template (with its Part 2 section) | [templates/BAA-QSOA-DRAFT.md](templates/BAA-QSOA-DRAFT.md) | Counsel decides (item 2) |
+| 90-day pilot agreement template (now part of the v2 licence draft) | [templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md](templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md) (section 4, the pilot), [PILOT-KIT.md](PILOT-KIT.md) and the published pilot tier (`public/procurement.json`) | Reconciled into v2 (owner workspace). **DECISION FOR TJ:** whether the v2 changes come back into the repository template before counsel's review, or counsel reviews v2 with the memo; counsel then decides the text |
+| BAA template (with its Part 2 section; now the v2 BAA/QSOA) | [templates/BAA-QSOA-DRAFT.md](templates/BAA-QSOA-DRAFT.md) | Reconciled into v2 on the repository's structure (a BAA plus a standalone Part 2 QSOA); the same decision as the row above |
 | Executive one-pager | The short version in [README.md](README.md), [POSITIONING.md](POSITIONING.md), [BUYER-GUIDE-PROGRAM.md](BUYER-GUIDE-PROGRAM.md) | The repository's wording rules ([README.md](README.md), *Rules for anyone using this pack*) |
-| Pilot evaluation framework | [PILOT-KIT.md](PILOT-KIT.md), *Measurement plan and success metrics* and *Pilot evaluation template* | Merge into one before the first pilot |
+| Pilot evaluation framework | [PILOT-KIT.md](PILOT-KIT.md), *Measurement plan and success metrics* and *Pilot evaluation template* | Folded into the v2 licence draft (its pilot section and an exhibit); PILOT-KIT is aligned with it before the first pilot |
 | County outreach email draft | [COUNTY-KIT.md](COUNTY-KIT.md) and item 5's CalOMS request | The facts in the repository |
 | Business-readiness checklist | This page, [README.md](README.md) *Organisational gaps* and [HOSTING.md](HOSTING.md) *Before the vendor-hosted tier can be offered* | Keep one list: this page, with Muse's copy pointing here |
 
@@ -132,15 +137,20 @@ overlaps before either is used:
   [templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md](templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md);
   [templates/BAA-QSOA-DRAFT.md](templates/BAA-QSOA-DRAFT.md); [templates/DPA-DRAFT.md](templates/DPA-DRAFT.md);
   [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md); [templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md);
-  Muse's owner-side pilot agreement and BAA templates; the cover brief
-  [templates/COUNSEL-REVIEW-BRIEF.md](templates/COUNSEL-REVIEW-BRIEF.md).
+  Muse's v2 drafts of the licence agreement and BAA/QSOA (owner workspace, built on the repository templates) and
+  their reconciliation memo; the cover brief [templates/COUNSEL-REVIEW-BRIEF.md](templates/COUNSEL-REVIEW-BRIEF.md).
 - **DECISION FOR TJ.** Which counsel (a California health-privacy and technology-contracts attorney), the budget, and
   the scope: all three sets at once, or the licence and subscription agreement with its BAA/QSOA first (the minimum to
-  sign a paid pilot). Whether counsel waits for the entity (item 0) or advises on it.
+  sign a paid pilot). Whether counsel waits for the entity (item 0) or advises on it. Which text counsel reviews: the
+  repository templates or Muse's v2 drafts (the reconciliation table above). The open choices the v2 memo lists, to
+  settle with counsel's advice: the renewal model, termination for convenience, de-identified operational metrics,
+  the carve-out for reporting unsuccessful security attempts, source-code escrow (clause 14.3), venue, the business
+  address and state of formation, and the AWS region for hosted tenants.
 - **Steps (Muse).**
   1. Complete the brief's `[BRACKETS]` that are facts the owner has confirmed; leave the rest as questions.
-  2. Reconcile Muse's pilot agreement and BAA with the repository drafts (the table above) into a list of differences
-     for counsel, rather than two competing texts.
+  2. Give counsel one text per document (the v2 draft or the repository template, as Tj decides) with the
+     reconciliation memo, never two competing texts; if v2 is chosen, bring its changes into the repository template
+     after counsel's review, so the published draft and the signed form agree.
   3. Collect two or three counsel candidates with a fixed-fee or capped quote for the scope; Tj chooses.
   4. Send the brief and the documents (links to the default branch, or a zip of the commit) once Tj approves.
   5. Turn counsel's mark-ups into a change to the templates, keeping the "DRAFT" banner until counsel signs off on a
@@ -159,7 +169,8 @@ overlaps before either is used:
 - **What already exists.** [../security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md) (the scope a county or the
   vendor commissions against); [../evidence/pentest-suds-systems-2026-10-08.md](../evidence/pentest-suds-systems-2026-10-08.md)
   (the vendor's own test); the vendor-neutral RFP [templates/PEN-TEST-RFP.md](templates/PEN-TEST-RFP.md); Muse's
-  owner-side RFP with its vendor shortlist and recommended first send, ready since 2026-10-06 and **unsent**.
+  owner-side RFP with its vendor shortlist and recommended first send, ready since 2026-10-06, now **send-ready** (target
+  version, proposed response deadline and testing window filled in) and **unsent**: sending needs Tj's go.
 - **DECISION FOR TJ.** Approve sending Muse's RFP (and to which vendors), the budget, and the target environment:
   a staging copy of SUDS Server seeded with fictional data (recommended; PEN-TEST-SCOPE.md *Target*), or suds.systems
   itself (fictional data only, so acceptable, but a test there should not disturb what a county is shown).
@@ -345,14 +356,17 @@ overlaps before either is used:
   reporting maps to that form (evaluation, section 7).
 - **What already exists.** [../compliance/HARM-REDUCTION-REPORTING.md](../compliance/HARM-REDUCTION-REPORTING.md)
   sections 3–5; the draft [templates/OSF-REPORTING-ONE-PAGER.md](templates/OSF-REPORTING-ONE-PAGER.md). Muse's
-  county brochure (owner-side): its HTML was revised to 1.25.0 wording, but **the PDF was not regenerated** and must not be
-  sent as current; the six role pamphlets have **placeholders, not screenshots** (15 screens to recapture).
+  county brochure (owner-side): its PDF was regenerated from the revised HTML on 2026-10-06 (proprietary wording, the
+  four tiers, 1.25.0) and the older MIT-wording PDF is marked not to be distributed (HANDOFF, later 2026-10-10); it
+  still describes 1.25.0 while the published site serves 1.25.4. The six role pamphlets have **placeholders, not
+  screenshots** (15 screens to recapture).
 - **DECISION FOR TJ.** Approve the one-pager's wording for use; which counties to send it to, and when (ahead of the
   spring budgeting for the next cycle, not in September).
 - **Steps (Muse).**
   1. Check the one-pager against the current DHCS online form and guidance for the cycle (the form changes).
-  2. Regenerate the brochure PDF from the revised HTML; recapture the 15 pamphlet screenshots from fictional data on
-     the current release, through a capture path that returns the image files.
+  2. Bring the brochure up to the current release if Tj decides to (a version bump is an owner call); recapture the 15
+     pamphlet screenshots from fictional data on the current release, through a capture path that returns the image
+     files.
   3. Keep every claim inside what the repository documents (no time saving or outcome a pilot has not measured).
 - **Send to.** County behavioural-health and opioid-settlement coordinators, and CBO directors with settlement funds
   (by role), after Tj approves.

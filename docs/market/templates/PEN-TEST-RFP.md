@@ -3,8 +3,8 @@
 > **DRAFT — a vendor-neutral template to be completed before it is sent; it names no vendor.** Every `[BRACKET]` is for
 > the owner to fill in outside this public repository. The scope is
 > [../../security/PEN-TEST-SCOPE.md](../../security/PEN-TEST-SCOPE.md); this RFP must not contradict it. The owner's
-> business assistant holds an owner-side RFP with a vendor shortlist (HANDOFF, 2026-10-06 and 2026-10-10): **that one
-> is sent once the owner approves**, and this page is the public scope reference it is checked against. Item 3 of
+> business assistant holds a send-ready owner-side RFP with a vendor shortlist (HANDOFF, 2026-10-06 and 2026-10-10):
+> **that one is sent once the owner approves**, and this page is the public scope reference it is checked against. Item 3 of
 > [../BUSINESS-WORKPLAN.md](../BUSINESS-WORKPLAN.md).
 
 **Issued by:** `[LICENSOR LEGAL ENTITY]`, the licensor of SUDS. **Contact:** `[CONTACT EMAIL]`.

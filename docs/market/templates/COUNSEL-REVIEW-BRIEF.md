@@ -45,7 +45,7 @@ Review links point at the repository's default branch; a zip of the exact commit
 | 3 | [BAA-QSOA-DRAFT.md](BAA-QSOA-DRAFT.md) | Exhibits B and C: a HIPAA business associate agreement (45 CFR 164.504(e)) and a Part 2 QSOA (42 CFR 2.11) | Draft, unreviewed |
 | 4 | [DPA-DRAFT.md](DPA-DRAFT.md) | Data processing addendum | Draft, unreviewed |
 | 5 | [SUPPORT-SLA.md](SUPPORT-SLA.md) | Support service levels (business hours; hosted terms only when offered) | Template, unreviewed |
-| 6 | The owner's own drafts, held outside the repository: `[a 90-day pilot agreement template; a BAA template with a Part 2 section]` | Written separately; to be reconciled with 2 and 3 | Unreviewed. A list of their differences from 2 and 3 is attached: `[ATTACHMENT]` |
+| 6 | The owner's own drafts, held outside the repository: `[v2 of the licence and subscription agreement and of the BAA/QSOA, built on 2 and 3 with the owner's earlier pilot agreement and BAA folded in, and a reconciliation memo listing the open choices]` | Send **one** text per document: either 2 and 3, or their v2, as the owner decides; the memo goes with it | Unreviewed: `[ATTACHMENTS]` |
 | 7 | [DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](DATA-CONTRIBUTION-AGREEMENT-DRAFT.md) (optional, later) | A CBO-to-county agreement for aggregate figures | Draft; only when a county pilot needs it |
 
 Background, not for review: [../PROCUREMENT.md](../PROCUREMENT.md) (how counties buy), [../../compliance/PART2.md](../../compliance/PART2.md)
@@ -75,7 +75,9 @@ Background, not for review: [../PROCUREMENT.md](../PROCUREMENT.md) (how counties
 - L5. Who owns code written with AI coding assistants under the owner's direction, and does anything need to be
   recorded or assigned?
 
-**Licence and subscription agreement.**
+**Licence and subscription agreement.** The owner's reconciliation memo lists open choices (renewal model, termination
+for convenience, de-identified metrics, escrow, venue, address and state of formation, the AWS region for hosted
+tenants): `[ATTACH THE MEMO; ADD ANY CHOICE IT RAISES THAT IS NOT BELOW]`.
 - A1. Liability cap and exclusions (section 11): a structure that a small vendor can insure and a county will accept;
   which breaches (Exhibit B/C, confidentiality) sit outside the cap.
 - A2. Data ownership and use (section 7): is 7.1–7.4 sufficient, including the bracketed choice on de-identified
