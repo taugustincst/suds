@@ -72,7 +72,10 @@ Record each result in the table under *Results* as **pass**, **fail** (with what
    a backup** with the file and passphrase: SUDS shows what the backup holds (clients, accounts, when made), changes
    nothing until you type `RESTORE`, then reloads; sign in with the account from the backup. The client from step 4 is
    there and the second one is gone. Also try a **wrong passphrase** once: it is refused as a wrong passphrase, and
-   nothing changes. [Screenshot.]
+   nothing changes. Then **sign out and reload the page** (pull down to refresh): the sign-in page must open, and the
+   account must sign in with the client still there. Write down anything else (a blank page, "A problem repeatedly
+   occurred", Safari reloading by itself). CI's WebKit on Linux crashes the page at exactly this reload, though the
+   records survive (docs/RELEASE.md, flake register); this step is what tells whether an iPhone does. [Screenshot.]
 10. **Recovery code sign-in.** Sign out. On the sign-in page, **Can't sign in? → Use your recovery code**: the code from
     step 3 and a new password. SUDS signs in, the records are all there, and a new recovery code is shown once. [Screenshot.]
 11. **Offline after an update** (only when a previous release was on the home screen; ADOPTION §4, *iPhone: offline
@@ -104,7 +107,7 @@ Record each result in the table under *Results* as **pass**, **fail** (with what
 | 6. Offline reload and unlock | | | | | |
 | 7. Ten sign-ins (failures of 10) | | | | | |
 | 8. Passphrase backup (file size) | | | | | |
-| 9. Restore (and wrong passphrase) | | | | | |
+| 9. Restore (wrong passphrase; sign out and reload after) | | | | | |
 | 10. Recovery code sign-in | | | | | |
 | 11. Offline after an update | | | | | |
 | 12. Damaged-copy path (seen? outcome) | | | | | |

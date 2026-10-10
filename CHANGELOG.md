@@ -6,7 +6,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 A patch of 1.25.4 (docs/RELEASE.md, *Record: 1.25.5*): the fixes from the market-readiness evaluation of 1.25.4
 (H1–H9). No migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.25.5
---previous v1.25.4` passes: 735 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It
+--previous v1.25.4` passes: 738 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It
 passes the release policy with no exception. Upgrading needs nothing beyond replacing the files and restarting. What an
 upgrading administrator should know:
 

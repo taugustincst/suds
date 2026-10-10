@@ -616,7 +616,11 @@ rewrite is Tj's decision, and I have asked). Please keep them in the owner works
   reported by you. **H6** CI is pinned to Ubuntu 24.04 (your and Tj's decision; `ubuntu-latest` moves to 26 on
   2026-10-19). **H7** re-running `install.sh` keeps a hand-added IPv6 SSH rule — suds.systems' exact state. **H8** the
   release gate requires `evening`; Releases carry their SBOM.
-- Tests on the exact stamped tree: full suite UTC and evening, and the browser suite, before the push.
+- Tests on the exact stamped tree: full suite UTC and evening, and the browser suite, before the push. In CI's
+  WebKit every new check passes; one does not: **the reload after Start over, a restore and a sign-out crashes the
+  page** (every run; not the new engine, a diagnostic build without it crashed too). The records survive it (a new
+  page signs in and finds the client). It is a named failing check, not skipped, and step 9 of the iPhone checklist
+  tests that exact reload — the one thing the real-device run must tell us.
 
 **What I could not do, and need from you or Tj.**
 1. **A real-iPhone check.** CI's WebKit is not iOS Safari. docs/evidence/REAL-DEVICE-CHECK-TEMPLATE.md is a 15-step
