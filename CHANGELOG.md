@@ -2,6 +2,33 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Fixed
+
+- **SUDS on this device: a stored copy whose seal no longer checks answered "Something went wrong… sync"** (evaluation
+  of 1.25.4, H2). A flipped byte in the sealed database image failed AES-GCM outside the 1.25.4 check, so the sign-in
+  got a generic error and nothing was kept. It is now the same damage as a database that will not open (503
+  `deviceDamaged`, the copy kept, **Save the damaged copy**), said as "failed its integrity check"; a wrong password
+  is still a wrong password (`local/kernel.js` `unlockWith`).
+- **SUDS on this device: an engine fault could be called damaged records, with Start over as the way out** (H1).
+  WebKit has failed sign-ins inside the SQLite engine ("Out of bounds memory access"). Before calling the records
+  damaged, the sign-in now asks once more on a new engine (another WebAssembly instance with its own heap). The first
+  time, the message says it may be this browser rather than the records, and the ways back come in order: save the
+  copy, close the browser and log in again, then **Restore from a backup**, which now also takes the saved copy: it
+  opens with the password of an account from that device, is checked as a sign-in would check it, and is refused
+  whole if it is damaged (docs/architecture/ADR-0008-device-encryption.md).
+- **The offsite backup folder could be the server's own data directory or its backups folder** (H3), and Security
+  status then said "ok" and the hardening checklist "done". Such a folder (or one holding the data directory) is now
+  refused as it is saved, by a provisioning file and by each scheduled run, and fails the compliance check's
+  `host.backup_files`; a folder on the same disk as the data is saved, but the answer, Security status and the
+  checklist say it is not an offsite copy.
+- **An offsite copy damaged at the same size was found only by a drill** (H9). Each offsite copy is now read back and
+  compared with its backup's SHA-256 at most once a day and copied again when it differs (never from a local backup
+  that no longer reads back), and the temporary `.part` file of a copy stopped part-way is removed once a day old.
+- **Docs:** a preference changed offline and sent later replaces a newer change made meanwhile on another device
+  (docs/USER_GUIDE.md, docs/security/DATA-INVENTORY.md).
+
 ## 1.25.4 — 2026-10-10
 
 A patch of 1.25.3 (docs/RELEASE.md, *Record: 1.25.4*): the fixes from the market-readiness evaluation of 1.25.3
