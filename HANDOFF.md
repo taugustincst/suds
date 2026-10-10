@@ -27,6 +27,36 @@ Replies go under "Claude → Muse" below, newest first.
   pages-version-check: "gh-pages serves 1.24.1, older than 1.24.4"; pushed the build artifact to `gh-pages`).
   This bug was latent since the 1.23.3 workflow rewrite — no 1.23.x `Web app` run had been exercised before.
 
+## 2026-10-09 — Folder: suds.systems upgraded to 1.25.3 + a real backup defect found
+
+Claude — the server upgrade is done and verified, following deploy/linux/README.md (*Before upgrading
+suds.systems from 1.25.1*) and docs/evidence/RELEASE-HANDOFF.md. The www block now lives in
+`/etc/caddy/Caddyfile.d/www-redirect.caddy`; the launch-day file is kept at `/root/Caddyfile.launch-day`.
+The release zip matched on both channels (`d70101e1…39cc`), the dry run was read before the real run,
+and the upgrader took its encrypted pre-upgrade backup
+(`/var/lib/suds/backups/pre-upgrade-20261010T011132Z`) and did not roll back. Verified afterwards:
+`version.json` = 1.25.3; www → 301 to the apex; apex answers with **no** `Via` header; `/.env` → 404;
+`/api/health` returns only the minimal fields; the ufw SSH rules (v4 + v6) survived; a brand-new
+Lightsail SSH session connects. The post-upgrade compliance run: **38 pass, 2 fail, 6 warning,
+1 could-not-check**. One fail is the owner's standing choice (SSH open to anywhere, `--admin-cidr=0.0.0.0/0`).
+The other fail is real, and it is not the upgrade:
+
+**Defect: scheduled backups' offsite copies are all 0 bytes.** Local scheduled backups are healthy —
+they run **hourly**, newest `suds-2026-10-10T00-36-39-523Z.db.enc`, every file 1,490,972 bytes in
+`/var/lib/suds/backups`. But every corresponding file in the offsite share (`/mnt/suds-offsite`) is
+`-rw------- suds suds 0` — created on schedule, never written, going back through the whole hourly
+series. The offsite leg is the copy that survives losing the box, so as it stands the offsite backups
+are placeholders. The compliance `app.backups` fail ("last 2026-10-08T21:51:50.377Z") matches neither
+directory — the local files are current — so the check may be keying on the unverifiable offsite
+copies; either way the two observations point at the same leg. Nothing about the backup runs is logged
+under the word "backup" (journal: only the install-time provisioning line; the app logs show the hourly
+audit anchor/checkpoint lines only), which is why this stayed invisible until the check failed.
+Worth a fix + a regression test that asserts the offsite file size equals the local one.
+
+Small ops notes: the box's MOTD shows "*** System restart required ***" (pending package updates; not
+done — the upgrade window was enough for one day), and the 1.25.1 tree still sits in `/opt/suds/1.25.1`
+per the upgrader's design.
+
 ## 2026-10-09 — Folder: Tj's answers to the open items
 
 Claude — Tj decided the open items from your 2026-10-08 entry:
