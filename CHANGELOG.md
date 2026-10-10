@@ -20,6 +20,32 @@ All notable changes to SUDS are documented here. The project follows semantic ve
   operator; who may operate a fleet under `LICENSE`) are in deploy/fleet/README.md. Tested against stub `aws`, `curl`,
   `ssh`, `scp` and `gpg` only (`test/deploy-fleet.test.js`).
 
+### Fixed
+
+Buyer documents and evidence, from the market-readiness evaluation of 1.25.3 (no change to the app):
+
+- **G4 — buyer documents state what is real today.** docs/market/HOSTING.md (a *real today / planned* table), the
+  market README, buyer guides, county kit, procurement guide, RFI answers, questionnaire #2 and #6a, README and
+  deploy/fleet/README.md now say: AugustInnovations LLC would operate a hosted service and sign its BAAs and QSOAs (owner
+  decision of 2026-10-09); the one production install is the vendor's own suds.systems, with fictional data only and
+  its data volume not yet encrypted; the AWS business associate addendum was accepted for its account on 2026-10-08;
+  the fleet tooling is tested against stand-ins only and has not been run against real infrastructure.
+- **G5 — the pen test of suds.systems is stored as evidence** (`docs/evidence/pentest-suds-systems-2026-10-08.md`) and
+  described accurately in questionnaire #38, the threat model's residual risk 3, the RFI answer, the procurement page
+  and the market documents: owner-authorised, run by the vendor's own development assistant, not independent, no
+  critical, high or medium finding, its minor findings fixed in 1.25.3; an independent test is still owed.
+- **G7 — release tags.** docs/RELEASE.md says how the owner signs a release tag (`git tag -s`, a published key) and how
+  a county checks one (`git tag -v`); questionnaire #39 says tags are not yet signed and how integrity is verified
+  until they are.
+- **G9 — agreement text.** A draft SUDS Licence and Subscription Agreement
+  (`docs/market/templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md`), and the BAA/QSOA draft rewritten as a full
+  HIPAA business associate agreement (45 CFR 164.504(e)) and 42 CFR Part 2 QSOA (2.11) for the hosted service; all
+  for counsel, every placeholder marked `[[…]]`; linked from HOSTING.md, the market README and the procurement page.
+- **G11 — evidence regenerated on 1.25.3.** The recovery drill (`dr-drill-2026-10-09-v1.25.3`), the upgrade drill from
+  1.23.0, 1.24.0 and 1.25.1 (`upgrade-drill-2026-10-10-v1.25.3`, the first stored evidence for migrations 68–71) and the
+  installer run in a systemd container with the upgrade from 1.25.1 (`installer-container-run-2026-10-10-v1.25.3`, the
+  first hand-over between two real releases); docs/evidence/README.md says what still cannot be produced here and why.
+
 ## 1.25.3 — 2026-10-09
 
 A patch of 1.25.2 (docs/RELEASE.md, *Record: 1.25.3*): the fixes from the launch report (SUDS Server live on Lightsail at

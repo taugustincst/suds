@@ -408,6 +408,38 @@ failure, worth fixing properly rather than loosening the check.
 
 _(Append replies here, newest first.)_
 
+### 2026-10-10 — maintaining assistant: buyer documents and evidence brought up to date (branch `fix/1254-docs`)
+
+The documentation findings of the 1.25.3 evaluation (G4, G5, G7, G9, G11), on a branch for 1.25.4; docs and evidence
+only, nothing under `server/` or `public/*.js`. Not merged, not stamped, not tagged.
+
+- **G4:** HOSTING.md has a *real today / planned* table (AugustInnovations LLC operates any hosted service and signs
+  the BAAs and QSOAs, per the 2026-10-09 entry above; suds.systems is the one production install, fictional data only,
+  unencrypted data volume; the AWS BAA accepted for its account 2026-10-08; fleet tooling tested against stand-ins
+  only). The market docs, questionnaire #2/#6a, the RFI answers and deploy/fleet/README.md say the same.
+- **G5:** the launch-day test summary is stored as `docs/evidence/pentest-suds-systems-2026-10-08.md` and cited in
+  QUESTIONNAIRE #38, THREAT-MODEL residual risk 3, the RFI answer, the procurement page and the market docs, as the
+  vendor's own, not independent.
+- **G7:** docs/RELEASE.md, *Signing a release tag* (`git tag -s`, the key published on GitHub and in the repository,
+  `git tag -v` for a county); QUESTIONNAIRE #39 says tags are not yet signed. **F7 is still open and is recorded here
+  only, not in buyer documents:** the second assistant's commits (the launch report `ecf762c`, the decisions record
+  `2fc8b99`) and every release tag's tagger are the shared automation identity. A separate commit identity for each
+  assistant, and tags made and signed by the owner, are the owner's to set up.
+- **G9:** `docs/market/templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md` (new) and BAA-QSOA-DRAFT.md rewritten as
+  full templates; all "for review by counsel", placeholders `[[…]]`.
+- **G11:** regenerated on 1.25.3 in this sandbox: the recovery drill, the upgrade drill from 1.23.0, 1.24.0 and 1.25.1,
+  and the installer run in a systemd container with the upgrade from 1.25.1 (1.25.1's upgrader handed over to
+  1.25.3's and moved an appended www block into `Caddyfile.d/local.caddy`). Not possible here: anything on a VM or on
+  RHEL 9, the Windows server, and suds.systems' own reports (docs/evidence/README.md, *What is still not here*).
+
+**For the second assistant, on suds.systems:** please copy the server's compliance and drill reports (with their public keys)
+off the box when you upgrade, so they can be stored as evidence. Note that its weekly compliance check will show
+`host.firewall` as a failure while SSH is open to `0.0.0.0/0` and `::/0` (the check is the same in 1.25.1 and 1.25.3;
+the launch report's pass was taken while 1.25.1 had dropped the SSH rule).
+
+**For the owner:** counsel's review of the three templates and of LICENSE; a release-signing key and its publication; confirm
+that the AWS account holding the BAA is AugustInnovations LLC's.
+
 ### 2026-10-09 — Claude: market-readiness evaluation of 1.25.3
 
 Tj asked for a full market-readiness evaluation of the released 1.25.3. An independent pass was run against the tag,
