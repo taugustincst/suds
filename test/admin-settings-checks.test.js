@@ -62,3 +62,54 @@ test('BO15: "About this server" is given the retention in force and where the ke
   assert.equal((await put({ client_retention_years: '' })).status, 200);
   assert.equal((await admin.get('/api/admin/stats')).data.client_retention_years, require('../server/config').clientRetentionYears, 'blank: the default');
 });
+
+// 1.25.5, H3: the "offsite" folder could be the server's own data directory or its backups folder, and Security status
+// then said "ok" and the hardening checklist "done". Such a folder is refused (as server/audit-anchor.js refuses
+// anchors there); one on the same disk as the data is saved, but the answer, Security status and the checklist say so.
+test('the offsite folder may not be the data directory, its backups folder, a folder holding it, or a link to it', async () => {
+  const data = require('../server/config').dataDir;
+  const backups = path.join(data, 'backups'); fs.mkdirSync(backups, { recursive: true });
+  const dirs = [data, backups, path.dirname(data)];
+  if (process.platform !== 'win32') { const link = path.join(tmp, 'link-to-backups'); fs.symlinkSync(backups, link); dirs.push(link); }
+  for (const dir of dirs) {
+    const r = await put({ backup_offsite_dir: dir });
+    assert.equal(r.status, 400, dir); assert.match(r.data.error, /inside the data directory \(or contains it\), so it is not an offsite copy/);
+    assert.match(r.data.fields.backup_offsite_dir, /not an offsite copy/);
+  }
+  assert.equal(H.db.getSetting('backup_offsite_dir', null), null, 'nothing was saved');
+  // Saved before this release (or by hand in the database): Security status and the checklist say it is no offsite copy.
+  H.db.setSetting('backup_offsite_dir', backups);
+  try {
+    const st = (await admin.get('/api/admin/security/status')).data.items.find((i) => i.name === 'Offsite copy');
+    assert.equal(st.level, 'bad'); assert.match(st.detail, /inside the data directory/);
+    H.db.setSetting('backup_schedule_hours', '4');
+    const hard = (await admin.get('/api/admin/security/hardening')).data.items.find((i) => i.id === 'backups');
+    assert.equal(hard.done, false); assert.match(hard.status, /inside the data directory/);
+  } finally { H.db.run(`DELETE FROM settings WHERE key IN ('backup_offsite_dir','backup_schedule_hours')`); }
+});
+
+test('an offsite folder on the same disk as the data is saved with a warning, and Security status and the checklist say so', async () => {
+  const data = require('../server/config').dataDir;
+  const sameDisk = fs.mkdtempSync(path.join(path.dirname(data), '.suds-same-disk-'));
+  try {
+    const r = await put({ backup_offsite_dir: sameDisk, backup_schedule_hours: '4' });
+    assert.equal(r.status, 200, JSON.stringify(r.data));
+    assert.match(r.data.warnings.join(' '), /is on the same disk as the data, so it is not an offsite copy/);
+    assert.equal(H.db.getSetting('backup_offsite_dir', null), sameDisk, 'saved: a warning, not a refusal');
+    const st = (await admin.get('/api/admin/security/status')).data.items.find((i) => i.name === 'Offsite copy');
+    assert.equal(st.level, 'warn'); assert.match(st.detail, /same disk as the data/);
+    const hard = (await admin.get('/api/admin/security/hardening')).data.items.find((i) => i.id === 'backups');
+    assert.equal(hard.done, false); assert.match(hard.why, /same disk as the data, so it is not an offsite copy/); assert.match(hard.status, /same disk/);
+    // Another filesystem (a tmpfs here) is a copy off the data's disk: no warning, and the item is done.
+    let other = null; try { other = fs.mkdtempSync('/dev/shm/suds-offsite-'); } catch {}
+    if (other && fs.statSync(other).dev !== fs.statSync(data).dev) {
+      try {
+        const o = await put({ backup_offsite_dir: other });
+        assert.equal(o.status, 200); assert.equal(o.data.warnings, undefined);
+        assert.equal((await admin.get('/api/admin/security/status')).data.items.find((i) => i.name === 'Offsite copy').level, 'ok');
+        assert.equal((await admin.get('/api/admin/security/hardening')).data.items.find((i) => i.id === 'backups').done, true);
+      } finally { fs.rmSync(other, { recursive: true, force: true }); }
+    } else if (other) fs.rmSync(other, { recursive: true, force: true });
+    assert.equal((await H.client().get('/api/admin/security/status')).status, 401, 'and none of it without signing in');
+  } finally { await put({ backup_offsite_dir: '', backup_schedule_hours: '0' }); fs.rmSync(sameDisk, { recursive: true, force: true }); }
+});

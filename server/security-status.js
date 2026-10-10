@@ -193,8 +193,10 @@ function status({ host = true } = {}) {
   const offsite = db.getSetting('backup_offsite_dir', '') || '';
   // The newest copy on the share is looked at, not only the last run's word for it: an empty or short copy fails.
   const offNewest = offsite ? sb.newest(offsite).newest : null;
-  const offBad = /offsite copy failed/.test(lastStatus) ? lastStatus : offNewest && sb.copyProblem(offNewest.file, offNewest.size);
-  add('Backups and recovery', 'Offsite copy', !offsite ? 'warn' : offBad ? 'bad' : 'ok', offsite ? offsite : 'not configured', offsite ? (offBad || 'Each scheduled backup is copied here after it is verified, and the copy is checked against it (size and SHA-256).') : 'Set an offsite directory (a mounted share on another host or site).', 'server/scheduled-backup.js');
+  // Not offsite at all when it is in (or holds) the data directory, nor when it is on the same disk (1.25.5, H3).
+  const place = offsite ? sb.offsitePlacement(offsite) : {};
+  const offBad = place.inside ? `This folder ${place.inside}.` : /offsite copy failed/.test(lastStatus) ? lastStatus : offNewest && sb.copyProblem(offNewest.file, offNewest.size);
+  add('Backups and recovery', 'Offsite copy', !offsite ? 'warn' : offBad ? 'bad' : place.sameDisk ? 'warn' : 'ok', offsite ? offsite : 'not configured', offsite ? (offBad || (place.sameDisk ? `This folder ${place.sameDisk}. Point it at a mounted share on another host or site.` : 'Each scheduled backup is copied here after it is verified, and the copy is checked against it (size and SHA-256).')) : 'Set an offsite directory (a mounted share on another host or site).', 'server/scheduled-backup.js');
   const drill = require('./dr-drill').lastDrill();
   const drillAge = drill ? ageDays(drill.at) : null;
   // Day one (dr-drill.js firstDrillPending): the monthly drill is on and has not had its first turn — a warning.

@@ -106,6 +106,51 @@ test('empty offsite copies left by 1.25.3 and earlier are copied again on the ne
   assert.equal(JSON.parse(audited.details).offsite_repaired, 1);
 });
 
+// 1.25.5, H9: a copy damaged at the same size was found only by a drill; a copy stopped part-way left its `.part` file.
+test('an offsite copy of the same size but different bytes is copied again; one a day old is read back again', async () => {
+  const [first] = await quietly(() => scheduled.run({ retain: 14 }));
+  const name = path.basename(first.file); const copy = path.join(offsite, name);
+  const bad = fs.readFileSync(first.file); bad[bad.length >> 1] ^= 0xff; fs.writeFileSync(copy, bad); // as left by 1.25.4, then damaged
+  const [out, lines] = await quietly(() => scheduled.run({ retain: 14, offsiteDir: offsite }));
+  assert.equal(out.offsiteOk, true, out.offsiteError);
+  assert.equal(out.repaired, 1, lines.join('\n'));
+  assert.equal(sha(copy), sha(first.file), 'the copy is the backup again');
+  // Damaged again after it was checked: within the day it is not read back, after a day it is, and copied again.
+  fs.writeFileSync(copy, bad);
+  assert.equal(await scheduled.repairOffsite(local, offsite), 0, 'checked within the day: not read again');
+  assert.equal((await quietly(() => scheduled.repairOffsite(local, offsite, Date.now() + 25 * 3600_000)))[0], 1);
+  assert.equal(sha(copy), sha(first.file));
+  // A local backup that no longer reads back is never copied over its offsite copy.
+  const localBad = fs.readFileSync(first.file); localBad[localBad.length >> 1] ^= 0x0f; fs.writeFileSync(first.file, localBad);
+  const keep = sha(copy);
+  const [n, said] = await quietly(() => scheduled.repairOffsite(local, offsite, Date.now() + 50 * 3600_000));
+  assert.equal(n, 0); assert.equal(sha(copy), keep, 'the offsite copy is left as it was');
+  assert.ok(said.some((l) => /no longer reads back either/.test(l)), said.join('\n'));
+});
+
+test('a temporary file left by a copy stopped part-way is removed once it is a day old', async () => {
+  const old = path.join(offsite, '.suds-2026-10-01T00-00-00-000Z.db.enc.0a1b2c3d.part');
+  const fresh = path.join(offsite, '.suds-2026-10-09T00-00-00-000Z.db.enc.4e5f6a7b.part');
+  const other = path.join(offsite, '.not-ours.part');
+  for (const f of [old, fresh, other]) fs.writeFileSync(f, 'partial');
+  const twoDays = (Date.now() - 2 * 86400_000) / 1000; fs.utimesSync(old, twoDays, twoDays); fs.utimesSync(other, twoDays, twoDays);
+  const [out] = await quietly(() => scheduled.run({ retain: 14, offsiteDir: offsite }));
+  assert.equal(out.offsiteOk, true, out.offsiteError);
+  assert.equal(fs.existsSync(old), false, 'the day-old one is gone');
+  assert.equal(fs.existsSync(fresh), true, 'a recent one (a copy that may still be running) stays');
+  assert.equal(fs.existsSync(other), true, 'and nothing SUDS did not name is touched');
+});
+
+test('the data directory or its backups folder is never used as the offsite copy, whatever the setting says (1.25.5, H3)', async () => {
+  for (const d of [local, dir]) {
+    fs.mkdirSync(d, { recursive: true });
+    const [out] = await quietly(() => scheduled.run({ retain: 14, offsiteDir: d }));
+    assert.equal(out.offsiteOk, false); assert.match(out.offsiteError, /inside the data directory \(or contains it\)/);
+    assert.ok(out.verified && fs.existsSync(out.file), 'the local backup is kept');
+  }
+  assert.match(db.getSetting('last_scheduled_backup_status', ''), /offsite copy failed: offsite directory is inside the data directory/);
+});
+
 test('the compliance check fails an empty or short offsite copy, and its "last backup" is the newest actual backup', async () => {
   const [first] = await quietly(() => scheduled.run({ retain: 14 }));
   const name = path.basename(first.file);
@@ -138,7 +183,10 @@ test('the compliance check fails an empty or short offsite copy, and its "last b
 
   fs.copyFileSync(first.file, path.join(offsite, name));
   assert.equal(host().result, 'pass', host().evidence);
-  assert.equal(app('app.offsite').result, 'pass');
+  // A temporary folder on the data's own disk is a whole copy, but not an offsite one (1.25.5, H3): a warning.
+  const sameDisk = fs.statSync(offsite).dev === fs.statSync(dir).dev;
+  assert.equal(app('app.offsite').result, sameDisk ? 'warn' : 'pass', app('app.offsite').evidence);
+  if (sameDisk) assert.match(app('app.offsite').evidence, /same disk as the data/);
 });
 
 test('the recovery drill refuses an empty offsite copy as its restore source', async () => {

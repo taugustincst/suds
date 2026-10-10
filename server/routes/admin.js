@@ -44,11 +44,14 @@ const listener = require('../listener');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// Why a folder cannot take the offsite copy of each backup, or null: absolute, an existing directory, writable.
+// Why a folder cannot take the offsite copy of each backup, or null: absolute, an existing directory, outside the data
+// directory (1.25.5, H3: the data directory or its backups folder was accepted, and Security status said "ok"), writable.
 function offsiteDirProblem(dir) {
   if (!path.isAbsolute(dir)) return 'must be an absolute path (for example /mnt/backups or D:\\SUDS-backups)';
   let st; try { st = fs.statSync(dir); } catch { return 'does not exist (is the share mounted?)'; }
   if (!st.isDirectory()) return 'is not a folder';
+  const inside = require('../scheduled-backup').offsitePlacement(dir).inside;
+  if (inside) return inside;
   const probe = path.join(dir, `.suds-write-test-${process.pid}-${Date.now()}`);
   try { fs.writeFileSync(probe, 'x', { mode: 0o600 }); fs.unlinkSync(probe); } catch { return 'cannot be written to by SUDS (check the share\'s permissions)'; }
   return null;
@@ -72,7 +75,7 @@ module.exports = (r) => {
     return out;
   });
   r.put('/api/admin/settings', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
-    const changed = [];
+    const changed = []; const warnings = [];
     const ssoBefore = [db.getSetting('sso_required', '0'), db.getSetting('sso_emergency_accounts', '')].join('|');
     // One transaction: a bad value part-way through the form must not leave the fields before it saved
     // and the ones after it not.
@@ -129,6 +132,9 @@ module.exports = (r) => {
         if (k === 'backup_offsite_dir' && v !== '' && !config.local) {
           const problem = offsiteDirProblem(v);
           if (problem) throw badRequest(`backup_offsite_dir ${problem}`, { fields: { backup_offsite_dir: problem } });
+          // Saved, but said: a second disk in the same server, or the same disk, is not offsite.
+          const sameDisk = require('../scheduled-backup').offsitePlacement(v).sameDisk;
+          if (sameDisk) warnings.push(`The offsite folder ${v} ${sameDisk}.`);
         }
         if (k === 'scim_group_roles' && v !== '') v = require('../scim').normaliseGroupRoles(v);
         // The profile always has a value: a blank one would be decided again from the data at the next start.
@@ -159,7 +165,7 @@ module.exports = (r) => {
     // Trusting the identity provider's second factor changes who can reach records without SUDS's own: its
     // own audit entry, so it stands out from routine settings changes.
     if (changed.includes('sso_trust_idp_mfa') || changed.includes('sso_mfa_acr_values')) audit.log({ user: ctx.user, action: 'security.idp_mfa_trust', ip: ctx.ip, details: { trusted: db.getSetting('sso_trust_idp_mfa', '0') === '1', acr_values: db.getSetting('sso_mfa_acr_values', '') || null } });
-    return { ok: true };
+    return warnings.length ? { ok: true, warnings } : { ok: true };
   });
 
   r.get('/api/admin/audit', auth.requireAuth, auth.requirePerm('audit:read'), (ctx) => {

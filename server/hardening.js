@@ -59,11 +59,15 @@ function items() {
     const hours = Number(db.getSetting('backup_schedule_hours', '0')) || 0;
     const offsite = db.getSetting('backup_offsite_dir', '') || '';
     const failing = /offsite copy failed/.test(db.getSetting('last_scheduled_backup_status', '') || '');
-    add({ id: 'backups', title: hours ? 'Copy each backup off this server' : 'Turn on scheduled backups', done: !!(hours && offsite) && !failing,
+    // A folder in the data directory, or on the same disk, is no copy off this server (1.25.5, H3).
+    const place = offsite ? require('./scheduled-backup').offsitePlacement(offsite) : {};
+    const notOff = place.inside || place.sameDisk;
+    add({ id: 'backups', title: hours ? 'Copy each backup off this server' : 'Turn on scheduled backups', done: !!(hours && offsite) && !failing && !notOff,
       why: !hours ? 'Nothing is backing this database up automatically. Set how often (every 4 hours is the production default), and a folder on another machine for a copy.'
         : !offsite ? `Backups run every ${hours} hour${hours === 1 ? '' : 's'}, but only onto this server's own disk: a failed disk or a stolen server takes them with it. Name a mounted network share or drive for a second copy.`
-          : failing ? `The last backup's copy to ${offsite} failed: ${db.getSetting('last_scheduled_backup_status', '')}` : `Every ${hours} hour${hours === 1 ? '' : 's'}, with a copy in ${offsite}.`,
-      status: !hours ? 'off' : !offsite ? `every ${hours} h, local only` : failing ? `every ${hours} h, offsite copy failing` : `every ${hours} h, copied offsite`,
+          : notOff ? `The offsite folder ${offsite} ${notOff}. Name a mounted network share or a drive in another place.`
+            : failing ? `The last backup's copy to ${offsite} failed: ${db.getSetting('last_scheduled_backup_status', '')}` : `Every ${hours} hour${hours === 1 ? '' : 's'}, with a copy in ${offsite}.`,
+      status: !hours ? 'off' : !offsite ? `every ${hours} h, local only` : notOff ? `every ${hours} h, ${place.inside ? 'copy inside the data directory' : 'copy on the same disk'}` : failing ? `every ${hours} h, offsite copy failing` : `every ${hours} h, copied offsite`,
       action: { label: hours ? 'Set the offsite folder' : 'Set up backups', href: settingsLink('backups', hours ? 'backup_offsite_dir' : 'backup_schedule_hours') } });
   }
 

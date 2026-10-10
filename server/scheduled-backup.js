@@ -18,6 +18,23 @@ const FILE_RE = /^suds-\d.*\.db\.enc$/;
 const SNAP_RE = /^suds-snap-.*\.db\.enc$/;
 const OFFSITE_MISSING = 'offsite directory does not exist (is the share mounted?)';
 
+/**
+ * Where an offsite folder stands against the data directory (1.25.5, H3), resolved through symlinks, as
+ * server/audit-anchor.js does for anchors. `inside`: the folder is in the data directory (its backups folder
+ * included) or contains it, so it is no offsite copy at all: refused as the setting is saved, and never copied to.
+ * `sameDisk`: it is on the same device (on Windows, the same volume) as the data, so a lost disk takes both: said by
+ * the setting's answer, Security status and the hardening checklist. Each is the sentence to show, or null.
+ */
+function offsitePlacement(dir) {
+  const real = (p) => { let r; try { r = fs.realpathSync.native(p); } catch { r = path.resolve(p); } return process.platform === 'win32' ? r.toLowerCase() : r; };
+  const within = (child, parent) => child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
+  const a = real(dir); const data = real(config.dataDir);
+  const inside = within(a, data) || within(data, a);
+  let sameDisk = false; try { sameDisk = !inside && fs.statSync(a).dev === fs.statSync(data).dev; } catch {}
+  return { inside: inside ? 'is inside the data directory (or contains it), so it is not an offsite copy: choose a share on another disk or machine' : null,
+    sameDisk: sameDisk ? 'is on the same disk as the data, so it is not an offsite copy: a failed disk takes both' : null };
+}
+
 function settings() {
   const hours = Number(db.getSetting('backup_schedule_hours', '0')) || 0;
   const retain = Math.max(1, Number(db.getSetting('backup_retain_count', '14')) || 14);
@@ -127,7 +144,10 @@ async function runOnce({ retain = 14, offsiteDir = '' } = {}) {
     try {
       let st = null; try { st = await fs.promises.stat(offsiteDir); } catch {}
       if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
-      await copyVerified(file, offsiteDir);
+      const inside = offsitePlacement(offsiteDir).inside;
+      if (inside) throw new Error(`offsite directory ${inside}`);
+      prunePartials(offsiteDir);
+      await copyVerified(file, offsiteDir); offsiteMatched.set(path.basename(file), Date.now());
       offsiteFile = path.join(offsiteDir, path.basename(file));
       offsiteOk = true;
       repaired = await repairOffsite(dir, offsiteDir);
@@ -174,15 +194,36 @@ async function copyVerified(src, destDir) {
   throw new Error(`the offsite copy of ${path.basename(src)} did not match the backup (${b.bytes} of ${a.bytes} bytes${a.bytes === b.bytes ? ', different SHA-256' : ''}) and was deleted`);
 }
 
-/** Copy again each offsite backup whose size differs from the local backup of the same name (the empty files
- *  1.25.3 and earlier left on SUDS Server). Local backups are only read. Resolves to how many were copied. */
-async function repairOffsite(localDir, offsiteDir) {
+// When each offsite copy last matched its local backup (name -> ms), and the local backups' SHA-256 (they are never
+// changed once written, so keyed by name, size and time): each copy is read back at most once a day.
+const offsiteMatched = new Map(); const localSums = new Map();
+const RECHECK_MS = 24 * 3600_000;
+/**
+ * Copy again each offsite backup that is not the local backup of the same name: its size differs (the empty files
+ * 1.25.3 and earlier left on SUDS Server) or, read back, its SHA-256 does (1.25.5, H9: a copy damaged since, at the
+ * same size). A local backup that no longer decrypts is never copied over its offsite copy. Local backups are only
+ * read. Resolves to how many were copied.
+ */
+async function repairOffsite(localDir, offsiteDir, now = Date.now()) {
   let n = 0;
   for (const f of fs.readdirSync(offsiteDir).filter((x) => FILE_RE.test(x))) {
-    let a; let b; try { a = fs.lstatSync(path.join(localDir, f)); b = fs.lstatSync(path.join(offsiteDir, f)); } catch { continue; }
-    if (a.isFile() && b.isFile() && a.size !== b.size) { await copyVerified(path.join(localDir, f), offsiteDir); n++; }
+    const src = path.join(localDir, f); const dest = path.join(offsiteDir, f);
+    let a; let b; try { a = fs.lstatSync(src); b = fs.lstatSync(dest); } catch { continue; }
+    if (!a.isFile() || !b.isFile() || (a.size === b.size && now - (offsiteMatched.get(f) || 0) < RECHECK_MS)) continue;
+    if (a.size === b.size) {
+      const id = `${f}:${a.size}:${a.mtimeMs}`;
+      if (!localSums.has(id)) localSums.set(id, (await digest(src)).sha256);
+      if ((await digest(dest)).sha256 === localSums.get(id)) { offsiteMatched.set(f, now); continue; }
+    }
+    try { await backup.verifyFileAsync(src); } catch (e) { console.error(`[suds] the offsite copy ${f} does not match its local backup, which no longer reads back either (${e.message}): neither is replaced`); continue; }
+    await copyVerified(src, offsiteDir); offsiteMatched.set(f, now); n++;
   }
   return n;
+}
+/** Remove the temporary `.part` files of offsite copies stopped part-way (copyVerified) once they are a day old. */
+function prunePartials(dir, now = Date.now()) {
+  let names = []; try { names = fs.readdirSync(dir).filter((x) => /^\.suds-.*\.part$/.test(x)); } catch {}
+  for (const f of names) { try { const s = fs.lstatSync(path.join(dir, f)); if (s.isFile() && now - s.mtimeMs > RECHECK_MS) fs.unlinkSync(path.join(dir, f)); } catch {} }
 }
 
 /** The newest scheduled backup in `dir` by its name (a timestamp): { newest: { file, mtime, size } | null, count },
@@ -270,4 +311,4 @@ function prune(dir, retain) {
   return Math.min(files.length, retain);
 }
 
-module.exports = { runIfDue, run, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, copyVerified, newest, copyProblem, FILE_RE, SNAP_RE };
+module.exports = { runIfDue, run, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, copyVerified, repairOffsite, prunePartials, offsitePlacement, newest, copyProblem, FILE_RE, SNAP_RE };
