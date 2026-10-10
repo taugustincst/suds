@@ -30,7 +30,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 let REQUIRED_JOBS;
-try { ({ REQUIRED_JOBS } = require('./release-gate')); } catch { REQUIRED_JOBS = ['test', 'thorough', 'thorough-sdc', 'browser', 'node24', 'dr-drill']; }
+try { ({ REQUIRED_JOBS } = require('./release-gate')); } catch { REQUIRED_JOBS = ['test', 'thorough', 'thorough-sdc', 'browser', 'node24', 'dr-drill', 'evening']; }
 
 const ADMIN_ROLE_ID = 5; // actor_id of the "Repository admin" role in a ruleset's bypass list
 const SAMPLE = { tag: 'refs/tags/v0.0.0', maint: 'refs/heads/maint/0.0' };
