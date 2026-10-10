@@ -204,7 +204,8 @@ What protects a release, once it has a tag:
 
 What is still missing:
 
-- **Releases are not signed.** There is no Sigstore signature or provenance attestation. The Windows server zip (from 1.24.0) is Authenticode-signed only once the owner adds a code-signing certificate to the repository's secrets; until then it is published unsigned, with its SHA-256 (owner item).
+- **Release tags are not yet signed.** The tag objects (`v1.25.3` and every earlier one) carry no signature, so a tag does not by itself show who vouched for the release. Until it does, integrity is verified this way, and each step can be repeated by a county: CI green on the exact commit the tag names (the release gate refuses anything else); the release zip rebuilt byte for byte from that commit with `git archive`; its SHA-256 recorded on `main` *before* the tag is pushed ([../evidence/RELEASE-HANDOFF.md](../evidence/RELEASE-HANDOFF.md)) and checked by SUDS Server's upgrades from a second channel; the published web app checked byte for byte against the tag; and, from 1.25.2, an SBOM of each release ([../evidence/](../evidence/README.md)). **Signed tags are planned:** once the owner has a signing key whose public half is published, each release tag will be made with `git tag -s` and can be checked with `git tag -v` ([../RELEASE.md](../RELEASE.md), *Signing a release tag*). Owner item.
+- **Release artefacts are not signed either.** There is no Sigstore signature or provenance attestation. The Windows server zip (from 1.24.0) is Authenticode-signed only once the owner adds a code-signing certificate to the repository's secrets; until then it is published unsigned, with its SHA-256 (owner item).
 - **The protections that stop a collaborator replacing a release or pushing a tag are owner settings, not yet in force (owner item):** release immutability, the tag and branch rulesets, and the environment reviewer.
 
 ## Incident response

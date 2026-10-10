@@ -339,8 +339,8 @@ These close review questions that software cannot. The status of each is on the 
    - an independent statistical review of the publication method;
    - a third-party accessibility review and screen-reader testing;
    - SOC 2, only if a hosted tier is ever offered.
-8. **Release signing.** Sigstore signing or GitHub artifact attestations in the release workflow (a workflow change for the owner to approve).
-9. **Installer run on real VMs.** `deploy/linux/install.sh` and `upgrade.sh` on a fresh Ubuntu 24.04 VM and a fresh RHEL 9 VM, recorded and committed back: [INSTALLER-VM-RUN.md](INSTALLER-VM-RUN.md). So far they have run in a fake root (tests) and, on Ubuntu only, in a systemd container ([1.19.0](installer-container-run-2026-09-30/README.md), [1.20.0](installer-container-run-2026-09-30-v1.20.0/README.md)).
+8. **Release signing.** Signed release tags, made by the owner with a key whose public half is published ([../RELEASE.md](../RELEASE.md), *Signing a release tag*; every tag up to `v1.25.3` is unsigned); and Sigstore signing or GitHub artifact attestations in the release workflow (a workflow change for the owner to approve).
+9. **Installer run on real VMs.** `deploy/linux/install.sh` and `upgrade.sh` on a fresh Ubuntu 24.04 VM and a fresh RHEL 9 VM, recorded and committed back: [INSTALLER-VM-RUN.md](INSTALLER-VM-RUN.md). So far they have run in a fake root (tests), on Ubuntu in a systemd container (most recently [1.25.3](installer-container-run-2026-10-10-v1.25.3/README.md)), and once on a real Ubuntu 24.04 VM: the vendor's own suds.systems (1.25.1, AWS Lightsail, 2026-10-08), reported in prose only. Its transcript, compliance report and drill report, signed on the server, are not committed here yet; RHEL 9 has never run on a VM.
 
 **County:**
 

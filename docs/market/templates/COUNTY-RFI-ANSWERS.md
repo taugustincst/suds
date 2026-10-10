@@ -169,7 +169,8 @@ published, 1.25.3 marked Latest (2026-10-09) (docs/evidence/RELEASE-HANDOFF.md).
 commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
 release zip, which anyone can rebuild with `git archive` and compare. `scripts/release-site-check.js` checks a
 published web app byte for byte against the commit's build. The steps are in
-[../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #39. Releases are not signed. **[owner to
+[../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #39. Release tags and artefacts are not yet signed;
+signed tags are planned once the owner has a published key ([../../RELEASE.md](../../RELEASE.md), *Signing a release tag*). **[owner to
 complete]: push the owed tags, then turn on the release protections (RELEASE.md, *Owner: repository settings*).**
 
 **Q. Penetration testing?** **No independent test has been done. [owner to complete]: an independent penetration

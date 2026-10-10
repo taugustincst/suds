@@ -768,6 +768,42 @@ The gate checks the same things again (CI on that exact commit, on `main`, the t
 mistake stops the release rather than shipping it. A tag made in any other clone (an assistant's, say) is never
 pushed: delete it there (`git tag -d vX.Y.Z`), since the tag's date starts the 28-day clock for a feature release.
 
+**Signing the tag (owner; planned, not yet in use).** Release tags are annotated but **not signed** today (every
+tag up to `v1.25.3`), so a tag alone does not show who vouched for a release; *Signing a release tag*, below, is the
+procedure for when the owner has a signing key whose public half is published. Then the last line above becomes
+`git tag -s vX.Y.Z <sha> -m "SUDS X.Y.Z" && git tag -v vX.Y.Z && git push origin vX.Y.Z` (sign, check the signature
+before the push, push).
+
+#### Signing a release tag
+A signed tag adds what the gate, the checksums and the SBOM cannot: an accountable signature, by the owner, on the
+statement "this commit is release X.Y.Z". It replaces none of them. Only the owner signs, with a key that is the
+owner's own (never the shared automation identity, never in the repository or in a CI secret), on the owner's machine.
+
+1. **Make the key once.** An SSH key (Git 2.34 or later), `ssh-keygen -t ed25519 -f ~/.ssh/suds-release-signing -C
+   "SUDS release signing"`, then in the clone the owner tags from: `git config gpg.format ssh` and `git config
+   user.signingkey ~/.ssh/suds-release-signing.pub`. (An OpenPGP key works the same way: `gpg --full-generate-key`,
+   then `git config user.signingkey <fingerprint>`.) Keep a protected backup of the private key; losing it means a new
+   key, announced the same way.
+2. **Publish the public half in two places**, so a county can check one against the other: the owner's GitHub account
+   (Settings → SSH and GPG keys → *New SSH key*, key type *Signing Key*; GitHub then marks the tags *Verified*), and the
+   repository, as an allowed-signers line in `docs/security/release-signing-keys` (`<principal> namespaces="git"
+   ssh-ed25519 AAAA…`, with a role address or the owner's GitHub no-reply address as the principal, never a personal
+   one), committed on `main` with its fingerprint (`ssh-keygen -lf ~/.ssh/suds-release-signing.pub`) in
+   docs/security/QUESTIONNAIRE.md #39 and on the procurement page.
+3. **Sign each release tag** at the stamp commit the hand-off names: `git tag -s vX.Y.Z <sha> -m "SUDS X.Y.Z"`, then
+   `git tag -v vX.Y.Z` (it must print a good signature with that fingerprint) before `git push origin vX.Y.Z`. The
+   hand-off's commands ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)) and `scripts/release-state.js`,
+   which reads their `git tag -a` lines, change to `-s` in the same commit that publishes the key.
+4. **A county verifies one** from any clone:
+   ```bash
+   git fetch origin tag vX.Y.Z
+   git config gpg.ssh.allowedSignersFile docs/security/release-signing-keys   # the published key (OpenPGP: gpg --import it)
+   git tag -v vX.Y.Z            # Good "git" signature for <principal> with ED25519 key SHA256:<fingerprint>
+   git rev-parse 'vX.Y.Z^{commit}'                                             # the commit the hand-off and the Release name
+   ```
+   and compares the fingerprint with the one on GitHub (`https://api.github.com/users/<owner>/ssh_signing_keys` lists
+   the owner's signing keys) and on the procurement page. A tag that does not verify, or verifies with another key, is not a release.
+
 Pushing the tag starts `release.yml`. *Run workflow* (Actions → *Release*) is only for running it again **on an
 existing `v*` tag** (*Use workflow from* → the tag; a retry after a flaky job, or with `policy_exception`); on a
 branch it is refused by the gate's first step. Until 1.16.2 releases were dispatched on a `release/v*` branch and
@@ -979,6 +1015,10 @@ a workflow cannot change repository settings).
   `test/release-gate.test.js` fails if a listed path is renamed away from its owner.
 * **Who released it** is written at the foot of the GitHub Release notes: `Released by @<github.actor>
   (<event>, run <id>)`, and `re-run by @<github.triggering_actor>` when someone else re-ran it.
+* **Who vouched for it**, once the owner signs release tags (*Signing a release tag*, above): until then a tag is
+  unsigned, and the checks a county can repeat are exact-commit CI, the reproducible zip, its SHA-256 recorded on
+  `main` before the tag, the web app checked against the tag, and the release's SBOM (docs/security/QUESTIONNAIRE.md
+  #39).
 
 ### Owner: repository settings
 
