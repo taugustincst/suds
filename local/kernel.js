@@ -215,10 +215,36 @@ async function unlockWith(dekRaw) {
     setKeys(await vault.openKeys(dekKey, theVault.keys));
     const sealed = await sqlite.readCurrent();
     const plain = await vault.open(dekKey, sealed);
-    openDatabase(plain); plain.fill(0);
+    // The image is checked before it is used (1.25.4, G2): its length against its own header, then SQLite's
+    // quick_check on a copy off to the side, before the schema and migrations touch it.
+    try {
+      const why = sqlite.imageProblem(plain) || sqlite.inspect(plain, (d) => { const q = Object.values(d.one('PRAGMA quick_check') || {})[0]; return q === 'ok' ? null : `quick_check: ${q}`; });
+      if (why) throw new Error(why);
+      openDatabase(plain);
+    } catch (e) { plain.fill(0); if (e.code === 'SUDS_KEY_LOST') throw e; throw await damagedDevice(sealed, e); }
+    plain.fill(0);
     sqlite.setSealer(sealer());
     phase = 'open'; lastActivity = Date.now();
   } catch (e) { dropKey(); clearKeys(); sqlite.setOpenAllowed(false); throw e; }
+}
+/**
+ * The device database opened under the right key but would not open as a database (1.25.4, G2: a WebKit run saw
+ * "malformed database schema (audit_log) - string or blob too big" at sign-in after a reload). Nothing is
+ * discarded or written over: the sealed image stays where it is, a copy of it is kept under its own key with the
+ * vault that opens it (a restore does not remove it; only Start over, which erases everything, does), and the
+ * person is told plainly, with the ways back. The copy can be saved as a file from the sign-in page (damagedCopy).
+ */
+const DAMAGED_KEY = 'damaged_db';
+async function damagedDevice(sealed, err) {
+  try { db.close(); } catch {}
+  const why = String((err && err.message) || err).slice(0, 300);
+  console.error('[suds-local] the device database would not open:', why);
+  try {
+    const kept = await sqlite.getMeta(DAMAGED_KEY);
+    const same = kept && kept.image && kept.image.ct.length === sealed.ct.length && kept.image.ct.every((x, i) => x === sealed.ct[i]);
+    if (!same) await sqlite.putMeta({ [DAMAGED_KEY]: { at: new Date().toISOString(), why, image: sealed, vault: theVault } });
+  } catch (e) { reportError(e); }
+  return new HttpError(503, 'The records on this device could not be opened: the copy stored in this browser is damaged. Nothing has been deleted, and the damaged copy is kept on this device. Reload the page and log in again. If this message comes back, save the damaged copy, then put your latest device backup back: Can\u2019t sign in? \u2192 Start over on this device, then Restore from a backup.', { deviceDamaged: true, locked: true });
 }
 /** Try a username and password against the vault; the DEK and the wrap it opened, or null. */
 async function tryUnwrap(username, password) {
@@ -928,6 +954,9 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
     // Diagnostics only: whether the database is open, and the sizes and timings of the last save (no contents);
     // whether a restored device still runs under the key its backup carried (no key material).
     phase: () => phase, saveStats: () => sqlite.saveStats(), lock: () => lockDevice(), rekeyPending: () => !!(theVault && theVault.rekey),
+    // The damaged database kept by damagedDevice, as a file's text (JSON, its bytes in base64), or null. Sealed: only
+    // the device key opens the image, and only an account's password (a wrap in the vault beside it) opens that key.
+    damagedCopy: async () => { const k = await sqlite.getMeta(DAMAGED_KEY); return k ? JSON.stringify({ format: 'suds-damaged-device-db', ...k }, (_, v) => (v instanceof Uint8Array ? { b64: Buffer.from(v).toString('base64') } : v)) : null; },
     // The folder scheduled backups are written to (1.24.0): a File System Access directory handle, kept with the
     // device's other stored values so that erasing the device forgets it too. No record and no key: the files
     // written there are encrypted backups (local/backup.js).

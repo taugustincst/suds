@@ -5953,6 +5953,7 @@ __export(sqlite_exports, {
   hasLock: () => hasLock,
   hasPendingExtra: () => hasPendingExtra,
   hasSealer: () => hasSealer,
+  imageProblem: () => imageProblem,
   init: () => init,
   inspect: () => inspect,
   isDirty: () => isDirty,
@@ -6432,6 +6433,18 @@ function exportCurrent() {
   if (!current) throw new Error("The on-device database is not open");
   return current.export();
 }
+function imageProblem(bytes3) {
+  const b = bytes3 instanceof Uint8Array ? bytes3 : null;
+  if (!b || b.length < 512) return `the image is ${b ? b.length : 0} bytes long, too short for a database`;
+  if (String.fromCharCode(...b.subarray(0, 16)) !== "SQLite format 3\0") return "the image does not start with the SQLite header";
+  const raw = b[16] << 8 | b[17];
+  const page = raw === 1 ? 65536 : raw;
+  if (page < 512 || page > 65536 || page & page - 1) return `the header gives an impossible page size (${raw})`;
+  if (b.length % page) return `the image (${b.length} bytes) is not a whole number of ${page}-byte pages`;
+  const u323 = (o) => (b[o] << 24 >>> 0) + (b[o + 1] << 16) + (b[o + 2] << 8) + b[o + 3];
+  if (u323(28) && u323(24) === u323(92) && u323(28) * page !== b.length) return `the header counts ${u323(28)} pages, the image holds ${b.length / page}`;
+  return null;
+}
 function inspect(bytes3, fn) {
   if (!SQL) throw new Error("sqlite shim not initialised");
   const d = new SQL.Database(bytes3);
@@ -6693,7 +6706,7 @@ var init_sqlite = __esm({
         return this.db.export();
       }
     };
-    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, putMeta, getMeta, entries, readCurrent, setSealer, hasSealer, hasPendingExtra, setOpenAllowed, saveStats, wipe, isWiped, replaceWith, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
+    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, putMeta, getMeta, entries, readCurrent, setSealer, hasSealer, hasPendingExtra, setOpenAllowed, saveStats, wipe, isWiped, replaceWith, imageProblem, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
   }
 });
 
@@ -56990,7 +57003,18 @@ async function unlockWith(dekRaw) {
     setKeys(await openKeys(dekKey, theVault.keys));
     const sealed = await sqlite_default.readCurrent();
     const plain = await open2(dekKey, sealed);
-    openDatabase(plain);
+    try {
+      const why = sqlite_default.imageProblem(plain) || sqlite_default.inspect(plain, (d) => {
+        const q = Object.values(d.one("PRAGMA quick_check") || {})[0];
+        return q === "ok" ? null : `quick_check: ${q}`;
+      });
+      if (why) throw new Error(why);
+      openDatabase(plain);
+    } catch (e) {
+      plain.fill(0);
+      if (e.code === "SUDS_KEY_LOST") throw e;
+      throw await damagedDevice(sealed, e);
+    }
     plain.fill(0);
     sqlite_default.setSealer(sealer2());
     phase = "open";
@@ -57001,6 +57025,23 @@ async function unlockWith(dekRaw) {
     sqlite_default.setOpenAllowed(false);
     throw e;
   }
+}
+var DAMAGED_KEY = "damaged_db";
+async function damagedDevice(sealed, err2) {
+  try {
+    import_db2.default.close();
+  } catch {
+  }
+  const why = String(err2 && err2.message || err2).slice(0, 300);
+  console.error("[suds-local] the device database would not open:", why);
+  try {
+    const kept = await sqlite_default.getMeta(DAMAGED_KEY);
+    const same = kept && kept.image && kept.image.ct.length === sealed.ct.length && kept.image.ct.every((x, i) => x === sealed.ct[i]);
+    if (!same) await sqlite_default.putMeta({ [DAMAGED_KEY]: { at: (/* @__PURE__ */ new Date()).toISOString(), why, image: sealed, vault: theVault } });
+  } catch (e) {
+    reportError(e);
+  }
+  return new import_http2.HttpError(503, "The records on this device could not be opened: the copy stored in this browser is damaged. Nothing has been deleted, and the damaged copy is kept on this device. Reload the page and log in again. If this message comes back, save the damaged copy, then put your latest device backup back: Can\u2019t sign in? \u2192 Start over on this device, then Restore from a backup.", { deviceDamaged: true, locked: true });
 }
 async function tryUnwrap(username, password) {
   if (typeof username !== "string" || typeof password !== "string" || !username || !password) return null;
@@ -57732,6 +57773,12 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
     saveStats: () => sqlite_default.saveStats(),
     lock: () => lockDevice(),
     rekeyPending: () => !!(theVault && theVault.rekey),
+    // The damaged database kept by damagedDevice, as a file's text (JSON, its bytes in base64), or null. Sealed: only
+    // the device key opens the image, and only an account's password (a wrap in the vault beside it) opens that key.
+    damagedCopy: async () => {
+      const k = await sqlite_default.getMeta(DAMAGED_KEY);
+      return k ? JSON.stringify({ format: "suds-damaged-device-db", ...k }, (_, v) => v instanceof Uint8Array ? { b64: import_buffer.Buffer.from(v).toString("base64") } : v) : null;
+    },
     // The folder scheduled backups are written to (1.24.0): a File System Access directory handle, kept with the
     // device's other stored values so that erasing the device forgets it too. No record and no key: the files
     // written there are encrypted backups (local/backup.js).

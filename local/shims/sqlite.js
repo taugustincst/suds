@@ -382,6 +382,23 @@ export async function replaceWith(value, { extra = null } = {}) {
 }
 /** The database as it is in memory right now (a device backup). */
 export function exportCurrent() { if (!current) throw new Error('The on-device database is not open'); return current.export(); }
+/**
+ * Why `bytes` cannot be a whole SQLite database image, or null (1.25.4, G2): checked before an unsealed image is
+ * opened. The header's own figures are used: the page size (offset 16), and the page count (offset 28), which
+ * SQLite keeps exact whenever the change counter (24) and "version valid for" (92) agree. A cut-short image fails
+ * here; damage inside a page is left to PRAGMA quick_check.
+ */
+export function imageProblem(bytes) {
+  const b = bytes instanceof Uint8Array ? bytes : null;
+  if (!b || b.length < 512) return `the image is ${b ? b.length : 0} bytes long, too short for a database`;
+  if (String.fromCharCode(...b.subarray(0, 16)) !== 'SQLite format 3\0') return 'the image does not start with the SQLite header';
+  const raw = (b[16] << 8) | b[17]; const page = raw === 1 ? 65536 : raw;
+  if (page < 512 || page > 65536 || (page & (page - 1))) return `the header gives an impossible page size (${raw})`;
+  if (b.length % page) return `the image (${b.length} bytes) is not a whole number of ${page}-byte pages`;
+  const u32 = (o) => ((b[o] << 24) >>> 0) + (b[o + 1] << 16) + (b[o + 2] << 8) + b[o + 3];
+  if (u32(28) && u32(24) === u32(92) && u32(28) * page !== b.length) return `the header counts ${u32(28)} pages, the image holds ${b.length / page}`;
+  return null;
+}
 /** Open a copy of `bytes` read-only, off to the side, for `fn(db)` to inspect (a backup's contents). */
 export function inspect(bytes, fn) {
   if (!SQL) throw new Error('sqlite shim not initialised');
@@ -524,4 +541,4 @@ export class DatabaseSync {
   close() { if (current === this.db) { current = null; dirty = false; clearTimeout(saveTimer); saveTimer = null; } try { this.db.close(); } catch {} }
   export() { return this.db.export(); }
 }
-export default { DatabaseSync, init, loadBytes, saveBytes, putMeta, getMeta, entries, readCurrent, setSealer, hasSealer, hasPendingExtra, setOpenAllowed, saveStats, wipe, isWiped, replaceWith, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
+export default { DatabaseSync, init, loadBytes, saveBytes, putMeta, getMeta, entries, readCurrent, setSealer, hasSealer, hasPendingExtra, setOpenAllowed, saveStats, wipe, isWiped, replaceWith, imageProblem, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
