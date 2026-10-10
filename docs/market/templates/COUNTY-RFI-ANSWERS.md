@@ -165,8 +165,8 @@ recorded in the exceptions table ([../../RELEASE.md](../../RELEASE.md), *The exc
 the gate, and its GitHub Release is published (2026-10-05). 1.25.0 is tagged, has been through the gate, and its
 GitHub Release is published (2026-10-06). 1.25.1 is tagged, has been through the gate, and its GitHub Release is
 published (2026-10-08). 1.25.2 and 1.25.3 are tagged, have been through the gate, and their GitHub Releases are
-published, 1.25.3 marked Latest (2026-10-09) (docs/evidence/RELEASE-HANDOFF.md). 1.25.4, stamped 2026-10-10, waits for
-the owner's tag; until it is pushed it is not published, and there is no tag or published zip to check it against. Verify against the commit instead. Each
+published (2026-10-09). 1.25.4 is tagged, has been through the gate, and its GitHub Release is published, marked
+Latest (2026-10-10) (docs/evidence/RELEASE-HANDOFF.md). Each
 commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
 release zip, which anyone can rebuild with `git archive` and compare. `scripts/release-site-check.js` checks a
 published web app byte for byte against the commit's build. The steps are in

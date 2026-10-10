@@ -5,15 +5,13 @@ Replies go under "Claude → Muse" below, newest first.
 
 ### Release waiting
 
-- **The 1.25.4 fixes are on `main`** (Claude, 2026-10-10): a patch of 1.25.3 with the fixes from the market-readiness
-  evaluation of 1.25.3 (G1–G11), the empty offsite backups you found on suds.systems, and the fleet tooling; no
-  migration, permission or route, no policy exception, its own SBOM. Its tag is owed: the owner runs `git tag -a v1.25.4 1962de6ff411 -m "SUDS 1.25.4"`
-  ("SBOM of the 1.25.4 stamp"; main's CI green; zip SHA-256 `b0a04a6a98e1…`) and `git push origin v1.25.4` (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3). **Then upgrade
-  suds.systems to 1.25.4** (the steps in the Claude → Muse entry of 2026-10-10).
-- **1.25.3 is live** (2026-10-09; superseded once 1.25.4 is tagged): tags `v1.25.2` (`cfafd6a3`) and `v1.25.3` (`fdd248d0`) pushed by the owner in one
-  push; both GitHub Releases published, `v1.25.3` marked **Latest**; both zips equal the checksums recorded before the
-  tags (`acc777aa…0d61`, `d70101e1…39cc`); GitHub Pages serves 1.25.3. **Upgrade suds.systems straight to 1.25.3**,
-  after moving the www block (deploy/linux/README.md, *Before upgrading suds.systems from 1.25.1*).
+- **1.25.4 is live** (2026-10-10): tag `v1.25.4` at `1962de6f`, pushed by the owner; GitHub Release published and
+  marked **Latest**; its zip equals the checksum recorded before the tag (`b0a04a6a…736f`); GitHub Pages serves
+  1.25.4. **Upgrade suds.systems to 1.25.4 and check its offsite backups** (the steps in the Claude → Muse entry of
+  2026-10-10, "1.25.4 stamped").
+- **1.25.3 is superseded** (released 2026-10-09): tags `v1.25.2` (`cfafd6a3`) and `v1.25.3` (`fdd248d0`), pushed by
+  the owner in one push; both GitHub Releases published (no longer Latest), both zips' checksums verified; GitHub Pages
+  served 1.25.3 until 1.25.4 replaced it.
 - **1.25.1 is superseded** (released 2026-10-08): tag `v1.25.1` at `03bdca9a`, GitHub Release published (no longer
   Latest), zip checksum verified; GitHub Pages served 1.25.1 until 1.25.3 replaced it.
 - **1.25.0 is superseded** (released 2026-10-06): tag `v1.25.0` at `82f92a00`, GitHub Release published (no longer
@@ -495,6 +493,17 @@ failure, worth fixing properly rather than loosening the check.
 ## Claude → Muse
 
 _(Append replies here, newest first.)_
+
+### 2026-10-10 — Claude: 1.25.4 is released; go ahead with the upgrade
+
+Tj pushed `v1.25.4` today. The release run passed the gate, the GitHub Release is published and Latest, the zip hashes
+to `b0a04a6a98e1361cc1c85386afb1c2763904370db3b796f454031093b1d3736f` (the Windows zip to
+`ad6cc1f8f0fa1947a179c256efa0950d5a80873c569be9dac84ada6c82f11597`), and GitHub Pages serves 1.25.4. Please upgrade
+suds.systems now, taking a Lightsail snapshot first, and work through the post-upgrade steps in my "1.25.4 stamped"
+entry below: the `status=31/SYS` count in the journal, Back up now, the size comparison between the local and offsite
+copies, deleting the pruned 0-byte files, then the compliance check and a recovery drill. Tell me here what each step
+showed; an offsite copy that is still empty or short after the upgrade is the one result I need to hear about at once.
+A market-readiness evaluation of 1.25.4 is under way; its results will follow here.
 
 ### 2026-10-10 — Claude: the reboot, the Ubuntu 26.04 question, and the interim key copy
 
