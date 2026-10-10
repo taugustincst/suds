@@ -295,14 +295,40 @@ let good = null; let copyText = null; // the good sealed image, and the saved co
   await page.waitForSelector('[data-mode-tab=login][aria-selected=true]', { timeout: 20000 }); await settle(page);
   eq(await tryLogin(page, 'dmg', PW), 'in', 'damaged: after Start over and the restore, the same account signs in');
   ok(((await kernel(page, 'GET', '/api/clients')).json.clients || []).some(c => c.last_name === 'Keeper'), 'damaged: and the client is back');
-  // (H2) A byte of the stored seal flipped: refused as damage (an integrity failure), with the copy offered.
+  // After Start over and a restore, a sign-out and a reload: the device is locked and the account signs in again. (In
+  // CI's WebKit this reload crashed the page on 1.25.5's first runs, with and without the second engine; whatever the
+  // reload does, the records must still be there in a new page. docs/RELEASE.md, flake register.)
   await logout(page);
-  await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 }); await settle(page);
+  let reloadCrash = null;
+  try { await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 }); await settle(page); }
+  catch (e) { reloadCrash = String(e.message || e).split('\n')[0]; }
+  ok(!reloadCrash, 'restored: a reload after Start over, a restore and a sign-out opens the sign-in page', reloadCrash);
+  const after = reloadCrash ? await ctx.newPage() : page;
+  if (reloadCrash) { await after.goto(base + '/'); await after.waitForSelector('.login input[name=username]', { timeout: 20000 }); await settle(after); }
+  eq(await tryLogin(after, 'dmg', PW), 'in', 'restored: after the reload the account signs in (the records survived)');
+  ok(((await kernel(after, 'GET', '/api/clients')).json.clients || []).some(c => c.last_name === 'Keeper'), 'restored: and the client is still there');
+  fs.rmSync(backupFile, { force: true }); fs.rmSync(copyFile, { force: true });
+  errors.push(...mine);
+  await ctx.close();
+}
+// (H2) A byte of the stored seal flipped: refused as damage (an integrity failure), with the copy offered. A device of
+// its own, so the check does not depend on the restore above.
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, acceptDownloads: true });
+  const page = await ctx.newPage(); const mine = [];
+  page.on('pageerror', e => mine.push(`PAGEERROR ${e.message}`));
+  page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|net::ERR_|region-pictures|the device database would not open/.test(m.text())) mine.push(`CONSOLE ${m.text().slice(0, 300)}`); });
+  await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 20000 });
+  eq((await kernel(page, 'POST', '/api/local/signup', { display_name: 'Integrity Owner', username: 'seal', password: PW, role: 'admin', storage_ack: true })).status, 200, 'integrity: a device is set up');
+  eq((await kernel(page, 'POST', '/api/auth/login', { username: 'seal', password: PW })).status, 200, 'integrity: and signed in');
+  eq((await kernel(page, 'POST', '/api/clients', { first_name: 'Sealed', last_name: 'Keeper', status: 'active' })).status, 201, 'integrity: a client');
+  await page.evaluate(async () => { await window.SUDS_LOCAL.flush(); });
+  ok((await kernel(page, 'POST', '/api/auth/logout', {})).status < 300, 'integrity: signed out');
+  await page.goto(base + '/#/login?mode=login'); await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 }); await settle(page);
   ok(await storedImage(page, true), 'integrity: one byte of the stored image flipped');
-  eq(await tryLogin(page, 'dmg', PW), 'refused', 'integrity: the sign-in is refused');
+  eq(await tryLogin(page, 'seal', PW), 'refused', 'integrity: the sign-in is refused');
   ok(/failed its integrity check/.test(await page.textContent('.login')) && !/Something went wrong/.test(await page.textContent('.login')), 'integrity: saying the stored copy failed its integrity check, not "something went wrong"', await page.textContent('.login'));
   ok(await page.$('[data-device-damaged][role=alert] [data-damaged-save]'), 'integrity: with the button to save the copy');
-  fs.rmSync(backupFile, { force: true }); fs.rmSync(copyFile, { force: true });
   errors.push(...mine);
   await ctx.close();
 }
