@@ -7,11 +7,21 @@ must exist before the vendor can host anything, and what it costs.
 
 **Current status: SUDS is not offered as a hosted service** (true of every release so far). It is self-hosted by
 the programme, its IT partner or its county (since 1.18.0 optionally with SUDS Server, the hardened Linux installer
-and its weekly signed compliance check: [../SELF-HOSTING.md](../SELF-HOSTING.md); run for real in a systemd
-container on Ubuntu 24.04, most recently on 1.23.0, with 1.20.0 and 1.22.0 fixing what earlier runs found, but not yet
-on a real VM or on RHEL 9 by the project). The vendor is one person, offering business-hours help. Nothing on this page should
-be read as a hosted offer until the checklist in *Before the vendor-hosted tier can be offered* is complete and
-this line is changed.
+and its weekly signed compliance check: [../SELF-HOSTING.md](../SELF-HOSTING.md)). The vendor is one person, offering
+business-hours help. Nothing on this page should be read as a hosted offer until the checklist in *Before the
+vendor-hosted tier can be offered* is complete and this line is changed.
+
+**What is real today, and what is planned** (2026-10-10):
+
+| | Real today | Planned, not done |
+| --- | --- | --- |
+| **Who would operate a hosted service** | Decided by the owner on 2026-10-09: **AugustInnovations LLC**, the licensor, operates it and signs each customer's BAA and Part 2 QSOA (no separate operator company, so no further licence is needed) | Bank account, W-9 and county vendor registration in its name: not recorded here |
+| **A production install** | **One: suds.systems**, the vendor's own SUDS Server on an AWS Lightsail VM (Ubuntu 24.04, `us-west-2`), installed from the 1.25.1 release with `deploy/linux/install.sh` on 2026-10-08. It holds **fictional data only**: its data volume is **not encrypted yet** (the installer recorded that as an accepted risk), so it must not hold a real record. Its first backup and recovery drill passed and its compliance check reported 39 pass, 0 fail, 7 warnings (the project's launch report; no signed report from it is stored in this repository yet). It is not a customer, a pilot or a reference site | An encrypted data volume before any real record; an upgrade to the current release |
+| **Cloud provider BAA** | The **AWS Business Associate Addendum** was accepted, in AWS Artifact, for the AWS account that runs suds.systems, effective 2026-10-08. It covers AWS's infrastructure only and is not an agreement with any customer | Confirm that the account is held by AugustInnovations LLC, the operator; confirm with counsel that every AWS service used is HIPAA-eligible |
+| **Fleet tooling** | [`deploy/fleet/`](../../deploy/fleet/README.md): one VM per customer, an encrypted (LUKS) data volume required before real data, escrowed keys with a logged access chain, and a two-confirmation teardown. Written and tested **against stand-ins only** (stub `aws`, `ssh`, DNS and `gpg`) | Its first real run (the drill tenant in its runbook), on the owner's go; nothing has been provisioned with it |
+| **Installer on a real VM** | Run once on Ubuntu 24.04 (suds.systems, above); its two findings (the firewall clean-up removed the SSH rule it had just added when the administration network was `0.0.0.0/0`; `www.<domain>` had no certificate) are fixed in 1.25.3 | RHEL 9 on a real VM ([../evidence/INSTALLER-VM-RUN.md](../evidence/INSTALLER-VM-RUN.md)) |
+| **Penetration testing** | An owner-authorised test of suds.systems on 2026-10-08 by the vendor's own development assistant (not independent; no critical, high or medium finding; its minor findings fixed in 1.25.3): [../evidence/pentest-suds-systems-2026-10-08.md](../evidence/pentest-suds-systems-2026-10-08.md) | An independent test of the application and the hosting environment ([../security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md)) |
+| **Agreements** | Drafts for counsel: a [licence and subscription agreement](templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md), a [BAA and Part 2 QSOA](templates/BAA-QSOA-DRAFT.md), a [DPA](templates/DPA-DRAFT.md) and [support service levels](templates/SUPPORT-SLA.md) | Counsel's review; a hosted price; insurance; staffed on-call |
 
 ## The three hosting models
 
@@ -48,17 +58,17 @@ All of these, not most of them:
 
 | # | Requirement | Why | Status |
 | --- | --- | --- | --- |
-| 1 | Legal entity, business bank account | Contracts and BAAs are signed by an entity | Not started |
-| 2 | Cloud provider **BAA** signed; only BAA-eligible services used | HIPAA; Part 2 records | Not started |
-| 3 | **US region** only, stated in the DPA; backups in the US too | Data residency asks from counties | Not started |
-| 4 | **Offsite backups** to a separate account/region with object lock; restore drill monthly, results shared | Recovery, ransomware | Tooling exists; hosting not started |
+| 1 | Legal entity, business bank account | Contracts and BAAs are signed by an entity | **Entity decided:** AugustInnovations LLC operates the hosted service and signs the BAAs and QSOAs (owner decision, 2026-10-09). Business bank account: not recorded here |
+| 2 | Cloud provider **BAA** signed; only BAA-eligible services used | HIPAA; Part 2 records | **AWS BAA accepted** for the AWS account that runs suds.systems (AWS Artifact, effective 2026-10-08). To confirm: the account is held by the operator, and each service used is HIPAA-eligible |
+| 3 | **US region** only, stated in the DPA; backups in the US too | Data residency asks from counties | suds.systems runs in `us-west-2`; the fleet tooling takes the region per tenant. Not yet stated in a signed DPA |
+| 4 | **Offsite backups** to a separate account/region with object lock; restore drill monthly, results shared | Recovery, ransomware | Tooling exists; the fleet's "offsite" disk is in the same zone (not yet a copy that leaves the zone: [deploy/fleet](../../deploy/fleet/README.md), *Limits*) |
 | 5 | **Monitoring and alerting** on health, disk, certificate, backup age, audit verification | Knowing before the customer does | Endpoints exist; no monitoring service |
 | 6 | **On-call** that matches the SLA: a second person or contracted on-call before any after-hours promise | A one-person vendor cannot be on call 24×7 | Not started |
 | 7 | **Insurance**: cyber liability and technology E&O at the limits counties ask for | Contract requirement; protects both sides | Not started |
-| 8 | **Independent penetration test** of the application and the hosting environment, findings fixed | County IT gate | Not started ([docs/security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md) ready) |
+| 8 | **Independent penetration test** of the application and the hosting environment, findings fixed | County IT gate | Not started ([docs/security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md) ready). The vendor's own owner-authorised test of suds.systems (2026-10-08) is not independent: [../evidence/pentest-suds-systems-2026-10-08.md](../evidence/pentest-suds-systems-2026-10-08.md) |
 | 9 | Hardened image, patch process, access control to the hosting account (MFA, least privilege, access log) | SOC 2 CC6/CC7 | Documented for county installs; not built for vendor hosting |
 | 10 | Key custody procedure and escrow option | The vendor would hold PHI keys | Tooling: [deploy/fleet](../../deploy/fleet/README.md) escrows each tenant's keys encrypted for the owner and logs every access; no custody procedure adopted |
-| 11 | BAA/QSOA and DPA templates reviewed by the vendor's counsel | Every hosted contract needs them | Drafts in [templates/](templates/) |
+| 11 | Licence and subscription agreement, BAA/QSOA and DPA templates reviewed by the vendor's counsel | Every hosted contract needs them | Drafts in [templates/](templates/), not reviewed |
 | 12 | SOC 2 Type 1 scoped to the hosted service (can follow the first customers, but must be planned) | Larger buyers | Readiness self-assessment only |
 
 ## Unit-cost model (planning assumptions, not quotes)

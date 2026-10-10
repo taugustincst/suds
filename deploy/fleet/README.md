@@ -16,6 +16,10 @@ SUDS stays single-tenant: a "fleet" is many separate installs, never one install
 
 Tested in `test/deploy-fleet.test.js`, against stub `aws`, `curl`, `ssh`, `scp` and `gpg` executables only: no test,
 and no dry run, contacts AWS, Porkbun, DNS or a VM.
+**Status (2026-10-10): not yet run against real infrastructure.** Nothing has been provisioned with it; its first real
+run is the drill tenant below, on the owner's go and with the owner's credentials. The only production install today
+is the vendor's own suds.systems (fictional data only), installed by hand with `deploy/linux/install.sh` before this
+tooling existed.
 
 ## Private by design
 
@@ -57,11 +61,11 @@ $FLEET_HOME/                        mode 0700, a private git repository (see bel
   keys; no other customer's server can reach it. As your service provider we hold administrative access and an
   escrowed copy of your keys, used only as our agreement allows, and every use of the escrow is logged."* Never
   "zero-knowledge", "we cannot see your data" or "end-to-end encrypted".
-- **Who operates the fleet is the owner's decision, not assumed here.** `LICENSE` names AugustInnovations LLC as the
-  licensor, and section 3 requires a signed licence for "offering the software, or its functionality, as a hosted or
-  managed service". If a company other than AugustInnovations LLC operates the fleet and signs the BAAs and QSOAs (the
-  multitenancy plan said "Suds LLC"), that company needs a written licence from AugustInnovations LLC that permits
-  hosted operation first. [docs/market/HOSTING.md](../../docs/market/HOSTING.md) lists what else must exist before a
+- **AugustInnovations LLC operates the fleet** and signs each tenant's BAA and QSOA (owner decision of 2026-10-09).
+  It is the licensor (`LICENSE`), so no separate licence for hosted operation is needed; were any other company ever to
+  operate it, that company would need a written licence from AugustInnovations LLC first (`LICENSE` section 3). The
+  customer-facing agreement is the draft [licence and subscription agreement](../../docs/market/templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md),
+  with the BAA and QSOA as its exhibits (all for counsel). [docs/market/HOSTING.md](../../docs/market/HOSTING.md) lists what else must exist before a
   hosted service is offered.
 - **LUKS before real data.** The provisioning run fails unless `/var/lib/suds` is on a LUKS (dm-crypt) volume.
   `--allow-unencrypted-demo` downgrades that to a loud warning for a demonstration tenant, and records `DEMO_ONLY=yes`
@@ -92,7 +96,8 @@ $FLEET_HOME/                        mode 0700, a private git repository (see bel
    Push it, if at all, to a **private** repository the owner controls, never to this one.
 2. **AWS.** An IAM user or role in the owner's account limited to Lightsail (`lightsail:*`), with MFA;
    `aws configure --profile suds-fleet` and `export AWS_PROFILE=suds-fleet`. The AWS BAA accepted in AWS Artifact
-   (done for the account on 2026-10-08). A Lightsail key pair in each region used:
+   (done on 2026-10-08 for the account that runs suds.systems; the account must be the operator's, AugustInnovations
+   LLC's). A Lightsail key pair in each region used:
    `aws lightsail create-key-pair --region us-west-2 --key-pair-name suds-fleet --query privateKeyBase64 --output text > keys/suds-fleet.pem && chmod 0600 keys/suds-fleet.pem`.
 3. **Porkbun.** In the Porkbun account, *API Access* on for the zone (`suds.systems`) and an API key:
    `credentials/porkbun.env` with `PORKBUN_API_KEY=pk1_…` and `PORKBUN_SECRET_API_KEY=sk1_…`, `chmod 0600`. The scripts

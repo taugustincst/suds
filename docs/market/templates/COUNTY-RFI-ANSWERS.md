@@ -18,7 +18,8 @@ between the two, both are given. The longer, question-by-question version is
 **Q. Is SUDS software-as-a-service? Who hosts it?**
 No. The county (for the county view) and each CBO or its IT partner install and operate it: SUDS Server on a
 Linux VM with the project's installer, a container, or the county's own cloud tenant. A vendor-hosted option is
-planned, not offered. Evidence: [../../SELF-HOSTING.md](../../SELF-HOSTING.md),
+planned, not offered; if it is offered, AugustInnovations LLC operates it and signs the BAA and Part 2 QSOA. The
+vendor's own install, suds.systems, holds fictional data only and is not offered to customers. Evidence: [../../SELF-HOSTING.md](../../SELF-HOSTING.md),
 [../../../deploy/linux/README.md](../../../deploy/linux/README.md), [../../DEPLOYMENT.md](../../DEPLOYMENT.md),
 [../HOSTING.md](../HOSTING.md).
 
@@ -174,7 +175,12 @@ complete]: push the owed tags, then turn on the release protections (RELEASE.md,
 **Q. Penetration testing?** **No independent test has been done. [owner to complete]: an independent penetration
 test and its remediation.** The owner authorised a white-box penetration test of 1.23.6, made with the source; its
 two Medium findings (a consent's purpose not checked at a disclosure; a device's sync push bringing back a row the
-office had deleted) and seven Low ones are fixed in 1.24.0 with tests (CHANGELOG 1.24.0). It is not independent. A scope for a county-commissioned test is in
+office had deleted) and seven Low ones are fixed in 1.24.0 with tests (CHANGELOG 1.24.0). It is not independent. On 2026-10-08
+the owner authorised a black-box test, with a code review of the deployed tag, of the vendor's own live install
+(suds.systems, 1.25.1, fictional data only), run by the vendor's own development assistant: no critical, high or medium
+finding; its two minor findings (a lock that confirmed a username exists; operational warnings on the anonymous health
+check) are fixed in 1.25.3. It is not independent either, and did not test inside a signed-in session
+([../../evidence/pentest-suds-systems-2026-10-08.md](../../evidence/pentest-suds-systems-2026-10-08.md)). A scope for a county-commissioned test is in
 [../../security/PEN-TEST-SCOPE.md](../../security/PEN-TEST-SCOPE.md). It covers the county view's import, read API
 and push endpoint, and the areas 1.21.0 added and 1.22.0 changed: county publication (differencing, consent and corrected releases),
 field devices and participant codes (the scope bound to the account), the authenticator allow-list and metadata upload
@@ -263,6 +269,7 @@ No 24×7 support, no vendor on-call, no vendor-hosted service. Evidence: [../../
 ## Company
 
 **Q. Legal entity, insurance, references, certifications?**
-**[owner to complete]: legal entity, W-9 and county vendor registration; insurance (general liability, tech E&O,
-cyber); references.** Today there is no legal entity, no insurance, one maintainer and no customer references; no
+Legal entity: **AugustInnovations LLC**, the licensor. **[owner to complete]: W-9 and county vendor registration;
+insurance (general liability, tech E&O, cyber); references.** Today there is no insurance, one maintainer and no
+customer references; no
 certification or attestation of any kind ([../README.md](../README.md), *Organisational gaps*).

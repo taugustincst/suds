@@ -49,4 +49,4 @@ Evidence an auditor can take away:
 * The index key keys both the blind indexes and the audit chain ([../HIPAA.md](../HIPAA.md), risk register). Anchors on write-once storage are what make a rewrite by a key holder detectable.
 * No built-in SIEM connector beyond structured logs, syslog for anchors and Prometheus metrics.
 * SSO sign-ins still need SUDS's own TOTP where the role requires it; SUDS does not yet accept the identity provider's MFA claim in its place.
-* No third-party penetration test has been commissioned by the project; [PEN-TEST-SCOPE.md](PEN-TEST-SCOPE.md) is written for a county that commissions one.
+* No third-party penetration test has been commissioned by the project; [PEN-TEST-SCOPE.md](PEN-TEST-SCOPE.md) is written for a county that commissions one. The vendor's own tests are not independent: a white-box test of 1.23.6, and a black-box test of its live install suds.systems on 2026-10-08 ([summary](../evidence/pentest-suds-systems-2026-10-08.md)).

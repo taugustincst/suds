@@ -162,7 +162,7 @@ Owner: **vendor / company**. These are organisational tasks the software cannot 
 
 | # | Item | Why | Suggested timing |
 | --- | --- | --- | --- |
-| 1 | **Legal entity** (e.g. LLC or corporation) with a business bank account | Counties contract with entities, not individuals | Now (Phase 1) |
+| 1 | **Legal entity** (e.g. LLC or corporation) with a business bank account | Counties contract with entities, not individuals | Now (Phase 1). The entity is AugustInnovations LLC, the licensor; its bank account is not recorded here |
 | 2 | **W-9, Payee Data Record, EIN**, county vendor registration | Required to be paid | Now |
 | 3 | **Insurance**: general liability, tech E&O, cyber liability (common county asks are $1M–$5M per claim; confirm) | Contract exhibit; also protects the company | Before first paid pilot |
 | 4 | **Signed-off BAA/QSOA and DPA templates**, reviewed by the vendor's own counsel | Every PHI contract needs them | Before first paid pilot |

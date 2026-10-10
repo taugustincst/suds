@@ -194,10 +194,12 @@ drills, a self-assessed accessibility report): say them when you send it. Tested
 
 Software cannot close these. A county will ask about each; say plainly that it is open.
 
-- **[owner to complete]: legal entity**, W-9 / Payee Data Record and county vendor registration.
+- **Legal entity: AugustInnovations LLC**, the licensor. **[owner to complete]:** W-9 / Payee Data Record and county
+  vendor registration.
 - **[owner to complete]: insurance** (general liability, tech E&O, cyber liability).
-- **[owner to complete]: penetration test.** None has been done; the scope is written for a county-commissioned
-  test ([../security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md)).
+- **[owner to complete]: penetration test.** No independent test has been done (the vendor's own owner-authorised
+  tests, of 1.23.6 and of its live install on 2026-10-08, are not independent); the scope is written for a
+  county-commissioned test ([../security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md)).
 - **[owner to complete]: pricing.** Nothing is decided ([PRICING-OPTIONS.md](PRICING-OPTIONS.md)); do not quote a
   number from this kit.
 - **[owner to complete]: counsel review** of the BAA/QSOA and DPA drafts, and of the questions in

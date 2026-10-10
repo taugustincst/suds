@@ -263,8 +263,10 @@ consent and notice wording before first use.
 
 **"Do you have SOC 2 / HITRUST / a pen test?"**
 No, and we will not say otherwise. What exists: control documentation and a SOC 2 readiness self-assessment in
-`docs/security/`, a pre-answered questionnaire, and source code anyone can review (public; licensed under [LICENSE](../../LICENSE)). An independent
-penetration test and SOC 2 are open vendor items ([EVALUATION-RESPONSE.md](EVALUATION-RESPONSE.md)).
+`docs/security/`, a pre-answered questionnaire, and source code anyone can review (public; licensed under [LICENSE](../../LICENSE)). The vendor's own tests
+are not independent: an owner-authorised white-box test of 1.23.6, and a black-box test of its live install on
+2026-10-08 that found no critical, high or medium issue ([summary](../evidence/pentest-suds-systems-2026-10-08.md)). An
+independent penetration test and SOC 2 are open vendor items ([EVALUATION-RESPONSE.md](EVALUATION-RESPONSE.md)).
 
 **"Is it accessible?"**
 A WCAG 2.1 AA self-assessment and an Accessibility Conformance Report (VPAT format) are published at

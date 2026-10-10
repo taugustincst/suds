@@ -67,15 +67,15 @@ Organisational items that software cannot close are marked **open**.
 
 ## Organisational items still open
 
-Software cannot close these. None is done.
+Software cannot close these. Only the legal entity is settled.
 
 | Item | Why it matters | Status |
 | --- | --- | --- |
-| Legal entity, W-9, vendor registration | Programmes and counties contract with entities | Not started |
+| Legal entity, W-9, vendor registration | Programmes and counties contract with entities | Entity: AugustInnovations LLC, the licensor and the operator of any hosted service (owner decision, 2026-10-09); W-9 and vendor registration not recorded |
 | Insurance (cyber liability, tech E&O, general liability) | Contract requirement; before any paid pilot | Not started |
-| Counsel review of BAA/QSOA, DPA and SLA templates | Every contract with PHI access needs them | Drafts only |
-| Vendor-hosted tier | CBOs without IT partners | Planned — not offered ([HOSTING.md](HOSTING.md)) |
-| Independent penetration test | IT gate; prerequisite for hosting | Not commissioned ([docs/security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md) ready). An owner-authorised white-box test of 1.23.6, not independent, found two Medium and seven Low findings, fixed in 1.24.0 |
+| Counsel review of the licence and subscription agreement, BAA/QSOA, DPA and SLA templates | Every contract needs them | Drafts only ([templates/](templates/)) |
+| Vendor-hosted tier | CBOs without IT partners | Planned — not offered ([HOSTING.md](HOSTING.md)): operator decided; one vendor install with fictional data only; fleet tooling not yet run against real infrastructure |
+| Independent penetration test | IT gate; prerequisite for hosting | Not commissioned ([docs/security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md) ready). An owner-authorised white-box test of 1.23.6, not independent, found two Medium and seven Low findings, fixed in 1.24.0; an owner-authorised black-box test of the vendor's own live install (2026-10-08), not independent, found no critical, high or medium issue, its minor findings fixed in 1.25.3 ([summary](../evidence/pentest-suds-systems-2026-10-08.md)) |
 | SOC 2 (Type 1, then Type 2) | Larger buyers | Readiness self-assessment only ([docs/security/SOC2-READINESS.md](../security/SOC2-READINESS.md)) |
 | Real users | "A product without users is a prototype with opinions" | None yet; three pilot CBOs sought |
 | Pricing validation | Willingness to pay is unknown | Introductory tiers published ([`public/procurement.json`](../../public/procurement.json)); willingness to pay not yet validated |

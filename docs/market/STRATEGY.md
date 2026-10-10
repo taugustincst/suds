@@ -32,8 +32,8 @@ The independent market reviews of 1.16.2 and 1.16.3 rated SUDS **2.5 / 5** overa
 with an IT partner, **1.5–2 / 5** for a county procurement or IT review. The software is ahead of the
 organisation:
 
-- Every organisational item that makes SUDS purchasable is *Not started* or *Drafts only*: legal entity,
-  vendor registration, insurance, counsel review of the BAA/QSOA, DPA and SLA, a penetration test, an
+- Every organisational item that makes SUDS purchasable was *Not started* or *Drafts only* (the legal entity,
+  AugustInnovations LLC, has since been settled): vendor registration, insurance, counsel review of the BAA/QSOA, DPA and SLA, a penetration test, an
   independent reviewer, the official reporting templates and a county sponsor
   ([README.md](README.md#organisational-gaps-owner-vendor--company)).
 - The repository controls for releases are designed but not in force until the owner applies them
