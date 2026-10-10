@@ -790,6 +790,7 @@ with its cause and its fix; "known flaky" without a cause is not an entry.
 | `2e4ecac` node24 | `test/fingerprint-review.test.js` "401 == 200" (and the same pattern in eight files) | an authenticator code of the previous 30-second step, refused when a step boundary fell inside the request | 1.25.4: the current step then the next; `H.totpPreviousStep` for the tests that need three steps |
 | `147fddd` browser | `accessibility.mjs` "the referral is saved, relying on the consent — got [null]" | a product race: the provider's consents answering after the worker chose a consent cleared the choice | 1.25.4: `public/views/referrals.js` keeps a choice made during the reload; checked in `frontline-review.mjs` |
 | `cfafd6a` test, `c3a54bd` evening | one failing test each, not named in what the API returns | unknown: the CI log was not readable from where it was investigated | 1.25.4 annotates every failure, so the next one is named |
+| `1962de6` webkit (advisory) | `device-recovery.mjs`: a Playwright `TimeoutError` (named by the new annotations) | not yet established: the same script passed in WebKit on the branch run `38011340911`; WebKit is not installable where it was investigated | open: to be watched on the next runs and investigated if it recurs |
 
 #### Handing a release to the owner
 Whoever prepares a release (a maintainer, or the maintaining assistant) stamps it on `main` and then hands it over;
