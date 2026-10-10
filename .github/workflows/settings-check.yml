@@ -25,7 +25,7 @@ permissions:
   deployments: read
 jobs:
   settings:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Holds SETTINGS_READ_TOKEN, if the owner made one; limited to the default branch, so a branch's copy of this
     # workflow never receives it. Without the secret the workflow's own read-only token is used.

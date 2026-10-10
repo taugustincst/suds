@@ -13,12 +13,18 @@ const jobs = (overrides = {}) => [...REQUIRED_JOBS, 'webkit'].map((name) => ({ n
 
 test('passes only when a push run for the exact commit succeeded with every required job green', () => {
   assert.equal(evaluate(SHA, [run(1)], { 1: jobs() }).decision, 'pass');
-  assert.deepEqual(REQUIRED_JOBS.slice().sort(), ['browser', 'dr-drill', 'node24', 'test', 'thorough', 'thorough-sdc'], 'the browser suite, Node 24, the recovery drill, the thorough checks and the SDC disclosure sweeps are required');
+  assert.deepEqual(REQUIRED_JOBS.slice().sort(), ['browser', 'dr-drill', 'evening', 'node24', 'test', 'thorough', 'thorough-sdc'], 'the browser suite, Node 24, the recovery drill, the thorough checks, the SDC disclosure sweeps and the 9pm-in-Los-Angeles run are required');
 });
 
 test('refuses when the browser suite failed, even if the run as a whole is marked success', () => {
   const out = evaluate(SHA, [run(1)], { 1: jobs({ browser: 'failure' }) });
   assert.equal(out.decision, 'fail'); assert.match(out.reason, /browser/);
+});
+
+test('refuses a run whose evening job (npm test at 9pm in Los Angeles) failed, or that has none (1.25.5, evaluation of 1.25.4, H8)', () => {
+  const out = evaluate(SHA, [run(1)], { 1: jobs({ evening: 'failure' }) });
+  assert.equal(out.decision, 'fail'); assert.match(out.reason, /not successful: evening/);
+  assert.match(evaluate(SHA, [run(1)], { 1: jobs().filter((j) => j.name !== 'evening') }).reason, /missing job\(s\) evening/);
 });
 
 test('refuses when the run failed; WebKit (advisory) failing alone does not block', () => {
@@ -114,7 +120,7 @@ test('every Node 22 job, and the release, runs an exact pinned Node 22 checked a
   const nvmrc = fs.readFileSync(path.join(__dirname, '..', '.nvmrc'), 'utf8').trim();
   assert.equal(a.v.split('.')[0], `v${nvmrc}`, 'of the major .nvmrc names');
   const job = (y, name, next) => y.slice(y.indexOf(`\n  ${name}:`), next ? y.indexOf(`\n  ${next}:`) : undefined);
-  const jobs = [['test', job(ci, 'test', 'thorough')], ['thorough', job(ci, 'thorough', 'thorough-sdc')], ['thorough-sdc', job(ci, 'thorough-sdc', 'browser')], ['browser', job(ci, 'browser', 'node24')], ['evening', job(ci, 'evening', 'dr-drill')], ['dr-drill', job(ci, 'dr-drill', 'webkit')], ['verify', job(rel, 'verify', 'release')]];
+  const jobs = [['test', job(ci, 'test', 'thorough')], ['thorough', job(ci, 'thorough', 'thorough-sdc')], ['thorough-sdc', job(ci, 'thorough-sdc', 'browser')], ['browser', job(ci, 'browser', 'node24')], ['evening', job(ci, 'evening', 'dr-drill')], ['dr-drill', job(ci, 'dr-drill', 'service-sandbox')], ['verify', job(rel, 'verify', 'release')]];
   for (const [name, text] of jobs) {
     assert.match(text, /curl -fsSLO "https:\/\/nodejs\.org\/dist\/\$\{NODE22_VERSION\}\/\$\{file\}"/, `${name}: downloads the pinned release`);
     assert.match(text, /echo "\$\{NODE22_SHA256\}  \$\{file\}" \| sha256sum -c -/, `${name}: checks it against the pinned checksum`);

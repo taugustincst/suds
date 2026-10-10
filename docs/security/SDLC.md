@@ -17,9 +17,11 @@
 | `thorough` | The performance checks and timing budgets at full size |
 | `thorough-sdc` | The statistical-disclosure-control attacker sweeps at full size (publication releases) |
 | `dr-drill` | Backup and restore end to end: seed, encrypted backup, recovery drill with an escrowed key file, host restore, audit chain, signed report verified |
+| `evening` | `npm test` at 9pm in Los Angeles (`scripts/test-evening.sh`, libfaketime), when the UTC date is already tomorrow's |
+| `service-sandbox` | SUDS Server under its own systemd unit (`deploy/linux/suds.service`), non-root, driven over HTTP: Back up now with an offsite copy, snapshots, anchors, a recovery drill and a restore; no process killed by the unit's system-call filter |
 | `webkit` (advisory) | A WebKit smoke subset |
 
-The release gate requires `test`, `thorough`, `thorough-sdc`, `browser`, `node24` and `dr-drill` to have passed on the exact commit released (`scripts/release-gate.js` `REQUIRED_JOBS`). CI runs with a read-only token and installs every Node release against a SHA-256 pinned in the workflow.
+The release gate requires `test`, `thorough`, `thorough-sdc`, `browser`, `node24`, `dr-drill` and `evening` to have passed on the exact commit released (`scripts/release-gate.js` `REQUIRED_JOBS`). CI runs with a read-only token and installs every Node release against a SHA-256 pinned in the workflow.
 
 Security-relevant properties have dedicated tests, for example: `test/security-evidence.test.js` (anchors, audit export, recovery drill, SSO-required, MFA-for-all, Security status), `test/rotate-index-key.test.js`, `test/backup.test.js`, `test/migrations.test.js`, `test/sync.test.js` (every `_enc` column declared for sync), `test/security-1154.test.js` to `test/security-1164.test.js` (each security review's findings), `test/data-inventory.test.js` (the data inventory matches the schema) and `test/sbom.test.js` (the committed SBOM matches the script). The threat model lists them by attack class ([THREAT-MODEL.md](THREAT-MODEL.md)).
 

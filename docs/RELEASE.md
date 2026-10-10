@@ -819,6 +819,17 @@ The gate checks the same things again (CI on that exact commit, on `main`, the t
 mistake stops the release rather than shipping it. A tag made in any other clone (an assistant's, say) is never
 pushed: delete it there (`git tag -d vX.Y.Z`), since the tag's date starts the 28-day clock for a feature release.
 
+**After the tag: the records commit, and the hour `release-state` is red.** Every tag is followed on `main` by a
+records commit, "Release records: X.Y.Z completed" (`ec874a4` for 1.25.4), made once the release run has passed and
+the web app is published: the hand-off ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)) and HANDOFF.md's
+*Release waiting* no longer list the tag as owed, and the questionnaire, the RFI answer, the evidence index and the
+ledger above say it was released (and the zip's SHA-256 goes into the CHANGELOG, *The zip's SHA-256 in two places*,
+below). Between the tag push and that commit (about an hour for 1.25.4: the gate, the approval, the web app's
+publish) the advisory `release-state` job on `main` is **expected red**: the documents still say the tag is owed
+while origin has it. That is not a failure to chase; a `release-state` that is still red once the records commit is
+on `main` is (evaluation of 1.25.4, H8). Nothing automates the records commit: it states what the owner and the
+release run did, so it is written after they did it.
+
 **Signing the tag (owner; planned, not yet in use).** Release tags are annotated but **not signed** today (every
 tag up to `v1.25.4`), so a tag alone does not show who vouched for a release; *Signing a release tag*, below, is the
 procedure for when the owner has a signing key whose public half is published. Then the last line above becomes
@@ -881,7 +892,7 @@ refusal, so that a reviewed exception stays possible: the owner decides, and say
 Pushing the tag runs `.github/workflows/release.yml`, which first passes the release gate (below), then re-runs the tests in the `verify` job (read-only token, no environment), and, after the owner's approval, the `release` job packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release for the tag with the zip attached. Since 1.16.4 (engineering review of 1.16.3, M5) the `release` job is the only one with a write token and runs no npm and none of the released commit's code: `npm ci` and `npm test` ran in `verify`, where a dependency could once reach the packaging step through `$GITHUB_ENV`, `$GITHUB_PATH` or a replaced `git`, `sha256sum` or `gh`. As its last step it starts the web-app (GitHub Pages) workflow for the tag (`gh workflow run web-app.yml --ref v1.0.1`): a release created with `GITHUB_TOKEN` does not trigger other workflows by itself. That dispatch is the web-app workflow's only trigger (since 1.16.1 a tag push or a `release` event no longer starts it): it runs only on a `v*` tag whose GitHub Release exists at that commit, and its `publish` job waits in the `release` environment, so the owner approves it too. The on-device web app is published on releases only — never on a push to `main` — so what is on the public URL is always a released version ([WEB_APP.md](WEB_APP.md#when-it-is-published)). No workflow uses a marketplace action; the only actions used are GitHub's own `actions/upload-artifact` and `actions/download-artifact`, pinned to a commit, in `web-app.yml` (they run under the Actions policy *Allow actions created by GitHub*).
 
 ### Release gate
-QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` runs `scripts/release-gate.js` for the commit being released (`GITHUB_SHA`) before anything is built. It asks the GitHub API (with the workflow's own token — no marketplace action) for the runs of `ci.yml` on that exact commit, counts only `push` runs (a `pull_request` run tests a merge commit, not this one), and passes only when one of them **concluded success with the `test`, `thorough`, `thorough-sdc`, `browser`, `node24` and `dr-drill` jobs all successful** (with `SUDS_THOROUGH=1`, `thorough-sdc` runs the publication-release disclosure sweeps at full size — `npm test` runs a sample — and `thorough` the performance checks in `test/thorough/` and the other timing budgets, which `npm test` leaves out so a busy runner cannot flake it; `npm run test:thorough` runs both, `node scripts/test-thorough.js --part sdc|rest` either. Until 1.16.0 they were one job that took about 25 of its 30 minutes; the sweeps now have their own, with a 60-minute limit — measured alone on the development container they take about 27 minutes, everything else 17 seconds):
+QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` runs `scripts/release-gate.js` for the commit being released (`GITHUB_SHA`) before anything is built. It asks the GitHub API (with the workflow's own token — no marketplace action) for the runs of `ci.yml` on that exact commit, counts only `push` runs (a `pull_request` run tests a merge commit, not this one), and passes only when one of them **concluded success with the `test`, `thorough`, `thorough-sdc`, `browser`, `node24`, `dr-drill` and `evening` jobs all successful** (with `SUDS_THOROUGH=1`, `thorough-sdc` runs the publication-release disclosure sweeps at full size — `npm test` runs a sample — and `thorough` the performance checks in `test/thorough/` and the other timing budgets, which `npm test` leaves out so a busy runner cannot flake it; `npm run test:thorough` runs both, `node scripts/test-thorough.js --part sdc|rest` either. Until 1.16.0 they were one job that took about 25 of its 30 minutes; the sweeps now have their own, with a 60-minute limit — measured alone on the development container they take about 27 minutes, everything else 17 seconds):
 
 | CI job | What it proves |
 | --- | --- |
@@ -891,10 +902,32 @@ QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` r
 | `thorough` | the performance checks (`test/thorough/`) and timing budgets, at full size |
 | `thorough-sdc` | the statistical-disclosure-control attacker sweeps at full size (`scripts/test-thorough.js` `SDC_SWEEPS`) |
 | `dr-drill` | backup and restore actually work: `scripts/dr-exercise.js` (seed, encrypted backup through the scheduled path, `npm run dr-drill` with an escrowed key file, host restore into a fresh data directory, row counts, audit chain, signed report verified with the public key); the signed report is printed in the job log |
+| `evening` | `npm test` with `TZ=America/Los_Angeles` and the clock at 9pm local, when the UTC date is already tomorrow's (`scripts/test-evening.sh`, libfaketime): the date-bug class of the evaluation of 1.25.0, E1. Required from 1.25.5 (evaluation of 1.25.4, H8); before, it was only not advisory |
 
-`evening` (`npm test` with `TZ=America/Los_Angeles` and the clock at 9pm local, when the UTC date is already tomorrow's: `scripts/test-evening.sh`, libfaketime) is not in the list, but it is not advisory either: a red one fails the CI run, and the gate passes only a run that concluded success. `webkit` and `release-state` stay advisory (`continue-on-error`) and are not checked. If CI on the commit is still running (a tag pushed together with its commit) the gate waits, up to an hour (`RELEASE_GATE_WAIT_MINUTES`). A failed or missing required job fails the release with the reason; fix it (or re-run a flaky job — the latest attempt counts) and run the release again. The `verify` and `release` jobs then check out exactly the gated commit, so a branch that moved in the meantime cannot slip an untested commit in. The decision logic is tested in `test/release-gate.test.js`, which also fails if a required job is renamed out of `ci.yml`.
+`service-sandbox` (below, *The service-sandbox job*) and `release-policy` are not in the list, but they are not advisory either: a red one fails the CI run, and the gate passes only a run that concluded success. `webkit` and `release-state` stay advisory (`continue-on-error`) and are not checked. If CI on the commit is still running (a tag pushed together with its commit) the gate waits, up to an hour (`RELEASE_GATE_WAIT_MINUTES`). A failed or missing required job fails the release with the reason; fix it (or re-run a flaky job — the latest attempt counts) and run the release again. The `verify` and `release` jobs then check out exactly the gated commit, so a branch that moved in the meantime cannot slip an untested commit in. The decision logic is tested in `test/release-gate.test.js`, which also fails if a required job is renamed out of `ci.yml`.
 
 1.11.0 itself was published while its `browser` job had failed — the case this gate now refuses.
+
+#### The service-sandbox job
+`service-sandbox` (1.25.5; evaluation of 1.25.4, H4) runs SUDS Server the way it runs on a county's VM: under the
+release's own `deploy/linux/suds.service`, unchanged, as the non-root `suds` user, with every sandbox setting the unit
+sets in force (it checks them with `systemctl show`, including a system-call filter that refuses `fchown`).
+`scripts/service-sandbox-check.js` lays the runner out as `deploy/linux/install.sh` does (the release zip at
+`/opt/suds/<version>`, the pinned Node at `/opt/suds/node`, root-only keys loaded with `LoadCredential=`, install.sh's
+drop-in for the offsite and anchor shares, two tmpfs mounts as those shares), then signs in as the first administrator
+over HTTP and presses what an office presses: *Back up now* with the offsite share configured (the offsite and local
+copies compared, size and SHA-256), an online snapshot written to the share by the server's own timer, an audit anchor
+and the chain verified against the anchors, a recovery drill from the offsite copy, a restore of that copy through
+Settings, and *Back up now* again. It fails if the journal or the kernel's log shows `status=31/SYS`, `SIGSYS` or a
+seccomp kill, if the service restarted (`NRestarts`), or if it does not stop cleanly. **Why:** from 1.18.0 to 1.25.3
+every scheduled offsite copy on a real server was an empty file, because `fs.copyFile` calls `fchown`, the unit's
+`SystemCallFilter=~@privileged` refuses it, and the kernel killed SUDS before a byte was copied; `Restart=always`
+brought it back each time, and no test, `dr-drill` run or installer run ever took a backup inside the unit. 1.25.4
+fixed the copy and added only a source check (`test/offsite-backup-copy.test.js`), which cannot see a refused call made
+by Node itself or a dependency. The job is not advisory; it joins the gate's `REQUIRED_JOBS` once it has been green on
+`main`. It runs only on a disposable host (it refuses where `/etc/suds`, `/opt/suds` or `/var/lib/suds` exists); to
+run it by hand on a throwaway Ubuntu 24.04 VM: `node scripts/package.js /tmp/suds.zip && sudo node
+scripts/service-sandbox-check.js --disposable-host --release-zip /tmp/suds.zip --node-dir <the pinned Node>`.
 
 **The gate runs main's copy of its scripts** (1.16.1). It checks out the commit being released, but runs
 `scripts/release-gate.js` and `scripts/release-policy.js` from **`main`'s copy** (`git archive <main commit> …`
@@ -957,7 +990,9 @@ immutable releases on (step 5) the forgery would have stayed for good. Since 1.1
 the owner is asked to approve**, again in the release job after the approval, and once more after publishing:
 * its author must be `github-actions[bot]`, the account this workflow publishes as. That alone proves little (any
   workflow run with a write token, on any branch, acts as that account), so also:
-* it may carry only `suds-vX.Y.Z.zip` and `suds-vX.Y.Z.zip.sha256`, both or neither; and
+* it may carry only `suds-vX.Y.Z.zip` and `suds-vX.Y.Z.zip.sha256`, both or neither (and the Windows server pair,
+  likewise, and from 1.25.5 the SBOM, `sbom-X.Y.Z.cdx.json`: the gate and the release job copy it from the tag's
+  `docs/evidence/` with `git show`, attach it with the zips, and refuse a tag that has none); and
 * each one it carries must be **byte for byte** the file built from the tag, as the job builds it (`git archive
   --format=zip --prefix=suds-vX.Y.Z/` of the tag, and `sha256sum` of that). `git archive` is reproducible: the
   1.16.2 review rebuilt the published `suds-v1.16.2.zip` to the same bytes.
@@ -1107,7 +1142,7 @@ classic branch protection rule*): name `main`, Enforcement status **Active**, **
 * **Require a pull request before merging**: Required approvals **1**, **Require review from Code Owners**,
   **Dismiss stale pull request approvals when new commits are pushed**;
 * **Require status checks to pass**, **Require branches to be up to date before merging**, and add `test`,
-  `thorough`, `thorough-sdc`, `browser`, `node24` and `dr-drill` (the release gate's `REQUIRED_JOBS`; they are
+  `thorough`, `thorough-sdc`, `browser`, `node24`, `dr-drill` and `evening` (the release gate's `REQUIRED_JOBS`; they are
   offered once they have run on a pull request);
 * **Bypass list**: leave it empty (classic: tick *Do not allow bypassing the above settings*), or the owner's own
   pushes skip review; add *Repository admin* only if the owner accepts that. Never add *Deploy keys* here.
@@ -1375,7 +1410,7 @@ The remaining kernel libraries (`@noble/*`, `fflate`, `buffer`) come as one grou
 By owner decision of 2026-10-03 (PLATFORM.md), each release also carries `suds-<version>-windows-x64.zip` and its
 `.sha256` ([WINDOWS-SERVER.md](WINDOWS-SERVER.md)). It is built only in CI, by `scripts/build-windows.js`:
 
-* **On every push**, `ci.yml`'s `windows-exe` job (windows-latest) builds it unsigned, unzips it and runs
+* **On every push**, `ci.yml`'s `windows-exe` job (windows-2025) builds it unsigned, unzips it and runs
   `scripts/windows/smoke-test.ps1`: `suds version`, `suds try` with a sample sign-in, `suds status --json`, the
   Windows service (install, start, health, a clean stop checked in the log and the instance lock, restart,
   uninstall) and `suds logs`. The zip is the run's artifact **`suds-windows-x64`** (kept 30 days): open the run
@@ -1417,6 +1452,15 @@ HSM cannot be exported to a `.pfx`: then signing needs that provider's signing t
 the signing step of `windows-sign` receives the secrets. It runs `signtool sign /fd SHA256 /tr
 http://timestamp.digicert.com /td SHA256` and `signtool verify /pa`, and deletes the `.pfx` afterwards. CI builds
 on push are never signed.
+
+## Runner images
+Every job names its runner image: `runs-on: ubuntu-24.04` for the Linux jobs and `windows-2025` for the Windows ones
+(1.25.5; evaluation of 1.25.4, H6), never `ubuntu-latest` or `windows-latest`, which GitHub moves to a new release on
+its own schedule (`ubuntu-latest` becomes Ubuntu 26.04 from 2026-10-19). **Owner decision of 2026-10-10: SUDS stays on
+Ubuntu 24.04**, the release SUDS Server's installer supports and the `evening` job's libfaketime and the browser
+suite's dependencies are tested on. A move to 26.04 is its own planned change, tested first: a job on `ubuntu-26.04`
+beside the 24.04 ones, the installer and docs/SELF-HOSTING.md updated, then the labels changed in one commit.
+`test/workflow-yaml.test.js` refuses a `-latest` label in any workflow.
 
 ## Bumping the pinned Node versions
 Every CI job installs an exact Node release checked against a SHA-256 written in the workflow, not whatever

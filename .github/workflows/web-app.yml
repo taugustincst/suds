@@ -43,7 +43,7 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
@@ -138,7 +138,7 @@ jobs:
           kill "$(cat /tmp/static.pid)" 2>/dev/null || true
   publish:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The owner's approval, as for the release itself (docs/RELEASE.md, "Owner control over releases").
     environment: release
     permissions:

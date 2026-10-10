@@ -148,6 +148,7 @@ fi
 # Under sudo SSH_CONNECTION is gone (env_reset): lib.sh ssh_lockout_guard also asks who -m, the parent
 # processes and ss; if none can say, it refuses unless --console-access.
 # An --admin-cidr6 not given again is the previous run's (read here so that the guard knows it).
+ADMIN_CIDR6_ARG=$ADMIN_CIDR6
 PREV_ADMIN_CIDR6=$(conf_get SUDS_ADMIN_CIDR6); [[ -n "$ADMIN_CIDR6" ]] || ADMIN_CIDR6=$PREV_ADMIN_CIDR6; [[ "$ADMIN_CIDR6" != none ]] || ADMIN_CIDR6=''
 ssh_lockout_guard "$ADMIN_CIDR" "$CONSOLE" "$ADMIN_CIDR6"
 
@@ -374,7 +375,25 @@ ssh_from=$ADMIN_CIDR; [[ -z "$ADMIN_CIDR6" ]] || ssh_from+=" and $ADMIN_CIDR6"
 say ""; say "== Firewall ($ports; SSH from $ssh_from only) =="
 # quiet_act: a best-effort command whose failure (e.g. a rule that is not there) is expected; shown in a dry run.
 quiet_act() { if (( DRY )); then act "$@"; else "$@" >/dev/null 2>&1 || true; fi; }
+# The rules as the firewall lists them, and whether they allow SSH at all (fw_ssh) and over IPv6 (fw_ssh6). Read before
+# anything changes (fw_before, had_ssh6) and again at the end (firewall_summary): IPv6 SSH that was allowed before
+# this run and is not after it is said out loud (evaluation of 1.25.4, H7).
+fw_list() { if [[ $OS_FAMILY == debian ]]; then ufw status 2>&1 || true; else firewall-cmd --zone="$zone" --list-all 2>&1 || true; fi; }
+fw_ssh() { if [[ $OS_FAMILY == debian ]]; then grep -Eq '^(22(/tcp)?|OpenSSH)( \(v6\))? +(ALLOW|LIMIT)' <<< "$1"; else grep -Eq 'service name="ssh" accept|services:.* ssh( |$)' <<< "$1"; fi; }
+fw_ssh6() { if [[ $OS_FAMILY == debian ]]; then grep -Eq '^(22(/tcp)?|OpenSSH)( \(v6\))? +(ALLOW|LIMIT)( IN)? +([0-9a-fA-F]*:|Anywhere \(v6\))' <<< "$1"; else grep -Eq 'family="ipv6".*service name="ssh" accept|services:.* ssh( |$)' <<< "$1"; fi; }
+fw_before=''; had_ssh6=0; zone=public
 if [[ $OS_FAMILY == debian ]]; then
+  if (( ! DRY )); then fw_before=$(fw_list); if fw_ssh6 "$fw_before"; then had_ssh6=1; fi; fi
+  # A re-run deletes the plain 22/tcp, 22 and OpenSSH rules (below), and ufw lists an IPv6 SSH rule added by hand from
+  # any address (`ufw allow proto tcp from ::/0 to any port 22`) as one of them, "22/tcp (v6) ALLOW Anywhere (v6)": up
+  # to 1.25.4 a re-run without --admin-cidr6 removed it without a word (evaluation of 1.25.4, H7; suds.systems has one).
+  # On a re-run (a previous run's settings are here), such a rule that this run would not add back is kept, and named,
+  # as upgrade.sh names a hand-edited Caddyfile; --admin-cidr6=none still removes it. A first install still removes the
+  # image's own open rules (the warning at the end says so when IPv6 SSH went with them). A rule from a narrower IPv6
+  # network is not touched by those deletes, so only "Anywhere (v6)" needs keeping.
+  keep_ssh6=0
+  if [[ -n "$PREV_ADMIN_CIDR" && "$ADMIN_CIDR6_ARG" != none ]] && ! [[ "$ADMIN_CIDR" == ::/0 || "$ADMIN_CIDR6" == ::/0 || "$PREV_ADMIN_CIDR" == ::/0 || "$PREV_ADMIN_CIDR6" == ::/0 ]] \
+     && grep -Eq '^(22(/tcp)?|OpenSSH) \(v6\) +(ALLOW|LIMIT)( IN)? +Anywhere \(v6\)' <<< "$fw_before"; then keep_ssh6=1; fi
   act ufw default deny incoming
   act ufw default allow outgoing
   # The stale SSH rules (the image's open "allow OpenSSH/22", the previous run's admin network) go BEFORE the admin
@@ -387,12 +406,18 @@ if [[ $OS_FAMILY == debian ]]; then
   if [[ -n "$PREV_ADMIN_CIDR6" && "$PREV_ADMIN_CIDR6" != "$ADMIN_CIDR6" ]]; then note "removing the previous SSH rule for $PREV_ADMIN_CIDR6"; quiet_act ufw delete allow proto tcp from "$PREV_ADMIN_CIDR6" to any port 22; fi
   act ufw allow proto tcp from "$ADMIN_CIDR" to any port 22 comment 'SUDS Server: SSH from the administration network'
   [[ -z "$ADMIN_CIDR6" ]] || act ufw allow proto tcp from "$ADMIN_CIDR6" to any port 22 comment 'SUDS Server: SSH from the IPv6 administration network'
+  if (( keep_ssh6 )); then
+    warn "an IPv6 SSH rule this installer did not make is KEPT: \"22/tcp (v6) ALLOW Anywhere (v6)\" (SSH from any IPv6 address, added by hand). Run the installer with --admin-cidr6=::/0 (or your IPv6 network) to make it the installer's own, or with --admin-cidr6=none to remove it."
+    act ufw allow proto tcp from ::/0 to any port 22 comment 'SSH over IPv6 from any address, added by hand: kept by the SUDS installer'
+  fi
   act ufw allow 443/tcp comment 'SUDS Server: HTTPS'
   if [[ $TLS_MODE == caddy ]]; then act ufw allow 80/tcp comment 'SUDS Server: redirect and ACME'; else quiet_act ufw delete allow 80/tcp; fi
   act ufw --force enable
 else
   act systemctl enable --now firewalld
   if (( DRY )); then zone=public; else zone=$(firewall-cmd --get-default-zone); fi
+  # firewalld removes only the ssh service and the previous run's rich rules: an IPv6 rich rule added by hand stays.
+  if (( ! DRY )); then fw_before=$(fw_list); if fw_ssh6 "$fw_before"; then had_ssh6=1; fi; fi
   rich() { local fam=ipv4; [[ "$1" == *:* ]] && fam=ipv6; printf 'rule family="%s" source address="%s" service name="ssh" accept' "$fam" "$1"; }
   act firewall-cmd --permanent --zone="$zone" --add-service=https
   if [[ $TLS_MODE == caddy ]]; then act firewall-cmd --permanent --zone="$zone" --add-service=http; else act firewall-cmd --permanent --zone="$zone" --remove-service=http; fi
@@ -410,17 +435,14 @@ fi
 firewall_summary() {
   local out line ssh=0 ssh6=0
   if (( DRY )); then printf '+ show the firewall rules now in force, and warn if none allows SSH\n'; return 0; fi
-  if [[ $OS_FAMILY == debian ]]; then
-    out=$(ufw status 2>&1) || true
-    grep -Eq '^(22(/tcp)?|OpenSSH)( \(v6\))? +(ALLOW|LIMIT)' <<< "$out" && ssh=1
-    grep -Eq '^(22(/tcp)?|OpenSSH)( \(v6\))? +(ALLOW|LIMIT)( IN)? +([0-9a-fA-F]*:|Anywhere \(v6\))' <<< "$out" && ssh6=1
-  else
-    out=$(firewall-cmd --zone="$zone" --list-all 2>&1) || true
-    grep -Eq 'service name="ssh" accept|services:.* ssh( |$)' <<< "$out" && ssh=1
-    grep -Eq 'family="ipv6".*service name="ssh" accept|services:.* ssh( |$)' <<< "$out" && ssh6=1
-  fi
+  out=$(fw_list)
+  if fw_ssh "$out"; then ssh=1; fi
+  if fw_ssh6 "$out"; then ssh6=1; fi
   say ""; say "== Firewall rules in force =="; while IFS= read -r line; do say "  $line"; done <<< "$out"
-  if (( ssh && ! ssh6 )) && [[ -n "$ADMIN_CIDR6" ]]; then warn "!!! NO FIREWALL RULE ALLOWS SSH OVER IPv6 from --admin-cidr6=$ADMIN_CIDR6: add it before an IPv6-only client needs it."; fi
+  if (( ssh && ! ssh6 )); then
+    if [[ -n "$ADMIN_CIDR6" ]]; then warn "!!! NO FIREWALL RULE ALLOWS SSH OVER IPv6 from --admin-cidr6=$ADMIN_CIDR6: add it before an IPv6-only client needs it."
+    elif (( had_ssh6 )); then warn "!!! NO FIREWALL RULE ALLOWS SSH OVER IPv6 any more: one did before this run (the image's open rule, or one added by hand). If you reach this server over IPv6, run the installer again with --admin-cidr6=<your IPv6 network> (::/0 for any) before you log out."; fi
+  fi
   if (( ! ssh )); then
     warn "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     warn "!!! NO FIREWALL RULE ALLOWS SSH (port 22). This session still works; the next SSH connection will not."

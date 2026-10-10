@@ -13,7 +13,7 @@
       { "type": "deletion" }, { "type": "non_fast_forward" },
       { "type": "pull_request", "parameters": { "required_approving_review_count": 1, "require_code_owner_review": true, "dismiss_stale_reviews_on_push": true, "require_last_push_approval": false, "required_review_thread_resolution": false } },
       { "type": "required_status_checks", "parameters": { "strict_required_status_checks_policy": true, "required_status_checks": [
-        { "context": "test" }, { "context": "thorough" }, { "context": "thorough-sdc" }, { "context": "browser" }, { "context": "node24" }, { "context": "dr-drill" } ] } }
+        { "context": "test" }, { "context": "thorough" }, { "context": "thorough-sdc" }, { "context": "browser" }, { "context": "node24" }, { "context": "dr-drill" }, { "context": "evening" } ] } }
     ],
     "bypass_actors": []
   } },
@@ -40,7 +40,7 @@
     { "type": "non_fast_forward", "ruleset_source_type": "Repository", "ruleset_source": "taugustincst/suds", "ruleset_id": 101 },
     { "type": "pull_request", "parameters": { "required_approving_review_count": 1, "require_code_owner_review": true, "dismiss_stale_reviews_on_push": true }, "ruleset_source_type": "Repository", "ruleset_source": "taugustincst/suds", "ruleset_id": 101 },
     { "type": "required_status_checks", "parameters": { "strict_required_status_checks_policy": true, "required_status_checks": [
-      { "context": "test" }, { "context": "thorough" }, { "context": "thorough-sdc" }, { "context": "browser" }, { "context": "node24" }, { "context": "dr-drill" } ] }, "ruleset_source_type": "Repository", "ruleset_source": "taugustincst/suds", "ruleset_id": 101 }
+      { "context": "test" }, { "context": "thorough" }, { "context": "thorough-sdc" }, { "context": "browser" }, { "context": "node24" }, { "context": "dr-drill" }, { "context": "evening" } ] }, "ruleset_source_type": "Repository", "ruleset_source": "taugustincst/suds", "ruleset_id": 101 }
   ] },
   "rules/branches/gh-pages": { "status": 200, "body": [
     { "type": "creation", "ruleset_id": 103 }, { "type": "update", "parameters": { "update_allows_fetch_and_merge": false }, "ruleset_id": 103 },

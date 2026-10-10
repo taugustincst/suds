@@ -1,7 +1,7 @@
 'use strict';
 // scripts/build-windows.js (docs/RELEASE.md, "The Windows server zip"): every input is pinned by hash in ci.yml and a
 // mismatch stops the build; app\ holds the server, the web app and the scripts the Windows command line runs, and
-// everything they load; the zip is deterministic. The full build (node.exe, postject, WinSW) runs on windows-latest in
+// everything they load; the zip is deterministic. The full build (node.exe, postject, WinSW) runs on windows-2025 in
 // ci.yml's windows-exe job; here it runs as far as it can without those downloads.
 const { test } = require('node:test');
 const assert = require('node:assert');

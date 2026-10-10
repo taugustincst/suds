@@ -1,7 +1,7 @@
 'use strict';
 // The suds command line of the Windows server (scripts/windows/cli.js, service.js, sea-main.js, zip.js, pe.js;
 // docs/WINDOWS-SERVER.md). Everything Windows-specific goes through injected commands, so all of it runs on Linux
-// here; the real thing is exercised on windows-latest by ci.yml's windows-exe job (scripts/windows/smoke-test.ps1).
+// here; the real thing is exercised on windows-2025 by ci.yml's windows-exe job (scripts/windows/smoke-test.ps1).
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');

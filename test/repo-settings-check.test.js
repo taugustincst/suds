@@ -156,7 +156,7 @@ test('main protected by a classic rule instead of a ruleset is read the same way
   d['rules/branches/main'] = { status: 200, body: [] };
   d['branches/main'] = { status: 200, body: { name: 'main', protected: true } };
   d['branches/main/protection'] = { status: 200, body: {
-    required_status_checks: { strict: true, contexts: ['test', 'thorough', 'thorough-sdc', 'browser', 'node24', 'dr-drill'] },
+    required_status_checks: { strict: true, contexts: ['test', 'thorough', 'thorough-sdc', 'browser', 'node24', 'dr-drill', 'evening'] },
     required_pull_request_reviews: { required_approving_review_count: 1, require_code_owner_reviews: true, dismiss_stale_reviews: true },
     enforce_admins: { enabled: true }, allow_force_pushes: { enabled: false }, allow_deletions: { enabled: false },
   } };

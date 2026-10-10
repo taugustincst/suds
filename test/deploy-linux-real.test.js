@@ -315,7 +315,9 @@ test('install.sh for real with --admin-cidr=0.0.0.0/0: the SSH rule it adds is s
   assert.ok(cmds.lastIndexOf('ufw delete allow') < cmds.indexOf('ufw allow proto tcp from 0.0.0.0/0 to any port 22'), 'every delete comes before the admin rule');
   assert.match(r.out, /== Firewall rules in force ==\n(?:.*\n)*? {2}22\/tcp +ALLOW +Anywhere\n/, 'the final rules are printed');
   assert.ok(r.out.lastIndexOf('== Firewall rules in force ==') > r.out.indexOf('KEY ESCROW'), 'at the very end, where the operator reads');
-  assert.doesNotMatch(r.err, /NO FIREWALL RULE ALLOWS SSH/);
+  assert.doesNotMatch(r.err, /NO FIREWALL RULE ALLOWS SSH \(port 22\)/);
+  // The image allowed SSH over IPv6 and this first install did not keep it (no --admin-cidr6): said, with the option (H7).
+  assert.match(r.err, /NO FIREWALL RULE ALLOWS SSH OVER IPv6 any more: one did before this run[^\n]*--admin-cidr6=/);
   // And ::/0 the same way, run again over the first install (the previous 0.0.0.0/0 rule is replaced, not kept).
   const v6 = run(h, 'install.sh', t, INSTALL.map((a) => (a.startsWith('--admin-cidr') ? '--admin-cidr=::/0' : a)), { HARNESS_HEALTHY: VERSION });
   assert.ok(rules().some((x) => x.port === '22/tcp' && x.from === 'Anywhere (v6)'), `IPv6 anywhere keeps its SSH rule too:\n${v6.all}`);
@@ -350,7 +352,46 @@ test('install.sh for real with --admin-cidr6=::/0 (1.25.4, G10): SSH on IPv4 and
   assert.deepEqual(ssh(), [v4]); assert.match(conf(), /^SUDS_ADMIN_CIDR6=$/m);
 });
 
-test('install.sh for real: when no rule allows SSH at the end, it says so loudly, with the command that fixes it', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+test('install.sh for real, re-run without --admin-cidr6: an IPv6 SSH rule added by hand is kept and named, not removed in silence (1.25.5, evaluation of 1.25.4, H7)', { skip: !canRun && 'xz, unzip or tar missing' }, () => {
+  // The evaluator's repro: install with --admin-cidr=0.0.0.0/0, add `ufw allow proto tcp from ::/0 to any port 22` by
+  // hand (suds.systems' state since launch day), run 1.25.4's install.sh again without the flag: the rule was gone and
+  // stderr said nothing about IPv6.
+  const h = host(); const t = tree(VERSION);
+  const rules = statefulUfw(h);
+  const args = (...extra) => [...INSTALL.map((a) => (a.startsWith('--admin-cidr') ? '--admin-cidr=0.0.0.0/0' : a)), ...extra];
+  const v4 = { port: '22/tcp', from: 'Anywhere' }; const v6 = { port: '22/tcp', from: 'Anywhere (v6)' };
+  const ssh = () => rules().filter((x) => /^(22|OpenSSH)/.test(x.port));
+  let r = run(h, 'install.sh', t, args(), { HARNESS_HEALTHY: VERSION });
+  assert.equal(r.code, 0, r.all);
+  assert.deepEqual(ssh(), [v4]);
+  assert.doesNotMatch(r.err, /IPv6/, 'no IPv6 SSH before, none after: nothing to say');
+  // By hand, as the evaluator (and the owner on launch day) did.
+  const ufw = (...a) => execFileSync(path.join(h.bin, 'ufw'), a);
+  ufw('allow', 'proto', 'tcp', 'from', '::/0', 'to', 'any', 'port', '22');
+  assert.deepEqual(ssh(), [v4, v6]);
+  r = run(h, 'install.sh', t, args(), { HARNESS_HEALTHY: VERSION });
+  assert.equal(r.code, 0, r.all);
+  assert.deepEqual(ssh(), [v4, v6], 'the hand-added IPv6 rule is still there');
+  assert.match(r.err, /an IPv6 SSH rule this installer did not make is KEPT: "22\/tcp \(v6\) ALLOW Anywhere \(v6\)"[^\n]*--admin-cidr6=::\/0[^\n]*--admin-cidr6=none/, 'and named, with the options');
+  assert.match(r.out, /== Firewall rules in force ==\n(?:.*\n)*? {2}22\/tcp \(v6\) +ALLOW +Anywhere \(v6\)\n/);
+  assert.doesNotMatch(r.err, /NO FIREWALL RULE ALLOWS SSH/);
+  assert.match(fs.readFileSync(path.join(h.root, 'etc/suds/suds-server.conf'), 'utf8'), /^SUDS_ADMIN_CIDR6=$/m, 'not adopted: it stays the operator\'s rule until --admin-cidr6 says otherwise');
+  // Kept again on the next re-run; --admin-cidr6=::/0 makes it the installer's own (no warning); none removes it, and
+  // the summary then says IPv6 SSH was allowed before this run.
+  r = run(h, 'install.sh', t, args(), { HARNESS_HEALTHY: VERSION });
+  assert.deepEqual(ssh(), [v4, v6]); assert.match(r.err, /is KEPT/);
+  r = run(h, 'install.sh', t, args('--admin-cidr6=::/0'), { HARNESS_HEALTHY: VERSION });
+  assert.equal(r.code, 0, r.all);
+  assert.deepEqual(ssh(), [v4, v6]); assert.doesNotMatch(r.err, /is KEPT|IPv6/);
+  r = run(h, 'install.sh', t, args('--admin-cidr6=none'), { HARNESS_HEALTHY: VERSION });
+  assert.equal(r.code, 0, r.all);
+  assert.deepEqual(ssh(), [v4], '--admin-cidr6=none removes it, as asked');
+  assert.doesNotMatch(r.err, /is KEPT/);
+  assert.match(r.err, /NO FIREWALL RULE ALLOWS SSH OVER IPv6 any more: one did before this run/);
+  assert.doesNotMatch(r.err, /NO FIREWALL RULE ALLOWS SSH \(port 22\)/);
+});
+
+test('install.sh for real: when no rule allows SSH at the end, it says so loudly, with the command that fixes it',{ skip: !canRun && 'xz, unzip or tar missing' }, () => {
   const h = host(); const t = tree(VERSION);
   statefulUfw(h);
   // A ufw that loses the SSH rule (another tool's cleanup, a broken profile): the installer cannot stop it, but must not keep quiet.
