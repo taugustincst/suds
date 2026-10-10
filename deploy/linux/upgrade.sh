@@ -134,7 +134,9 @@ act systemctl start suds.service
 if wait_ready "$READY_SECS"; then
   note "SUDS $VERSION is ready"
   if (( caddy_changed || caddyfile_changed )); then
-    note "Caddy $( (( caddy_changed )) && echo "is now ${CADDY_VERSION_PINNED:-the pinned version}")$( (( caddy_changed && caddyfile_changed )) && echo ' and')$( (( caddyfile_changed )) && echo ' has a new Caddyfile'): restarting it"
+    caddy_what=''; (( caddy_changed )) && caddy_what="is now ${CADDY_VERSION_PINNED:-the pinned version}"
+    (( caddyfile_changed )) && caddy_what="${caddy_what:+$caddy_what and }has a new Caddyfile"
+    note "Caddy $caddy_what: restarting it"
     act systemctl restart caddy.service
   fi
 else
