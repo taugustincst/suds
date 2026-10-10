@@ -121,7 +121,10 @@ test('the hardening checklist is for administrators only and ticks itself off fr
   assert.equal((await admin.put('/api/admin/settings', { backup_offsite_dir: offsite })).status, 200);
   s = await get();
   assert.equal(item(s, 'mfa_privileged').done, true);
-  assert.equal(item(s, 'backups').done, true);
+  // A temporary folder may be on the data's own disk here, and then it is no copy off this server (1.25.5, H3).
+  const sameDisk = fs.statSync(offsite).dev === fs.statSync(require('../server/config').dataDir).dev;
+  assert.equal(item(s, 'backups').done, !sameDisk);
+  if (sameDisk) assert.match(item(s, 'backups').why, /same disk as the data/);
   // And comes back when someone turns it off again.
   assert.equal((await admin.put('/api/admin/settings', { sign_strong_required: '0', session_idle_minutes: 30 })).status, 200);
   s = await get();

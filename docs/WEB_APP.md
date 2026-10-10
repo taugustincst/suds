@@ -108,6 +108,8 @@ under **Can't sign in?**, and what each does to the records:
 | **Restore from a backup** | whoever has a backup file and its passphrase | replaced by the backup's; anything recorded since it was made is lost; its accounts and passwords come with it |
 | **Start over on this device** | anyone holding the device | **none kept**: everything in this browser is erased (on an office copy, what was synced comes back from the office) |
 
+When the records will not open at sign-in, the page says so and keeps a copy: save it (**Save the damaged copy**), close the browser and log in again, then use **Restore from a backup** with the latest backup or the saved copy, which opens with the password of an account from that device (1.25.5; docs/architecture/ADR-0008-device-encryption.md).
+
 **The recovery code.** At set-up, after the first account is created, the app shows the code once on its own
 screen (*Download as a text file*, *Print*, and a required *I have saved my recovery code* box before going
 on). The device administrator can make a new one under **This device → Recovery code**, after typing their

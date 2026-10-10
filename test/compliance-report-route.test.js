@@ -136,6 +136,11 @@ test('provisioned settings: applied once where unset, never over an administrato
   fs.writeFileSync(f, JSON.stringify({ settings: { backup_offsite_dir: '/nonexistent/share' } }));
   db.run(`DELETE FROM settings WHERE key='backup_offsite_dir'`);
   assert.match(provision.apply({ file: f }).refused[0].reason, /is the share mounted/);
+  // Nor the server's own backups folder (1.25.5, H3).
+  const ownBackups = path.join(require('../server/config').dataDir, 'backups'); fs.mkdirSync(ownBackups, { recursive: true });
+  fs.writeFileSync(f, JSON.stringify({ settings: { backup_offsite_dir: ownBackups } }));
+  assert.match(provision.apply({ file: f }).refused[0].reason, /outside the data directory/);
+  assert.equal(db.getSetting('backup_offsite_dir', null), null);
   assert.deepEqual(provision.apply({ file: path.join(dir, 'missing.json') }), { applied: [], refused: [] });
   fs.rmSync(offsite, { recursive: true, force: true });
 });
@@ -249,6 +254,11 @@ test('app checks: on a new server no backup and no drill yet is "pending first r
     fs.rmSync(offsite, { recursive: true, force: true });
     c = ac.backupFiles({ config, db, now, conf: ago(1) });
     assert.equal(c.result, 'fail', 'an offsite share that is not there is never "pending"'); assert.match(c.evidence, /is the share mounted/);
+    // The server's own backups folder as the "offsite" one (1.25.5, H3): its backups are there, and still it fails.
+    fs.mkdirSync(path.join(dir, 'backups'), { recursive: true }); db.setSetting('backup_offsite_dir', path.join(dir, 'backups'));
+    c = ac.backupFiles({ config, db, now, conf: ago(48) });
+    assert.equal(c.result, 'fail'); assert.match(c.evidence, /inside the data directory \(or contains it\), so it is not an offsite copy/);
+    db.run(`DELETE FROM settings WHERE key='backup_offsite_dir'`);
   } finally { if (saved) db.setSetting('dr_last_drill', saved); }
 });
 

@@ -76,6 +76,7 @@ function backupFiles({ config, db, now, conf }) {
   if (local.newest) { const h = (now - local.newest.mtime) / 3600_000; bits.push(`newest local ${local.newest.file} (${h.toFixed(1)} h old; ${local.count} kept)`); if (h > policyH) bad.push(`the newest local backup is ${h.toFixed(1)} h old (policy ${policyH} h: twice the ${s.hours || 'unset'} h interval)`); }
   if (!s.hours) bad.push('scheduled backups are off');
   if (!s.offsiteDir) bad.push('no offsite directory is configured');
+  else if (sb.offsitePlacement(s.offsiteDir).inside) bad.push(`the offsite directory ${s.offsiteDir} ${sb.offsitePlacement(s.offsiteDir).inside}`);
   else {
     const off = sb.newest(s.offsiteDir);
     if (off.error === 'ENOENT') bad.push(`the offsite directory ${s.offsiteDir} does not exist (is the share mounted?)`);

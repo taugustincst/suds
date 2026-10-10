@@ -23,7 +23,7 @@ const KEYS = {
   backup_retain_count: (v) => Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 1000,
   backup_schedule_minutes: (v) => Number.isInteger(Number(v)) && (Number(v) === 0 || (Number(v) >= 5 && Number(v) <= 1440)),
   // An existing absolute directory, as Settings requires: an unmounted share is an empty mount point.
-  backup_offsite_dir: (v) => path.isAbsolute(v) && (() => { try { return fs.statSync(v).isDirectory(); } catch { return false; } })(),
+  backup_offsite_dir: (v) => path.isAbsolute(v) && (() => { try { return fs.statSync(v).isDirectory(); } catch { return false; } })() && !require('./scheduled-backup').offsitePlacement(v).inside,
   dr_drill_monthly: only('1'),
   mfa_require_all: only('1'),
   self_signup: only('0'),
@@ -42,7 +42,7 @@ function apply({ file = process.env.SUDS_PROVISION_FILE } = {}) {
   for (const [k, raw] of Object.entries(settings)) {
     const v = raw === null || raw === undefined ? '' : String(raw);
     if (!KEYS[k]) { out.refused.push({ key: k, reason: 'not a setting this file may provision' }); continue; }
-    if (!KEYS[k](v)) { out.refused.push({ key: k, reason: k === 'backup_offsite_dir' ? 'invalid value (must be an existing absolute directory: is the share mounted?)' : WEAKER[k] ? `a provisioning file may only tighten a setting: this value ${WEAKER[k]}` : 'invalid value' }); continue; }
+    if (!KEYS[k](v)) { out.refused.push({ key: k, reason: k === 'backup_offsite_dir' ? 'invalid value (must be an existing absolute directory outside the data directory: is the share mounted?)' : WEAKER[k] ? `a provisioning file may only tighten a setting: this value ${WEAKER[k]}` : 'invalid value' }); continue; }
     if (db.getSetting(k, null) !== null) continue;
     db.setSetting(k, v);
     out.applied.push(k);

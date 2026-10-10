@@ -3856,2085 +3856,2092 @@ var init_crypto2 = __esm({
 var require_sql_wasm = __commonJS({
   "node_modules/sql.js/dist/sql-wasm.js"(exports, module) {
     init_globals_inject();
-    var initSqlJsPromise = void 0;
-    var initSqlJs = function(moduleConfig) {
-      if (initSqlJsPromise) {
-        return initSqlJsPromise;
-      }
-      initSqlJsPromise = new Promise(function(resolveModule, reject) {
-        var Module = typeof moduleConfig !== "undefined" ? moduleConfig : {};
-        var originalOnAbortFunction = Module["onAbort"];
-        Module["onAbort"] = function(errorThatCausedAbort) {
-          reject(new Error(errorThatCausedAbort));
-          if (originalOnAbortFunction) {
-            originalOnAbortFunction(errorThatCausedAbort);
-          }
-        };
-        Module["postRun"] = Module["postRun"] || [];
-        Module["postRun"].push(function() {
-          resolveModule(Module);
-        });
-        module = void 0;
-        var f;
-        f ||= typeof Module != "undefined" ? Module : {};
-        var aa = "object" == typeof window, ba = "function" == typeof importScripts, ca = "object" == typeof proc && "object" == typeof proc.versions && "string" == typeof proc.versions.node;
-        "use strict";
-        f.onRuntimeInitialized = function() {
-          function a(g, l) {
-            switch (typeof l) {
-              case "boolean":
-                fc(g, l ? 1 : 0);
-                break;
-              case "number":
-                gc(g, l);
-                break;
-              case "string":
-                hc(g, l, -1, -1);
-                break;
-              case "object":
-                if (null === l) ib(g);
-                else if (null != l.length) {
-                  var n = da(l, ea);
-                  ic(g, n, l.length, -1);
-                  fa(n);
-                } else xa(g, "Wrong API use : tried to return a value of an unknown type (" + l + ").", -1);
-                break;
-              default:
-                ib(g);
+    function load() {
+      var module2 = { exports: {} };
+      var exports2 = module2.exports;
+      var initSqlJsPromise = void 0;
+      var initSqlJs = function(moduleConfig) {
+        if (initSqlJsPromise) {
+          return initSqlJsPromise;
+        }
+        initSqlJsPromise = new Promise(function(resolveModule, reject) {
+          var Module = typeof moduleConfig !== "undefined" ? moduleConfig : {};
+          var originalOnAbortFunction = Module["onAbort"];
+          Module["onAbort"] = function(errorThatCausedAbort) {
+            reject(new Error(errorThatCausedAbort));
+            if (originalOnAbortFunction) {
+              originalOnAbortFunction(errorThatCausedAbort);
             }
-          }
-          function b(g, l) {
-            for (var n = [], t = 0; t < g; t += 1) {
-              var w = m(l + 4 * t, "i32"), A = jc(w);
-              if (1 === A || 2 === A) w = kc(w);
-              else if (3 === A) w = lc2(w);
-              else if (4 === A) {
-                A = w;
-                w = mc(A);
-                A = nc(A);
-                for (var N = new Uint8Array(w), M = 0; M < w; M += 1) N[M] = p[A + M];
-                w = N;
-              } else w = null;
-              n.push(w);
-            }
-            return n;
-          }
-          function c(g, l) {
-            this.Ka = g;
-            this.db = l;
-            this.Ia = 1;
-            this.eb = [];
-          }
-          function d(g, l) {
-            this.db = l;
-            l = ha(g) + 1;
-            this.Xa = ia(l);
-            if (null === this.Xa) throw Error("Unable to allocate memory for the SQL string");
-            q(g, u, this.Xa, l);
-            this.cb = this.Xa;
-            this.Ta = this.hb = null;
-          }
-          function e(g) {
-            this.filename = "dbfile_" + (4294967295 * Math.random() >>> 0);
-            if (null != g) {
-              var l = this.filename, n = "/", t = l;
-              n && (n = "string" == typeof n ? n : ja(n), t = l ? x(n + "/" + l) : n);
-              l = ka(true, true);
-              t = la(t, (void 0 !== l ? l : 438) & 4095 | 32768, 0);
-              if (g) {
-                if ("string" == typeof g) {
-                  n = Array(g.length);
-                  for (var w = 0, A = g.length; w < A; ++w) n[w] = g.charCodeAt(w);
-                  g = n;
-                }
-                ma(t, l | 146);
-                n = na(t, 577);
-                oa(n, g, 0, g.length, 0);
-                pa(n);
-                ma(t, l);
+          };
+          Module["postRun"] = Module["postRun"] || [];
+          Module["postRun"].push(function() {
+            resolveModule(Module);
+          });
+          module2 = void 0;
+          var f;
+          f ||= typeof Module != "undefined" ? Module : {};
+          var aa = "object" == typeof window, ba = "function" == typeof importScripts, ca = "object" == typeof proc && "object" == typeof proc.versions && "string" == typeof proc.versions.node;
+          "use strict";
+          f.onRuntimeInitialized = function() {
+            function a(g, l) {
+              switch (typeof l) {
+                case "boolean":
+                  fc(g, l ? 1 : 0);
+                  break;
+                case "number":
+                  gc(g, l);
+                  break;
+                case "string":
+                  hc(g, l, -1, -1);
+                  break;
+                case "object":
+                  if (null === l) ib(g);
+                  else if (null != l.length) {
+                    var n = da(l, ea);
+                    ic(g, n, l.length, -1);
+                    fa(n);
+                  } else xa(g, "Wrong API use : tried to return a value of an unknown type (" + l + ").", -1);
+                  break;
+                default:
+                  ib(g);
               }
             }
-            this.handleError(r(this.filename, h));
-            this.db = m(h, "i32");
-            lb(this.db);
-            this.Ya = {};
-            this.Ma = {};
-          }
-          var h = y(4), k = f.cwrap, r = k("sqlite3_open", "number", ["string", "number"]), z = k("sqlite3_close_v2", "number", ["number"]), v = k("sqlite3_exec", "number", ["number", "string", "number", "number", "number"]), E = k(
-            "sqlite3_changes",
-            "number",
-            ["number"]
-          ), H = k("sqlite3_prepare_v2", "number", ["number", "string", "number", "number", "number"]), mb = k("sqlite3_sql", "string", ["number"]), oc = k("sqlite3_normalized_sql", "string", ["number"]), nb = k("sqlite3_prepare_v2", "number", ["number", "number", "number", "number", "number"]), pc = k("sqlite3_bind_text", "number", ["number", "number", "number", "number", "number"]), ob = k("sqlite3_bind_blob", "number", ["number", "number", "number", "number", "number"]), qc = k("sqlite3_bind_double", "number", ["number", "number", "number"]), rc = k("sqlite3_bind_int", "number", ["number", "number", "number"]), sc = k("sqlite3_bind_parameter_index", "number", ["number", "string"]), tc = k("sqlite3_step", "number", ["number"]), uc = k("sqlite3_errmsg", "string", ["number"]), vc = k("sqlite3_column_count", "number", ["number"]), wc = k("sqlite3_data_count", "number", ["number"]), xc = k("sqlite3_column_double", "number", ["number", "number"]), pb = k("sqlite3_column_text", "string", ["number", "number"]), yc = k("sqlite3_column_blob", "number", ["number", "number"]), zc = k(
-            "sqlite3_column_bytes",
-            "number",
-            ["number", "number"]
-          ), Ac = k("sqlite3_column_type", "number", ["number", "number"]), Bc = k("sqlite3_column_name", "string", ["number", "number"]), Cc = k("sqlite3_reset", "number", ["number"]), Dc = k("sqlite3_clear_bindings", "number", ["number"]), Ec = k("sqlite3_finalize", "number", ["number"]), qb = k("sqlite3_create_function_v2", "number", "number string number number number number number number number".split(" ")), jc = k("sqlite3_value_type", "number", ["number"]), mc = k("sqlite3_value_bytes", "number", ["number"]), lc2 = k(
-            "sqlite3_value_text",
-            "string",
-            ["number"]
-          ), nc = k("sqlite3_value_blob", "number", ["number"]), kc = k("sqlite3_value_double", "number", ["number"]), gc = k("sqlite3_result_double", "", ["number", "number"]), ib = k("sqlite3_result_null", "", ["number"]), hc = k("sqlite3_result_text", "", ["number", "string", "number", "number"]), ic = k("sqlite3_result_blob", "", ["number", "number", "number", "number"]), fc = k("sqlite3_result_int", "", ["number", "number"]), xa = k("sqlite3_result_error", "", ["number", "string", "number"]), rb = k(
-            "sqlite3_aggregate_context",
-            "number",
-            ["number", "number"]
-          ), lb = k("RegisterExtensionFunctions", "number", ["number"]);
-          c.prototype.bind = function(g) {
-            if (!this.Ka) throw "Statement closed";
-            this.reset();
-            return Array.isArray(g) ? this.vb(g) : null != g && "object" === typeof g ? this.wb(g) : true;
-          };
-          c.prototype.step = function() {
-            if (!this.Ka) throw "Statement closed";
-            this.Ia = 1;
-            var g = tc(this.Ka);
-            switch (g) {
-              case 100:
-                return true;
-              case 101:
-                return false;
-              default:
-                throw this.db.handleError(g);
+            function b(g, l) {
+              for (var n = [], t = 0; t < g; t += 1) {
+                var w = m(l + 4 * t, "i32"), A = jc(w);
+                if (1 === A || 2 === A) w = kc(w);
+                else if (3 === A) w = lc2(w);
+                else if (4 === A) {
+                  A = w;
+                  w = mc(A);
+                  A = nc(A);
+                  for (var N = new Uint8Array(w), M = 0; M < w; M += 1) N[M] = p[A + M];
+                  w = N;
+                } else w = null;
+                n.push(w);
+              }
+              return n;
             }
-          };
-          c.prototype.qb = function(g) {
-            null == g && (g = this.Ia, this.Ia += 1);
-            return xc(this.Ka, g);
-          };
-          c.prototype.zb = function(g) {
-            null == g && (g = this.Ia, this.Ia += 1);
-            g = pb(this.Ka, g);
-            if ("function" !== typeof BigInt) throw Error("BigInt is not supported");
-            return BigInt(g);
-          };
-          c.prototype.Ab = function(g) {
-            null == g && (g = this.Ia, this.Ia += 1);
-            return pb(this.Ka, g);
-          };
-          c.prototype.getBlob = function(g) {
-            null == g && (g = this.Ia, this.Ia += 1);
-            var l = zc(this.Ka, g);
-            g = yc(this.Ka, g);
-            for (var n = new Uint8Array(l), t = 0; t < l; t += 1) n[t] = p[g + t];
-            return n;
-          };
-          c.prototype.get = function(g, l) {
-            l = l || {};
-            null != g && this.bind(g) && this.step();
-            g = [];
-            for (var n = wc(this.Ka), t = 0; t < n; t += 1) switch (Ac(this.Ka, t)) {
-              case 1:
-                var w = l.useBigInt ? this.zb(t) : this.qb(t);
-                g.push(w);
-                break;
-              case 2:
-                g.push(this.qb(t));
-                break;
-              case 3:
-                g.push(this.Ab(t));
-                break;
-              case 4:
-                g.push(this.getBlob(t));
-                break;
-              default:
-                g.push(null);
+            function c(g, l) {
+              this.Ka = g;
+              this.db = l;
+              this.Ia = 1;
+              this.eb = [];
             }
-            return g;
-          };
-          c.prototype.getColumnNames = function() {
-            for (var g = [], l = vc(this.Ka), n = 0; n < l; n += 1) g.push(Bc(this.Ka, n));
-            return g;
-          };
-          c.prototype.getAsObject = function(g, l) {
-            g = this.get(g, l);
-            l = this.getColumnNames();
-            for (var n = {}, t = 0; t < l.length; t += 1) n[l[t]] = g[t];
-            return n;
-          };
-          c.prototype.getSQL = function() {
-            return mb(this.Ka);
-          };
-          c.prototype.getNormalizedSQL = function() {
-            return oc(this.Ka);
-          };
-          c.prototype.run = function(g) {
-            null != g && this.bind(g);
-            this.step();
-            return this.reset();
-          };
-          c.prototype.mb = function(g, l) {
-            null == l && (l = this.Ia, this.Ia += 1);
-            g = qa(g);
-            var n = da(g, ea);
-            this.eb.push(n);
-            this.db.handleError(pc(this.Ka, l, n, g.length - 1, 0));
-          };
-          c.prototype.ub = function(g, l) {
-            null == l && (l = this.Ia, this.Ia += 1);
-            var n = da(g, ea);
-            this.eb.push(n);
-            this.db.handleError(ob(this.Ka, l, n, g.length, 0));
-          };
-          c.prototype.lb = function(g, l) {
-            null == l && (l = this.Ia, this.Ia += 1);
-            this.db.handleError((g === (g | 0) ? rc : qc)(this.Ka, l, g));
-          };
-          c.prototype.xb = function(g) {
-            null == g && (g = this.Ia, this.Ia += 1);
-            ob(this.Ka, g, 0, 0, 0);
-          };
-          c.prototype.nb = function(g, l) {
-            null == l && (l = this.Ia, this.Ia += 1);
-            switch (typeof g) {
-              case "string":
-                this.mb(g, l);
-                return;
-              case "number":
-                this.lb(g, l);
-                return;
-              case "bigint":
-                this.mb(g.toString(), l);
-                return;
-              case "boolean":
-                this.lb(g + 0, l);
-                return;
-              case "object":
-                if (null === g) {
-                  this.xb(l);
-                  return;
+            function d(g, l) {
+              this.db = l;
+              l = ha(g) + 1;
+              this.Xa = ia(l);
+              if (null === this.Xa) throw Error("Unable to allocate memory for the SQL string");
+              q(g, u, this.Xa, l);
+              this.cb = this.Xa;
+              this.Ta = this.hb = null;
+            }
+            function e(g) {
+              this.filename = "dbfile_" + (4294967295 * Math.random() >>> 0);
+              if (null != g) {
+                var l = this.filename, n = "/", t = l;
+                n && (n = "string" == typeof n ? n : ja(n), t = l ? x(n + "/" + l) : n);
+                l = ka(true, true);
+                t = la(t, (void 0 !== l ? l : 438) & 4095 | 32768, 0);
+                if (g) {
+                  if ("string" == typeof g) {
+                    n = Array(g.length);
+                    for (var w = 0, A = g.length; w < A; ++w) n[w] = g.charCodeAt(w);
+                    g = n;
+                  }
+                  ma(t, l | 146);
+                  n = na(t, 577);
+                  oa(n, g, 0, g.length, 0);
+                  pa(n);
+                  ma(t, l);
                 }
-                if (null != g.length) {
-                  this.ub(g, l);
-                  return;
-                }
+              }
+              this.handleError(r(this.filename, h));
+              this.db = m(h, "i32");
+              lb(this.db);
+              this.Ya = {};
+              this.Ma = {};
             }
-            throw "Wrong API use : tried to bind a value of an unknown type (" + g + ").";
-          };
-          c.prototype.wb = function(g) {
-            var l = this;
-            Object.keys(g).forEach(function(n) {
-              var t = sc(l.Ka, n);
-              0 !== t && l.nb(g[n], t);
+            var h = y(4), k = f.cwrap, r = k("sqlite3_open", "number", ["string", "number"]), z = k("sqlite3_close_v2", "number", ["number"]), v = k("sqlite3_exec", "number", ["number", "string", "number", "number", "number"]), E = k(
+              "sqlite3_changes",
+              "number",
+              ["number"]
+            ), H = k("sqlite3_prepare_v2", "number", ["number", "string", "number", "number", "number"]), mb = k("sqlite3_sql", "string", ["number"]), oc = k("sqlite3_normalized_sql", "string", ["number"]), nb = k("sqlite3_prepare_v2", "number", ["number", "number", "number", "number", "number"]), pc = k("sqlite3_bind_text", "number", ["number", "number", "number", "number", "number"]), ob = k("sqlite3_bind_blob", "number", ["number", "number", "number", "number", "number"]), qc = k("sqlite3_bind_double", "number", ["number", "number", "number"]), rc = k("sqlite3_bind_int", "number", ["number", "number", "number"]), sc = k("sqlite3_bind_parameter_index", "number", ["number", "string"]), tc = k("sqlite3_step", "number", ["number"]), uc = k("sqlite3_errmsg", "string", ["number"]), vc = k("sqlite3_column_count", "number", ["number"]), wc = k("sqlite3_data_count", "number", ["number"]), xc = k("sqlite3_column_double", "number", ["number", "number"]), pb = k("sqlite3_column_text", "string", ["number", "number"]), yc = k("sqlite3_column_blob", "number", ["number", "number"]), zc = k(
+              "sqlite3_column_bytes",
+              "number",
+              ["number", "number"]
+            ), Ac = k("sqlite3_column_type", "number", ["number", "number"]), Bc = k("sqlite3_column_name", "string", ["number", "number"]), Cc = k("sqlite3_reset", "number", ["number"]), Dc = k("sqlite3_clear_bindings", "number", ["number"]), Ec = k("sqlite3_finalize", "number", ["number"]), qb = k("sqlite3_create_function_v2", "number", "number string number number number number number number number".split(" ")), jc = k("sqlite3_value_type", "number", ["number"]), mc = k("sqlite3_value_bytes", "number", ["number"]), lc2 = k(
+              "sqlite3_value_text",
+              "string",
+              ["number"]
+            ), nc = k("sqlite3_value_blob", "number", ["number"]), kc = k("sqlite3_value_double", "number", ["number"]), gc = k("sqlite3_result_double", "", ["number", "number"]), ib = k("sqlite3_result_null", "", ["number"]), hc = k("sqlite3_result_text", "", ["number", "string", "number", "number"]), ic = k("sqlite3_result_blob", "", ["number", "number", "number", "number"]), fc = k("sqlite3_result_int", "", ["number", "number"]), xa = k("sqlite3_result_error", "", ["number", "string", "number"]), rb = k(
+              "sqlite3_aggregate_context",
+              "number",
+              ["number", "number"]
+            ), lb = k("RegisterExtensionFunctions", "number", ["number"]);
+            c.prototype.bind = function(g) {
+              if (!this.Ka) throw "Statement closed";
+              this.reset();
+              return Array.isArray(g) ? this.vb(g) : null != g && "object" === typeof g ? this.wb(g) : true;
+            };
+            c.prototype.step = function() {
+              if (!this.Ka) throw "Statement closed";
+              this.Ia = 1;
+              var g = tc(this.Ka);
+              switch (g) {
+                case 100:
+                  return true;
+                case 101:
+                  return false;
+                default:
+                  throw this.db.handleError(g);
+              }
+            };
+            c.prototype.qb = function(g) {
+              null == g && (g = this.Ia, this.Ia += 1);
+              return xc(this.Ka, g);
+            };
+            c.prototype.zb = function(g) {
+              null == g && (g = this.Ia, this.Ia += 1);
+              g = pb(this.Ka, g);
+              if ("function" !== typeof BigInt) throw Error("BigInt is not supported");
+              return BigInt(g);
+            };
+            c.prototype.Ab = function(g) {
+              null == g && (g = this.Ia, this.Ia += 1);
+              return pb(this.Ka, g);
+            };
+            c.prototype.getBlob = function(g) {
+              null == g && (g = this.Ia, this.Ia += 1);
+              var l = zc(this.Ka, g);
+              g = yc(this.Ka, g);
+              for (var n = new Uint8Array(l), t = 0; t < l; t += 1) n[t] = p[g + t];
+              return n;
+            };
+            c.prototype.get = function(g, l) {
+              l = l || {};
+              null != g && this.bind(g) && this.step();
+              g = [];
+              for (var n = wc(this.Ka), t = 0; t < n; t += 1) switch (Ac(this.Ka, t)) {
+                case 1:
+                  var w = l.useBigInt ? this.zb(t) : this.qb(t);
+                  g.push(w);
+                  break;
+                case 2:
+                  g.push(this.qb(t));
+                  break;
+                case 3:
+                  g.push(this.Ab(t));
+                  break;
+                case 4:
+                  g.push(this.getBlob(t));
+                  break;
+                default:
+                  g.push(null);
+              }
+              return g;
+            };
+            c.prototype.getColumnNames = function() {
+              for (var g = [], l = vc(this.Ka), n = 0; n < l; n += 1) g.push(Bc(this.Ka, n));
+              return g;
+            };
+            c.prototype.getAsObject = function(g, l) {
+              g = this.get(g, l);
+              l = this.getColumnNames();
+              for (var n = {}, t = 0; t < l.length; t += 1) n[l[t]] = g[t];
+              return n;
+            };
+            c.prototype.getSQL = function() {
+              return mb(this.Ka);
+            };
+            c.prototype.getNormalizedSQL = function() {
+              return oc(this.Ka);
+            };
+            c.prototype.run = function(g) {
+              null != g && this.bind(g);
+              this.step();
+              return this.reset();
+            };
+            c.prototype.mb = function(g, l) {
+              null == l && (l = this.Ia, this.Ia += 1);
+              g = qa(g);
+              var n = da(g, ea);
+              this.eb.push(n);
+              this.db.handleError(pc(this.Ka, l, n, g.length - 1, 0));
+            };
+            c.prototype.ub = function(g, l) {
+              null == l && (l = this.Ia, this.Ia += 1);
+              var n = da(g, ea);
+              this.eb.push(n);
+              this.db.handleError(ob(this.Ka, l, n, g.length, 0));
+            };
+            c.prototype.lb = function(g, l) {
+              null == l && (l = this.Ia, this.Ia += 1);
+              this.db.handleError((g === (g | 0) ? rc : qc)(this.Ka, l, g));
+            };
+            c.prototype.xb = function(g) {
+              null == g && (g = this.Ia, this.Ia += 1);
+              ob(this.Ka, g, 0, 0, 0);
+            };
+            c.prototype.nb = function(g, l) {
+              null == l && (l = this.Ia, this.Ia += 1);
+              switch (typeof g) {
+                case "string":
+                  this.mb(g, l);
+                  return;
+                case "number":
+                  this.lb(g, l);
+                  return;
+                case "bigint":
+                  this.mb(g.toString(), l);
+                  return;
+                case "boolean":
+                  this.lb(g + 0, l);
+                  return;
+                case "object":
+                  if (null === g) {
+                    this.xb(l);
+                    return;
+                  }
+                  if (null != g.length) {
+                    this.ub(g, l);
+                    return;
+                  }
+              }
+              throw "Wrong API use : tried to bind a value of an unknown type (" + g + ").";
+            };
+            c.prototype.wb = function(g) {
+              var l = this;
+              Object.keys(g).forEach(function(n) {
+                var t = sc(l.Ka, n);
+                0 !== t && l.nb(g[n], t);
+              });
+              return true;
+            };
+            c.prototype.vb = function(g) {
+              for (var l = 0; l < g.length; l += 1) this.nb(g[l], l + 1);
+              return true;
+            };
+            c.prototype.reset = function() {
+              this.freemem();
+              return 0 === Dc(this.Ka) && 0 === Cc(this.Ka);
+            };
+            c.prototype.freemem = function() {
+              for (var g; void 0 !== (g = this.eb.pop()); ) fa(g);
+            };
+            c.prototype.free = function() {
+              this.freemem();
+              var g = 0 === Ec(this.Ka);
+              delete this.db.Ya[this.Ka];
+              this.Ka = 0;
+              return g;
+            };
+            d.prototype.next = function() {
+              if (null === this.Xa) return { done: true };
+              null !== this.Ta && (this.Ta.free(), this.Ta = null);
+              if (!this.db.db) throw this.fb(), Error("Database closed");
+              var g = ra(), l = y(4);
+              sa(h);
+              sa(l);
+              try {
+                this.db.handleError(nb(this.db.db, this.cb, -1, h, l));
+                this.cb = m(l, "i32");
+                var n = m(h, "i32");
+                if (0 === n) return this.fb(), { done: true };
+                this.Ta = new c(n, this.db);
+                this.db.Ya[n] = this.Ta;
+                return { value: this.Ta, done: false };
+              } catch (t) {
+                throw this.hb = ta(this.cb), this.fb(), t;
+              } finally {
+                ua(g);
+              }
+            };
+            d.prototype.fb = function() {
+              fa(this.Xa);
+              this.Xa = null;
+            };
+            d.prototype.getRemainingSQL = function() {
+              return null !== this.hb ? this.hb : ta(this.cb);
+            };
+            "function" === typeof Symbol && "symbol" === typeof Symbol.iterator && (d.prototype[Symbol.iterator] = function() {
+              return this;
             });
-            return true;
-          };
-          c.prototype.vb = function(g) {
-            for (var l = 0; l < g.length; l += 1) this.nb(g[l], l + 1);
-            return true;
-          };
-          c.prototype.reset = function() {
-            this.freemem();
-            return 0 === Dc(this.Ka) && 0 === Cc(this.Ka);
-          };
-          c.prototype.freemem = function() {
-            for (var g; void 0 !== (g = this.eb.pop()); ) fa(g);
-          };
-          c.prototype.free = function() {
-            this.freemem();
-            var g = 0 === Ec(this.Ka);
-            delete this.db.Ya[this.Ka];
-            this.Ka = 0;
-            return g;
-          };
-          d.prototype.next = function() {
-            if (null === this.Xa) return { done: true };
-            null !== this.Ta && (this.Ta.free(), this.Ta = null);
-            if (!this.db.db) throw this.fb(), Error("Database closed");
-            var g = ra(), l = y(4);
-            sa(h);
-            sa(l);
-            try {
-              this.db.handleError(nb(this.db.db, this.cb, -1, h, l));
-              this.cb = m(l, "i32");
-              var n = m(h, "i32");
-              if (0 === n) return this.fb(), { done: true };
-              this.Ta = new c(n, this.db);
-              this.db.Ya[n] = this.Ta;
-              return { value: this.Ta, done: false };
-            } catch (t) {
-              throw this.hb = ta(this.cb), this.fb(), t;
-            } finally {
-              ua(g);
-            }
-          };
-          d.prototype.fb = function() {
-            fa(this.Xa);
-            this.Xa = null;
-          };
-          d.prototype.getRemainingSQL = function() {
-            return null !== this.hb ? this.hb : ta(this.cb);
-          };
-          "function" === typeof Symbol && "symbol" === typeof Symbol.iterator && (d.prototype[Symbol.iterator] = function() {
-            return this;
-          });
-          e.prototype.run = function(g, l) {
-            if (!this.db) throw "Database closed";
-            if (l) {
+            e.prototype.run = function(g, l) {
+              if (!this.db) throw "Database closed";
+              if (l) {
+                g = this.prepare(g, l);
+                try {
+                  g.step();
+                } finally {
+                  g.free();
+                }
+              } else this.handleError(v(this.db, g, 0, 0, h));
+              return this;
+            };
+            e.prototype.exec = function(g, l, n) {
+              if (!this.db) throw "Database closed";
+              var t = ra(), w = null;
+              try {
+                var A = va(g), N = y(4);
+                for (g = []; 0 !== m(A, "i8"); ) {
+                  sa(h);
+                  sa(N);
+                  this.handleError(nb(
+                    this.db,
+                    A,
+                    -1,
+                    h,
+                    N
+                  ));
+                  var M = m(h, "i32");
+                  A = m(N, "i32");
+                  if (0 !== M) {
+                    var K = null;
+                    w = new c(M, this);
+                    for (null != l && w.bind(l); w.step(); ) null === K && (K = { columns: w.getColumnNames(), values: [] }, g.push(K)), K.values.push(w.get(null, n));
+                    w.free();
+                  }
+                }
+                return g;
+              } catch (O) {
+                throw w && w.free(), O;
+              } finally {
+                ua(t);
+              }
+            };
+            e.prototype.each = function(g, l, n, t, w) {
+              "function" === typeof l && (t = n, n = l, l = void 0);
               g = this.prepare(g, l);
               try {
-                g.step();
+                for (; g.step(); ) n(g.getAsObject(null, w));
               } finally {
                 g.free();
               }
-            } else this.handleError(v(this.db, g, 0, 0, h));
-            return this;
-          };
-          e.prototype.exec = function(g, l, n) {
-            if (!this.db) throw "Database closed";
-            var t = ra(), w = null;
-            try {
-              var A = va(g), N = y(4);
-              for (g = []; 0 !== m(A, "i8"); ) {
-                sa(h);
-                sa(N);
-                this.handleError(nb(
-                  this.db,
-                  A,
-                  -1,
-                  h,
-                  N
-                ));
-                var M = m(h, "i32");
-                A = m(N, "i32");
-                if (0 !== M) {
-                  var K = null;
-                  w = new c(M, this);
-                  for (null != l && w.bind(l); w.step(); ) null === K && (K = { columns: w.getColumnNames(), values: [] }, g.push(K)), K.values.push(w.get(null, n));
-                  w.free();
-                }
-              }
-              return g;
-            } catch (O) {
-              throw w && w.free(), O;
-            } finally {
-              ua(t);
-            }
-          };
-          e.prototype.each = function(g, l, n, t, w) {
-            "function" === typeof l && (t = n, n = l, l = void 0);
-            g = this.prepare(g, l);
-            try {
-              for (; g.step(); ) n(g.getAsObject(null, w));
-            } finally {
-              g.free();
-            }
-            if ("function" === typeof t) return t();
-          };
-          e.prototype.prepare = function(g, l) {
-            sa(h);
-            this.handleError(H(this.db, g, -1, h, 0));
-            g = m(h, "i32");
-            if (0 === g) throw "Nothing to prepare";
-            var n = new c(g, this);
-            null != l && n.bind(l);
-            return this.Ya[g] = n;
-          };
-          e.prototype.iterateStatements = function(g) {
-            return new d(g, this);
-          };
-          e.prototype["export"] = function() {
-            Object.values(this.Ya).forEach(function(l) {
-              l.free();
-            });
-            Object.values(this.Ma).forEach(wa);
-            this.Ma = {};
-            this.handleError(z(this.db));
-            var g = ya(this.filename);
-            this.handleError(r(this.filename, h));
-            this.db = m(h, "i32");
-            lb(this.db);
-            return g;
-          };
-          e.prototype.close = function() {
-            null !== this.db && (Object.values(this.Ya).forEach(function(g) {
-              g.free();
-            }), Object.values(this.Ma).forEach(wa), this.Ma = {}, this.handleError(z(this.db)), za("/" + this.filename), this.db = null);
-          };
-          e.prototype.handleError = function(g) {
-            if (0 === g) return null;
-            g = uc(this.db);
-            throw Error(g);
-          };
-          e.prototype.getRowsModified = function() {
-            return E(this.db);
-          };
-          e.prototype.create_function = function(g, l) {
-            Object.prototype.hasOwnProperty.call(this.Ma, g) && (wa(this.Ma[g]), delete this.Ma[g]);
-            var n = Aa(function(t, w, A) {
-              w = b(w, A);
-              try {
-                var N = l.apply(
-                  null,
-                  w
-                );
-              } catch (M) {
-                xa(t, M, -1);
-                return;
-              }
-              a(t, N);
-            }, "viii");
-            this.Ma[g] = n;
-            this.handleError(qb(this.db, g, l.length, 1, 0, n, 0, 0, 0));
-            return this;
-          };
-          e.prototype.create_aggregate = function(g, l) {
-            var n = l.init || function() {
-              return null;
-            }, t = l.finalize || function(K) {
-              return K;
-            }, w = l.step;
-            if (!w) throw "An aggregate function must have a step function in " + g;
-            var A = {};
-            Object.hasOwnProperty.call(this.Ma, g) && (wa(this.Ma[g]), delete this.Ma[g]);
-            l = g + "__finalize";
-            Object.hasOwnProperty.call(this.Ma, l) && (wa(this.Ma[l]), delete this.Ma[l]);
-            var N = Aa(function(K, O, Ra) {
-              var Y = rb(K, 1);
-              Object.hasOwnProperty.call(A, Y) || (A[Y] = n());
-              O = b(O, Ra);
-              O = [A[Y]].concat(O);
-              try {
-                A[Y] = w.apply(null, O);
-              } catch (Gc) {
-                delete A[Y], xa(K, Gc, -1);
-              }
-            }, "viii"), M = Aa(function(K) {
-              var O = rb(K, 1);
-              try {
-                var Ra = t(A[O]);
-              } catch (Y) {
-                delete A[O];
-                xa(K, Y, -1);
-                return;
-              }
-              a(K, Ra);
-              delete A[O];
-            }, "vi");
-            this.Ma[g] = N;
-            this.Ma[l] = M;
-            this.handleError(qb(this.db, g, w.length - 1, 1, 0, 0, N, M, 0));
-            return this;
-          };
-          f.Database = e;
-        };
-        var Ba = Object.assign({}, f), Ca = "./this.program", B2 = "", Da, Ea;
-        if (ca) {
-          var fs = (init_fs(), __toCommonJS(fs_exports)), Fa = (init_path(), __toCommonJS(path_exports));
-          B2 = "//";
-          Ea = (a) => {
-            a = Ga(a) ? new URL(a) : Fa.normalize(a);
-            return fs.readFileSync(a);
-          };
-          Da = (a) => {
-            a = Ga(a) ? new URL(a) : Fa.normalize(a);
-            return new Promise((b, c) => {
-              fs.readFile(a, void 0, (d, e) => {
-                d ? c(d) : b(e.buffer);
+              if ("function" === typeof t) return t();
+            };
+            e.prototype.prepare = function(g, l) {
+              sa(h);
+              this.handleError(H(this.db, g, -1, h, 0));
+              g = m(h, "i32");
+              if (0 === g) throw "Nothing to prepare";
+              var n = new c(g, this);
+              null != l && n.bind(l);
+              return this.Ya[g] = n;
+            };
+            e.prototype.iterateStatements = function(g) {
+              return new d(g, this);
+            };
+            e.prototype["export"] = function() {
+              Object.values(this.Ya).forEach(function(l) {
+                l.free();
               });
-            });
-          };
-          !f.thisProgram && 1 < proc.argv.length && (Ca = proc.argv[1].replace(/\\/g, "/"));
-          proc.argv.slice(2);
-          "undefined" != typeof module && (module.exports = f);
-        } else if (aa || ba) ba ? B2 = self.location.href : "undefined" != typeof document && document.currentScript && (B2 = document.currentScript.src), B2 = B2.startsWith("blob:") ? "" : B2.substr(0, B2.replace(/[?#].*/, "").lastIndexOf("/") + 1), ba && (Ea = (a) => {
-          var b = new XMLHttpRequest();
-          b.open("GET", a, false);
-          b.responseType = "arraybuffer";
-          b.send(null);
-          return new Uint8Array(b.response);
-        }), Da = (a) => Ga(a) ? new Promise((b, c) => {
-          var d = new XMLHttpRequest();
-          d.open("GET", a, true);
-          d.responseType = "arraybuffer";
-          d.onload = () => {
-            (200 == d.status || 0 == d.status && d.response) && c(d.response);
-            b(d.status);
-          };
-          d.onerror = b;
-          d.send(null);
-        }) : fetch(a, { credentials: "same-origin" }).then((b) => b.ok ? b.arrayBuffer() : Promise.reject(Error(b.status + " : " + b.url)));
-        var Ha = f.print || console.log.bind(console), C = f.printErr || console.error.bind(console);
-        Object.assign(f, Ba);
-        Ba = null;
-        f.thisProgram && (Ca = f.thisProgram);
-        var Ia;
-        f.wasmBinary && (Ia = f.wasmBinary);
-        var Ja, Ka = false, p, u, La, D, F, Ma, Na;
-        function Oa() {
-          var a = Ja.buffer;
-          f.HEAP8 = p = new Int8Array(a);
-          f.HEAP16 = La = new Int16Array(a);
-          f.HEAPU8 = u = new Uint8Array(a);
-          f.HEAPU16 = new Uint16Array(a);
-          f.HEAP32 = D = new Int32Array(a);
-          f.HEAPU32 = F = new Uint32Array(a);
-          f.HEAPF32 = Ma = new Float32Array(a);
-          f.HEAPF64 = Na = new Float64Array(a);
-        }
-        var Pa = [], Qa = [], Sa = [];
-        function Ta() {
-          var a = f.preRun.shift();
-          Pa.unshift(a);
-        }
-        var Ua = 0, Va = null, Wa = null;
-        function G(a) {
-          f.onAbort?.(a);
-          a = "Aborted(" + a + ")";
-          C(a);
-          Ka = true;
-          throw new WebAssembly.RuntimeError(a + ". Build with -sASSERTIONS for more info.");
-        }
-        var Xa = (a) => a.startsWith("data:application/octet-stream;base64,"), Ga = (a) => a.startsWith("file://"), Ya;
-        function Za(a) {
-          if (a == Ya && Ia) return new Uint8Array(Ia);
-          if (Ea) return Ea(a);
-          throw "both async and sync fetching of the wasm failed";
-        }
-        function $a(a) {
-          return Ia ? Promise.resolve().then(() => Za(a)) : Da(a).then((b) => new Uint8Array(b), () => Za(a));
-        }
-        function ab(a, b, c) {
-          return $a(a).then((d) => WebAssembly.instantiate(d, b)).then(c, (d) => {
-            C(`failed to asynchronously prepare wasm: ${d}`);
-            G(d);
-          });
-        }
-        function bb(a, b) {
-          var c = Ya;
-          Ia || "function" != typeof WebAssembly.instantiateStreaming || Xa(c) || Ga(c) || ca || "function" != typeof fetch ? ab(c, a, b) : fetch(c, { credentials: "same-origin" }).then((d) => WebAssembly.instantiateStreaming(d, a).then(b, function(e) {
-            C(`wasm streaming compile failed: ${e}`);
-            C("falling back to ArrayBuffer instantiation");
-            return ab(c, a, b);
-          }));
-        }
-        var I, J, cb = (a) => {
-          for (; 0 < a.length; ) a.shift()(f);
-        };
-        function m(a, b = "i8") {
-          b.endsWith("*") && (b = "*");
-          switch (b) {
-            case "i1":
-              return p[a];
-            case "i8":
-              return p[a];
-            case "i16":
-              return La[a >> 1];
-            case "i32":
-              return D[a >> 2];
-            case "i64":
-              G("to do getValue(i64) use WASM_BIGINT");
-            case "float":
-              return Ma[a >> 2];
-            case "double":
-              return Na[a >> 3];
-            case "*":
-              return F[a >> 2];
-            default:
-              G(`invalid type for getValue: ${b}`);
-          }
-        }
-        function sa(a) {
-          var b = "i32";
-          b.endsWith("*") && (b = "*");
-          switch (b) {
-            case "i1":
-              p[a] = 0;
-              break;
-            case "i8":
-              p[a] = 0;
-              break;
-            case "i16":
-              La[a >> 1] = 0;
-              break;
-            case "i32":
-              D[a >> 2] = 0;
-              break;
-            case "i64":
-              G("to do setValue(i64) use WASM_BIGINT");
-            case "float":
-              Ma[a >> 2] = 0;
-              break;
-            case "double":
-              Na[a >> 3] = 0;
-              break;
-            case "*":
-              F[a >> 2] = 0;
-              break;
-            default:
-              G(`invalid type for setValue: ${b}`);
-          }
-        }
-        var db3 = "undefined" != typeof TextDecoder ? new TextDecoder() : void 0, L = (a, b, c) => {
-          var d = b + c;
-          for (c = b; a[c] && !(c >= d); ) ++c;
-          if (16 < c - b && a.buffer && db3) return db3.decode(a.subarray(b, c));
-          for (d = ""; b < c; ) {
-            var e = a[b++];
-            if (e & 128) {
-              var h = a[b++] & 63;
-              if (192 == (e & 224)) d += String.fromCharCode((e & 31) << 6 | h);
-              else {
-                var k = a[b++] & 63;
-                e = 224 == (e & 240) ? (e & 15) << 12 | h << 6 | k : (e & 7) << 18 | h << 12 | k << 6 | a[b++] & 63;
-                65536 > e ? d += String.fromCharCode(e) : (e -= 65536, d += String.fromCharCode(55296 | e >> 10, 56320 | e & 1023));
-              }
-            } else d += String.fromCharCode(e);
-          }
-          return d;
-        }, ta = (a, b) => a ? L(u, a, b) : "", eb = (a, b) => {
-          for (var c = 0, d = a.length - 1; 0 <= d; d--) {
-            var e = a[d];
-            "." === e ? a.splice(d, 1) : ".." === e ? (a.splice(d, 1), c++) : c && (a.splice(d, 1), c--);
-          }
-          if (b) for (; c; c--) a.unshift("..");
-          return a;
-        }, x = (a) => {
-          var b = "/" === a.charAt(0), c = "/" === a.substr(-1);
-          (a = eb(a.split("/").filter((d) => !!d), !b).join("/")) || b || (a = ".");
-          a && c && (a += "/");
-          return (b ? "/" : "") + a;
-        }, fb = (a) => {
-          var b = /^(\/?|)([\s\S]*?)((?:\.{1,2}|[^\/]+?|)(\.[^.\/]*|))(?:[\/]*)$/.exec(a).slice(1);
-          a = b[0];
-          b = b[1];
-          if (!a && !b) return ".";
-          b &&= b.substr(0, b.length - 1);
-          return a + b;
-        }, gb = (a) => {
-          if ("/" === a) return "/";
-          a = x(a);
-          a = a.replace(/\/$/, "");
-          var b = a.lastIndexOf("/");
-          return -1 === b ? a : a.substr(b + 1);
-        }, hb = () => {
-          if ("object" == typeof crypto && "function" == typeof crypto.getRandomValues) return (c) => crypto.getRandomValues(c);
-          if (ca) try {
-            var a = (init_crypto2(), __toCommonJS(crypto_exports));
-            if (a.randomFillSync) return (c) => a.randomFillSync(c);
-            var b = a.randomBytes;
-            return (c) => (c.set(b(c.byteLength)), c);
-          } catch (c) {
-          }
-          G("initRandomDevice");
-        }, jb = (a) => (jb = hb())(a), kb = (...a) => {
-          for (var b = "", c = false, d = a.length - 1; -1 <= d && !c; d--) {
-            c = 0 <= d ? a[d] : "/";
-            if ("string" != typeof c) throw new TypeError("Arguments to path.resolve must be strings");
-            if (!c) return "";
-            b = c + "/" + b;
-            c = "/" === c.charAt(0);
-          }
-          b = eb(b.split("/").filter((e) => !!e), !c).join("/");
-          return (c ? "/" : "") + b || ".";
-        }, sb = [], ha = (a) => {
-          for (var b = 0, c = 0; c < a.length; ++c) {
-            var d = a.charCodeAt(c);
-            127 >= d ? b++ : 2047 >= d ? b += 2 : 55296 <= d && 57343 >= d ? (b += 4, ++c) : b += 3;
-          }
-          return b;
-        }, q = (a, b, c, d) => {
-          if (!(0 < d)) return 0;
-          var e = c;
-          d = c + d - 1;
-          for (var h = 0; h < a.length; ++h) {
-            var k = a.charCodeAt(h);
-            if (55296 <= k && 57343 >= k) {
-              var r = a.charCodeAt(++h);
-              k = 65536 + ((k & 1023) << 10) | r & 1023;
-            }
-            if (127 >= k) {
-              if (c >= d) break;
-              b[c++] = k;
-            } else {
-              if (2047 >= k) {
-                if (c + 1 >= d) break;
-                b[c++] = 192 | k >> 6;
-              } else {
-                if (65535 >= k) {
-                  if (c + 2 >= d) break;
-                  b[c++] = 224 | k >> 12;
-                } else {
-                  if (c + 3 >= d) break;
-                  b[c++] = 240 | k >> 18;
-                  b[c++] = 128 | k >> 12 & 63;
-                }
-                b[c++] = 128 | k >> 6 & 63;
-              }
-              b[c++] = 128 | k & 63;
-            }
-          }
-          b[c] = 0;
-          return c - e;
-        };
-        function qa(a, b) {
-          var c = Array(ha(a) + 1);
-          a = q(a, c, 0, c.length);
-          b && (c.length = a);
-          return c;
-        }
-        var tb = [];
-        function ub(a, b) {
-          tb[a] = { input: [], output: [], Wa: b };
-          vb(a, wb);
-        }
-        var wb = { open(a) {
-          var b = tb[a.node.rdev];
-          if (!b) throw new P2(43);
-          a.tty = b;
-          a.seekable = false;
-        }, close(a) {
-          a.tty.Wa.fsync(a.tty);
-        }, fsync(a) {
-          a.tty.Wa.fsync(a.tty);
-        }, read(a, b, c, d) {
-          if (!a.tty || !a.tty.Wa.rb) throw new P2(60);
-          for (var e = 0, h = 0; h < d; h++) {
-            try {
-              var k = a.tty.Wa.rb(a.tty);
-            } catch (r) {
-              throw new P2(29);
-            }
-            if (void 0 === k && 0 === e) throw new P2(6);
-            if (null === k || void 0 === k) break;
-            e++;
-            b[c + h] = k;
-          }
-          e && (a.node.timestamp = Date.now());
-          return e;
-        }, write(a, b, c, d) {
-          if (!a.tty || !a.tty.Wa.ib) throw new P2(60);
-          try {
-            for (var e = 0; e < d; e++) a.tty.Wa.ib(a.tty, b[c + e]);
-          } catch (h) {
-            throw new P2(29);
-          }
-          d && (a.node.timestamp = Date.now());
-          return e;
-        } }, xb = { rb() {
-          a: {
-            if (!sb.length) {
-              var a = null;
-              if (ca) {
-                var b = import_buffer.Buffer.alloc(256), c = 0, d = proc.stdin.fd;
+              Object.values(this.Ma).forEach(wa);
+              this.Ma = {};
+              this.handleError(z(this.db));
+              var g = ya(this.filename);
+              this.handleError(r(this.filename, h));
+              this.db = m(h, "i32");
+              lb(this.db);
+              return g;
+            };
+            e.prototype.close = function() {
+              null !== this.db && (Object.values(this.Ya).forEach(function(g) {
+                g.free();
+              }), Object.values(this.Ma).forEach(wa), this.Ma = {}, this.handleError(z(this.db)), za("/" + this.filename), this.db = null);
+            };
+            e.prototype.handleError = function(g) {
+              if (0 === g) return null;
+              g = uc(this.db);
+              throw Error(g);
+            };
+            e.prototype.getRowsModified = function() {
+              return E(this.db);
+            };
+            e.prototype.create_function = function(g, l) {
+              Object.prototype.hasOwnProperty.call(this.Ma, g) && (wa(this.Ma[g]), delete this.Ma[g]);
+              var n = Aa(function(t, w, A) {
+                w = b(w, A);
                 try {
-                  c = fs.readSync(d, b, 0, 256);
-                } catch (e) {
-                  if (e.toString().includes("EOF")) c = 0;
-                  else throw e;
+                  var N = l.apply(
+                    null,
+                    w
+                  );
+                } catch (M) {
+                  xa(t, M, -1);
+                  return;
                 }
-                0 < c && (a = b.slice(0, c).toString("utf-8"));
-              } else "undefined" != typeof window && "function" == typeof window.prompt && (a = window.prompt("Input: "), null !== a && (a += "\n"));
-              if (!a) {
-                a = null;
-                break a;
-              }
-              sb = qa(a, true);
-            }
-            a = sb.shift();
+                a(t, N);
+              }, "viii");
+              this.Ma[g] = n;
+              this.handleError(qb(this.db, g, l.length, 1, 0, n, 0, 0, 0));
+              return this;
+            };
+            e.prototype.create_aggregate = function(g, l) {
+              var n = l.init || function() {
+                return null;
+              }, t = l.finalize || function(K) {
+                return K;
+              }, w = l.step;
+              if (!w) throw "An aggregate function must have a step function in " + g;
+              var A = {};
+              Object.hasOwnProperty.call(this.Ma, g) && (wa(this.Ma[g]), delete this.Ma[g]);
+              l = g + "__finalize";
+              Object.hasOwnProperty.call(this.Ma, l) && (wa(this.Ma[l]), delete this.Ma[l]);
+              var N = Aa(function(K, O, Ra) {
+                var Y = rb(K, 1);
+                Object.hasOwnProperty.call(A, Y) || (A[Y] = n());
+                O = b(O, Ra);
+                O = [A[Y]].concat(O);
+                try {
+                  A[Y] = w.apply(null, O);
+                } catch (Gc) {
+                  delete A[Y], xa(K, Gc, -1);
+                }
+              }, "viii"), M = Aa(function(K) {
+                var O = rb(K, 1);
+                try {
+                  var Ra = t(A[O]);
+                } catch (Y) {
+                  delete A[O];
+                  xa(K, Y, -1);
+                  return;
+                }
+                a(K, Ra);
+                delete A[O];
+              }, "vi");
+              this.Ma[g] = N;
+              this.Ma[l] = M;
+              this.handleError(qb(this.db, g, w.length - 1, 1, 0, 0, N, M, 0));
+              return this;
+            };
+            f.Database = e;
+          };
+          var Ba = Object.assign({}, f), Ca = "./this.program", B2 = "", Da, Ea;
+          if (ca) {
+            var fs = (init_fs(), __toCommonJS(fs_exports)), Fa = (init_path(), __toCommonJS(path_exports));
+            B2 = "//";
+            Ea = (a) => {
+              a = Ga(a) ? new URL(a) : Fa.normalize(a);
+              return fs.readFileSync(a);
+            };
+            Da = (a) => {
+              a = Ga(a) ? new URL(a) : Fa.normalize(a);
+              return new Promise((b, c) => {
+                fs.readFile(a, void 0, (d, e) => {
+                  d ? c(d) : b(e.buffer);
+                });
+              });
+            };
+            !f.thisProgram && 1 < proc.argv.length && (Ca = proc.argv[1].replace(/\\/g, "/"));
+            proc.argv.slice(2);
+            "undefined" != typeof module2 && (module2.exports = f);
+          } else if (aa || ba) ba ? B2 = self.location.href : "undefined" != typeof document && document.currentScript && (B2 = document.currentScript.src), B2 = B2.startsWith("blob:") ? "" : B2.substr(0, B2.replace(/[?#].*/, "").lastIndexOf("/") + 1), ba && (Ea = (a) => {
+            var b = new XMLHttpRequest();
+            b.open("GET", a, false);
+            b.responseType = "arraybuffer";
+            b.send(null);
+            return new Uint8Array(b.response);
+          }), Da = (a) => Ga(a) ? new Promise((b, c) => {
+            var d = new XMLHttpRequest();
+            d.open("GET", a, true);
+            d.responseType = "arraybuffer";
+            d.onload = () => {
+              (200 == d.status || 0 == d.status && d.response) && c(d.response);
+              b(d.status);
+            };
+            d.onerror = b;
+            d.send(null);
+          }) : fetch(a, { credentials: "same-origin" }).then((b) => b.ok ? b.arrayBuffer() : Promise.reject(Error(b.status + " : " + b.url)));
+          var Ha = f.print || console.log.bind(console), C = f.printErr || console.error.bind(console);
+          Object.assign(f, Ba);
+          Ba = null;
+          f.thisProgram && (Ca = f.thisProgram);
+          var Ia;
+          f.wasmBinary && (Ia = f.wasmBinary);
+          var Ja, Ka = false, p, u, La, D, F, Ma, Na;
+          function Oa() {
+            var a = Ja.buffer;
+            f.HEAP8 = p = new Int8Array(a);
+            f.HEAP16 = La = new Int16Array(a);
+            f.HEAPU8 = u = new Uint8Array(a);
+            f.HEAPU16 = new Uint16Array(a);
+            f.HEAP32 = D = new Int32Array(a);
+            f.HEAPU32 = F = new Uint32Array(a);
+            f.HEAPF32 = Ma = new Float32Array(a);
+            f.HEAPF64 = Na = new Float64Array(a);
           }
-          return a;
-        }, ib(a, b) {
-          null === b || 10 === b ? (Ha(L(
-            a.output,
-            0
-          )), a.output = []) : 0 != b && a.output.push(b);
-        }, fsync(a) {
-          a.output && 0 < a.output.length && (Ha(L(a.output, 0)), a.output = []);
-        }, Lb() {
-          return { Gb: 25856, Ib: 5, Fb: 191, Hb: 35387, Eb: [3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26, 0, 18, 15, 23, 22, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
-        }, Mb() {
-          return 0;
-        }, Nb() {
-          return [24, 80];
-        } }, yb = { ib(a, b) {
-          null === b || 10 === b ? (C(L(a.output, 0)), a.output = []) : 0 != b && a.output.push(b);
-        }, fsync(a) {
-          a.output && 0 < a.output.length && (C(L(a.output, 0)), a.output = []);
-        } };
-        function zb(a, b) {
-          var c = a.Ha ? a.Ha.length : 0;
-          c >= b || (b = Math.max(b, c * (1048576 > c ? 2 : 1.125) >>> 0), 0 != c && (b = Math.max(b, 256)), c = a.Ha, a.Ha = new Uint8Array(b), 0 < a.La && a.Ha.set(c.subarray(0, a.La), 0));
-        }
-        var Q = {
-          Pa: null,
-          Qa() {
-            return Q.createNode(null, "/", 16895, 0);
-          },
-          createNode(a, b, c, d) {
-            if (24576 === (c & 61440) || 4096 === (c & 61440)) throw new P2(63);
-            Q.Pa || (Q.Pa = { dir: { node: { Oa: Q.Fa.Oa, Na: Q.Fa.Na, lookup: Q.Fa.lookup, $a: Q.Fa.$a, rename: Q.Fa.rename, unlink: Q.Fa.unlink, rmdir: Q.Fa.rmdir, readdir: Q.Fa.readdir, symlink: Q.Fa.symlink }, stream: { Sa: Q.Ga.Sa } }, file: { node: { Oa: Q.Fa.Oa, Na: Q.Fa.Na }, stream: { Sa: Q.Ga.Sa, read: Q.Ga.read, write: Q.Ga.write, kb: Q.Ga.kb, ab: Q.Ga.ab, bb: Q.Ga.bb } }, link: {
-              node: { Oa: Q.Fa.Oa, Na: Q.Fa.Na, readlink: Q.Fa.readlink },
-              stream: {}
-            }, ob: { node: { Oa: Q.Fa.Oa, Na: Q.Fa.Na }, stream: Ab } });
-            c = Bb(a, b, c, d);
-            R(c.mode) ? (c.Fa = Q.Pa.dir.node, c.Ga = Q.Pa.dir.stream, c.Ha = {}) : 32768 === (c.mode & 61440) ? (c.Fa = Q.Pa.file.node, c.Ga = Q.Pa.file.stream, c.La = 0, c.Ha = null) : 40960 === (c.mode & 61440) ? (c.Fa = Q.Pa.link.node, c.Ga = Q.Pa.link.stream) : 8192 === (c.mode & 61440) && (c.Fa = Q.Pa.ob.node, c.Ga = Q.Pa.ob.stream);
-            c.timestamp = Date.now();
-            a && (a.Ha[b] = c, a.timestamp = c.timestamp);
-            return c;
-          },
-          Kb(a) {
-            return a.Ha ? a.Ha.subarray ? a.Ha.subarray(0, a.La) : new Uint8Array(a.Ha) : new Uint8Array(0);
-          },
-          Fa: { Oa(a) {
-            var b = {};
-            b.dev = 8192 === (a.mode & 61440) ? a.id : 1;
-            b.ino = a.id;
-            b.mode = a.mode;
-            b.nlink = 1;
-            b.uid = 0;
-            b.gid = 0;
-            b.rdev = a.rdev;
-            R(a.mode) ? b.size = 4096 : 32768 === (a.mode & 61440) ? b.size = a.La : 40960 === (a.mode & 61440) ? b.size = a.link.length : b.size = 0;
-            b.atime = new Date(a.timestamp);
-            b.mtime = new Date(a.timestamp);
-            b.ctime = new Date(a.timestamp);
-            b.yb = 4096;
-            b.blocks = Math.ceil(b.size / b.yb);
-            return b;
-          }, Na(a, b) {
-            void 0 !== b.mode && (a.mode = b.mode);
-            void 0 !== b.timestamp && (a.timestamp = b.timestamp);
-            if (void 0 !== b.size && (b = b.size, a.La != b)) if (0 == b) a.Ha = null, a.La = 0;
-            else {
-              var c = a.Ha;
-              a.Ha = new Uint8Array(b);
-              c && a.Ha.set(c.subarray(0, Math.min(b, a.La)));
-              a.La = b;
+          var Pa = [], Qa = [], Sa = [];
+          function Ta() {
+            var a = f.preRun.shift();
+            Pa.unshift(a);
+          }
+          var Ua = 0, Va = null, Wa = null;
+          function G(a) {
+            f.onAbort?.(a);
+            a = "Aborted(" + a + ")";
+            C(a);
+            Ka = true;
+            throw new WebAssembly.RuntimeError(a + ". Build with -sASSERTIONS for more info.");
+          }
+          var Xa = (a) => a.startsWith("data:application/octet-stream;base64,"), Ga = (a) => a.startsWith("file://"), Ya;
+          function Za(a) {
+            if (a == Ya && Ia) return new Uint8Array(Ia);
+            if (Ea) return Ea(a);
+            throw "both async and sync fetching of the wasm failed";
+          }
+          function $a(a) {
+            return Ia ? Promise.resolve().then(() => Za(a)) : Da(a).then((b) => new Uint8Array(b), () => Za(a));
+          }
+          function ab(a, b, c) {
+            return $a(a).then((d) => WebAssembly.instantiate(d, b)).then(c, (d) => {
+              C(`failed to asynchronously prepare wasm: ${d}`);
+              G(d);
+            });
+          }
+          function bb(a, b) {
+            var c = Ya;
+            Ia || "function" != typeof WebAssembly.instantiateStreaming || Xa(c) || Ga(c) || ca || "function" != typeof fetch ? ab(c, a, b) : fetch(c, { credentials: "same-origin" }).then((d) => WebAssembly.instantiateStreaming(d, a).then(b, function(e) {
+              C(`wasm streaming compile failed: ${e}`);
+              C("falling back to ArrayBuffer instantiation");
+              return ab(c, a, b);
+            }));
+          }
+          var I, J, cb = (a) => {
+            for (; 0 < a.length; ) a.shift()(f);
+          };
+          function m(a, b = "i8") {
+            b.endsWith("*") && (b = "*");
+            switch (b) {
+              case "i1":
+                return p[a];
+              case "i8":
+                return p[a];
+              case "i16":
+                return La[a >> 1];
+              case "i32":
+                return D[a >> 2];
+              case "i64":
+                G("to do getValue(i64) use WASM_BIGINT");
+              case "float":
+                return Ma[a >> 2];
+              case "double":
+                return Na[a >> 3];
+              case "*":
+                return F[a >> 2];
+              default:
+                G(`invalid type for getValue: ${b}`);
             }
-          }, lookup() {
-            throw Cb[44];
-          }, $a(a, b, c, d) {
-            return Q.createNode(a, b, c, d);
-          }, rename(a, b, c) {
-            if (R(a.mode)) {
-              try {
-                var d = Db(b, c);
-              } catch (h) {
-              }
-              if (d) for (var e in d.Ha) throw new P2(55);
+          }
+          function sa(a) {
+            var b = "i32";
+            b.endsWith("*") && (b = "*");
+            switch (b) {
+              case "i1":
+                p[a] = 0;
+                break;
+              case "i8":
+                p[a] = 0;
+                break;
+              case "i16":
+                La[a >> 1] = 0;
+                break;
+              case "i32":
+                D[a >> 2] = 0;
+                break;
+              case "i64":
+                G("to do setValue(i64) use WASM_BIGINT");
+              case "float":
+                Ma[a >> 2] = 0;
+                break;
+              case "double":
+                Na[a >> 3] = 0;
+                break;
+              case "*":
+                F[a >> 2] = 0;
+                break;
+              default:
+                G(`invalid type for setValue: ${b}`);
             }
-            delete a.parent.Ha[a.name];
-            a.parent.timestamp = Date.now();
-            a.name = c;
-            b.Ha[c] = a;
-            b.timestamp = a.parent.timestamp;
-          }, unlink(a, b) {
-            delete a.Ha[b];
-            a.timestamp = Date.now();
-          }, rmdir(a, b) {
-            var c = Db(a, b), d;
-            for (d in c.Ha) throw new P2(55);
-            delete a.Ha[b];
-            a.timestamp = Date.now();
-          }, readdir(a) {
-            var b = [".", ".."], c;
-            for (c of Object.keys(a.Ha)) b.push(c);
-            return b;
-          }, symlink(a, b, c) {
-            a = Q.createNode(a, b, 41471, 0);
-            a.link = c;
+          }
+          var db3 = "undefined" != typeof TextDecoder ? new TextDecoder() : void 0, L = (a, b, c) => {
+            var d = b + c;
+            for (c = b; a[c] && !(c >= d); ) ++c;
+            if (16 < c - b && a.buffer && db3) return db3.decode(a.subarray(b, c));
+            for (d = ""; b < c; ) {
+              var e = a[b++];
+              if (e & 128) {
+                var h = a[b++] & 63;
+                if (192 == (e & 224)) d += String.fromCharCode((e & 31) << 6 | h);
+                else {
+                  var k = a[b++] & 63;
+                  e = 224 == (e & 240) ? (e & 15) << 12 | h << 6 | k : (e & 7) << 18 | h << 12 | k << 6 | a[b++] & 63;
+                  65536 > e ? d += String.fromCharCode(e) : (e -= 65536, d += String.fromCharCode(55296 | e >> 10, 56320 | e & 1023));
+                }
+              } else d += String.fromCharCode(e);
+            }
+            return d;
+          }, ta = (a, b) => a ? L(u, a, b) : "", eb = (a, b) => {
+            for (var c = 0, d = a.length - 1; 0 <= d; d--) {
+              var e = a[d];
+              "." === e ? a.splice(d, 1) : ".." === e ? (a.splice(d, 1), c++) : c && (a.splice(d, 1), c--);
+            }
+            if (b) for (; c; c--) a.unshift("..");
             return a;
-          }, readlink(a) {
-            if (40960 !== (a.mode & 61440)) throw new P2(28);
-            return a.link;
-          } },
-          Ga: {
-            read(a, b, c, d, e) {
-              var h = a.node.Ha;
-              if (e >= a.node.La) return 0;
-              a = Math.min(a.node.La - e, d);
-              if (8 < a && h.subarray) b.set(h.subarray(e, e + a), c);
-              else for (d = 0; d < a; d++) b[c + d] = h[e + d];
-              return a;
-            },
-            write(a, b, c, d, e, h) {
-              b.buffer === p.buffer && (h = false);
-              if (!d) return 0;
-              a = a.node;
-              a.timestamp = Date.now();
-              if (b.subarray && (!a.Ha || a.Ha.subarray)) {
-                if (h) return a.Ha = b.subarray(c, c + d), a.La = d;
-                if (0 === a.La && 0 === e) return a.Ha = b.slice(c, c + d), a.La = d;
-                if (e + d <= a.La) return a.Ha.set(b.subarray(c, c + d), e), d;
-              }
-              zb(a, e + d);
-              if (a.Ha.subarray && b.subarray) a.Ha.set(b.subarray(c, c + d), e);
-              else for (h = 0; h < d; h++) a.Ha[e + h] = b[c + h];
-              a.La = Math.max(a.La, e + d);
-              return d;
-            },
-            Sa(a, b, c) {
-              1 === c ? b += a.position : 2 === c && 32768 === (a.node.mode & 61440) && (b += a.node.La);
-              if (0 > b) throw new P2(28);
-              return b;
-            },
-            kb(a, b, c) {
-              zb(a.node, b + c);
-              a.node.La = Math.max(a.node.La, b + c);
-            },
-            ab(a, b, c, d, e) {
-              if (32768 !== (a.node.mode & 61440)) throw new P2(43);
-              a = a.node.Ha;
-              if (e & 2 || a.buffer !== p.buffer) {
-                if (0 < c || c + b < a.length) a.subarray ? a = a.subarray(c, c + b) : a = Array.prototype.slice.call(a, c, c + b);
-                c = true;
-                b = 65536 * Math.ceil(b / 65536);
-                (e = Eb(65536, b)) ? (u.fill(0, e, e + b), b = e) : b = 0;
-                if (!b) throw new P2(48);
-                p.set(a, b);
-              } else c = false, b = a.byteOffset;
-              return { Cb: b, tb: c };
-            },
-            bb(a, b, c, d) {
-              Q.Ga.write(a, b, 0, d, c, false);
-              return 0;
-            }
-          }
-        }, ka = (a, b) => {
-          var c = 0;
-          a && (c |= 365);
-          b && (c |= 146);
-          return c;
-        }, Fb = null, Gb = {}, Hb = [], Ib = 1, S = null, Jb = true, P2 = class {
-          constructor(a) {
-            this.name = "ErrnoError";
-            this.Ja = a;
-          }
-        }, Cb = {}, Kb = class {
-          constructor() {
-            this.Za = {};
-            this.node = null;
-          }
-          get flags() {
-            return this.Za.flags;
-          }
-          set flags(a) {
-            this.Za.flags = a;
-          }
-          get position() {
-            return this.Za.position;
-          }
-          set position(a) {
-            this.Za.position = a;
-          }
-        }, Lb = class {
-          constructor(a, b, c, d) {
-            a ||= this;
-            this.parent = a;
-            this.Qa = a.Qa;
-            this.Ua = null;
-            this.id = Ib++;
-            this.name = b;
-            this.mode = c;
-            this.Fa = {};
-            this.Ga = {};
-            this.rdev = d;
-          }
-          get read() {
-            return 365 === (this.mode & 365);
-          }
-          set read(a) {
-            a ? this.mode |= 365 : this.mode &= -366;
-          }
-          get write() {
-            return 146 === (this.mode & 146);
-          }
-          set write(a) {
-            a ? this.mode |= 146 : this.mode &= -147;
-          }
-        };
-        function T(a, b = {}) {
-          a = kb(a);
-          if (!a) return { path: "", node: null };
-          b = Object.assign({ pb: true, jb: 0 }, b);
-          if (8 < b.jb) throw new P2(32);
-          a = a.split("/").filter((k) => !!k);
-          for (var c = Fb, d = "/", e = 0; e < a.length; e++) {
-            var h = e === a.length - 1;
-            if (h && b.parent) break;
-            c = Db(c, a[e]);
-            d = x(d + "/" + a[e]);
-            c.Ua && (!h || h && b.pb) && (c = c.Ua.root);
-            if (!h || b.Ra) {
-              for (h = 0; 40960 === (c.mode & 61440); ) if (c = Mb(d), d = kb(fb(d), c), c = T(d, { jb: b.jb + 1 }).node, 40 < h++) throw new P2(32);
-            }
-          }
-          return { path: d, node: c };
-        }
-        function ja(a) {
-          for (var b; ; ) {
-            if (a === a.parent) return a = a.Qa.sb, b ? "/" !== a[a.length - 1] ? `${a}/${b}` : a + b : a;
-            b = b ? `${a.name}/${b}` : a.name;
-            a = a.parent;
-          }
-        }
-        function Nb(a, b) {
-          for (var c = 0, d = 0; d < b.length; d++) c = (c << 5) - c + b.charCodeAt(d) | 0;
-          return (a + c >>> 0) % S.length;
-        }
-        function Ob(a) {
-          var b = Nb(a.parent.id, a.name);
-          if (S[b] === a) S[b] = a.Va;
-          else for (b = S[b]; b; ) {
-            if (b.Va === a) {
-              b.Va = a.Va;
-              break;
-            }
-            b = b.Va;
-          }
-        }
-        function Db(a, b) {
-          var c = R(a.mode) ? (c = Pb(a, "x")) ? c : a.Fa.lookup ? 0 : 2 : 54;
-          if (c) throw new P2(c);
-          for (c = S[Nb(a.id, b)]; c; c = c.Va) {
-            var d = c.name;
-            if (c.parent.id === a.id && d === b) return c;
-          }
-          return a.Fa.lookup(a, b);
-        }
-        function Bb(a, b, c, d) {
-          a = new Lb(a, b, c, d);
-          b = Nb(a.parent.id, a.name);
-          a.Va = S[b];
-          return S[b] = a;
-        }
-        function R(a) {
-          return 16384 === (a & 61440);
-        }
-        function Qb(a) {
-          var b = ["r", "w", "rw"][a & 3];
-          a & 512 && (b += "w");
-          return b;
-        }
-        function Pb(a, b) {
-          if (Jb) return 0;
-          if (!b.includes("r") || a.mode & 292) {
-            if (b.includes("w") && !(a.mode & 146) || b.includes("x") && !(a.mode & 73)) return 2;
-          } else return 2;
-          return 0;
-        }
-        function Rb(a, b) {
-          try {
-            return Db(a, b), 20;
-          } catch (c) {
-          }
-          return Pb(a, "wx");
-        }
-        function Sb(a, b, c) {
-          try {
-            var d = Db(a, b);
-          } catch (e) {
-            return e.Ja;
-          }
-          if (a = Pb(a, "wx")) return a;
-          if (c) {
-            if (!R(d.mode)) return 54;
-            if (d === d.parent || "/" === ja(d)) return 10;
-          } else if (R(d.mode)) return 31;
-          return 0;
-        }
-        function U2(a) {
-          a = Hb[a];
-          if (!a) throw new P2(8);
-          return a;
-        }
-        function Tb(a, b = -1) {
-          a = Object.assign(new Kb(), a);
-          if (-1 == b) a: {
-            for (b = 0; 4096 >= b; b++) if (!Hb[b]) break a;
-            throw new P2(33);
-          }
-          a.fd = b;
-          return Hb[b] = a;
-        }
-        function Ub(a, b = -1) {
-          a = Tb(a, b);
-          a.Ga?.Jb?.(a);
-          return a;
-        }
-        var Ab = { open(a) {
-          a.Ga = Gb[a.node.rdev].Ga;
-          a.Ga.open?.(a);
-        }, Sa() {
-          throw new P2(70);
-        } };
-        function vb(a, b) {
-          Gb[a] = { Ga: b };
-        }
-        function Vb(a, b) {
-          var c = "/" === b;
-          if (c && Fb) throw new P2(10);
-          if (!c && b) {
-            var d = T(b, { pb: false });
-            b = d.path;
-            d = d.node;
-            if (d.Ua) throw new P2(10);
-            if (!R(d.mode)) throw new P2(54);
-          }
-          b = { type: a, Ob: {}, sb: b, Bb: [] };
-          a = a.Qa(b);
-          a.Qa = b;
-          b.root = a;
-          c ? Fb = a : d && (d.Ua = b, d.Qa && d.Qa.Bb.push(b));
-        }
-        function la(a, b, c) {
-          var d = T(a, { parent: true }).node;
-          a = gb(a);
-          if (!a || "." === a || ".." === a) throw new P2(28);
-          var e = Rb(d, a);
-          if (e) throw new P2(e);
-          if (!d.Fa.$a) throw new P2(63);
-          return d.Fa.$a(d, a, b, c);
-        }
-        function V(a, b) {
-          return la(a, (void 0 !== b ? b : 511) & 1023 | 16384, 0);
-        }
-        function Wb(a, b, c) {
-          "undefined" == typeof c && (c = b, b = 438);
-          la(a, b | 8192, c);
-        }
-        function Xb(a, b) {
-          if (!kb(a)) throw new P2(44);
-          var c = T(b, { parent: true }).node;
-          if (!c) throw new P2(44);
-          b = gb(b);
-          var d = Rb(c, b);
-          if (d) throw new P2(d);
-          if (!c.Fa.symlink) throw new P2(63);
-          c.Fa.symlink(c, b, a);
-        }
-        function Yb(a) {
-          var b = T(a, { parent: true }).node;
-          a = gb(a);
-          var c = Db(b, a), d = Sb(b, a, true);
-          if (d) throw new P2(d);
-          if (!b.Fa.rmdir) throw new P2(63);
-          if (c.Ua) throw new P2(10);
-          b.Fa.rmdir(b, a);
-          Ob(c);
-        }
-        function za(a) {
-          var b = T(a, { parent: true }).node;
-          if (!b) throw new P2(44);
-          a = gb(a);
-          var c = Db(b, a), d = Sb(b, a, false);
-          if (d) throw new P2(d);
-          if (!b.Fa.unlink) throw new P2(63);
-          if (c.Ua) throw new P2(10);
-          b.Fa.unlink(b, a);
-          Ob(c);
-        }
-        function Mb(a) {
-          a = T(a).node;
-          if (!a) throw new P2(44);
-          if (!a.Fa.readlink) throw new P2(28);
-          return kb(ja(a.parent), a.Fa.readlink(a));
-        }
-        function Zb(a, b) {
-          a = T(a, { Ra: !b }).node;
-          if (!a) throw new P2(44);
-          if (!a.Fa.Oa) throw new P2(63);
-          return a.Fa.Oa(a);
-        }
-        function $b(a) {
-          return Zb(a, true);
-        }
-        function ma(a, b) {
-          a = "string" == typeof a ? T(a, { Ra: true }).node : a;
-          if (!a.Fa.Na) throw new P2(63);
-          a.Fa.Na(a, { mode: b & 4095 | a.mode & -4096, timestamp: Date.now() });
-        }
-        function ac(a, b) {
-          if (0 > b) throw new P2(28);
-          a = "string" == typeof a ? T(a, { Ra: true }).node : a;
-          if (!a.Fa.Na) throw new P2(63);
-          if (R(a.mode)) throw new P2(31);
-          if (32768 !== (a.mode & 61440)) throw new P2(28);
-          var c = Pb(a, "w");
-          if (c) throw new P2(c);
-          a.Fa.Na(a, { size: b, timestamp: Date.now() });
-        }
-        function na(a, b, c) {
-          if ("" === a) throw new P2(44);
-          if ("string" == typeof b) {
-            var d = { r: 0, "r+": 2, w: 577, "w+": 578, a: 1089, "a+": 1090 }[b];
-            if ("undefined" == typeof d) throw Error(`Unknown file open mode: ${b}`);
-            b = d;
-          }
-          c = b & 64 ? ("undefined" == typeof c ? 438 : c) & 4095 | 32768 : 0;
-          if ("object" == typeof a) var e = a;
-          else {
+          }, x = (a) => {
+            var b = "/" === a.charAt(0), c = "/" === a.substr(-1);
+            (a = eb(a.split("/").filter((d) => !!d), !b).join("/")) || b || (a = ".");
+            a && c && (a += "/");
+            return (b ? "/" : "") + a;
+          }, fb = (a) => {
+            var b = /^(\/?|)([\s\S]*?)((?:\.{1,2}|[^\/]+?|)(\.[^.\/]*|))(?:[\/]*)$/.exec(a).slice(1);
+            a = b[0];
+            b = b[1];
+            if (!a && !b) return ".";
+            b &&= b.substr(0, b.length - 1);
+            return a + b;
+          }, gb = (a) => {
+            if ("/" === a) return "/";
             a = x(a);
-            try {
-              e = T(a, { Ra: !(b & 131072) }).node;
-            } catch (h) {
+            a = a.replace(/\/$/, "");
+            var b = a.lastIndexOf("/");
+            return -1 === b ? a : a.substr(b + 1);
+          }, hb = () => {
+            if ("object" == typeof crypto && "function" == typeof crypto.getRandomValues) return (c) => crypto.getRandomValues(c);
+            if (ca) try {
+              var a = (init_crypto2(), __toCommonJS(crypto_exports));
+              if (a.randomFillSync) return (c) => a.randomFillSync(c);
+              var b = a.randomBytes;
+              return (c) => (c.set(b(c.byteLength)), c);
+            } catch (c) {
             }
+            G("initRandomDevice");
+          }, jb = (a) => (jb = hb())(a), kb = (...a) => {
+            for (var b = "", c = false, d = a.length - 1; -1 <= d && !c; d--) {
+              c = 0 <= d ? a[d] : "/";
+              if ("string" != typeof c) throw new TypeError("Arguments to path.resolve must be strings");
+              if (!c) return "";
+              b = c + "/" + b;
+              c = "/" === c.charAt(0);
+            }
+            b = eb(b.split("/").filter((e) => !!e), !c).join("/");
+            return (c ? "/" : "") + b || ".";
+          }, sb = [], ha = (a) => {
+            for (var b = 0, c = 0; c < a.length; ++c) {
+              var d = a.charCodeAt(c);
+              127 >= d ? b++ : 2047 >= d ? b += 2 : 55296 <= d && 57343 >= d ? (b += 4, ++c) : b += 3;
+            }
+            return b;
+          }, q = (a, b, c, d) => {
+            if (!(0 < d)) return 0;
+            var e = c;
+            d = c + d - 1;
+            for (var h = 0; h < a.length; ++h) {
+              var k = a.charCodeAt(h);
+              if (55296 <= k && 57343 >= k) {
+                var r = a.charCodeAt(++h);
+                k = 65536 + ((k & 1023) << 10) | r & 1023;
+              }
+              if (127 >= k) {
+                if (c >= d) break;
+                b[c++] = k;
+              } else {
+                if (2047 >= k) {
+                  if (c + 1 >= d) break;
+                  b[c++] = 192 | k >> 6;
+                } else {
+                  if (65535 >= k) {
+                    if (c + 2 >= d) break;
+                    b[c++] = 224 | k >> 12;
+                  } else {
+                    if (c + 3 >= d) break;
+                    b[c++] = 240 | k >> 18;
+                    b[c++] = 128 | k >> 12 & 63;
+                  }
+                  b[c++] = 128 | k >> 6 & 63;
+                }
+                b[c++] = 128 | k & 63;
+              }
+            }
+            b[c] = 0;
+            return c - e;
+          };
+          function qa(a, b) {
+            var c = Array(ha(a) + 1);
+            a = q(a, c, 0, c.length);
+            b && (c.length = a);
+            return c;
           }
-          d = false;
-          if (b & 64) if (e) {
-            if (b & 128) throw new P2(20);
-          } else e = la(a, c, 0), d = true;
-          if (!e) throw new P2(44);
-          8192 === (e.mode & 61440) && (b &= -513);
-          if (b & 65536 && !R(e.mode)) throw new P2(54);
-          if (!d && (c = e ? 40960 === (e.mode & 61440) ? 32 : R(e.mode) && ("r" !== Qb(b) || b & 512) ? 31 : Pb(e, Qb(b)) : 44)) throw new P2(c);
-          b & 512 && !d && ac(e, 0);
-          b &= -131713;
-          e = Tb({ node: e, path: ja(e), flags: b, seekable: true, position: 0, Ga: e.Ga, Db: [], error: false });
-          e.Ga.open && e.Ga.open(e);
-          !f.logReadFiles || b & 1 || (bc ||= {}, a in bc || (bc[a] = 1));
-          return e;
-        }
-        function pa(a) {
-          if (null === a.fd) throw new P2(8);
-          a.gb && (a.gb = null);
-          try {
-            a.Ga.close && a.Ga.close(a);
-          } catch (b) {
-            throw b;
-          } finally {
-            Hb[a.fd] = null;
+          var tb = [];
+          function ub(a, b) {
+            tb[a] = { input: [], output: [], Wa: b };
+            vb(a, wb);
           }
-          a.fd = null;
-        }
-        function cc(a, b, c) {
-          if (null === a.fd) throw new P2(8);
-          if (!a.seekable || !a.Ga.Sa) throw new P2(70);
-          if (0 != c && 1 != c && 2 != c) throw new P2(28);
-          a.position = a.Ga.Sa(a, b, c);
-          a.Db = [];
-        }
-        function dc(a, b, c, d, e) {
-          if (0 > d || 0 > e) throw new P2(28);
-          if (null === a.fd) throw new P2(8);
-          if (1 === (a.flags & 2097155)) throw new P2(8);
-          if (R(a.node.mode)) throw new P2(31);
-          if (!a.Ga.read) throw new P2(28);
-          var h = "undefined" != typeof e;
-          if (!h) e = a.position;
-          else if (!a.seekable) throw new P2(70);
-          b = a.Ga.read(a, b, c, d, e);
-          h || (a.position += b);
-          return b;
-        }
-        function oa(a, b, c, d, e) {
-          if (0 > d || 0 > e) throw new P2(28);
-          if (null === a.fd) throw new P2(8);
-          if (0 === (a.flags & 2097155)) throw new P2(8);
-          if (R(a.node.mode)) throw new P2(31);
-          if (!a.Ga.write) throw new P2(28);
-          a.seekable && a.flags & 1024 && cc(a, 0, 2);
-          var h = "undefined" != typeof e;
-          if (!h) e = a.position;
-          else if (!a.seekable) throw new P2(70);
-          b = a.Ga.write(a, b, c, d, e, void 0);
-          h || (a.position += b);
-          return b;
-        }
-        function ya(a) {
-          var b = "binary";
-          if ("utf8" !== b && "binary" !== b) throw Error(`Invalid encoding type "${b}"`);
-          var c;
-          var d = na(a, d || 0);
-          a = Zb(a).size;
-          var e = new Uint8Array(a);
-          dc(d, e, 0, a, 0);
-          "utf8" === b ? c = L(e, 0) : "binary" === b && (c = e);
-          pa(d);
-          return c;
-        }
-        var ec2;
-        function Fc(a, b, c) {
-          a = x("/dev/" + a);
-          var d = ka(!!b, !!c);
-          Hc ||= 64;
-          var e = Hc++ << 8 | 0;
-          vb(e, { open(h) {
-            h.seekable = false;
-          }, close() {
-            c?.buffer?.length && c(10);
-          }, read(h, k, r, z) {
-            for (var v = 0, E = 0; E < z; E++) {
+          var wb = { open(a) {
+            var b = tb[a.node.rdev];
+            if (!b) throw new P2(43);
+            a.tty = b;
+            a.seekable = false;
+          }, close(a) {
+            a.tty.Wa.fsync(a.tty);
+          }, fsync(a) {
+            a.tty.Wa.fsync(a.tty);
+          }, read(a, b, c, d) {
+            if (!a.tty || !a.tty.Wa.rb) throw new P2(60);
+            for (var e = 0, h = 0; h < d; h++) {
               try {
-                var H = b();
-              } catch (mb) {
+                var k = a.tty.Wa.rb(a.tty);
+              } catch (r) {
                 throw new P2(29);
               }
-              if (void 0 === H && 0 === v) throw new P2(6);
-              if (null === H || void 0 === H) break;
-              v++;
-              k[r + E] = H;
+              if (void 0 === k && 0 === e) throw new P2(6);
+              if (null === k || void 0 === k) break;
+              e++;
+              b[c + h] = k;
             }
-            v && (h.node.timestamp = Date.now());
-            return v;
-          }, write(h, k, r, z) {
-            for (var v = 0; v < z; v++) try {
-              c(k[r + v]);
-            } catch (E) {
+            e && (a.node.timestamp = Date.now());
+            return e;
+          }, write(a, b, c, d) {
+            if (!a.tty || !a.tty.Wa.ib) throw new P2(60);
+            try {
+              for (var e = 0; e < d; e++) a.tty.Wa.ib(a.tty, b[c + e]);
+            } catch (h) {
               throw new P2(29);
             }
-            z && (h.node.timestamp = Date.now());
-            return v;
-          } });
-          Wb(a, d, e);
-        }
-        var Hc, W = {}, bc;
-        function Ic(a, b, c) {
-          if ("/" === b.charAt(0)) return b;
-          a = -100 === a ? "/" : U2(a).path;
-          if (0 == b.length) {
-            if (!c) throw new P2(44);
+            d && (a.node.timestamp = Date.now());
+            return e;
+          } }, xb = { rb() {
+            a: {
+              if (!sb.length) {
+                var a = null;
+                if (ca) {
+                  var b = import_buffer.Buffer.alloc(256), c = 0, d = proc.stdin.fd;
+                  try {
+                    c = fs.readSync(d, b, 0, 256);
+                  } catch (e) {
+                    if (e.toString().includes("EOF")) c = 0;
+                    else throw e;
+                  }
+                  0 < c && (a = b.slice(0, c).toString("utf-8"));
+                } else "undefined" != typeof window && "function" == typeof window.prompt && (a = window.prompt("Input: "), null !== a && (a += "\n"));
+                if (!a) {
+                  a = null;
+                  break a;
+                }
+                sb = qa(a, true);
+              }
+              a = sb.shift();
+            }
+            return a;
+          }, ib(a, b) {
+            null === b || 10 === b ? (Ha(L(
+              a.output,
+              0
+            )), a.output = []) : 0 != b && a.output.push(b);
+          }, fsync(a) {
+            a.output && 0 < a.output.length && (Ha(L(a.output, 0)), a.output = []);
+          }, Lb() {
+            return { Gb: 25856, Ib: 5, Fb: 191, Hb: 35387, Eb: [3, 28, 127, 21, 4, 0, 1, 0, 17, 19, 26, 0, 18, 15, 23, 22, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
+          }, Mb() {
+            return 0;
+          }, Nb() {
+            return [24, 80];
+          } }, yb = { ib(a, b) {
+            null === b || 10 === b ? (C(L(a.output, 0)), a.output = []) : 0 != b && a.output.push(b);
+          }, fsync(a) {
+            a.output && 0 < a.output.length && (C(L(a.output, 0)), a.output = []);
+          } };
+          function zb(a, b) {
+            var c = a.Ha ? a.Ha.length : 0;
+            c >= b || (b = Math.max(b, c * (1048576 > c ? 2 : 1.125) >>> 0), 0 != c && (b = Math.max(b, 256)), c = a.Ha, a.Ha = new Uint8Array(b), 0 < a.La && a.Ha.set(c.subarray(0, a.La), 0));
+          }
+          var Q = {
+            Pa: null,
+            Qa() {
+              return Q.createNode(null, "/", 16895, 0);
+            },
+            createNode(a, b, c, d) {
+              if (24576 === (c & 61440) || 4096 === (c & 61440)) throw new P2(63);
+              Q.Pa || (Q.Pa = { dir: { node: { Oa: Q.Fa.Oa, Na: Q.Fa.Na, lookup: Q.Fa.lookup, $a: Q.Fa.$a, rename: Q.Fa.rename, unlink: Q.Fa.unlink, rmdir: Q.Fa.rmdir, readdir: Q.Fa.readdir, symlink: Q.Fa.symlink }, stream: { Sa: Q.Ga.Sa } }, file: { node: { Oa: Q.Fa.Oa, Na: Q.Fa.Na }, stream: { Sa: Q.Ga.Sa, read: Q.Ga.read, write: Q.Ga.write, kb: Q.Ga.kb, ab: Q.Ga.ab, bb: Q.Ga.bb } }, link: {
+                node: { Oa: Q.Fa.Oa, Na: Q.Fa.Na, readlink: Q.Fa.readlink },
+                stream: {}
+              }, ob: { node: { Oa: Q.Fa.Oa, Na: Q.Fa.Na }, stream: Ab } });
+              c = Bb(a, b, c, d);
+              R(c.mode) ? (c.Fa = Q.Pa.dir.node, c.Ga = Q.Pa.dir.stream, c.Ha = {}) : 32768 === (c.mode & 61440) ? (c.Fa = Q.Pa.file.node, c.Ga = Q.Pa.file.stream, c.La = 0, c.Ha = null) : 40960 === (c.mode & 61440) ? (c.Fa = Q.Pa.link.node, c.Ga = Q.Pa.link.stream) : 8192 === (c.mode & 61440) && (c.Fa = Q.Pa.ob.node, c.Ga = Q.Pa.ob.stream);
+              c.timestamp = Date.now();
+              a && (a.Ha[b] = c, a.timestamp = c.timestamp);
+              return c;
+            },
+            Kb(a) {
+              return a.Ha ? a.Ha.subarray ? a.Ha.subarray(0, a.La) : new Uint8Array(a.Ha) : new Uint8Array(0);
+            },
+            Fa: { Oa(a) {
+              var b = {};
+              b.dev = 8192 === (a.mode & 61440) ? a.id : 1;
+              b.ino = a.id;
+              b.mode = a.mode;
+              b.nlink = 1;
+              b.uid = 0;
+              b.gid = 0;
+              b.rdev = a.rdev;
+              R(a.mode) ? b.size = 4096 : 32768 === (a.mode & 61440) ? b.size = a.La : 40960 === (a.mode & 61440) ? b.size = a.link.length : b.size = 0;
+              b.atime = new Date(a.timestamp);
+              b.mtime = new Date(a.timestamp);
+              b.ctime = new Date(a.timestamp);
+              b.yb = 4096;
+              b.blocks = Math.ceil(b.size / b.yb);
+              return b;
+            }, Na(a, b) {
+              void 0 !== b.mode && (a.mode = b.mode);
+              void 0 !== b.timestamp && (a.timestamp = b.timestamp);
+              if (void 0 !== b.size && (b = b.size, a.La != b)) if (0 == b) a.Ha = null, a.La = 0;
+              else {
+                var c = a.Ha;
+                a.Ha = new Uint8Array(b);
+                c && a.Ha.set(c.subarray(0, Math.min(b, a.La)));
+                a.La = b;
+              }
+            }, lookup() {
+              throw Cb[44];
+            }, $a(a, b, c, d) {
+              return Q.createNode(a, b, c, d);
+            }, rename(a, b, c) {
+              if (R(a.mode)) {
+                try {
+                  var d = Db(b, c);
+                } catch (h) {
+                }
+                if (d) for (var e in d.Ha) throw new P2(55);
+              }
+              delete a.parent.Ha[a.name];
+              a.parent.timestamp = Date.now();
+              a.name = c;
+              b.Ha[c] = a;
+              b.timestamp = a.parent.timestamp;
+            }, unlink(a, b) {
+              delete a.Ha[b];
+              a.timestamp = Date.now();
+            }, rmdir(a, b) {
+              var c = Db(a, b), d;
+              for (d in c.Ha) throw new P2(55);
+              delete a.Ha[b];
+              a.timestamp = Date.now();
+            }, readdir(a) {
+              var b = [".", ".."], c;
+              for (c of Object.keys(a.Ha)) b.push(c);
+              return b;
+            }, symlink(a, b, c) {
+              a = Q.createNode(a, b, 41471, 0);
+              a.link = c;
+              return a;
+            }, readlink(a) {
+              if (40960 !== (a.mode & 61440)) throw new P2(28);
+              return a.link;
+            } },
+            Ga: {
+              read(a, b, c, d, e) {
+                var h = a.node.Ha;
+                if (e >= a.node.La) return 0;
+                a = Math.min(a.node.La - e, d);
+                if (8 < a && h.subarray) b.set(h.subarray(e, e + a), c);
+                else for (d = 0; d < a; d++) b[c + d] = h[e + d];
+                return a;
+              },
+              write(a, b, c, d, e, h) {
+                b.buffer === p.buffer && (h = false);
+                if (!d) return 0;
+                a = a.node;
+                a.timestamp = Date.now();
+                if (b.subarray && (!a.Ha || a.Ha.subarray)) {
+                  if (h) return a.Ha = b.subarray(c, c + d), a.La = d;
+                  if (0 === a.La && 0 === e) return a.Ha = b.slice(c, c + d), a.La = d;
+                  if (e + d <= a.La) return a.Ha.set(b.subarray(c, c + d), e), d;
+                }
+                zb(a, e + d);
+                if (a.Ha.subarray && b.subarray) a.Ha.set(b.subarray(c, c + d), e);
+                else for (h = 0; h < d; h++) a.Ha[e + h] = b[c + h];
+                a.La = Math.max(a.La, e + d);
+                return d;
+              },
+              Sa(a, b, c) {
+                1 === c ? b += a.position : 2 === c && 32768 === (a.node.mode & 61440) && (b += a.node.La);
+                if (0 > b) throw new P2(28);
+                return b;
+              },
+              kb(a, b, c) {
+                zb(a.node, b + c);
+                a.node.La = Math.max(a.node.La, b + c);
+              },
+              ab(a, b, c, d, e) {
+                if (32768 !== (a.node.mode & 61440)) throw new P2(43);
+                a = a.node.Ha;
+                if (e & 2 || a.buffer !== p.buffer) {
+                  if (0 < c || c + b < a.length) a.subarray ? a = a.subarray(c, c + b) : a = Array.prototype.slice.call(a, c, c + b);
+                  c = true;
+                  b = 65536 * Math.ceil(b / 65536);
+                  (e = Eb(65536, b)) ? (u.fill(0, e, e + b), b = e) : b = 0;
+                  if (!b) throw new P2(48);
+                  p.set(a, b);
+                } else c = false, b = a.byteOffset;
+                return { Cb: b, tb: c };
+              },
+              bb(a, b, c, d) {
+                Q.Ga.write(a, b, 0, d, c, false);
+                return 0;
+              }
+            }
+          }, ka = (a, b) => {
+            var c = 0;
+            a && (c |= 365);
+            b && (c |= 146);
+            return c;
+          }, Fb = null, Gb = {}, Hb = [], Ib = 1, S = null, Jb = true, P2 = class {
+            constructor(a) {
+              this.name = "ErrnoError";
+              this.Ja = a;
+            }
+          }, Cb = {}, Kb = class {
+            constructor() {
+              this.Za = {};
+              this.node = null;
+            }
+            get flags() {
+              return this.Za.flags;
+            }
+            set flags(a) {
+              this.Za.flags = a;
+            }
+            get position() {
+              return this.Za.position;
+            }
+            set position(a) {
+              this.Za.position = a;
+            }
+          }, Lb = class {
+            constructor(a, b, c, d) {
+              a ||= this;
+              this.parent = a;
+              this.Qa = a.Qa;
+              this.Ua = null;
+              this.id = Ib++;
+              this.name = b;
+              this.mode = c;
+              this.Fa = {};
+              this.Ga = {};
+              this.rdev = d;
+            }
+            get read() {
+              return 365 === (this.mode & 365);
+            }
+            set read(a) {
+              a ? this.mode |= 365 : this.mode &= -366;
+            }
+            get write() {
+              return 146 === (this.mode & 146);
+            }
+            set write(a) {
+              a ? this.mode |= 146 : this.mode &= -147;
+            }
+          };
+          function T(a, b = {}) {
+            a = kb(a);
+            if (!a) return { path: "", node: null };
+            b = Object.assign({ pb: true, jb: 0 }, b);
+            if (8 < b.jb) throw new P2(32);
+            a = a.split("/").filter((k) => !!k);
+            for (var c = Fb, d = "/", e = 0; e < a.length; e++) {
+              var h = e === a.length - 1;
+              if (h && b.parent) break;
+              c = Db(c, a[e]);
+              d = x(d + "/" + a[e]);
+              c.Ua && (!h || h && b.pb) && (c = c.Ua.root);
+              if (!h || b.Ra) {
+                for (h = 0; 40960 === (c.mode & 61440); ) if (c = Mb(d), d = kb(fb(d), c), c = T(d, { jb: b.jb + 1 }).node, 40 < h++) throw new P2(32);
+              }
+            }
+            return { path: d, node: c };
+          }
+          function ja(a) {
+            for (var b; ; ) {
+              if (a === a.parent) return a = a.Qa.sb, b ? "/" !== a[a.length - 1] ? `${a}/${b}` : a + b : a;
+              b = b ? `${a.name}/${b}` : a.name;
+              a = a.parent;
+            }
+          }
+          function Nb(a, b) {
+            for (var c = 0, d = 0; d < b.length; d++) c = (c << 5) - c + b.charCodeAt(d) | 0;
+            return (a + c >>> 0) % S.length;
+          }
+          function Ob(a) {
+            var b = Nb(a.parent.id, a.name);
+            if (S[b] === a) S[b] = a.Va;
+            else for (b = S[b]; b; ) {
+              if (b.Va === a) {
+                b.Va = a.Va;
+                break;
+              }
+              b = b.Va;
+            }
+          }
+          function Db(a, b) {
+            var c = R(a.mode) ? (c = Pb(a, "x")) ? c : a.Fa.lookup ? 0 : 2 : 54;
+            if (c) throw new P2(c);
+            for (c = S[Nb(a.id, b)]; c; c = c.Va) {
+              var d = c.name;
+              if (c.parent.id === a.id && d === b) return c;
+            }
+            return a.Fa.lookup(a, b);
+          }
+          function Bb(a, b, c, d) {
+            a = new Lb(a, b, c, d);
+            b = Nb(a.parent.id, a.name);
+            a.Va = S[b];
+            return S[b] = a;
+          }
+          function R(a) {
+            return 16384 === (a & 61440);
+          }
+          function Qb(a) {
+            var b = ["r", "w", "rw"][a & 3];
+            a & 512 && (b += "w");
+            return b;
+          }
+          function Pb(a, b) {
+            if (Jb) return 0;
+            if (!b.includes("r") || a.mode & 292) {
+              if (b.includes("w") && !(a.mode & 146) || b.includes("x") && !(a.mode & 73)) return 2;
+            } else return 2;
+            return 0;
+          }
+          function Rb(a, b) {
+            try {
+              return Db(a, b), 20;
+            } catch (c) {
+            }
+            return Pb(a, "wx");
+          }
+          function Sb(a, b, c) {
+            try {
+              var d = Db(a, b);
+            } catch (e) {
+              return e.Ja;
+            }
+            if (a = Pb(a, "wx")) return a;
+            if (c) {
+              if (!R(d.mode)) return 54;
+              if (d === d.parent || "/" === ja(d)) return 10;
+            } else if (R(d.mode)) return 31;
+            return 0;
+          }
+          function U2(a) {
+            a = Hb[a];
+            if (!a) throw new P2(8);
             return a;
           }
-          return x(a + "/" + b);
-        }
-        function Jc(a, b, c) {
-          a = a(b);
-          D[c >> 2] = a.dev;
-          D[c + 4 >> 2] = a.mode;
-          F[c + 8 >> 2] = a.nlink;
-          D[c + 12 >> 2] = a.uid;
-          D[c + 16 >> 2] = a.gid;
-          D[c + 20 >> 2] = a.rdev;
-          J = [a.size >>> 0, (I = a.size, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
-          D[c + 24 >> 2] = J[0];
-          D[c + 28 >> 2] = J[1];
-          D[c + 32 >> 2] = 4096;
-          D[c + 36 >> 2] = a.blocks;
-          b = a.atime.getTime();
-          var d = a.mtime.getTime(), e = a.ctime.getTime();
-          J = [Math.floor(b / 1e3) >>> 0, (I = Math.floor(b / 1e3), 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
-          D[c + 40 >> 2] = J[0];
-          D[c + 44 >> 2] = J[1];
-          F[c + 48 >> 2] = b % 1e3 * 1e3;
-          J = [Math.floor(d / 1e3) >>> 0, (I = Math.floor(d / 1e3), 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
-          D[c + 56 >> 2] = J[0];
-          D[c + 60 >> 2] = J[1];
-          F[c + 64 >> 2] = d % 1e3 * 1e3;
-          J = [Math.floor(e / 1e3) >>> 0, (I = Math.floor(e / 1e3), 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
-          D[c + 72 >> 2] = J[0];
-          D[c + 76 >> 2] = J[1];
-          F[c + 80 >> 2] = e % 1e3 * 1e3;
-          J = [a.ino >>> 0, (I = a.ino, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
-          D[c + 88 >> 2] = J[0];
-          D[c + 92 >> 2] = J[1];
-          return 0;
-        }
-        var Kc = void 0;
-        function Lc() {
-          var a = D[+Kc >> 2];
-          Kc += 4;
-          return a;
-        }
-        var Mc = (a, b) => b + 2097152 >>> 0 < 4194305 - !!a ? (a >>> 0) + 4294967296 * b : NaN, Nc = [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335], Oc = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334], Pc = {}, Rc = () => {
-          if (!Qc) {
-            var a = { USER: "web_user", LOGNAME: "web_user", PATH: "/", PWD: "/", HOME: "/home/web_user", LANG: ("object" == typeof navigator && navigator.languages && navigator.languages[0] || "C").replace("-", "_") + ".UTF-8", _: Ca || "./this.program" }, b;
-            for (b in Pc) void 0 === Pc[b] ? delete a[b] : a[b] = Pc[b];
-            var c = [];
-            for (b in a) c.push(`${b}=${a[b]}`);
-            Qc = c;
+          function Tb(a, b = -1) {
+            a = Object.assign(new Kb(), a);
+            if (-1 == b) a: {
+              for (b = 0; 4096 >= b; b++) if (!Hb[b]) break a;
+              throw new P2(33);
+            }
+            a.fd = b;
+            return Hb[b] = a;
           }
-          return Qc;
-        }, Qc, va = (a) => {
-          var b = ha(a) + 1, c = y(b);
-          q(a, u, c, b);
-          return c;
-        }, Sc = (a, b, c, d) => {
-          var e = { string: (v) => {
-            var E = 0;
-            null !== v && void 0 !== v && 0 !== v && (E = va(v));
-            return E;
-          }, array: (v) => {
-            var E = y(v.length);
-            p.set(v, E);
-            return E;
+          function Ub(a, b = -1) {
+            a = Tb(a, b);
+            a.Ga?.Jb?.(a);
+            return a;
+          }
+          var Ab = { open(a) {
+            a.Ga = Gb[a.node.rdev].Ga;
+            a.Ga.open?.(a);
+          }, Sa() {
+            throw new P2(70);
           } };
-          a = f["_" + a];
-          var h = [], k = 0;
-          if (d) for (var r = 0; r < d.length; r++) {
-            var z = e[c[r]];
-            z ? (0 === k && (k = ra()), h[r] = z(d[r])) : h[r] = d[r];
+          function vb(a, b) {
+            Gb[a] = { Ga: b };
           }
-          c = a(...h);
-          return c = function(v) {
-            0 !== k && ua(k);
-            return "string" === b ? v ? L(u, v) : "" : "boolean" === b ? !!v : v;
-          }(c);
-        }, ea = 0, da = (a, b) => {
-          b = 1 == b ? y(a.length) : ia(a.length);
-          a.subarray || a.slice || (a = new Uint8Array(a));
-          u.set(
-            a,
-            b
-          );
-          return b;
-        }, Tc, Uc = [], X, wa = (a) => {
-          Tc.delete(X.get(a));
-          X.set(a, null);
-          Uc.push(a);
-        }, Aa = (a, b) => {
-          if (!Tc) {
-            Tc = /* @__PURE__ */ new WeakMap();
-            var c = X.length;
-            if (Tc) for (var d = 0; d < 0 + c; d++) {
-              var e = X.get(d);
-              e && Tc.set(e, d);
+          function Vb(a, b) {
+            var c = "/" === b;
+            if (c && Fb) throw new P2(10);
+            if (!c && b) {
+              var d = T(b, { pb: false });
+              b = d.path;
+              d = d.node;
+              if (d.Ua) throw new P2(10);
+              if (!R(d.mode)) throw new P2(54);
             }
+            b = { type: a, Ob: {}, sb: b, Bb: [] };
+            a = a.Qa(b);
+            a.Qa = b;
+            b.root = a;
+            c ? Fb = a : d && (d.Ua = b, d.Qa && d.Qa.Bb.push(b));
           }
-          if (c = Tc.get(a) || 0) return c;
-          if (Uc.length) c = Uc.pop();
-          else {
-            try {
-              X.grow(1);
-            } catch (r) {
-              if (!(r instanceof RangeError)) throw r;
-              throw "Unable to grow wasm table. Set ALLOW_TABLE_GROWTH.";
-            }
-            c = X.length - 1;
+          function la(a, b, c) {
+            var d = T(a, { parent: true }).node;
+            a = gb(a);
+            if (!a || "." === a || ".." === a) throw new P2(28);
+            var e = Rb(d, a);
+            if (e) throw new P2(e);
+            if (!d.Fa.$a) throw new P2(63);
+            return d.Fa.$a(d, a, b, c);
           }
-          try {
-            X.set(c, a);
-          } catch (r) {
-            if (!(r instanceof TypeError)) throw r;
-            if ("function" == typeof WebAssembly.Function) {
-              d = WebAssembly.Function;
-              e = { i: "i32", j: "i64", f: "f32", d: "f64", e: "externref", p: "i32" };
-              for (var h = { parameters: [], results: "v" == b[0] ? [] : [e[b[0]]] }, k = 1; k < b.length; ++k) h.parameters.push(e[b[k]]);
-              b = new d(h, a);
-            } else {
-              d = [1];
-              e = b.slice(0, 1);
-              b = b.slice(1);
-              h = { i: 127, p: 127, j: 126, f: 125, d: 124, e: 111 };
-              d.push(96);
-              k = b.length;
-              128 > k ? d.push(k) : d.push(k % 128 | 128, k >> 7);
-              for (k = 0; k < b.length; ++k) d.push(h[b[k]]);
-              "v" == e ? d.push(0) : d.push(1, h[e]);
-              b = [0, 97, 115, 109, 1, 0, 0, 0, 1];
-              e = d.length;
-              128 > e ? b.push(e) : b.push(e % 128 | 128, e >> 7);
-              b.push(...d);
-              b.push(
-                2,
-                7,
-                1,
-                1,
-                101,
-                1,
-                102,
-                0,
-                0,
-                7,
-                5,
-                1,
-                1,
-                102,
-                0,
-                0
-              );
-              b = new WebAssembly.Module(new Uint8Array(b));
-              b = new WebAssembly.Instance(b, { e: { f: a } }).exports.f;
-            }
-            X.set(c, b);
+          function V(a, b) {
+            return la(a, (void 0 !== b ? b : 511) & 1023 | 16384, 0);
           }
-          Tc.set(a, c);
-          return c;
-        };
-        [44].forEach((a) => {
-          Cb[a] = new P2(a);
-          Cb[a].stack = "<generic error, no stack>";
-        });
-        S = Array(4096);
-        Vb(Q, "/");
-        V("/tmp");
-        V("/home");
-        V("/home/web_user");
-        (function() {
-          V("/dev");
-          vb(259, { read: () => 0, write: (d, e, h, k) => k });
-          Wb("/dev/null", 259);
-          ub(1280, xb);
-          ub(1536, yb);
-          Wb("/dev/tty", 1280);
-          Wb("/dev/tty1", 1536);
-          var a = new Uint8Array(1024), b = 0, c = () => {
-            0 === b && (b = jb(a).byteLength);
-            return a[--b];
-          };
-          Fc("random", c);
-          Fc("urandom", c);
-          V("/dev/shm");
-          V("/dev/shm/tmp");
-        })();
-        (function() {
-          V("/proc");
-          var a = V("/proc/self");
-          V("/proc/self/fd");
-          Vb({ Qa() {
-            var b = Bb(a, "fd", 16895, 73);
-            b.Fa = { lookup(c, d) {
-              var e = U2(+d);
-              c = { parent: null, Qa: { sb: "fake" }, Fa: { readlink: () => e.path } };
-              return c.parent = c;
-            } };
-            return b;
-          } }, "/proc/self/fd");
-        })();
-        var Vc = {
-          a: (a, b, c, d) => {
-            G(`Assertion failed: ${a ? L(u, a) : ""}, at: ` + [b ? b ? L(u, b) : "" : "unknown filename", c, d ? d ? L(u, d) : "" : "unknown function"]);
-          },
-          h: function(a, b) {
-            try {
-              return a = a ? L(u, a) : "", ma(a, b), 0;
-            } catch (c) {
-              if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
-              return -c.Ja;
+          function Wb(a, b, c) {
+            "undefined" == typeof c && (c = b, b = 438);
+            la(a, b | 8192, c);
+          }
+          function Xb(a, b) {
+            if (!kb(a)) throw new P2(44);
+            var c = T(b, { parent: true }).node;
+            if (!c) throw new P2(44);
+            b = gb(b);
+            var d = Rb(c, b);
+            if (d) throw new P2(d);
+            if (!c.Fa.symlink) throw new P2(63);
+            c.Fa.symlink(c, b, a);
+          }
+          function Yb(a) {
+            var b = T(a, { parent: true }).node;
+            a = gb(a);
+            var c = Db(b, a), d = Sb(b, a, true);
+            if (d) throw new P2(d);
+            if (!b.Fa.rmdir) throw new P2(63);
+            if (c.Ua) throw new P2(10);
+            b.Fa.rmdir(b, a);
+            Ob(c);
+          }
+          function za(a) {
+            var b = T(a, { parent: true }).node;
+            if (!b) throw new P2(44);
+            a = gb(a);
+            var c = Db(b, a), d = Sb(b, a, false);
+            if (d) throw new P2(d);
+            if (!b.Fa.unlink) throw new P2(63);
+            if (c.Ua) throw new P2(10);
+            b.Fa.unlink(b, a);
+            Ob(c);
+          }
+          function Mb(a) {
+            a = T(a).node;
+            if (!a) throw new P2(44);
+            if (!a.Fa.readlink) throw new P2(28);
+            return kb(ja(a.parent), a.Fa.readlink(a));
+          }
+          function Zb(a, b) {
+            a = T(a, { Ra: !b }).node;
+            if (!a) throw new P2(44);
+            if (!a.Fa.Oa) throw new P2(63);
+            return a.Fa.Oa(a);
+          }
+          function $b(a) {
+            return Zb(a, true);
+          }
+          function ma(a, b) {
+            a = "string" == typeof a ? T(a, { Ra: true }).node : a;
+            if (!a.Fa.Na) throw new P2(63);
+            a.Fa.Na(a, { mode: b & 4095 | a.mode & -4096, timestamp: Date.now() });
+          }
+          function ac(a, b) {
+            if (0 > b) throw new P2(28);
+            a = "string" == typeof a ? T(a, { Ra: true }).node : a;
+            if (!a.Fa.Na) throw new P2(63);
+            if (R(a.mode)) throw new P2(31);
+            if (32768 !== (a.mode & 61440)) throw new P2(28);
+            var c = Pb(a, "w");
+            if (c) throw new P2(c);
+            a.Fa.Na(a, { size: b, timestamp: Date.now() });
+          }
+          function na(a, b, c) {
+            if ("" === a) throw new P2(44);
+            if ("string" == typeof b) {
+              var d = { r: 0, "r+": 2, w: 577, "w+": 578, a: 1089, "a+": 1090 }[b];
+              if ("undefined" == typeof d) throw Error(`Unknown file open mode: ${b}`);
+              b = d;
             }
-          },
-          H: function(a, b, c) {
-            try {
-              b = b ? L(u, b) : "";
-              b = Ic(a, b);
-              if (c & -8) return -28;
-              var d = T(b, { Ra: true }).node;
-              if (!d) return -44;
-              a = "";
-              c & 4 && (a += "r");
-              c & 2 && (a += "w");
-              c & 1 && (a += "x");
-              return a && Pb(d, a) ? -2 : 0;
-            } catch (e) {
-              if ("undefined" == typeof W || "ErrnoError" !== e.name) throw e;
-              return -e.Ja;
-            }
-          },
-          i: function(a, b) {
-            try {
-              var c = U2(a);
-              ma(c.node, b);
-              return 0;
-            } catch (d) {
-              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
-              return -d.Ja;
-            }
-          },
-          g: function(a) {
-            try {
-              var b = U2(a).node;
-              var c = "string" == typeof b ? T(b, { Ra: true }).node : b;
-              if (!c.Fa.Na) throw new P2(63);
-              c.Fa.Na(c, { timestamp: Date.now() });
-              return 0;
-            } catch (d) {
-              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
-              return -d.Ja;
-            }
-          },
-          b: function(a, b, c) {
-            Kc = c;
-            try {
-              var d = U2(a);
-              switch (b) {
-                case 0:
-                  var e = Lc();
-                  if (0 > e) break;
-                  for (; Hb[e]; ) e++;
-                  return Ub(d, e).fd;
-                case 1:
-                case 2:
-                  return 0;
-                case 3:
-                  return d.flags;
-                case 4:
-                  return e = Lc(), d.flags |= e, 0;
-                case 12:
-                  return e = Lc(), La[e + 0 >> 1] = 2, 0;
-                case 13:
-                case 14:
-                  return 0;
+            c = b & 64 ? ("undefined" == typeof c ? 438 : c) & 4095 | 32768 : 0;
+            if ("object" == typeof a) var e = a;
+            else {
+              a = x(a);
+              try {
+                e = T(a, { Ra: !(b & 131072) }).node;
+              } catch (h) {
               }
-              return -28;
-            } catch (h) {
-              if ("undefined" == typeof W || "ErrnoError" !== h.name) throw h;
-              return -h.Ja;
             }
-          },
-          f: function(a, b) {
+            d = false;
+            if (b & 64) if (e) {
+              if (b & 128) throw new P2(20);
+            } else e = la(a, c, 0), d = true;
+            if (!e) throw new P2(44);
+            8192 === (e.mode & 61440) && (b &= -513);
+            if (b & 65536 && !R(e.mode)) throw new P2(54);
+            if (!d && (c = e ? 40960 === (e.mode & 61440) ? 32 : R(e.mode) && ("r" !== Qb(b) || b & 512) ? 31 : Pb(e, Qb(b)) : 44)) throw new P2(c);
+            b & 512 && !d && ac(e, 0);
+            b &= -131713;
+            e = Tb({ node: e, path: ja(e), flags: b, seekable: true, position: 0, Ga: e.Ga, Db: [], error: false });
+            e.Ga.open && e.Ga.open(e);
+            !f.logReadFiles || b & 1 || (bc ||= {}, a in bc || (bc[a] = 1));
+            return e;
+          }
+          function pa(a) {
+            if (null === a.fd) throw new P2(8);
+            a.gb && (a.gb = null);
             try {
-              var c = U2(a);
-              return Jc(Zb, c.path, b);
-            } catch (d) {
-              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
-              return -d.Ja;
-            }
-          },
-          n: function(a, b, c) {
-            b = Mc(b, c);
-            try {
-              if (isNaN(b)) return 61;
-              var d = U2(a);
-              if (0 === (d.flags & 2097155)) throw new P2(28);
-              ac(d.node, b);
-              return 0;
-            } catch (e) {
-              if ("undefined" == typeof W || "ErrnoError" !== e.name) throw e;
-              return -e.Ja;
-            }
-          },
-          C: function(a, b) {
-            try {
-              if (0 === b) return -28;
-              var c = ha("/") + 1;
-              if (b < c) return -68;
-              q("/", u, a, b);
-              return c;
-            } catch (d) {
-              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
-              return -d.Ja;
-            }
-          },
-          F: function(a, b) {
-            try {
-              return a = a ? L(u, a) : "", Jc($b, a, b);
-            } catch (c) {
-              if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
-              return -c.Ja;
-            }
-          },
-          z: function(a, b, c) {
-            try {
-              return b = b ? L(u, b) : "", b = Ic(a, b), b = x(b), "/" === b[b.length - 1] && (b = b.substr(0, b.length - 1)), V(b, c), 0;
-            } catch (d) {
-              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
-              return -d.Ja;
-            }
-          },
-          E: function(a, b, c, d) {
-            try {
-              b = b ? L(u, b) : "";
-              var e = d & 256;
-              b = Ic(a, b, d & 4096);
-              return Jc(e ? $b : Zb, b, c);
-            } catch (h) {
-              if ("undefined" == typeof W || "ErrnoError" !== h.name) throw h;
-              return -h.Ja;
-            }
-          },
-          x: function(a, b, c, d) {
-            Kc = d;
-            try {
-              b = b ? L(u, b) : "";
-              b = Ic(a, b);
-              var e = d ? Lc() : 0;
-              return na(b, c, e).fd;
-            } catch (h) {
-              if ("undefined" == typeof W || "ErrnoError" !== h.name) throw h;
-              return -h.Ja;
-            }
-          },
-          v: function(a, b, c, d) {
-            try {
-              b = b ? L(u, b) : "";
-              b = Ic(a, b);
-              if (0 >= d) return -28;
-              var e = Mb(b), h = Math.min(d, ha(e)), k = p[c + h];
-              q(e, u, c, d + 1);
-              p[c + h] = k;
-              return h;
-            } catch (r) {
-              if ("undefined" == typeof W || "ErrnoError" !== r.name) throw r;
-              return -r.Ja;
-            }
-          },
-          u: function(a) {
-            try {
-              return a = a ? L(u, a) : "", Yb(a), 0;
+              a.Ga.close && a.Ga.close(a);
             } catch (b) {
-              if ("undefined" == typeof W || "ErrnoError" !== b.name) throw b;
-              return -b.Ja;
+              throw b;
+            } finally {
+              Hb[a.fd] = null;
             }
-          },
-          G: function(a, b) {
-            try {
-              return a = a ? L(u, a) : "", Jc(Zb, a, b);
-            } catch (c) {
-              if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
-              return -c.Ja;
-            }
-          },
-          r: function(a, b, c) {
-            try {
-              return b = b ? L(u, b) : "", b = Ic(a, b), 0 === c ? za(b) : 512 === c ? Yb(b) : G("Invalid flags passed to unlinkat"), 0;
-            } catch (d) {
-              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
-              return -d.Ja;
-            }
-          },
-          q: function(a, b, c) {
-            try {
-              b = b ? L(u, b) : "";
-              b = Ic(a, b, true);
-              if (c) {
-                var d = F[c >> 2] + 4294967296 * D[c + 4 >> 2], e = D[c + 8 >> 2];
-                h = 1e3 * d + e / 1e6;
-                c += 16;
-                d = F[c >> 2] + 4294967296 * D[c + 4 >> 2];
-                e = D[c + 8 >> 2];
-                k = 1e3 * d + e / 1e6;
-              } else var h = Date.now(), k = h;
-              a = h;
-              var r = T(b, { Ra: true }).node;
-              r.Fa.Na(r, { timestamp: Math.max(a, k) });
-              return 0;
-            } catch (z) {
-              if ("undefined" == typeof W || "ErrnoError" !== z.name) throw z;
-              return -z.Ja;
-            }
-          },
-          l: function(a, b, c) {
-            a = new Date(1e3 * Mc(a, b));
-            D[c >> 2] = a.getSeconds();
-            D[c + 4 >> 2] = a.getMinutes();
-            D[c + 8 >> 2] = a.getHours();
-            D[c + 12 >> 2] = a.getDate();
-            D[c + 16 >> 2] = a.getMonth();
-            D[c + 20 >> 2] = a.getFullYear() - 1900;
-            D[c + 24 >> 2] = a.getDay();
-            b = a.getFullYear();
-            D[c + 28 >> 2] = (0 !== b % 4 || 0 === b % 100 && 0 !== b % 400 ? Oc : Nc)[a.getMonth()] + a.getDate() - 1 | 0;
-            D[c + 36 >> 2] = -(60 * a.getTimezoneOffset());
-            b = new Date(a.getFullYear(), 6, 1).getTimezoneOffset();
-            var d = new Date(a.getFullYear(), 0, 1).getTimezoneOffset();
-            D[c + 32 >> 2] = (b != d && a.getTimezoneOffset() == Math.min(d, b)) | 0;
-          },
-          j: function(a, b, c, d, e, h, k, r) {
-            e = Mc(e, h);
-            try {
-              if (isNaN(e)) return 61;
-              var z = U2(d);
-              if (0 !== (b & 2) && 0 === (c & 2) && 2 !== (z.flags & 2097155)) throw new P2(2);
-              if (1 === (z.flags & 2097155)) throw new P2(2);
-              if (!z.Ga.ab) throw new P2(43);
-              var v = z.Ga.ab(z, a, e, b, c);
-              var E = v.Cb;
-              D[k >> 2] = v.tb;
-              F[r >> 2] = E;
-              return 0;
-            } catch (H) {
-              if ("undefined" == typeof W || "ErrnoError" !== H.name) throw H;
-              return -H.Ja;
-            }
-          },
-          k: function(a, b, c, d, e, h, k) {
-            h = Mc(h, k);
-            try {
-              var r = U2(e);
-              if (c & 2) {
-                if (32768 !== (r.node.mode & 61440)) throw new P2(43);
-                if (!(d & 2)) {
-                  var z = u.slice(a, a + b);
-                  r.Ga.bb && r.Ga.bb(r, z, h, b, d);
-                }
-              }
-            } catch (v) {
-              if ("undefined" == typeof W || "ErrnoError" !== v.name) throw v;
-              return -v.Ja;
-            }
-          },
-          y: (a, b, c, d) => {
-            var e = (/* @__PURE__ */ new Date()).getFullYear(), h = new Date(e, 0, 1).getTimezoneOffset();
-            e = new Date(e, 6, 1).getTimezoneOffset();
-            F[a >> 2] = 60 * Math.max(h, e);
-            D[b >> 2] = Number(h != e);
-            b = (k) => {
-              var r = Math.abs(k);
-              return `UTC${0 <= k ? "-" : "+"}${String(Math.floor(r / 60)).padStart(2, "0")}${String(r % 60).padStart(2, "0")}`;
-            };
-            a = b(h);
-            b = b(e);
-            e < h ? (q(a, u, c, 17), q(b, u, d, 17)) : (q(a, u, d, 17), q(b, u, c, 17));
-          },
-          d: () => Date.now(),
-          s: () => 2147483648,
-          c: () => performance.now(),
-          o: (a) => {
-            var b = u.length;
-            a >>>= 0;
-            if (2147483648 < a) return false;
-            for (var c = 1; 4 >= c; c *= 2) {
-              var d = b * (1 + 0.2 / c);
-              d = Math.min(d, a + 100663296);
-              var e = Math;
-              d = Math.max(a, d);
-              a: {
-                e = (e.min.call(e, 2147483648, d + (65536 - d % 65536) % 65536) - Ja.buffer.byteLength + 65535) / 65536;
+            a.fd = null;
+          }
+          function cc(a, b, c) {
+            if (null === a.fd) throw new P2(8);
+            if (!a.seekable || !a.Ga.Sa) throw new P2(70);
+            if (0 != c && 1 != c && 2 != c) throw new P2(28);
+            a.position = a.Ga.Sa(a, b, c);
+            a.Db = [];
+          }
+          function dc(a, b, c, d, e) {
+            if (0 > d || 0 > e) throw new P2(28);
+            if (null === a.fd) throw new P2(8);
+            if (1 === (a.flags & 2097155)) throw new P2(8);
+            if (R(a.node.mode)) throw new P2(31);
+            if (!a.Ga.read) throw new P2(28);
+            var h = "undefined" != typeof e;
+            if (!h) e = a.position;
+            else if (!a.seekable) throw new P2(70);
+            b = a.Ga.read(a, b, c, d, e);
+            h || (a.position += b);
+            return b;
+          }
+          function oa(a, b, c, d, e) {
+            if (0 > d || 0 > e) throw new P2(28);
+            if (null === a.fd) throw new P2(8);
+            if (0 === (a.flags & 2097155)) throw new P2(8);
+            if (R(a.node.mode)) throw new P2(31);
+            if (!a.Ga.write) throw new P2(28);
+            a.seekable && a.flags & 1024 && cc(a, 0, 2);
+            var h = "undefined" != typeof e;
+            if (!h) e = a.position;
+            else if (!a.seekable) throw new P2(70);
+            b = a.Ga.write(a, b, c, d, e, void 0);
+            h || (a.position += b);
+            return b;
+          }
+          function ya(a) {
+            var b = "binary";
+            if ("utf8" !== b && "binary" !== b) throw Error(`Invalid encoding type "${b}"`);
+            var c;
+            var d = na(a, d || 0);
+            a = Zb(a).size;
+            var e = new Uint8Array(a);
+            dc(d, e, 0, a, 0);
+            "utf8" === b ? c = L(e, 0) : "binary" === b && (c = e);
+            pa(d);
+            return c;
+          }
+          var ec2;
+          function Fc(a, b, c) {
+            a = x("/dev/" + a);
+            var d = ka(!!b, !!c);
+            Hc ||= 64;
+            var e = Hc++ << 8 | 0;
+            vb(e, { open(h) {
+              h.seekable = false;
+            }, close() {
+              c?.buffer?.length && c(10);
+            }, read(h, k, r, z) {
+              for (var v = 0, E = 0; E < z; E++) {
                 try {
-                  Ja.grow(e);
-                  Oa();
-                  var h = 1;
-                  break a;
-                } catch (k) {
+                  var H = b();
+                } catch (mb) {
+                  throw new P2(29);
                 }
-                h = void 0;
+                if (void 0 === H && 0 === v) throw new P2(6);
+                if (null === H || void 0 === H) break;
+                v++;
+                k[r + E] = H;
               }
-              if (h) return true;
+              v && (h.node.timestamp = Date.now());
+              return v;
+            }, write(h, k, r, z) {
+              for (var v = 0; v < z; v++) try {
+                c(k[r + v]);
+              } catch (E) {
+                throw new P2(29);
+              }
+              z && (h.node.timestamp = Date.now());
+              return v;
+            } });
+            Wb(a, d, e);
+          }
+          var Hc, W = {}, bc;
+          function Ic(a, b, c) {
+            if ("/" === b.charAt(0)) return b;
+            a = -100 === a ? "/" : U2(a).path;
+            if (0 == b.length) {
+              if (!c) throw new P2(44);
+              return a;
             }
-            return false;
-          },
-          A: (a, b) => {
-            var c = 0;
-            Rc().forEach((d, e) => {
-              var h = b + c;
-              e = F[a + 4 * e >> 2] = h;
-              for (h = 0; h < d.length; ++h) p[e++] = d.charCodeAt(h);
-              p[e] = 0;
-              c += d.length + 1;
-            });
+            return x(a + "/" + b);
+          }
+          function Jc(a, b, c) {
+            a = a(b);
+            D[c >> 2] = a.dev;
+            D[c + 4 >> 2] = a.mode;
+            F[c + 8 >> 2] = a.nlink;
+            D[c + 12 >> 2] = a.uid;
+            D[c + 16 >> 2] = a.gid;
+            D[c + 20 >> 2] = a.rdev;
+            J = [a.size >>> 0, (I = a.size, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+            D[c + 24 >> 2] = J[0];
+            D[c + 28 >> 2] = J[1];
+            D[c + 32 >> 2] = 4096;
+            D[c + 36 >> 2] = a.blocks;
+            b = a.atime.getTime();
+            var d = a.mtime.getTime(), e = a.ctime.getTime();
+            J = [Math.floor(b / 1e3) >>> 0, (I = Math.floor(b / 1e3), 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+            D[c + 40 >> 2] = J[0];
+            D[c + 44 >> 2] = J[1];
+            F[c + 48 >> 2] = b % 1e3 * 1e3;
+            J = [Math.floor(d / 1e3) >>> 0, (I = Math.floor(d / 1e3), 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+            D[c + 56 >> 2] = J[0];
+            D[c + 60 >> 2] = J[1];
+            F[c + 64 >> 2] = d % 1e3 * 1e3;
+            J = [Math.floor(e / 1e3) >>> 0, (I = Math.floor(e / 1e3), 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+            D[c + 72 >> 2] = J[0];
+            D[c + 76 >> 2] = J[1];
+            F[c + 80 >> 2] = e % 1e3 * 1e3;
+            J = [a.ino >>> 0, (I = a.ino, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+            D[c + 88 >> 2] = J[0];
+            D[c + 92 >> 2] = J[1];
             return 0;
-          },
-          B: (a, b) => {
-            var c = Rc();
-            F[a >> 2] = c.length;
-            var d = 0;
-            c.forEach((e) => d += e.length + 1);
-            F[b >> 2] = d;
-            return 0;
-          },
-          e: function(a) {
-            try {
-              var b = U2(a);
-              pa(b);
-              return 0;
-            } catch (c) {
-              if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
-              return c.Ja;
+          }
+          var Kc = void 0;
+          function Lc() {
+            var a = D[+Kc >> 2];
+            Kc += 4;
+            return a;
+          }
+          var Mc = (a, b) => b + 2097152 >>> 0 < 4194305 - !!a ? (a >>> 0) + 4294967296 * b : NaN, Nc = [0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335], Oc = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334], Pc = {}, Rc = () => {
+            if (!Qc) {
+              var a = { USER: "web_user", LOGNAME: "web_user", PATH: "/", PWD: "/", HOME: "/home/web_user", LANG: ("object" == typeof navigator && navigator.languages && navigator.languages[0] || "C").replace("-", "_") + ".UTF-8", _: Ca || "./this.program" }, b;
+              for (b in Pc) void 0 === Pc[b] ? delete a[b] : a[b] = Pc[b];
+              var c = [];
+              for (b in a) c.push(`${b}=${a[b]}`);
+              Qc = c;
             }
-          },
-          p: function(a, b) {
-            try {
-              var c = U2(a);
-              p[b] = c.tty ? 2 : R(c.mode) ? 3 : 40960 === (c.mode & 61440) ? 7 : 4;
-              La[b + 2 >> 1] = 0;
-              J = [0, (I = 0, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
-              D[b + 8 >> 2] = J[0];
-              D[b + 12 >> 2] = J[1];
-              J = [0, (I = 0, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
-              D[b + 16 >> 2] = J[0];
-              D[b + 20 >> 2] = J[1];
-              return 0;
-            } catch (d) {
-              if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
-              return d.Ja;
+            return Qc;
+          }, Qc, va = (a) => {
+            var b = ha(a) + 1, c = y(b);
+            q(a, u, c, b);
+            return c;
+          }, Sc = (a, b, c, d) => {
+            var e = { string: (v) => {
+              var E = 0;
+              null !== v && void 0 !== v && 0 !== v && (E = va(v));
+              return E;
+            }, array: (v) => {
+              var E = y(v.length);
+              p.set(v, E);
+              return E;
+            } };
+            a = f["_" + a];
+            var h = [], k = 0;
+            if (d) for (var r = 0; r < d.length; r++) {
+              var z = e[c[r]];
+              z ? (0 === k && (k = ra()), h[r] = z(d[r])) : h[r] = d[r];
             }
-          },
-          w: function(a, b, c, d) {
-            try {
-              a: {
-                var e = U2(a);
-                a = b;
-                for (var h, k = b = 0; k < c; k++) {
-                  var r = F[a >> 2], z = F[a + 4 >> 2];
-                  a += 8;
-                  var v = dc(e, p, r, z, h);
-                  if (0 > v) {
-                    var E = -1;
-                    break a;
-                  }
-                  b += v;
-                  if (v < z) break;
-                  "undefined" != typeof h && (h += v);
-                }
-                E = b;
+            c = a(...h);
+            return c = function(v) {
+              0 !== k && ua(k);
+              return "string" === b ? v ? L(u, v) : "" : "boolean" === b ? !!v : v;
+            }(c);
+          }, ea = 0, da = (a, b) => {
+            b = 1 == b ? y(a.length) : ia(a.length);
+            a.subarray || a.slice || (a = new Uint8Array(a));
+            u.set(
+              a,
+              b
+            );
+            return b;
+          }, Tc, Uc = [], X, wa = (a) => {
+            Tc.delete(X.get(a));
+            X.set(a, null);
+            Uc.push(a);
+          }, Aa = (a, b) => {
+            if (!Tc) {
+              Tc = /* @__PURE__ */ new WeakMap();
+              var c = X.length;
+              if (Tc) for (var d = 0; d < 0 + c; d++) {
+                var e = X.get(d);
+                e && Tc.set(e, d);
               }
-              F[d >> 2] = E;
-              return 0;
-            } catch (H) {
-              if ("undefined" == typeof W || "ErrnoError" !== H.name) throw H;
-              return H.Ja;
             }
-          },
-          m: function(a, b, c, d, e) {
-            b = Mc(b, c);
-            try {
-              if (isNaN(b)) return 61;
-              var h = U2(a);
-              cc(h, b, d);
-              J = [h.position >>> 0, (I = h.position, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
-              D[e >> 2] = J[0];
-              D[e + 4 >> 2] = J[1];
-              h.gb && 0 === b && 0 === d && (h.gb = null);
-              return 0;
-            } catch (k) {
-              if ("undefined" == typeof W || "ErrnoError" !== k.name) throw k;
-              return k.Ja;
-            }
-          },
-          D: function(a) {
-            try {
-              var b = U2(a);
-              return b.Ga?.fsync ? b.Ga.fsync(b) : 0;
-            } catch (c) {
-              if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
-              return c.Ja;
-            }
-          },
-          t: function(a, b, c, d) {
-            try {
-              a: {
-                var e = U2(a);
-                a = b;
-                for (var h, k = b = 0; k < c; k++) {
-                  var r = F[a >> 2], z = F[a + 4 >> 2];
-                  a += 8;
-                  var v = oa(e, p, r, z, h);
-                  if (0 > v) {
-                    var E = -1;
-                    break a;
-                  }
-                  b += v;
-                  "undefined" != typeof h && (h += v);
-                }
-                E = b;
+            if (c = Tc.get(a) || 0) return c;
+            if (Uc.length) c = Uc.pop();
+            else {
+              try {
+                X.grow(1);
+              } catch (r) {
+                if (!(r instanceof RangeError)) throw r;
+                throw "Unable to grow wasm table. Set ALLOW_TABLE_GROWTH.";
               }
-              F[d >> 2] = E;
-              return 0;
-            } catch (H) {
-              if ("undefined" == typeof W || "ErrnoError" !== H.name) throw H;
-              return H.Ja;
+              c = X.length - 1;
             }
-          }
-        }, Z = function() {
-          function a(c) {
-            Z = c.exports;
-            Ja = Z.I;
-            Oa();
-            X = Z.K;
-            Qa.unshift(Z.J);
-            Ua--;
-            f.monitorRunDependencies?.(Ua);
-            0 == Ua && (null !== Va && (clearInterval(Va), Va = null), Wa && (c = Wa, Wa = null, c()));
-            return Z;
-          }
-          var b = { a: Vc };
-          Ua++;
-          f.monitorRunDependencies?.(Ua);
-          if (f.instantiateWasm) try {
-            return f.instantiateWasm(b, a);
-          } catch (c) {
-            return C(`Module.instantiateWasm callback failed with error: ${c}`), false;
-          }
-          Ya ||= Xa("sql-wasm.wasm") ? "sql-wasm.wasm" : f.locateFile ? f.locateFile(
-            "sql-wasm.wasm",
-            B2
-          ) : B2 + "sql-wasm.wasm";
-          bb(b, function(c) {
-            a(c.instance);
+            try {
+              X.set(c, a);
+            } catch (r) {
+              if (!(r instanceof TypeError)) throw r;
+              if ("function" == typeof WebAssembly.Function) {
+                d = WebAssembly.Function;
+                e = { i: "i32", j: "i64", f: "f32", d: "f64", e: "externref", p: "i32" };
+                for (var h = { parameters: [], results: "v" == b[0] ? [] : [e[b[0]]] }, k = 1; k < b.length; ++k) h.parameters.push(e[b[k]]);
+                b = new d(h, a);
+              } else {
+                d = [1];
+                e = b.slice(0, 1);
+                b = b.slice(1);
+                h = { i: 127, p: 127, j: 126, f: 125, d: 124, e: 111 };
+                d.push(96);
+                k = b.length;
+                128 > k ? d.push(k) : d.push(k % 128 | 128, k >> 7);
+                for (k = 0; k < b.length; ++k) d.push(h[b[k]]);
+                "v" == e ? d.push(0) : d.push(1, h[e]);
+                b = [0, 97, 115, 109, 1, 0, 0, 0, 1];
+                e = d.length;
+                128 > e ? b.push(e) : b.push(e % 128 | 128, e >> 7);
+                b.push(...d);
+                b.push(
+                  2,
+                  7,
+                  1,
+                  1,
+                  101,
+                  1,
+                  102,
+                  0,
+                  0,
+                  7,
+                  5,
+                  1,
+                  1,
+                  102,
+                  0,
+                  0
+                );
+                b = new WebAssembly.Module(new Uint8Array(b));
+                b = new WebAssembly.Instance(b, { e: { f: a } }).exports.f;
+              }
+              X.set(c, b);
+            }
+            Tc.set(a, c);
+            return c;
+          };
+          [44].forEach((a) => {
+            Cb[a] = new P2(a);
+            Cb[a].stack = "<generic error, no stack>";
           });
-          return {};
-        }();
-        f._sqlite3_free = (a) => (f._sqlite3_free = Z.L)(a);
-        f._sqlite3_value_text = (a) => (f._sqlite3_value_text = Z.M)(a);
-        f._sqlite3_prepare_v2 = (a, b, c, d, e) => (f._sqlite3_prepare_v2 = Z.N)(a, b, c, d, e);
-        f._sqlite3_step = (a) => (f._sqlite3_step = Z.O)(a);
-        f._sqlite3_reset = (a) => (f._sqlite3_reset = Z.P)(a);
-        f._sqlite3_exec = (a, b, c, d, e) => (f._sqlite3_exec = Z.Q)(a, b, c, d, e);
-        f._sqlite3_finalize = (a) => (f._sqlite3_finalize = Z.R)(a);
-        f._sqlite3_column_name = (a, b) => (f._sqlite3_column_name = Z.S)(a, b);
-        f._sqlite3_column_text = (a, b) => (f._sqlite3_column_text = Z.T)(a, b);
-        f._sqlite3_column_type = (a, b) => (f._sqlite3_column_type = Z.U)(a, b);
-        f._sqlite3_errmsg = (a) => (f._sqlite3_errmsg = Z.V)(a);
-        f._sqlite3_clear_bindings = (a) => (f._sqlite3_clear_bindings = Z.W)(a);
-        f._sqlite3_value_blob = (a) => (f._sqlite3_value_blob = Z.X)(a);
-        f._sqlite3_value_bytes = (a) => (f._sqlite3_value_bytes = Z.Y)(a);
-        f._sqlite3_value_double = (a) => (f._sqlite3_value_double = Z.Z)(a);
-        f._sqlite3_value_int = (a) => (f._sqlite3_value_int = Z._)(a);
-        f._sqlite3_value_type = (a) => (f._sqlite3_value_type = Z.$)(a);
-        f._sqlite3_result_blob = (a, b, c, d) => (f._sqlite3_result_blob = Z.aa)(a, b, c, d);
-        f._sqlite3_result_double = (a, b) => (f._sqlite3_result_double = Z.ba)(a, b);
-        f._sqlite3_result_error = (a, b, c) => (f._sqlite3_result_error = Z.ca)(a, b, c);
-        f._sqlite3_result_int = (a, b) => (f._sqlite3_result_int = Z.da)(a, b);
-        f._sqlite3_result_int64 = (a, b, c) => (f._sqlite3_result_int64 = Z.ea)(a, b, c);
-        f._sqlite3_result_null = (a) => (f._sqlite3_result_null = Z.fa)(a);
-        f._sqlite3_result_text = (a, b, c, d) => (f._sqlite3_result_text = Z.ga)(a, b, c, d);
-        f._sqlite3_aggregate_context = (a, b) => (f._sqlite3_aggregate_context = Z.ha)(a, b);
-        f._sqlite3_column_count = (a) => (f._sqlite3_column_count = Z.ia)(a);
-        f._sqlite3_data_count = (a) => (f._sqlite3_data_count = Z.ja)(a);
-        f._sqlite3_column_blob = (a, b) => (f._sqlite3_column_blob = Z.ka)(a, b);
-        f._sqlite3_column_bytes = (a, b) => (f._sqlite3_column_bytes = Z.la)(a, b);
-        f._sqlite3_column_double = (a, b) => (f._sqlite3_column_double = Z.ma)(a, b);
-        f._sqlite3_bind_blob = (a, b, c, d, e) => (f._sqlite3_bind_blob = Z.na)(a, b, c, d, e);
-        f._sqlite3_bind_double = (a, b, c) => (f._sqlite3_bind_double = Z.oa)(a, b, c);
-        f._sqlite3_bind_int = (a, b, c) => (f._sqlite3_bind_int = Z.pa)(a, b, c);
-        f._sqlite3_bind_text = (a, b, c, d, e) => (f._sqlite3_bind_text = Z.qa)(a, b, c, d, e);
-        f._sqlite3_bind_parameter_index = (a, b) => (f._sqlite3_bind_parameter_index = Z.ra)(a, b);
-        f._sqlite3_sql = (a) => (f._sqlite3_sql = Z.sa)(a);
-        f._sqlite3_normalized_sql = (a) => (f._sqlite3_normalized_sql = Z.ta)(a);
-        f._sqlite3_changes = (a) => (f._sqlite3_changes = Z.ua)(a);
-        f._sqlite3_close_v2 = (a) => (f._sqlite3_close_v2 = Z.va)(a);
-        f._sqlite3_create_function_v2 = (a, b, c, d, e, h, k, r, z) => (f._sqlite3_create_function_v2 = Z.wa)(a, b, c, d, e, h, k, r, z);
-        f._sqlite3_open = (a, b) => (f._sqlite3_open = Z.xa)(a, b);
-        var ia = f._malloc = (a) => (ia = f._malloc = Z.ya)(a), fa = f._free = (a) => (fa = f._free = Z.za)(a);
-        f._RegisterExtensionFunctions = (a) => (f._RegisterExtensionFunctions = Z.Aa)(a);
-        var Eb = (a, b) => (Eb = Z.Ba)(a, b), ua = (a) => (ua = Z.Ca)(a), y = (a) => (y = Z.Da)(a), ra = () => (ra = Z.Ea)();
-        f.stackSave = () => ra();
-        f.stackRestore = (a) => ua(a);
-        f.stackAlloc = (a) => y(a);
-        f.cwrap = (a, b, c, d) => {
-          var e = !c || c.every((h) => "number" === h || "boolean" === h);
-          return "string" !== b && e && !d ? f["_" + a] : (...h) => Sc(a, b, c, h);
-        };
-        f.addFunction = Aa;
-        f.removeFunction = wa;
-        f.UTF8ToString = ta;
-        f.ALLOC_NORMAL = ea;
-        f.allocate = da;
-        f.allocateUTF8OnStack = va;
-        var Wc;
-        Wa = function Xc() {
-          Wc || Yc();
-          Wc || (Wa = Xc);
-        };
-        function Yc() {
-          function a() {
-            if (!Wc && (Wc = true, f.calledRun = true, !Ka)) {
-              f.noFSInit || ec2 || (ec2 = true, f.stdin = f.stdin, f.stdout = f.stdout, f.stderr = f.stderr, f.stdin ? Fc("stdin", f.stdin) : Xb("/dev/tty", "/dev/stdin"), f.stdout ? Fc("stdout", null, f.stdout) : Xb("/dev/tty", "/dev/stdout"), f.stderr ? Fc("stderr", null, f.stderr) : Xb("/dev/tty1", "/dev/stderr"), na("/dev/stdin", 0), na("/dev/stdout", 1), na("/dev/stderr", 1));
-              Jb = false;
-              cb(Qa);
-              f.onRuntimeInitialized?.();
-              if (f.postRun) for ("function" == typeof f.postRun && (f.postRun = [f.postRun]); f.postRun.length; ) {
-                var b = f.postRun.shift();
-                Sa.unshift(b);
+          S = Array(4096);
+          Vb(Q, "/");
+          V("/tmp");
+          V("/home");
+          V("/home/web_user");
+          (function() {
+            V("/dev");
+            vb(259, { read: () => 0, write: (d, e, h, k) => k });
+            Wb("/dev/null", 259);
+            ub(1280, xb);
+            ub(1536, yb);
+            Wb("/dev/tty", 1280);
+            Wb("/dev/tty1", 1536);
+            var a = new Uint8Array(1024), b = 0, c = () => {
+              0 === b && (b = jb(a).byteLength);
+              return a[--b];
+            };
+            Fc("random", c);
+            Fc("urandom", c);
+            V("/dev/shm");
+            V("/dev/shm/tmp");
+          })();
+          (function() {
+            V("/proc");
+            var a = V("/proc/self");
+            V("/proc/self/fd");
+            Vb({ Qa() {
+              var b = Bb(a, "fd", 16895, 73);
+              b.Fa = { lookup(c, d) {
+                var e = U2(+d);
+                c = { parent: null, Qa: { sb: "fake" }, Fa: { readlink: () => e.path } };
+                return c.parent = c;
+              } };
+              return b;
+            } }, "/proc/self/fd");
+          })();
+          var Vc = {
+            a: (a, b, c, d) => {
+              G(`Assertion failed: ${a ? L(u, a) : ""}, at: ` + [b ? b ? L(u, b) : "" : "unknown filename", c, d ? d ? L(u, d) : "" : "unknown function"]);
+            },
+            h: function(a, b) {
+              try {
+                return a = a ? L(u, a) : "", ma(a, b), 0;
+              } catch (c) {
+                if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
+                return -c.Ja;
               }
-              cb(Sa);
+            },
+            H: function(a, b, c) {
+              try {
+                b = b ? L(u, b) : "";
+                b = Ic(a, b);
+                if (c & -8) return -28;
+                var d = T(b, { Ra: true }).node;
+                if (!d) return -44;
+                a = "";
+                c & 4 && (a += "r");
+                c & 2 && (a += "w");
+                c & 1 && (a += "x");
+                return a && Pb(d, a) ? -2 : 0;
+              } catch (e) {
+                if ("undefined" == typeof W || "ErrnoError" !== e.name) throw e;
+                return -e.Ja;
+              }
+            },
+            i: function(a, b) {
+              try {
+                var c = U2(a);
+                ma(c.node, b);
+                return 0;
+              } catch (d) {
+                if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+                return -d.Ja;
+              }
+            },
+            g: function(a) {
+              try {
+                var b = U2(a).node;
+                var c = "string" == typeof b ? T(b, { Ra: true }).node : b;
+                if (!c.Fa.Na) throw new P2(63);
+                c.Fa.Na(c, { timestamp: Date.now() });
+                return 0;
+              } catch (d) {
+                if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+                return -d.Ja;
+              }
+            },
+            b: function(a, b, c) {
+              Kc = c;
+              try {
+                var d = U2(a);
+                switch (b) {
+                  case 0:
+                    var e = Lc();
+                    if (0 > e) break;
+                    for (; Hb[e]; ) e++;
+                    return Ub(d, e).fd;
+                  case 1:
+                  case 2:
+                    return 0;
+                  case 3:
+                    return d.flags;
+                  case 4:
+                    return e = Lc(), d.flags |= e, 0;
+                  case 12:
+                    return e = Lc(), La[e + 0 >> 1] = 2, 0;
+                  case 13:
+                  case 14:
+                    return 0;
+                }
+                return -28;
+              } catch (h) {
+                if ("undefined" == typeof W || "ErrnoError" !== h.name) throw h;
+                return -h.Ja;
+              }
+            },
+            f: function(a, b) {
+              try {
+                var c = U2(a);
+                return Jc(Zb, c.path, b);
+              } catch (d) {
+                if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+                return -d.Ja;
+              }
+            },
+            n: function(a, b, c) {
+              b = Mc(b, c);
+              try {
+                if (isNaN(b)) return 61;
+                var d = U2(a);
+                if (0 === (d.flags & 2097155)) throw new P2(28);
+                ac(d.node, b);
+                return 0;
+              } catch (e) {
+                if ("undefined" == typeof W || "ErrnoError" !== e.name) throw e;
+                return -e.Ja;
+              }
+            },
+            C: function(a, b) {
+              try {
+                if (0 === b) return -28;
+                var c = ha("/") + 1;
+                if (b < c) return -68;
+                q("/", u, a, b);
+                return c;
+              } catch (d) {
+                if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+                return -d.Ja;
+              }
+            },
+            F: function(a, b) {
+              try {
+                return a = a ? L(u, a) : "", Jc($b, a, b);
+              } catch (c) {
+                if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
+                return -c.Ja;
+              }
+            },
+            z: function(a, b, c) {
+              try {
+                return b = b ? L(u, b) : "", b = Ic(a, b), b = x(b), "/" === b[b.length - 1] && (b = b.substr(0, b.length - 1)), V(b, c), 0;
+              } catch (d) {
+                if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+                return -d.Ja;
+              }
+            },
+            E: function(a, b, c, d) {
+              try {
+                b = b ? L(u, b) : "";
+                var e = d & 256;
+                b = Ic(a, b, d & 4096);
+                return Jc(e ? $b : Zb, b, c);
+              } catch (h) {
+                if ("undefined" == typeof W || "ErrnoError" !== h.name) throw h;
+                return -h.Ja;
+              }
+            },
+            x: function(a, b, c, d) {
+              Kc = d;
+              try {
+                b = b ? L(u, b) : "";
+                b = Ic(a, b);
+                var e = d ? Lc() : 0;
+                return na(b, c, e).fd;
+              } catch (h) {
+                if ("undefined" == typeof W || "ErrnoError" !== h.name) throw h;
+                return -h.Ja;
+              }
+            },
+            v: function(a, b, c, d) {
+              try {
+                b = b ? L(u, b) : "";
+                b = Ic(a, b);
+                if (0 >= d) return -28;
+                var e = Mb(b), h = Math.min(d, ha(e)), k = p[c + h];
+                q(e, u, c, d + 1);
+                p[c + h] = k;
+                return h;
+              } catch (r) {
+                if ("undefined" == typeof W || "ErrnoError" !== r.name) throw r;
+                return -r.Ja;
+              }
+            },
+            u: function(a) {
+              try {
+                return a = a ? L(u, a) : "", Yb(a), 0;
+              } catch (b) {
+                if ("undefined" == typeof W || "ErrnoError" !== b.name) throw b;
+                return -b.Ja;
+              }
+            },
+            G: function(a, b) {
+              try {
+                return a = a ? L(u, a) : "", Jc(Zb, a, b);
+              } catch (c) {
+                if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
+                return -c.Ja;
+              }
+            },
+            r: function(a, b, c) {
+              try {
+                return b = b ? L(u, b) : "", b = Ic(a, b), 0 === c ? za(b) : 512 === c ? Yb(b) : G("Invalid flags passed to unlinkat"), 0;
+              } catch (d) {
+                if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+                return -d.Ja;
+              }
+            },
+            q: function(a, b, c) {
+              try {
+                b = b ? L(u, b) : "";
+                b = Ic(a, b, true);
+                if (c) {
+                  var d = F[c >> 2] + 4294967296 * D[c + 4 >> 2], e = D[c + 8 >> 2];
+                  h = 1e3 * d + e / 1e6;
+                  c += 16;
+                  d = F[c >> 2] + 4294967296 * D[c + 4 >> 2];
+                  e = D[c + 8 >> 2];
+                  k = 1e3 * d + e / 1e6;
+                } else var h = Date.now(), k = h;
+                a = h;
+                var r = T(b, { Ra: true }).node;
+                r.Fa.Na(r, { timestamp: Math.max(a, k) });
+                return 0;
+              } catch (z) {
+                if ("undefined" == typeof W || "ErrnoError" !== z.name) throw z;
+                return -z.Ja;
+              }
+            },
+            l: function(a, b, c) {
+              a = new Date(1e3 * Mc(a, b));
+              D[c >> 2] = a.getSeconds();
+              D[c + 4 >> 2] = a.getMinutes();
+              D[c + 8 >> 2] = a.getHours();
+              D[c + 12 >> 2] = a.getDate();
+              D[c + 16 >> 2] = a.getMonth();
+              D[c + 20 >> 2] = a.getFullYear() - 1900;
+              D[c + 24 >> 2] = a.getDay();
+              b = a.getFullYear();
+              D[c + 28 >> 2] = (0 !== b % 4 || 0 === b % 100 && 0 !== b % 400 ? Oc : Nc)[a.getMonth()] + a.getDate() - 1 | 0;
+              D[c + 36 >> 2] = -(60 * a.getTimezoneOffset());
+              b = new Date(a.getFullYear(), 6, 1).getTimezoneOffset();
+              var d = new Date(a.getFullYear(), 0, 1).getTimezoneOffset();
+              D[c + 32 >> 2] = (b != d && a.getTimezoneOffset() == Math.min(d, b)) | 0;
+            },
+            j: function(a, b, c, d, e, h, k, r) {
+              e = Mc(e, h);
+              try {
+                if (isNaN(e)) return 61;
+                var z = U2(d);
+                if (0 !== (b & 2) && 0 === (c & 2) && 2 !== (z.flags & 2097155)) throw new P2(2);
+                if (1 === (z.flags & 2097155)) throw new P2(2);
+                if (!z.Ga.ab) throw new P2(43);
+                var v = z.Ga.ab(z, a, e, b, c);
+                var E = v.Cb;
+                D[k >> 2] = v.tb;
+                F[r >> 2] = E;
+                return 0;
+              } catch (H) {
+                if ("undefined" == typeof W || "ErrnoError" !== H.name) throw H;
+                return -H.Ja;
+              }
+            },
+            k: function(a, b, c, d, e, h, k) {
+              h = Mc(h, k);
+              try {
+                var r = U2(e);
+                if (c & 2) {
+                  if (32768 !== (r.node.mode & 61440)) throw new P2(43);
+                  if (!(d & 2)) {
+                    var z = u.slice(a, a + b);
+                    r.Ga.bb && r.Ga.bb(r, z, h, b, d);
+                  }
+                }
+              } catch (v) {
+                if ("undefined" == typeof W || "ErrnoError" !== v.name) throw v;
+                return -v.Ja;
+              }
+            },
+            y: (a, b, c, d) => {
+              var e = (/* @__PURE__ */ new Date()).getFullYear(), h = new Date(e, 0, 1).getTimezoneOffset();
+              e = new Date(e, 6, 1).getTimezoneOffset();
+              F[a >> 2] = 60 * Math.max(h, e);
+              D[b >> 2] = Number(h != e);
+              b = (k) => {
+                var r = Math.abs(k);
+                return `UTC${0 <= k ? "-" : "+"}${String(Math.floor(r / 60)).padStart(2, "0")}${String(r % 60).padStart(2, "0")}`;
+              };
+              a = b(h);
+              b = b(e);
+              e < h ? (q(a, u, c, 17), q(b, u, d, 17)) : (q(a, u, d, 17), q(b, u, c, 17));
+            },
+            d: () => Date.now(),
+            s: () => 2147483648,
+            c: () => performance.now(),
+            o: (a) => {
+              var b = u.length;
+              a >>>= 0;
+              if (2147483648 < a) return false;
+              for (var c = 1; 4 >= c; c *= 2) {
+                var d = b * (1 + 0.2 / c);
+                d = Math.min(d, a + 100663296);
+                var e = Math;
+                d = Math.max(a, d);
+                a: {
+                  e = (e.min.call(e, 2147483648, d + (65536 - d % 65536) % 65536) - Ja.buffer.byteLength + 65535) / 65536;
+                  try {
+                    Ja.grow(e);
+                    Oa();
+                    var h = 1;
+                    break a;
+                  } catch (k) {
+                  }
+                  h = void 0;
+                }
+                if (h) return true;
+              }
+              return false;
+            },
+            A: (a, b) => {
+              var c = 0;
+              Rc().forEach((d, e) => {
+                var h = b + c;
+                e = F[a + 4 * e >> 2] = h;
+                for (h = 0; h < d.length; ++h) p[e++] = d.charCodeAt(h);
+                p[e] = 0;
+                c += d.length + 1;
+              });
+              return 0;
+            },
+            B: (a, b) => {
+              var c = Rc();
+              F[a >> 2] = c.length;
+              var d = 0;
+              c.forEach((e) => d += e.length + 1);
+              F[b >> 2] = d;
+              return 0;
+            },
+            e: function(a) {
+              try {
+                var b = U2(a);
+                pa(b);
+                return 0;
+              } catch (c) {
+                if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
+                return c.Ja;
+              }
+            },
+            p: function(a, b) {
+              try {
+                var c = U2(a);
+                p[b] = c.tty ? 2 : R(c.mode) ? 3 : 40960 === (c.mode & 61440) ? 7 : 4;
+                La[b + 2 >> 1] = 0;
+                J = [0, (I = 0, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+                D[b + 8 >> 2] = J[0];
+                D[b + 12 >> 2] = J[1];
+                J = [0, (I = 0, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+                D[b + 16 >> 2] = J[0];
+                D[b + 20 >> 2] = J[1];
+                return 0;
+              } catch (d) {
+                if ("undefined" == typeof W || "ErrnoError" !== d.name) throw d;
+                return d.Ja;
+              }
+            },
+            w: function(a, b, c, d) {
+              try {
+                a: {
+                  var e = U2(a);
+                  a = b;
+                  for (var h, k = b = 0; k < c; k++) {
+                    var r = F[a >> 2], z = F[a + 4 >> 2];
+                    a += 8;
+                    var v = dc(e, p, r, z, h);
+                    if (0 > v) {
+                      var E = -1;
+                      break a;
+                    }
+                    b += v;
+                    if (v < z) break;
+                    "undefined" != typeof h && (h += v);
+                  }
+                  E = b;
+                }
+                F[d >> 2] = E;
+                return 0;
+              } catch (H) {
+                if ("undefined" == typeof W || "ErrnoError" !== H.name) throw H;
+                return H.Ja;
+              }
+            },
+            m: function(a, b, c, d, e) {
+              b = Mc(b, c);
+              try {
+                if (isNaN(b)) return 61;
+                var h = U2(a);
+                cc(h, b, d);
+                J = [h.position >>> 0, (I = h.position, 1 <= +Math.abs(I) ? 0 < I ? +Math.floor(I / 4294967296) >>> 0 : ~~+Math.ceil((I - +(~~I >>> 0)) / 4294967296) >>> 0 : 0)];
+                D[e >> 2] = J[0];
+                D[e + 4 >> 2] = J[1];
+                h.gb && 0 === b && 0 === d && (h.gb = null);
+                return 0;
+              } catch (k) {
+                if ("undefined" == typeof W || "ErrnoError" !== k.name) throw k;
+                return k.Ja;
+              }
+            },
+            D: function(a) {
+              try {
+                var b = U2(a);
+                return b.Ga?.fsync ? b.Ga.fsync(b) : 0;
+              } catch (c) {
+                if ("undefined" == typeof W || "ErrnoError" !== c.name) throw c;
+                return c.Ja;
+              }
+            },
+            t: function(a, b, c, d) {
+              try {
+                a: {
+                  var e = U2(a);
+                  a = b;
+                  for (var h, k = b = 0; k < c; k++) {
+                    var r = F[a >> 2], z = F[a + 4 >> 2];
+                    a += 8;
+                    var v = oa(e, p, r, z, h);
+                    if (0 > v) {
+                      var E = -1;
+                      break a;
+                    }
+                    b += v;
+                    "undefined" != typeof h && (h += v);
+                  }
+                  E = b;
+                }
+                F[d >> 2] = E;
+                return 0;
+              } catch (H) {
+                if ("undefined" == typeof W || "ErrnoError" !== H.name) throw H;
+                return H.Ja;
+              }
+            }
+          }, Z = function() {
+            function a(c) {
+              Z = c.exports;
+              Ja = Z.I;
+              Oa();
+              X = Z.K;
+              Qa.unshift(Z.J);
+              Ua--;
+              f.monitorRunDependencies?.(Ua);
+              0 == Ua && (null !== Va && (clearInterval(Va), Va = null), Wa && (c = Wa, Wa = null, c()));
+              return Z;
+            }
+            var b = { a: Vc };
+            Ua++;
+            f.monitorRunDependencies?.(Ua);
+            if (f.instantiateWasm) try {
+              return f.instantiateWasm(b, a);
+            } catch (c) {
+              return C(`Module.instantiateWasm callback failed with error: ${c}`), false;
+            }
+            Ya ||= Xa("sql-wasm.wasm") ? "sql-wasm.wasm" : f.locateFile ? f.locateFile(
+              "sql-wasm.wasm",
+              B2
+            ) : B2 + "sql-wasm.wasm";
+            bb(b, function(c) {
+              a(c.instance);
+            });
+            return {};
+          }();
+          f._sqlite3_free = (a) => (f._sqlite3_free = Z.L)(a);
+          f._sqlite3_value_text = (a) => (f._sqlite3_value_text = Z.M)(a);
+          f._sqlite3_prepare_v2 = (a, b, c, d, e) => (f._sqlite3_prepare_v2 = Z.N)(a, b, c, d, e);
+          f._sqlite3_step = (a) => (f._sqlite3_step = Z.O)(a);
+          f._sqlite3_reset = (a) => (f._sqlite3_reset = Z.P)(a);
+          f._sqlite3_exec = (a, b, c, d, e) => (f._sqlite3_exec = Z.Q)(a, b, c, d, e);
+          f._sqlite3_finalize = (a) => (f._sqlite3_finalize = Z.R)(a);
+          f._sqlite3_column_name = (a, b) => (f._sqlite3_column_name = Z.S)(a, b);
+          f._sqlite3_column_text = (a, b) => (f._sqlite3_column_text = Z.T)(a, b);
+          f._sqlite3_column_type = (a, b) => (f._sqlite3_column_type = Z.U)(a, b);
+          f._sqlite3_errmsg = (a) => (f._sqlite3_errmsg = Z.V)(a);
+          f._sqlite3_clear_bindings = (a) => (f._sqlite3_clear_bindings = Z.W)(a);
+          f._sqlite3_value_blob = (a) => (f._sqlite3_value_blob = Z.X)(a);
+          f._sqlite3_value_bytes = (a) => (f._sqlite3_value_bytes = Z.Y)(a);
+          f._sqlite3_value_double = (a) => (f._sqlite3_value_double = Z.Z)(a);
+          f._sqlite3_value_int = (a) => (f._sqlite3_value_int = Z._)(a);
+          f._sqlite3_value_type = (a) => (f._sqlite3_value_type = Z.$)(a);
+          f._sqlite3_result_blob = (a, b, c, d) => (f._sqlite3_result_blob = Z.aa)(a, b, c, d);
+          f._sqlite3_result_double = (a, b) => (f._sqlite3_result_double = Z.ba)(a, b);
+          f._sqlite3_result_error = (a, b, c) => (f._sqlite3_result_error = Z.ca)(a, b, c);
+          f._sqlite3_result_int = (a, b) => (f._sqlite3_result_int = Z.da)(a, b);
+          f._sqlite3_result_int64 = (a, b, c) => (f._sqlite3_result_int64 = Z.ea)(a, b, c);
+          f._sqlite3_result_null = (a) => (f._sqlite3_result_null = Z.fa)(a);
+          f._sqlite3_result_text = (a, b, c, d) => (f._sqlite3_result_text = Z.ga)(a, b, c, d);
+          f._sqlite3_aggregate_context = (a, b) => (f._sqlite3_aggregate_context = Z.ha)(a, b);
+          f._sqlite3_column_count = (a) => (f._sqlite3_column_count = Z.ia)(a);
+          f._sqlite3_data_count = (a) => (f._sqlite3_data_count = Z.ja)(a);
+          f._sqlite3_column_blob = (a, b) => (f._sqlite3_column_blob = Z.ka)(a, b);
+          f._sqlite3_column_bytes = (a, b) => (f._sqlite3_column_bytes = Z.la)(a, b);
+          f._sqlite3_column_double = (a, b) => (f._sqlite3_column_double = Z.ma)(a, b);
+          f._sqlite3_bind_blob = (a, b, c, d, e) => (f._sqlite3_bind_blob = Z.na)(a, b, c, d, e);
+          f._sqlite3_bind_double = (a, b, c) => (f._sqlite3_bind_double = Z.oa)(a, b, c);
+          f._sqlite3_bind_int = (a, b, c) => (f._sqlite3_bind_int = Z.pa)(a, b, c);
+          f._sqlite3_bind_text = (a, b, c, d, e) => (f._sqlite3_bind_text = Z.qa)(a, b, c, d, e);
+          f._sqlite3_bind_parameter_index = (a, b) => (f._sqlite3_bind_parameter_index = Z.ra)(a, b);
+          f._sqlite3_sql = (a) => (f._sqlite3_sql = Z.sa)(a);
+          f._sqlite3_normalized_sql = (a) => (f._sqlite3_normalized_sql = Z.ta)(a);
+          f._sqlite3_changes = (a) => (f._sqlite3_changes = Z.ua)(a);
+          f._sqlite3_close_v2 = (a) => (f._sqlite3_close_v2 = Z.va)(a);
+          f._sqlite3_create_function_v2 = (a, b, c, d, e, h, k, r, z) => (f._sqlite3_create_function_v2 = Z.wa)(a, b, c, d, e, h, k, r, z);
+          f._sqlite3_open = (a, b) => (f._sqlite3_open = Z.xa)(a, b);
+          var ia = f._malloc = (a) => (ia = f._malloc = Z.ya)(a), fa = f._free = (a) => (fa = f._free = Z.za)(a);
+          f._RegisterExtensionFunctions = (a) => (f._RegisterExtensionFunctions = Z.Aa)(a);
+          var Eb = (a, b) => (Eb = Z.Ba)(a, b), ua = (a) => (ua = Z.Ca)(a), y = (a) => (y = Z.Da)(a), ra = () => (ra = Z.Ea)();
+          f.stackSave = () => ra();
+          f.stackRestore = (a) => ua(a);
+          f.stackAlloc = (a) => y(a);
+          f.cwrap = (a, b, c, d) => {
+            var e = !c || c.every((h) => "number" === h || "boolean" === h);
+            return "string" !== b && e && !d ? f["_" + a] : (...h) => Sc(a, b, c, h);
+          };
+          f.addFunction = Aa;
+          f.removeFunction = wa;
+          f.UTF8ToString = ta;
+          f.ALLOC_NORMAL = ea;
+          f.allocate = da;
+          f.allocateUTF8OnStack = va;
+          var Wc;
+          Wa = function Xc() {
+            Wc || Yc();
+            Wc || (Wa = Xc);
+          };
+          function Yc() {
+            function a() {
+              if (!Wc && (Wc = true, f.calledRun = true, !Ka)) {
+                f.noFSInit || ec2 || (ec2 = true, f.stdin = f.stdin, f.stdout = f.stdout, f.stderr = f.stderr, f.stdin ? Fc("stdin", f.stdin) : Xb("/dev/tty", "/dev/stdin"), f.stdout ? Fc("stdout", null, f.stdout) : Xb("/dev/tty", "/dev/stdout"), f.stderr ? Fc("stderr", null, f.stderr) : Xb("/dev/tty1", "/dev/stderr"), na("/dev/stdin", 0), na("/dev/stdout", 1), na("/dev/stderr", 1));
+                Jb = false;
+                cb(Qa);
+                f.onRuntimeInitialized?.();
+                if (f.postRun) for ("function" == typeof f.postRun && (f.postRun = [f.postRun]); f.postRun.length; ) {
+                  var b = f.postRun.shift();
+                  Sa.unshift(b);
+                }
+                cb(Sa);
+              }
+            }
+            if (!(0 < Ua)) {
+              if (f.preRun) for ("function" == typeof f.preRun && (f.preRun = [f.preRun]); f.preRun.length; ) Ta();
+              cb(Pa);
+              0 < Ua || (f.setStatus ? (f.setStatus("Running..."), setTimeout(function() {
+                setTimeout(function() {
+                  f.setStatus("");
+                }, 1);
+                a();
+              }, 1)) : a());
             }
           }
-          if (!(0 < Ua)) {
-            if (f.preRun) for ("function" == typeof f.preRun && (f.preRun = [f.preRun]); f.preRun.length; ) Ta();
-            cb(Pa);
-            0 < Ua || (f.setStatus ? (f.setStatus("Running..."), setTimeout(function() {
-              setTimeout(function() {
-                f.setStatus("");
-              }, 1);
-              a();
-            }, 1)) : a());
-          }
-        }
-        if (f.preInit) for ("function" == typeof f.preInit && (f.preInit = [f.preInit]); 0 < f.preInit.length; ) f.preInit.pop()();
-        Yc();
-        return Module;
-      });
-      return initSqlJsPromise;
-    };
-    if (typeof exports === "object" && typeof module === "object") {
-      module.exports = initSqlJs;
-      module.exports.default = initSqlJs;
-    } else if (typeof define === "function" && define["amd"]) {
-      define([], function() {
-        return initSqlJs;
-      });
-    } else if (typeof exports === "object") {
-      exports["Module"] = initSqlJs;
+          if (f.preInit) for ("function" == typeof f.preInit && (f.preInit = [f.preInit]); 0 < f.preInit.length; ) f.preInit.pop()();
+          Yc();
+          return Module;
+        });
+        return initSqlJsPromise;
+      };
+      if (typeof exports2 === "object" && typeof module2 === "object") {
+        module2.exports = initSqlJs;
+        module2.exports.default = initSqlJs;
+      } else if (typeof define === "function" && define["amd"]) {
+        define([], function() {
+          return initSqlJs;
+        });
+      } else if (typeof exports2 === "object") {
+        exports2["Module"] = initSqlJs;
+      }
+      return module2.exports;
     }
+    module.exports = load();
+    module.exports.fresh = load;
   }
 });
 
@@ -5949,6 +5956,7 @@ __export(sqlite_exports, {
   exportCurrent: () => exportCurrent,
   flush: () => flush,
   forceAcquireLock: () => forceAcquireLock,
+  freshEngine: () => freshEngine,
   getMeta: () => getMeta,
   hasLock: () => hasLock,
   hasPendingExtra: () => hasPendingExtra,
@@ -5974,8 +5982,15 @@ __export(sqlite_exports, {
 });
 async function init(wasmUrl) {
   if (SQL) return SQL;
+  wasmAt = wasmUrl;
   const initSqlJs = (await Promise.resolve().then(() => __toESM(require_sql_wasm()))).default;
   SQL = await initSqlJs({ locateFile: () => wasmUrl });
+  return SQL;
+}
+async function freshEngine() {
+  const mod = (await Promise.resolve().then(() => __toESM(require_sql_wasm()))).default;
+  if (!wasmAt || typeof mod.fresh !== "function") throw new Error("this build cannot start a second SQLite engine");
+  SQL = await mod.fresh()({ locateFile: () => wasmAt });
   return SQL;
 }
 function beat() {
@@ -6551,11 +6566,12 @@ function markDirty() {
     });
   }, delay);
 }
-var SQL, STORE, LEGACY_KEY, EPOCH_KEY, DB_PREFIX, dbKey, myEpoch, claimedBytes, LOCK_NAME, HEARTBEAT_KEY, HELD_KEY, CHANNEL, HEARTBEAT_MS, STALE_MS, ACK_WAIT_MS, SAME_TAB_WAIT_MS, docId, haveLock, frozen, steppingAside, heartbeatTimer, channel, lostHandler, lostNotified, conn, sealer, pendingExtra, openAllowed, lastSave, ordinarySaveMs, now, inflight, current, saveTimer, dirty, saving, wiped, inTransaction, onSaveError, ticket, issued, COALESCE_MS, MAX_COALESCE_MS, writeSeq, Statement, DatabaseSync, sqlite_default;
+var SQL, wasmAt, STORE, LEGACY_KEY, EPOCH_KEY, DB_PREFIX, dbKey, myEpoch, claimedBytes, LOCK_NAME, HEARTBEAT_KEY, HELD_KEY, CHANNEL, HEARTBEAT_MS, STALE_MS, ACK_WAIT_MS, SAME_TAB_WAIT_MS, docId, haveLock, frozen, steppingAside, heartbeatTimer, channel, lostHandler, lostNotified, conn, sealer, pendingExtra, openAllowed, lastSave, ordinarySaveMs, now, inflight, current, saveTimer, dirty, saving, wiped, inTransaction, onSaveError, ticket, issued, COALESCE_MS, MAX_COALESCE_MS, writeSeq, Statement, DatabaseSync, sqlite_default;
 var init_sqlite = __esm({
   "local/shims/sqlite.js"() {
     init_globals_inject();
     SQL = null;
+    wasmAt = null;
     STORE = "suds-local";
     LEGACY_KEY = "db";
     EPOCH_KEY = "epoch";
@@ -6706,7 +6722,7 @@ var init_sqlite = __esm({
         return this.db.export();
       }
     };
-    sqlite_default = { DatabaseSync, init, loadBytes, saveBytes, putMeta, getMeta, entries, readCurrent, setSealer, hasSealer, hasPendingExtra, setOpenAllowed, saveStats, wipe, isWiped, replaceWith, imageProblem, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
+    sqlite_default = { DatabaseSync, init, freshEngine, loadBytes, saveBytes, putMeta, getMeta, entries, readCurrent, setSealer, hasSealer, hasPendingExtra, setOpenAllowed, saveStats, wipe, isWiped, replaceWith, imageProblem, inspect, exportCurrent, flush, isDirty, acquireLock, lockIsStale, forceAcquireLock, hasLock, epoch, isFrozen, onLockLost, setSaveErrorHandler };
   }
 });
 
@@ -11950,6 +11966,1354 @@ var init_listener = __esm({
     listener_default = { describe, lanAddresses, relisten, start() {
     }, stop() {
     } };
+  }
+});
+
+// local/shims/empty.js
+var empty_exports = {};
+__export(empty_exports, {
+  default: () => empty_default
+});
+var empty_default;
+var init_empty = __esm({
+  "local/shims/empty.js"() {
+    init_globals_inject();
+    empty_default = {};
+  }
+});
+
+// server/backup-lock.js
+var require_backup_lock = __commonJS({
+  "server/backup-lock.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var WHAT = {
+      backup: "A scheduled backup is running",
+      snapshot: "An online snapshot of the database is being taken",
+      "dr-drill": "A recovery drill is running",
+      restore: "A restore is running"
+    };
+    var holder = null;
+    var queue = [];
+    function busyError(name, forWhat) {
+      const e = new Error(`${WHAT[name] || `${name} is running`}; the ${forWhat || "operation"} was not started. Try again when it has finished.`);
+      e.code = "EBUSY";
+      e.holder = name;
+      return e;
+    }
+    function grantNext() {
+      holder = null;
+      const next = queue.shift();
+      if (next) next.grant();
+    }
+    function makeRelease(name) {
+      let done = false;
+      return () => {
+        if (done) return;
+        done = true;
+        if (holder && holder.name === name) grantNext();
+      };
+    }
+    function tryAcquire(name) {
+      if (holder || queue.length) return null;
+      holder = { name, since: Date.now() };
+      return makeRelease(name);
+    }
+    function acquire(name, { waitMs = Infinity, forWhat } = {}) {
+      const now2 = tryAcquire(name);
+      if (now2) return Promise.resolve(now2);
+      return new Promise((resolve2, reject) => {
+        let timer = null;
+        const entry = { name, grant: () => {
+          if (timer) clearTimeout(timer);
+          holder = { name, since: Date.now() };
+          resolve2(makeRelease(name));
+        } };
+        queue.push(entry);
+        if (Number.isFinite(waitMs)) {
+          timer = setTimeout(() => {
+            const i = queue.indexOf(entry);
+            if (i < 0) return;
+            queue.splice(i, 1);
+            reject(busyError(holder ? holder.name : "backup", forWhat));
+          }, Math.max(0, waitMs));
+          if (timer.unref) timer.unref();
+        }
+      });
+    }
+    async function run2(name, fn, opts) {
+      const release = await acquire(name, opts);
+      try {
+        return await fn();
+      } finally {
+        release();
+      }
+    }
+    function current2() {
+      return holder ? { ...holder } : null;
+    }
+    function paused() {
+      return !!holder && holder.name === "restore" || queue.some((q) => q.name === "restore");
+    }
+    module.exports = {
+      tryAcquire,
+      acquire,
+      run: run2,
+      current: current2,
+      paused,
+      busyError,
+      // How long a restore from the Administration page waits for work in flight before it is refused with a 409.
+      // A scheduled backup of a county-sized database takes seconds to a minute; a recovery drill can take longer.
+      restoreWaitMs: 12e4
+    };
+  }
+});
+
+// local/shims/os.js
+var os_exports = {};
+__export(os_exports, {
+  default: () => os_default,
+  hostname: () => hostname,
+  networkInterfaces: () => networkInterfaces
+});
+function hostname() {
+  return "this-device";
+}
+function networkInterfaces() {
+  return {};
+}
+var os_default;
+var init_os = __esm({
+  "local/shims/os.js"() {
+    init_globals_inject();
+    os_default = { hostname, networkInterfaces };
+  }
+});
+
+// server/audit-anchor.js
+var require_audit_anchor = __commonJS({
+  "server/audit-anchor.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var config2 = require_config();
+    var db3 = require_db();
+    var FILE_RE2 = /^anchor-.*\.json$/;
+    var keyId = (key = config2.indexKey) => crypto3.createHmac("sha256", key).update("suds-audit-anchor-key-id").digest("hex").slice(0, 16);
+    var FIELDS = ["v", "kind", "at", "reason", "install", "gen", "prev_gen", "head_id", "head_hash", "first_id", "rows", "host", "key_id", "prev_mac"];
+    var installId = () => db3.getSetting("audit_anchor_install", null);
+    var generation = () => db3.getSetting("db_generation", null) || "initial";
+    function canonical(a) {
+      const o = {};
+      for (const k of FIELDS) o[k] = a[k] === void 0 ? null : a[k];
+      return JSON.stringify(o);
+    }
+    function macOf(a, key = config2.indexKey) {
+      return crypto3.createHmac("sha256", key).update(canonical(a)).digest("hex");
+    }
+    function macOk(a, key = config2.indexKey) {
+      if (typeof a.mac !== "string") return false;
+      const want = macOf(a, key);
+      return want.length === a.mac.length && crypto3.timingSafeEqual(import_buffer.Buffer.from(want), import_buffer.Buffer.from(a.mac));
+    }
+    function dir() {
+      return config2.auditAnchorDir;
+    }
+    function list(d = dir()) {
+      let names = [];
+      try {
+        names = fs.readdirSync(d).filter((f) => FILE_RE2.test(f)).sort();
+      } catch {
+        return [];
+      }
+      return names.map((file) => {
+        try {
+          return { file, anchor: JSON.parse(fs.readFileSync(path.join(d, file), "utf8")) };
+        } catch (e) {
+          return { file, error: String(e.message || e) };
+        }
+      });
+    }
+    var real = (p) => {
+      try {
+        return fs.realpathSync(p);
+      } catch {
+        return path.resolve(p);
+      }
+    };
+    var within = (child, parent) => child === parent || child.startsWith(parent + path.sep);
+    function dirStatus(d = dir()) {
+      let exists3 = false;
+      let writable = false;
+      try {
+        exists3 = fs.statSync(d).isDirectory();
+      } catch {
+      }
+      if (exists3) {
+        try {
+          fs.accessSync(d, fs.constants.W_OK);
+          writable = true;
+        } catch {
+        }
+      }
+      const a = real(d);
+      const data = real(config2.dataDir);
+      return { dir: d, configured: config2.auditAnchorDirConfigured, exists: exists3, writable, inside_data_dir: within(a, data) || within(data, a) };
+    }
+    function placementProblem(d = dir()) {
+      if (!config2.isProd) return null;
+      const st = dirStatus(d);
+      if (!st.configured) return `AUDIT_ANCHOR_DIR is not set, so audit anchors are written to ${d}, inside the data directory on the same disk as the database they are meant to check. Point AUDIT_ANCHOR_DIR at write-once (WORM) storage outside the data directory (docs/security/LOGGING-AND-AUDIT.md).`;
+      if (st.inside_data_dir) return `AUDIT_ANCHOR_DIR (${d}) is inside the data directory (or contains it), so a rewrite of the data directory rewrites the anchors too. Point it at write-once (WORM) storage outside the data directory (docs/security/LOGGING-AND-AUDIT.md).`;
+      return null;
+    }
+    function write(reason = "manual", { key = config2.indexKey, d = dir(), prevGen = null } = {}) {
+      const head = db3.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
+      if (!head) return null;
+      const first = db3.one(`SELECT MIN(id) m FROM audit_log`).m;
+      const rows = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, head.id).n;
+      if (!config2.auditAnchorDirConfigured || d !== config2.auditAnchorDir) fs.mkdirSync(d, { recursive: true, mode: 448 });
+      else if (!dirStatus(d).exists) throw new Error(`the audit anchor directory ${d} does not exist (is the share mounted?)`);
+      let install = installId();
+      if (!install) {
+        install = require_crypto().uuid();
+        db3.setSetting("audit_anchor_install", install);
+      }
+      const all = list(d);
+      const prev = all.filter((x) => x.anchor && x.anchor.install === install).pop();
+      const newest = all.filter((x) => x.anchor && typeof x.anchor.at === "string").map((x) => Date.parse(x.anchor.at)).filter(Number.isFinite);
+      const floor = newest.length ? Math.max(...newest) + 1 : 0;
+      let atMs = Math.max(Date.now(), floor);
+      let a;
+      let file;
+      for (let attempt = 0; ; attempt++, atMs++) {
+        a = { v: 1, kind: "suds-audit-anchor", at: new Date(atMs).toISOString(), reason, install, gen: generation(), prev_gen: prevGen, head_id: head.id, head_hash: head.hash, first_id: first, rows, host: (init_os(), __toCommonJS(os_exports)).hostname(), key_id: keyId(key), prev_mac: prev ? prev.anchor.mac || null : null };
+        a.mac = macOf(a, key);
+        file = path.join(d, `anchor-${a.at.replace(/[:.]/g, "-")}-${String(head.id).padStart(12, "0")}.json`);
+        try {
+          fs.writeFileSync(file, JSON.stringify(a) + "\n", { flag: "wx", mode: 384 });
+          break;
+        } catch (e) {
+          if (e.code !== "EEXIST" || attempt >= 50) throw e;
+        }
+      }
+      try {
+        fs.chmodSync(file, 256);
+      } catch {
+      }
+      db3.setSetting("audit_anchor_last_at", a.at);
+      db3.setSetting("audit_anchor_last_status", "ok");
+      console.log(`[suds] audit anchor id=${a.head_id} rows=${a.rows} hash=${a.head_hash} mac=${a.mac} reason=${reason}`);
+      sendSyslog(a);
+      return { ...a, file: path.basename(file) };
+    }
+    function sendSyslog(a) {
+      if (!config2.auditSyslog) return;
+      try {
+        const m = String(config2.auditSyslog).match(/^(?:udp:\/\/)?\[?([^\]]+?)\]?(?::(\d+))?$/);
+        if (!m) return;
+        const host = m[1];
+        const port = Number(m[2] || 514);
+        const dgram = (init_empty(), __toCommonJS(empty_exports));
+        const sock = dgram.createSocket(host.includes(":") ? "udp6" : "udp4");
+        const msg = import_buffer.Buffer.from(`<110>1 ${a.at} ${a.host} suds - audit-anchor - ${JSON.stringify(a)}`);
+        sock.send(msg, port, host, () => {
+          try {
+            sock.close();
+          } catch {
+          }
+        });
+        if (sock.unref) sock.unref();
+      } catch (e) {
+        console.error("[suds] audit anchor syslog send failed:", e.message);
+      }
+    }
+    function runIfDue(now2 = Date.now()) {
+      const hours = config2.auditAnchorHours;
+      if (!(hours > 0)) return null;
+      const last = db3.getSetting("audit_anchor_last_at", null);
+      if (last && now2 - Date.parse(last) < hours * 36e5 - 5 * 6e4) return null;
+      return safeWrite("schedule");
+    }
+    function firstAnchorAtStart() {
+      if (!(config2.auditAnchorHours > 0) || db3.getSetting("audit_anchor_last_at", null)) return null;
+      return safeWrite("first-start");
+    }
+    function safeWrite(reason, opts = {}) {
+      try {
+        return write(reason, opts);
+      } catch (e) {
+        const msg = String(e.message || e);
+        console.error("[suds] audit anchor could not be written:", msg);
+        db3.setSetting("audit_anchor_last_status", `failed: ${msg}`);
+        try {
+          require_audit().log({ user: { username: "system" }, action: "audit.anchor.failed", success: false, details: { reason, error: msg.slice(0, 300) } });
+        } catch (e2) {
+          console.error("[suds] the audit entry for that failure could not be written either:", e2 && e2.message);
+        }
+        return null;
+      }
+    }
+    function verify({ key = config2.indexKey, d = dir(), tolerateNewer = false } = {}) {
+      const files = list(d);
+      const out2 = { dir: d, total: files.length, matched: 0, other_key: 0, other_install: 0, other_generation: 0, purged: 0, newer: 0, bad: [], last_anchor_at: null };
+      const install = installId();
+      const gen = generation();
+      const kid = keyId(key);
+      const bounds = db3.one(`SELECT MIN(id) mn, MAX(id) mx FROM audit_log`);
+      const minId = bounds.mn || 0;
+      const maxId = bounds.mx || 0;
+      let purgedThrough = null;
+      const purged = () => {
+        if (purgedThrough === null) {
+          purgedThrough = 0;
+          for (const r of db3.all(`SELECT details FROM audit_log WHERE action='audit.purge'`)) {
+            try {
+              purgedThrough = Math.max(purgedThrough, Number(JSON.parse(r.details).last_purged_id) || 0);
+            } catch {
+            }
+          }
+        }
+        return purgedThrough;
+      };
+      const mine = files.filter((f) => f.anchor && f.anchor.install === install);
+      const newest = mine.filter((f) => f.anchor.key_id === kid && f.anchor.gen === gen).pop();
+      const restores = /* @__PURE__ */ new Map();
+      for (const f of mine) if (f.anchor.reason === "restore" && f.anchor.key_id === kid && macOk(f.anchor, key) && !restores.has(f.anchor.gen)) restores.set(f.anchor.gen, f.anchor);
+      const boundFor = (g) => {
+        let bound = Infinity;
+        let cur = gen;
+        const seen2 = /* @__PURE__ */ new Set();
+        while (cur !== g) {
+          const r = restores.get(cur);
+          if (!r || seen2.has(cur)) return null;
+          seen2.add(cur);
+          bound = Math.min(bound, r.head_id);
+          cur = r.prev_gen || "initial";
+        }
+        return bound;
+      };
+      let prevMac = null;
+      let first = true;
+      for (const f of files) {
+        const bad = (reason) => out2.bad.push({ file: f.file, head_id: f.anchor ? f.anchor.head_id : null, reason });
+        if (!f.anchor) {
+          bad(`unreadable: ${f.error}`);
+          prevMac = void 0;
+          first = false;
+          continue;
+        }
+        const a = f.anchor;
+        if (!install || a.install !== install) {
+          out2.other_install++;
+          continue;
+        }
+        out2.last_anchor_at = a.at || out2.last_anchor_at;
+        if (!first && prevMac !== void 0 && a.prev_mac !== prevMac) bad("the anchor before this one is missing or was replaced (the sequence of anchor files is broken)");
+        first = false;
+        prevMac = a.mac;
+        if (a.key_id !== kid) {
+          out2.other_key++;
+          continue;
+        }
+        if (!macOk(a, key)) {
+          bad("the anchor file does not verify (it was altered, or was not written by this server)");
+          continue;
+        }
+        if (a.gen !== gen) {
+          const bound = boundFor(a.gen);
+          if (bound === null && !tolerateNewer) {
+            bad("the database has been replaced since this anchor (its generation changed) but no restore was anchored");
+            continue;
+          }
+          if (bound === null || a.head_id > bound) {
+            out2.other_generation++;
+            continue;
+          }
+        }
+        const row = db3.one(`SELECT id, hash FROM audit_log WHERE id=?`, a.head_id);
+        if (!row) {
+          if (a.head_id > maxId) {
+            if (tolerateNewer) out2.newer++;
+            else bad(`the audit log now ends at entry ${maxId}, before this anchor's entry ${a.head_id}: newer entries were removed`);
+            continue;
+          }
+          if (a.head_id < minId && a.head_id <= purged()) {
+            out2.purged++;
+            continue;
+          }
+          bad(`entry ${a.head_id} recorded by this anchor is missing${a.head_id < minId ? " and no retention purge accounts for it" : ""}`);
+          continue;
+        }
+        if (row.hash !== a.head_hash) {
+          bad(`entry ${a.head_id} no longer has the hash this anchor recorded: the chain was rewritten`);
+          continue;
+        }
+        if (f === newest && a.first_id === minId) {
+          const n = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, a.head_id).n;
+          if (n !== a.rows) {
+            bad(`${a.rows - n} entr${Math.abs(a.rows - n) === 1 ? "y" : "ies"} at or before entry ${a.head_id} ${n < a.rows ? "were removed" : "were inserted"} since this anchor`);
+            continue;
+          }
+        }
+        out2.matched++;
+      }
+      out2.ok = out2.bad.length === 0;
+      return out2;
+    }
+    function verifyAndRecord() {
+      const r = verify();
+      db3.setSetting("audit_anchor_verified_at", db3.now());
+      db3.setSetting("audit_anchor_verify_status", r.ok ? `ok: ${r.matched} matched${r.purged ? `, ${r.purged} before a retention purge` : ""}${r.other_key ? `, ${r.other_key} under an earlier index key` : ""}${r.other_generation ? `, ${r.other_generation} from before a restore` : ""}${r.other_install ? `, ${r.other_install} from another installation` : ""} of ${r.total}` : `FAILED: ${r.bad[0].reason} (${r.bad[0].file})`);
+      if (!r.ok) {
+        console.error(`[suds] AUDIT ANCHOR MISMATCH: ${r.bad.length} anchor(s) do not match the audit log \u2014 ${r.bad[0].reason}`);
+        try {
+          require_audit().log({ user: { username: "system" }, action: "audit.anchor.verify.failed", success: false, details: { bad: r.bad.slice(0, 20), total: r.total } });
+        } catch (e) {
+          console.error("[suds] the audit entry for the anchor mismatch could not be written:", e && e.message);
+        }
+        try {
+          require_incidents().draft({
+            source: "audit_chain",
+            sourceRef: "audit_anchor",
+            title: "Audit log does not match its external anchors",
+            description: `${r.bad.length} audit anchor(s) written outside the database do not match the audit log (${r.bad[0].reason}). Establish whether audit entries were altered, rebuilt or removed, and whether that concealed access to client records.`
+          });
+        } catch (e) {
+          console.error("[suds] could not open an incident for the anchor mismatch:", e.message);
+        }
+      }
+      return r;
+    }
+    module.exports = { write, safeWrite, runIfDue, firstAnchorAtStart, verify, verifyAndRecord, list, dirStatus, placementProblem, keyId, macOf, macOk, canonical, FIELDS };
+  }
+});
+
+// server/backup.js
+var require_backup = __commonJS({
+  "server/backup.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var { DatabaseSync: DatabaseSync2 } = (init_sqlite(), __toCommonJS(sqlite_exports));
+    var config2 = require_config();
+    var db3 = require_db();
+    function backupKey(encryptionKey) {
+      if (!encryptionKey && config2.backupKey) return fromBackupKey(config2.backupKey);
+      return crypto3.createHash("sha256").update(import_buffer.Buffer.concat([encryptionKey || config2.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest();
+    }
+    var fromBackupKey = (raw) => crypto3.createHash("sha256").update(import_buffer.Buffer.concat([raw, import_buffer.Buffer.from("suds-backup-key")])).digest();
+    function candidateKeys(encryptionKey, escrow) {
+      if (escrow) {
+        const out3 = [];
+        if (escrow.backupKey) out3.push(fromBackupKey(escrow.backupKey));
+        if (escrow.encryptionKey) out3.push(backupKey(escrow.encryptionKey));
+        return out3;
+      }
+      if (encryptionKey) return [backupKey(encryptionKey)];
+      const out2 = [];
+      if (config2.backupKey) out2.push(backupKey());
+      out2.push(crypto3.createHash("sha256").update(import_buffer.Buffer.concat([config2.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest());
+      return out2;
+    }
+    function encryptPlain(plain, { encryptionKey } = {}) {
+      const iv = crypto3.randomBytes(12);
+      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
+      const body = import_buffer.Buffer.concat([c.update(plain), c.final()]);
+      return import_buffer.Buffer.concat([iv, c.getAuthTag(), body]);
+    }
+    function encryptFileSync(srcFile, outFile, { encryptionKey } = {}) {
+      const iv = crypto3.randomBytes(12);
+      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
+      const src = fs.openSync(srcFile, "r");
+      let out2 = null;
+      let written = 0;
+      let pos = 0;
+      try {
+        out2 = fs.openSync(outFile, "wx", 384);
+        fs.writeSync(out2, import_buffer.Buffer.concat([iv, import_buffer.Buffer.alloc(16)]), 0, 28, 0);
+        written = 28;
+        const chunk = import_buffer.Buffer.alloc(4 << 20);
+        for (; ; ) {
+          const n = fs.readSync(src, chunk, 0, chunk.length, pos);
+          if (!n) break;
+          pos += n;
+          const enc2 = c.update(chunk.subarray(0, n));
+          fs.writeSync(out2, enc2, 0, enc2.length, written);
+          written += enc2.length;
+        }
+        chunk.fill(0);
+        const fin = c.final();
+        if (fin.length) {
+          fs.writeSync(out2, fin, 0, fin.length, written);
+          written += fin.length;
+        }
+        fs.writeSync(out2, c.getAuthTag(), 0, 16, 12);
+        fs.fsyncSync(out2);
+      } catch (e) {
+        if (out2 !== null) {
+          try {
+            fs.closeSync(out2);
+          } catch {
+          }
+          out2 = null;
+          try {
+            fs.unlinkSync(outFile);
+          } catch {
+          }
+        }
+        throw e;
+      } finally {
+        fs.closeSync(src);
+        if (out2 !== null) fs.closeSync(out2);
+      }
+      return written;
+    }
+    async function createAsync({ encryptionKey, rate = 256 } = {}) {
+      const sqlite = (init_sqlite(), __toCommonJS(sqlite_exports));
+      const tmp = path.join(config2.dataDir, `.backup-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
+      let plain;
+      let method;
+      const t0 = Date.now();
+      let t1;
+      try {
+        fs.writeFileSync(tmp, "", { mode: 384 });
+        if (typeof sqlite.backup === "function" && config2.dbPath !== ":memory:") {
+          method = "sqlite-online-backup";
+          await sqlite.backup(db3.get(), tmp, { rate });
+        } else {
+          method = "vacuum-into";
+          fs.unlinkSync(tmp);
+          db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+        }
+        try {
+          fs.chmodSync(tmp, 384);
+        } catch {
+        }
+        t1 = Date.now();
+        plain = await fs.promises.readFile(tmp);
+      } finally {
+        await secureUnlinkAsync(tmp);
+        for (const suffix of ["-wal", "-shm", "-journal"]) await secureUnlinkAsync(tmp + suffix);
+      }
+      const iv = crypto3.randomBytes(12);
+      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
+      const parts = [];
+      const SLICE2 = 4 << 20;
+      for (let off = 0; off < plain.length; off += SLICE2) {
+        parts.push(c.update(plain.subarray(off, Math.min(off + SLICE2, plain.length))));
+        await new Promise((resolve2) => globalThis.setImmediate ? globalThis.setImmediate(resolve2) : setTimeout(resolve2, 0));
+      }
+      parts.push(c.final());
+      const bytes3 = import_buffer.Buffer.concat([iv, c.getAuthTag(), ...parts]);
+      const plainBytes = plain.length;
+      plain.fill(0);
+      return { bytes: bytes3, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
+    }
+    var SLICE = 4 << 20;
+    var tmpName = (kind) => path.join(config2.dataDir, `.${kind}-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
+    var removeTmp = async (tmp) => {
+      await secureUnlinkAsync(tmp);
+      for (const suffix of ["-wal", "-shm", "-journal"]) await secureUnlinkAsync(tmp + suffix);
+    };
+    async function createToFileAsync(outFile, { encryptionKey, rate = 256, flag = "w" } = {}) {
+      const sqlite = (init_sqlite(), __toCommonJS(sqlite_exports));
+      const tmp = tmpName("backup");
+      let method;
+      const t0 = Date.now();
+      let t1;
+      let plainBytes = 0;
+      let written = 0;
+      try {
+        await fs.promises.writeFile(tmp, "", { mode: 384 });
+        if (typeof sqlite.backup === "function" && config2.dbPath !== ":memory:") {
+          method = "sqlite-online-backup";
+          await sqlite.backup(db3.get(), tmp, { rate });
+        } else {
+          method = "vacuum-into";
+          await fs.promises.unlink(tmp);
+          db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+        }
+        try {
+          await fs.promises.chmod(tmp, 384);
+        } catch {
+        }
+        t1 = Date.now();
+        const iv = crypto3.randomBytes(12);
+        const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
+        const src = await fs.promises.open(tmp, "r");
+        let out2 = null;
+        try {
+          out2 = await fs.promises.open(outFile, flag, 384);
+          await out2.write(import_buffer.Buffer.concat([iv, import_buffer.Buffer.alloc(16)]), 0, 28, 0);
+          written = 28;
+          const chunk = import_buffer.Buffer.alloc(SLICE);
+          for (; ; ) {
+            const { bytesRead } = await src.read(chunk, 0, SLICE, plainBytes);
+            if (!bytesRead) break;
+            plainBytes += bytesRead;
+            const enc2 = c.update(chunk.subarray(0, bytesRead));
+            await out2.write(enc2, 0, enc2.length, written);
+            written += enc2.length;
+          }
+          chunk.fill(0);
+          const fin = c.final();
+          if (fin.length) {
+            await out2.write(fin, 0, fin.length, written);
+            written += fin.length;
+          }
+          await out2.write(c.getAuthTag(), 0, 16, 12);
+          await out2.sync();
+        } finally {
+          await src.close().catch(() => {
+          });
+          if (out2) await out2.close().catch(() => {
+          });
+        }
+      } finally {
+        await removeTmp(tmp);
+      }
+      return { bytes: written, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
+    }
+    async function decryptFileAsync(encFile, plainFile, { encryptionKey, escrow } = {}) {
+      const src = await fs.promises.open(encFile, "r");
+      try {
+        const { size } = await src.stat();
+        if (size < 29) throw new Error("That does not look like a SUDS backup file");
+        const head = import_buffer.Buffer.alloc(28);
+        await src.read(head, 0, 28, 0);
+        const iv = head.subarray(0, 12), tag = head.subarray(12, 28);
+        const chunk = import_buffer.Buffer.alloc(SLICE);
+        for (const key of candidateKeys(encryptionKey, escrow)) {
+          const d = crypto3.createDecipheriv("aes-256-gcm", key, iv);
+          d.setAuthTag(tag);
+          const out2 = await fs.promises.open(plainFile, "w", 384);
+          let ok = false;
+          try {
+            let pos = 28;
+            let at = 0;
+            for (; ; ) {
+              const { bytesRead } = await src.read(chunk, 0, SLICE, pos);
+              if (!bytesRead) break;
+              pos += bytesRead;
+              const p = d.update(chunk.subarray(0, bytesRead));
+              await out2.write(p, 0, p.length, at);
+              at += p.length;
+              p.fill(0);
+            }
+            const fin = d.final();
+            if (fin.length) await out2.write(fin, 0, fin.length, at);
+            ok = true;
+          } catch {
+          } finally {
+            await out2.close().catch(() => {
+            });
+            chunk.fill(0);
+          }
+          if (ok) return;
+          await secureUnlinkAsync(plainFile);
+        }
+      } finally {
+        await src.close().catch(() => {
+        });
+      }
+      throw new Error(escrow ? "The backup could not be read with the escrowed keys. Either the key file is not the one for this backup set, or the backup is damaged." : "The backup could not be read. It is either damaged, or it was made with a different encryption key.");
+    }
+    var INSPECT_WORKER = `
+const { parentPort, workerData } = require('node:worker_threads');
+const { DatabaseSync } = require('node:sqlite');
+try {
+  const d = new DatabaseSync(workerData.file, { readOnly: true });
+  try {
+    const integrity = d.prepare('PRAGMA integrity_check').get();
+    const has = (t) => !!d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
+    const count = (t) => (has(t) ? d.prepare('SELECT COUNT(*) n FROM ' + t).get().n : 0);
+    const setting = (k) => (has('settings') ? d.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value : undefined);
+    parentPort.postMessage({ ok: true, integrity: String(integrity.integrity_check || ''), hasSettings: has('settings'), hasClients: has('clients'),
+      schema_version: Number(setting('schema_version') || 0), org_name: setting('org_name') || null,
+      counts: { clients: count('clients'), notes: count('notes'), interventions: count('interventions'), users: count('users'), audit_log: count('audit_log') } });
+  } finally { d.close(); }
+} catch (e) { parentPort.postMessage({ ok: false, error: String(e && e.message || e) }); }
+`;
+    var WorkerCtor;
+    try {
+      WorkerCtor = (init_empty(), __toCommonJS(empty_exports)).Worker;
+    } catch {
+      WorkerCtor = null;
+    }
+    function inspectInWorker(file) {
+      return new Promise((resolve2, reject) => {
+        const w = new WorkerCtor(INSPECT_WORKER, { eval: true, workerData: { file } });
+        let msg = null;
+        w.once("message", (m) => {
+          msg = m;
+        });
+        w.once("error", reject);
+        w.once("exit", (code) => msg ? resolve2(msg) : reject(new Error(`backup verification worker exited (${code})`)));
+      });
+    }
+    async function verifyFileAsync(encFile, opts = {}) {
+      if (typeof WorkerCtor !== "function" || config2.local) return inspect2(decrypt3(fs.readFileSync(encFile), opts));
+      const tmp = tmpName("inspect");
+      try {
+        await decryptFileAsync(encFile, tmp, opts);
+        const { size } = await fs.promises.stat(tmp);
+        const r = await inspectInWorker(tmp);
+        if (!r.ok) throw new Error(r.error);
+        if (r.integrity.toLowerCase() !== "ok") throw new Error("The backup file is damaged.");
+        if (!r.hasSettings || !r.hasClients) throw new Error("That file is not a SUDS backup.");
+        if (r.schema_version > db3.LATEST_SCHEMA_VERSION) throw new Error(`This backup was made by a newer version of SUDS (schema ${r.schema_version}; this build understands ${db3.LATEST_SCHEMA_VERSION}). Upgrade SUDS before restoring it.`);
+        return { schema_version: r.schema_version, org_name: r.org_name, counts: r.counts, bytes: size };
+      } finally {
+        await removeTmp(tmp);
+      }
+    }
+    async function secureUnlinkAsync(file) {
+      let st = null;
+      try {
+        st = await fs.promises.lstat(file);
+      } catch (e) {
+        if (e && e.code === "ENOENT") return false;
+      }
+      if (st && st.isFile() && st.size > 0) {
+        let fh = null;
+        try {
+          fh = await fs.promises.open(file, "r+");
+          const chunk = import_buffer.Buffer.alloc(Math.min(st.size, 4 << 20));
+          for (let off = 0; off < st.size; off += chunk.length) await fh.write(chunk, 0, Math.min(chunk.length, st.size - off), off);
+          await fh.sync();
+        } catch {
+        } finally {
+          if (fh) await fh.close().catch(() => {
+          });
+        }
+      }
+      try {
+        await fs.promises.unlink(file);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    function secureUnlink(file) {
+      let st = null;
+      try {
+        st = fs.lstatSync(file);
+      } catch (e) {
+        if (e && e.code === "ENOENT") return false;
+      }
+      if (st && st.isFile() && st.size > 0) {
+        try {
+          const fd2 = fs.openSync(file, "r+");
+          try {
+            const chunk = import_buffer.Buffer.alloc(Math.min(st.size, 1 << 20));
+            for (let off = 0; off < st.size; off += chunk.length) fs.writeSync(fd2, chunk, 0, Math.min(chunk.length, st.size - off), off);
+            fs.fsyncSync(fd2);
+          } finally {
+            fs.closeSync(fd2);
+          }
+        } catch {
+        }
+      }
+      try {
+        fs.unlinkSync(file);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    function secureRemoveDir(dir) {
+      let n = 0;
+      let entries2 = [];
+      try {
+        entries2 = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return 0;
+      }
+      for (const e of entries2) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) n += secureRemoveDir(p);
+        else if (secureUnlink(p)) n++;
+      }
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+      }
+      return n;
+    }
+    function create3({ encryptionKey } = {}) {
+      const tmp = path.join(config2.dataDir, `.backup-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
+      let plain;
+      try {
+        fs.writeFileSync(tmp, "", { mode: 384 });
+        fs.unlinkSync(tmp);
+        db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
+        try {
+          fs.chmodSync(tmp, 384);
+        } catch {
+        }
+        plain = fs.readFileSync(tmp);
+      } finally {
+        secureUnlink(tmp);
+      }
+      return encryptPlain(plain, { encryptionKey });
+    }
+    function decrypt3(buf, { encryptionKey, escrow } = {}) {
+      if (!import_buffer.Buffer.isBuffer(buf) || buf.length < 29) throw new Error("That does not look like a SUDS backup file");
+      const iv = buf.subarray(0, 12), tag = buf.subarray(12, 28), data = buf.subarray(28);
+      for (const key of candidateKeys(encryptionKey, escrow)) {
+        const d = crypto3.createDecipheriv("aes-256-gcm", key, iv);
+        d.setAuthTag(tag);
+        try {
+          return import_buffer.Buffer.concat([d.update(data), d.final()]);
+        } catch {
+        }
+      }
+      throw new Error(escrow ? "The backup could not be read with the escrowed keys. Either the key file is not the one for this backup set, or the backup is damaged." : "The backup could not be read. It is either damaged, or it was made with a different encryption key.");
+    }
+    function inspect2(plainBytes) {
+      const tmp = path.join(config2.dataDir, `.inspect-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
+      fs.writeFileSync(tmp, plainBytes, { mode: 384 });
+      try {
+        const d = new DatabaseSync2(tmp, { readOnly: true });
+        try {
+          const integrity = d.prepare("PRAGMA integrity_check").get();
+          if ((integrity.integrity_check || "").toLowerCase() !== "ok") throw new Error("The backup file is damaged.");
+          const has = (t) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(t);
+          if (!has("settings") || !has("clients")) throw new Error("That file is not a SUDS backup.");
+          const count = (t) => has(t) ? d.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n : 0;
+          const schemaVersion = Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0);
+          if (schemaVersion > db3.LATEST_SCHEMA_VERSION) throw new Error(`This backup was made by a newer version of SUDS (schema ${schemaVersion}; this build understands ${db3.LATEST_SCHEMA_VERSION}). Upgrade SUDS before restoring it.`);
+          return {
+            schema_version: schemaVersion,
+            org_name: d.prepare(`SELECT value FROM settings WHERE key='org_name'`).get()?.value || null,
+            counts: { clients: count("clients"), notes: count("notes"), interventions: count("interventions"), users: count("users"), audit_log: count("audit_log") },
+            bytes: plainBytes.length
+          };
+        } finally {
+          d.close();
+        }
+      } finally {
+        secureUnlink(tmp);
+        for (const suffix of ["-wal", "-shm", "-journal"]) secureUnlink(tmp + suffix);
+      }
+    }
+    function restore(plainBytes) {
+      const release = require_backup_lock().tryAcquire("restore");
+      if (!release) throw require_backup_lock().busyError(require_backup_lock().current()?.name || "backup", "restore");
+      try {
+        return restoreHeld(plainBytes);
+      } finally {
+        release();
+      }
+    }
+    async function restoreWhenIdle(plainBytes, { waitMs } = {}) {
+      const lock = require_backup_lock();
+      const release = await lock.acquire("restore", { waitMs: waitMs ?? lock.restoreWaitMs, forWhat: "restore" });
+      try {
+        return restoreHeld(plainBytes);
+      } finally {
+        release();
+      }
+    }
+    function copyBytesSync(src, dest) {
+      const a = fs.openSync(src, "r");
+      let b = null;
+      try {
+        b = fs.openSync(dest, "w", 384);
+        const buf = import_buffer.Buffer.alloc(SLICE);
+        for (let pos = 0, n; n = fs.readSync(a, buf, 0, buf.length, pos); pos += n) fs.writeSync(b, buf, 0, n);
+        fs.fsyncSync(b);
+      } finally {
+        fs.closeSync(a);
+        if (b !== null) fs.closeSync(b);
+      }
+    }
+    function restoreHeld(plainBytes) {
+      const info = inspect2(plainBytes);
+      const dbPath = config2.dbPath;
+      if (dbPath === ":memory:") throw new Error("This server is running on an in-memory database; there is nothing to restore into.");
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      const aside = `${dbPath}.before-restore-${stamp2}`;
+      const dropJournal = () => {
+        for (const suffix of ["-wal", "-shm"]) {
+          try {
+            fs.unlinkSync(dbPath + suffix);
+          } catch {
+          }
+        }
+      };
+      const rollBack = (cause) => {
+        try {
+          db3.close();
+        } catch {
+        }
+        try {
+          if (fs.existsSync(aside)) {
+            copyBytesSync(aside, dbPath);
+            dropJournal();
+          }
+        } catch (e) {
+          cause.message += ` (and the previous database could not be put back from ${aside}: ${e.message})`;
+        }
+        try {
+          db3.open();
+        } catch (e) {
+          cause.message += ` (the previous database could not be reopened either: ${e.message})`;
+        }
+      };
+      try {
+        db3.get().exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      } catch (e) {
+        console.warn("[suds] restore: WAL checkpoint before setting the current database aside failed:", e && e.message);
+      }
+      db3.close();
+      try {
+        if (fs.existsSync(dbPath)) copyBytesSync(dbPath, aside);
+        fs.writeFileSync(dbPath, plainBytes, { mode: 384 });
+        dropJournal();
+      } catch (e) {
+        rollBack(e);
+        throw e;
+      }
+      try {
+        db3.open();
+      } catch (e) {
+        rollBack(e);
+        throw new Error(`The backup could not be opened after it was restored, so the previous database was put back: ${e.message}`);
+      }
+      try {
+        const restoredGen = db3.getSetting("db_generation", null) || "initial";
+        db3.setSetting("db_generation", require_crypto().uuid());
+        if (!config2.local) require_audit_anchor().write("restore", { prevGen: restoredGen });
+      } catch (e) {
+        rollBack(e);
+        throw new Error(`The restore could not be completed (${e.message}), so the previous database was put back. Nothing was changed.`);
+      }
+      let kept = aside;
+      try {
+        const sealed = `${aside}.enc`;
+        encryptFileSync(aside, sealed);
+        secureUnlink(aside);
+        kept = sealed;
+      } catch (e) {
+        db3.noteSealError(aside, e);
+        console.warn(`[suds] ${JSON.stringify({ event: "restore.aside_seal_failed", error: String(e && e.message || e).slice(0, 200) })}`);
+      }
+      return { ...info, previous_database_kept_at: kept };
+    }
+    function restoreInPlace(plainBytes, { dbPath = config2.dbPath, by = "cli" } = {}) {
+      if (dbPath === ":memory:") throw new Error("This server is configured with an in-memory database; there is nothing to restore into.");
+      if (db3.isOpen && db3.isOpen()) throw new Error("The database is open in this process: restoreInPlace() is for a stopped server.");
+      const info = inspect2(plainBytes);
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      const dir = path.dirname(dbPath);
+      const side = `${dbPath}.restoring-${stamp2}`;
+      const journals = (f) => ["-wal", "-shm", "-journal"].map((s) => f + s);
+      const fd2 = fs.openSync(side, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 384);
+      try {
+        fs.writeSync(fd2, plainBytes);
+        fs.fsyncSync(fd2);
+      } finally {
+        fs.closeSync(fd2);
+      }
+      try {
+        const d = new DatabaseSync2(side, { readOnly: true });
+        try {
+          const ok = String(Object.values(d.prepare("PRAGMA integrity_check").get())[0]).toLowerCase() === "ok";
+          const v = Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0);
+          if (!ok || v !== info.schema_version) throw new Error("The copy written beside the database does not match the backup (a disk problem?). Nothing was replaced.");
+        } finally {
+          d.close();
+        }
+        for (const j of journals(side)) secureUnlink(j);
+      } catch (e) {
+        secureUnlink(side);
+        for (const j of journals(side)) secureUnlink(j);
+        throw e;
+      }
+      const aside = `${dbPath}.replaced-${stamp2}`;
+      fs.mkdirSync(aside, { mode: 448 });
+      const moved = [];
+      for (const f of [dbPath, ...journals(dbPath)]) {
+        if (fs.existsSync(f)) {
+          fs.renameSync(f, path.join(aside, path.basename(f)));
+          moved.push(path.basename(f));
+        }
+      }
+      fs.renameSync(side, dbPath);
+      for (const j of journals(dbPath)) {
+        try {
+          fs.unlinkSync(j);
+        } catch {
+        }
+      }
+      try {
+        const dfd = fs.openSync(dir, "r");
+        try {
+          fs.fsyncSync(dfd);
+        } finally {
+          fs.closeSync(dfd);
+        }
+      } catch {
+      }
+      db3.open(dbPath);
+      try {
+        const restoredGen = db3.getSetting("db_generation", null) || "initial";
+        db3.setSetting("db_generation", require_crypto().uuid());
+        require_audit().log({ user: { username: by }, action: "backup.restore", details: { mode: "in-place (server stopped)", clients: info.counts.clients, schema_version: info.schema_version, replaced: moved } });
+        if (!config2.local) require_audit_anchor().write("restore", { prevGen: restoredGen });
+      } finally {
+        db3.close();
+      }
+      for (const f of moved) {
+        const p = path.join(aside, f);
+        try {
+          encryptFileSync(p, `${p}.enc`);
+          secureUnlink(p);
+        } catch (e) {
+          db3.noteSealError(p, e);
+          console.warn(`[suds] ${JSON.stringify({ event: "restore.aside_seal_failed", error: String(e && e.message || e).slice(0, 200) })}`);
+        }
+      }
+      return { ...info, replaced_kept_at: moved.length ? aside : null };
+    }
+    module.exports = { create: create3, createAsync, encryptPlain, encryptFileSync, decrypt: decrypt3, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect: inspect2, restore, restoreWhenIdle, restoreInPlace, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
+  }
+});
+
+// server/scheduled-backup.js
+var require_scheduled_backup = __commonJS({
+  "server/scheduled-backup.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var fs = (init_fs(), __toCommonJS(fs_exports));
+    var path = (init_path(), __toCommonJS(path_exports));
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var config2 = require_config();
+    var db3 = require_db();
+    var audit3 = require_audit();
+    var backup = require_backup();
+    var lock = require_backup_lock();
+    var FILE_RE2 = /^suds-\d.*\.db\.enc$/;
+    var SNAP_RE = /^suds-snap-.*\.db\.enc$/;
+    var OFFSITE_MISSING = "offsite directory does not exist (is the share mounted?)";
+    function offsitePlacement(dir) {
+      const real = (p) => {
+        let r;
+        try {
+          r = fs.realpathSync.native(p);
+        } catch {
+          r = path.resolve(p);
+        }
+        return proc.platform === "win32" ? r.toLowerCase() : r;
+      };
+      const within = (child, parent) => child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
+      const a = real(dir);
+      const data = real(config2.dataDir);
+      const inside = within(a, data) || within(data, a);
+      let sameDisk = false;
+      try {
+        sameDisk = !inside && fs.statSync(a).dev === fs.statSync(data).dev;
+      } catch {
+      }
+      return {
+        inside: inside ? "is inside the data directory (or contains it), so it is not an offsite copy: choose a share on another disk or machine" : null,
+        sameDisk: sameDisk ? "is on the same disk as the data, so it is not an offsite copy: a failed disk takes both" : null
+      };
+    }
+    function settings() {
+      const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
+      const retain = Math.max(1, Number(db3.getSetting("backup_retain_count", "14")) || 14);
+      const offsiteDir = db3.getSetting("backup_offsite_dir", "") || "";
+      const minutes = Number(db3.getSetting("backup_schedule_minutes", "0")) || 0;
+      const snapshotRetain = Math.max(1, Number(db3.getSetting("backup_snapshot_retain", "24")) || 24);
+      return { hours, retain, offsiteDir, minutes, snapshotRetain };
+    }
+    function rpo(s = settings()) {
+      const c = [];
+      if (s.hours > 0) c.push({ minutes: s.hours * 60, by: "scheduled backups" });
+      if (s.minutes > 0) c.push({ minutes: s.minutes, by: "online snapshots" });
+      if (!c.length) return null;
+      return c.sort((a, b) => a.minutes - b.minutes)[0];
+    }
+    function firstRunPending(now2 = Date.now()) {
+      const { hours } = settings();
+      if (!hours || db3.getSetting("last_scheduled_backup_at", null)) return null;
+      const row = db3.one(`SELECT updated_at FROM settings WHERE key='backup_schedule_hours'`);
+      const since = Date.parse(row && row.updated_at || "");
+      if (!Number.isFinite(since) || now2 - since >= 2 * hours * 36e5) return null;
+      return { hours, since: row.updated_at, until: new Date(since + 2 * hours * 36e5).toISOString() };
+    }
+    async function runIfDue(now2 = Date.now()) {
+      const { hours, retain, offsiteDir } = settings();
+      if (!hours || lock.paused()) return null;
+      const last = db3.getSetting("last_scheduled_backup_at", null);
+      if (last && now2 - Date.parse(last) < hours * 36e5) return null;
+      return run2({ retain, offsiteDir });
+    }
+    var inFlight = null;
+    function run2(opts = {}) {
+      if (inFlight) return inFlight;
+      inFlight = lock.run("backup", () => runOnce(opts)).finally(() => {
+        inFlight = null;
+      });
+      return inFlight;
+    }
+    function runHeld(opts = {}) {
+      return runOnce(opts);
+    }
+    async function runOnce({ retain = 14, offsiteDir = "" } = {}) {
+      const dir = path.join(config2.dataDir, "backups");
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      const file = path.join(dir, `suds-${stamp2}.db.enc`);
+      let bytes3;
+      let verified = false;
+      let verifyError = null;
+      let kept = 0;
+      let method = null;
+      console.log(`[suds] scheduled backup ${path.basename(file)} starting${offsiteDir ? `, with an offsite copy to ${offsiteDir}` : ""}`);
+      try {
+        fs.mkdirSync(dir, { recursive: true, mode: 448 });
+        prune(dir, Math.max(0, retain - 1));
+        const made = await backup.createToFileAsync(file);
+        bytes3 = made.bytes;
+        method = made.method;
+        try {
+          const info = await backup.verifyFileAsync(file);
+          verified = info.counts.clients >= 0;
+        } catch (e) {
+          verifyError = String(e && e.message || e);
+          console.error("[suds] backup written but could not be read back:", verifyError);
+        }
+      } catch (e) {
+        const reason = e && e.code === "ENOSPC" ? `no space left on the disk holding ${dir}` : String(e && e.message || e);
+        try {
+          fs.unlinkSync(file);
+        } catch {
+        }
+        console.error("[suds] scheduled backup failed:", reason);
+        db3.setSetting("last_scheduled_backup_at", db3.now());
+        db3.setSetting("last_scheduled_backup_status", `failed: ${reason}`);
+        audit3.log({ user: { username: "system" }, action: "backup.scheduled", success: false, details: { error: reason, code: e && e.code || void 0 } });
+        return { file: null, bytes: 0, offsiteOk: null, verified: false, verifyError: reason, failed: true, error: reason };
+      }
+      let offsiteOk = null;
+      let offsiteError = null;
+      let offsiteFile = null;
+      let repaired = 0;
+      if (offsiteDir) {
+        try {
+          let st = null;
+          try {
+            st = await fs.promises.stat(offsiteDir);
+          } catch {
+          }
+          if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
+          const inside = offsitePlacement(offsiteDir).inside;
+          if (inside) throw new Error(`offsite directory ${inside}`);
+          prunePartials(offsiteDir);
+          await copyVerified(file, offsiteDir);
+          offsiteMatched.set(path.join(offsiteDir, path.basename(file)), Date.now());
+          offsiteFile = path.join(offsiteDir, path.basename(file));
+          offsiteOk = true;
+          repaired = await repairOffsite(dir, offsiteDir);
+        } catch (e) {
+          offsiteOk = false;
+          offsiteError = String(e && e.message || e);
+        }
+      }
+      (verified && offsiteOk !== false ? console.log : console.error)(`[suds] scheduled backup ${path.basename(file)}: ${bytes3} bytes, ${verified ? "verified" : "NOT verified"}; offsite ${!offsiteDir ? "not configured" : offsiteOk ? "copied and checked (size and SHA-256)" : `copy FAILED: ${offsiteError}`}${repaired ? `; ${repaired} earlier offsite cop${repaired === 1 ? "y" : "ies"} that did not match copied again` : ""}`);
+      if (!config2.local) require_audit_anchor().safeWrite("backup");
+      kept = prune(dir, retain);
+      db3.setSetting("last_scheduled_backup_at", db3.now());
+      db3.setSetting("last_scheduled_backup_status", !verified ? `backup written but could not be read back \u2014 ${verifyError}` : offsiteDir && offsiteOk === false ? `ok (verified) \u2014 offsite copy failed: ${offsiteError}; local backup kept` : "ok (verified)");
+      audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3, method, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || void 0, offsite_repaired: repaired || void 0, kept, verified } });
+      return { file, bytes: bytes3, method, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, repaired, verified, verifyError };
+    }
+    async function digest(file) {
+      const h = crypto3.createHash("sha256");
+      let bytes3 = 0;
+      for await (const c of fs.createReadStream(file)) {
+        h.update(c);
+        bytes3 += c.length;
+      }
+      return { bytes: bytes3, sha256: h.digest("hex") };
+    }
+    async function copyVerified(src, destDir) {
+      const dest = path.join(destDir, path.basename(src));
+      const tmp = path.join(destDir, `.${path.basename(src)}.${crypto3.randomBytes(4).toString("hex")}.part`);
+      try {
+        const out2 = await fs.promises.open(tmp, "wx", 384);
+        try {
+          for await (const c of fs.createReadStream(src)) await out2.write(c);
+          await out2.sync();
+        } finally {
+          await out2.close();
+        }
+        await fs.promises.rename(tmp, dest);
+      } catch (e) {
+        await fs.promises.rm(tmp, { force: true });
+        throw e;
+      }
+      const [a, b] = await Promise.all([digest(src), digest(dest)]);
+      if (a.bytes === b.bytes && a.sha256 === b.sha256) return b;
+      await fs.promises.rm(dest, { force: true });
+      throw new Error(`the offsite copy of ${path.basename(src)} did not match the backup (${b.bytes} of ${a.bytes} bytes${a.bytes === b.bytes ? ", different SHA-256" : ""}) and was deleted`);
+    }
+    var offsiteMatched = /* @__PURE__ */ new Map();
+    var localSums = /* @__PURE__ */ new Map();
+    var RECHECK_MS = 24 * 36e5;
+    async function repairOffsite(localDir, offsiteDir, now2 = Date.now()) {
+      let n = 0;
+      for (const f of fs.readdirSync(offsiteDir).filter((x) => FILE_RE2.test(x))) {
+        const src = path.join(localDir, f);
+        const dest = path.join(offsiteDir, f);
+        let a;
+        let b;
+        try {
+          a = fs.lstatSync(src);
+          b = fs.lstatSync(dest);
+        } catch {
+          continue;
+        }
+        if (!a.isFile() || !b.isFile() || a.size === b.size && now2 - (offsiteMatched.get(dest) || 0) < RECHECK_MS) continue;
+        if (a.size === b.size) {
+          const id = `${f}:${a.size}:${a.mtimeMs}`;
+          if (!localSums.has(id)) localSums.set(id, (await digest(src)).sha256);
+          if ((await digest(dest)).sha256 === localSums.get(id)) {
+            offsiteMatched.set(dest, now2);
+            continue;
+          }
+        }
+        try {
+          await backup.verifyFileAsync(src);
+        } catch (e) {
+          console.error(`[suds] the offsite copy ${f} does not match its local backup, which no longer reads back either (${e.message}): neither is replaced`);
+          continue;
+        }
+        await copyVerified(src, offsiteDir);
+        offsiteMatched.set(dest, now2);
+        n++;
+      }
+      return n;
+    }
+    function prunePartials(dir, now2 = Date.now()) {
+      let names = [];
+      try {
+        names = fs.readdirSync(dir).filter((x) => /^\.suds-.*\.part$/.test(x));
+      } catch {
+      }
+      for (const f of names) {
+        try {
+          const s = fs.lstatSync(path.join(dir, f));
+          if (s.isFile() && now2 - s.mtimeMs > RECHECK_MS) fs.unlinkSync(path.join(dir, f));
+        } catch {
+        }
+      }
+    }
+    function newest(dir) {
+      let names;
+      try {
+        names = fs.readdirSync(dir).filter((f) => FILE_RE2.test(f)).sort();
+      } catch (e) {
+        return { error: e.code || e.message };
+      }
+      for (let i = names.length - 1; i >= 0; i--) {
+        try {
+          const s = fs.lstatSync(path.join(dir, names[i]));
+          if (s.isFile()) return { newest: { file: names[i], mtime: s.mtimeMs, size: s.size }, count: names.length };
+        } catch {
+        }
+      }
+      return { newest: null, count: names.length };
+    }
+    function copyProblem(name, size) {
+      if (!size) return `the offsite copy ${name} is empty (0 bytes): it is not a backup`;
+      let local = null;
+      try {
+        local = fs.lstatSync(path.join(config2.dataDir, "backups", name)).size;
+      } catch {
+      }
+      return local !== null && local !== size ? `the offsite copy ${name} is ${size} bytes, but the local backup of that name is ${local} bytes` : null;
+    }
+    async function snapshotIfDue(now2 = Date.now()) {
+      const s = settings();
+      if (!s.minutes || lock.current() || lock.paused()) return null;
+      const last = db3.getSetting("last_snapshot_at", null);
+      if (last && now2 - Date.parse(last) < s.minutes * 6e4) return null;
+      return snapshot(s);
+    }
+    async function snapshot(s = settings()) {
+      const release = lock.tryAcquire("snapshot");
+      if (!release) return null;
+      const localDir = path.join(config2.dataDir, "backups");
+      let target = localDir;
+      let where = "local";
+      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
+      let file = null;
+      try {
+        if (s.offsiteDir) {
+          let st = null;
+          try {
+            st = fs.statSync(s.offsiteDir);
+          } catch {
+          }
+          if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
+          target = s.offsiteDir;
+          where = "offsite";
+        } else fs.mkdirSync(localDir, { recursive: true, mode: 448 });
+        file = path.join(target, `suds-snap-${stamp2}.db.enc`);
+        const made = await backup.createToFileAsync(file, { flag: "wx" });
+        const kept = pruneMatching(target, SNAP_RE, s.snapshotRetain);
+        db3.setSetting("last_snapshot_at", db3.now());
+        db3.setSetting("last_snapshot_status", `ok (${where}; ${made.method}; ${Math.round(made.bytes / 1024)} KB in ${made.copy_ms + made.encrypt_ms} ms)`);
+        return { file, where, kept, bytes: made.bytes, method: made.method, copy_ms: made.copy_ms, encrypt_ms: made.encrypt_ms };
+      } catch (e) {
+        const reason = e && e.code === "ENOSPC" ? `no space left on the disk holding ${target}` : String(e && e.message || e);
+        if (file) {
+          try {
+            fs.unlinkSync(file);
+          } catch {
+          }
+        }
+        console.error("[suds] snapshot failed:", reason);
+        const prev = db3.getSetting("last_snapshot_status", "") || "";
+        db3.setSetting("last_snapshot_at", db3.now());
+        db3.setSetting("last_snapshot_status", `failed: ${reason}`);
+        if (!/^failed/.test(prev)) audit3.log({ user: { username: "system" }, action: "backup.snapshot.failed", success: false, details: { error: reason.slice(0, 300) } });
+        return { file: null, failed: true, error: reason };
+      } finally {
+        release();
+      }
+    }
+    function pruneMatching(dir, re, retain) {
+      const files = fs.readdirSync(dir).filter((f) => re.test(f)).sort();
+      const excess = files.length - retain;
+      if (excess > 0) for (const f of files.slice(0, excess)) {
+        try {
+          fs.unlinkSync(path.join(dir, f));
+        } catch {
+        }
+      }
+      return Math.min(files.length, retain);
+    }
+    function prune(dir, retain) {
+      const files = fs.readdirSync(dir).filter((f) => FILE_RE2.test(f)).sort();
+      const excess = files.length - retain;
+      if (excess > 0) for (const f of files.slice(0, excess)) {
+        try {
+          fs.unlinkSync(path.join(dir, f));
+        } catch {
+        }
+      }
+      return Math.min(files.length, retain);
+    }
+    module.exports = { runIfDue, run: run2, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, copyVerified, repairOffsite, prunePartials, offsitePlacement, newest, copyProblem, FILE_RE: FILE_RE2, SNAP_RE };
   }
 });
 
@@ -22227,1293 +23591,6 @@ ${rows}
   }
 });
 
-// local/shims/empty.js
-var empty_exports = {};
-__export(empty_exports, {
-  default: () => empty_default
-});
-var empty_default;
-var init_empty = __esm({
-  "local/shims/empty.js"() {
-    init_globals_inject();
-    empty_default = {};
-  }
-});
-
-// server/backup-lock.js
-var require_backup_lock = __commonJS({
-  "server/backup-lock.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var WHAT = {
-      backup: "A scheduled backup is running",
-      snapshot: "An online snapshot of the database is being taken",
-      "dr-drill": "A recovery drill is running",
-      restore: "A restore is running"
-    };
-    var holder = null;
-    var queue = [];
-    function busyError(name, forWhat) {
-      const e = new Error(`${WHAT[name] || `${name} is running`}; the ${forWhat || "operation"} was not started. Try again when it has finished.`);
-      e.code = "EBUSY";
-      e.holder = name;
-      return e;
-    }
-    function grantNext() {
-      holder = null;
-      const next = queue.shift();
-      if (next) next.grant();
-    }
-    function makeRelease(name) {
-      let done = false;
-      return () => {
-        if (done) return;
-        done = true;
-        if (holder && holder.name === name) grantNext();
-      };
-    }
-    function tryAcquire(name) {
-      if (holder || queue.length) return null;
-      holder = { name, since: Date.now() };
-      return makeRelease(name);
-    }
-    function acquire(name, { waitMs = Infinity, forWhat } = {}) {
-      const now2 = tryAcquire(name);
-      if (now2) return Promise.resolve(now2);
-      return new Promise((resolve2, reject) => {
-        let timer = null;
-        const entry = { name, grant: () => {
-          if (timer) clearTimeout(timer);
-          holder = { name, since: Date.now() };
-          resolve2(makeRelease(name));
-        } };
-        queue.push(entry);
-        if (Number.isFinite(waitMs)) {
-          timer = setTimeout(() => {
-            const i = queue.indexOf(entry);
-            if (i < 0) return;
-            queue.splice(i, 1);
-            reject(busyError(holder ? holder.name : "backup", forWhat));
-          }, Math.max(0, waitMs));
-          if (timer.unref) timer.unref();
-        }
-      });
-    }
-    async function run2(name, fn, opts) {
-      const release = await acquire(name, opts);
-      try {
-        return await fn();
-      } finally {
-        release();
-      }
-    }
-    function current2() {
-      return holder ? { ...holder } : null;
-    }
-    function paused() {
-      return !!holder && holder.name === "restore" || queue.some((q) => q.name === "restore");
-    }
-    module.exports = {
-      tryAcquire,
-      acquire,
-      run: run2,
-      current: current2,
-      paused,
-      busyError,
-      // How long a restore from the Administration page waits for work in flight before it is refused with a 409.
-      // A scheduled backup of a county-sized database takes seconds to a minute; a recovery drill can take longer.
-      restoreWaitMs: 12e4
-    };
-  }
-});
-
-// local/shims/os.js
-var os_exports = {};
-__export(os_exports, {
-  default: () => os_default,
-  hostname: () => hostname,
-  networkInterfaces: () => networkInterfaces
-});
-function hostname() {
-  return "this-device";
-}
-function networkInterfaces() {
-  return {};
-}
-var os_default;
-var init_os = __esm({
-  "local/shims/os.js"() {
-    init_globals_inject();
-    os_default = { hostname, networkInterfaces };
-  }
-});
-
-// server/audit-anchor.js
-var require_audit_anchor = __commonJS({
-  "server/audit-anchor.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var fs = (init_fs(), __toCommonJS(fs_exports));
-    var path = (init_path(), __toCommonJS(path_exports));
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var config2 = require_config();
-    var db3 = require_db();
-    var FILE_RE2 = /^anchor-.*\.json$/;
-    var keyId = (key = config2.indexKey) => crypto3.createHmac("sha256", key).update("suds-audit-anchor-key-id").digest("hex").slice(0, 16);
-    var FIELDS = ["v", "kind", "at", "reason", "install", "gen", "prev_gen", "head_id", "head_hash", "first_id", "rows", "host", "key_id", "prev_mac"];
-    var installId = () => db3.getSetting("audit_anchor_install", null);
-    var generation = () => db3.getSetting("db_generation", null) || "initial";
-    function canonical(a) {
-      const o = {};
-      for (const k of FIELDS) o[k] = a[k] === void 0 ? null : a[k];
-      return JSON.stringify(o);
-    }
-    function macOf(a, key = config2.indexKey) {
-      return crypto3.createHmac("sha256", key).update(canonical(a)).digest("hex");
-    }
-    function macOk(a, key = config2.indexKey) {
-      if (typeof a.mac !== "string") return false;
-      const want = macOf(a, key);
-      return want.length === a.mac.length && crypto3.timingSafeEqual(import_buffer.Buffer.from(want), import_buffer.Buffer.from(a.mac));
-    }
-    function dir() {
-      return config2.auditAnchorDir;
-    }
-    function list(d = dir()) {
-      let names = [];
-      try {
-        names = fs.readdirSync(d).filter((f) => FILE_RE2.test(f)).sort();
-      } catch {
-        return [];
-      }
-      return names.map((file) => {
-        try {
-          return { file, anchor: JSON.parse(fs.readFileSync(path.join(d, file), "utf8")) };
-        } catch (e) {
-          return { file, error: String(e.message || e) };
-        }
-      });
-    }
-    var real = (p) => {
-      try {
-        return fs.realpathSync(p);
-      } catch {
-        return path.resolve(p);
-      }
-    };
-    var within = (child, parent) => child === parent || child.startsWith(parent + path.sep);
-    function dirStatus(d = dir()) {
-      let exists3 = false;
-      let writable = false;
-      try {
-        exists3 = fs.statSync(d).isDirectory();
-      } catch {
-      }
-      if (exists3) {
-        try {
-          fs.accessSync(d, fs.constants.W_OK);
-          writable = true;
-        } catch {
-        }
-      }
-      const a = real(d);
-      const data = real(config2.dataDir);
-      return { dir: d, configured: config2.auditAnchorDirConfigured, exists: exists3, writable, inside_data_dir: within(a, data) || within(data, a) };
-    }
-    function placementProblem(d = dir()) {
-      if (!config2.isProd) return null;
-      const st = dirStatus(d);
-      if (!st.configured) return `AUDIT_ANCHOR_DIR is not set, so audit anchors are written to ${d}, inside the data directory on the same disk as the database they are meant to check. Point AUDIT_ANCHOR_DIR at write-once (WORM) storage outside the data directory (docs/security/LOGGING-AND-AUDIT.md).`;
-      if (st.inside_data_dir) return `AUDIT_ANCHOR_DIR (${d}) is inside the data directory (or contains it), so a rewrite of the data directory rewrites the anchors too. Point it at write-once (WORM) storage outside the data directory (docs/security/LOGGING-AND-AUDIT.md).`;
-      return null;
-    }
-    function write(reason = "manual", { key = config2.indexKey, d = dir(), prevGen = null } = {}) {
-      const head = db3.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
-      if (!head) return null;
-      const first = db3.one(`SELECT MIN(id) m FROM audit_log`).m;
-      const rows = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, head.id).n;
-      if (!config2.auditAnchorDirConfigured || d !== config2.auditAnchorDir) fs.mkdirSync(d, { recursive: true, mode: 448 });
-      else if (!dirStatus(d).exists) throw new Error(`the audit anchor directory ${d} does not exist (is the share mounted?)`);
-      let install = installId();
-      if (!install) {
-        install = require_crypto().uuid();
-        db3.setSetting("audit_anchor_install", install);
-      }
-      const all = list(d);
-      const prev = all.filter((x) => x.anchor && x.anchor.install === install).pop();
-      const newest = all.filter((x) => x.anchor && typeof x.anchor.at === "string").map((x) => Date.parse(x.anchor.at)).filter(Number.isFinite);
-      const floor = newest.length ? Math.max(...newest) + 1 : 0;
-      let atMs = Math.max(Date.now(), floor);
-      let a;
-      let file;
-      for (let attempt = 0; ; attempt++, atMs++) {
-        a = { v: 1, kind: "suds-audit-anchor", at: new Date(atMs).toISOString(), reason, install, gen: generation(), prev_gen: prevGen, head_id: head.id, head_hash: head.hash, first_id: first, rows, host: (init_os(), __toCommonJS(os_exports)).hostname(), key_id: keyId(key), prev_mac: prev ? prev.anchor.mac || null : null };
-        a.mac = macOf(a, key);
-        file = path.join(d, `anchor-${a.at.replace(/[:.]/g, "-")}-${String(head.id).padStart(12, "0")}.json`);
-        try {
-          fs.writeFileSync(file, JSON.stringify(a) + "\n", { flag: "wx", mode: 384 });
-          break;
-        } catch (e) {
-          if (e.code !== "EEXIST" || attempt >= 50) throw e;
-        }
-      }
-      try {
-        fs.chmodSync(file, 256);
-      } catch {
-      }
-      db3.setSetting("audit_anchor_last_at", a.at);
-      db3.setSetting("audit_anchor_last_status", "ok");
-      console.log(`[suds] audit anchor id=${a.head_id} rows=${a.rows} hash=${a.head_hash} mac=${a.mac} reason=${reason}`);
-      sendSyslog(a);
-      return { ...a, file: path.basename(file) };
-    }
-    function sendSyslog(a) {
-      if (!config2.auditSyslog) return;
-      try {
-        const m = String(config2.auditSyslog).match(/^(?:udp:\/\/)?\[?([^\]]+?)\]?(?::(\d+))?$/);
-        if (!m) return;
-        const host = m[1];
-        const port = Number(m[2] || 514);
-        const dgram = (init_empty(), __toCommonJS(empty_exports));
-        const sock = dgram.createSocket(host.includes(":") ? "udp6" : "udp4");
-        const msg = import_buffer.Buffer.from(`<110>1 ${a.at} ${a.host} suds - audit-anchor - ${JSON.stringify(a)}`);
-        sock.send(msg, port, host, () => {
-          try {
-            sock.close();
-          } catch {
-          }
-        });
-        if (sock.unref) sock.unref();
-      } catch (e) {
-        console.error("[suds] audit anchor syslog send failed:", e.message);
-      }
-    }
-    function runIfDue(now2 = Date.now()) {
-      const hours = config2.auditAnchorHours;
-      if (!(hours > 0)) return null;
-      const last = db3.getSetting("audit_anchor_last_at", null);
-      if (last && now2 - Date.parse(last) < hours * 36e5 - 5 * 6e4) return null;
-      return safeWrite("schedule");
-    }
-    function firstAnchorAtStart() {
-      if (!(config2.auditAnchorHours > 0) || db3.getSetting("audit_anchor_last_at", null)) return null;
-      return safeWrite("first-start");
-    }
-    function safeWrite(reason, opts = {}) {
-      try {
-        return write(reason, opts);
-      } catch (e) {
-        const msg = String(e.message || e);
-        console.error("[suds] audit anchor could not be written:", msg);
-        db3.setSetting("audit_anchor_last_status", `failed: ${msg}`);
-        try {
-          require_audit().log({ user: { username: "system" }, action: "audit.anchor.failed", success: false, details: { reason, error: msg.slice(0, 300) } });
-        } catch (e2) {
-          console.error("[suds] the audit entry for that failure could not be written either:", e2 && e2.message);
-        }
-        return null;
-      }
-    }
-    function verify({ key = config2.indexKey, d = dir(), tolerateNewer = false } = {}) {
-      const files = list(d);
-      const out2 = { dir: d, total: files.length, matched: 0, other_key: 0, other_install: 0, other_generation: 0, purged: 0, newer: 0, bad: [], last_anchor_at: null };
-      const install = installId();
-      const gen = generation();
-      const kid = keyId(key);
-      const bounds = db3.one(`SELECT MIN(id) mn, MAX(id) mx FROM audit_log`);
-      const minId = bounds.mn || 0;
-      const maxId = bounds.mx || 0;
-      let purgedThrough = null;
-      const purged = () => {
-        if (purgedThrough === null) {
-          purgedThrough = 0;
-          for (const r of db3.all(`SELECT details FROM audit_log WHERE action='audit.purge'`)) {
-            try {
-              purgedThrough = Math.max(purgedThrough, Number(JSON.parse(r.details).last_purged_id) || 0);
-            } catch {
-            }
-          }
-        }
-        return purgedThrough;
-      };
-      const mine = files.filter((f) => f.anchor && f.anchor.install === install);
-      const newest = mine.filter((f) => f.anchor.key_id === kid && f.anchor.gen === gen).pop();
-      const restores = /* @__PURE__ */ new Map();
-      for (const f of mine) if (f.anchor.reason === "restore" && f.anchor.key_id === kid && macOk(f.anchor, key) && !restores.has(f.anchor.gen)) restores.set(f.anchor.gen, f.anchor);
-      const boundFor = (g) => {
-        let bound = Infinity;
-        let cur = gen;
-        const seen2 = /* @__PURE__ */ new Set();
-        while (cur !== g) {
-          const r = restores.get(cur);
-          if (!r || seen2.has(cur)) return null;
-          seen2.add(cur);
-          bound = Math.min(bound, r.head_id);
-          cur = r.prev_gen || "initial";
-        }
-        return bound;
-      };
-      let prevMac = null;
-      let first = true;
-      for (const f of files) {
-        const bad = (reason) => out2.bad.push({ file: f.file, head_id: f.anchor ? f.anchor.head_id : null, reason });
-        if (!f.anchor) {
-          bad(`unreadable: ${f.error}`);
-          prevMac = void 0;
-          first = false;
-          continue;
-        }
-        const a = f.anchor;
-        if (!install || a.install !== install) {
-          out2.other_install++;
-          continue;
-        }
-        out2.last_anchor_at = a.at || out2.last_anchor_at;
-        if (!first && prevMac !== void 0 && a.prev_mac !== prevMac) bad("the anchor before this one is missing or was replaced (the sequence of anchor files is broken)");
-        first = false;
-        prevMac = a.mac;
-        if (a.key_id !== kid) {
-          out2.other_key++;
-          continue;
-        }
-        if (!macOk(a, key)) {
-          bad("the anchor file does not verify (it was altered, or was not written by this server)");
-          continue;
-        }
-        if (a.gen !== gen) {
-          const bound = boundFor(a.gen);
-          if (bound === null && !tolerateNewer) {
-            bad("the database has been replaced since this anchor (its generation changed) but no restore was anchored");
-            continue;
-          }
-          if (bound === null || a.head_id > bound) {
-            out2.other_generation++;
-            continue;
-          }
-        }
-        const row = db3.one(`SELECT id, hash FROM audit_log WHERE id=?`, a.head_id);
-        if (!row) {
-          if (a.head_id > maxId) {
-            if (tolerateNewer) out2.newer++;
-            else bad(`the audit log now ends at entry ${maxId}, before this anchor's entry ${a.head_id}: newer entries were removed`);
-            continue;
-          }
-          if (a.head_id < minId && a.head_id <= purged()) {
-            out2.purged++;
-            continue;
-          }
-          bad(`entry ${a.head_id} recorded by this anchor is missing${a.head_id < minId ? " and no retention purge accounts for it" : ""}`);
-          continue;
-        }
-        if (row.hash !== a.head_hash) {
-          bad(`entry ${a.head_id} no longer has the hash this anchor recorded: the chain was rewritten`);
-          continue;
-        }
-        if (f === newest && a.first_id === minId) {
-          const n = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, a.head_id).n;
-          if (n !== a.rows) {
-            bad(`${a.rows - n} entr${Math.abs(a.rows - n) === 1 ? "y" : "ies"} at or before entry ${a.head_id} ${n < a.rows ? "were removed" : "were inserted"} since this anchor`);
-            continue;
-          }
-        }
-        out2.matched++;
-      }
-      out2.ok = out2.bad.length === 0;
-      return out2;
-    }
-    function verifyAndRecord() {
-      const r = verify();
-      db3.setSetting("audit_anchor_verified_at", db3.now());
-      db3.setSetting("audit_anchor_verify_status", r.ok ? `ok: ${r.matched} matched${r.purged ? `, ${r.purged} before a retention purge` : ""}${r.other_key ? `, ${r.other_key} under an earlier index key` : ""}${r.other_generation ? `, ${r.other_generation} from before a restore` : ""}${r.other_install ? `, ${r.other_install} from another installation` : ""} of ${r.total}` : `FAILED: ${r.bad[0].reason} (${r.bad[0].file})`);
-      if (!r.ok) {
-        console.error(`[suds] AUDIT ANCHOR MISMATCH: ${r.bad.length} anchor(s) do not match the audit log \u2014 ${r.bad[0].reason}`);
-        try {
-          require_audit().log({ user: { username: "system" }, action: "audit.anchor.verify.failed", success: false, details: { bad: r.bad.slice(0, 20), total: r.total } });
-        } catch (e) {
-          console.error("[suds] the audit entry for the anchor mismatch could not be written:", e && e.message);
-        }
-        try {
-          require_incidents().draft({
-            source: "audit_chain",
-            sourceRef: "audit_anchor",
-            title: "Audit log does not match its external anchors",
-            description: `${r.bad.length} audit anchor(s) written outside the database do not match the audit log (${r.bad[0].reason}). Establish whether audit entries were altered, rebuilt or removed, and whether that concealed access to client records.`
-          });
-        } catch (e) {
-          console.error("[suds] could not open an incident for the anchor mismatch:", e.message);
-        }
-      }
-      return r;
-    }
-    module.exports = { write, safeWrite, runIfDue, firstAnchorAtStart, verify, verifyAndRecord, list, dirStatus, placementProblem, keyId, macOf, macOk, canonical, FIELDS };
-  }
-});
-
-// server/backup.js
-var require_backup = __commonJS({
-  "server/backup.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var fs = (init_fs(), __toCommonJS(fs_exports));
-    var path = (init_path(), __toCommonJS(path_exports));
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var { DatabaseSync: DatabaseSync2 } = (init_sqlite(), __toCommonJS(sqlite_exports));
-    var config2 = require_config();
-    var db3 = require_db();
-    function backupKey(encryptionKey) {
-      if (!encryptionKey && config2.backupKey) return fromBackupKey(config2.backupKey);
-      return crypto3.createHash("sha256").update(import_buffer.Buffer.concat([encryptionKey || config2.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest();
-    }
-    var fromBackupKey = (raw) => crypto3.createHash("sha256").update(import_buffer.Buffer.concat([raw, import_buffer.Buffer.from("suds-backup-key")])).digest();
-    function candidateKeys(encryptionKey, escrow) {
-      if (escrow) {
-        const out3 = [];
-        if (escrow.backupKey) out3.push(fromBackupKey(escrow.backupKey));
-        if (escrow.encryptionKey) out3.push(backupKey(escrow.encryptionKey));
-        return out3;
-      }
-      if (encryptionKey) return [backupKey(encryptionKey)];
-      const out2 = [];
-      if (config2.backupKey) out2.push(backupKey());
-      out2.push(crypto3.createHash("sha256").update(import_buffer.Buffer.concat([config2.encryptionKey, import_buffer.Buffer.from("suds-backup")])).digest());
-      return out2;
-    }
-    function encryptPlain(plain, { encryptionKey } = {}) {
-      const iv = crypto3.randomBytes(12);
-      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
-      const body = import_buffer.Buffer.concat([c.update(plain), c.final()]);
-      return import_buffer.Buffer.concat([iv, c.getAuthTag(), body]);
-    }
-    function encryptFileSync(srcFile, outFile, { encryptionKey } = {}) {
-      const iv = crypto3.randomBytes(12);
-      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
-      const src = fs.openSync(srcFile, "r");
-      let out2 = null;
-      let written = 0;
-      let pos = 0;
-      try {
-        out2 = fs.openSync(outFile, "wx", 384);
-        fs.writeSync(out2, import_buffer.Buffer.concat([iv, import_buffer.Buffer.alloc(16)]), 0, 28, 0);
-        written = 28;
-        const chunk = import_buffer.Buffer.alloc(4 << 20);
-        for (; ; ) {
-          const n = fs.readSync(src, chunk, 0, chunk.length, pos);
-          if (!n) break;
-          pos += n;
-          const enc2 = c.update(chunk.subarray(0, n));
-          fs.writeSync(out2, enc2, 0, enc2.length, written);
-          written += enc2.length;
-        }
-        chunk.fill(0);
-        const fin = c.final();
-        if (fin.length) {
-          fs.writeSync(out2, fin, 0, fin.length, written);
-          written += fin.length;
-        }
-        fs.writeSync(out2, c.getAuthTag(), 0, 16, 12);
-        fs.fsyncSync(out2);
-      } catch (e) {
-        if (out2 !== null) {
-          try {
-            fs.closeSync(out2);
-          } catch {
-          }
-          out2 = null;
-          try {
-            fs.unlinkSync(outFile);
-          } catch {
-          }
-        }
-        throw e;
-      } finally {
-        fs.closeSync(src);
-        if (out2 !== null) fs.closeSync(out2);
-      }
-      return written;
-    }
-    async function createAsync({ encryptionKey, rate = 256 } = {}) {
-      const sqlite = (init_sqlite(), __toCommonJS(sqlite_exports));
-      const tmp = path.join(config2.dataDir, `.backup-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
-      let plain;
-      let method;
-      const t0 = Date.now();
-      let t1;
-      try {
-        fs.writeFileSync(tmp, "", { mode: 384 });
-        if (typeof sqlite.backup === "function" && config2.dbPath !== ":memory:") {
-          method = "sqlite-online-backup";
-          await sqlite.backup(db3.get(), tmp, { rate });
-        } else {
-          method = "vacuum-into";
-          fs.unlinkSync(tmp);
-          db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
-        }
-        try {
-          fs.chmodSync(tmp, 384);
-        } catch {
-        }
-        t1 = Date.now();
-        plain = await fs.promises.readFile(tmp);
-      } finally {
-        await secureUnlinkAsync(tmp);
-        for (const suffix of ["-wal", "-shm", "-journal"]) await secureUnlinkAsync(tmp + suffix);
-      }
-      const iv = crypto3.randomBytes(12);
-      const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
-      const parts = [];
-      const SLICE2 = 4 << 20;
-      for (let off = 0; off < plain.length; off += SLICE2) {
-        parts.push(c.update(plain.subarray(off, Math.min(off + SLICE2, plain.length))));
-        await new Promise((resolve2) => globalThis.setImmediate ? globalThis.setImmediate(resolve2) : setTimeout(resolve2, 0));
-      }
-      parts.push(c.final());
-      const bytes3 = import_buffer.Buffer.concat([iv, c.getAuthTag(), ...parts]);
-      const plainBytes = plain.length;
-      plain.fill(0);
-      return { bytes: bytes3, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
-    }
-    var SLICE = 4 << 20;
-    var tmpName = (kind) => path.join(config2.dataDir, `.${kind}-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
-    var removeTmp = async (tmp) => {
-      await secureUnlinkAsync(tmp);
-      for (const suffix of ["-wal", "-shm", "-journal"]) await secureUnlinkAsync(tmp + suffix);
-    };
-    async function createToFileAsync(outFile, { encryptionKey, rate = 256, flag = "w" } = {}) {
-      const sqlite = (init_sqlite(), __toCommonJS(sqlite_exports));
-      const tmp = tmpName("backup");
-      let method;
-      const t0 = Date.now();
-      let t1;
-      let plainBytes = 0;
-      let written = 0;
-      try {
-        await fs.promises.writeFile(tmp, "", { mode: 384 });
-        if (typeof sqlite.backup === "function" && config2.dbPath !== ":memory:") {
-          method = "sqlite-online-backup";
-          await sqlite.backup(db3.get(), tmp, { rate });
-        } else {
-          method = "vacuum-into";
-          await fs.promises.unlink(tmp);
-          db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
-        }
-        try {
-          await fs.promises.chmod(tmp, 384);
-        } catch {
-        }
-        t1 = Date.now();
-        const iv = crypto3.randomBytes(12);
-        const c = crypto3.createCipheriv("aes-256-gcm", backupKey(encryptionKey), iv);
-        const src = await fs.promises.open(tmp, "r");
-        let out2 = null;
-        try {
-          out2 = await fs.promises.open(outFile, flag, 384);
-          await out2.write(import_buffer.Buffer.concat([iv, import_buffer.Buffer.alloc(16)]), 0, 28, 0);
-          written = 28;
-          const chunk = import_buffer.Buffer.alloc(SLICE);
-          for (; ; ) {
-            const { bytesRead } = await src.read(chunk, 0, SLICE, plainBytes);
-            if (!bytesRead) break;
-            plainBytes += bytesRead;
-            const enc2 = c.update(chunk.subarray(0, bytesRead));
-            await out2.write(enc2, 0, enc2.length, written);
-            written += enc2.length;
-          }
-          chunk.fill(0);
-          const fin = c.final();
-          if (fin.length) {
-            await out2.write(fin, 0, fin.length, written);
-            written += fin.length;
-          }
-          await out2.write(c.getAuthTag(), 0, 16, 12);
-          await out2.sync();
-        } finally {
-          await src.close().catch(() => {
-          });
-          if (out2) await out2.close().catch(() => {
-          });
-        }
-      } finally {
-        await removeTmp(tmp);
-      }
-      return { bytes: written, method, copy_ms: t1 - t0, encrypt_ms: Date.now() - t1, plain_bytes: plainBytes };
-    }
-    async function decryptFileAsync(encFile, plainFile, { encryptionKey, escrow } = {}) {
-      const src = await fs.promises.open(encFile, "r");
-      try {
-        const { size } = await src.stat();
-        if (size < 29) throw new Error("That does not look like a SUDS backup file");
-        const head = import_buffer.Buffer.alloc(28);
-        await src.read(head, 0, 28, 0);
-        const iv = head.subarray(0, 12), tag = head.subarray(12, 28);
-        const chunk = import_buffer.Buffer.alloc(SLICE);
-        for (const key of candidateKeys(encryptionKey, escrow)) {
-          const d = crypto3.createDecipheriv("aes-256-gcm", key, iv);
-          d.setAuthTag(tag);
-          const out2 = await fs.promises.open(plainFile, "w", 384);
-          let ok = false;
-          try {
-            let pos = 28;
-            let at = 0;
-            for (; ; ) {
-              const { bytesRead } = await src.read(chunk, 0, SLICE, pos);
-              if (!bytesRead) break;
-              pos += bytesRead;
-              const p = d.update(chunk.subarray(0, bytesRead));
-              await out2.write(p, 0, p.length, at);
-              at += p.length;
-              p.fill(0);
-            }
-            const fin = d.final();
-            if (fin.length) await out2.write(fin, 0, fin.length, at);
-            ok = true;
-          } catch {
-          } finally {
-            await out2.close().catch(() => {
-            });
-            chunk.fill(0);
-          }
-          if (ok) return;
-          await secureUnlinkAsync(plainFile);
-        }
-      } finally {
-        await src.close().catch(() => {
-        });
-      }
-      throw new Error(escrow ? "The backup could not be read with the escrowed keys. Either the key file is not the one for this backup set, or the backup is damaged." : "The backup could not be read. It is either damaged, or it was made with a different encryption key.");
-    }
-    var INSPECT_WORKER = `
-const { parentPort, workerData } = require('node:worker_threads');
-const { DatabaseSync } = require('node:sqlite');
-try {
-  const d = new DatabaseSync(workerData.file, { readOnly: true });
-  try {
-    const integrity = d.prepare('PRAGMA integrity_check').get();
-    const has = (t) => !!d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
-    const count = (t) => (has(t) ? d.prepare('SELECT COUNT(*) n FROM ' + t).get().n : 0);
-    const setting = (k) => (has('settings') ? d.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value : undefined);
-    parentPort.postMessage({ ok: true, integrity: String(integrity.integrity_check || ''), hasSettings: has('settings'), hasClients: has('clients'),
-      schema_version: Number(setting('schema_version') || 0), org_name: setting('org_name') || null,
-      counts: { clients: count('clients'), notes: count('notes'), interventions: count('interventions'), users: count('users'), audit_log: count('audit_log') } });
-  } finally { d.close(); }
-} catch (e) { parentPort.postMessage({ ok: false, error: String(e && e.message || e) }); }
-`;
-    var WorkerCtor;
-    try {
-      WorkerCtor = (init_empty(), __toCommonJS(empty_exports)).Worker;
-    } catch {
-      WorkerCtor = null;
-    }
-    function inspectInWorker(file) {
-      return new Promise((resolve2, reject) => {
-        const w = new WorkerCtor(INSPECT_WORKER, { eval: true, workerData: { file } });
-        let msg = null;
-        w.once("message", (m) => {
-          msg = m;
-        });
-        w.once("error", reject);
-        w.once("exit", (code) => msg ? resolve2(msg) : reject(new Error(`backup verification worker exited (${code})`)));
-      });
-    }
-    async function verifyFileAsync(encFile, opts = {}) {
-      if (typeof WorkerCtor !== "function" || config2.local) return inspect2(decrypt3(fs.readFileSync(encFile), opts));
-      const tmp = tmpName("inspect");
-      try {
-        await decryptFileAsync(encFile, tmp, opts);
-        const { size } = await fs.promises.stat(tmp);
-        const r = await inspectInWorker(tmp);
-        if (!r.ok) throw new Error(r.error);
-        if (r.integrity.toLowerCase() !== "ok") throw new Error("The backup file is damaged.");
-        if (!r.hasSettings || !r.hasClients) throw new Error("That file is not a SUDS backup.");
-        if (r.schema_version > db3.LATEST_SCHEMA_VERSION) throw new Error(`This backup was made by a newer version of SUDS (schema ${r.schema_version}; this build understands ${db3.LATEST_SCHEMA_VERSION}). Upgrade SUDS before restoring it.`);
-        return { schema_version: r.schema_version, org_name: r.org_name, counts: r.counts, bytes: size };
-      } finally {
-        await removeTmp(tmp);
-      }
-    }
-    async function secureUnlinkAsync(file) {
-      let st = null;
-      try {
-        st = await fs.promises.lstat(file);
-      } catch (e) {
-        if (e && e.code === "ENOENT") return false;
-      }
-      if (st && st.isFile() && st.size > 0) {
-        let fh = null;
-        try {
-          fh = await fs.promises.open(file, "r+");
-          const chunk = import_buffer.Buffer.alloc(Math.min(st.size, 4 << 20));
-          for (let off = 0; off < st.size; off += chunk.length) await fh.write(chunk, 0, Math.min(chunk.length, st.size - off), off);
-          await fh.sync();
-        } catch {
-        } finally {
-          if (fh) await fh.close().catch(() => {
-          });
-        }
-      }
-      try {
-        await fs.promises.unlink(file);
-        return true;
-      } catch {
-        return false;
-      }
-    }
-    function secureUnlink(file) {
-      let st = null;
-      try {
-        st = fs.lstatSync(file);
-      } catch (e) {
-        if (e && e.code === "ENOENT") return false;
-      }
-      if (st && st.isFile() && st.size > 0) {
-        try {
-          const fd2 = fs.openSync(file, "r+");
-          try {
-            const chunk = import_buffer.Buffer.alloc(Math.min(st.size, 1 << 20));
-            for (let off = 0; off < st.size; off += chunk.length) fs.writeSync(fd2, chunk, 0, Math.min(chunk.length, st.size - off), off);
-            fs.fsyncSync(fd2);
-          } finally {
-            fs.closeSync(fd2);
-          }
-        } catch {
-        }
-      }
-      try {
-        fs.unlinkSync(file);
-        return true;
-      } catch {
-        return false;
-      }
-    }
-    function secureRemoveDir(dir) {
-      let n = 0;
-      let entries2 = [];
-      try {
-        entries2 = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return 0;
-      }
-      for (const e of entries2) {
-        const p = path.join(dir, e.name);
-        if (e.isDirectory()) n += secureRemoveDir(p);
-        else if (secureUnlink(p)) n++;
-      }
-      try {
-        fs.rmSync(dir, { recursive: true, force: true });
-      } catch {
-      }
-      return n;
-    }
-    function create3({ encryptionKey } = {}) {
-      const tmp = path.join(config2.dataDir, `.backup-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
-      let plain;
-      try {
-        fs.writeFileSync(tmp, "", { mode: 384 });
-        fs.unlinkSync(tmp);
-        db3.get().exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
-        try {
-          fs.chmodSync(tmp, 384);
-        } catch {
-        }
-        plain = fs.readFileSync(tmp);
-      } finally {
-        secureUnlink(tmp);
-      }
-      return encryptPlain(plain, { encryptionKey });
-    }
-    function decrypt3(buf, { encryptionKey, escrow } = {}) {
-      if (!import_buffer.Buffer.isBuffer(buf) || buf.length < 29) throw new Error("That does not look like a SUDS backup file");
-      const iv = buf.subarray(0, 12), tag = buf.subarray(12, 28), data = buf.subarray(28);
-      for (const key of candidateKeys(encryptionKey, escrow)) {
-        const d = crypto3.createDecipheriv("aes-256-gcm", key, iv);
-        d.setAuthTag(tag);
-        try {
-          return import_buffer.Buffer.concat([d.update(data), d.final()]);
-        } catch {
-        }
-      }
-      throw new Error(escrow ? "The backup could not be read with the escrowed keys. Either the key file is not the one for this backup set, or the backup is damaged." : "The backup could not be read. It is either damaged, or it was made with a different encryption key.");
-    }
-    function inspect2(plainBytes) {
-      const tmp = path.join(config2.dataDir, `.inspect-${Date.now()}-${crypto3.randomBytes(4).toString("hex")}.db`);
-      fs.writeFileSync(tmp, plainBytes, { mode: 384 });
-      try {
-        const d = new DatabaseSync2(tmp, { readOnly: true });
-        try {
-          const integrity = d.prepare("PRAGMA integrity_check").get();
-          if ((integrity.integrity_check || "").toLowerCase() !== "ok") throw new Error("The backup file is damaged.");
-          const has = (t) => !!d.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name=?`).get(t);
-          if (!has("settings") || !has("clients")) throw new Error("That file is not a SUDS backup.");
-          const count = (t) => has(t) ? d.prepare(`SELECT COUNT(*) n FROM ${t}`).get().n : 0;
-          const schemaVersion = Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0);
-          if (schemaVersion > db3.LATEST_SCHEMA_VERSION) throw new Error(`This backup was made by a newer version of SUDS (schema ${schemaVersion}; this build understands ${db3.LATEST_SCHEMA_VERSION}). Upgrade SUDS before restoring it.`);
-          return {
-            schema_version: schemaVersion,
-            org_name: d.prepare(`SELECT value FROM settings WHERE key='org_name'`).get()?.value || null,
-            counts: { clients: count("clients"), notes: count("notes"), interventions: count("interventions"), users: count("users"), audit_log: count("audit_log") },
-            bytes: plainBytes.length
-          };
-        } finally {
-          d.close();
-        }
-      } finally {
-        secureUnlink(tmp);
-        for (const suffix of ["-wal", "-shm", "-journal"]) secureUnlink(tmp + suffix);
-      }
-    }
-    function restore(plainBytes) {
-      const release = require_backup_lock().tryAcquire("restore");
-      if (!release) throw require_backup_lock().busyError(require_backup_lock().current()?.name || "backup", "restore");
-      try {
-        return restoreHeld(plainBytes);
-      } finally {
-        release();
-      }
-    }
-    async function restoreWhenIdle(plainBytes, { waitMs } = {}) {
-      const lock = require_backup_lock();
-      const release = await lock.acquire("restore", { waitMs: waitMs ?? lock.restoreWaitMs, forWhat: "restore" });
-      try {
-        return restoreHeld(plainBytes);
-      } finally {
-        release();
-      }
-    }
-    function copyBytesSync(src, dest) {
-      const a = fs.openSync(src, "r");
-      let b = null;
-      try {
-        b = fs.openSync(dest, "w", 384);
-        const buf = import_buffer.Buffer.alloc(SLICE);
-        for (let pos = 0, n; n = fs.readSync(a, buf, 0, buf.length, pos); pos += n) fs.writeSync(b, buf, 0, n);
-        fs.fsyncSync(b);
-      } finally {
-        fs.closeSync(a);
-        if (b !== null) fs.closeSync(b);
-      }
-    }
-    function restoreHeld(plainBytes) {
-      const info = inspect2(plainBytes);
-      const dbPath = config2.dbPath;
-      if (dbPath === ":memory:") throw new Error("This server is running on an in-memory database; there is nothing to restore into.");
-      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-      const aside = `${dbPath}.before-restore-${stamp2}`;
-      const dropJournal = () => {
-        for (const suffix of ["-wal", "-shm"]) {
-          try {
-            fs.unlinkSync(dbPath + suffix);
-          } catch {
-          }
-        }
-      };
-      const rollBack = (cause) => {
-        try {
-          db3.close();
-        } catch {
-        }
-        try {
-          if (fs.existsSync(aside)) {
-            copyBytesSync(aside, dbPath);
-            dropJournal();
-          }
-        } catch (e) {
-          cause.message += ` (and the previous database could not be put back from ${aside}: ${e.message})`;
-        }
-        try {
-          db3.open();
-        } catch (e) {
-          cause.message += ` (the previous database could not be reopened either: ${e.message})`;
-        }
-      };
-      try {
-        db3.get().exec("PRAGMA wal_checkpoint(TRUNCATE)");
-      } catch (e) {
-        console.warn("[suds] restore: WAL checkpoint before setting the current database aside failed:", e && e.message);
-      }
-      db3.close();
-      try {
-        if (fs.existsSync(dbPath)) copyBytesSync(dbPath, aside);
-        fs.writeFileSync(dbPath, plainBytes, { mode: 384 });
-        dropJournal();
-      } catch (e) {
-        rollBack(e);
-        throw e;
-      }
-      try {
-        db3.open();
-      } catch (e) {
-        rollBack(e);
-        throw new Error(`The backup could not be opened after it was restored, so the previous database was put back: ${e.message}`);
-      }
-      try {
-        const restoredGen = db3.getSetting("db_generation", null) || "initial";
-        db3.setSetting("db_generation", require_crypto().uuid());
-        if (!config2.local) require_audit_anchor().write("restore", { prevGen: restoredGen });
-      } catch (e) {
-        rollBack(e);
-        throw new Error(`The restore could not be completed (${e.message}), so the previous database was put back. Nothing was changed.`);
-      }
-      let kept = aside;
-      try {
-        const sealed = `${aside}.enc`;
-        encryptFileSync(aside, sealed);
-        secureUnlink(aside);
-        kept = sealed;
-      } catch (e) {
-        db3.noteSealError(aside, e);
-        console.warn(`[suds] ${JSON.stringify({ event: "restore.aside_seal_failed", error: String(e && e.message || e).slice(0, 200) })}`);
-      }
-      return { ...info, previous_database_kept_at: kept };
-    }
-    function restoreInPlace(plainBytes, { dbPath = config2.dbPath, by = "cli" } = {}) {
-      if (dbPath === ":memory:") throw new Error("This server is configured with an in-memory database; there is nothing to restore into.");
-      if (db3.isOpen && db3.isOpen()) throw new Error("The database is open in this process: restoreInPlace() is for a stopped server.");
-      const info = inspect2(plainBytes);
-      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-      const dir = path.dirname(dbPath);
-      const side = `${dbPath}.restoring-${stamp2}`;
-      const journals = (f) => ["-wal", "-shm", "-journal"].map((s) => f + s);
-      const fd2 = fs.openSync(side, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 384);
-      try {
-        fs.writeSync(fd2, plainBytes);
-        fs.fsyncSync(fd2);
-      } finally {
-        fs.closeSync(fd2);
-      }
-      try {
-        const d = new DatabaseSync2(side, { readOnly: true });
-        try {
-          const ok = String(Object.values(d.prepare("PRAGMA integrity_check").get())[0]).toLowerCase() === "ok";
-          const v = Number(d.prepare(`SELECT value FROM settings WHERE key='schema_version'`).get()?.value || 0);
-          if (!ok || v !== info.schema_version) throw new Error("The copy written beside the database does not match the backup (a disk problem?). Nothing was replaced.");
-        } finally {
-          d.close();
-        }
-        for (const j of journals(side)) secureUnlink(j);
-      } catch (e) {
-        secureUnlink(side);
-        for (const j of journals(side)) secureUnlink(j);
-        throw e;
-      }
-      const aside = `${dbPath}.replaced-${stamp2}`;
-      fs.mkdirSync(aside, { mode: 448 });
-      const moved = [];
-      for (const f of [dbPath, ...journals(dbPath)]) {
-        if (fs.existsSync(f)) {
-          fs.renameSync(f, path.join(aside, path.basename(f)));
-          moved.push(path.basename(f));
-        }
-      }
-      fs.renameSync(side, dbPath);
-      for (const j of journals(dbPath)) {
-        try {
-          fs.unlinkSync(j);
-        } catch {
-        }
-      }
-      try {
-        const dfd = fs.openSync(dir, "r");
-        try {
-          fs.fsyncSync(dfd);
-        } finally {
-          fs.closeSync(dfd);
-        }
-      } catch {
-      }
-      db3.open(dbPath);
-      try {
-        const restoredGen = db3.getSetting("db_generation", null) || "initial";
-        db3.setSetting("db_generation", require_crypto().uuid());
-        require_audit().log({ user: { username: by }, action: "backup.restore", details: { mode: "in-place (server stopped)", clients: info.counts.clients, schema_version: info.schema_version, replaced: moved } });
-        if (!config2.local) require_audit_anchor().write("restore", { prevGen: restoredGen });
-      } finally {
-        db3.close();
-      }
-      for (const f of moved) {
-        const p = path.join(aside, f);
-        try {
-          encryptFileSync(p, `${p}.enc`);
-          secureUnlink(p);
-        } catch (e) {
-          db3.noteSealError(p, e);
-          console.warn(`[suds] ${JSON.stringify({ event: "restore.aside_seal_failed", error: String(e && e.message || e).slice(0, 200) })}`);
-        }
-      }
-      return { ...info, replaced_kept_at: moved.length ? aside : null };
-    }
-    module.exports = { create: create3, createAsync, encryptPlain, encryptFileSync, decrypt: decrypt3, decryptFileAsync, createToFileAsync, verifyFileAsync, inspect: inspect2, restore, restoreWhenIdle, restoreInPlace, backupKey, secureUnlink, secureUnlinkAsync, secureRemoveDir };
-  }
-});
-
-// server/scheduled-backup.js
-var require_scheduled_backup = __commonJS({
-  "server/scheduled-backup.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var fs = (init_fs(), __toCommonJS(fs_exports));
-    var path = (init_path(), __toCommonJS(path_exports));
-    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
-    var config2 = require_config();
-    var db3 = require_db();
-    var audit3 = require_audit();
-    var backup = require_backup();
-    var lock = require_backup_lock();
-    var FILE_RE2 = /^suds-\d.*\.db\.enc$/;
-    var SNAP_RE = /^suds-snap-.*\.db\.enc$/;
-    var OFFSITE_MISSING = "offsite directory does not exist (is the share mounted?)";
-    function settings() {
-      const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
-      const retain = Math.max(1, Number(db3.getSetting("backup_retain_count", "14")) || 14);
-      const offsiteDir = db3.getSetting("backup_offsite_dir", "") || "";
-      const minutes = Number(db3.getSetting("backup_schedule_minutes", "0")) || 0;
-      const snapshotRetain = Math.max(1, Number(db3.getSetting("backup_snapshot_retain", "24")) || 24);
-      return { hours, retain, offsiteDir, minutes, snapshotRetain };
-    }
-    function rpo(s = settings()) {
-      const c = [];
-      if (s.hours > 0) c.push({ minutes: s.hours * 60, by: "scheduled backups" });
-      if (s.minutes > 0) c.push({ minutes: s.minutes, by: "online snapshots" });
-      if (!c.length) return null;
-      return c.sort((a, b) => a.minutes - b.minutes)[0];
-    }
-    function firstRunPending(now2 = Date.now()) {
-      const { hours } = settings();
-      if (!hours || db3.getSetting("last_scheduled_backup_at", null)) return null;
-      const row = db3.one(`SELECT updated_at FROM settings WHERE key='backup_schedule_hours'`);
-      const since = Date.parse(row && row.updated_at || "");
-      if (!Number.isFinite(since) || now2 - since >= 2 * hours * 36e5) return null;
-      return { hours, since: row.updated_at, until: new Date(since + 2 * hours * 36e5).toISOString() };
-    }
-    async function runIfDue(now2 = Date.now()) {
-      const { hours, retain, offsiteDir } = settings();
-      if (!hours || lock.paused()) return null;
-      const last = db3.getSetting("last_scheduled_backup_at", null);
-      if (last && now2 - Date.parse(last) < hours * 36e5) return null;
-      return run2({ retain, offsiteDir });
-    }
-    var inFlight = null;
-    function run2(opts = {}) {
-      if (inFlight) return inFlight;
-      inFlight = lock.run("backup", () => runOnce(opts)).finally(() => {
-        inFlight = null;
-      });
-      return inFlight;
-    }
-    function runHeld(opts = {}) {
-      return runOnce(opts);
-    }
-    async function runOnce({ retain = 14, offsiteDir = "" } = {}) {
-      const dir = path.join(config2.dataDir, "backups");
-      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-      const file = path.join(dir, `suds-${stamp2}.db.enc`);
-      let bytes3;
-      let verified = false;
-      let verifyError = null;
-      let kept = 0;
-      let method = null;
-      console.log(`[suds] scheduled backup ${path.basename(file)} starting${offsiteDir ? `, with an offsite copy to ${offsiteDir}` : ""}`);
-      try {
-        fs.mkdirSync(dir, { recursive: true, mode: 448 });
-        prune(dir, Math.max(0, retain - 1));
-        const made = await backup.createToFileAsync(file);
-        bytes3 = made.bytes;
-        method = made.method;
-        try {
-          const info = await backup.verifyFileAsync(file);
-          verified = info.counts.clients >= 0;
-        } catch (e) {
-          verifyError = String(e && e.message || e);
-          console.error("[suds] backup written but could not be read back:", verifyError);
-        }
-      } catch (e) {
-        const reason = e && e.code === "ENOSPC" ? `no space left on the disk holding ${dir}` : String(e && e.message || e);
-        try {
-          fs.unlinkSync(file);
-        } catch {
-        }
-        console.error("[suds] scheduled backup failed:", reason);
-        db3.setSetting("last_scheduled_backup_at", db3.now());
-        db3.setSetting("last_scheduled_backup_status", `failed: ${reason}`);
-        audit3.log({ user: { username: "system" }, action: "backup.scheduled", success: false, details: { error: reason, code: e && e.code || void 0 } });
-        return { file: null, bytes: 0, offsiteOk: null, verified: false, verifyError: reason, failed: true, error: reason };
-      }
-      let offsiteOk = null;
-      let offsiteError = null;
-      let offsiteFile = null;
-      let repaired = 0;
-      if (offsiteDir) {
-        try {
-          let st = null;
-          try {
-            st = await fs.promises.stat(offsiteDir);
-          } catch {
-          }
-          if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
-          await copyVerified(file, offsiteDir);
-          offsiteFile = path.join(offsiteDir, path.basename(file));
-          offsiteOk = true;
-          repaired = await repairOffsite(dir, offsiteDir);
-        } catch (e) {
-          offsiteOk = false;
-          offsiteError = String(e && e.message || e);
-        }
-      }
-      (verified && offsiteOk !== false ? console.log : console.error)(`[suds] scheduled backup ${path.basename(file)}: ${bytes3} bytes, ${verified ? "verified" : "NOT verified"}; offsite ${!offsiteDir ? "not configured" : offsiteOk ? "copied and checked (size and SHA-256)" : `copy FAILED: ${offsiteError}`}${repaired ? `; ${repaired} earlier offsite cop${repaired === 1 ? "y" : "ies"} that did not match copied again` : ""}`);
-      if (!config2.local) require_audit_anchor().safeWrite("backup");
-      kept = prune(dir, retain);
-      db3.setSetting("last_scheduled_backup_at", db3.now());
-      db3.setSetting("last_scheduled_backup_status", !verified ? `backup written but could not be read back \u2014 ${verifyError}` : offsiteDir && offsiteOk === false ? `ok (verified) \u2014 offsite copy failed: ${offsiteError}; local backup kept` : "ok (verified)");
-      audit3.log({ user: { username: "system" }, action: "backup.scheduled", details: { bytes: bytes3, method, offsite: offsiteDir ? offsiteOk : null, offsite_error: offsiteError || void 0, offsite_repaired: repaired || void 0, kept, verified } });
-      return { file, bytes: bytes3, method, offsiteOk, offsiteError, offsiteFile: offsiteOk ? offsiteFile : null, repaired, verified, verifyError };
-    }
-    async function digest(file) {
-      const h = crypto3.createHash("sha256");
-      let bytes3 = 0;
-      for await (const c of fs.createReadStream(file)) {
-        h.update(c);
-        bytes3 += c.length;
-      }
-      return { bytes: bytes3, sha256: h.digest("hex") };
-    }
-    async function copyVerified(src, destDir) {
-      const dest = path.join(destDir, path.basename(src));
-      const tmp = path.join(destDir, `.${path.basename(src)}.${crypto3.randomBytes(4).toString("hex")}.part`);
-      try {
-        const out2 = await fs.promises.open(tmp, "wx", 384);
-        try {
-          for await (const c of fs.createReadStream(src)) await out2.write(c);
-          await out2.sync();
-        } finally {
-          await out2.close();
-        }
-        await fs.promises.rename(tmp, dest);
-      } catch (e) {
-        await fs.promises.rm(tmp, { force: true });
-        throw e;
-      }
-      const [a, b] = await Promise.all([digest(src), digest(dest)]);
-      if (a.bytes === b.bytes && a.sha256 === b.sha256) return b;
-      await fs.promises.rm(dest, { force: true });
-      throw new Error(`the offsite copy of ${path.basename(src)} did not match the backup (${b.bytes} of ${a.bytes} bytes${a.bytes === b.bytes ? ", different SHA-256" : ""}) and was deleted`);
-    }
-    async function repairOffsite(localDir, offsiteDir) {
-      let n = 0;
-      for (const f of fs.readdirSync(offsiteDir).filter((x) => FILE_RE2.test(x))) {
-        let a;
-        let b;
-        try {
-          a = fs.lstatSync(path.join(localDir, f));
-          b = fs.lstatSync(path.join(offsiteDir, f));
-        } catch {
-          continue;
-        }
-        if (a.isFile() && b.isFile() && a.size !== b.size) {
-          await copyVerified(path.join(localDir, f), offsiteDir);
-          n++;
-        }
-      }
-      return n;
-    }
-    function newest(dir) {
-      let names;
-      try {
-        names = fs.readdirSync(dir).filter((f) => FILE_RE2.test(f)).sort();
-      } catch (e) {
-        return { error: e.code || e.message };
-      }
-      for (let i = names.length - 1; i >= 0; i--) {
-        try {
-          const s = fs.lstatSync(path.join(dir, names[i]));
-          if (s.isFile()) return { newest: { file: names[i], mtime: s.mtimeMs, size: s.size }, count: names.length };
-        } catch {
-        }
-      }
-      return { newest: null, count: names.length };
-    }
-    function copyProblem(name, size) {
-      if (!size) return `the offsite copy ${name} is empty (0 bytes): it is not a backup`;
-      let local = null;
-      try {
-        local = fs.lstatSync(path.join(config2.dataDir, "backups", name)).size;
-      } catch {
-      }
-      return local !== null && local !== size ? `the offsite copy ${name} is ${size} bytes, but the local backup of that name is ${local} bytes` : null;
-    }
-    async function snapshotIfDue(now2 = Date.now()) {
-      const s = settings();
-      if (!s.minutes || lock.current() || lock.paused()) return null;
-      const last = db3.getSetting("last_snapshot_at", null);
-      if (last && now2 - Date.parse(last) < s.minutes * 6e4) return null;
-      return snapshot(s);
-    }
-    async function snapshot(s = settings()) {
-      const release = lock.tryAcquire("snapshot");
-      if (!release) return null;
-      const localDir = path.join(config2.dataDir, "backups");
-      let target = localDir;
-      let where = "local";
-      const stamp2 = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-      let file = null;
-      try {
-        if (s.offsiteDir) {
-          let st = null;
-          try {
-            st = fs.statSync(s.offsiteDir);
-          } catch {
-          }
-          if (!st || !st.isDirectory()) throw new Error(OFFSITE_MISSING);
-          target = s.offsiteDir;
-          where = "offsite";
-        } else fs.mkdirSync(localDir, { recursive: true, mode: 448 });
-        file = path.join(target, `suds-snap-${stamp2}.db.enc`);
-        const made = await backup.createToFileAsync(file, { flag: "wx" });
-        const kept = pruneMatching(target, SNAP_RE, s.snapshotRetain);
-        db3.setSetting("last_snapshot_at", db3.now());
-        db3.setSetting("last_snapshot_status", `ok (${where}; ${made.method}; ${Math.round(made.bytes / 1024)} KB in ${made.copy_ms + made.encrypt_ms} ms)`);
-        return { file, where, kept, bytes: made.bytes, method: made.method, copy_ms: made.copy_ms, encrypt_ms: made.encrypt_ms };
-      } catch (e) {
-        const reason = e && e.code === "ENOSPC" ? `no space left on the disk holding ${target}` : String(e && e.message || e);
-        if (file) {
-          try {
-            fs.unlinkSync(file);
-          } catch {
-          }
-        }
-        console.error("[suds] snapshot failed:", reason);
-        const prev = db3.getSetting("last_snapshot_status", "") || "";
-        db3.setSetting("last_snapshot_at", db3.now());
-        db3.setSetting("last_snapshot_status", `failed: ${reason}`);
-        if (!/^failed/.test(prev)) audit3.log({ user: { username: "system" }, action: "backup.snapshot.failed", success: false, details: { error: reason.slice(0, 300) } });
-        return { file: null, failed: true, error: reason };
-      } finally {
-        release();
-      }
-    }
-    function pruneMatching(dir, re, retain) {
-      const files = fs.readdirSync(dir).filter((f) => re.test(f)).sort();
-      const excess = files.length - retain;
-      if (excess > 0) for (const f of files.slice(0, excess)) {
-        try {
-          fs.unlinkSync(path.join(dir, f));
-        } catch {
-        }
-      }
-      return Math.min(files.length, retain);
-    }
-    function prune(dir, retain) {
-      const files = fs.readdirSync(dir).filter((f) => FILE_RE2.test(f)).sort();
-      const excess = files.length - retain;
-      if (excess > 0) for (const f of files.slice(0, excess)) {
-        try {
-          fs.unlinkSync(path.join(dir, f));
-        } catch {
-        }
-      }
-      return Math.min(files.length, retain);
-    }
-    module.exports = { runIfDue, run: run2, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, copyVerified, newest, copyProblem, FILE_RE: FILE_RE2, SNAP_RE };
-  }
-});
-
 // server/startup-checks.js
 var require_startup_checks = __commonJS({
   "server/startup-checks.js"(exports, module) {
@@ -24397,8 +24474,9 @@ var require_security_status = __commonJS({
       );
       const offsite = db3.getSetting("backup_offsite_dir", "") || "";
       const offNewest = offsite ? sb.newest(offsite).newest : null;
-      const offBad = /offsite copy failed/.test(lastStatus) ? lastStatus : offNewest && sb.copyProblem(offNewest.file, offNewest.size);
-      add("Backups and recovery", "Offsite copy", !offsite ? "warn" : offBad ? "bad" : "ok", offsite ? offsite : "not configured", offsite ? offBad || "Each scheduled backup is copied here after it is verified, and the copy is checked against it (size and SHA-256)." : "Set an offsite directory (a mounted share on another host or site).", "server/scheduled-backup.js");
+      const place = offsite ? sb.offsitePlacement(offsite) : {};
+      const offBad = place.inside ? `This folder ${place.inside}.` : /offsite copy failed/.test(lastStatus) ? lastStatus : offNewest && sb.copyProblem(offNewest.file, offNewest.size);
+      add("Backups and recovery", "Offsite copy", !offsite ? "warn" : offBad ? "bad" : place.sameDisk ? "warn" : "ok", offsite ? offsite : "not configured", offsite ? offBad || (place.sameDisk ? `This folder ${place.sameDisk}. Point it at a mounted share on another host or site.` : "Each scheduled backup is copied here after it is verified, and the copy is checked against it (size and SHA-256).") : "Set an offsite directory (a mounted share on another host or site).", "server/scheduled-backup.js");
       const drill = require_dr_drill().lastDrill();
       const drillAge = drill ? ageDays(drill.at) : null;
       const firstDrill = drill ? null : require_dr_drill().firstDrillPending();
@@ -25988,6 +26066,8 @@ var require_admin = __commonJS({
         return "does not exist (is the share mounted?)";
       }
       if (!st.isDirectory()) return "is not a folder";
+      const inside = require_scheduled_backup().offsitePlacement(dir).inside;
+      if (inside) return inside;
       const probe = path.join(dir, `.suds-write-test-${proc.pid}-${Date.now()}`);
       try {
         fs.writeFileSync(probe, "x", { mode: 384 });
@@ -26014,6 +26094,7 @@ var require_admin = __commonJS({
       });
       r.put("/api/admin/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
         const changed = [];
+        const warnings = [];
         const ssoBefore = [db3.getSetting("sso_required", "0"), db3.getSetting("sso_emergency_accounts", "")].join("|");
         db3.transaction(() => {
           for (const k of SETTING_KEYS) if (ctx.body[k] !== void 0) {
@@ -26058,6 +26139,8 @@ var require_admin = __commonJS({
             if (k === "backup_offsite_dir" && v !== "" && !config2.local) {
               const problem = offsiteDirProblem(v);
               if (problem) throw badRequest(`backup_offsite_dir ${problem}`, { fields: { backup_offsite_dir: problem } });
+              const sameDisk = require_scheduled_backup().offsitePlacement(v).sameDisk;
+              if (sameDisk) warnings.push(`The offsite folder ${v} ${sameDisk}.`);
             }
             if (k === "scim_group_roles" && v !== "") v = require_scim().normaliseGroupRoles(v);
             if (k === "programme_profile" && !require_programme().PROFILES[v]) throw badRequest(`programme_profile must be one of ${Object.keys(require_programme().PROFILES).join(", ")}`, { fields: { programme_profile: "choose a program profile" } });
@@ -26081,7 +26164,7 @@ var require_admin = __commonJS({
         const P2 = require_programme();
         if (changed.some((k) => P2.SETTING_KEYS.includes(k))) audit3.log({ user: ctx.user, action: "settings.programme", ip: ctx.ip, details: { profile: P2.profile(), modules: P2.modules() } });
         if (changed.includes("sso_trust_idp_mfa") || changed.includes("sso_mfa_acr_values")) audit3.log({ user: ctx.user, action: "security.idp_mfa_trust", ip: ctx.ip, details: { trusted: db3.getSetting("sso_trust_idp_mfa", "0") === "1", acr_values: db3.getSetting("sso_mfa_acr_values", "") || null } });
-        return { ok: true };
+        return warnings.length ? { ok: true, warnings } : { ok: true };
       });
       r.get("/api/admin/audit", auth3.requireAuth, auth3.requirePerm("audit:read"), (ctx) => {
         const { limit: limit2, offset } = paging(ctx.query, { limit: 100, max: 1e3 });
@@ -49675,12 +49758,14 @@ var require_hardening = __commonJS({
         const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
         const offsite = db3.getSetting("backup_offsite_dir", "") || "";
         const failing = /offsite copy failed/.test(db3.getSetting("last_scheduled_backup_status", "") || "");
+        const place = offsite ? require_scheduled_backup().offsitePlacement(offsite) : {};
+        const notOff = place.inside || place.sameDisk;
         add({
           id: "backups",
           title: hours ? "Copy each backup off this server" : "Turn on scheduled backups",
-          done: !!(hours && offsite) && !failing,
-          why: !hours ? "Nothing is backing this database up automatically. Set how often (every 4 hours is the production default), and a folder on another machine for a copy." : !offsite ? `Backups run every ${hours} hour${hours === 1 ? "" : "s"}, but only onto this server's own disk: a failed disk or a stolen server takes them with it. Name a mounted network share or drive for a second copy.` : failing ? `The last backup's copy to ${offsite} failed: ${db3.getSetting("last_scheduled_backup_status", "")}` : `Every ${hours} hour${hours === 1 ? "" : "s"}, with a copy in ${offsite}.`,
-          status: !hours ? "off" : !offsite ? `every ${hours} h, local only` : failing ? `every ${hours} h, offsite copy failing` : `every ${hours} h, copied offsite`,
+          done: !!(hours && offsite) && !failing && !notOff,
+          why: !hours ? "Nothing is backing this database up automatically. Set how often (every 4 hours is the production default), and a folder on another machine for a copy." : !offsite ? `Backups run every ${hours} hour${hours === 1 ? "" : "s"}, but only onto this server's own disk: a failed disk or a stolen server takes them with it. Name a mounted network share or drive for a second copy.` : notOff ? `The offsite folder ${offsite} ${notOff}. Name a mounted network share or a drive in another place.` : failing ? `The last backup's copy to ${offsite} failed: ${db3.getSetting("last_scheduled_backup_status", "")}` : `Every ${hours} hour${hours === 1 ? "" : "s"}, with a copy in ${offsite}.`,
+          status: !hours ? "off" : !offsite ? `every ${hours} h, local only` : notOff ? `every ${hours} h, ${place.inside ? "copy inside the data directory" : "copy on the same disk"}` : failing ? `every ${hours} h, offsite copy failing` : `every ${hours} h, copied offsite`,
           action: { label: hours ? "Set the offsite folder" : "Set up backups", href: settingsLink("backups", hours ? "backup_offsite_dir" : "backup_schedule_hours") }
         });
       }
@@ -56676,20 +56761,30 @@ async function unlockRecovery(vault, code) {
   if (!w || !norm) return null;
   return unwrapDek(w, RECOVERY_DOMAIN + norm);
 }
+async function openWrap(vault, w, password) {
+  const dek2 = await unwrapDek(w, password);
+  if (!dek2 || !w.chained) return dek2;
+  const k = await importDek(dek2);
+  dek2.fill(0);
+  if (!vault.chain) return null;
+  try {
+    return await open2(k, { format: IMAGE_FORMAT, version: VERSION2, iv: vault.chain.iv, ct: vault.chain.ct }, AAD_CHAIN);
+  } catch {
+    return null;
+  }
+}
 async function unlock(vault, username, password) {
   for (const w of await wrapsFor(vault, username)) {
-    let dek2 = await unwrapDek(w, password);
-    if (dek2 && w.chained) {
-      if (!vault.chain) continue;
-      const k = await importDek(dek2);
-      dek2.fill(0);
-      try {
-        dek2 = await open2(k, { format: IMAGE_FORMAT, version: VERSION2, iv: vault.chain.iv, ct: vault.chain.ct }, AAD_CHAIN);
-      } catch {
-        continue;
-      }
-    }
+    const dek2 = await openWrap(vault, w, password);
     if (dek2) return { dek: dek2, wrap: w };
+  }
+  return null;
+}
+async function unlockAnyAccount(vault, password) {
+  if (!hasAccounts(vault) || typeof password !== "string" || !password) return null;
+  for (const w of vault.wraps.filter((x) => !x.recovery).slice(0, 50)) {
+    const dek2 = await openWrap(vault, w, password);
+    if (dek2) return dek2;
   }
   return null;
 }
@@ -57102,6 +57197,10 @@ async function eraseLegacyCopies() {
   }
   import_audit2.default.log({ user: { username: "device" }, action: "device.encrypted_at_rest", details: { migrated: true } });
 }
+var imageCheck = (bytes3) => sqlite_default.imageProblem(bytes3) || sqlite_default.inspect(bytes3, (d) => {
+  const q = Object.values(d.one("PRAGMA quick_check") || {})[0];
+  return q === "ok" ? null : `quick_check: ${q}`;
+});
 async function unlockWith(dekRaw) {
   dropKey();
   dek = dekRaw;
@@ -57110,18 +57209,41 @@ async function unlockWith(dekRaw) {
     theVault = await sqlite_default.getMeta(VAULT_KEY) || theVault;
     setKeys(await openKeys(dekKey, theVault.keys));
     const sealed = await sqlite_default.readCurrent();
-    const plain = await open2(dekKey, sealed);
+    let plain;
     try {
-      const why = sqlite_default.imageProblem(plain) || sqlite_default.inspect(plain, (d) => {
-        const q = Object.values(d.one("PRAGMA quick_check") || {})[0];
-        return q === "ok" ? null : `quick_check: ${q}`;
-      });
-      if (why) throw new Error(why);
-      openDatabase(plain);
+      plain = await open2(dekKey, sealed);
     } catch (e) {
-      plain.fill(0);
-      if (e.code === "SUDS_KEY_LOST") throw e;
-      throw await damagedDevice(sealed, e);
+      if (e instanceof VaultError && e.code === "tampered") throw await damagedDevice(sealed, e, { integrity: true });
+      throw e;
+    }
+    let first = null;
+    for (; ; ) {
+      try {
+        const why = imageCheck(plain);
+        if (why) throw new Error(why);
+        openDatabase(plain);
+        break;
+      } catch (e) {
+        if (e.code === "SUDS_KEY_LOST") {
+          plain.fill(0);
+          throw e;
+        }
+        try {
+          import_db2.default.close();
+        } catch {
+        }
+        if (first || sqlite_default.imageProblem(plain)) {
+          plain.fill(0);
+          throw await damagedDevice(sealed, first && first.message !== e.message ? new Error(`${first.message}; on a new engine: ${e.message}`) : e);
+        }
+        first = e;
+        console.warn("[suds-local] the device database would not open; trying once more on a new SQLite engine:", String(e.message).slice(0, 300));
+        try {
+          await sqlite_default.freshEngine();
+        } catch (e2) {
+          console.warn("[suds-local] no new SQLite engine:", e2.message);
+        }
+      }
     }
     plain.fill(0);
     sqlite_default.setSealer(sealer2());
@@ -57135,21 +57257,69 @@ async function unlockWith(dekRaw) {
   }
 }
 var DAMAGED_KEY = "damaged_db";
-async function damagedDevice(sealed, err2) {
+var DAMAGED_FORMAT = "suds-damaged-device-db";
+async function damagedDevice(sealed, err2, { integrity = false } = {}) {
   try {
     import_db2.default.close();
   } catch {
   }
   const why = String(err2 && err2.message || err2).slice(0, 300);
   console.error("[suds-local] the device database would not open:", why);
+  let again = false;
   try {
     const kept = await sqlite_default.getMeta(DAMAGED_KEY);
-    const same = kept && kept.image && kept.image.ct.length === sealed.ct.length && kept.image.ct.every((x, i) => x === sealed.ct[i]);
-    if (!same) await sqlite_default.putMeta({ [DAMAGED_KEY]: { at: (/* @__PURE__ */ new Date()).toISOString(), why, image: sealed, vault: theVault } });
+    again = !!(kept && kept.image && kept.image.ct.length === sealed.ct.length && kept.image.ct.every((x, i) => x === sealed.ct[i]));
+    if (!again) await sqlite_default.putMeta({ [DAMAGED_KEY]: { at: (/* @__PURE__ */ new Date()).toISOString(), why, image: sealed, vault: theVault } });
   } catch (e) {
     reportError(e);
   }
-  return new import_http2.HttpError(503, "The records on this device could not be opened: the copy stored in this browser is damaged. Nothing has been deleted, and the damaged copy is kept on this device. Reload the page and log in again. If this message comes back, save the damaged copy, then put your latest device backup back: Can\u2019t sign in? \u2192 Start over on this device, then Restore from a backup.", { deviceDamaged: true, locked: true });
+  const found = integrity ? ": the copy stored in this browser failed its integrity check (it has changed since it was saved)" : again ? " again: the copy stored in this browser is damaged" : ". This may be this browser rather than the records";
+  return new import_http2.HttpError(
+    503,
+    `The records on this device could not be opened${found}. Nothing has been deleted, and a copy is kept on this device. First save the damaged copy${again ? " if you have not" : ", then close the browser completely and log in again"}. If it still does not open, use Restore from a backup with your latest backup or the copy you saved: in another browser, or in this one after Start over on this device.`,
+    { deviceDamaged: true, locked: true, integrity, repeated: again }
+  );
+}
+var isDamagedCopy = (file) => new TextDecoder().decode(file.subarray(0, 64)).startsWith(`{"format":"${DAMAGED_FORMAT}"`);
+async function openDamagedCopy(file, secret) {
+  const refused = (message, code = "tampered") => new import_http2.HttpError(400, message, { backupError: code });
+  let k = null;
+  try {
+    k = JSON.parse(new TextDecoder().decode(file), (_, v) => v && typeof v === "object" && Object.keys(v).length === 1 && typeof v.b64 === "string" ? Uint8Array.from(import_buffer.Buffer.from(v.b64, "base64")) : v);
+  } catch {
+  }
+  if (!k || !isSealed(k.image) || !hasAccounts(k.vault) || !k.vault.keys) throw refused("This saved copy is incomplete, so it cannot be restored.");
+  let raw = null;
+  try {
+    raw = normalizeRecoveryCode(secret) && await unlockRecovery(k.vault, secret) || await unlockAnyAccount(k.vault, secret);
+  } catch {
+  }
+  if (!raw) throw refused("That password does not open this saved copy. Type the password of an account from the device it was saved on.", "passphrase");
+  const key = await importDek(raw);
+  raw.fill(0);
+  let keys;
+  let bytes3;
+  try {
+    keys = await openKeys(key, k.vault.keys);
+    bytes3 = await open2(key, k.image);
+  } catch {
+    throw refused("This saved copy has changed since it was saved, so it cannot be restored. Restore your latest backup instead.");
+  }
+  let why;
+  try {
+    why = imageCheck(bytes3);
+  } catch (e) {
+    why = e.message;
+  }
+  if (why) {
+    bytes3.fill(0);
+    console.warn("[suds-local] the saved copy would not open:", String(why).slice(0, 300));
+    throw refused("The records in this saved copy are damaged here too, so it cannot be restored. Restore your latest backup instead.");
+  }
+  const nextDek = newDek();
+  const device = await backupRecord(k.vault, key, nextDek);
+  nextDek.fill(0);
+  return { header: { created_at: k.at || null, app_version: null }, meta: { keys, created_at: k.at || null, device, damaged_copy: true }, bytes: bytes3 };
 }
 async function tryUnwrap(username, password) {
   if (typeof username !== "string" || typeof password !== "string" || !username || !password) return null;
@@ -57622,7 +57792,7 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
   async function openUpload(ctx) {
     const v = validate(ctx.body, { file_b64: { type: "string", required: true, maxLen: 400 * 1024 * 1024 }, passphrase: { type: "string", required: true, maxLen: 500 }, confirm: { type: "string", maxLen: 40 } });
     const file = Uint8Array.from(import_buffer.Buffer.from(v.file_b64.replace(/^data:[^,]*,/, ""), "base64"));
-    const out2 = await asHttp(() => open(file, v.passphrase));
+    const out2 = isDamagedCopy(file) ? await openDamagedCopy(file, v.passphrase) : await asHttp(() => open(file, v.passphrase));
     const damaged = () => new import_http2.HttpError(400, "This backup file is damaged or has been altered, so it cannot be restored.", { backupError: "tampered" });
     let info;
     try {
@@ -57643,7 +57813,7 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
   router.post("/api/local/restore/preview", async (ctx) => {
     mayRestore(ctx);
     const { out: out2, info } = await openUpload(ctx);
-    return { created_at: out2.meta.created_at || out2.header.created_at, app_version: out2.header.app_version, org_name: out2.meta.org_name || "", clients: info.clients, users: info.users, schema_version: info.schema_version, current: { clients: userCount() ? clientCount() : 0 } };
+    return { created_at: out2.meta.created_at || out2.header.created_at, app_version: out2.header.app_version, org_name: out2.meta.org_name || "", clients: info.clients, users: info.users, schema_version: info.schema_version, damaged_copy: !!out2.meta.damaged_copy, current: { clients: userCount() ? clientCount() : 0 } };
   });
   router.post("/api/local/restore", async (ctx) => {
     mayRestore(ctx);
@@ -57675,7 +57845,7 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
     phase = "open";
     token = "";
     lastActivity = Date.now();
-    import_audit2.default.log({ user: { username: by || "device" }, action: "device.restore", details: { at: (/* @__PURE__ */ new Date()).toISOString(), backup_created_at: out2.meta.created_at || null, clients: info.clients } });
+    import_audit2.default.log({ user: { username: by || "device" }, action: "device.restore", details: { at: (/* @__PURE__ */ new Date()).toISOString(), backup_created_at: out2.meta.created_at || null, clients: info.clients, ...out2.meta.damaged_copy ? { from: "damaged_copy" } : {} } });
     if (wasLegacy) {
       try {
         await eraseLegacyCopies();
@@ -57885,7 +58055,7 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
     // the device key opens the image, and only an account's password (a wrap in the vault beside it) opens that key.
     damagedCopy: async () => {
       const k = await sqlite_default.getMeta(DAMAGED_KEY);
-      return k ? JSON.stringify({ format: "suds-damaged-device-db", ...k }, (_, v) => v instanceof Uint8Array ? { b64: import_buffer.Buffer.from(v).toString("base64") } : v) : null;
+      return k ? JSON.stringify({ format: DAMAGED_FORMAT, ...k }, (_, v) => v instanceof Uint8Array ? { b64: import_buffer.Buffer.from(v).toString("base64") } : v) : null;
     },
     // The folder scheduled backups are written to (1.24.0): a File System Access directory handle, kept with the
     // device's other stored values so that erasing the device forgets it too. No record and no key: the files

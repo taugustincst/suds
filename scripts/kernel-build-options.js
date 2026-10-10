@@ -2,6 +2,7 @@
 // How the browser kernel (local/kernel.js + the server modules + local/shims) is bundled. One definition, used
 // by scripts/build-local.js (public/local/kernel.js) and by test/kernel-parity.test.js, which bundles the
 // current sources the same way and runs them in Node against sql.js to check they answer as the server does.
+const fs = require('node:fs');
 const path = require('node:path');
 
 const root = path.join(__dirname, '..');
@@ -29,6 +30,11 @@ function kernelBuildOptions(outfile) {
         // Fingerprint sign-in and signing are office-server only (docs/FINGERPRINT.md): the kernel gets a stand-in
         // that says so, and none of the WebAuthn code (server/passkeys.js, server/webauthn.js, the passkey routes).
         b.onResolve({ filter: /(^|[\\/])(passkeys|webauthn)(\.js)?$/ }, (a) => (a.importer.includes(path.join('server')) ? { path: shim('passkeys.js') } : undefined));
+        // A second SQLite engine on demand (local/shims/sqlite.js freshEngine, 1.25.5): sql.js keeps the instance it
+        // makes in a variable of its module, so the module is wrapped in a function that `fresh` runs again, each
+        // time a new WebAssembly instance with a heap of its own. The file's own text is not changed.
+        b.onLoad({ filter: /[\\/]node_modules[\\/]sql\.js[\\/]dist[\\/]sql-wasm\.js$/ }, async (a) => ({ loader: 'js',
+          contents: `function load() { var module = { exports: {} }; var exports = module.exports;\n${await fs.promises.readFile(a.path, 'utf8')}\nreturn module.exports; }\nmodule.exports = load();\nmodule.exports.fresh = load;\n` }));
         b.onLoad({ filter: /[\\/]server[\\/]routes[\\/]passkeys\.js$/ }, () => ({ contents: "'use strict';\n// Not on a device: fingerprint sign-in is office-server only (local/shims/passkeys.js).\nmodule.exports = () => {};\n", loader: 'js' }));
       },
     }],

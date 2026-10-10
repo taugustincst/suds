@@ -211,7 +211,37 @@ async function useCode(page, code, { username = '', password = NEW_PW } = {}) {
 // reach SQLite is a valid seal over a bad image: here the page's WebCrypto seals a cut-short image at sign-out.
 // After a reload the sign-in is refused plainly, the damaged copy can be saved as a file, and Start over then
 // Restore from a backup brings the records back.
+// (1.25.5, H1 and H2) The first refusal says it may be this browser, and the ways back come in order: save the copy,
+// close the browser and try again, then Restore from a backup (Start over only within that last step); the same
+// image again is said without "may be this browser". Restore from a backup takes the saved copy: a damaged one is
+// refused whole, and a sound one (an engine that misread a good image) brings the records back in another browser.
+// A flipped byte in the stored seal is refused as damage too (an integrity failure), never "something went wrong".
 // ---------------------------------------------------------------------------------------------------------
+const tmpDir = process.env.SUDS_UI_TMP || '/tmp';
+// The sealed image this page's store holds now ({ key, iv, ct } in base64); `flip` changes one byte of it in place.
+const storedImage = (page, flip = false) => page.evaluate((flip) => new Promise((res, rej) => {
+  const r = indexedDB.open('suds-local');
+  r.onerror = () => rej(r.error);
+  r.onsuccess = () => {
+    const t = r.result.transaction('kv', 'readwrite'); const s = t.objectStore('kv'); const keys = s.getAllKeys(); let out = null;
+    keys.onsuccess = () => {
+      const key = keys.result.filter(k => String(k).startsWith('db2:')).sort().pop(); const g = s.get(key);
+      g.onsuccess = () => {
+        const v = g.result; const b64 = (u) => { let x = ''; for (const c of u) x += String.fromCharCode(c); return btoa(x); };
+        out = { key, iv: b64(v.iv), ct: b64(v.ct) };
+        if (flip) { const ct = Uint8Array.from(v.ct); ct[Math.floor(ct.length / 2)] ^= 1; s.put({ ...v, ct }, key); }
+      };
+    };
+    t.oncomplete = () => { r.result.close(); res(out); }; t.onabort = () => rej(t.error);
+  };
+}), flip);
+async function restoreFile(page, file, passphrase) {
+  await page.click('[data-restore-open]'); await page.waitForSelector('.modal input[name=backup_file]');
+  await page.setInputFiles('.modal input[name=backup_file]', file); await page.fill('.modal input[name=backup_passphrase]', passphrase);
+  await page.click('.modal [data-restore-check]');
+  return until(async () => (await page.$('.modal [data-restore-preview]')) ? 'preview' : ((await page.$('.modal [data-restore-error]')) ? 'refused' : null), { timeout: 30000 });
+}
+let good = null; let copyText = null; // the good sealed image, and the saved copy's text, for the other browser below
 {
   const ctx = await browser.newContext({ viewport: { width: 1100, height: 850 }, acceptDownloads: true });
   const page = await ctx.newPage(); const mine = [];
@@ -226,6 +256,8 @@ async function useCode(page, code, { username = '', password = NEW_PW } = {}) {
   // Everything written so far saved first; then the next sealed save of the image (at sign-out) seals it cut short.
   await page.evaluate(async () => { await window.SUDS_LOCAL.flush(); });
   ok(!(await page.evaluate(() => window.SUDS_LOCAL.isDirty())), 'damaged: everything written so far is saved');
+  good = await storedImage(page);
+  ok(good && good.ct.length > 1000, 'damaged: (the good sealed image, kept by the script for the other browser below)');
   await page.evaluate(() => {
     const s = crypto.subtle; const real = s.encrypt.bind(s);
     s.encrypt = (alg, key, data) => { if (new TextDecoder().decode(alg.additionalData || new Uint8Array()) === 'suds-device-db/v1') { const b = new Uint8Array(data.buffer || data, data.byteOffset || 0, data.byteLength); data = b.slice(0, Math.floor(b.length / 2) + 100); s.encrypt = real; window.damagedSeals = (window.damagedSeals || 0) + 1; } return real(alg, key, data); };
@@ -236,23 +268,62 @@ async function useCode(page, code, { username = '', password = NEW_PW } = {}) {
   eq(await tryLogin(page, 'dmg', PW), 'refused', 'damaged: after a reload the sign-in is refused');
   ok(/could not be opened/.test(await page.textContent('.login .banner.danger:not(.hidden)')) && /Nothing has been deleted/.test(await page.textContent('.login')), 'damaged: saying plainly that the records could not be opened and nothing was deleted', await page.textContent('.login'));
   ok(await page.$('[data-device-damaged][role=alert] [data-damaged-save]'), 'damaged: with a button to save the damaged copy');
+  const notice = (await page.textContent('[data-device-damaged]')) || '';
+  ok(/This may be this browser rather than the records/.test(notice), 'damaged: the first time, it says it may be this browser', notice);
+  eq((await page.$$eval('[data-device-damaged] [data-damaged-step]', ls => ls.map(l => l.dataset.damagedStep))).join(','), 'save,again,restore', 'damaged: the ways back in order: save the copy, try again, restore');
+  ok(!/Start over/.test(await page.textContent('[data-damaged-step=save]') + await page.textContent('[data-damaged-step=again]')) && /Restore from a backup.*Start over/s.test(await page.textContent('[data-damaged-step=restore]')), 'damaged: Start over only within the last step, after Restore from a backup');
   eq(await phase(page), 'locked', 'damaged: nothing was opened');
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.click('[data-damaged-save]')]);
-  const copy = JSON.parse(fs.readFileSync(await dl.path(), 'utf8'));
+  copyText = fs.readFileSync(await dl.path(), 'utf8');
+  const copy = JSON.parse(copyText);
   ok(copy.format === 'suds-damaged-device-db' && copy.image && copy.image.ct && copy.image.ct.b64 && copy.vault && /pages|whole number/.test(copy.why), 'damaged: the saved file holds the sealed image, the vault that opens it and what was found', { format: copy.format, why: copy.why });
-  // Start over, then Restore from a backup: the existing way back.
+  const copyFile = `${tmpDir}/suds-ui-damaged-copy.json`; fs.writeFileSync(copyFile, copyText);
+  // Closing the browser and trying again (a reload here): the same image fails again, and is said so.
+  await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 }); await settle(page);
+  eq(await tryLogin(page, 'dmg', PW), 'refused', 'damaged: tried again after a reload, refused again');
+  ok(await page.$('[data-device-damaged=again]') && !(await page.$('[data-damaged-step=again]')) && /could not be opened again/.test(await page.textContent('.login')) && !/may be this browser/.test(await page.textContent('.login')), 'damaged: and said as the same damage, not "may be this browser"', await page.textContent('.login'));
+  // Start over, then Restore from a backup. The saved copy of a damaged image is refused whole; the backup brings the records back.
   await page.click('[data-cant-sign-in] [data-device-reset-open]'); await page.waitForSelector('.modal #reset-device-confirm');
   await page.fill('#reset-device-confirm', 'ERASE'); await page.click('.modal button.danger');
   await page.waitForSelector('input[name=display_name]', { timeout: 20000 }); await settle(page);
-  await page.click('[data-restore-open]'); await page.waitForSelector('.modal input[name=backup_file]');
-  await page.setInputFiles('.modal input[name=backup_file]', backupFile); await page.fill('.modal input[name=backup_passphrase]', 'damaged device passphrase');
-  await page.click('.modal [data-restore-check]'); await page.waitForSelector('.modal [data-restore-preview]', { timeout: 30000 });
+  eq(await restoreFile(page, copyFile, PW), 'refused', 'damaged: Restore from a backup with the saved copy of the damaged image is refused');
+  ok(/damaged here too/.test(await page.textContent('.modal [data-restore-error]')), 'damaged: saying its records are damaged here too', await page.textContent('.modal [data-restore-error]'));
+  eq(await phase(page), 'fresh', 'damaged: and nothing was restored');
+  await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal')), { timeout: 5000 });
+  eq(await restoreFile(page, backupFile, 'damaged device passphrase'), 'preview', 'damaged: the backup opens');
   await page.fill('.modal input[name=restore_confirm]', 'RESTORE'); await page.click('.modal [data-restore-go]');
   await page.waitForSelector('[data-mode-tab=login][aria-selected=true]', { timeout: 20000 }); await settle(page);
   eq(await tryLogin(page, 'dmg', PW), 'in', 'damaged: after Start over and the restore, the same account signs in');
   ok(((await kernel(page, 'GET', '/api/clients')).json.clients || []).some(c => c.last_name === 'Keeper'), 'damaged: and the client is back');
-  fs.rmSync(backupFile, { force: true });
+  // (H2) A byte of the stored seal flipped: refused as damage (an integrity failure), with the copy offered.
+  await logout(page);
+  await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 }); await settle(page);
+  ok(await storedImage(page, true), 'integrity: one byte of the stored image flipped');
+  eq(await tryLogin(page, 'dmg', PW), 'refused', 'integrity: the sign-in is refused');
+  ok(/failed its integrity check/.test(await page.textContent('.login')) && !/Something went wrong/.test(await page.textContent('.login')), 'integrity: saying the stored copy failed its integrity check, not "something went wrong"', await page.textContent('.login'));
+  ok(await page.$('[data-device-damaged][role=alert] [data-damaged-save]'), 'integrity: with the button to save the copy');
+  fs.rmSync(backupFile, { force: true }); fs.rmSync(copyFile, { force: true });
   errors.push(...mine);
+  await ctx.close();
+}
+// Another browser: the saved copy, when its image is sound (what an engine that misread a good image leaves), is
+// restored with the password of an account from the device, and the records come back.
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = watch(await ctx.newPage(), 'damaged-copy-restore');
+  const sound = JSON.parse(copyText); sound.image = { ...sound.image, iv: { b64: good.iv }, ct: { b64: good.ct } };
+  const soundFile = `${tmpDir}/suds-ui-damaged-copy-sound.json`; fs.writeFileSync(soundFile, JSON.stringify(sound));
+  await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 20000 }); await settle(page);
+  eq(await restoreFile(page, soundFile, 'Not-The-Password-2026!'), 'refused', 'saved copy: a wrong password is refused');
+  ok(/password of an account/.test(await page.textContent('.modal [data-restore-error]')), 'saved copy: asking for an account\'s password');
+  await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal')), { timeout: 5000 });
+  eq(await restoreFile(page, soundFile, PW), 'preview', 'saved copy: opens with the account\'s password');
+  ok(await page.$('.modal [data-restore-preview=damaged-copy]') && (await page.textContent('.modal [data-restore-clients]')) === '1', 'saved copy: shown as the saved copy, with its one client');
+  await page.fill('.modal input[name=restore_confirm]', 'RESTORE'); await page.click('.modal [data-restore-go]');
+  await page.waitForSelector('[data-mode-tab=login][aria-selected=true]', { timeout: 20000 }); await settle(page);
+  eq(await tryLogin(page, 'dmg', PW), 'in', 'saved copy: the account signs in with its password');
+  ok(((await kernel(page, 'GET', '/api/clients')).json.clients || []).some(c => c.last_name === 'Keeper'), 'saved copy: and the records are back');
+  fs.rmSync(soundFile, { force: true });
   await ctx.close();
 }
 

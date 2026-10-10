@@ -108,7 +108,7 @@ async function loginPanel(r, noAccount, back = '', status = {}) {
     // A device account with no key to the encrypted records yet (one made before they were encrypted, or
     // restored from a backup) is let in by someone who has one: the two extra fields appear.
     try { r2 = await post('/api/auth/login', d); }
-    catch (e) { if (e.data && e.data.deviceDamaged && !f.parentNode.querySelector('[data-device-damaged]')) f.before(damagedNotice());
+    catch (e) { if (e.data && e.data.deviceDamaged) { const was = f.parentNode.querySelector('[data-device-damaged]'); if (was) was.remove(); f.before(damagedNotice(e.data)); }
       if (e.data && e.data.sponsorRequired && showSponsor && !d.sponsor_username) { showSponsor(true); if (!e.data.droppedAfterRestore) e.message += ' If your account has not been used on this device since its records were encrypted, someone who can already log in here can let you in below.'; e.labelled = true; } throw e; }
     await loadSession();
     resetRecoveryPrompt();
@@ -184,8 +184,10 @@ function fingerprintSignIn(f, back) {
 }
 
 // The device's database would not open (1.25.4, G2; local/kernel.js damagedDevice): the kernel keeps the damaged
-// copy, and this saves it as a file (still encrypted) before anyone starts over, so nothing is lost unseen.
-function damagedNotice() {
+// copy, and this saves it as a file (still encrypted) before anyone starts over, so nothing is lost unseen. The ways
+// back in the order to try them (1.25.5, H1): save the copy, try again after closing the browser (the first time it
+// may be the browser, not the records), then Restore from a backup, which also takes the saved copy.
+function damagedNotice(d = {}) {
   const save = async () => {
     const text = await window.SUDS_LOCAL.damagedCopy();
     if (!text) { toast('No damaged copy is kept on this device.', 'error'); return; }
@@ -193,9 +195,13 @@ function damagedNotice() {
     const a = h('a', { href: url, download: `suds-damaged-device-copy-${new Date().toISOString().slice(0, 10)}.json` }); document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   };
-  return h('div', { class: 'banner danger', role: 'alert', 'data-device-damaged': '1' }, h('div', {},
-    h('p', {}, h('b', {}, 'The records stored on this device could not be opened. '), 'Starting over erases the damaged copy too, so save it first. The file stays encrypted: only an account’s password from this device opens it.'),
-    h('button', { type: 'button', class: 'btn', 'data-damaged-save': '1', onClick: save }, 'Save the damaged copy')));
+  const maybeBrowser = !d.repeated && !d.integrity;
+  return h('div', { class: 'banner danger', role: 'alert', 'data-device-damaged': d.repeated ? 'again' : '1' }, h('div', {},
+    h('p', {}, h('b', {}, 'The records stored on this device could not be opened. '), maybeBrowser ? 'This may be this browser rather than the records. ' : '', 'Nothing has been deleted.'),
+    h('ol', {},
+      h('li', { 'data-damaged-step': 'save' }, h('button', { type: 'button', class: 'btn', 'data-damaged-save': '1', onClick: save }, 'Save the damaged copy'), ' The file stays encrypted: only an account’s password from this device opens it.'),
+      d.repeated ? null : h('li', { 'data-damaged-step': 'again' }, 'Close the browser completely (every window), open SUDS again and log in.'),
+      h('li', { 'data-damaged-step': 'restore' }, 'If it still does not open: Restore from a backup, with your latest backup or the copy you saved. Do it in another browser, or in this one after Start over on this device, which erases the copy kept here.'))));
 }
 
 // ---- a device: "Can't sign in?" — every way back in, and what each does to the records ----

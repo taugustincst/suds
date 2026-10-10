@@ -260,18 +260,27 @@ export async function unlockRecovery(vault, code) {
   if (!w || !norm) return null;
   return unwrapDek(w, RECOVERY_DOMAIN + norm);
 }
+/** The DEK from one account's wrap with `password`, or null. */
+async function openWrap(vault, w, password) {
+  const dek = await unwrapDek(w, password);
+  if (!dek || !w.chained) return dek;
+  // A wrap carried over by a restore opens the backed-up device's DEK, which opens this one's (the chain).
+  const k = await importDek(dek); dek.fill(0);
+  if (!vault.chain) return null;
+  try { return await open(k, { format: IMAGE_FORMAT, version: VERSION, iv: vault.chain.iv, ct: vault.chain.ct }, AAD_CHAIN); } catch { return null; }
+}
 /** Try `password` against this username's wraps: { dek, wrap } or null. */
 export async function unlock(vault, username, password) {
   for (const w of await wrapsFor(vault, username)) {
-    let dek = await unwrapDek(w, password);
-    if (dek && w.chained) {
-      // A wrap carried over by a restore opens the backed-up device's DEK, which opens this one's (the chain).
-      if (!vault.chain) continue;
-      const k = await importDek(dek); dek.fill(0);
-      try { dek = await open(k, { format: IMAGE_FORMAT, version: VERSION, iv: vault.chain.iv, ct: vault.chain.ct }, AAD_CHAIN); } catch { continue; }
-    }
+    const dek = await openWrap(vault, w, password);
     if (dek) return { dek, wrap: w };
   }
+  return null;
+}
+/** The DEK from whichever account's wrap `password` opens, or null: a saved damaged copy is opened with no username (local/kernel.js). */
+export async function unlockAnyAccount(vault, password) {
+  if (!hasAccounts(vault) || typeof password !== 'string' || !password) return null;
+  for (const w of vault.wraps.filter(x => !x.recovery).slice(0, 50)) { const dek = await openWrap(vault, w, password); if (dek) return dek; }
   return null;
 }
 

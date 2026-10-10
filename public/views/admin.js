@@ -668,7 +668,7 @@ route('admin', async (r) => {
           { name: 'procurement_pricing', label: 'Pricing', type: 'textarea', rows: 3, value: s.procurement_pricing || '', span: true },
           { name: 'procurement_sla', label: 'Support and service levels', type: 'textarea', rows: 3, value: s.procurement_sla || '', span: true },
         ]),
-      ], { values: s, submitText: 'Save settings', onSubmit: async (d) => { await put('/api/admin/settings', d); toast('Settings saved', 'ok'); },
+      ], { values: s, submitText: 'Save settings', onSubmit: async (d) => { const r = await put('/api/admin/settings', d); if (r && r.warnings && r.warnings.length) toast(`Settings saved. ${r.warnings.join(' ')}`, 'warn'); else toast('Settings saved', 'ok'); },
         extra: state.local ? null : h('p', { class: 'small', 'data-backup-link': '1' }, 'To back up now, download a backup or restore one, open ', h('a', { href: '#/admin?tab=system' }, 'System & backups'), '.') });
       // A link to one setting (Home's "Finish setting up", 1.24.0: field=…): its section is open; the field is scrolled
       // to and focused once the page is drawn (after the router has put focus on the heading).

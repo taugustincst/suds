@@ -207,6 +207,8 @@ async function eraseLegacyCopies() {
   audit.log({ user: { username: 'device' }, action: 'device.encrypted_at_rest', details: { migrated: true } });
 }
 
+/** Why unsealed `bytes` are not a whole, sound database, or null: its length against its own header, then SQLite's quick_check on a copy off to the side. */
+const imageCheck = (bytes) => sqlite.imageProblem(bytes) || sqlite.inspect(bytes, (d) => { const q = Object.values(d.one('PRAGMA quick_check') || {})[0]; return q === 'ok' ? null : `quick_check: ${q}`; });
 /** Unseal the database with `dekRaw` (from a wrap) and open it in this page. */
 async function unlockWith(dekRaw) {
   dropKey(); dek = dekRaw; dekKey = await vault.importDek(dek);
@@ -214,37 +216,84 @@ async function unlockWith(dekRaw) {
     theVault = (await sqlite.getMeta(VAULT_KEY)) || theVault;
     setKeys(await vault.openKeys(dekKey, theVault.keys));
     const sealed = await sqlite.readCurrent();
-    const plain = await vault.open(dekKey, sealed);
-    // The image is checked before it is used (1.25.4, G2): its length against its own header, then SQLite's
-    // quick_check on a copy off to the side, before the schema and migrations touch it.
-    try {
-      const why = sqlite.imageProblem(plain) || sqlite.inspect(plain, (d) => { const q = Object.values(d.one('PRAGMA quick_check') || {})[0]; return q === 'ok' ? null : `quick_check: ${q}`; });
-      if (why) throw new Error(why);
-      openDatabase(plain);
-    } catch (e) { plain.fill(0); if (e.code === 'SUDS_KEY_LOST') throw e; throw await damagedDevice(sealed, e); }
+    // The key is right (it has just opened the vault's column keys), so an image that fails AES-GCM has changed since
+    // it was sealed: damage in the store, kept and said like any other (1.25.5, H2), not "something went wrong".
+    let plain;
+    try { plain = await vault.open(dekKey, sealed); }
+    catch (e) { if (e instanceof vault.VaultError && e.code === 'tampered') throw await damagedDevice(sealed, e, { integrity: true }); throw e; }
+    // The image is checked before it is used (1.25.4, G2), before the schema and migrations touch it. When SQLite
+    // fails on it, it is asked once more on a new engine (1.25.5, H1): WebKit has failed sign-ins inside the engine
+    // ("Out of bounds memory access"), and an engine that misreads a good image must not get it called damaged. A
+    // length or header that is wrong (plain JavaScript, no engine) is not asked again.
+    let first = null;
+    for (;;) {
+      try { const why = imageCheck(plain); if (why) throw new Error(why); openDatabase(plain); break; }
+      catch (e) {
+        if (e.code === 'SUDS_KEY_LOST') { plain.fill(0); throw e; }
+        try { db.close(); } catch {}
+        if (first || sqlite.imageProblem(plain)) { plain.fill(0); throw await damagedDevice(sealed, first && first.message !== e.message ? new Error(`${first.message}; on a new engine: ${e.message}`) : e); }
+        first = e;
+        console.warn('[suds-local] the device database would not open; trying once more on a new SQLite engine:', String(e.message).slice(0, 300));
+        try { await sqlite.freshEngine(); } catch (e2) { console.warn('[suds-local] no new SQLite engine:', e2.message); }
+      }
+    }
     plain.fill(0);
     sqlite.setSealer(sealer());
     phase = 'open'; lastActivity = Date.now();
   } catch (e) { dropKey(); clearKeys(); sqlite.setOpenAllowed(false); throw e; }
 }
 /**
- * The device database opened under the right key but would not open as a database (1.25.4, G2: a WebKit run saw
- * "malformed database schema (audit_log) - string or blob too big" at sign-in after a reload). Nothing is
- * discarded or written over: the sealed image stays where it is, a copy of it is kept under its own key with the
- * vault that opens it (a restore does not remove it; only Start over, which erases everything, does), and the
- * person is told plainly, with the ways back. The copy can be saved as a file from the sign-in page (damagedCopy).
+ * The device database would not open under the right key (1.25.4, G2: a WebKit run saw "malformed database schema
+ * (audit_log) - string or blob too big" at sign-in after a reload; 1.25.5, H2: an image whose seal no longer checks).
+ * Nothing is discarded or written over: the sealed image stays where it is, a copy of it is kept under its own key
+ * with the vault that opens it (a restore does not remove it; only Start over, which erases everything, does), and
+ * the person is told plainly, with the ways back in the order to try them. The copy can be saved as a file from the
+ * sign-in page (damagedCopy), and Restore from a backup takes that file (openDamagedCopy). The first time an image is
+ * found so it may be this browser, not the records (1.25.5, H1), and the message says so; the same image again, not.
  */
 const DAMAGED_KEY = 'damaged_db';
-async function damagedDevice(sealed, err) {
+const DAMAGED_FORMAT = 'suds-damaged-device-db';
+async function damagedDevice(sealed, err, { integrity = false } = {}) {
   try { db.close(); } catch {}
   const why = String((err && err.message) || err).slice(0, 300);
   console.error('[suds-local] the device database would not open:', why);
+  let again = false;
   try {
     const kept = await sqlite.getMeta(DAMAGED_KEY);
-    const same = kept && kept.image && kept.image.ct.length === sealed.ct.length && kept.image.ct.every((x, i) => x === sealed.ct[i]);
-    if (!same) await sqlite.putMeta({ [DAMAGED_KEY]: { at: new Date().toISOString(), why, image: sealed, vault: theVault } });
+    again = !!(kept && kept.image && kept.image.ct.length === sealed.ct.length && kept.image.ct.every((x, i) => x === sealed.ct[i]));
+    if (!again) await sqlite.putMeta({ [DAMAGED_KEY]: { at: new Date().toISOString(), why, image: sealed, vault: theVault } });
   } catch (e) { reportError(e); }
-  return new HttpError(503, 'The records on this device could not be opened: the copy stored in this browser is damaged. Nothing has been deleted, and the damaged copy is kept on this device. Reload the page and log in again. If this message comes back, save the damaged copy, then put your latest device backup back: Can\u2019t sign in? \u2192 Start over on this device, then Restore from a backup.', { deviceDamaged: true, locked: true });
+  const found = integrity ? ': the copy stored in this browser failed its integrity check (it has changed since it was saved)'
+    : again ? ' again: the copy stored in this browser is damaged' : '. This may be this browser rather than the records';
+  return new HttpError(503, `The records on this device could not be opened${found}. Nothing has been deleted, and a copy is kept on this device. `
+    + `First save the damaged copy${again ? ' if you have not' : ', then close the browser completely and log in again'}. If it still does not open, use Restore from a backup with your latest backup or the copy you saved: in another browser, or in this one after Start over on this device.`,
+  { deviceDamaged: true, locked: true, integrity, repeated: again });
+}
+/**
+ * A copy saved by "Save the damaged copy" (damagedDevice, damagedCopy), given to Restore from a backup (1.25.5, H1). It
+ * holds the sealed image and the vault that opens it, so the password of an account from that device (or its recovery
+ * code) opens it wherever an engine reads it: another browser, or this one after a restart. It is opened and checked
+ * as a sign-in would (AES-GCM, the image's length, quick_check); one that fails is refused whole and nothing changes.
+ * Answers as backup.open does, its accounts' wraps carried as a backup carries them (vault.backupRecord): they sign
+ * in with the passwords they had, and the device moves to a key of its own at the first sign-in.
+ */
+const isDamagedCopy = (file) => new TextDecoder().decode(file.subarray(0, 64)).startsWith(`{"format":"${DAMAGED_FORMAT}"`);
+async function openDamagedCopy(file, secret) {
+  const refused = (message, code = 'tampered') => new HttpError(400, message, { backupError: code });
+  let k = null;
+  try { k = JSON.parse(new TextDecoder().decode(file), (_, v) => (v && typeof v === 'object' && Object.keys(v).length === 1 && typeof v.b64 === 'string' ? Uint8Array.from(Buffer.from(v.b64, 'base64')) : v)); } catch {}
+  if (!k || !vault.isSealed(k.image) || !vault.hasAccounts(k.vault) || !k.vault.keys) throw refused('This saved copy is incomplete, so it cannot be restored.');
+  let raw = null;
+  try { raw = (vault.normalizeRecoveryCode(secret) && await vault.unlockRecovery(k.vault, secret)) || await vault.unlockAnyAccount(k.vault, secret); } catch {}
+  if (!raw) throw refused('That password does not open this saved copy. Type the password of an account from the device it was saved on.', 'passphrase');
+  const key = await vault.importDek(raw); raw.fill(0);
+  let keys; let bytes;
+  try { keys = await vault.openKeys(key, k.vault.keys); bytes = await vault.open(key, k.image); }
+  catch { throw refused('This saved copy has changed since it was saved, so it cannot be restored. Restore your latest backup instead.'); }
+  let why; try { why = imageCheck(bytes); } catch (e) { why = e.message; }
+  if (why) { bytes.fill(0); console.warn('[suds-local] the saved copy would not open:', String(why).slice(0, 300)); throw refused('The records in this saved copy are damaged here too, so it cannot be restored. Restore your latest backup instead.'); }
+  const nextDek = vault.newDek(); const device = await vault.backupRecord(k.vault, key, nextDek); nextDek.fill(0);
+  return { header: { created_at: k.at || null, app_version: null }, meta: { keys, created_at: k.at || null, device, damaged_copy: true }, bytes };
 }
 /** Try a username and password against the vault; the DEK and the wrap it opened, or null. */
 async function tryUnwrap(username, password) {
@@ -760,7 +809,8 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
   async function openUpload(ctx) {
     const v = validate(ctx.body, { file_b64: { type: 'string', required: true, maxLen: 400 * 1024 * 1024 }, passphrase: { type: 'string', required: true, maxLen: 500 }, confirm: { type: 'string', maxLen: 40 } });
     const file = Uint8Array.from(Buffer.from(v.file_b64.replace(/^data:[^,]*,/, ''), 'base64'));
-    const out = await asHttp(() => backup.open(file, v.passphrase));
+    // A backup file, or the copy saved when this device's records would not open (openDamagedCopy, 1.25.5).
+    const out = isDamagedCopy(file) ? await openDamagedCopy(file, v.passphrase) : await asHttp(() => backup.open(file, v.passphrase));
     const damaged = () => new HttpError(400, 'This backup file is damaged or has been altered, so it cannot be restored.', { backupError: 'tampered' });
     let info;
     try {
@@ -777,7 +827,7 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
   router.post('/api/local/restore/preview', async (ctx) => {
     mayRestore(ctx);
     const { out, info } = await openUpload(ctx);
-    return { created_at: out.meta.created_at || out.header.created_at, app_version: out.header.app_version, org_name: out.meta.org_name || '', clients: info.clients, users: info.users, schema_version: info.schema_version, current: { clients: userCount() ? clientCount() : 0 } };
+    return { created_at: out.meta.created_at || out.header.created_at, app_version: out.header.app_version, org_name: out.meta.org_name || '', clients: info.clients, users: info.users, schema_version: info.schema_version, damaged_copy: !!out.meta.damaged_copy, current: { clients: userCount() ? clientCount() : 0 } };
   });
   router.post('/api/local/restore', async (ctx) => {
     mayRestore(ctx);
@@ -805,7 +855,7 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
     phase = 'open'; token = ''; lastActivity = Date.now();
     // Everyone signs in again, as an account from the backup. The restore goes into the restored database's
     // own audit trail, which is the one that carries on.
-    audit.log({ user: { username: by || 'device' }, action: 'device.restore', details: { at: new Date().toISOString(), backup_created_at: out.meta.created_at || null, clients: info.clients } });
+    audit.log({ user: { username: by || 'device' }, action: 'device.restore', details: { at: new Date().toISOString(), backup_created_at: out.meta.created_at || null, clients: info.clients, ...(out.meta.damaged_copy ? { from: 'damaged_copy' } : {}) } });
     if (wasLegacy) { try { await eraseLegacyCopies(); } catch (e) { reportError(e); } }
     return { ok: true, clients: info.clients, users: info.users, reload: false };
   });
@@ -956,7 +1006,7 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
     phase: () => phase, saveStats: () => sqlite.saveStats(), lock: () => lockDevice(), rekeyPending: () => !!(theVault && theVault.rekey),
     // The damaged database kept by damagedDevice, as a file's text (JSON, its bytes in base64), or null. Sealed: only
     // the device key opens the image, and only an account's password (a wrap in the vault beside it) opens that key.
-    damagedCopy: async () => { const k = await sqlite.getMeta(DAMAGED_KEY); return k ? JSON.stringify({ format: 'suds-damaged-device-db', ...k }, (_, v) => (v instanceof Uint8Array ? { b64: Buffer.from(v).toString('base64') } : v)) : null; },
+    damagedCopy: async () => { const k = await sqlite.getMeta(DAMAGED_KEY); return k ? JSON.stringify({ format: DAMAGED_FORMAT, ...k }, (_, v) => (v instanceof Uint8Array ? { b64: Buffer.from(v).toString('base64') } : v)) : null; },
     // The folder scheduled backups are written to (1.24.0): a File System Access directory handle, kept with the
     // device's other stored values so that erasing the device forgets it too. No record and no key: the files
     // written there are encrypted backups (local/backup.js).
