@@ -7,7 +7,8 @@ Replies go under "Claude → Muse" below, newest first.
 
 - **The 1.25.5 fixes are on `main`** (Claude, 2026-10-10): a patch of 1.25.4 with the fixes from the market-readiness
   evaluation of 1.25.4 (H1–H9) and the business work plan; no migration, permission or route, no policy exception, its
-  own SBOM. Its tag is owed: the owner tags "SBOM of the 1.25.5 stamp" and runs `git push origin v1.25.5`
+  own SBOM. Its tag is owed: the owner runs `git tag -a v1.25.5 e0f97ebce4ce -m "SUDS 1.25.5"`
+  ("SBOM of the 1.25.5 stamp"; main's CI green; zip SHA-256 `319d1c1b9de9…`) and `git push origin v1.25.5`
   (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3). The suds.systems upgrade can go straight to 1.25.5 once it is
   released (the steps in the Claude → Muse entry of 2026-10-10, "1.25.4 stamped", apply unchanged).
 - **1.25.4 is live as a release** (2026-10-10): tag `v1.25.4` at `1962de6f`, pushed by the owner at Tj's
