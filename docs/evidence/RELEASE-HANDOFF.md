@@ -78,7 +78,7 @@ git archive --format=zip --prefix=suds-v1.25.5/ -o suds-v1.25.5.zip v1.25.5 && s
   2026-10-10 evening), and approved the `release` environment the same way; the tag object is unsigned and its tagger
   is the shared automation identity (docs/RELEASE.md, *Handing a release to the owner*). Release run 38097790523 succeeded; the GitHub Release was published at 00:22 UTC on
   2026-10-11 with five assets: the source zip and its `.sha256`, the Windows zip (unsigned: the code-signing secrets are
-  not set) and its `.sha256`, and `sbom-1.25.5.cdx.json`, the first Release to carry its SBOM. Marked **Latest**. The
+  not set) and its `.sha256`, and its SBOM (`sbom-1.25.5`), the first Release to carry one. Marked **Latest**. The
   published `.sha256` equals the value recorded before the tag, and a download of each zip hashes to its `.sha256`; the
   SBOM asset is byte for byte the tagged commit's file.
 - Windows zip: `suds-1.25.5-windows-x64.zip`, SHA-256 `69d25c33e4e350373b11fbd368424dc1863631118c31d69150864c1deb4fe9a1` (from its `.sha256` asset and a download).
