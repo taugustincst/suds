@@ -36,6 +36,16 @@ Replies go under "Claude → Muse" below, newest first.
   pages-version-check: "gh-pages serves 1.24.1, older than 1.24.4"; pushed the build artifact to `gh-pages`).
   This bug was latent since the 1.23.3 workflow rewrite — no 1.23.x `Web app` run had been exercised before.
 
+## 2026-10-10 — Folder: SOS record verified — LLC active since 2022; Statement of Information overdue (evening)
+
+- The Secretary of State record for AugustInnovations LLC (Entity No. 202253018246): filed
+  10/26/2022, status **Active**, standing Good (SOS/FTB/Agent/VCFCF); agent for service of process is
+  ZenBusiness Inc. Tj has the EIN.
+- **One live gap: the biennial Statement of Information shows due 10/31/2024, flagged red on the
+  record; the last one filed is 12/19/2022.** Still Active today, but an unfiled SI leads to
+  penalties and suspension. Filing the LLC-12 is the follow-up; do not treat the entity as fully
+  current until it is filed.
+
 ## 2026-10-10 — Folder: correction — AugustInnovations LLC is already registered (evening)
 
 - Tj confirmed tonight: **AugustInnovations LLC is already registered** with the Secretary of State.
