@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, startPage, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink, roleOptions, roleSummary, NOT_SAVED } from '../app.js';
+import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, startPage, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink, roleOptions, roleSummary, NOT_SAVED, iosBrowserTab, IOS_TAB_REASON } from '../app.js';
 import { restoreBackupButton, requestPersistentStorage, showRecoveryCode, resetRecoveryPrompt } from './local.js';
 import { passkeysPossible, platformAvailable, conditionalAvailable, getPasskey, signInWithPasskey, passkeyErrorMessage, withFingerprint, fingerprintIcon } from '../passkey.js';
 
@@ -352,9 +352,16 @@ function firstRun() {
     : h('div', {},
       h('div', { class: 'banner warn mb', 'data-browser-copy-warning': '1' }, h('div', {}, h('b', {}, 'This is an offline copy of the office SUDS. '), 'Its records are encrypted with the password you choose here, and SUDS locks when you log out or step away. Keep that password to yourself: if you forget it, the records on this device cannot be opened, and anything not yet synced is lost — the office copy is re-downloaded when you set the device up again. Keep real client information on the office SUDS unless your administrator has approved this device for field work.')),
       h('p', { class: 'small muted' }, 'Everything you record is kept in this browser on this device. Whenever you are near the office, tap Sync to exchange changes with the office SUDS — both directions.'));
+  // On an iPhone or iPad in a Safari tab (1.25.6, J7), the Home Screen comes first: records kept in a tab can be
+  // deleted after seven days without a visit, and a Home Screen app may not see what was set up in a tab.
+  const homeScreen = stat && iosBrowserTab()
+    ? h('div', { class: 'banner warn mb', 'data-ios-home-screen-step': '1' }, h('div', {}, h('b', {}, 'First, add SUDS to your Home Screen. '), IOS_TAB_REASON, ' Opened from its Home Screen icon, SUDS is not affected by that count.',
+      h('ol', {}, h('li', {}, 'Tap ', h('b', {}, 'Share'), ', then ', h('b', {}, 'Add to Home Screen'), '.'),
+        h('li', {}, 'Open SUDS from the new icon and set it up there. A Home Screen app may not see records made in a Safari tab.'))))
+    : null;
   return h('div', { 'data-first-run': '1' },
     h('p', { class: 'small' }, stat ? 'Create the first account on this device. You will manage it: backups, and whether other people may sign up here.' : 'Set up SUDS on this device.'),
-    notice, f, tryIt,
+    homeScreen, notice, f, tryIt,
     h('p', { class: 'small muted center mt' }, 'Have a backup from this or another device? ', restoreBackupButton({ link: true })));
 }
 

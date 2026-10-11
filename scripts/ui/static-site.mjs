@@ -51,6 +51,15 @@ ok(cspMeta && /connect-src 'self'(;|$)/.test(cspMeta) && /script-src 'self' 'was
 ok(await page.$('input[name=display_name]'), 'so opening it with no query string at all still lands on first-run setup, not a login screen for a server that does not exist');
 eq(await page.getAttribute('[data-mode-tab=signup]', 'aria-selected'), 'true', 'first-run set-up is the Sign up option, selected because the device has no account');
 ok(await page.$('[data-storage-notice]') && /nowhere else/.test(await page.textContent('[data-storage-notice]')), 'it says once where the records are kept');
+// 1.25.6 (J7): this context is an iPhone in a Safari tab (its user agent; not opened from the Home Screen), where
+// Safari deletes a site's storage after 7 days without a visit: the Home Screen is the first set-up step.
+{
+  const step = await page.$('[data-ios-home-screen-step]');
+  const text = step ? await step.textContent() : '';
+  ok(step && /First, add SUDS to your Home Screen/.test(text) && /after 7 days/.test(text) && /Add to Home Screen/.test(text), 'iPhone in a Safari tab: adding SUDS to the Home Screen is a set-up step, with the reason (7 days)', text);
+  ok(step && await page.evaluate(() => { const s = document.querySelector('[data-ios-home-screen-step]'); const f = document.querySelector('input[name=display_name]'); return !!(s.compareDocumentPosition(f) & Node.DOCUMENT_POSITION_FOLLOWING); }), 'and it comes before the form');
+  ok(!/demo|evaluation/i.test(text), 'with no demo or evaluation wording');
+}
 
 await page.fill('input[name=display_name]', 'Static Nav'); await page.fill('input[name=username]', 'staticnav');
 await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
@@ -62,6 +71,13 @@ await page.waitForSelector('.layout', { timeout: 10000 }).catch(() => {});
 ok(await page.$('.layout'), 'setup completes with no server round trip');
 await passRecoveryCode(page);
 ok(await page.evaluate(() => !!window.SUDS_LOCAL), 'the in-browser kernel is what answered every request');
+// 1.25.6 (J7): signed in, in a Safari tab, one line on every page says so; dismissed, it stays away for the session.
+{
+  const notice = await until(() => page.$('#banners [data-banner="ios-safari-tab"]'), { timeout: 5000 });
+  ok(notice && /7 days without a visit/.test(await notice.textContent()) && await notice.$('a[href="get-app.html"]'), 'iPhone in a Safari tab: a notice on the page says records can be deleted after 7 days, with how to add SUDS to the Home Screen', notice && await notice.textContent());
+  if (notice) await (await notice.$('button[aria-label=Dismiss]')).click();
+  ok(!(await page.$('#banners [data-banner="ios-safari-tab"]')), 'it can be dismissed');
+}
 ok(!(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)), 'the page fits a phone screen width');
 // 1.23.5 (D7): the first-run address typed while signed in goes to Home, not to a Sign up form inside the app.
 await page.goto(base + '/#/localsetup');
@@ -81,8 +97,33 @@ await page.reload(); await page.waitForSelector('.layout, .login input[name=user
 ok(!(await page.$('.layout')) && await page.$('.login input[name=username]'), 'a reload locks the device: it asks for the password again');
 await signInAgain(page, 'staticnav', 'Navigator2026!!'); await settle(page);
 ok(await page.$('.layout'), 'and signing in opens it again');
+ok(!(await page.$('#banners [data-banner="ios-safari-tab"]')), 'the dismissed Safari-tab notice stays away for the rest of the session, a reload and sign-in included');
 await page.goto(base + '/#/clients'); await settle(page);
 eq(await page.$$eval('tbody tr', r => r.length), 1, 'and the client entered offline is still there');
+// The same set-up page as a Home Screen app (display-mode: standalone, navigator.standalone), as iPadOS (a Mac with a
+// touch screen) in a tab, and as a desktop and an Android browser: only the iPad in a tab sees the step; nothing is blocked.
+for (const [label, opts, stub, want] of [
+  ['an iPhone Home Screen app', { ...devices['iPhone 13'] }, { standalone: true }, false],
+  ['an iPad (iPadOS reports a Mac) in a Safari tab', { viewport: { width: 820, height: 1180 }, userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15' }, { platform: 'MacIntel', touch: 5 }, true],
+  ['a desktop Mac (no touch screen)', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15' }, { platform: 'MacIntel', touch: 0 }, false],
+  ['an Android phone', { ...devices['Pixel 5'] }, {}, false],
+]) {
+  const c = await browser.newContext(opts);
+  await c.addInitScript((st) => {
+    if (st.platform) Object.defineProperty(Navigator.prototype, 'platform', { get: () => st.platform, configurable: true });
+    if (st.touch !== undefined) Object.defineProperty(Navigator.prototype, 'maxTouchPoints', { get: () => st.touch, configurable: true });
+    if (st.standalone) {
+      Object.defineProperty(Navigator.prototype, 'standalone', { get: () => true, configurable: true });
+      const mm = window.matchMedia.bind(window);
+      window.matchMedia = (q) => (/display-mode:\s*standalone/.test(q) ? { matches: true, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} } : mm(q));
+    }
+  }, stub);
+  const p = await c.newPage();
+  await p.goto(base + '/'); await p.waitForSelector('input[name=display_name]', { timeout: 20000 });
+  eq(!!(await p.$('[data-ios-home-screen-step]')), want, `${label}: the Home Screen set-up step is ${want ? 'shown' : 'not shown'}`);
+  ok(!!(await p.$('button[type=submit]')) && !(await p.$('button[type=submit][disabled]')), `${label}: set-up is not blocked`);
+  await c.close();
+}
 
 // The on-device app holds real records now: fictional sample clients are only offered to an empty device
 // (as on an office server), never mixed in beside a real one (ux-polish.mjs loads them on an empty device).

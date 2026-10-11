@@ -33,7 +33,14 @@ Open the published address on any phone, tablet or computer. There is nothing to
    straight to either one. SUDS asks for it every time the page is opened, and after signing out or 15 minutes
    idle: until then the records stay locked (below).
 4. **Add it to the home screen** for something that opens like an app: on iPhone, Safari's Share sheet →
-   *Add to Home Screen*; on Android and desktop Chrome/Edge, the address bar offers *Install*. The step-by-step
+   *Add to Home Screen*; on Android and desktop Chrome/Edge, the address bar offers *Install*. **On iPhone and
+   iPad it is a set-up step, not an option:** Safari deletes all of a site's script-writable storage (IndexedDB,
+   so every record) after seven days of Safari use without a visit to the site (since Safari 13.1), and a Home
+   Screen web app is counted separately. In a Safari tab on iOS or iPadOS (not opened from the Home Screen:
+   `display-mode: standalone` false and `navigator.standalone` not true), the set-up page shows *First, add SUDS
+   to your Home Screen* above the form (set it up from the new icon: a Home Screen app may not see records made in
+   a tab), and every page afterwards shows a one-line notice, dismissible for the session. Nothing is blocked, and
+   desktop and Android browsers see neither (1.25.6). The step-by-step
    page is `get-app.html` next to the site (the office server's `/app` is a rewrite a static host does not
    have, so every link in the app uses the file name).
 5. **Try it with sample data** is still there, folded away below the Sign up form: it creates an account whose
@@ -77,7 +84,10 @@ register (`HIPAA.md`, *Risk register notes*).
   username and password of a person who already has an account on it: a new account gets the key to every
   record, so it cannot be created by whoever happens to pick the device up.
 - **Clearing the browser's site data, or losing the device, loses the records.** So does a browser that evicts
-  the site's storage when the device runs short of space. The app asks the browser to keep its storage
+  the site's storage when the device runs short of space, and so does **Safari on iPhone and iPad after seven days
+  of Safari use without a visit to SUDS** (its cap on script-writable storage, since Safari 13.1): use SUDS there
+  from the Home Screen, which is counted on its own (WebKit has had a bug report that the exemption is not always
+  kept, so backups still matter), as the set-up page and the in-tab notice say (step 4 above). The app asks the browser to keep its storage
   ("persistent storage") when the first account is created; **This device** shows the answer —
   *Storage: Protected* or *May be cleared by the browser* — with a button to ask again. Installing the app to
   the home screen makes a browser more likely to agree.
