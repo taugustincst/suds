@@ -35,6 +35,19 @@ Rules for every release:
    release each.
 5. The staged rollout ([ADOPTION.md](ADOPTION.md#3-staged-release-cadence)) still applies: pilot group first.
 
+### Release cadence (adopted 2026-10-11)
+
+Adopted on 2026-10-11 at the owner's request, to resolve the shortcomings the market-readiness evaluation of 1.25.5
+found in the process's volume (48 releases in 26 days; finding J11). The owner may revise it.
+
+- **Patches are batched at most weekly**, outside security fixes. Fixes found during the week go into one patch;
+  a security fix still ships as soon as it is ready (the table above).
+- **Pushes that change only documentation skip the heavy CI jobs** (the browser suite and the other long jobs). This
+  is being implemented in the CI workflow by a separate change; until it lands, every push runs every job. The release
+  gate's rule does not change with it: a tagged commit needs every required job green on that exact commit.
+- **`HANDOFF.md` is archived monthly**: the entries older than the current month move to an archive, so that the
+  current notes stay short enough to read.
+
 ### Stabilisation (from 1.23.1)
 
 Ten releases, 1.16.3 to 1.23.0, shipped in about two days; every feature release among them went out under a policy

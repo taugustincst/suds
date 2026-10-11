@@ -47,6 +47,7 @@ Review links point at the repository's default branch; a zip of the exact commit
 | 5 | [SUPPORT-SLA.md](SUPPORT-SLA.md) | Support service levels (business hours; hosted terms only when offered) | Template, unreviewed |
 | 6 | The owner's own drafts, held outside the repository: `[v2 of the licence and subscription agreement and of the BAA/QSOA, built on 2 and 3 with the owner's earlier pilot agreement and BAA folded in, and a reconciliation memo listing the open choices]` | Send **one** text per document: either 2 and 3, or their v2, as the owner decides; the memo goes with it | Unreviewed: `[ATTACHMENTS]` |
 | 7 | [DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](DATA-CONTRIBUTION-AGREEMENT-DRAFT.md) (optional, later) | A CBO-to-county agreement for aggregate figures | Draft; only when a county pilot needs it |
+| 8 | [IP-ASSIGNMENT-DRAFT.md](IP-ASSIGNMENT-DRAFT.md) | A copyright and IP assignment from the individual contributor(s) to the LLC (section 5) | Draft for counsel, unsigned |
 
 Background, not for review: [../PROCUREMENT.md](../PROCUREMENT.md) (how counties buy), [../../compliance/PART2.md](../../compliance/PART2.md)
 (how SUDS maps the Part 2 rule), [../../HIPAA.md](../../HIPAA.md), [../HOSTING.md](../HOSTING.md),
@@ -56,10 +57,12 @@ Background, not for review: [../PROCUREMENT.md](../PROCUREMENT.md) (how counties
 ## 4. The questions
 
 **The entity (first).**
-- E1. The licence and the drafts name "AugustInnovations LLC". `[STATE WHICH ENTITY IS FILED, ITS NAME AND STATE OF
-  FORMATION, OR THAT FILING IS PENDING]`. What must change, and in what order, so that the entity that signs customer
-  agreements is the one that owns the software and the licence names it? Is a written assignment of copyright from the
-  owner (and of any rights in contributions) to the entity needed, and what should it cover?
+- E1. The licence and the drafts name "AugustInnovations LLC", the licensor (owner decision of 2026-10-10). It is
+  registered with the California Secretary of State and Active (filed 2022); its biennial Statement of Information
+  (LLC-12), due 31 October 2024, is overdue and is being filed, and its Franchise Tax Board status is being confirmed
+  (`[STATE OF FORMATION, AND THE STATUS OF BOTH WHEN SENT]`). No written assignment of copyright from the individual
+  contributor(s) to the LLC exists yet: is the draft [IP-ASSIGNMENT-DRAFT.md](IP-ASSIGNMENT-DRAFT.md) the right
+  instrument, and what should it cover (section 5 below)?
 
 **`LICENSE`.**
 - L1. Section 2A lets anyone use SUDS on this device at its official address free of charge for real records. Is the
@@ -113,10 +116,45 @@ tenants): `[ATTACH THE MEMO; ADD ANY CHOICE IT RAISES THAT IS NOT BELOW]`.
 - S1. Are the SLA's response targets and exclusions consistent with the agreement and with a one-person business; how
   to word service credits, if any.
 
-## 5. Out of scope
+## 5. What the licence protects
 
-- Corporate formation filings themselves, tax and accounting (the entity question E1 is in scope only as it affects
-  the agreements and the licence).
+An investor's or acquirer's diligence will ask what is protectable, who owns it, and what a competitor may already take
+freely. The facts counsel needs:
+
+- **The MIT versions.** Versions 1.24.0 and earlier were released under the MIT licence and stay MIT for the copies
+  already received (`LICENSE`; the change was the owner's decision of 2026-10-03). Anyone holding such a copy may use,
+  modify and redistribute it under the MIT terms. The SUDS Proprietary Licence covers 1.24.1 and later.
+- **How the code was produced.** SUDS is written with AI coding assistants under the owner's direction, reviewed and
+  merged by the owner, with no second human reviewer ([../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md)
+  #36a). The owner's recorded decisions, and what is and is not claimed about them, are in
+  [../../IP-PROVENANCE.md](../../IP-PROVENANCE.md).
+- **The Copyright Office's guidance.** In January 2025 the US Copyright Office published *Copyright and Artificial
+  Intelligence, Part 2: Copyrightability*, which addresses the protection of material generated with AI and the role
+  of human contribution (for example, selection, arrangement and modification) in what may be protected. It is cited
+  here for counsel's assessment, not as a conclusion about SUDS.
+- **The assignment.** The LLC is the licensor, but no written assignment from the individual contributor(s) has been
+  signed yet; a draft for counsel is [IP-ASSIGNMENT-DRAFT.md](IP-ASSIGNMENT-DRAFT.md). It cannot change the MIT grant
+  already made for 1.24.0 and earlier copies.
+
+Questions:
+
+- P1. What in SUDS 1.24.1 and later is likely protectable by copyright, given how it was produced and the Copyright
+  Office's report; and what records (beyond [../../IP-PROVENANCE.md](../../IP-PROVENANCE.md)) would strengthen the
+  position?
+- P2. Is the assignment draft sufficient (its scope, the MIT versions, future contributions, moral rights, further
+  assurances), and who must sign it?
+- P3. What can the licence agreement's title and non-infringement warranties honestly say, and what should the
+  licensor disclose to a customer or acquirer about AI-assisted authorship?
+- P4. What may a competitor do with the 1.24.0 MIT code base, and does anything (the name, later work, trade secrets
+  not in the public repository) protect the business beyond copyright? Should "SUDS" be cleared and registered as a
+  mark?
+- P5. Should any version be registered with the Copyright Office, and how would AI-generated material be disclosed in
+  an application?
+
+## 6. Out of scope
+
+- Corporate filings themselves (the Statement of Information), tax and accounting (the entity question E1 is in scope
+  only as it affects the agreements, the licence and the assignment).
 - Opinions on whether SUDS's software features satisfy HIPAA or Part 2 (the documents describe controls; customers
   remain responsible for their compliance).
 - The data contribution agreement (document 7) unless the owner adds it.
@@ -124,13 +162,13 @@ tenants): `[ATTACH THE MEMO; ADD ANY CHOICE IT RAISES THAT IS NOT BELOW]`.
   questions listed in [../README.md](../README.md) *Organisational gaps*, for a later engagement.
 - Litigation, regulatory filings and any customer-specific negotiation.
 
-## 6. What we ask back
+## 7. What we ask back
 
 Written comments (tracked changes or a memo) on each document in scope; a short list of anything that must change
 before a first paid pilot is signed; and an estimate for later reviews of customer-specific changes.
 `[DEADLINE]`.
 
-## 7. Recording the result (owner and Muse, after the review)
+## 8. Recording the result (owner and Muse, after the review)
 
 The drafts are revised from counsel's comments; their banner changes only for a version counsel has reviewed
 ("Reviewed by counsel on `[DATE]`, version `[N]`"). Counsel's name appears only if counsel agrees. Status in

@@ -286,6 +286,15 @@ The owner has decided: the introductory tiers in [`public/procurement.json`](../
 Public code is also a selling point, and should stay one: a county can inspect every line, and a programme can
 keep running SUDS if the vendor disappears. The moat is everything around the code.
 
+**Value is the service, not code exclusivity.** Do not pitch or value SUDS on owning code nobody else may use: 1.24.0
+and earlier stay MIT for the copies already received, the code is written with AI coding assistants, and what copyright
+protects in it is a question for counsel ([templates/COUNSEL-REVIEW-BRIEF.md](templates/COUNSEL-REVIEW-BRIEF.md),
+*What the licence protects*; [../IP-PROVENANCE.md](../IP-PROVENANCE.md)). Position the value in what a fork does not
+bring: the service (setup, import, training and support under a signed agreement), the data model built for
+California SUD and harm-reduction reporting (Part 2 consent and disclosure accounting, CalOMS Tx, opioid-settlement and
+funder reporting), the compliance know-how documented around it, and the support and release discipline a county can
+hold the licensor to.
+
 ## The FDE model
 
 **The idea.** SUDS is priced low; the paid work is forward-deployed implementation: discovery, deployment, data
