@@ -1297,7 +1297,7 @@ page turn on **Private vulnerability reporting**. `SECURITY.md` (1.20.0) tells r
 
 **9. The weekly settings check, and the token that lets it read everything (1.17.0).**
 `.github/workflows/settings-check.yml` runs every Monday (and on *Run workflow*) and runs
-`scripts/repo-settings-check.js`, which reads steps 1 to 7 and this step's environment through the REST API, only with
+`scripts/repo-settings-check.js`, which reads steps 1 to 7, step 8's private vulnerability reporting and this step's environment through the REST API, only with
 GET requests, and fails the run when a setting it read is **off**; the run summary has one row per setting (step,
 setting, state, detail). A setting it **cannot verify** fails the run once `SETTINGS_READ_TOKEN` exists; until then
 (the run has only the workflow's own token), a setting that token is refused is a **warning**, "cannot verify (add
@@ -1313,6 +1313,7 @@ added (engineering review of the 1.17.0 candidate, M6). What it reads:
 | 5 | immutable releases | `immutable-releases`; else the newest release's `immutable` | cannot verify, unless the newest release is marked immutable |
 | 6 | `gh-pages` ruleset; one deploy key with write access; `PAGES_PUBLISH_KEY` in `release`, no `PAGES_DEPLOY_KEY`, neither as a repository secret | `rules/branches/gh-pages`, `keys`, `environments/release/secrets`, `actions/secrets` | the ruleset; the rest **cannot verify** |
 | 7 | no `release/v*` branch left; *Automatically delete head branches* | `git/matching-refs/heads/release/v`, the repository | the branches; the setting **cannot verify** |
+| 8 | private vulnerability reporting enabled (evaluation of 1.25.5, J2: it was off while `SECURITY.md` and the buyer documents sent reporters to it); disabled is **off** | `private-vulnerability-reporting` | may be refused (it needs *Administration: read*): then a warning |
 | 9 | the `settings-check` environment: deployments from `main` only (branch rule `main`, nothing else) | `environments/settings-check`, `…/deployment-branch-policies` | reads it; open to other branches is a warning without the token, **off** with it |
 
 **Cannot verify is not a pass**: with only the workflow's token the rows marked above are warnings, which say what
@@ -1338,7 +1339,7 @@ nothing more, and put it where only `main`'s copy of the workflow can read it, *
 What no read-only token can see: a ruleset's **bypass list**, which GitHub shows only to a token that may edit the
 ruleset. Those rows read "check by hand" and do not fail the run; look at them in Settings → Rules → Rulesets (step
 2: empty; step 3 and `maint/*` creation: *Repository admin* only; step 6: *Deploy keys*). The check does not look at
-code scanning (step 8), the collaborators with write access, or who can edit Releases (*A GitHub Release made by
+code scanning or secret scanning (step 8's optional parts), the collaborators with write access, or who can edit Releases (*A GitHub Release made by
 someone else*). Tested with saved API responses in `test/repo-settings-check.test.js`.
 
 ### Migration numbering across branches
