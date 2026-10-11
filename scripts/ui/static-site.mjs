@@ -4,7 +4,7 @@
 // phone, so it gets the same end-to-end proof the office app and the phone apps get.
 import * as pw from 'playwright';
 const { devices } = pw;
-import { makeChecks, until, settle, signInAgain, PLAYWRIGHT_WEBKIT_LINUX, WEBKIT_LINUX_SW_CACHE, passRecoveryCode } from './assert.mjs';
+import { makeChecks, until, settle, signInAgain, PLAYWRIGHT_WEBKIT_LINUX, WEBKIT_LINUX_SW_CACHE, passRecoveryCode, firstLoad } from './assert.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -30,7 +30,7 @@ page.on('console', m => { if (m.type() === 'error' && !probe(m.location()?.url |
   && !((process.env.SUDS_BROWSER || 'chromium') === 'webkit' && /^Failed to load resource: WebKit encountered an internal error$/.test(m.text()))) errors.push('CONSOLE ' + m.text().slice(0, 250)); });
 page.on('response', r => { if (r.status() >= 400 && !probe(r.url())) errors.push(`HTTP ${r.status()} ${r.url()}`); });
 
-await page.goto(base + '/'); await settle(page);
+await firstLoad(page, base + '/', 'input[name=display_name]'); await settle(page);
 ok(await page.evaluate(() => window.SUDS_FORCE_LOCAL === true), 'the built site forces local mode before app.js even loads');
 ok(await page.evaluate(() => window.SUDS_STATIC_HOST === true), 'and marks itself as served from a static host (the internal marker that turns office sync off)');
 // The production on-device app: no demo/evaluation banner, and no wording that says so, anywhere.
@@ -119,7 +119,7 @@ for (const [label, opts, stub, want] of [
     }
   }, stub);
   const p = await c.newPage();
-  await p.goto(base + '/'); await p.waitForSelector('input[name=display_name]', { timeout: 20000 });
+  await firstLoad(p, base + '/', 'input[name=display_name]', { timeout: 20000 });
   eq(!!(await p.$('[data-ios-home-screen-step]')), want, `${label}: the Home Screen set-up step is ${want ? 'shown' : 'not shown'}`);
   ok(!!(await p.$('button[type=submit]')) && !(await p.$('button[type=submit][disabled]')), `${label}: set-up is not blocked`);
   await c.close();
