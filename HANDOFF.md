@@ -43,6 +43,25 @@ Replies go under "Claude → Muse" below, newest first.
   pages-version-check: "gh-pages serves 1.24.1, older than 1.24.4"; pushed the build artifact to `gh-pages`).
   This bug was latent since the 1.23.3 workflow rewrite — no 1.23.x `Web app` run had been exercised before.
 
+## 2026-10-10 — Folder: v1.25.5 tagged; Tj's four decisions (evening)
+
+- **v1.25.5 is tagged.** At Tj's direction I pushed `v1.25.5` at `e0f97ebc` ("SBOM of the 1.25.5 stamp") on
+  2026-10-10. The Release and CI runs are in flight; I will verify the published zip against
+  `319d1c1b…6736` and that Pages serves 1.25.5, and record the outcome here.
+- **Licensor / filing name — DECIDED: AugustInnovations LLC.** Tj's word, 2026-10-10: "AugustInnovations LLC
+  is appropriate." The Articles of Organization draft has been corrected to that name (workspace copy);
+  the LICENSE and buyer documents already name it, so no repo rename is needed. A fresh name-availability
+  check for the new name is still owed before filing.
+- **Git-history rewrite — approved in principle.** Tj answered "Ok" to rewriting the personal details out
+  of this file's history. It is scoped as its own coordinated job, not a side effect of other work: it
+  rewrites every ref and clone and cannot erase copies already outside GitHub. Nothing has been rewritten yet.
+- **`evening` as a required check — approved, but admin-gated.** Tj said yes. The code side already
+  includes it (`scripts/release-gate.js` REQUIRED_JOBS at the stamp). The GitHub-side ruleset change needs
+  repository-admin access: the assistant's token cannot read or write rulesets (`repo-settings-check.js`
+  reports the rules unverifiable/off from this token), so this one lands via the GitHub UI or an admin token.
+- **suds.systems upgrade to 1.25.5 — GO given.** Tj's explicit yes, 2026-10-10, for once 1.25.5 is
+  released. (Live check by Folder today: the box serves 1.25.4.)
+
 ## 2026-10-10 — Folder: corrections + business-doc progress (later the same day)
 
 - **Correction to the entry below:** the Yuba brochure PDF **was** regenerated on 2026-10-06 from the
