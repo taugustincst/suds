@@ -1,8 +1,11 @@
 # Business work plan: the owner actions that move market readiness
 
 **For:** the owner (Tj), who decides, and the owner's business assistant (Muse), who carries out the steps.
-**As of:** 2026-10-10, SUDS 1.25.4. **Source:** the market-readiness evaluation of 1.25.4 (section 9, *Owner and
-business actions*), HANDOFF.md's open owner decisions and the documents this repository already holds.
+**As of:** 2026-10-10, SUDS 1.25.4; **updated 2026-10-11** with the market-readiness evaluation of 1.25.5 (its
+findings J1–J11: private vulnerability reporting, the entity's filings and the IP assignment, the iPhone checklist,
+suds.systems hygiene). **Source:** the market-readiness evaluation of 1.25.4 (section 9, *Owner and business
+actions*) and of 1.25.5 (section 10), HANDOFF.md's open owner decisions and the documents this repository already
+holds.
 
 The software is not what holds SUDS back. The evaluation of 1.25.4 kept the market-readiness headline at **3.0 of 5**
 because "every gating item is still an owner action": a buyer has nobody to contact, nothing reviewed to sign, no
@@ -24,10 +27,11 @@ with what exists, what the owner must decide, the steps, and where each result i
 
 ## Summary
 
-| # | Item | Owner | Status (2026-10-10) | Next step | Headline effect (evaluation of 1.25.4) |
+| # | Item | Owner | Status (2026-10-11) | Next step | Headline effect (evaluation of 1.25.4, or of 1.25.5 where marked) |
 | --- | --- | --- | --- | --- | --- |
-| 0 | Legal entity: which LLC is filed and licenses SUDS | Tj | Open: the LLC is not filed yet (HANDOFF 2026-10-10); `LICENSE` names AugustInnovations LLC | **DECISION FOR TJ**, then file, then EIN | None on its own; items 1, 2, 6, 7 and 8 depend on it |
-| 1 | Publish a procurement contact | Tj decides, Muse fills | Not done: the three contact fields are empty | **DECISION FOR TJ**: which role address and page | +0.25 together with item 2 |
+| 0a | **Private vulnerability reporting** (new, first: it takes minutes) | Tj (a repository setting the assistants' tokens cannot change) | **Off**, while the buyer documents name it as the channel; they now mark it **owner-pending** | Tj: Settings → Code security → *Private vulnerability reporting* → Enable; publish a security contact | Restores the security lens (+0.25 to it; evaluation of 1.25.5); a prerequisite for any county |
+| 0 | Legal entity: AugustInnovations LLC | Tj | **Registered and Active** (filed 2022; the Secretary of State record Muse checked on 2026-10-10); the licensor (Tj's decision, 2026-10-10). **Owed:** the Statement of Information (LLC-12), overdue since 10/31/2024; the FTB franchise-tax status, unconfirmed; a written IP and copyright assignment to the LLC | File the LLC-12; confirm the FTB status; sign the assignment ([templates/IP-ASSIGNMENT-DRAFT.md](templates/IP-ASSIGNMENT-DRAFT.md), with counsel) | None on its own; a precondition for any agreement (items 1, 2, 6, 7 and 8) |
+| 1 | Publish a procurement contact (minutes, once decided: the mailbox exists) | Tj decides, Muse fills | Not done: the three contact fields are empty; the product-domain mailbox and its role forwards exist | **DECISION FOR TJ**: which role address and page | +0.25 together with item 2 |
 | 2 | Counsel review: licence, agreement, BAA/QSOA, DPA, SLA | Tj engages, Muse prepares | Drafts only, unreviewed; owner-side v2 drafts reconciled with the repository's | Brief ready: [templates/COUNSEL-REVIEW-BRIEF.md](templates/COUNSEL-REVIEW-BRIEF.md) | +0.25 together with item 1 |
 | 3 | Independent penetration test | Tj approves and pays, Muse runs the process | Not started; Muse's RFP is send-ready (HANDOFF, later 2026-10-10) and unsent | **DECISION FOR TJ**: approve the send | +0.25 to +0.5 |
 | 4 | Code signing for the Windows server | Tj | Not done: `suds.exe` and `suds-service.exe` unsigned | **DECISION FOR TJ**: certificate or signing service | +0.1 to +0.25 (with a county-like Windows run) |
@@ -35,9 +39,9 @@ with what exists, what the owner must decide, the steps, and where each result i
 | 6 | Insurance: cyber liability and technology E&O | Tj | None | Quotes with [templates/INSURANCE-QUOTE-BRIEF.md](templates/INSURANCE-QUOTE-BRIEF.md), after item 0 | +0.1 |
 | 7 | A reference pilot under a signed agreement | Tj | None | After items 1, 2 and 6 | +0.25 to +0.5, over months |
 | 8 | A hosted offer and its price | Tj | Operator decided; no price, insurance or on-call | Fill [templates/HOSTED-OFFER-WORKSHEET.md](templates/HOSTED-OFFER-WORKSHEET.md) | +0.25 once priced, insured and offered |
-| 9 | Signed release tags; separate commit identities | Tj | Procedure written; `v1.25.4` unsigned, one shared identity | Make the signing key | Small; removes a supply-chain question |
-| 10 | suds.systems hygiene | Muse, on Tj's directives | Runs 1.25.3; upgrade to 1.25.4 owed | Tj's directive naming the upgrade | Small, but it is the box a county is shown |
-| 11 | The real-iPhone check | Tj or a pilot lead | None recorded | Run [../evidence/REAL-DEVICE-CHECK-TEMPLATE.md](../evidence/REAL-DEVICE-CHECK-TEMPLATE.md) | Can move the device-only verdict on iPhone |
+| 9 | Signed release tags; separate commit identities | Tj | Procedure written; `v1.25.5` unsigned, one shared identity, pushed by Muse on Tj's instruction (the questionnaire now says so) | Make the signing key | Small; removes a supply-chain question |
+| 10 | suds.systems hygiene | Muse, on Tj's directives | Runs 1.25.4 (HANDOFF, 2026-10-10); the upgrade to 1.25.5 has Tj's go; the administrator accounts keep known names; the hand-off notes are public | The upgrade; rename the administrator accounts; plan the private operations repository and the history rewrite | Small, but it is the box a county is shown |
+| 11 | The real-iPhone check | Tj or a pilot lead | None recorded; no one named, no date | **DECISION FOR TJ**: a named owner and a date; then run [../evidence/REAL-DEVICE-CHECK-TEMPLATE.md](../evidence/REAL-DEVICE-CHECK-TEMPLATE.md) | Can move the device-only verdict on iPhone |
 | 12 | Opioid-settlement reporting collateral | Muse | Draft one-pager in the repository | Check against the current DHCS form; review | Sales, before the 30 Sept 2027 cycle |
 
 **Muse's owner-side drafts.** Since 2026-10-06 Muse has held a business packet **outside this repository** (HANDOFF,
@@ -61,37 +65,76 @@ decisions (item 2).
 | County outreach email draft | [COUNTY-KIT.md](COUNTY-KIT.md) and item 5's CalOMS request | The facts in the repository |
 | Business-readiness checklist | This page, [README.md](README.md) *Organisational gaps* and [HOSTING.md](HOSTING.md) *Before the vendor-hosted tier can be offered* | Keep one list: this page, with Muse's copy pointing here |
 
-## 0. The legal entity (first, because the rest depends on it)
+## 0a. Private vulnerability reporting (minutes)
+
+- **Why it matters.** The buyer documents told security reviewers to report through GitHub's private vulnerability
+  reporting, and the setting is **off** (evaluation of 1.25.5, J2). For a system that holds Part 2 records, the
+  absence of a private reporting path is a standard procurement fail. The documents now say it is **owner-pending**
+  and name the owner-published security contact as the channel until it is enabled.
+- **What already exists.** [`SECURITY.md`](../../SECURITY.md) (*How to report*, written to read correctly the moment
+  the setting is on); [../RELEASE.md](../RELEASE.md), *Owner: repository settings*, step 8; the product-domain
+  mailbox and its role forwards (item 1).
+- **DECISION FOR TJ.** (a) Enable the setting (no real choice: the documents already promise it). (b) The security
+  contact: a role address on the product domain (for example a `security@` forward to the business mailbox), never a
+  personal one.
+- **Steps.**
+  1. Tj: Settings → **Code security** → *Private vulnerability reporting* → **Enable**. The assistants' tokens cannot
+     change this setting.
+  2. Muse: check from a signed-in account that is not a collaborator that the **Security** tab shows *Report a
+     vulnerability*.
+  3. Muse prepares the documentation change: the security contact in `SECURITY.md`, and the **owner-pending** markers
+     removed from `SECURITY.md`, QUESTIONNAIRE #48 and #49, [PROCUREMENT.md](PROCUREMENT.md),
+     [BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md), [templates/COUNTY-RFI-ANSWERS.md](templates/COUNTY-RFI-ANSWERS.md),
+     [../SUPPORT.md](../SUPPORT.md), [../security/VULNERABILITY-MANAGEMENT.md](../security/VULNERABILITY-MANAGEMENT.md)
+     and the evidence index; Tj confirms `SECURITY.md`'s response targets.
+- **Send to.** Nobody; this is a setting and a publication.
+- **Done when.** `gh api repos/taugustincst/suds/private-vulnerability-reporting` answers `{"enabled":true}`, the
+  security contact is in `SECURITY.md`, and no buyer document still marks the channel owner-pending.
+- **Recorded in.** `SECURITY.md`; QUESTIONNAIRE #48; [../evidence/README.md](../evidence/README.md) *Support and
+  vulnerability reporting*.
+
+## 0. The legal entity
 
 - **Why it matters.** Every agreement, BAA, QSOA, insurance policy, county vendor registration and invoice names a
-  legal entity. `LICENSE` names **AugustInnovations LLC** as the copyright holder and licensor, and the owner decided
-  on 2026-10-09 that AugustInnovations LLC would operate a hosted service and sign its BAAs and QSOAs. Muse reports
-  (HANDOFF, 2026-10-10) that the LLC is **not filed yet**, and refers to it as "Suds LLC". A contract signed in the
-  name of an entity that does not exist, or a different one from the licence's, is a problem counsel will raise first.
+  legal entity, and the licensor must be able to warrant that it owns what it licenses. `LICENSE` names
+  **AugustInnovations LLC** as the copyright holder and licensor.
+- **Where it stands (2026-10-11).**
+  - **Registered and Active.** AugustInnovations LLC is registered with the California Secretary of State (filed
+    2022, status Active, in good standing), per the Secretary of State record Muse checked on 2026-10-10 (HANDOFF).
+    An earlier draft of formation documents was never filed and is superseded.
+  - **The licensor.** Tj decided on 2026-10-10 that AugustInnovations LLC is the licensor, and on 2026-10-09 that it
+    would operate a hosted service and sign its BAAs and QSOAs. The `LICENSE`, `procurement.json` and the drafts
+    already name it, so no rename is needed.
+- **What is owed.**
+  1. **The Statement of Information (LLC-12).** The biennial statement was due 10/31/2024 and is overdue; an unfiled
+     statement leads to a penalty and can lead to suspension. File it now.
+  2. **The FTB franchise-tax status.** Confirm that the annual tax and any returns are current (the Franchise Tax
+     Board's record), since a suspension by either agency stops the entity contracting.
+  3. **A written IP and copyright assignment** from the individual contributor(s) to the LLC, covering the SUDS
+     software and documentation since inception. Without it the LLC cannot cleanly warrant title in the licence
+     agreement (QUESTIONNAIRE #6a). A draft for counsel is
+     [templates/IP-ASSIGNMENT-DRAFT.md](templates/IP-ASSIGNMENT-DRAFT.md); the record of the human direction behind
+     SUDS that counsel will want with it is [../IP-PROVENANCE.md](../IP-PROVENANCE.md). An assignment cannot change
+     the MIT grant already made for 1.24.0 and earlier copies.
 - **What already exists.** [`LICENSE`](../../LICENSE) sections 1 and 11; `legal_entity` in
   [`public/procurement.json`](../../public/procurement.json); [HOSTING.md](HOSTING.md) checklist item 1; questionnaire
   #6a ([../security/QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md)); the agreement drafts' party blocks
-  (`[[state of formation]]`, `[[address]]`). Muse holds the formation and statement-of-information drafts outside the
-  repository.
-- **DECISION FOR TJ.** Which entity name is filed, and is it the entity that licenses SUDS? If it differs from
-  "AugustInnovations LLC", then `LICENSE`, `legal_entity` in `public/procurement.json` (and its static text in
-  `public/procurement.html`), the agreement drafts, HOSTING.md, the market README, QUESTIONNAIRE #2 and #6a and every
-  other document naming the licensor must change **before any agreement is signed**, and the copyright must be
-  assigned in writing to that entity (QUESTIONNAIRE #6a lists the assignment as an owner item). Also: the state of
-  formation, and whether the AWS account that holds the AWS BAA is (or moves to) that entity (HOSTING.md item 2).
-- **Steps (Muse, after the decision).** Muse's stated critical path is **file the entity → EIN → insurance → counsel**:
-  1. Tj files and signs the formation documents himself; Muse tracks the filing's confirmation.
-  2. Tj obtains the EIN; Muse records that it exists (never the number) in the owner-side checklist.
-  3. If the name differs from the licence's: a change request listing every file that names the licensor
-     (`grep -rn "AugustInnovations" LICENSE NOTICE docs public README.md`), made as one documentation change in a
-     release; the licence change itself needs counsel's wording (item 2).
+  (`[[state of formation]]`, `[[address]]`); [templates/COUNSEL-REVIEW-BRIEF.md](templates/COUNSEL-REVIEW-BRIEF.md),
+  *What the licence protects*.
+- **DECISION FOR TJ.** Who files the LLC-12 (Tj, or the registered agent's service on Tj's instruction); whether the
+  AWS account that holds the AWS BAA is (or moves to) the LLC (HOSTING.md item 2); and the counsel who reviews the
+  assignment (with item 2, or on its own first).
+- **Steps.**
+  1. Tj files the LLC-12 with the Secretary of State and pays any penalty; Muse records that it was filed (the date,
+     never the filing number) in the owner-side checklist.
+  2. Tj confirms the FTB status; Muse records the outcome there.
+  3. Counsel reviews the assignment draft; Tj and each contributor sign it; the signed copy stays outside the
+     repository.
   4. Business bank account, W-9 / Payee Data Record, then county vendor registration when a county asks.
-- **Send to.** The state filing office (Tj); nobody else.
-- **Done when.** The entity is filed, has an EIN, and the name in `LICENSE`, `procurement.json` and the drafts is that
-  entity's.
-- **Recorded in.** `legal_entity` in `public/procurement.json`; [README.md](README.md) *Organisational gaps* (the
-  entity row); HOSTING.md item 1; QUESTIONNAIRE #6a (state of formation). No filing number, EIN or address goes in the
-  repository unless the owner chooses to publish the business address.
+- **Send to.** The Secretary of State (Tj); counsel (the assignment).
+- **Done when.** The LLC-12 is filed, the FTB status is confirmed current, and the assignment is signed.
+- **Recorded in.** [README.md](README.md) *Organisational gaps* (the entity row); HOSTING.md item 1; QUESTIONNAIRE #6a.
+  No filing number, EIN or address goes in the repository unless the owner chooses to publish the business address.
 
 ## 1. Publish a procurement contact
 
@@ -141,7 +184,8 @@ decisions (item 2).
   their reconciliation memo; the cover brief [templates/COUNSEL-REVIEW-BRIEF.md](templates/COUNSEL-REVIEW-BRIEF.md).
 - **DECISION FOR TJ.** Which counsel (a California health-privacy and technology-contracts attorney), the budget, and
   the scope: all three sets at once, or the licence and subscription agreement with its BAA/QSOA first (the minimum to
-  sign a paid pilot). Whether counsel waits for the entity (item 0) or advises on it. Which text counsel reviews: the
+  sign a paid pilot). Whether counsel also reviews the IP assignment (item 0) and the question of what the licence
+  protects (the brief's *What the licence protects*; [../IP-PROVENANCE.md](../IP-PROVENANCE.md)). Which text counsel reviews: the
   repository templates or Muse's v2 drafts (the reconciliation table above). The open choices the v2 memo lists, to
   settle with counsel's advice: the renewal model, termination for convenience, de-identified operational metrics,
   the carve-out for reporting unsuccessful security attempts, source-code escrow (clause 14.3), venue, the business
@@ -313,12 +357,13 @@ decisions (item 2).
 - **What already exists.** HANDOFF's six post-upgrade steps (its entry "1.25.4 stamped"); deploy/linux's
   *Check your offsite backups*; [../evidence/README.md](../evidence/README.md) *What is still not here* (what to copy
   off the box and how to verify it).
-- **DECISIONS FOR TJ.** (a) The directive naming the **upgrade to 1.25.4** (a tag or release order does not cover it).
+- **DECISIONS FOR TJ.** (a) The directive naming the **upgrade to 1.25.5** (given 2026-10-10, HANDOFF; a tag or
+  release order alone does not cover an upgrade).
   (b) Whether SSH stays open to `0.0.0.0/0` and `::/0` or is limited to an administration network; check first how the
   Lightsail browser terminal reaches the box, so narrowing it does not lock the operator out (the launch's finding cost
   a rebuild). (c) When LUKS is set up (before any real record: a rebuild onto an encrypted volume).
 - **Steps (Muse, each on Tj's directive).**
-  1. The upgrade to 1.25.4 and HANDOFF's six steps: escrow first, upgrade, count `status=31/SYS` in the journal, Back up
+  1. The upgrade to 1.25.5 and HANDOFF's six steps: escrow first, upgrade, count `status=31/SYS` in the journal, Back up
      now, compare offsite and local sizes, delete the unrepairable 0-byte files, compliance re-run, recovery drill from
      the offsite copy.
   2. Copy the signed compliance report and the drill report off the box, verify them
@@ -329,6 +374,17 @@ decisions (item 2).
   5. LUKS on the data volume before any real data.
   6. DMARC for the domain (item 1).
   7. Housekeeping (the old release tree and launch-day files) and the pending reboot, as HANDOFF lists.
+  8. **Rename the live administrator accounts** away from known names: the default first administrator's username is
+     documented publicly (docs/SELF-HOSTING.md, docs/DEPLOYMENT.md), and with the five-failure lockout anyone who can
+     name an account can keep it locked out (evaluation of 1.25.5, J9). Use names that appear in no public document,
+     and never write them into the repository.
+  9. **Move the hand-off notes to a private operations repository.** HANDOFF.md is public and carries the live
+     server's operational details; the fleet tooling already calls for a private repository the owner controls for
+     tenant records ([`deploy/fleet/README.md`](../../deploy/fleet/README.md)), and the hand-off notes belong beside
+     them. **DECISION FOR TJ:** create it and say when the move happens.
+  10. **The history rewrite**, approved in principle by Tj (HANDOFF, 2026-10-10), that takes the personal and
+     operational details out of the public history. It is scheduled as its own coordinated job, never a side effect
+     of other work: it rewrites every ref and clone, and cannot erase copies already outside GitHub.
 - **Send to.** Nobody.
 - **Done when.** The compliance run after the upgrade has no fail other than any the owner accepts in writing, its
   signed reports are stored, and MFA, escrow and the restore test are done.
@@ -342,7 +398,10 @@ decisions (item 2).
   could move the device-only verdict on iPhone (evaluation, H1).
 - **What already exists.** [../ADOPTION.md](../ADOPTION.md) §4 and the checklist
   [../evidence/REAL-DEVICE-CHECK-TEMPLATE.md](../evidence/REAL-DEVICE-CHECK-TEMPLATE.md).
-- **DECISION FOR TJ.** Who runs it (the owner, or a pilot lead) and on which two iPhones.
+- **DECISION FOR TJ.** Who runs it (the owner, or a pilot lead; **a named owner**), on which two iPhones, and **by what
+  date**. On iPhone, SUDS on this device must be added to the Home Screen (Safari deletes a site's stored data after
+  seven days without a visit; [../ADOPTION.md](../ADOPTION.md) §4), so the checklist's Home Screen step is part of
+  every run.
 - **Steps.** As the checklist; Muse collects the filled copy and screenshots and commits them.
 - **Done when.** Two iPhones on the current release pass, or failures are recorded and reported.
 - **Recorded in.** `docs/evidence/real-device-check-<date>-v<version>.md`; the evidence index; the flake register for

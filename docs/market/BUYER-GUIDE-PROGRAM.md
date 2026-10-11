@@ -20,6 +20,13 @@ implementation for you and one or two other CBOs it funds, and the vendor does t
 funder-report checks with your team ([PILOT-KIT.md](PILOT-KIT.md), section 8). Ask your county contract manager
 whether that is possible.
 
+**SUDS on this device, on an iPhone.** The free build that keeps records only in the phone's browser
+([docs/WEB_APP.md](../WEB_APP.md)) must be **added to the Home Screen** on an iPhone (Safari → Share → *Add to Home
+Screen*), and opened from that icon: Safari deletes a site's stored data, records included, after seven days of
+Safari use without a visit to the site, so a worker who keeps SUDS in a Safari tab and is away for a week can lose
+everything on that phone. Keep a current passphrase backup on another device as well. No run of the real-iPhone
+checklist is recorded yet ([docs/ADOPTION.md](../ADOPTION.md), section 4).
+
 **What is available, and what is planned.** The AI documentation copilot is available from 1.17.0
 (below: office server only, off unless your administrator turns it on after a BAA and QSOA with the AI
 provider). A county view of its grantees' outcomes is released in 1.18.0: your finance lead makes a
