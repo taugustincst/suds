@@ -299,6 +299,10 @@ let good = null; let copyText = null; // the good sealed image, and the saved co
   // CI's WebKit this reload crashed the page on 1.25.5's first runs, with and without the second engine; whatever the
   // reload does, the records must still be there in a new page. docs/RELEASE.md, flake register.)
   await logout(page);
+  // DIAGNOSTIC (session branch only): let every save finish before the reload.
+  console.log('DIAG pending before wait:', JSON.stringify(await page.evaluate(async () => ({ dirty: window.SUDS_LOCAL && window.SUDS_LOCAL.isDirty && window.SUDS_LOCAL.isDirty() }))));
+  await page.evaluate(async () => { try { await window.SUDS_LOCAL.flush(); } catch (e) { return String(e); } });
+  await page.waitForTimeout(3000);
   let reloadCrash = null;
   try { await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 }); await settle(page); }
   catch (e) { reloadCrash = String(e.message || e).split('\n')[0]; }
