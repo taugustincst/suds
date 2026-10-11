@@ -2,6 +2,63 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.25.6 — 2026-10-11
+
+A patch of 1.25.5 (docs/RELEASE.md, *Record: 1.25.6*): the fixes from the critical evaluation of 1.25.5 (J1–J13). No
+migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.25.6 --previous
+v1.25.5` passes: 490 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It passes the
+release policy with no exception. Upgrading needs nothing beyond replacing the files and restarting. What an upgrading
+administrator should know:
+
+* **The release checksum now really is in two places.** `upgrade.sh --release-sha256` takes the zip's SHA-256 from the
+  GitHub Release notes and from this CHANGELOG on `main`, which must agree (docs/SELF-HOSTING.md, *Upgrading*). Until
+  now neither carried it. From 1.25.6 the release job writes it into the Release notes, and the CHANGELOG carries it
+  for 1.17.0 to 1.25.5 (backfilled, each value rebuilt from its tag) and for every release after.
+* **An offsite backup folder in memory (tmpfs) is reported as not an offsite copy**, like one on the same disk.
+* **SUDS Server under systemd no longer prints the first administrator's temporary password into the journal**; the
+  journal names the 0600 file that holds it.
+* **SUDS on this device on an iPhone or iPad** asks, at set-up, to be added to the Home Screen: Safari can delete a
+  site's stored records after seven days without a visit. Used in a Safari tab, a notice says so.
+
+### Fixed
+
+- **The release checksum's second channel was never published** (J1). The release job writes `SHA-256 of
+  suds-vX.Y.Z.zip` (and the Windows zip's) into the Release notes and reads them back; the records commit after each
+  tag adds the line to that version's CHANGELOG section; `release-state` fails when either is missing or differs from
+  the value recorded before the tag.
+- **Buyers were told to report vulnerabilities through a channel that is switched off** (J2). The documents now say
+  private vulnerability reporting is owner-pending until the owner enables it, and never invite vulnerability details
+  in a public issue; the weekly settings check reports whether it is on.
+- **The records said the owner pushed tags the owner's business assistant pushed** (J3). They now say who pushed each
+  1.25.x tag and approved its release, on whose instruction, and why signed tags matter.
+- **After a stored copy failed its integrity check, the advice offered a saved copy that can never be restored** (J6).
+  It now says only a backup brings the records back, and not to Start over without one.
+- **Start over left an IndexedDB connection open across the page's reload**; it is closed once the clear commits.
+- **Checks that random hex could trip** (J5): a browser check failed whenever a random ID, hash or timestamp contained
+  "207"; it now checks the cells. The same class in the API tests (a county audit entry searched for "777" beside its
+  SHA-256; client revisions searched for 4-digit fragments) now searches for whole values.
+- **iPhone: Safari's seven-day deletion of a site's storage** (J7): the Home Screen set-up step and notice, and the
+  policy in docs/WEB_APP.md, docs/HIPAA.md and the iPhone checklist.
+- **The temporary password in the journal** (J12) and **tmpfs as an offsite folder** (J13), as above.
+
+### Changed (CI, release and records)
+
+- **WebKit:** the page crash at a reload after Start over (WK-1) is a named known defect: CI's WebKit job reports it as a
+  warning and fails on anything else, so a new WebKit failure is seen again; a first load that stalls now prints which
+  stage stalled. The crash was bisected (docs/RELEASE.md, *Known defects*); the records survive it (J4).
+- **CI skips its heavy jobs on Markdown-only pushes**, and the release gate refuses a commit whose required jobs were
+  skipped (J11). Outside security fixes, patches are batched at most weekly (docs/RELEASE.md, *Release cadence*).
+- **The evening test run no longer sets the clock behind the real one** (after 21:00 in Los Angeles it did, and the
+  recovery drill's restored server, which does not inherit the faked clock, then failed a snapshot-freshness check).
+- **docs/security/OPERATIVE-CONTROLS.md**: one page with every control buyers are promised, its true state today and
+  how it is checked; `release-state` fails when the page claims a state that is not true.
+
+### Docs
+
+- The licensor's standing (AugustInnovations LLC, registered and active; its Statement of Information overdue), a draft
+  IP assignment for counsel, docs/IP-PROVENANCE.md, and what the licence protects in the counsel brief (J8, J10).
+- The live server's administrator usernames are out of the public documents (J9).
+
 ## 1.25.5 — 2026-10-10
 
 SHA-256 of suds-v1.25.5.zip: 319d1c1b9de96c52ce67503d0a460092149d96a6591aad2a1b448ac941956736
