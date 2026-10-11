@@ -806,6 +806,10 @@ G6 and G1). The 1.25.3 stamp was pushed without the suite that would have refuse
    on `main` gets its failure read first (each failing test or browser check is an `::error` annotation on the run and
    a line in the job summary, `scripts/ci-annotate.js` and `run-all.sh`, readable through the API when the log is not),
    and is fixed or recorded in the flake register below before the commit is handed over.
+3. That run **ran** every required job: none of them `skipped` (evaluation of 1.25.5, J11). CI skips the heavy jobs
+   on a push that changes only Markdown (*Release gate*, below), and the gate refuses such a run. The commit to tag
+   changes a file that is not Markdown (the SBOM commit adds `docs/evidence/sbom-X.Y.Z.cdx.json`; a patch's stamp
+   changes `package.json`); a records or HANDOFF commit after it is never the one handed over.
 
 **Flake register.** A test or script that failed on `main` and passed on a re-run of the same commit is recorded here
 with its cause and its fix; "known flaky" without a cause is not an entry. Every red of the advisory `webkit` job on
@@ -928,6 +932,20 @@ QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` r
 | `thorough-sdc` | the statistical-disclosure-control attacker sweeps at full size (`scripts/test-thorough.js` `SDC_SWEEPS`) |
 | `dr-drill` | backup and restore actually work: `scripts/dr-exercise.js` (seed, encrypted backup through the scheduled path, `npm run dr-drill` with an escrowed key file, host restore into a fresh data directory, row counts, audit chain, signed report verified with the public key); the signed report is printed in the job log |
 | `evening` | `npm test` with `TZ=America/Los_Angeles` and the clock at 9pm local, when the UTC date is already tomorrow's (`scripts/test-evening.sh`, libfaketime): the date-bug class of the evaluation of 1.25.0, E1. Required from 1.25.5 (evaluation of 1.25.4, H8); before, it was only not advisory |
+
+**Markdown-only pushes skip the heavy jobs; the gate never counts a skipped job** (evaluation of 1.25.5, J11). CI's
+first job, `changes`, compares a push with the commit before it (for one commit, its parent) and a pull request with
+its base, and says `code=false` only when every changed file ends in `.md`; any doubt (a new branch, a force push, a
+merge in the push, an empty difference, git failing) is `code=true`. On `code=false` the heavy jobs (`browser`,
+`webkit`, `thorough`, `thorough-sdc`, `dr-drill`, `service-sandbox`, `windows`, `windows-exe`, `node24`, `evening`) are
+skipped; `test`, `release-policy` and `release-state` always run, so the doc tests still check every Markdown change.
+A job skipped by its `if:` **reports success to a required status check** (GitHub's documentation: "A job that is
+skipped will report its status as 'Success'. It will not prevent a pull request from merging, even if it is a required
+check"), so a Markdown-only pull request can merge without the browser suite. The gate is stricter: a required job
+whose conclusion is `skipped` is not success, so the commit is refused ("skipped, so not run on this commit"). A
+release commit always changes a file that is not Markdown (the "SBOM of the X.Y.Z stamp" commit adds a `.json` file; a
+patch's "Release X.Y.Z" changes `package.json`), so its own CI runs every job; a Markdown-only commit can never be
+released. Tested in `test/release-gate.test.js` and `test/workflow-yaml.test.js`.
 
 `service-sandbox` (below, *The service-sandbox job*) and `release-policy` are not in the list, but they are not advisory either: a red one fails the CI run, and the gate passes only a run that concluded success. `webkit` and `release-state` stay advisory (`continue-on-error`) and are not checked. If CI on the commit is still running (a tag pushed together with its commit) the gate waits, up to an hour (`RELEASE_GATE_WAIT_MINUTES`). A failed or missing required job fails the release with the reason; fix it (or re-run a flaky job — the latest attempt counts) and run the release again. The `verify` and `release` jobs then check out exactly the gated commit, so a branch that moved in the meantime cannot slip an untested commit in. The decision logic is tested in `test/release-gate.test.js`, which also fails if a required job is renamed out of `ci.yml`.
 

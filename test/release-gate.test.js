@@ -27,6 +27,21 @@ test('refuses a run whose evening job (npm test at 9pm in Los Angeles) failed, o
   assert.match(evaluate(SHA, [run(1)], { 1: jobs().filter((j) => j.name !== 'evening') }).reason, /missing job\(s\) evening/);
 });
 
+test('a required job skipped (a Markdown-only commit, ci.yml `changes`) is not success: the commit is refused (evaluation of 1.25.5, J11)', () => {
+  // GitHub concludes the run success and reports a skipped job to required checks as success; the gate does not.
+  const docsOnly = jobs(Object.fromEntries(REQUIRED_JOBS.filter((j) => j !== 'test').map((j) => [j, 'skipped'])));
+  const out = evaluate(SHA, [run(1)], { 1: docsOnly });
+  assert.equal(out.decision, 'fail');
+  assert.match(out.reason, /skipped, so not run on this commit/);
+  for (const j of REQUIRED_JOBS.filter((x) => x !== 'test')) assert.ok(out.reason.includes(j), j);
+  assert.doesNotMatch(out.reason, /not successful/, 'said as skipped, not as failed');
+  // One skipped job is enough to refuse; a later run of the same commit with every job green passes.
+  assert.equal(evaluate(SHA, [run(1)], { 1: jobs({ browser: 'skipped' }) }).decision, 'fail');
+  assert.equal(evaluate(SHA, [run(2), run(1)], { 2: jobs(), 1: docsOnly }).decision, 'pass');
+  // Advisory webkit skipped alone does not block.
+  assert.equal(evaluate(SHA, [run(1)], { 1: jobs({ webkit: 'skipped' }) }).decision, 'pass');
+});
+
 test('refuses when the run failed; WebKit (advisory) failing alone does not block', () => {
   assert.equal(evaluate(SHA, [run(1, { conclusion: 'failure' })], {}).decision, 'fail');
   assert.equal(evaluate(SHA, [run(1)], { 1: jobs({ webkit: 'failure' }) }).decision, 'pass');
