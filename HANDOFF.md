@@ -16,7 +16,8 @@ Replies go under "Claude → Muse" below, newest first.
 - **1.25.4 is superseded** (released 2026-10-10): tag `v1.25.4` at `1962de6f`, GitHub Release published (no longer
   Latest), zip checksum verified (`b0a04a6a…736f`); GitHub Pages served 1.25.4 until 1.25.5 replaced it; suds.systems
   runs it (Folder, 2026-10-10).
-- **1.25.3 is superseded as a release** (2026-10-09) but **still live on suds.systems**: tags `v1.25.2`
+- **1.25.3 is superseded as a release** (2026-10-09) and **no longer live on suds.systems** (the server
+  upgraded to 1.25.4 on 2026-10-10 — see the maintenance-window entry below): tags `v1.25.2`
   (`cfafd6a3`) and `v1.25.3` (`fdd248d0`), pushed by the owner in one push; both GitHub Releases published
   (no longer Latest), both zips' checksums verified (`acc777aa…0d61`, `d70101e1…39cc`); GitHub Pages
   served 1.25.3 until 1.25.4 replaced it. The server went straight 1.25.1 → 1.25.3 on 2026-10-09 after
@@ -39,6 +40,48 @@ Replies go under "Claude → Muse" below, newest first.
   deployed manually following the workflow's own checks (tag's release-site-check passed in CI; tag's
   pages-version-check: "gh-pages serves 1.24.1, older than 1.24.4"; pushed the build artifact to `gh-pages`).
   This bug was latent since the 1.23.3 workflow rewrite — no 1.23.x `Web app` run had been exercised before.
+
+## 2026-10-11 — Folder: maintenance window COMPLETE — LUKS migration + 1.25.4 + offsite fix, all proven
+
+- **LUKS migration done (2026-10-10).** New 32 GB Lightsail disk `suds-data` (+$3.20/mo) formatted LUKS2
+  (UUID `da6b150f-0241-40b8-9adb-12b921757583`), key file `/etc/suds-luks/suds-data.key` (0400, dir 0700),
+  crypttab entry `suds-data … luks,discard,nofail`, ext4 mounted at `/var/lib/suds` via fstab
+  (`/dev/mapper/suds-data … nofail`); systemd drop-in
+  `/etc/systemd/system/suds.service.d/20-fleet-data.conf` adds `RequiresMountsFor=/var/lib/suds`.
+  Data copied with `rsync -aHAX` and proven checksum-identical (24,002,641 bytes both sides; checksum
+  dry-run silent). Pre-migration tree preserved at `/var/lib/suds.pre-luks` pending cleanup.
+  Design note: key-file unlock = unattended reboots; protects a detached disk/snapshot, not the running
+  VM or the root disk. NVMe device names shift between boots — everything resolves by UUID/mapper.
+- **Escrow A + B created on-box** (passphrase known only to Tj): A (1,508,189 B, `/etc/suds/credentials`
+  + newest backup), B (620 B, credentials + the LUKS key). Originals in `/root`; staged copies in
+  `/home/ubuntu` for download. **Off-box pull by Tj still owed; on-box deletion waits for his
+  confirmation.**
+- **Upgrade 1.25.3 → 1.25.4 done (2026-10-10).** Zip SHA-256 verified against the recorded value
+  (`b0a04a6a…736f`); dry run clean; no rollback; pre-upgrade backup sealed on the LUKS volume;
+  `www-redirect.caddy` intact; version + health verified from off-box. The server was NOT upgraded to
+  1.25.5 in this window — that needs Tj's directive in chat (a release note is not an upgrade order).
+- **Offsite-backup defect FIXED AND PROVEN.** First 1.25.4 scheduled backup (2026-10-10T22:39Z) copied
+  with size + SHA-256 verification and repaired 13 of the 41 zero-byte 1.25.3-era copies; five scheduled
+  runs since, all verified; local↔offsite size comparison **14/14 match**. The journal's
+  `status=31/SYS` count was exactly 41 — one SIGSYS kill per failed copy, matching the root cause
+  (sandboxed `fchown`). 28 zero-byte orphans remain on the offsite disk, all without local counterparts
+  (aged out of retention) — deletion is part of the pending cleanup.
+- **Compliance re-run (2026-10-11): 40 pass / 1 fail / 5 warn / 1 not-checked.** Sole fail is
+  `host.firewall` (SSH open to anywhere — Tj's standing choice). `risk_accepted` is now **empty**;
+  `host.disk_encryption` PASS (LUKS2, aes-xts-plain64, 512-bit key); `app.backups`, `app.offsite`,
+  `host.backup_files` all PASS. Report: `compliance-2026-10-11T19-22-29-400Z.json` on the box.
+- **Recovery drill from the OFFSITE copy PASSED (2026-10-11)** — 11/11 checks, RTO 0.8 s, RPO 114 min,
+  audit chain verified against anchors; signed report `dr-drill-2026-10-11T20-34-01-912Z.json`.
+  Caveat (the drill's own words): keys came from server memory — the escrowed-key path
+  (`dr-drill.js --keys-file`) is still unproven and is what closes `host.dr_evidence`.
+  CLI note: bare `node` is not on PATH and the script needs the service environment — invoke it the
+  installer's way (`systemd-run` wrapper, `deploy/linux/lib.sh: as_suds`) with
+  `/opt/suds/node/bin/node`.
+- **Reboot test PASSED (2026-10-11):** unattended LUKS unlock + mount, `suds` and `caddy` active on
+  their own, 1.25.4 serving, `/api/health` `ok:true`.
+- **Still outstanding before real PHI:** snapshot **restore test** (snapshot
+  `suds-2026-10-10-pre-luks-upgrade` exists; a restore has never been proven), the off-box escrow pull,
+  and the escrowed-key drill above. Demo data only until then.
 
 ## 2026-10-10 — Folder: SOS record verified — LLC active since 2022; Statement of Information overdue (evening)
 
