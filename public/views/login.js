@@ -195,7 +195,18 @@ function damagedNotice(d = {}) {
     const a = h('a', { href: url, download: `suds-damaged-device-copy-${new Date().toISOString().slice(0, 10)}.json` }); document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   };
-  const maybeBrowser = !d.repeated && !d.integrity;
+  // A seal that fails (1.25.6, J6): AES-GCM opens all or nothing, so the copy kept here, or one saved from it, can
+  // never be restored, and support cannot read it either. Neither is offered: only a backup brings the records back,
+  // and Start over is said only to someone who has one.
+  if (d.integrity) {
+    return h('div', { class: 'banner danger', role: 'alert', 'data-device-damaged': d.repeated ? 'again' : '1', 'data-device-integrity': '1' }, h('div', {},
+      h('p', {}, h('b', {}, 'The records stored on this device could not be opened: they failed an integrity check (they have changed since they were saved). '), 'Nothing has been deleted.'),
+      h('ol', {},
+        d.repeated ? null : h('li', { 'data-damaged-step': 'again' }, 'Close the browser completely (every window), open SUDS again and log in.'),
+        h('li', { 'data-damaged-step': 'restore' }, `${d.repeated ? 'Only' : 'If it still does not open, only'} a backup can bring the records back: the copy kept here cannot be repaired or restored. If you have a backup: Start over on this device, then Restore from a backup with it (or restore it in another browser).`),
+        h('li', { 'data-damaged-step': 'keep' }, h('b', {}, 'If you have no backup, do not Start over: '), 'it erases these records for good. Leave them as they are.'))));
+  }
+  const maybeBrowser = !d.repeated;
   return h('div', { class: 'banner danger', role: 'alert', 'data-device-damaged': d.repeated ? 'again' : '1' }, h('div', {},
     h('p', {}, h('b', {}, 'The records stored on this device could not be opened. '), maybeBrowser ? 'This may be this browser rather than the records. ' : '', 'Nothing has been deleted.'),
     h('ol', {},

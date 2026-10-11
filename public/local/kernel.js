@@ -57273,7 +57273,14 @@ async function damagedDevice(sealed, err2, { integrity = false } = {}) {
   } catch (e) {
     reportError(e);
   }
-  const found = integrity ? ": the copy stored in this browser failed its integrity check (it has changed since it was saved)" : again ? " again: the copy stored in this browser is damaged" : ". This may be this browser rather than the records";
+  if (integrity) {
+    return new import_http2.HttpError(
+      503,
+      `The records on this device could not be opened: the copy stored in this browser failed its integrity check (it has changed since it was saved). Nothing has been deleted. ${again ? "Only" : "Close the browser completely and log in again. If it still does not open, only"} a backup can bring the records back: the copy here cannot be repaired, and a saved copy of it cannot be restored. If you have a backup: Start over on this device, then Restore from a backup (or restore it in another browser). If you have no backup, do not Start over: it erases these records for good.`,
+      { deviceDamaged: true, locked: true, integrity, repeated: again }
+    );
+  }
+  const found = again ? " again: the copy stored in this browser is damaged" : ". This may be this browser rather than the records";
   return new import_http2.HttpError(
     503,
     `The records on this device could not be opened${found}. Nothing has been deleted, and a copy is kept on this device. First save the damaged copy${again ? " if you have not" : ", then close the browser completely and log in again"}. If it still does not open, use Restore from a backup with your latest backup or the copy you saved: in another browser, or in this one after Start over on this device.`,

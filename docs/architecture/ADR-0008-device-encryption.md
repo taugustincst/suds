@@ -177,6 +177,13 @@ does not store is the password its people type.
   refused whole (400, nothing changes). One that opens is restored as a backup is: its wraps carried by
   `vault.backupRecord`, so its accounts sign in with the passwords they had and the device moves to a key of its own
   at the first sign-in; the audit entry says `from: damaged_copy`.
+- **1.25.6 (evaluation of 1.25.5, J6).** AES-GCM opens all or nothing, so a copy of an image whose seal fails can
+  never be restored (`openDamagedCopy` refuses it), and nobody, support included, can read it. The `integrity: true`
+  answer and its sign-in notice therefore offer no saved copy (no *Save the damaged copy* button): they say plainly
+  that only a backup can bring the records back, keep *close the browser and log in again* the first time (a read can
+  fail), and name *Start over* only for someone with a backup ("If you have a backup: Start over on this device, then
+  Restore from a backup"); without one, do not Start over, which erases the records for good. The engine variant
+  (`integrity: false`) is unchanged. The kernel still keeps the image under `damaged_db`.
   The WebKit runs that failed this way are each in [docs/RELEASE.md](../RELEASE.md)'s flake register (one of them on
   app code identical to 1.25.3). Whether these engine errors happen on iOS Safari, and not only in Playwright's
   WebKit on Linux, is not yet established: the real-iPhone record of [docs/ADOPTION.md](../ADOPTION.md) §4

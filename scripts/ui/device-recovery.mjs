@@ -328,7 +328,13 @@ let good = null; let copyText = null; // the good sealed image, and the saved co
   ok(await storedImage(page, true), 'integrity: one byte of the stored image flipped');
   eq(await tryLogin(page, 'seal', PW), 'refused', 'integrity: the sign-in is refused');
   ok(/failed its integrity check/.test(await page.textContent('.login')) && !/Something went wrong/.test(await page.textContent('.login')), 'integrity: saying the stored copy failed its integrity check, not "something went wrong"', await page.textContent('.login'));
-  ok(await page.$('[data-device-damaged][role=alert] [data-damaged-save]'), 'integrity: with the button to save the copy');
+  // 1.25.6, J6: AES-GCM is all or nothing, so a copy of this image can never be restored: it is not offered. Only a
+  // backup is, and Start over is said only to someone who has one.
+  ok(await page.$('[data-device-damaged][data-device-integrity][role=alert]') && !(await page.$('[data-device-damaged] [data-damaged-save]')), 'integrity: no button to save a copy that could never be restored');
+  eq((await page.$$eval('[data-device-damaged] [data-damaged-step]', ls => ls.map(l => l.dataset.damagedStep))).join(','), 'again,restore,keep', 'integrity: the ways back in order: try again, restore a backup, and without one keep the records');
+  const restoreStep = await page.textContent('[data-damaged-step=restore]');
+  ok(/only a backup can bring the records back/.test(restoreStep) && /If you have a backup: Start over.*Restore from a backup/s.test(restoreStep) && !/copy you saved/.test(await page.textContent('[data-device-damaged]')), 'integrity: only a backup brings the records back, and Start over is for someone who has one', restoreStep);
+  ok(/If you have no backup, do not Start over/.test(await page.textContent('[data-damaged-step=keep]')), 'integrity: without a backup, do not Start over');
   errors.push(...mine);
   await ctx.close();
 }
