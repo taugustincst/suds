@@ -20,6 +20,10 @@ zone="${SUDS_EVENING_TZ:-America/Los_Angeles}"
 at="${SUDS_EVENING_AT:-21:00}"
 day="$(TZ="$zone" date +%F)"
 offset=$(( $(TZ="$zone" date -d "$day $at" +%s) - $(date +%s) ))
+# Never back in time (1.25.6): after 21:00 in Los Angeles the local date already differs from the UTC one, so the real
+# clock is used. A clock set behind the real one is wrong in any process that does not inherit libfaketime (the recovery
+# drill starts the restored server with a clean environment): a snapshot taken "now" looked half an hour old to it.
+[ "$offset" -lt 0 ] && offset=0
 spec="$(printf '%+d' "$offset")"
 export TZ="$zone" FAKETIME_DONT_FAKE_MONOTONIC=1
 # Refuse to pass vacuously: the shifted clock must be in effect, and the local date must differ from the UTC one.

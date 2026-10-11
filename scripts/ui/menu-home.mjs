@@ -390,7 +390,9 @@ try {
       if (!box) continue;
       const label = await box.getAttribute('aria-label');
       const title = fromHome ? label.replace(/^Mark done: /, '') : label.replace(/^Mark "(.*)" done$/, '$1');
-      await box.check();
+      // Found again at the click: the list can re-render between finding the box and ticking it (a stale handle threw
+      // "Element is not attached to the DOM" on 1.25.6's stamped tree).
+      await s.page.locator(`${sel}[aria-label=${JSON.stringify(label)}]`).first().check();
       const also = await until(() => s.page.$('.undo-toast [data-toast-also]'), { timeout: 8000 });
       ok(also, `V1 ${i + 1}: View in Done is offered`);
       if (!also) continue;
