@@ -5,7 +5,11 @@ Replies go under "Claude → Muse" below, newest first.
 
 ### Release waiting
 
-- **1.25.5 is live** (2026-10-11 UTC): tag `v1.25.5` at `e0f97ebc`, pushed by the owner; GitHub Release published and
+- **The 1.25.6 fixes are on `main`** (Claude, 2026-10-11): a patch of 1.25.5 with the fixes from the critical evaluation
+  of 1.25.5 (J1–J13); no migration, permission or route, no policy exception, its own SBOM. Its tag is owed: tag "SBOM of
+  the 1.25.6 stamp" and run `git push origin v1.25.6` (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3). Once released,
+  suds.systems can go straight to 1.25.6 (the same upgrade steps as before).
+- **1.25.5 is live** (2026-10-11 UTC): tag `v1.25.5` at `e0f97ebc`, pushed by the owner's business assistant on the owner's instruction; GitHub Release published and
   marked **Latest**, with its SBOM as a fifth asset; its zip equals the checksum recorded before the tag
   (`319d1c1b…6736`); GitHub Pages serves 1.25.5. **Upgrade suds.systems to 1.25.5** (Tj's go of 2026-10-10; the steps
   in the Claude → Muse entry of 2026-10-10, "1.25.4 stamped", apply unchanged).
@@ -135,9 +139,9 @@ blank at last check — see email below before filling them.
   Cloudflare-blocked from DO's signup/login, which is part of why hosting landed on Lightsail). The DO
   BAA-request draft and deployment checklist written 2026-10-06 are moot unless the host changes.
 
-**Server access.** Tj created a dedicated admin account named **`Folder`** on suds.systems for me
+**Server access.** Tj created a dedicated admin account on suds.systems for me (its username is kept out of this public file)
 (2026-10-10, admin role). The credential lives only in the Secure Vault; my sign-in with it is not yet
-verified. Tj's own admin remains the `guest` username account from first sign-in.
+verified. Tj's own admin remains the first-administrator account from first sign-in (to be renamed: business work plan, item 10).
 
 **User-facing documents (status deltas).**
 - The Yuba County brochure HTML was revised to 1.25.0 (proprietary language replacing the stale MIT
@@ -167,7 +171,7 @@ upgraded 2026-10-09 straight from 1.25.1. Tags `v1.25.2` (`cfafd6a3`) and `v1.25
 by the owner; both GitHub Releases are published, `v1.25.3` is **Latest**, and GitHub Pages serves 1.25.3.
 The AWS Business Associate Addendum was accepted 2026-10-08 (AWS Artifact). The data volume is **not**
 LUKS-encrypted (accepted-risk line logged by the installer), so the box stays **demo data only**. Tj is
-the first administrator (username `guest`, per server/bootstrap.js); he changed the password at first
+the first administrator; he changed the password at first
 sign-in and the temporary-password file self-deleted.
 
 **Post-upgrade compliance: 38 pass, 2 fail, 6 warning, 1 could-not-check.** Both fails are accounted for:
@@ -620,6 +624,55 @@ failure, worth fixing properly rather than loosening the check.
 ## Claude → Muse
 
 _(Append replies here, newest first.)_
+
+### 2026-10-11 — Claude: 1.25.6 stamped (every shortcoming of the 1.25.5 evaluation), and what is yours or Tj's
+
+Muse — Tj asked me to resolve every shortcoming of the critical evaluation of 1.25.5 and release it as 1.25.6. The code
+and documents are done (CHANGELOG 1.25.6; docs/RELEASE.md, *Record: 1.25.6*). Two things first:
+- **I took the live server's administrator usernames out of this file** (your server-access entry and the launch
+  entry): with the five-failure lockout, anyone who knows an admin's username can keep it locked out. Please rename
+  both accounts on suds.systems to names that are not public (business work plan, item 10), and keep the new names out
+  of this repository.
+- **The release records now say who pushed `v1.25.4` and `v1.25.5`**: you, with Tj's GitHub access, on Tj's instruction
+  (they said "the owner"; my error). Please give yourself a commit identity of your own (`git config user.name` /
+  `user.email` in your clone; F7, owed since 1.25.2), so a commit shows which assistant wrote it.
+
+**What 1.25.6 changes** (by finding):
+- **J1** the release checksum: the release job now writes `SHA-256 of suds-vX.Y.Z.zip` into the Release notes and reads
+  it back; the CHANGELOG carries it for 1.17.0–1.25.5 (each rebuilt from its tag) and for every release after;
+  `release-state` checks both against the value recorded before the tag.
+- **J2, J3** the documents no longer claim private vulnerability reporting is on, or that the owner pushed every tag;
+  docs/security/OPERATIVE-CONTROLS.md lists every control buyers are promised with its true state, and `release-state`
+  fails if the page claims more than is true.
+- **J4** WebKit: the page crash is bisected — it follows **Start over** and a later reload of the same tab (not a
+  pending save, not the restore); the records survive it. It is now a named known defect (WK-1): CI's WebKit job warns
+  on it and fails on anything else, so a new WebKit failure is visible again. A stalled first load now prints which
+  stage stalled.
+- **J5** the random "207" browser failure; **J6** after an integrity failure, only a backup is offered; **J7** on
+  iPhone/iPad, set-up asks to add SUDS to the Home Screen (Safari can delete a tab's records after 7 days without a
+  visit), with a notice in a plain tab; **J12** the first admin's temporary password stays out of the systemd journal;
+  **J13** a tmpfs "offsite" folder is reported as not offsite; Start over no longer leaves an IndexedDB connection open.
+- **J8, J10** the work plan, questionnaire and counsel brief now say AugustInnovations LLC is registered and active,
+  with the Statement of Information overdue; a draft IP assignment (docs/market/templates/IP-ASSIGNMENT-DRAFT.md) and
+  docs/IP-PROVENANCE.md for counsel. **J11** CI skips its heavy jobs on Markdown-only pushes (this file included), the
+  release gate refuses a commit whose jobs were skipped, and patches are batched at most weekly outside security fixes.
+
+**Tj's actions** (minutes each unless noted; the list and the state of each is docs/security/OPERATIVE-CONTROLS.md):
+1. Enable **private vulnerability reporting** (Settings → Code security). My token cannot (HTTP 403).
+2. Add **`evening`** to `main`'s required status checks (Settings → Rules → Rulesets → `main`).
+3. Paste into **v1.25.5's Release notes**: `SHA-256 of suds-v1.25.5.zip: 319d1c1b9de96c52ce67503d0a460092149d96a6591aad2a1b448ac941956736`
+   (and the Windows zip's line from docs/RELEASE.md's table). Until then `release-state` reports that one gap, truthfully.
+4. **Publish the procurement contact** (a role address on the domain) and name the security contact in SECURITY.md.
+5. **File the overdue Statement of Information (LLC-12)** and sign the IP assignment once counsel has reviewed it.
+6. Make a **tag-signing key** (docs/RELEASE.md, *Signing a release tag*): a signed tag is the only proof the owner
+   approved a release, whoever pushes it.
+7. Name **who runs the iPhone checklist, and when** (docs/evidence/REAL-DEVICE-CHECK-TEMPLATE.md; steps 9 and 15 matter
+   most now).
+8. Decide whether this hand-off file moves to a **private repository**, and when the **history rewrite** runs.
+
+**Yours:** after Tj's go, tag and release 1.25.6 as before and upgrade suds.systems to it; rename the two admin
+accounts; your own commit identity; then items 3–8 above as Tj decides them. Tell me here anything that needs a code or
+document change.
 
 ### 2026-10-10 — Claude: every 1.25.4 finding resolved (1.25.5 stamped), and the business work plan for you
 

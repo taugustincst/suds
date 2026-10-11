@@ -396,6 +396,23 @@ its release run passed the gate on 2026-10-11 (UTC), the GitHub Release is publi
 checksum recorded before the tag, and its `Web app` run published 1.25.5 to GitHub Pages
 ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
+**Record: 1.25.6 is a patch with the fixes from the critical evaluation of 1.25.5.** 1.25.6, stamped 2026-10-11, is a
+patch of 1.25.5 inside 1.25.0's 28 days (*Stabilisation*, point 1). It fixes the evaluation's findings J1–J13: the
+release checksum's second channel, written by the release job and checked by `release-state` (J1); the documents'
+claims about private vulnerability reporting (J2) and about who pushes tags (J3), with
+[security/OPERATIVE-CONTROLS.md](security/OPERATIVE-CONTROLS.md) stating each control's true state; WebKit's reload crash
+made a named known defect (WK-1), bisected to Start over, with a trace for stalled first loads (J4); a browser check
+that failed on random hex (J5); the integrity-damage advice (J6); Safari's seven-day storage deletion on iPhone (J7);
+the licensor's standing, the IP assignment draft and provenance (J8, J10); the live server's admin usernames out of the
+public documents (J9); heavy CI jobs skipped on Markdown-only pushes and a release cadence (J11); the journal password
+(J12) and tmpfs offsite folders (J13). No migration, no new or widened permission and no new route, 490 lines added
+outside docs, tests and generated files (`node scripts/release-policy.js --version 1.25.6 --previous v1.25.5`), so it
+passes the release policy with no exception. It is two commits, "Release 1.25.6" and "SBOM of the 1.25.6 stamp", the tag
+on the second, and the full suite, the evening run and the browser suite ran on the stamped tree before the push. From
+1.25.6 its Release notes carry the zip checksums, so after the tag the records commit also sets OPERATIVE-CONTROLS'
+`checksum-release` row to **in force**. Owner actions it cannot do: enable private vulnerability reporting, add
+`evening` to `main`'s required checks, sign tags, and add the checksum line to v1.25.5's Release notes.
+
 
 ### Supported versions
 
@@ -559,6 +576,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.25.3 | none of the policy (a patch within the patch rules: no migration, permission or route, 210 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged with the owner's account on the owner's instruction and released through the gate on 2026-10-09 (*Record: 1.25.3*) | the fixes from the launch of suds.systems and the pen test of the live install (installer SSH rule, site-local Caddy configuration and the www redirect, the first administrator's username, MINOR-1, MINOR-2, INFO-2, INFO-3; *Record: 1.25.3*, above) | no exception to approve |
 | 1.25.4 | none of the policy (a patch within the patch rules: no migration, permission or route, 935 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-10 (*Record: 1.25.4*) | the fixes from the market-readiness evaluation of 1.25.3 (G1–G11), the empty offsite backup copies found on suds.systems, and the Option A fleet tooling (*Record: 1.25.4*, above) | no exception to approve |
 | 1.25.5 | none of the policy (a patch within the patch rules: no migration, permission or route, 738 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-11 (UTC), the Latest release (*Record: 1.25.5*) | the fixes from the market-readiness evaluation of 1.25.4 (H1–H9) and the business work plan (*Record: 1.25.5*, above) | no exception to approve |
+| 1.25.6 | none of the policy (a patch within the patch rules: no migration, permission or route, 490 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once its tag `v1.25.6` is pushed | the fixes from the critical evaluation of 1.25.5 (J1–J13; *Record: 1.25.6*, above) | no exception to approve |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as
