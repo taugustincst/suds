@@ -132,9 +132,9 @@ module.exports = (r) => {
         if (k === 'backup_offsite_dir' && v !== '' && !config.local) {
           const problem = offsiteDirProblem(v);
           if (problem) throw badRequest(`backup_offsite_dir ${problem}`, { fields: { backup_offsite_dir: problem } });
-          // Saved, but said: a second disk in the same server, or the same disk, is not offsite.
-          const sameDisk = require('../scheduled-backup').offsitePlacement(v).sameDisk;
-          if (sameDisk) warnings.push(`The offsite folder ${v} ${sameDisk}.`);
+          // Saved, but said: a second disk in the same server, or the same disk, or memory (tmpfs), is not offsite.
+          const place = require('../scheduled-backup').offsitePlacement(v);
+          if (place.volatile || place.sameDisk) warnings.push(`The offsite folder ${v} ${place.volatile || place.sameDisk}.`);
         }
         if (k === 'scim_group_roles' && v !== '') v = require('../scim').normaliseGroupRoles(v);
         // The profile always has a value: a blank one would be decided again from the data at the next start.

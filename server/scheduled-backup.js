@@ -23,15 +23,35 @@ const OFFSITE_MISSING = 'offsite directory does not exist (is the share mounted?
  * server/audit-anchor.js does for anchors. `inside`: the folder is in the data directory (its backups folder
  * included) or contains it, so it is no offsite copy at all: refused as the setting is saved, and never copied to.
  * `sameDisk`: it is on the same device (on Windows, the same volume) as the data, so a lost disk takes both: said by
- * the setting's answer, Security status and the hardening checklist. Each is the sentence to show, or null.
+ * the setting's answer, Security status and the hardening checklist. `volatile` (1.25.6, J13): it is on a tmpfs or
+ * ramfs (/dev/shm, /run, a tmpfs mount), in this machine's memory, gone at the next restart: said as sameDisk is.
+ * Each is the sentence to show, or null.
  */
+const within = (child, parent) => child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
+/** The filesystem type of the mount holding the resolved path `p` (Linux: /proc/self/mountinfo, the longest mount point
+ *  that contains it, the later of two at the same point), or null where that cannot be read. */
+function mountType(p, mountinfo = null) {
+  if (mountinfo === null) { if (process.platform !== 'linux') return null; try { mountinfo = fs.readFileSync('/proc/self/mountinfo', 'utf8'); } catch { return null; } }
+  let best = null;
+  for (const line of mountinfo.split('\n')) {
+    // id parent major:minor root mount-point options [optional fields…] - type source super-options
+    const f = line.split(' '); const dash = f.indexOf('-', 6);
+    if (f.length < 5 || dash < 0 || !f[dash + 1]) continue;
+    const point = f[4].replace(/\\([0-7]{3})/g, (_, o) => String.fromCharCode(parseInt(o, 8)));
+    if (within(p, point) && (!best || point.length >= best.point.length)) best = { point, type: f[dash + 1] };
+  }
+  return best ? best.type : null;
+}
+const VOLATILE_FS = new Set(['tmpfs', 'ramfs']);
 function offsitePlacement(dir) {
   const real = (p) => { let r; try { r = fs.realpathSync.native(p); } catch { r = path.resolve(p); } return process.platform === 'win32' ? r.toLowerCase() : r; };
-  const within = (child, parent) => child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
   const a = real(dir); const data = real(config.dataDir);
   const inside = within(a, data) || within(data, a);
-  let sameDisk = false; try { sameDisk = !inside && fs.statSync(a).dev === fs.statSync(data).dev; } catch {}
+  const type = inside ? null : mountType(a);
+  const volatile = VOLATILE_FS.has(type);
+  let sameDisk = false; try { sameDisk = !inside && !volatile && fs.statSync(a).dev === fs.statSync(data).dev; } catch {}
   return { inside: inside ? 'is inside the data directory (or contains it), so it is not an offsite copy: choose a share on another disk or machine' : null,
+    volatile: volatile ? `is in memory (${type}), so it does not survive a restart and is not an offsite copy` : null,
     sameDisk: sameDisk ? 'is on the same disk as the data, so it is not an offsite copy: a failed disk takes both' : null };
 }
 
@@ -311,4 +331,4 @@ function prune(dir, retain) {
   return Math.min(files.length, retain);
 }
 
-module.exports = { runIfDue, run, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, copyVerified, repairOffsite, prunePartials, offsitePlacement, newest, copyProblem, FILE_RE, SNAP_RE };
+module.exports = { runIfDue, run, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, copyVerified, repairOffsite, prunePartials, offsitePlacement, mountType, newest, copyProblem, FILE_RE, SNAP_RE };

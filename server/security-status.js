@@ -196,7 +196,9 @@ function status({ host = true } = {}) {
   // Not offsite at all when it is in (or holds) the data directory, nor when it is on the same disk (1.25.5, H3).
   const place = offsite ? sb.offsitePlacement(offsite) : {};
   const offBad = place.inside ? `This folder ${place.inside}.` : /offsite copy failed/.test(lastStatus) ? lastStatus : offNewest && sb.copyProblem(offNewest.file, offNewest.size);
-  add('Backups and recovery', 'Offsite copy', !offsite ? 'warn' : offBad ? 'bad' : place.sameDisk ? 'warn' : 'ok', offsite ? offsite : 'not configured', offsite ? (offBad || (place.sameDisk ? `This folder ${place.sameDisk}. Point it at a mounted share on another host or site.` : 'Each scheduled backup is copied here after it is verified, and the copy is checked against it (size and SHA-256).')) : 'Set an offsite directory (a mounted share on another host or site).', 'server/scheduled-backup.js');
+  // In memory (tmpfs, ramfs) is said as the same disk is: a warning, the copy still made (1.25.6, J13).
+  const notOff = place.volatile || place.sameDisk;
+  add('Backups and recovery', 'Offsite copy', !offsite ? 'warn' : offBad ? 'bad' : notOff ? 'warn' : 'ok', offsite ? offsite : 'not configured', offsite ? (offBad || (notOff ? `This folder ${notOff}. Point it at a mounted share on another host or site.` : 'Each scheduled backup is copied here after it is verified, and the copy is checked against it (size and SHA-256).')) : 'Set an offsite directory (a mounted share on another host or site).', 'server/scheduled-backup.js');
   const drill = require('./dr-drill').lastDrill();
   const drillAge = drill ? ageDays(drill.at) : null;
   // Day one (dr-drill.js firstDrillPending): the monthly drill is on and has not had its first turn — a warning.
