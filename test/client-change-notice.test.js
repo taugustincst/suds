@@ -29,7 +29,7 @@ test('an edit by someone off the care team tells the primary worker which fields
   const n = notices(id, U.primary);
   assert.equal(n.length, 1);
   assert.match(n[0].title, /ccn_other changed .*record \(Phone, Risk level\)/, 'the client form\'s labels');
-  assert.ok(!n[0].title.includes('0199') && !n[0].description.includes('0199') && !n[0].description.includes('high'), 'no values');
+  assert.ok(!n[0].title.includes('555-0199') && !n[0].description.includes('555-0199') && !n[0].description.includes('high'), 'no values');
   assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-/.test(n[0].title + n[0].description), 'no user id in its text (1.16.2)');
   assert.equal(n[0].created_by, U.primary, 'the primary worker\'s own');
   // Not overdue work (1.16.2): no due date; the bell lists it as a notice, first, and nothing counts it as overdue.

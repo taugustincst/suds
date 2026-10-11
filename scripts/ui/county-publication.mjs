@@ -144,7 +144,20 @@ try {
   const [dl] = await Promise.all([adm.waitForEvent('download'), adm.locator(`[data-pub-rows] tr:has-text("${year}") [data-pub-export="csv"]`).first().click()]);
   eq(dl.suggestedFilename(), `suds-county-publication-${q.from}_${q.to}.csv`, 'the CSV is named after the period');
   const csvPath = await dl.path(); const csv = fs.readFileSync(csvPath, 'utf8');
-  ok(csv.includes('Suppressed or withheld') && !csv.includes('207'), 'and says what was suppressed without the value');
+  // Read cell by cell (1.25.6, J5): the About rows carry the release's id, its SHA-256 in hex and a timestamp, so a
+  // check that '207' is nowhere in the file failed whenever one of them happened to contain it (about 2% of runs).
+  {
+    const [head, ...rows] = require('../../server/spreadsheet').parseCsv(csv.replace(/^\uFEFF/, ''));
+    const col = (name) => head.indexOf(name);
+    const [S, M, V, N] = ['Section', 'Measure', 'County total', 'Screened'].map(col);
+    const screened = rows.filter(r => r[S] !== 'About' && r[S] !== 'Suppressed or withheld' && r[N]);
+    const listed = rows.filter(r => r[S] === 'Suppressed or withheld');
+    const people = screened.find(r => r[N] === 'suppressed');
+    ok(S >= 0 && V >= 0 && N >= 0 && listed.length > 0 && people, 'the CSV has a figures row screened as suppressed and a "Suppressed or withheld" list', { head, screened, listed });
+    eq(people && people[V], 'suppressed', 'the suppressed figure\'s cell holds the marker, not a number');
+    ok(listed.every(r => !/^\d+$/.test(r[V]) && r[V] !== '207'), 'and each listed suppression is shown as a marker, never a value', listed);
+    ok(rows.filter(r => r[S] !== 'About').every(r => r.every(c => !c.includes('207'))), 'and the suppressed value (207) is in no cell of the figures or the list', rows.filter(r => r[S] !== 'About' && r.some(c => c.includes('207'))));
+  }
   // The same quarter again: refused, as an alert that takes the focus.
   await adm.click('[data-pub-prepare]');
   ok(await until(() => adm.$('[data-pub-result][data-pub-outcome="refused"]')), 'the same quarter again is refused');
