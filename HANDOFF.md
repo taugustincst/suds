@@ -5,10 +5,11 @@ Replies go under "Claude → Muse" below, newest first.
 
 ### Release waiting
 
-- **The 1.25.6 fixes are on `main`** (Claude, 2026-10-11): a patch of 1.25.5 with the fixes from the critical evaluation
-  of 1.25.5 (J1–J13); no migration, permission or route, no policy exception, its own SBOM. Its tag is owed: `git tag -a v1.25.6 f23a94e78bda -m "SUDS 1.25.6"` ("SBOM of
-  the 1.25.6 stamp"; main's CI green; zip SHA-256 `45d2a425c059…`) and `git push origin v1.25.6` (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3). Once released,
-  suds.systems can go straight to 1.25.6 (the same upgrade steps as before).
+- **1.25.6 is live** (2026-10-11): tag `v1.25.6` at `f23a94e7`, pushed by Folder at Tj's direction ("Tag and
+  release 1.25.6, upgrade straight to it"); the Release job published it, marked **Latest**, zip digest on
+  GitHub equals the recorded SHA-256 (`45d2a425…725`) exactly; GitHub Pages serves 1.25.6; **suds.systems
+  upgraded straight 1.25.4 → 1.25.6 the same day** (see the entry below). A patch of 1.25.5 with the fixes
+  from the critical evaluation of 1.25.5 (J1–J13); no migration, permission or route; its own SBOM.
 - **1.25.5 is live** (2026-10-11 UTC): tag `v1.25.5` at `e0f97ebc`, pushed by the owner's business assistant on the owner's instruction; GitHub Release published and
   marked **Latest**, with its SBOM as a fifth asset; its zip equals the checksum recorded before the tag
   (`319d1c1b…6736`); GitHub Pages serves 1.25.5. **Upgrade suds.systems to 1.25.5** (Tj's go of 2026-10-10; the steps
@@ -40,6 +41,18 @@ Replies go under "Claude → Muse" below, newest first.
   deployed manually following the workflow's own checks (tag's release-site-check passed in CI; tag's
   pages-version-check: "gh-pages serves 1.24.1, older than 1.24.4"; pushed the build artifact to `gh-pages`).
   This bug was latent since the 1.23.3 workflow rewrite — no 1.23.x `Web app` run had been exercised before.
+
+## 2026-10-11 — Folder: suds.systems upgraded 1.25.4 → 1.25.6 (afternoon)
+
+- At Tj's direction: tagged `v1.25.6` at `f23a94e7`, release job published it (Latest), GitHub's zip
+  digest verified equal to the recorded SHA-256 `45d2a425c059…186725`; Pages serves 1.25.6.
+- Server: manual snapshot **`suds-2026-10-11-pre-1256`** completed first. Upgrade from the release zip
+  (on-box `sha256sum -c` OK; dry run clean; **no rollback**); pre-upgrade backup sealed at
+  `/var/lib/suds/backups/pre-upgrade-20261011T220255Z`. Previous release retained at `/opt/suds/1.25.4`.
+- Post-checks all pass, verified on-box and from outside: version.json 1.25.6, www → 301 apex,
+  `/.env` 404, `www-redirect.caddy` intact, `/api/health` `ok:true`, service active. The upgrader's
+  compliance summary is unchanged: 40 pass / 1 fail (`host.firewall`, owner's standing choice) /
+  5 warn / 1 not-checked; all backup, offsite, disk-encryption and drill checks PASS.
 
 ## 2026-10-11 — Folder: maintenance window COMPLETE — LUKS migration + 1.25.4 + offsite fix, all proven
 
