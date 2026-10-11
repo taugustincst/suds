@@ -514,7 +514,7 @@ test('end to end: this programme\'s server sends its real signed file to the cou
     const audit = lastAudit('county_submission.send');
     assert.equal(audit.details.status, 'imported'); assert.equal(audit.details.leaves_programme, true); assert.equal(audit.details.sha256, s.receipt.sha256);
     assert.equal(audit.details.county_code, COUNTY.county_code);
-    assert.ok(!/naloxone|values|777/.test(JSON.stringify(audit.details)), 'no figures in the audit');
+    { const { sha256: _h, ...rest } = audit.details; assert.ok(!/naloxone|values|777/.test(JSON.stringify(rest)), 'no figures in the audit'); } // the file's SHA-256 is hex, and may hold "777"
     // The county's combined view counts it.
     const rt = ok(await issue(admin, { scope: 'county.read', name: 'E2E' }));
     const comb = (await bearer('GET', `/api/county-connect/v1/combined?from=${Q2.from}&to=${Q2.to}`, rt.token, undefined, { to: countyUrl })).data;
@@ -620,7 +620,7 @@ test('r1 #2: automatic sending sends only real, ended periods of the cadence in 
     assert.equal(out.skipped, 8); assert.equal(auditCount('county_submission.auto_skip') - skips, 8);
     const s = lastAudit('county_submission.auto_skip');
     assert.ok(['not_dates', 'reversed', 'longer_than_a_year', 'not_over', 'not_a_period_of_the_cadence'].includes(s.details.reason));
-    assert.ok(!/naloxone|values|777/.test(JSON.stringify(s.details)), 'no figures');
+    { const { sha256: _h, ...rest } = s.details; assert.ok(!/naloxone|values|777/.test(JSON.stringify(rest)), 'no figures'); }
     const reasons = H.db.all(`SELECT details FROM audit_log WHERE action='county_submission.auto_skip' ORDER BY id DESC LIMIT 8`).map(r => JSON.parse(r.details).reason).sort();
     assert.deepEqual(reasons, ['longer_than_a_year', 'not_a_period_of_the_cadence', 'not_a_period_of_the_cadence', 'not_dates', 'not_dates', 'not_dates', 'not_over', 'reversed']);
     // An unknown cadence: nothing is a period of it.

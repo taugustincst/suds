@@ -38,13 +38,13 @@ test('an edit keeps each changed field\'s value before and after, encrypted, and
   const [row] = revs(id);
   assert.equal(row.id, r.data.revision); assert.equal(row.via, 'rest'); assert.equal(row.changed_by, U.other); assert.equal(row.reverts, null);
   assert.match(row.changes_enc, /^v1:/, 'encrypted like every _enc column');
-  assert.ok(!/0199|0101|1990|Sacramento/.test(JSON.stringify(row)), 'no value in any column in plain text');
+  assert.ok(!/555-0199|555-0101|1990-02-0|Sacramento/.test(JSON.stringify(row)), 'no value in any column in plain text'); // whole values: a 4-digit fragment can occur in a hash or ciphertext
   assert.deepEqual(changesOf(row), { phone: { before: '916-555-0101', after: '916-555-0199' }, dob: { before: '1990-02-03', after: '1990-02-04' }, veteran: { before: 0, after: 1 }, city: { before: null, after: 'Sacramento' } },
     'only the fields that changed (first_name was sent unchanged)');
   // Audited by revision and field names, never a value.
   const a = audits('client.revision', id).at(-1);
   assert.deepEqual({ ...a.d, fields: [...a.d.fields].sort() }, { revision: row.id, via: 'rest', fields: ['city', 'dob', 'phone', 'veteran'] });
-  assert.ok(!/0199|0101|1990|Sacramento/.test(H.db.all(`SELECT details FROM audit_log WHERE client_id=?`, id).map(x => x.details).join(' ')), 'no value in any audit entry');
+  assert.ok(!/555-0199|555-0101|1990-02-0|Sacramento/.test(H.db.all(`SELECT details FROM audit_log WHERE client_id=?`, id).map(x => x.details).join(' ')), 'no value in any audit entry');
   assert.equal(audits('client.update', id).at(-1).d.revision, row.id);
   // An edit that changes nothing keeps nothing.
   await C.primary.put(`/api/clients/${id}`, { phone: '916-555-0199' });
@@ -106,7 +106,7 @@ test('revert puts the fields back as a new revision, never deleting history; onl
   // Reverting it again: the fields no longer hold what it set, so it is refused and named (never a value).
   const again = await C.primary.post(`/api/clients/${id}/history/${bad}/revert`, {});
   assert.equal(again.status, 409); assert.match(again.data.error, /(Phone and Date of birth|Date of birth and Phone) have been changed again since/);
-  assert.ok(!/0666|0101/.test(JSON.stringify(again.data)));
+  assert.ok(!/555-0666|555-0101/.test(JSON.stringify(again.data)));
   // A supervisor off the care team may revert (the revert of the revert), and the primary worker is told.
   const sup = await C.sup.post(`/api/clients/${id}/history/${r.data.revision}/revert`, {});
   assert.equal(sup.status, 200, JSON.stringify(sup.data));
@@ -126,7 +126,7 @@ test('a revert blocked by a later change names the field, and the other fields c
   assert.match(r.data.error, /(Date of birth and City|City and Date of birth) can still be put back on their own/);
   assert.deepEqual(r.data.changed_since, ['phone']);
   assert.deepEqual(r.data.revertible.map(x => x.field).sort(), ['city', 'dob']);
-  assert.ok(!/0777|0888|1992|Woodland/.test(JSON.stringify(r.data)), 'no values in the refusal');
+  assert.ok(!/555-0777|555-0888|1992-02-02|Woodland/.test(JSON.stringify(r.data)), 'no values in the refusal');
   // The others, on their own (with the record as it is now).
   const now = (await C.primary.get(`/api/clients/${id}`)).data.client;
   const part = await C.primary.post(`/api/clients/${id}/history/${bad}/revert`, { fields: ['dob', 'city'], if_updated_at: now.updated_at });
