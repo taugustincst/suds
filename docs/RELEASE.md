@@ -355,8 +355,9 @@ fleet tooling (`deploy/fleet/`). No migration, no new or widened permission and 
 outside docs, tests and generated files (`node scripts/release-policy.js --version 1.25.4 --previous v1.25.3`), so it
 passes the release policy with no exception. It is two commits, "Release 1.25.4" and "SBOM of the 1.25.4 stamp", the
 tag on the second, and the full suite ran on the stamped tree before the push (G6). After upgrading, an operator checks
-the offsite copies (deploy/linux/README.md, *Check your offsite backups*). The owner pushed `v1.25.4` on 2026-10-10; its
-release run passed the gate, the GitHub Release is published and marked Latest, its zip equals the checksum recorded
+the offsite copies (deploy/linux/README.md, *Check your offsite backups*). The owner's business assistant pushed `v1.25.4` on
+2026-10-10 and approved its release, with the owner's GitHub access and on the owner's explicit directives (tag first,
+then "release the job"; *Handing a release to the owner*); its release run passed the gate, the GitHub Release is published and marked Latest, its zip equals the checksum recorded
 before the tag, and its `Web app` run published 1.25.4 to GitHub Pages ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
 **Record: 1.25.5 is a patch with the fixes from the market-readiness evaluation of 1.25.4.** 1.25.5, stamped
@@ -376,8 +377,9 @@ is two commits, "Release 1.25.5" and "SBOM of the 1.25.5 stamp", the tag on the 
 evening run and the browser suite ran on the stamped tree before the push (*Stamp checklist*). Not done here and
 recorded as owed: a real-iPhone record (docs/ADOPTION.md §4) and a measured WebKit failure rate. In CI's WebKit every new
 check passes; the reload after Start over, a restore and a sign-out crashes the page there, the records surviving it
-(flake register), and the iPhone checklist tests that reload. The owner pushed `v1.25.5`; its release run passed the
-gate on 2026-10-11 (UTC), the GitHub Release is published and marked Latest with its SBOM attached, its zip equals the
+(flake register), and the iPhone checklist tests that reload. The owner's business assistant pushed `v1.25.5` and
+approved its release, with the owner's GitHub access and at the owner's direction (*Handing a release to the owner*);
+its release run passed the gate on 2026-10-11 (UTC), the GitHub Release is published and marked Latest with its SBOM attached, its zip equals the
 checksum recorded before the tag, and its `Web app` run published 1.25.5 to GitHub Pages
 ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
@@ -394,9 +396,10 @@ Security fixes are announced as a GitHub Security Advisory and an *Advisory* not
 CHANGELOG section, naming the affected versions (as 1.15.4 did); programmes with a support agreement are told
 directly. The project has one maintainer: this is a best-effort commitment, not a contractual SLA, and response
 times are those of [templates/SUPPORT-SLA.md](market/templates/SUPPORT-SLA.md) where a programme has signed one.
-**A security release waits for the owner.** Since 1.16.3 a release is a `v*` tag the owner pushes, and the
-maintaining assistant cannot push tags at all (*Handing a release to the owner*, below), so "as soon as a fix is
-ready" means as soon as the owner can tag it. No backup releaser is named today; one would be a second
+**A security release waits for the owner.** Since 1.16.3 a release is a `v*` tag pushed with the owner's account,
+by the owner or, on the owner's instruction, the owner's business assistant; the maintaining assistant cannot push
+tags at all (*Handing a release to the owner*, below), so "as soon as a fix is ready" means as soon as the owner can
+have it tagged. No backup releaser is named today; one would be a second
 administrator, added to the `v*` tag ruleset's bypass list and as a reviewer of the `release` environment
 (*Owner: repository settings*, steps 1 and 3), and named here.
 A change of default behaviour (such as 1.16.0's wider role defaults) is only made in a minor release and is
@@ -715,7 +718,9 @@ is allowed when the owner decides it; it is recorded here so that "patch" keeps 
 | 1.16.2 | A publication release that 1.16.1 published by withholding the overdose events by month is refused whole again (1.16.1's rule leaked; ADR-0009) | a disclosure-control defect: refusal is safe | the owner, approving these notes |
 
 ## Cutting a release
-**A release is always a `v*` tag, pushed by the owner** (1.16.3). Every fix is merged to `main` and green first;
+**A release is always a `v*` tag, pushed with the owner's account** (1.16.3): by the owner, or on the owner's
+instruction by the owner's business assistant, which uses that account (*Handing a release to the owner*, below,
+says what that means and why signed tags matter). Every fix is merged to `main` and green first;
 then the version stamp goes to `main` (through a pull request once branch protection is on, *Owner: repository
 settings*, step 2), and once CI has passed on that stamp commit the owner tags **that commit, by its SHA** (not
 whatever a local `main` happens to be: a clone's `main` can differ from `origin/main`):
@@ -844,7 +849,15 @@ Whoever prepares a release (a maintainer, or the maintaining assistant) stamps i
 the owner tags it. **The maintaining assistant cannot push tags at all** (its environment's proxy refuses a tag
 push), and once `main` is protected (step 2) it cannot push `main` either and opens a pull request, so every
 release, security releases included, waits for the owner unless a backup releaser is named (*Supported
-versions*). The hand-over is an issue or pull request titled "Release vX.Y.Z", and a line in HANDOFF.md's
+versions*). **The owner's business assistant can** (evaluation of 1.25.5, J3): it works with the owner's own GitHub
+access, so the `v*` tag ruleset and the `release` environment's required reviewer, which admit the owner's account,
+admit it too. On the owner's instruction it pushed `v1.25.4` and `v1.25.5` and approved their release runs. GitHub
+then records the owner's account, and the tag's tagger is the same automation identity that writes the code. So a
+tag and an approval show only that the owner's account was used, not that the owner checked the release. The
+records say who did it, on whose instruction (RELEASE-HANDOFF.md's *Completed* entries,
+[security/OPERATIVE-CONTROLS.md](security/OPERATIVE-CONTROLS.md)). This is why a **signed tag** made with a key that
+only the owner holds, on the owner's machine (*Signing a release tag*, below), matters: no assistant can make one,
+whatever GitHub access it is given. The hand-over is an issue or pull request titled "Release vX.Y.Z", and a line in HANDOFF.md's
 *Release waiting*, giving the stamp commit's full SHA, a link to that commit's green CI run, and these commands:
 ```bash
 git fetch origin

@@ -1,6 +1,7 @@
 # Release hand-off: v1.25.5 released, then the record
 
-> 1.25.5 is released (2026-10-11 UTC): tag `v1.25.5` at `e0f97ebc`, pushed by the owner; its GitHub Release is published
+> 1.25.5 is released (2026-10-11 UTC): tag `v1.25.5` at `e0f97ebc`, pushed by the owner's business assistant with the owner's GitHub
+> access, on the owner's instruction; its GitHub Release is published
 > and marked **Latest**; its zip equals the checksum recorded before the tag; GitHub Pages serves 1.25.5. The releases
 > below are the superseded record. No tag is owed.
 >
@@ -25,7 +26,9 @@ git archive --format=zip --prefix=suds-v1.25.5/ -o suds-v1.25.5.zip v1.25.5 && s
   CHANGELOG 2026-10-10), zip SHA-256 `319d1c1b9de96c52ce67503d0a460092149d96a6591aad2a1b448ac941956736`; exact-commit CI 38087235998 (every required
   job green, `evening` and `service-sandbox` included; the advisory WebKit job's timeout is in the flake register,
   docs/RELEASE.md). The full suite, the evening run and the browser suite ran on the stamped tree before it was pushed.
-- The owner pushed the tag. Release run 38097790523 succeeded; the GitHub Release was published at 00:22 UTC on
+- The owner's business assistant pushed the tag, at the owner's direction, with the owner's GitHub access (HANDOFF.md,
+  2026-10-10 evening), and approved the `release` environment the same way; the tag object is unsigned and its tagger
+  is the shared automation identity (docs/RELEASE.md, *Handing a release to the owner*). Release run 38097790523 succeeded; the GitHub Release was published at 00:22 UTC on
   2026-10-11 with five assets: the source zip and its `.sha256`, the Windows zip (unsigned: the code-signing secrets are
   not set) and its `.sha256`, and `sbom-1.25.5.cdx.json`, the first Release to carry its SBOM. Marked **Latest**. The
   published `.sha256` equals the value recorded before the tag, and a download of each zip hashes to its `.sha256`; the
@@ -51,7 +54,8 @@ git archive --format=zip --prefix=suds-v1.25.4/ -o suds-v1.25.4.zip v1.25.4 && s
   CHANGELOG 2026-10-10), zip SHA-256 `b0a04a6a98e1361cc1c85386afb1c2763904370db3b796f454031093b1d3736f`; exact-commit CI 38019332980 (every required
   job green; the advisory WebKit job's timeout is in the flake register, docs/RELEASE.md). The full suite, the evening
   run and the browser suite ran on the stamped tree before it was pushed (*Stamp checklist*).
-- The owner pushed the tag on 2026-10-10. Release run 38061810135 succeeded; the GitHub Release was published at
+- The owner's business assistant pushed the tag on 2026-10-10 and approved the release, with the owner's GitHub access,
+  on the owner's explicit directives (tag first, then "release the job"; HANDOFF.md, 2026-10-10). Release run 38061810135 succeeded; the GitHub Release was published at
   15:07 UTC with its source and Windows zips (the Windows zip unsigned: the code-signing secrets are not set), marked
   **Latest**. The published `.sha256` equals the value recorded before the tag, and a download of the zip hashes to it.
 - Windows zip: `suds-1.25.4-windows-x64.zip`, SHA-256 `ad6cc1f8f0fa1947a179c256efa0950d5a80873c569be9dac84ada6c82f11597` (read from its `.sha256` asset and from a download).
