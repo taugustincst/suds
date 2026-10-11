@@ -299,10 +299,6 @@ let good = null; let copyText = null; // the good sealed image, and the saved co
   // CI's WebKit this reload crashes the page on every run since 1.25.5, with and without the second engine: known
   // defect WK-1, docs/RELEASE.md *Known defects*; whatever the reload does, the records must still be there in a new page.)
   await logout(page);
-  // DIAGNOSTIC (session branch only): let every save finish before the reload.
-  console.log('DIAG pending before wait:', JSON.stringify(await page.evaluate(async () => ({ dirty: window.SUDS_LOCAL && window.SUDS_LOCAL.isDirty && window.SUDS_LOCAL.isDirty() }))));
-  await page.evaluate(async () => { try { await window.SUDS_LOCAL.flush(); } catch (e) { return String(e); } });
-  await page.waitForTimeout(3000);
   let reloadCrash = null;
   try { await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 }); await settle(page); }
   catch (e) { reloadCrash = String(e.message || e).split('\n')[0]; }
@@ -359,36 +355,9 @@ let good = null; let copyText = null; // the good sealed image, and the saved co
   await page.waitForSelector('[data-mode-tab=login][aria-selected=true]', { timeout: 20000 }); await settle(page);
   eq(await tryLogin(page, 'dmg', PW), 'in', 'saved copy: the account signs in with its password');
   ok(((await kernel(page, 'GET', '/api/clients')).json.clients || []).some(c => c.last_name === 'Keeper'), 'saved copy: and the records are back');
-  // DIAGNOSTIC B (session branch only): restore without Start over, then sign out and reload.
-  { await logout(page); let r = 'ok'; try { await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 }); } catch (e) { r = String(e.message || e).split('\n')[0]; } console.log('DIAG B restore-only reload:', r); }
   fs.rmSync(soundFile, { force: true });
   await ctx.close();
 }
 
-// DIAGNOSTIC C (session branch only): Start over with no restore, a new sign-up, sign out and reload.
-{
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  const page = await ctx.newPage();
-  let r = 'ok';
-  try {
-    await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 20000 });
-    await kernel(page, 'POST', '/api/local/signup', { display_name: 'Diag C', username: 'diagc', password: PW, role: 'admin', storage_ack: true });
-    await kernel(page, 'POST', '/api/auth/login', { username: 'diagc', password: PW });
-    await kernel(page, 'POST', '/api/clients', { first_name: 'Diag', last_name: 'Cee', status: 'active' });
-    await page.evaluate(async () => { await window.SUDS_LOCAL.flush(); });
-    await kernel(page, 'POST', '/api/auth/logout', {});
-    await page.goto(base + '/#/login?mode=login'); await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 }); await settle(page);
-    await page.click('[data-cant-sign-in] [data-device-reset-open]'); await page.waitForSelector('.modal #reset-device-confirm');
-    await page.fill('#reset-device-confirm', 'ERASE'); await page.click('.modal button.danger');
-    await page.waitForSelector('input[name=display_name]', { timeout: 20000 }); await settle(page);
-    await kernel(page, 'POST', '/api/local/signup', { display_name: 'Diag C2', username: 'diagc2', password: PW, role: 'admin', storage_ack: true });
-    await kernel(page, 'POST', '/api/auth/login', { username: 'diagc2', password: PW });
-    await page.evaluate(async () => { await window.SUDS_LOCAL.flush(); });
-    await kernel(page, 'POST', '/api/auth/logout', {});
-    await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 });
-  } catch (e) { r = String(e.message || e).split('\n')[0]; }
-  console.log('DIAG C start-over-only reload:', r);
-  await ctx.close();
-}
 finish(errors.slice(0, 10));
 await browser.close();
