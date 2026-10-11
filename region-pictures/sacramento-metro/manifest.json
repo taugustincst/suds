@@ -1,0 +1,360 @@
+{
+ "region": "sacramento-metro",
+ "fetched_at": "2026-10-11T00:23:26.120Z",
+ "user_agent": "SUDS/1.25.5 (+https://github.com/taugustincst/suds) region pictures",
+ "summary": {
+  "bundled": 44,
+  "tried": 81,
+  "refused": 10
+ },
+ "note": "44 of 81 providers' pictures were downloaded. SUDS identifies itself and does not pose as a browser, so a provider site that refuses automated downloads (10 here, HTTP 401/403) is listed under failures and shows no picture.",
+ "pictures": {
+  "988-sacramento": {
+   "file": "988-sacramento.png",
+   "content_type": "image/png",
+   "bytes": 224553,
+   "source_url": "https://www.wellspacehealth.org/wp-content/uploads/2024/09/2711fd0f638302f6f16d240ff29c3263-1024x654.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "aegis-marysville": {
+   "file": "aegis-marysville.webp",
+   "content_type": "image/webp",
+   "bytes": 229520,
+   "source_url": "https://pinnacletreatment.com/wp-content/uploads/2024/08/Aegis-Treatment-Centers-Marysville-Hero.webp",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "aegis-roseville": {
+   "file": "aegis-roseville.webp",
+   "content_type": "image/webp",
+   "bytes": 238472,
+   "source_url": "https://pinnacletreatment.com/wp-content/uploads/2024/08/Aegis-Treatment-Centers-Roseville-Hero.webp",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "bhs-sac-access": {
+   "file": "bhs-sac-access.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 411,
+   "source_url": "https://dhs.saccounty.gov/etc.clientlibs/saccounty/clientlibs/clientlib-global/resources/images/faviconV2.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "bridges-inc": {
+   "file": "bridges-inc.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 11101,
+   "source_url": "https://www.bridgesinc.net/wp-content/uploads/2020/02/cropped-favicon-270x270.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "casa-de-esperanza": {
+   "file": "casa-de-esperanza.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 157915,
+   "source_url": "https://casaysc.org/wp-content/uploads/2023/11/casa-logo.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "colusa-bh": {
+   "file": "colusa-bh.png",
+   "content_type": "image/png",
+   "bytes": 5672,
+   "source_url": "https://www.countyofcolusaca.gov/ImageRepository/Document?documentID=17322",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "common-goals": {
+   "file": "common-goals.png",
+   "content_type": "image/png",
+   "bytes": 698348,
+   "source_url": "https://commongoalsinc.org/wp-content/uploads/2025/11/commonpurpose_bannerwide-scaled.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "core-medical": {
+   "file": "core-medical.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 892877,
+   "source_url": "https://www.coremedicalclinic.com/core_sms.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "eldorado-suds": {
+   "file": "eldorado-suds.png",
+   "content_type": "image/png",
+   "bytes": 65003,
+   "source_url": "https://www.eldoradocounty.ca.gov/files/ocfavicon/County/apple-touch-icon.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "empower-yolo": {
+   "file": "empower-yolo.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 5952,
+   "source_url": "https://empoweryolo.org/wp-content/uploads/WFC-logotype-S.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "fourth-and-hope-shelter": {
+   "file": "fourth-and-hope-shelter.png",
+   "content_type": "image/png",
+   "bytes": 16084,
+   "source_url": "https://fourthandhope.org/wp-content/uploads/2020/10/fh_logo_whitegreen.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "gathering-inn": {
+   "file": "gathering-inn.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 6953,
+   "source_url": "https://cdn.prod.website-files.com/6318eb5732794f73dc93921a/6334ae968879492ee4331a60_webclip.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "harm-reduction-services": {
+   "file": "harm-reduction-services.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 14690,
+   "source_url": "https://hrssac.org/wp-content/uploads/2020/09/cropped-download-e1601521229950-2-270x270.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "harmony-health": {
+   "file": "harmony-health.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 16457,
+   "source_url": "https://static.wixstatic.com/media/fbf449_54f42d23238a44a2bca249689c7975bd%7Emv2_d_3000_1350_s_2.jpg/v1/fill/w_180%2Ch_180%2Clg_1%2Cusm_0.66_1.00_0.01/fbf449_54f42d23238a44a2bca249689c7975bd%7Emv2_d_3000_1350_s_2.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "hospitality-house-gv": {
+   "file": "hospitality-house-gv.png",
+   "content_type": "image/png",
+   "bytes": 29032,
+   "source_url": "https://hhshelter.org/wp-content/uploads/2021/02/cropped-web-icon-HH_icon_house-270x270.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "insight-respite": {
+   "file": "insight-respite.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 205417,
+   "source_url": "https://www.tpcp.org/wp-content/uploads/2022/06/Nev-Co-IRC.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "interfaith-food-ministry": {
+   "file": "interfaith-food-ministry.png",
+   "content_type": "image/png",
+   "bytes": 473559,
+   "source_url": "https://www.interfaithfoodministry.org/uploads/4/5/1/8/45188713/providing-supplemental-groceries-to-nevada-county-since-1987_orig.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "medmark-sacramento": {
+   "file": "medmark-sacramento.webp",
+   "content_type": "image/webp",
+   "bytes": 379480,
+   "source_url": "https://medmark.com/wp-content/uploads/2023/04/Sacramento.webp",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "mhucc-sacramento": {
+   "file": "mhucc-sacramento.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 580059,
+   "source_url": "https://www.tpcp.org/wp-content/uploads/2022/06/Sac-MHUCC.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "nevada-county-bh": {
+   "file": "nevada-county-bh.png",
+   "content_type": "image/png",
+   "bytes": 42047,
+   "source_url": "https://www.nevadacountyca.gov/ImageRepository/Document?documentID=59502",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "nevada-county-naloxone": {
+   "file": "nevada-county-naloxone.png",
+   "content_type": "image/png",
+   "bytes": 37904,
+   "source_url": "https://www.nevadacountyca.gov/ImageRepository/Document?documentID=59770",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "new-morning-yfs": {
+   "file": "new-morning-yfs.png",
+   "content_type": "image/png",
+   "bytes": 8560,
+   "source_url": "https://www.newmorningyfs.org/wp-content/uploads/new-morning-favicon.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "ona-treatment": {
+   "file": "ona-treatment.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 1455523,
+   "source_url": "https://onatreatmentcenter.com/assets/img/pond-1.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "pathways-marysville": {
+   "file": "pathways-marysville.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 341865,
+   "source_url": "https://www.yspathways.net/wp-content/uploads/2024/09/bigstock-Man-With-Addiction-Sharing-Hea-443875037-scaled.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "peach-tree-linda": {
+   "file": "peach-tree-linda.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 41937,
+   "source_url": "https://pickpeach.org/wp-content/uploads/2022/11/Peach-Tree-Health-social.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "progress-house": {
+   "file": "progress-house.png",
+   "content_type": "image/png",
+   "bytes": 25267,
+   "source_url": "https://static.mywebsites360.com/da9adda86ce846d3ac2e6a11737b471b/f/8d0d47d4ac5a1fd2b6bc29a675b8751b314c702b/1/favicon-180x180.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "sacramento-ctc": {
+   "file": "sacramento-ctc.png",
+   "content_type": "image/png",
+   "bytes": 2190,
+   "source_url": "https://www.ctcprograms.com/wp-content/uploads/sites/204/2017/05/CTC-Favicon.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "sacramento-recovery-house": {
+   "file": "sacramento-recovery-house.png",
+   "content_type": "image/png",
+   "bytes": 13039,
+   "source_url": "https://www.sacrecovery.org/media/yootheme/cache/e0/logo-e00c583c.png?src=images/logo.png&thumbnail=185,50,&hash=014d4509",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "sane-sacramento": {
+   "file": "sane-sacramento.webp",
+   "content_type": "image/webp",
+   "bytes": 116696,
+   "source_url": "https://static1.squarespace.com/static/6272d25763d6e51af0d023e2/t/627591d03dd1c6337efbaf08/1651872208706/SANE+LOGO+CIRCLE.PNG?format=1500w",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "sierra-family-health": {
+   "file": "sierra-family-health.webp",
+   "content_type": "image/webp",
+   "bytes": 9170,
+   "source_url": "https://wsmcmed.org/wp-content/uploads/2018/12/logo-original-250w.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "sierra-native-alliance": {
+   "file": "sierra-native-alliance.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 15200,
+   "source_url": "https://www.sierranativealliance.org/wp-content/uploads/2021/06/cropped-cropped-logo-270x270.jpeg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "snahc": {
+   "file": "snahc.png",
+   "content_type": "image/png",
+   "bytes": 13098,
+   "source_url": "https://snahc.org/wp-content/uploads/2019/08/cropped-favicon-270x270.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "tahoe-forest-bh": {
+   "file": "tahoe-forest-bh.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 47852,
+   "source_url": "https://www.tfhd.com/wp-content/uploads/2024/03/BehavioralHealth_1386x326.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "vista-rise": {
+   "file": "vista-rise.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 29163,
+   "source_url": "https://vistarise.org/wp-content/uploads/2020/12/Screen-Shot-2020-12-03-at-2.20.21-PM-768x513.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "voa-sacramento": {
+   "file": "voa-sacramento.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 407336,
+   "source_url": "https://www.voa-ncnn.org/wp-content/uploads/sites/16/2026/05/035A8488-copy-edited.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "walters-house": {
+   "file": "walters-house.png",
+   "content_type": "image/png",
+   "bytes": 16084,
+   "source_url": "https://fourthandhope.org/wp-content/uploads/2020/10/fh_logo_whitegreen.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "wellspace-detox": {
+   "file": "wellspace-detox.webp",
+   "content_type": "image/webp",
+   "bytes": 7468,
+   "source_url": "https://www.wellspacehealth.org/wp-content/uploads/2024/11/cropped-wellspacehealth-favicon-270x270.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "wellspace-fqhc": {
+   "file": "wellspace-fqhc.png",
+   "content_type": "image/png",
+   "bytes": 8124,
+   "source_url": "https://www.wellspacehealth.org/wp-content/uploads/2024/11/cropped-wellspacehealth-favicon-270x270.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "western-sierra-gv": {
+   "file": "western-sierra-gv.webp",
+   "content_type": "image/webp",
+   "bytes": 9170,
+   "source_url": "https://wsmcmed.org/wp-content/uploads/2018/12/logo-original-250w.png",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "yolo-food-bank": {
+   "file": "yolo-food-bank.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 240870,
+   "source_url": "https://yolofoodbank.org/wp-content/uploads/2021/10/Home-hero.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "yuba-harm-reduction": {
+   "file": "yuba-harm-reduction.webp",
+   "content_type": "image/webp",
+   "bytes": 43710,
+   "source_url": "https://static1.squarespace.com/static/608c3ad161437f4cd02cb777/t/64acd151de87bb30e81f994f/1689047377117/Color+Y+Horizontal+Logo.png?format=1500w",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "yuba-sutter-food-bank": {
+   "file": "yuba-sutter-food-bank.jpg",
+   "content_type": "image/jpeg",
+   "bytes": 27130,
+   "source_url": "https://static.wixstatic.com/media/8f4d16_7ca99d156b6d4d12907b74d0900b954b%7Emv2.jpg/v1/fit/w_2500,h_1330,al_c/8f4d16_7ca99d156b6d4d12907b74d0900b954b%7Emv2.jpg",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  },
+  "yuba-sutter-transit": {
+   "file": "yuba-sutter-transit.png",
+   "content_type": "image/png",
+   "bytes": 75251,
+   "source_url": "https://streamline.imgix.net/64f670dd-cfbb-4bde-a704-9e139315e31f/85457aad-6e1b-4d5c-aa88-7b634f27906f/YST%20-%20Logo%20-%20YST-0524-1%20-%20FINAL_Vertical.png?ixlib=rb-1.1.0&w=2000&h=2000&fit=max&or=0&s=2c447868be609b01f9bab82cd2b869b1",
+   "fetched_at": "2026-10-11T00:23:26.120Z"
+  }
+ },
+ "failures": {
+  "granite-gv-detox": "their website does not advertise a picture",
+  "granite-hope-house": "their website does not advertise a picture",
+  "granite-gv-outpatient": "their website does not advertise a picture",
+  "granite-serenity-house": "their website does not advertise a picture",
+  "granite-truckee": "their website does not advertise a picture",
+  "granite-adolescent": "their website does not advertise a picture",
+  "chapa-de-grass-valley": "their website does not advertise a picture",
+  "marshall-cares": "site returned 403",
+  "barton-mat": "site returned 403",
+  "tahoe-youth-family": "their website does not advertise a picture",
+  "edchc-placerville": "their website does not advertise a picture",
+  "only-kindness": "site returned 401",
+  "new-dawn-orangevale": "their website does not advertise a picture",
+  "saint-johns": "their website does not advertise a picture",
+  "loaves-and-fishes": "the computer running SUDS could not reach the internet (ECONNRESET). If the office network only reaches the internet through a proxy, set HTTPS_PROXY and NODE_USE_ENV_PROXY=1 (docs/DEPLOYMENT.md, \"Outbound internet\").",
+  "lsnc-sacramento": "their website does not advertise a picture",
+  "sacramento-covered": "their website does not advertise a picture",
+  "sacramento-food-bank": "site returned 404",
+  "yolo-sud-services": "site returned 403",
+  "yolo-access-line": "site returned 403",
+  "hansen-family-health": "not an https address",
+  "salud-clinic": "not an https address",
+  "lsnc-woodland": "their website does not advertise a picture",
+  "davis-community-meals": "their website does not advertise a picture",
+  "placer-sud-services": "site returned 403",
+  "granite-auburn": "their website does not advertise a picture",
+  "granite-roseville": "their website does not advertise a picture",
+  "211-sacramento": "file is too large",
+  "sybh-crisis": "site returned 403",
+  "chapa-de-auburn": "their website does not advertise a picture",
+  "sybh-options-for-change": "site returned 403",
+  "sybh-wellness-recovery": "site returned 403",
+  "hands-of-hope": "their website does not advertise a picture",
+  "sutter-eesb": "site returned 403",
+  "twin-cities-rescue": "their website does not advertise a picture",
+  "yuba-hhsd": "site returned 404",
+  "ys-harm-reduction": "the computer running SUDS could not reach the internet (ENOTFOUND). If the office network only reaches the internet through a proxy, set HTTPS_PROXY and NODE_USE_ENV_PROXY=1 (docs/DEPLOYMENT.md, \"Outbound internet\")."
+ }
+}

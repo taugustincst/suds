@@ -1,0 +1,397 @@
+import { h, route, get, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, parseHash, kv, stat, clientPicker, clear, contactLinks, mapLink, openHref, tabStrip, clientStatus, emptyState, downloadCsv, flag, moduleOn, supervising, undoToast, listEntries } from '../app.js';
+import { openClientForm, riskText, yesNoAsked } from './clients.js';
+import { openInterventionForm, openRepeatInterventionForm, interventionTable } from './interventions.js';
+import { openCallForm, callTable } from './calls.js';
+import { openTimeForm, timeTable } from './time.js';
+import { openReferralForm, referralTable } from './referrals.js';
+import { openTaskForm, taskTable } from './tasks.js';
+import { openNoteForm, noteTable, counselingHidden } from './notes.js';
+import { openExpenditureForm, expenditureTable } from './budget.js';
+import { openConsentForm, openDisclosureForm, part2Cards, part2Badge, consentTypeLabel, consentCategoriesLabel } from './part2.js';
+/** Secondary substances as typed, a code from the substance list ("opioids_fentanyl") read as its label (1.25.2, FL14). */
+const secondaryText = (s) => String(s || '').split(/\s*,\s*/).filter(Boolean).map(x => (listEntries('SUBSTANCES').some(e => e.code === x) ? fmt.label(x, 'SUBSTANCES') : x)).join(', ') || null;
+
+// A consent is in force through the whole of its expiry date, on this device's calendar, as the server and the
+// Overview have it (CS2): compared as a date, not as the instant of UTC midnight that a bare date parses to.
+const consentExpired = (x) => !!x.expires_at && String(x.expires_at).slice(0, 10) < fmt.today();
+
+route('client', async (r) => {
+  const id = r.id; const tab = r.sub || 'overview';
+  let c;
+  try { ({ client: c } = await get(`/api/clients/${id}`)); }
+  catch (e) {
+    // A duplicate that was merged away: the old link (a bookmark, a synced phone) goes on to the record
+    // that replaced it, and says so.
+    if (e.data && e.data.merged_into) { toast('This record was merged into another client — showing the record it was merged into.', 'ok'); nav(`client/${e.data.merged_into}${r.sub ? '/' + r.sub : ''}`); return h('div', { class: 'boot', 'data-merged-redirect': e.data.merged_into }, 'Redirecting…'); }
+    // A role that never sees who clients are (finance, read-only oversight) reaches here from a link that
+    // should not have been one; a worker reaches it for a client outside their caseload. Say which.
+    if (e.status === 403) {
+      const back = h('button', { class: 'btn', onClick: () => (history.length > 1 ? history.back() : nav('dashboard')) }, 'Go back');
+      return h('div', { 'data-client-forbidden': can('clients:read') ? 'caseload' : 'role' }, !can('clients:read')
+        ? emptyState('Not available for your role', 'Your account sees client codes on budget, time and reports, but not client records themselves. Ask your supervisor or administrator if you need to see this client.', back, { level: 1 })
+        : emptyState('Not on your caseload', `${e.message && !/^forbidden$/i.test(e.message) ? e.message + '. ' : ''}You can open clients you are assigned to. Ask your supervisor to add you to this client's care team if you need to work with them.`, back, { level: 1 }));
+    }
+    throw e;
+  }
+  const disp = `${c.display_name} (${c.client_code})`;
+  // A modal's onDone fires asynchronously, after its POST/PUT resolves — by then the worker may already
+  // have clicked to a different tab, or away from this client entirely. Re-reading the hash here (instead
+  // of closing over `tab`) means a slow save refreshes wherever the worker actually is now rather than
+  // silently navigating them back to the tab that was open when they started the save; and it no-ops
+  // instead of firing at all once they've left this client's page.
+  // The Notes tab on the reader's drafts stays on them (1.23.4): signing or deleting one there went back to every note.
+  const refresh = () => { const h = parseHash(); if (h.name === 'client' && h.id === id) nav(`client/${id}/${h.sub || 'overview'}?${h.sub === 'notes' && h.query && h.query.get('drafts') === 'mine' ? 'drafts=mine&' : ''}_=${Date.now()}`); };
+  const ctxOpts = { clientId: id, clientDisplay: disp, onDone: refresh };
+  // The "n" shortcut logs a visit for the client whose record is open (public/app.js), like + Log a visit here.
+  state.pageClient = { id, display: disp, onDone: refresh };
+  // The clinical modules show only when the programme uses them (server/programme.js); an address that names
+  // one still opens it, so a record made before a module was switched off can be read, but read only (1.24.0):
+  // the tab says the module is off and offers no form (public/views/clinical.js), as the server would refuse the save.
+  // The everyday sections first, in the order a visit is worked (and the same on every width): what
+  // happened, what was written, what is owed, whether it may be shared, where they were sent. Those six are
+  // always in the strip; everything else is under its More menu, on every screen (up to 18 tabs used to fill
+  // a desktop strip). Timeline is not a tab of its own: the Overview ends with the recent activity, and
+  // "All activity" opens the whole of it at the same address as before (client/:id/timeline).
+  // A module's tab (care plan, assessments, SUPRT-A) shows whenever the programme uses the module and the
+  // reader may open it — not only once the record has something in it — so the strip keeps a stable order as
+  // the record grows (1.24.3: tabs appearing mid-flow as counts changed disoriented). An empty tab says so and,
+  // for a reader who may not add, who does. An address that names one still opens it, to read.
+  const moduleTab = (mod, k, label, readable) => (tab === k || (moduleOn(mod) && readable) ? [k, label] : null);
+  const tabs = [['overview', 'Overview'], ['interventions', `Visits (${c.counts.interventions})`], ['notes', `Notes (${c.counts.notes})`], ['tasks', `To-dos (${c.counts.open_tasks})`], ['consents', 'Consents'], ['referrals', `Referrals (${c.counts.referrals})`],
+    ['calls', `Calls (${c.counts.calls})`],
+    moduleTab('careplan', 'problems', 'Problems', can('careplan:read')),
+    moduleTab('careplan', 'careplan', 'Care plan', can('careplan:read')),
+    moduleTab('assessments', 'assessments', 'Assessments', can('assessments:read')),
+    moduleTab('suprt', 'suprt', 'SUPRT-A', can('clients:read')),
+    ['forms', `Forms (${c.counts.forms || 0})`], ['episodes', 'Episodes'], ['requests', 'Requests'], ['time', 'Time'], can('budget:read') ? ['budget', 'Assistance $'] : null, ['team', 'Care team'],
+    // The record's own changes, before and after (1.17.0): for its care team and supervisors (server/client-revisions.js).
+    (c.history && c.history.read) || tab === 'history' ? ['history', 'History'] : null,
+    tab === 'timeline' ? ['timeline', 'All activity'] : null].filter(Boolean);
+  // The sections in the strip: the six everyone uses, then what this person's own work turns to most, by
+  // permission (deny-aware can()), not role name — a supervisor's episodes and care team (who is working this
+  // client), a clinician's care plan and assessments. A module switched off has no tab, so nothing is promoted
+  // in its place. tabStrip still measures the row and folds under More whatever does not fit (WCAG 1.4.10).
+  function coreTabs() {
+    const core = ['overview', 'interventions', 'notes', 'tasks', 'consents', 'referrals'];
+    const extra = supervising() ? ['episodes', 'team'] : can('notes:clinical:write') ? ['careplan', 'assessments'] : [];
+    return [...core, ...extra.filter(k => tabs.some(t => t[0] === k))];
+  }
+  // What can be added to this record. On a wide screen each is its own button; on a phone (styles.css,
+  // .client-actions) they fold into one "Add…" button that opens the same list, so the section tabs are not
+  // pushed below the fold by a wall of buttons.
+  function actionBar() {
+    const acts = [
+      can('interventions:write') ? ['+ Log a visit', 'Log a visit', () => openInterventionForm(null, ctxOpts), { primary: true }] : null,
+      can('interventions:write') && c.counts.interventions ? ['↻ Repeat last visit', 'Repeat last visit', () => openRepeatInterventionForm(id, disp, refresh), { title: 'Prefill from their most recent visit — same type, location and funding, with today\'s date, a blank summary and no supply quantities' }] : null,
+      can('calls:write') ? ['+ Call', 'Call', () => openCallForm(null, ctxOpts)] : null,
+      can('calls:write') ? ['+ Text', 'Text message', () => openCallForm(null, { ...ctxOpts, method: 'text' })] : null,
+      (can('notes:admin:write') || can('notes:clinical:write')) ? ['+ Note', 'Note', () => openNoteForm(null, ctxOpts)] : null,
+      can('tasks:write') ? ['+ To-do', 'To-do', () => openTaskForm(null, ctxOpts)] : null,
+      // The referral form, opened for this client (its consents are loaded for them).
+      can('referrals:write') ? ['+ Make a referral', 'Make a referral', () => openReferralForm(null, ctxOpts)] : null,
+    ].filter(Boolean);
+    const edit = can('clients:write') ? () => openClientForm(c, refresh) : null;
+    // A record just made with Quick add (clients.js, state.quickAdded) also offers "Add details": the rest of the
+    // intake, in the same sections as the full form, whenever the worker has it — until it is saved once.
+    const details = () => (edit && state.quickAdded === id ? h('button', { class: 'btn', 'data-client-add-details': '1', onClick: () => openClientForm(c, () => { state.quickAdded = null; refresh(); }) }, 'Add details') : null);
+    const wide = h('div', { class: 'row client-actions wide' },
+      acts.map(([text, , fn, o = {}]) => h('button', { class: `btn${o.primary ? ' primary' : ''}`, title: o.title || null, onClick: fn }, text)),
+      details(), edit ? h('button', { class: 'btn', onClick: edit }, 'Edit') : null);
+    if (!acts.length) return wide;
+    // The phone's version: a disclosure (not an ARIA menu), so it is a button and a list of buttons to a
+    // screen reader and Tab walks through it. Escape or a click elsewhere closes it.
+    const listId = `client-add-${id}`;
+    const list = h('div', { class: 'add-list hidden', id: listId });
+    const addBtn = h('button', { class: 'btn primary', type: 'button', 'aria-expanded': 'false', 'aria-controls': listId, 'data-client-add': '1' }, 'Add…');
+    // An item gives focus back to "Add…" before its dialog opens: the dialog returns focus to what opened it, and the
+    // item itself is gone once the list closes (1.25.2, FL11, WCAG 2.4.3).
+    const setOpen = (open) => {
+      clear(list);
+      if (open) list.append(...acts.map(([, label, fn]) => h('button', { class: 'btn', type: 'button', onClick: () => { setOpen(false); addBtn.focus(); fn(); } }, label)));
+      list.classList.toggle('hidden', !open); addBtn.setAttribute('aria-expanded', String(open));
+      if (open) list.querySelector('button')?.focus();
+    };
+    addBtn.addEventListener('click', () => setOpen(list.classList.contains('hidden')));
+    const narrow = h('div', { class: 'client-actions narrow' }, h('div', { class: 'row' }, addBtn, details(), edit ? h('button', { class: 'btn', onClick: edit }, 'Edit') : null), list);
+    narrow.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !list.classList.contains('hidden')) { e.stopPropagation(); setOpen(false); addBtn.focus(); } });
+    const onDoc = (e) => { if (!narrow.isConnected) { document.removeEventListener('click', onDoc); return; } if (!narrow.contains(e.target)) setOpen(false); };
+    document.addEventListener('click', onDoc);
+    return h('div', { class: 'client-actions-wrap' }, wide, narrow);
+  }
+  // Whose client this is, next to the name: covering for a colleague, the care team was far down Overview.
+  const primaryLine = () => {
+    const p = (c.assignments || []).find(a => a.role_on_case === 'primary' && !a.end_date);
+    return h('p', { class: 'small muted', 'data-primary-worker': p ? p.user_id : '' }, !p ? 'No primary worker assigned' : p.user_id === state.user.id ? 'Your client (you are the primary worker)' : `${p.display_name}'s client (primary worker)`);
+  };
+  // Change notices go to the primary worker: only they are told there are changes to review (r9 L2).
+  const isPrimary = () => (c.assignments || []).some(a => a.role_on_case === 'primary' && !a.end_date && a.user_id === state.user.id);
+  const body = h('div', {});
+  const view = h('div', { class: 'client-record' },
+    h('div', { class: 'topbar' }, h('div', {}, h('h1', {}, c.display_name, ' ', h('span', { class: 'muted', style: { fontWeight: 400, fontSize: '1rem' } }, c.client_code)),
+      // A list, so a screen reader meets each badge on its own ("Status: Inactive") instead of one run of text.
+      h('ul', { class: 'row badge-list', 'aria-label': 'Status and flags' }, ...[h('span', { class: `badge ${statusKind(clientStatus(c))}`, 'data-client-status': clientStatus(c) }, h('span', { class: 'sr-only' }, 'Status: '), fmt.label(clientStatus(c))), badge(`Risk: ${riskText(c.risk_level)}`, statusKind(c.risk_level)), c.primary_substance ? badge(fmt.label(c.primary_substance, 'SUBSTANCES')) : null, c.mat_status && c.mat_status !== 'none' ? badge(`MAT: ${fmt.label(c.mat_status)}`, 'purple') : null, c.overdose_history ? badge('OD history', 'danger') : null, c.naloxone_provided ? badge('Naloxone ✓', 'ok') : badge('No naloxone', 'warn'), c.flags ? h('span', { class: 'badge danger', 'data-client-flags': '1' }, h('span', { class: 'sr-only' }, 'Safety flags: '), `⚠ ${fmt.flags(c.flags)}`) : null, c.legal_hold ? badge('Legal hold', 'purple') : null, c.part2 && c.part2.program ? part2Badge() : null,
+        // A safety plan on file is worth seeing before anything else on a bad day; the chip opens it.
+        c.safety_plan ? h('button', { class: 'chip', type: 'button', 'data-safety-plan': c.safety_plan.id, title: 'Open the safety plan', onClick: async () => (await import('./notes.js')).openNote(c.safety_plan.id, { onChange: refresh }) }, `🛟 Safety plan on file (${fmt.date(c.safety_plan.occurred_at)})`) : null].filter(Boolean).map(x => h('li', {}, x))),
+        primaryLine()),
+      actionBar()),
+    // The strip holds the sections used every day; the rest are under More.
+    tabStrip(tabs, tab, (k) => nav(`client/${id}/${k}`), { label: 'Client record sections', core: coreTabs() }),
+    body);
+
+  // Free text such as "Rosa (sister) 555-0134" gets its number turned into a tel: link.
+  const linkifyPhones = (text) => {
+    if (!text) return null;
+    const parts = String(text).split(/(\+?\d[\d\-\s().]{6,}\d)/);
+    return parts.length > 1 ? h('span', {}, parts.map((x, i) => (i % 2 ? contactLinks(x.trim()) : x))) : text;
+  };
+  // Tap the number to call or text; the buttons also open the log so the contact is recorded straight after.
+  const phoneRow = (phone) => {
+    if (!phone) return null;
+    const logAfter = (method) => { openHref(`${method === 'text' ? 'sms' : 'tel'}:${String(phone).replace(/[^\d+]/g, '')}`); if (can('calls:write')) openCallForm(null, { ...ctxOpts, method, prefill: { phone, contact_type: 'client', direction: 'outbound' } }); };
+    return h('span', { class: 'row', style: { gap: '.4rem', display: 'inline-flex' } }, contactLinks(phone),
+      can('calls:write') ? h('button', { class: 'btn sm', type: 'button', 'data-call': phone, onClick: () => logAfter('phone') }, '☎ Call') : null,
+      can('calls:write') && c.ok_to_text !== 0 ? h('button', { class: 'btn sm', type: 'button', 'data-text': phone, onClick: () => logAfter('text') }, '💬 Text') : null);
+  };
+
+  // Everything in date order: visits, calls, notes, referrals, to-dos, as the timeline API gives them.
+  // A change notice (`notice: true`, built by the server from who changed which fields) opens its card (r8 M1).
+  const openNoticeEvent = async (ev, e) => {
+    ev.preventDefault();
+    try { const { row } = await get(`/api/tasks/${e.id}`); const card = await (await import('./tasks.js')).openChangeNotice(row, { onDone: refresh }); if (!card) nav(`tasks?id=${e.id}`); }
+    catch (err) { toast(err.message || 'Could not open the notice', 'error'); }
+  };
+  const timelineList = (events) => h('ul', { class: 'timeline' }, events.map(e => h('li', { class: e.kind, 'data-timeline-notice': e.notice === true ? e.id : null }, h('div', { class: 't' }, e.at ? fmt.dt(e.at) : '', e.worker && e.notice !== true ? ` · ${e.worker}` : ''), // a notice's title names its editor already (r9 L1)
+
+    h('div', { class: 'h' }, e.notice === true && can('tasks:read') ? h('a', { href: `#/tasks?id=${e.id}`, onClick: (ev) => openNoticeEvent(ev, e) }, e.title) : e.kind === 'note' ? h('a', { href: '#', onClick: async (ev) => { ev.preventDefault(); (await import('./notes.js')).openNote(e.id, { onChange: refresh }); } }, e.title) : e.title, ' ', e.meta?.status ? badge(fmt.label(e.meta.status), statusKind(e.meta.status)) : null, e.meta?.outcome ? badge(e.meta.outcome_label || fmt.label(e.meta.outcome), statusKind(e.meta.outcome)) : null, e.meta?.duration ? h('span', { class: 'muted small' }, ` ${fmt.mins(e.meta.duration)}`) : null, e.meta?.crisis ? badge('Crisis', 'danger') : null),
+    e.detail ? h('div', { class: 'd' }, String(e.detail).slice(0, 300)) : null)));
+  // The Overview's last section: the most recent activity, and a link to all of it (the Timeline tab that was).
+  const RECENT = 8;
+  // The timeline, read once for the Overview (its top card and its last section both use it).
+  let timelineOnce = null;
+  const timelineEvents = () => (timelineOnce || (timelineOnce = get(`/api/clients/${id}/timeline`).then(r => r.events || [], () => null)));
+  // "Where things stand" (1.22.0): the first thing on the Overview, on a phone too, is what a worker checks before
+  // seeing the person — when they were last seen or spoken to and by whom, the next thing owed to them, and the
+  // referrals still open. It used to be the bottom of a page some 3,000 px long at 390 px. Built from the same
+  // timeline the Recent activity section shows (no extra request), so it says nothing that list does not.
+  const OPEN_TASK = ['open', 'in_progress'];
+  const CLOSED_REFERRAL = ['declined_by_client', 'declined_by_provider', 'no_show', 'completed', 'closed'];
+  const glance = async () => {
+    const events = await timelineEvents(); if (!events) return null;
+    const now = Date.now();
+    const contact = events.find(e => (e.kind === 'intervention' || e.kind === 'call') && e.at && Date.parse(e.at) <= now);
+    const open = events.filter(e => (e.kind === 'task' || e.kind === 'milestone') && e.meta && OPEN_TASK.includes(e.meta.status));
+    const byDue = (a, b) => (a.meta.due_at ? 0 : 1) - (b.meta.due_at ? 0 : 1) || String(a.meta.due_at || '').localeCompare(String(b.meta.due_at || ''));
+    const next = open.slice().sort(byDue)[0];
+    const refs = events.filter(e => e.kind === 'referral' && e.meta && !CLOSED_REFERRAL.includes(e.meta.status));
+    const tab = (k, text, data) => h('a', { href: `#/client/${id}/${k}`, [data]: '1' }, text);
+    const overdue = next && next.meta.due_at && fmt.isPast(next.meta.due_at);
+    const rows = [
+      ['Last contact', contact ? h('span', { 'data-glance-contact': contact.kind },
+        h('b', {}, fmt.ago(contact.at)), ` · ${contact.title}`, h('span', { class: 'muted' }, ` · ${fmt.date(contact.at)}${contact.worker ? ` · ${contact.worker}` : ''}`))
+        : h('span', { class: 'muted', 'data-glance-contact': 'none' }, 'No visit or call recorded yet.')],
+      ['Next to-do', next ? h('span', { 'data-glance-todo': overdue ? 'overdue' : 'open' },
+        tab('tasks', next.title || 'To-do', 'data-glance-todo-link'), ' ',
+        next.meta.due_at ? h('span', { style: overdue ? { color: 'var(--danger)', fontWeight: 600 } : {} }, overdue ? `overdue since ${fmt.date(next.meta.due_at)}` : `due ${fmt.date(next.meta.due_at)}`) : h('span', { class: 'muted' }, 'no due date'),
+        open.length > 1 ? h('span', { class: 'muted' }, ` · ${open.length - 1} more open`) : null)
+        : h('span', { class: 'muted', 'data-glance-todo': 'none' }, 'Nothing open.')],
+      refs.length ? ['Open referrals', h('span', { 'data-glance-referrals': String(refs.length) }, tab('referrals', `${refs.length} open`, 'data-glance-referrals-link'), h('span', { class: 'muted' }, ` · ${refs.slice(0, 2).map(e => String(e.title || '').replace(/^Referral: /, '')).join(', ')}${refs.length > 2 ? '…' : ''}`))] : null,
+    ].filter(Boolean);
+    return h('section', { class: 'card glance', 'data-glance': '1', 'aria-labelledby': `glance-h-${id}`, style: { gridColumn: '1 / -1' } },
+      h('h2', { id: `glance-h-${id}` }, 'Where things stand'), kv(rows));
+  };
+  const recentActivity = async () => {
+    const events = await timelineEvents(); if (!events) return null;
+    return h('section', { class: 'card', 'data-recent-activity': '1', style: { gridColumn: '1 / -1' } },
+      h('div', { class: 'card-head' }, h('h2', {}, 'Recent activity'), events.length > RECENT ? h('a', { href: `#/client/${id}/timeline`, 'data-all-activity-link': '1' }, `All activity (${events.length})`) : null),
+      events.length ? timelineList(events.slice(0, RECENT)) : h('p', { class: 'muted' }, 'No activity yet.'));
+  };
+  // The top of the Overview (1.15.3): a consent that runs out within 30 days, or one that has already run out
+  // while an open referral still relies on it, named with its date, with the way to the Consents tab.
+  const OPEN_REFERRAL = (r) => !r.closed_at && !['declined_by_client', 'declined_by_provider', 'no_show', 'completed', 'closed'].includes(r.status);
+  const consentAlert = async () => {
+    if (!can('consents:read') && !can('consents:write')) return null;
+    const today = fmt.today(); const soon = fmt.isoLocal(new Date(Date.now() + 30 * 86400000)).slice(0, 10);
+    const daysTo = (d) => Math.round((Date.parse(`${d}T00:00`) - Date.parse(`${today}T00:00`)) / 86400000);
+    // The type's short name already says "consent" ("Part 2 consent"), or is an ROI: "consent" is added only where it
+    // does not ("Part 2 — counseling notes consent"), never twice ("Part 2 consent consent", 1.16.0).
+    const named = (x) => { const t = consentTypeLabel(x.type); return `${/\bconsent\b|\bROI\b|release/i.test(t) ? t : `${t} consent`}${x.recipient ? ` to ${x.recipient}` : ''}`; };
+    const lines = (c.active_consents || []).filter(x => x.expires_at && x.expires_at >= today && x.expires_at <= soon).sort((a, b) => a.expires_at.localeCompare(b.expires_at))
+      .map(x => { const n = daysTo(x.expires_at); return `The ${named(x)} expires on ${fmt.date(x.expires_at)} (${n === 0 ? 'today' : n === 1 ? 'tomorrow' : `in ${n} days`}).`; });
+    // Only when a referral points at a consent that is no longer in force is anything more read.
+    if (Number(c.counts.referrals) > 0 && can('referrals:read')) {
+      const live = new Set((c.active_consents || []).map(x => x.id));
+      let relying = [];
+      try { relying = (await get(`/api/referrals?client_id=${id}&limit=500`, { quiet: true })).rows.filter(r => r.consent_id && !live.has(r.consent_id) && !r.consent_revoked && OPEN_REFERRAL(r)); } catch { relying = []; }
+      if (relying.length) {
+        let all = []; try { all = (await get(`/api/clients/${id}/consents`, { quiet: true })).consents || []; } catch { all = []; }
+        for (const x of all.filter(k => !k.revoked_at && k.expires_at && k.expires_at < today)) {
+          const n = relying.filter(r => r.consent_id === x.id).length;
+          if (n) lines.push(`The ${named(x)} expired on ${fmt.date(x.expires_at)}, and ${n} open referral${n === 1 ? ' relies' : 's rely'} on it.`);
+        }
+      }
+    }
+    if (!lines.length) return null;
+    return h('div', { class: 'banner warn', 'data-consent-alert': '1', style: { gridColumn: '1 / -1', margin: 0 } },
+      h('div', {}, ...lines.map(t => h('p', { style: { margin: '0 0 .3rem' } }, t)),
+        h('p', { style: { margin: 0 } }, 'Nothing more is shared under a consent once it runs out. ', h('a', { href: `#/client/${id}/consents`, 'data-consent-alert-link': '1' }, 'Open Consents'), ' to record a renewed one.')));
+  };
+  const T = {
+    async overview() {
+      const age = c.dob ? Math.floor((Date.now() - Date.parse(c.dob)) / (365.25 * 86400000)) : null;
+      // Problem list, care plan reviews, latest ASAM and outcome trends (CalAIM), for the roles that may see them.
+      const [clinical, activity, consentWarn, standing] = await Promise.all([(await import('./clinical.js')).overviewCard(id, { refresh }), recentActivity(), consentAlert(), glance()]);
+      return h('div', { class: 'grid cols-2' }, consentWarn, standing, clinical,
+        h('div', { class: 'card' }, h('h2', {}, 'Identity & contact'), kv([['Name', `${c.first_name} ${c.last_name}${c.preferred_name ? ` ("${c.preferred_name}")` : ''}`], ['DOB', c.dob ? `${fmt.date(c.dob)} (${age})` : null], ['Gender / pronouns', [c.gender && fmt.label(c.gender), c.pronouns].filter(Boolean).join(' · ')], ['Phone', c.phone || c.alt_phone ? h('div', { class: 'row', style: { gap: '.5rem' } }, phoneRow(c.phone), c.alt_phone ? h('span', {}, h('span', { class: 'muted small' }, 'alt: '), phoneRow(c.alt_phone)) : null) : null], ['Email', c.email ? h('a', { href: `mailto:${c.email}` }, c.email) : null], ['Address', mapLink([c.address, c.city, c.zip].filter(Boolean).join(', '))], ['Language', c.preferred_language], ['Contact rules', [c.ok_to_text ? 'OK to text' : null, c.ok_to_voicemail ? 'OK to voicemail' : null, c.contact_preferences].filter(Boolean).join(' · ') || 'Not recorded — ask before texting or leaving a voicemail'], ['Emergency contact', linkifyPhones(c.emergency_contact)], ['Housing', c.housing_status && fmt.label(c.housing_status)], ['Insurance', [c.insurance && fmt.label(c.insurance), c.medicaid_id && `ID ${c.medicaid_id}`].filter(Boolean).join(' · ')], ['Veteran', yesNoAsked(c.veteran)]])),
+        h('div', { class: 'card' }, h('h2', {}, 'Substance use & clinical'), kv([['Primary substance', fmt.label(c.primary_substance, 'SUBSTANCES')], ['Secondary', secondaryText(c.secondary_substances)], ['Route', c.route_of_use && fmt.label(c.route_of_use)], ['ASAM level', c.asam_level], ['MAT', [c.mat_status && fmt.label(c.mat_status), c.mat_medication && fmt.label(c.mat_medication)].filter(Boolean).join(' — ')], ['Overdose history', c.overdose_history ? `Yes${c.last_overdose_date ? ', last ' + fmt.date(c.last_overdose_date) : ''}` : yesNoAsked(c.overdose_history)], ['Naloxone', c.naloxone_provided ? `Provided${c.naloxone_last_date ? ' ' + fmt.date(c.naloxone_last_date) : ''}` : 'Not provided'], ['Co-occurring MH', yesNoAsked(c.co_occurring_mh)], ['Justice involved', yesNoAsked(c.justice_involved)], ['Pregnant / parenting', yesNoAsked(c.pregnant_or_parenting)], ['Goals', c.goals]])),
+        h('div', { class: 'card' }, h('h2', {}, 'Program'), kv([['Status', fmt.label(clientStatus(c))], ['Intake', fmt.date(c.intake_date)], ['Referral source', c.referral_source && fmt.label(c.referral_source)], ['Referral date', c.referral_date && fmt.date(c.referral_date)], ['Engagement date', c.engagement_date && fmt.date(c.engagement_date)],
+          ['Time until engaged', c.days_to_engagement === null ? (c.referral_date || c.engagement_date ? h('span', { class: 'muted' }, 'needs both dates') : null) : flag(`${c.days_to_engagement} day${Math.abs(c.days_to_engagement) === 1 ? '' : 's'}`, c.days_to_engagement < 0, 'engagement date is before the referral date')],
+          ['Episode', c.open_episode ? h('a', { href: `#/client/${id}/episodes` }, 'Open — ', c.counts.episodes > 1 ? `${c.counts.episodes} episodes` : 'first episode') : c.counts.episodes ? h('a', { href: `#/client/${id}/episodes`, style: { color: 'var(--warn)' } }, 'Discharged — re-admit on the Episodes tab') : h('a', { href: `#/client/${id}/episodes`, style: { color: 'var(--warn)' } }, 'None open — start one on the Episodes tab')],
+          ['Discharge', c.discharge_date ? `${fmt.date(c.discharge_date)} — ${c.discharge_reason ? (/^[a-z_]+$/.test(c.discharge_reason) ? fmt.label(c.discharge_reason, 'DISCHARGE_REASONS') : c.discharge_reason) : ''}` : null], ['Care team', c.assignments.filter(a => !a.end_date).map(a => `${a.display_name} (${fmt.label(a.role_on_case)})`).join(', ') || 'Unassigned'], c.part2 && c.part2.program ? ['Part 2 notice', c.part2.notice ? h('span', { 'data-notice-given': '1' }, `Given ${fmt.date(c.part2.notice.given_at)}${c.part2.notice.acknowledged ? ', acknowledged' : ''}`) : h('a', { href: `#/client/${id}/consents`, 'data-notice-missing': '1', style: { color: 'var(--warn)' } }, 'Not recorded — record it on the Consents tab')] : null, ['Active consents', c.active_consents.length ? c.active_consents.map(x => `${fmt.label(x.type)}${x.recipient ? ' → ' + x.recipient : ''}`).join('; ') : h('span', { style: { color: 'var(--warn)' } }, 'None on file')]])),
+        h('div', { class: 'grid cols-4', style: { gridColumn: '1 / -1' } }, stat('Visits', c.counts.interventions, '', `client/${id}/interventions`), stat('Calls', c.counts.calls, '', `client/${id}/calls`), stat('Service time', fmt.mins(c.counts.minutes), '', `client/${id}/time`), stat(c.counts.notices && isPrimary() ? `Open to-dos · ${c.counts.notices} change${c.counts.notices === 1 ? '' : 's'} to review` : 'Open to-dos', c.counts.open_tasks - (c.counts.notices || 0), c.counts.overdue_tasks ? 'warn' : '', `client/${id}/tasks`), can('budget:read') ? stat('Assistance spent', fmt.money(c.counts.spent), '', `client/${id}/budget`) : null, stat('Referrals', c.counts.referrals, '', `client/${id}/referrals`)),
+        activity);
+    },
+    async problems() { return (await import('./clinical.js')).problemsTab(id, { refresh }); },
+    async careplan() { return (await import('./clinical.js')).carePlanTab(id, { refresh, clientDisplay: disp }); },
+    async assessments() { return (await import('./clinical.js')).assessmentsTab(id, { refresh, clientDisplay: disp }); },
+    async suprt() { return (await import('./suprt.js')).suprtTab(id, { refresh, clientDisplay: disp }); },
+    async history() { return (await import('./history.js')).historyTab(id, c, { refresh, highlight: (r.query && r.query.get('rev') ? r.query.get('rev').split(',') : []) }); },
+    async timeline() {
+      const { events } = await get(`/api/clients/${id}/timeline`);
+      return h('div', { 'data-all-activity': '1' }, h('p', {}, h('a', { href: `#/client/${id}/overview` }, '← Overview')), h('h2', {}, 'All activity'),
+        events.length ? h('div', { class: 'card' }, timelineList(events)) : h('div', { class: 'empty' }, 'No activity yet.'));
+    },
+    async interventions() { const d = await get(`/api/interventions?client_id=${id}&limit=500`); return interventionTable(d.rows, { showClient: false, onChange: refresh }); },
+    async calls() { const d = await get(`/api/calls?client_id=${id}&limit=500`); return callTable(d.rows, { showClient: false, onChange: refresh }); },
+    async notes() {
+      // ?drafts=mine (1.23.3): the reader's own drafts on this record, which a supervisor's "finish and sign" reminder
+      // opens (tasks.js sourceButton); "Show all notes" goes back to the whole tab.
+      const myDrafts = !!(r.query && r.query.get('drafts') === 'mine');
+      const d = await get(`/api/notes?client_id=${id}&limit=500${myDrafts ? '&status=draft&mine=1' : ''}`);
+      // With none left (the last one just signed), one line, not that line and then the table's "No notes yet" on a record
+      // with notes (market evaluation of 1.23.3, N4).
+      if (myDrafts) return h('div', { 'data-my-drafts': '1', 'data-my-drafts-left': String(d.rows.length) }, h('p', { class: 'row', style: { justifyContent: 'space-between', alignItems: 'center' } }, h('span', {}, h('b', {}, d.rows.length ? `Your draft notes on this record (${d.rows.length})` : 'No draft notes left to sign on this record.'), d.rows.length ? ' — open one to finish and sign it.' : ''), h('a', { href: `#/client/${id}/notes`, 'data-all-notes': '1' }, 'Show all notes')),
+        d.rows.length ? noteTable(d.rows, { showClient: false, onChange: refresh }) : null);
+      // An administrator holds break-glass but had nowhere to use it except a note link they could not see.
+      const breakGlass = !can('notes:clinical:read') && can('notes:clinical:breakglass') ? h('button', { class: 'btn sm danger', 'data-breakglass': '1', onClick: async () => {
+        // The server insists on a reason of at least 15 characters; the dialog asks for the same, so a
+        // one-word reason is corrected in the dialog rather than refused by the server after it closed.
+        const reason = await confirmDialog('Break-glass access', 'Clinical notes are outside your normal role. Emergency access is permitted only with a documented reason (at least 15 characters, saying why) and is reported to the privacy officer.', { danger: true, okText: 'Show clinical notes', requireReason: true, minLength: 15 });
+        if (!reason) return;
+        try {
+          const cl = await get(`/api/notes?client_id=${id}&kind=clinical&limit=500`, { headers: { 'X-Break-Glass-Reason': reason } });
+          const box = document.getElementById('breakglass-notes'); clear(box).append(h('h3', { class: 'eyebrow' }, 'Clinical notes (emergency access — logged)'), noteTable(cl.rows, { showClient: false, onChange: refresh }));
+        } catch (e) { toast(e.message || 'Emergency access was refused', 'error'); }
+      } }, 'Emergency access to clinical notes') : null;
+      return h('div', {}, !can('notes:clinical:read') ? h('div', { class: 'banner small' }, 'Clinical notes are hidden from your role. ', breakGlass) : counselingHidden(), noteTable(d.rows, { showClient: false, onChange: refresh }), h('div', { id: 'breakglass-notes', class: 'mt' }));
+    },
+    async referrals() { const d = await get(`/api/referrals?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('referrals:write') ? h('button', { class: 'btn primary', onClick: () => openReferralForm(null, ctxOpts) }, '+ Make a referral') : null), referralTable(d.rows, { showClient: false, onChange: refresh })); },
+    async tasks() { const d = await get(`/api/tasks?client_id=${id}&limit=500`); return taskTable(d.rows, { showClient: false, onChange: refresh }); },
+    async time() { const d = await get(`/api/time?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('time:write') ? h('button', { class: 'btn primary', onClick: () => openTimeForm(null, ctxOpts) }, '+ Log time') : null), timeTable(d.rows, { showClient: false, onChange: refresh })); },
+    async budget() { const d = await get(`/api/budget/expenditures?client_id=${id}&limit=500`); return h('div', {}, h('div', { class: 'row mb' }, can('budget:write') ? h('button', { class: 'btn primary', onClick: () => openExpenditureForm(null, ctxOpts) }, '+ Record client assistance') : null, h('span', { class: 'muted' }, `Total approved: ${fmt.money(c.counts.spent)}`)), expenditureTable(d.rows, { showClient: false, onChange: refresh })); },
+    async forms() { return (await import('./forms.js')).clientFormsTab(id, { refresh }); },
+    async episodes() { return (await import('./episodes.js')).episodesPanel(id, { onChange: refresh, client: c }); },
+    async consents() {
+      const d = await get(`/api/clients/${id}/consents`); const C = state.constants;
+      // The consent and disclosure forms, the §2.22 notice and the court orders live in part2.js; the server
+      // refuses a Part 2 consent missing any §2.31 element and a disclosure without a lawful basis.
+      const addConsent = () => openConsentForm(id, { onDone: refresh });
+      const addDisclosure = () => openDisclosureForm(id, d, { onDone: refresh });
+      // The accounting a client may ask for (§164.528): one printable page, produced (and audited) on demand.
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+      const printAccounting = async () => {
+        const a = await get(`/api/clients/${id}/disclosures/accounting`);
+        const rows = a.disclosures.map(x => `<tr><td>${esc(fmt.dt(x.disclosed_at))}</td><td>${esc(x.recipient)}</td><td>${esc(x.purpose)}</td><td>${esc(x.what)}</td><td>${esc(fmt.label(x.basis))}${x.justification ? '<br><small>' + esc(x.justification) + '</small>' : ''}</td><td>${esc(x.method || '')}</td><td>${esc(x.disclosed_by_name)}</td></tr>`).join('');
+        const cons = a.consents.map(x => `<tr><td>${esc(consentTypeLabel(x.type))}</td><td>${esc(x.recipient || '')}</td><td>${esc(x.purpose || '')}</td><td>${esc(fmt.date(x.signed_at))}</td><td>${esc(x.expires_at ? fmt.date(x.expires_at) : (x.expires_event || '—'))}</td><td>${x.revoked_at ? 'Revoked ' + esc(fmt.date(x.revoked_at)) : ''}</td></tr>`).join('');
+        const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Accounting of disclosures — ${esc(a.client_code)}</title><style>body{font-family:system-ui,sans-serif;margin:2rem;color:#111}table{border-collapse:collapse;width:100%;font-size:.85rem;margin-bottom:1.5rem}th,td{border:1px solid #999;padding:.3rem .5rem;text-align:left;vertical-align:top}h1{font-size:1.3rem}p{font-size:.85rem}</style></head><body>
+<h1>Accounting of disclosures — client ${esc(a.client_code)}</h1>
+<p>Name: ${esc(c.display_name)}. Generated ${esc(fmt.dt(a.generated_at))} by ${esc(state.user.display_name)}. Covers every disclosure of this client's information recorded by the program, with and without consent (HIPAA §164.528; 42 CFR §2.25).</p>
+${a.notice ? `<p style="border:1px solid #000;padding:.4rem"><b>Protected by 42 CFR Part 2.</b> ${esc(a.notice.short)} Notice to recipient (42 CFR §2.32): ${esc(a.notice.text)}</p>` : ''}
+<h2>Disclosures (${a.disclosures.length})</h2><table><tr><th>Date</th><th>To</th><th>Purpose</th><th>What</th><th>Basis</th><th>Method</th><th>By</th></tr>${rows || '<tr><td colspan="7">None recorded.</td></tr>'}</table>
+<h2>Consents relied on (${a.consents.length})</h2><table><tr><th>Type</th><th>Recipient</th><th>Purpose</th><th>Signed</th><th>Expires</th><th>Status</th></tr>${cons || '<tr><td colspan="6">None recorded.</td></tr>'}</table></body></html>`;
+        const w = window.open('', '_blank');
+        if (!w) { toast('Allow pop-ups to print the accounting', 'error'); return; }
+        w.document.open(); w.document.write(html); w.document.close(); w.focus(); setTimeout(() => w.print(), 300);
+      };
+      const revokedRefs = (d.consents || []).some(x => x.revoked_at);
+      return h('div', { class: 'grid cols-2' },
+        revokedRefs ? h('div', { class: 'banner warn span', role: 'status', style: { gridColumn: '1 / -1' } },
+          'A consent on this client has been revoked. Any referral that relied on it is flagged — stop sharing information under it and close those referrals out.') : null,
+        h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Consents & releases'), can('consents:write') ? h('button', { class: 'btn sm primary', onClick: addConsent }, '+ Consent') : null),
+          table([{ label: 'Type', render: x => consentTypeLabel(x.type) }, { label: 'Recipient', key: 'recipient' }, { label: 'Purpose', key: 'purpose' }, { label: 'Information', render: x => consentCategoriesLabel(x.info_categories) }, { label: 'Signed', render: x => fmt.date(x.signed_at) }, { label: 'Expires', render: x => x.expires_at ? flag(fmt.date(x.expires_at), consentExpired(x), 'expired') : (x.expires_event ? `until ${x.expires_event}` : '—') }, { label: 'Status', render: x => h('span', {}, x.revoked_at ? badge('Revoked', 'danger') : consentExpired(x) ? badge('Expired', 'warn') : badge('Active', 'ok'), x.legacy_elements && !x.revoked_at ? h('span', { title: 'Recorded before the 2024 §2.31 element list: renew it on the current form when you next can' }, ' ', badge('Pre-2024 form', 'warn')) : null, x.incomplete && x.incomplete.length && !x.revoked_at ? h('div', { class: 'small', 'data-consent-incomplete': x.id }, badge('Cannot authorise a disclosure', 'danger'), ` It does not record ${x.incomplete.join('; ')}. Record a new consent.`) : null) },
+            { label: '', render: x => h('button', { class: 'btn sm ghost', 'data-consent-pdf': x.id, onClick: () => (state.local ? downloadCsv(`/api/consents/${x.id}/pdf`) : window.open(`/api/consents/${x.id}/pdf`, '_blank', 'noopener')) }, 'Print') },
+            { label: '', render: x => !x.revoked_at && can('consents:write') ? h('button', { class: 'btn sm ghost', onClick: async () => { const reason = await confirmDialog('Revoke consent', 'Record that the client revoked this consent?', { danger: true, okText: 'Revoke', requireReason: true }); if (reason) { try { await post(`/api/consents/${x.id}/revoke`, { reason }); toast('Consent revoked — any referral that relied on it is now flagged', 'ok'); refresh(); } catch (e) { toast(e.message, 'error'); } } } }, 'Revoke') : null }], d.consents, { empty: 'No consents on file. SUD records cannot be shared without written consent.' })),
+        h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Accounting of disclosures'), h('div', { class: 'row' }, h('button', { class: 'btn sm', 'data-print-accounting': '1', onClick: printAccounting }, 'Print accounting'), can('consents:write') ? h('button', { class: 'btn sm primary', onClick: addDisclosure }, '+ Disclosure') : null)),
+          table([{ label: 'Date', render: x => fmt.dt(x.disclosed_at) }, { label: 'To', key: 'recipient' }, { label: 'Purpose', key: 'purpose' }, { label: 'What', key: 'what' }, { label: 'Basis', render: x => h('span', {}, fmt.label(x.basis), x.legal_proceeding ? h('div', {}, badge('Legal proceeding', 'purple')) : null, x.counseling_notes ? h('div', {}, badge('Counseling notes', 'purple')) : null, x.justification ? h('div', { class: 'small muted' }, x.justification) : null) }, { label: 'How it was recorded', render: x => fmt.label(x.source || 'manual') }, { label: 'By', key: 'disclosed_by_name' }], d.disclosures, { empty: 'No disclosures recorded. Every time identifiable information leaves this program, it is recorded here.' })),
+        ...part2Cards(id, d, { refresh }));
+    },
+    // Patient-rights requests: access, amendment, restriction, accounting — each on a 30-day clock.
+    async requests() {
+      const d = await get(`/api/patient-requests?client_id=${id}&status=all&limit=200`);
+      // The kinds, statuses and deadline come from GET /api/meta/patient-request-options; these labels (and
+      // the lists, should that request fail) are what the view falls back on.
+      const LABELS = { access: 'Access to their record (§164.524)', amendment: 'Amendment of their record (§164.526)', restriction: 'Restriction on use or disclosure (§164.522)', accounting: 'Accounting of disclosures (§164.528)' };
+      let kinds = Object.keys(LABELS); let statuses = ['open', 'fulfilled', 'denied']; let days = 30;
+      try { const m = await get('/api/meta/patient-request-options'); if (Array.isArray(m.kinds) && m.kinds.length) kinds = m.kinds; if (Array.isArray(m.statuses) && m.statuses.length) statuses = m.statuses; if (m.days_to_respond) days = m.days_to_respond; } catch { /* built-in lists */ }
+      const KINDS = kinds.map(value => ({ value, label: LABELS[value] || fmt.label(value) }));
+      const add = () => { const f = form([{ name: 'kind', label: 'Request', type: 'select', options: KINDS, required: true, noBlank: true }, { name: 'received_at', label: 'Received on', type: 'date', required: true, value: fmt.today() }, { name: 'notes', label: 'What was asked for, and how', type: 'textarea', span: true, rows: 3, help: 'Stored encrypted.' }], { submitText: 'Record request', onCancel: () => m.close(), onSubmit: async (v) => { await post('/api/patient-requests', { ...v, client_id: id }); toast(`Request recorded — due in ${days} days`, 'ok'); m.close(); refresh(); } }); const m = modal('Record a client rights request', f); };
+      const close = async (x, status) => { const note = await confirmDialog(status === 'fulfilled' ? 'Mark fulfilled' : 'Mark denied', status === 'fulfilled' ? 'Record how the request was fulfilled.' : 'Record the reason for denial (the client is entitled to it in writing).', { okText: status === 'fulfilled' ? 'Fulfilled' : 'Denied', danger: status === 'denied', requireReason: true }); if (!note) return; await put(`/api/patient-requests/${x.id}`, { status, notes: [x.notes, `${status === 'fulfilled' ? 'Fulfilled' : 'Denied'} ${fmt.today()}: ${note}`].filter(Boolean).join('\n') }); refresh(); };
+      // Correct a request recorded with the wrong kind or date, extend its due date, or reopen it.
+      const edit = (x) => { const f = form([{ name: 'kind', label: 'Request', type: 'select', options: KINDS, required: true, noBlank: true }, { name: 'received_at', label: 'Received on', type: 'date', required: true }, { name: 'due_at', label: 'Due by', type: 'date', help: `${days} days from receipt unless extended.` }, { name: 'status', label: 'Status', type: 'select', options: statuses, noBlank: true }, { name: 'notes', label: 'Notes', type: 'textarea', span: true, rows: 4, help: 'Stored encrypted.' }], { values: { kind: x.kind, received_at: x.received_at, due_at: x.due_at, status: x.status, notes: x.notes || '' }, submitText: 'Save', onCancel: () => m.close(), onSubmit: async (v) => { await put(`/api/patient-requests/${x.id}`, v); toast('Request updated', 'ok'); m.close(); refresh(); } }); const m = modal('Edit client rights request', f); };
+      // For a request recorded in error (the wrong client, a duplicate). A real request that is not being
+      // granted is "Denied", which keeps it on file; this removes it, and the removal is in the audit log.
+      const remove = async (x) => { if (!(await confirmDialog('Delete this request?', `Delete the ${fmt.label(x.kind)} request received ${fmt.date(x.received_at)}? Use this only for a request recorded in error — a request that is being refused should be marked Denied instead, so it stays on file. The deletion is recorded in the audit log.`, { danger: true, okText: 'Delete request' }))) return; await del(`/api/patient-requests/${x.id}`); toast('Request deleted', 'ok'); refresh(); };
+      const mayChange = (x) => can('patient-requests:write') && (x.handled_by === state.user.id || x.created_by === state.user.id || can('records:manage-others'));
+      return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Client rights requests'), can('patient-requests:write') ? h('button', { class: 'btn sm primary', 'data-add-request': '1', onClick: add }, '+ Request') : null),
+        h('p', { class: 'small muted' }, `A client may ask to see their record, have it corrected, restrict how it is shared, or receive the accounting of disclosures. Each must be answered within ${days} days of receipt.`),
+        table([{ label: 'Request', render: x => fmt.label(x.kind) }, { label: 'Received', render: x => fmt.date(x.received_at) }, { label: 'Due', render: x => h('span', { style: x.overdue ? { color: 'var(--danger)', fontWeight: 600 } : {} }, fmt.date(x.due_at), x.overdue ? ' — overdue' : '') }, { label: 'Status', render: x => badge(fmt.label(x.status), x.status === 'open' ? (x.overdue ? 'danger' : 'warn') : x.status === 'fulfilled' ? 'ok' : '') }, { label: 'Notes', render: x => h('div', { style: { whiteSpace: 'pre-wrap' } }, x.notes || '') }, { label: 'Handled by', key: 'handler' },
+          { label: '', render: x => h('div', { class: 'row nowrap' },
+            x.status === 'open' && can('patient-requests:write') ? [h('button', { class: 'btn sm primary', onClick: () => close(x, 'fulfilled') }, 'Fulfilled'), h('button', { class: 'btn sm', onClick: () => close(x, 'denied') }, 'Denied')] : null,
+            mayChange(x) ? h('button', { class: 'btn sm ghost', 'data-edit-request': x.id, onClick: () => edit(x) }, 'Edit') : null,
+            mayChange(x) ? h('button', { class: 'btn sm ghost danger', 'data-delete-request': x.id, onClick: () => remove(x) }, 'Delete') : null) }], d.rows, { empty: 'No requests recorded for this client.' }));
+    },
+    async team() {
+      // A client has one primary: assigning a new one ends the current one's assignment (and, for a
+      // caseload-restricted worker, their access). Said up front, and confirmed, rather than discovered.
+      const currentPrimary = c.assignments.find(a => a.role_on_case === 'primary' && !a.end_date);
+      const assign = () => { const f = form([{ name: 'user_id', label: 'Worker', type: 'user', required: true }, { name: 'role_on_case', label: 'Role', type: 'select', options: ['primary', 'secondary', 'clinician', 'peer', 'supervisor'], value: 'primary', noBlank: true, help: currentPrimary ? `${currentPrimary.display_name} is the current primary. Assigning another primary ends their assignment today.` : null }, { name: 'start_date', label: 'Start', type: 'date', value: fmt.today() }, { name: 'notes', label: 'Notes', span: true }], { submitText: 'Assign', onCancel: () => m.close(), onSubmit: async (v) => {
+        if ((v.role_on_case || 'primary') === 'primary' && currentPrimary && currentPrimary.user_id !== v.user_id) {
+          if (!(await confirmDialog('Replace the primary worker?', `${currentPrimary.display_name} is currently primary on this case. Their assignment ends today and the new worker takes over. Continue?`, { okText: 'Replace primary' }))) return;
+        }
+        await post(`/api/clients/${id}/assignments`, v); toast('Assigned', 'ok'); m.close(); refresh(); } }); const m = modal('Assign worker', f); };
+      return h('div', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Care team assignments'), can('assignments:manage') ? h('button', { class: 'btn sm primary', onClick: assign }, '+ Assign worker') : null),
+        table([{ label: 'Worker', key: 'display_name' }, { label: 'Staff role', render: a => fmt.label(a.user_role) }, { label: 'Role on case', render: a => fmt.label(a.role_on_case) }, { label: 'Start', render: a => fmt.date(a.start_date) }, { label: 'End', render: a => a.end_date ? fmt.date(a.end_date) : badge('Current', 'ok') }, { label: 'Notes', key: 'notes' }, { label: '', render: a => !a.end_date && can('assignments:manage') ? h('button', { class: 'btn sm ghost', 'data-assignment-end': a.id, 'aria-label': `End ${a.display_name}'s assignment`, onClick: async () => {
+          // Reversible: Undo puts the same worker back on the case in the same role (a new assignment from now,
+          // the ended one kept in the history), so it is done at once rather than asked first.
+          await post(`/api/assignments/${a.id}/end`, {}); refresh();
+          undoToast(`${a.display_name} removed from this case.`, async () => { await post(`/api/clients/${id}/assignments?restores=${encodeURIComponent(a.id)}`, { user_id: a.user_id, role_on_case: a.role_on_case, start_date: fmt.today(), notes: a.notes || undefined }); refresh(); });
+        } }, 'End') : null }], c.assignments, { empty: 'No workers assigned.' }),
+        can('clients:merge') ? h('div', { class: 'card mt' },
+          h('h2', {}, 'Merge a duplicate into this record'),
+          h('p', { class: 'small muted' }, 'If the same person was entered twice, merge the other record into this one. Everything attached to it — visits, calls, notes, referrals, forms — moves here, and anything this record is missing is filled in from the duplicate. The other record is kept, marked as merged: an old link to it sends you here. A record on legal hold cannot be merged.'),
+          (() => {
+            const picker = clientPicker('merge_source', '', { placeholder: 'Find the duplicate record…' });
+            return h('div', {}, picker, h('div', { class: 'btn-row' }, h('button', { class: 'btn', onClick: async () => {
+              const sourceId = picker.value;
+              if (!sourceId) { toast('Choose the duplicate record first', 'error'); return; }
+              if (sourceId === id) { toast('That is this record', 'error'); return; }
+              // What the merge would do that needs saying first (different participant codes, 1.21.0).
+              let notices = [];
+              try { notices = (await get(`/api/clients/${id}/merge/preview?source_id=${encodeURIComponent(sourceId)}`)).notices || []; } catch (e) { toast(e.message, 'error'); return; }
+              const reason = await confirmDialog('Merge duplicate', [...notices, 'Everything on the other record moves onto this one. This cannot be undone from the app. Continue?'].join(' '), { danger: true, okText: 'Merge', requireReason: true });
+              if (!reason) return;
+              try { const r = await post(`/api/clients/${id}/merge`, { source_id: sourceId, reason }); toast(`Merged. ${Object.values(r.moved).filter(n => typeof n === 'number').reduce((a, b) => a + b, 0)} record(s) moved.${(r.notices || []).length ? ` ${r.notices.join(' ')}` : ''}`, 'ok'); refresh(); }
+              catch (e) { toast(e.message, 'error'); }
+            } }, 'Merge into this record')));
+          })()) : null,
+        can('clients:legal-hold') || c.legal_hold ? h('div', { class: 'card mt' },
+          h('h2', {}, 'Legal hold'),
+          c.legal_hold ? h('p', {}, badge('On hold', 'purple'), ' ', c.legal_hold_reason || '', h('span', { class: 'small muted' }, ' — this record cannot be deleted and is exempt from the retention purge until the hold is cleared.')) : h('p', { class: 'small muted' }, 'Not on hold. Records are purged automatically once they pass the retention period set in Administration; a hold (litigation, an investigation, a client request) stops that.'),
+          can('clients:legal-hold') ? h('div', { class: 'btn-row' }, c.legal_hold
+            ? h('button', { class: 'btn', onClick: async () => { if (await confirmDialog('Clear legal hold', 'The record becomes subject to retention rules again.', { okText: 'Clear hold' })) { await post(`/api/clients/${id}/legal-hold`, { hold: false }); toast('Legal hold cleared', 'ok'); refresh(); } } }, 'Clear hold')
+            : h('button', { class: 'btn', onClick: async () => { const reason = await confirmDialog('Place legal hold', 'Name the matter or request this hold relates to.', { okText: 'Place hold', requireReason: true }); if (reason) { await post(`/api/clients/${id}/legal-hold`, { hold: true, reason }); toast('Legal hold placed', 'ok'); refresh(); } } }, 'Place legal hold')) : null) : null,
+        can('records:manage-others') && can('clients:write') ? h('div', { class: 'btn-row' }, h('button', { class: 'btn danger', onClick: async () => { const reason = await confirmDialog('Delete client record', 'This soft-deletes the client and hides all records. Retention rules still apply. Continue?', { danger: true, okText: 'Delete', requireReason: true }); if (reason) { await del(`/api/clients/${id}`, { reason }); toast('Client deleted'); nav('clients'); } } }, 'Delete client record')) : null);
+    },
+  };
+  body.append(await (T[tab] || T.overview)());
+  return view;
+});
