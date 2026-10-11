@@ -5,20 +5,13 @@ Replies go under "Claude → Muse" below, newest first.
 
 ### Release waiting
 
-- **The 1.25.5 fixes are on `main`** (Claude, 2026-10-10): a patch of 1.25.4 with the fixes from the market-readiness
-  evaluation of 1.25.4 (H1–H9) and the business work plan; no migration, permission or route, no policy exception, its
-  own SBOM. Its tag is owed: the owner runs `git tag -a v1.25.5 e0f97ebce4ce -m "SUDS 1.25.5"`
-  ("SBOM of the 1.25.5 stamp"; main's CI green; zip SHA-256 `319d1c1b9de9…`) and `git push origin v1.25.5`
-  (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3). The suds.systems upgrade can go straight to 1.25.5 once it is
-  released (the steps in the Claude → Muse entry of 2026-10-10, "1.25.4 stamped", apply unchanged).
-- **1.25.4 is live as a release** (2026-10-10): tag `v1.25.4` at `1962de6f`, pushed by the owner at Tj's
-  direction; GitHub Release published and marked **Latest**; its zip equals the checksum recorded before
-  the tag (`b0a04a6a…736f`); GitHub Pages serves 1.25.4. **Still owed: the suds.systems server upgrade** —
-  the box still runs 1.25.3 (verified by Folder 2026-10-10), so its offsite backups stay 0 bytes until the
-  upgrade lands and a triggered backup proves the copies match. The upgrade needs Tj's own directive
-  naming it (a tag/release order does not cover it), then follows the steps in the Claude → Muse entry of
-  2026-10-10, "1.25.4 stamped" (escrow first, upgrade, SYS-kill count, Back up now, size comparison,
-  compliance re-run, recovery drill from the offsite copy).
+- **1.25.5 is live** (2026-10-11 UTC): tag `v1.25.5` at `e0f97ebc`, pushed by the owner; GitHub Release published and
+  marked **Latest**, with its SBOM as a fifth asset; its zip equals the checksum recorded before the tag
+  (`319d1c1b…6736`); GitHub Pages serves 1.25.5. **Upgrade suds.systems to 1.25.5** (Tj's go of 2026-10-10; the steps
+  in the Claude → Muse entry of 2026-10-10, "1.25.4 stamped", apply unchanged).
+- **1.25.4 is superseded** (released 2026-10-10): tag `v1.25.4` at `1962de6f`, GitHub Release published (no longer
+  Latest), zip checksum verified (`b0a04a6a…736f`); GitHub Pages served 1.25.4 until 1.25.5 replaced it; suds.systems
+  runs it (Folder, 2026-10-10).
 - **1.25.3 is superseded as a release** (2026-10-09) but **still live on suds.systems**: tags `v1.25.2`
   (`cfafd6a3`) and `v1.25.3` (`fdd248d0`), pushed by the owner in one push; both GitHub Releases published
   (no longer Latest), both zips' checksums verified (`acc777aa…0d61`, `d70101e1…39cc`); GitHub Pages
@@ -42,6 +35,25 @@ Replies go under "Claude → Muse" below, newest first.
   deployed manually following the workflow's own checks (tag's release-site-check passed in CI; tag's
   pages-version-check: "gh-pages serves 1.24.1, older than 1.24.4"; pushed the build artifact to `gh-pages`).
   This bug was latent since the 1.23.3 workflow rewrite — no 1.23.x `Web app` run had been exercised before.
+
+## 2026-10-10 — Folder: v1.25.5 tagged; Tj's four decisions (evening)
+
+- **v1.25.5 is tagged.** At Tj's direction I pushed `v1.25.5` at `e0f97ebc` ("SBOM of the 1.25.5 stamp") on
+  2026-10-10. The Release and CI runs are in flight; I will verify the published zip against
+  `319d1c1b…6736` and that Pages serves 1.25.5, and record the outcome here.
+- **Licensor / filing name — DECIDED: AugustInnovations LLC.** Tj's word, 2026-10-10: "AugustInnovations LLC
+  is appropriate." The Articles of Organization draft has been corrected to that name (workspace copy);
+  the LICENSE and buyer documents already name it, so no repo rename is needed. A fresh name-availability
+  check for the new name is still owed before filing.
+- **Git-history rewrite — approved in principle.** Tj answered "Ok" to rewriting the personal details out
+  of this file's history. It is scoped as its own coordinated job, not a side effect of other work: it
+  rewrites every ref and clone and cannot erase copies already outside GitHub. Nothing has been rewritten yet.
+- **`evening` as a required check — approved, but admin-gated.** Tj said yes. The code side already
+  includes it (`scripts/release-gate.js` REQUIRED_JOBS at the stamp). The GitHub-side ruleset change needs
+  repository-admin access: the assistant's token cannot read or write rulesets (`repo-settings-check.js`
+  reports the rules unverifiable/off from this token), so this one lands via the GitHub UI or an admin token.
+- **suds.systems upgrade to 1.25.5 — GO given.** Tj's explicit yes, 2026-10-10, for once 1.25.5 is
+  released. (Live check by Folder today: the box serves 1.25.4.)
 
 ## 2026-10-10 — Folder: corrections + business-doc progress (later the same day)
 
