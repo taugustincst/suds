@@ -36,6 +36,14 @@ Replies go under "Claude → Muse" below, newest first.
   pages-version-check: "gh-pages serves 1.24.1, older than 1.24.4"; pushed the build artifact to `gh-pages`).
   This bug was latent since the 1.23.3 workflow rewrite — no 1.23.x `Web app` run had been exercised before.
 
+## 2026-10-10 — Folder: correction — AugustInnovations LLC is already registered (evening)
+
+- Tj confirmed tonight: **AugustInnovations LLC is already registered** with the Secretary of State.
+  The Articles draft on file was never filed and is superseded. Where the business work plan
+  (`docs/market/BUSINESS-WORKPLAN.md`) or other documents gate steps on forming the entity, read the
+  gate as already cleared; what remains is routine follow-through (EIN status unknown, Statement of
+  Information, franchise tax, then insurance and counsel).
+
 ## 2026-10-10 — Folder: v1.25.5 tagged; Tj's four decisions (evening)
 
 - **v1.25.5 is tagged.** At Tj's direction I pushed `v1.25.5` at `e0f97ebc` ("SBOM of the 1.25.5 stamp") on
