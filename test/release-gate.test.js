@@ -27,6 +27,21 @@ test('refuses a run whose evening job (npm test at 9pm in Los Angeles) failed, o
   assert.match(evaluate(SHA, [run(1)], { 1: jobs().filter((j) => j.name !== 'evening') }).reason, /missing job\(s\) evening/);
 });
 
+test('a required job skipped (a Markdown-only commit, ci.yml `changes`) is not success: the commit is refused (evaluation of 1.25.5, J11)', () => {
+  // GitHub concludes the run success and reports a skipped job to required checks as success; the gate does not.
+  const docsOnly = jobs(Object.fromEntries(REQUIRED_JOBS.filter((j) => j !== 'test').map((j) => [j, 'skipped'])));
+  const out = evaluate(SHA, [run(1)], { 1: docsOnly });
+  assert.equal(out.decision, 'fail');
+  assert.match(out.reason, /skipped, so not run on this commit/);
+  for (const j of REQUIRED_JOBS.filter((x) => x !== 'test')) assert.ok(out.reason.includes(j), j);
+  assert.doesNotMatch(out.reason, /not successful/, 'said as skipped, not as failed');
+  // One skipped job is enough to refuse; a later run of the same commit with every job green passes.
+  assert.equal(evaluate(SHA, [run(1)], { 1: jobs({ browser: 'skipped' }) }).decision, 'fail');
+  assert.equal(evaluate(SHA, [run(2), run(1)], { 2: jobs(), 1: docsOnly }).decision, 'pass');
+  // Advisory webkit skipped alone does not block.
+  assert.equal(evaluate(SHA, [run(1)], { 1: jobs({ webkit: 'skipped' }) }).decision, 'pass');
+});
+
 test('refuses when the run failed; WebKit (advisory) failing alone does not block', () => {
   assert.equal(evaluate(SHA, [run(1, { conclusion: 'failure' })], {}).decision, 'fail');
   assert.equal(evaluate(SHA, [run(1)], { 1: jobs({ webkit: 'failure' }) }).decision, 'pass');
@@ -155,6 +170,27 @@ test('the release job runs in the `release` environment and records who started 
   assert.ok(!/\$\{\{ github\.(triggering_)?actor/.test(job.replace(/^ {6}RELEASE_(TRIGGERING_)?ACTOR: .*$/gm, '')), 'through the environment, never pasted into a script');
   assert.match(job, /Released by @\$\{RELEASE_ACTOR\}/, 'and written into the notes');
   assert.match(job, /--notes "\$\{notes:-See CHANGELOG\.md\}"/);
+});
+
+test('the release notes carry each zip\'s SHA-256, also on a Release made before, and a conflicting line stops the job (evaluation of 1.25.5, J1)', () => {
+  const Y = require('../scripts/workflow-yaml');
+  const job = Y.parse(fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'release.yml'), 'utf8')).jobs.release;
+  const run = job.steps.find((s) => s.name === 'Publish').run;
+  // The line release-state.js and the records commit's CHANGELOG line use, hashed from the files this job uploads.
+  assert.match(run, /src_line="SHA-256 of suds-\$ver\.zip: \$\(sha256sum "\$RUNNER_TEMP\/pkg\/suds-\$ver\.zip" \| cut -d' ' -f1\)"/);
+  assert.match(run, /win_line="SHA-256 of suds-\$\{ver#v\}-windows-x64\.zip: \$\(sha256sum "\$RUNNER_TEMP\/pkg\/suds-\$\{ver#v\}-windows-x64\.zip" \| cut -d' ' -f1\)"/);
+  assert.match(run, /notes="\$\{notes:-See CHANGELOG\.md\}"\$'\\n\\n'"\$\{src_line\}"\$'\\n\\n'"\$\{win_line\}"/, 'in the notes a new Release is created with');
+  // An existing Release (upload, none, a draft) gets the missing lines added; a different value is never overwritten.
+  const after = run.slice(run.indexOf('esac'));
+  assert.match(after, /grep -qxF -- "\$l" <<< "\$have"; then continue/);
+  assert.match(after, /grep -qF -- "\$\{l%%: \*\}:" <<< "\$have"; then echo "::error::[^"]*"; exit 1; fi/);
+  assert.match(after, /gh release edit "\$ver" --notes "\$\{have\}\$\{add\}"/);
+  assert.match(after, /--jq \.body \| tr -d '\\r'/, 'notes edited on the web carry CRLF line ends');
+  assert.match(after, /for l in "\$\{src_line\}" "\$\{win_line\}"; do grep -qxF -- "\$l" <<< "\$have" \|\| \{ echo "::error::[^"]*"; exit 1; \}; done/, 'and checked after');
+  // The same text release-state.js reads.
+  const RS = require('../scripts/release-state');
+  const hex = 'a'.repeat(64);
+  assert.deepEqual(RS.checksumLines(`x\n\nSHA-256 of suds-v1.2.3.zip: ${hex}\n`, 'suds-v1.2.3.zip').map((c) => c.hex), [hex]);
 });
 
 test('CODEOWNERS names the owner for the release machinery and the security-critical modules', () => {

@@ -10,6 +10,7 @@ const RS = require('../scripts/release-state');
 
 const SHA = (c) => c.repeat(40);
 const ZIP = 'f'.repeat(64);
+const ZIP110 = 'e'.repeat(64); // v1.1.0's, the newest pushed tag in the online world
 
 /** A consistent set of documents: 1.3.0 and 1.2.0 stamped, both untagged, 1.3.0 live. */
 function world(o = {}) {
@@ -19,7 +20,7 @@ function world(o = {}) {
       '# Changelog', '', '## Unreleased', '',
       '## 1.3.0 — 2026-10-01', '', '- **Supported versions**: 1.3.x is the latest minor, 1.2.x the previous.', '- The questionnaire is checked against 1.3.0.', '',
       '## 1.2.0 — 2026-09-01', '', '- Documents describe 1.2.0.', '',
-      '## 1.1.0 — 2026-08-01', '', '- First.', '',
+      '## 1.1.0 — 2026-08-01', '', '- First.', '', `SHA-256 of suds-v1.1.0.zip: ${ZIP110}`, '',
     ].join('\n'),
     questionnaire: o.questionnaire || [
       '# Q', '', '**Checked against:** 1.3.0 (live on GitHub Pages; its tag is pending the owner).', '',
@@ -54,6 +55,7 @@ function world(o = {}) {
       `| \`v1.3.0\` | \`${SHA('c')}\` ("SBOM of the 1.3.0 stamp", after the stamp \`bbbbbbb\`) | 2026-10-01 | \`${ZIP}\` |`, '',
       '```bash', 'for c in aaaaaaa $R13; do git merge-base --is-ancestor $c origin/main; done',
       `git tag -a v1.2.0 ${SHA('a')} -m "SUDS 1.2.0"`, 'git tag -a v1.3.0 "$R13" -m "SUDS 1.3.0"', 'git push origin v1.2.0 v1.3.0', '```', '',
+      '## Completed: v1.1.0', '', `- \`v1.1.0\` — commit \`${SHA('1')}\` (CHANGELOG 2026-08-01), zip SHA-256`, `  \`${ZIP110}\`; the owner pushed the tag.`, '',
     ].join('\n'),
     notes: o.notes !== undefined ? o.notes : [
       '# Handoff', '', '### Release waiting', '',
@@ -78,7 +80,8 @@ test('a consistent world has no problems, offline and online', () => {
   const off = RS.evaluate({ docs });
   assert.deepEqual(off.problems, []);
   assert.ok(off.notChecked.some((n) => /GitHub Pages/.test(n)) && off.notChecked.some((n) => /tags are pushed/.test(n)) && off.notChecked.some((n) => /commits/.test(n)), 'and says what it could not check');
-  const on = RS.evaluate({ docs, git: goodGit(), remote: { tags: { 'v1.1.0': SHA('1') } }, pages: { version: '1.3.0', source: 'test' }, mainPkg: { version: '1.3.0', stamped: [] } });
+  const on = RS.evaluate({ docs, git: goodGit(), remote: { tags: { 'v1.1.0': SHA('1') } }, pages: { version: '1.3.0', source: 'test' }, mainPkg: { version: '1.3.0', stamped: [] },
+    newestTag: { tag: 'v1.1.0', signed: false }, releaseNotes: { tag: 'v1.1.0', status: 'ok', body: `Notes.\r\n\r\nSHA-256 of suds-v1.1.0.zip: ${ZIP110}\r\n` } });
   assert.deepEqual(on.problems, []);
   assert.deepEqual(on.notChecked, []);
 });
@@ -293,4 +296,132 @@ test('the CLI runs offline and reports what it could not check', () => {
   const r = JSON.parse(out);
   assert.ok(r.notChecked.some((n) => /--offline/.test(n)), 'says it did not ask origin');
   assert.ok(Array.isArray(r.problems) && r.problems.every((p) => p.file && p.line > 0 && p.fix));
+});
+
+// ---- The release checksum in two channels, and the operative controls page (evaluation of 1.25.5, J1, J3, J11) ----
+const CONTROLS = (o = {}) => [
+  '# Operative controls', '', '| Control | State | How it is checked |', '| --- | --- | --- |',
+  `| \`checksum-main\` On main. | **${o.main || 'in force'}** for v1.1.0 | release-state |`,
+  `| \`checksum-release\` In the Release notes. | **${o.release || 'in force'}** | release-state online |`,
+  `| \`signed-tag\` Signed. | **${o.signed || 'not signed'}**: owner action | release-state |`,
+  '| `private-reporting` Private reporting. | **off** | repo-settings-check |', '',
+].join('\n');
+const NEWEST = { tag: 'v1.1.0', signed: false };
+const notesWith = (hex, extra = '') => ({ tag: 'v1.1.0', status: 'ok', body: `Notes.\n\nSHA-256 of suds-v1.1.0.zip: ${hex}\n${extra}` });
+
+test('the newest tag\'s zip SHA-256 is in its CHANGELOG section, equal to the hand-off\'s record', () => {
+  const ok = RS.evaluate({ docs: world(), newestTag: NEWEST });
+  assert.deepEqual(ok.problems, []);
+  assert.ok(ok.info.some((i) => /newest tag is v1\.1\.0/.test(i)) && ok.info.some((i) => /v1\.1\.0 is not signed/.test(i)));
+  assert.ok(ok.notChecked.some((n) => /v1\.1\.0's GitHub Release notes \(not fetched/.test(n)), 'offline: the Release notes are not checked, and it says so');
+  // Missing: the fix names the line with the recorded value.
+  const missing = RS.evaluate({ docs: world({ patch: { changelog: (t) => t.replace(/^SHA-256 of suds-v1\.1\.0\.zip: .*\n/m, '') } }), newestTag: NEWEST });
+  assert.deepEqual(codes(missing), ['checksum-changelog-missing']);
+  assert.equal(missing.problems[0].file, 'CHANGELOG.md');
+  assert.match(missing.problems[0].fix, new RegExp(`SHA-256 of suds-v1\\.1\\.0\\.zip: ${ZIP110}`));
+  // Another value than the hand-off recorded before the tag.
+  const differs = RS.evaluate({ docs: world({ patch: { changelog: (t) => t.replace(ZIP110, 'd'.repeat(64)) } }), newestTag: NEWEST });
+  assert.deepEqual(codes(differs), ['checksum-changelog-differs']);
+  // A list item and backticks are read too; another version's line, or a longer value, is not this one.
+  assert.deepEqual(RS.checksumLines(`- SHA-256 of \`suds-v1.1.0.zip\`: \`${ZIP110}\``, 'suds-v1.1.0.zip').map((c) => c.hex), [ZIP110]);
+  assert.deepEqual(RS.checksumLines(`SHA-256 of suds-v1.1.00.zip: ${ZIP110}\nSHA-256 of suds-v1.1.0.zip: ${ZIP110}0`, 'suds-v1.1.0.zip'), []);
+  // The hand-off records none, or two different values.
+  const unrecorded = RS.evaluate({ docs: world({ patch: { handoff: (t) => t.replace(/zip SHA-256\n {2}`e+`/, 'zip SHA-256 unknown') } }), newestTag: NEWEST });
+  assert.deepEqual(codes(unrecorded), ['checksum-unrecorded']);
+  const two = RS.evaluate({ docs: world({ patch: { handoff: (t) => `${t}\n\`\`\`\n# ${'c'.repeat(64)}  suds-v1.1.0.zip\n\`\`\`\n` } }), newestTag: NEWEST });
+  assert.deepEqual(codes(two), ['checksum-handoff-disagrees']);
+  // Only the newest tag: v1.2.0 and v1.3.0's sections carry no line, and are not asked to.
+  assert.ok(!/SHA-256 of suds-v1\.[23]\.0/.test(world().changelog));
+  // A newest tag with no dated section.
+  assert.deepEqual(codes(RS.evaluate({ docs: world(), newestTag: { tag: 'v1.0.0', signed: false } })), ['checksum-no-section', 'checksum-unrecorded']);
+});
+
+test('online, the GitHub Release notes carry the same line; unreachable or no Release is "not checked"', () => {
+  const docs = world();
+  assert.deepEqual(RS.evaluate({ docs, newestTag: NEWEST, releaseNotes: notesWith(ZIP110) }).problems, []);
+  const missing = RS.evaluate({ docs, newestTag: NEWEST, releaseNotes: { tag: 'v1.1.0', status: 'ok', body: 'Notes.\n\n---\nReleased by @x.' } });
+  assert.deepEqual(codes(missing), ['checksum-release-missing']);
+  assert.equal(missing.problems[0].file, 'GitHub Release v1.1.0');
+  assert.match(missing.problems[0].fix, /Edit release/);
+  const differs = RS.evaluate({ docs, newestTag: NEWEST, releaseNotes: notesWith('d'.repeat(64)) });
+  assert.deepEqual(codes(differs), ['checksum-release-differs']);
+  // The Windows zip's line, when the notes and the record both give one, must agree too.
+  const win = RS.evaluate({ docs: world({ patch: { handoff: (t) => `${t}\n- Windows zip: \`suds-1.1.0-windows-x64.zip\`, SHA-256 \`${'a'.repeat(64)}\`.\n` } }), newestTag: NEWEST, releaseNotes: notesWith(ZIP110, `\nSHA-256 of suds-1.1.0-windows-x64.zip: ${'b'.repeat(64)}\n`) });
+  assert.deepEqual(codes(win), ['checksum-release-differs']);
+  for (const [notes, re] of [[{ tag: 'v1.1.0', status: 'none' }, /no GitHub Release for v1\.1\.0 yet/], [{ tag: 'v1.1.0', status: 'unreachable', detail: 'api.github.com answered HTTP 403: rate limit' }, /HTTP 403: rate limit/]]) {
+    const r = RS.evaluate({ docs, newestTag: NEWEST, releaseNotes: notes });
+    assert.deepEqual(r.problems, []);
+    assert.ok(r.notChecked.some((n) => re.test(n)), String(re));
+  }
+});
+
+test('fetchReleaseNotes: GET /repos/<repo>/releases/tags/<tag>; 404 is no Release, anything else unreadable', async () => {
+  const asked = [];
+  const get = (status, body, error) => async (url) => { asked.push(url); return { status, body, error }; };
+  assert.deepEqual(await RS.fetchReleaseNotes('o/r', 'v1.1.0', get(200, { body: 'x' })), { tag: 'v1.1.0', status: 'ok', body: 'x' });
+  assert.match(asked[0], /\/repos\/o\/r\/releases\/tags\/v1\.1\.0$/);
+  assert.equal((await RS.fetchReleaseNotes('o/r', 'v1.1.0', get(404, {}))).status, 'none');
+  const limited = await RS.fetchReleaseNotes('o/r', 'v1.1.0', get(403, { message: 'API rate limit exceeded' }));
+  assert.deepEqual([limited.status, /HTTP 403: API rate limit/.test(limited.detail)], ['unreachable', true]);
+  assert.match((await RS.fetchReleaseNotes('o/r', 'v1.1.0', get(0, null, 'ENOTFOUND'))).detail, /could not be reached: ENOTFOUND/);
+  assert.equal((await RS.fetchReleaseNotes(null, 'v1.1.0', get(200, {}))).status, 'unreachable', 'no repository known');
+});
+
+test('the operative controls page claims only what is true for the newest tag', () => {
+  const ev = (o, extra = {}) => RS.evaluate({ docs: { ...world(), controls: CONTROLS(o) }, newestTag: NEWEST, ...extra });
+  assert.deepEqual(ev({}, { releaseNotes: notesWith(ZIP110) }).problems, []);
+  // "signed" while the tag is not.
+  const signed = ev({ signed: 'signed' });
+  assert.deepEqual(codes(signed), ['controls-claim']);
+  assert.match(signed.problems[0].message, /`signed-tag` row says "signed"; for the newest tag it is "not signed"/);
+  assert.equal(signed.problems[0].file, 'docs/security/OPERATIVE-CONTROLS.md');
+  // "not signed" once it is signed is stale too.
+  assert.deepEqual(codes(ev({}, { newestTag: { tag: 'v1.1.0', signed: true } })), ['controls-claim']);
+  // The checksum in the Release notes: "in force" while the notes lack it; "missing" once they carry it.
+  assert.deepEqual(codes(ev({}, { releaseNotes: { tag: 'v1.1.0', status: 'ok', body: '' } })), ['checksum-release-missing', 'controls-claim']);
+  assert.deepEqual(codes(ev({ release: 'missing' }, { releaseNotes: notesWith(ZIP110) })), ['controls-claim']);
+  // Not known (offline): no claim about it is judged.
+  assert.deepEqual(ev({ release: 'missing' }).problems, []);
+  assert.deepEqual(codes(RS.evaluate({ docs: { ...world({ patch: { changelog: (t) => t.replace(/^SHA-256 of suds-v1\.1\.0\.zip: .*\n/m, '') } }), controls: CONTROLS() }, newestTag: NEWEST })), ['checksum-changelog-missing', 'controls-claim']);
+  // A state it does not know, a row or the page missing.
+  assert.deepEqual(codes(ev({ signed: 'planned' })), ['controls-state-unknown']);
+  assert.deepEqual(codes(RS.evaluate({ docs: { ...world(), controls: CONTROLS().replace(/^\| `signed-tag`.*\n/m, '') } })), ['controls-row-missing']);
+  assert.deepEqual(codes(RS.evaluate({ docs: { ...world(), controls: null } })), ['controls-missing']);
+});
+
+test('readNewestTag: the newest v* tag, and whether its tag object carries a signature', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-tags-'));
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.invalid', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.invalid', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+  const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', env }).trim();
+  try {
+    git('init', '-q'); git('commit', '-q', '--allow-empty', '-m', 'one');
+    assert.equal(RS.readNewestTag(dir, null), null, 'no tag');
+    git('tag', '-a', 'v1.9.0', '-m', 'SUDS 1.9.0'); git('tag', '-a', 'v1.10.0', '-m', 'SUDS 1.10.0'); git('tag', 'other');
+    assert.deepEqual(RS.readNewestTag(dir, null), { tag: 'v1.10.0', signed: false, source: 'this clone\'s tags' }, 'by version, not by name');
+    // A tag object with a signature block, as `git tag -s` writes one (mktag does not check the signature).
+    const head = git('rev-parse', 'HEAD');
+    const obj = `object ${head}\ntype commit\ntag v1.11.0\ntagger t <t@example.invalid> 1791677705 +0000\n\nSUDS 1.11.0\n-----BEGIN SSH SIGNATURE-----\nU1NIU0lH\n-----END SSH SIGNATURE-----\n`;
+    const sha = execFileSync('git', ['mktag'], { cwd: dir, input: obj, encoding: 'utf8', env }).trim();
+    git('update-ref', 'refs/tags/v1.11.0', sha);
+    assert.equal(RS.readNewestTag(dir, null).signed, true);
+    // Online, origin's list decides which is newest; a tag not fetched here cannot be judged.
+    assert.deepEqual(RS.readNewestTag(dir, { tags: { 'v1.9.0': head, 'v2.0.0': head } }), { tag: 'v2.0.0', signed: null, source: 'origin' });
+    git('tag', 'v2.0.0');
+    assert.equal(RS.readNewestTag(dir, { tags: { 'v2.0.0': head } }).signed, false, 'a lightweight tag has no signature');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('the real documents: the hand-off records v1.25.5\'s zips, the CHANGELOG carries them, the controls page parses', () => {
+  const fs = require('node:fs');
+  const read = (f) => fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+  const rec = RS.recordedChecksums(read(RS.FILES.handoff), '1.25.5');
+  assert.deepEqual([...new Set(rec.source.map((r) => r.hex))], ['319d1c1b9de96c52ce67503d0a460092149d96a6591aad2a1b448ac941956736']);
+  assert.deepEqual([...new Set(rec.windows.map((r) => r.hex))], ['69d25c33e4e350373b11fbd368424dc1863631118c31d69150864c1deb4fe9a1']);
+  const sec = RS.changelogSection(read(RS.FILES.changelog), '1.25.5');
+  assert.deepEqual(RS.checksumLines(sec.text, 'suds-v1.25.5.zip').map((c) => c.hex), [rec.source[0].hex]);
+  const rows = RS.parseControls(read(RS.FILES.controls));
+  for (const [id, states] of Object.entries(RS.CONTROL_STATES)) assert.ok(rows[id] && rows[id].state in states, `${id}: ${rows[id] && rows[id].state}`);
+  for (const id of ['private-reporting', 'tag-pusher', 'evening-required', 'flake-register']) assert.ok(rows[id], `${id} row`);
 });

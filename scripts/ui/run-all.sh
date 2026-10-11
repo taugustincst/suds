@@ -99,6 +99,9 @@ fi
 fail=0; office_dirty=0; reset_secs=0; suite_start=$SECONDS
 rows=()
 failed=()
+# Known defects (scripts/ui/assert.mjs knownDefect; docs/RELEASE.md, *Known defects*): "script|line", each a
+# registered failure that did not fail its script, or one that did not reproduce. Listed apart from failures and SKIPs.
+known=()
 for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-features local-mode multitab sync-two-way device-audit device-encryption device-recovery device-publication spreadsheets sample-data resource-profiles forms region dates setup setup-same-origin static-site qa-retest clinical-audit ux-polish signup load-review a11y-round4 caloms frontline frontline-review funder-reporting supplies programme suprt ux-nav ux-forms ui-eval ux13 r5 r6 r7 r8 r9 r10-lp r10-hist r10-prev r10-ai r10-part2 r10-outreach county county-connect county-publication fingerprint permissions-admin field-device worker-usefulness menu-home offline-outreach incoming-referrals accessibility}; do
   echo "=== $s"
   if [ ! -f "scripts/ui/$s.mjs" ]; then echo "FAILED: no such script scripts/ui/$s.mjs"; rows+=("$s|-|FAIL|0"); fail=1; continue; fi
@@ -121,12 +124,17 @@ for s in ${SCRIPTS:-desktop review-fixes navigator-flow navigator-fixes ux-featu
   # "name: 12/12 checks passed" is what makeChecks().finish() prints (scripts/ui/assert.mjs).
   checks=$(grep -oE '[0-9]+/[0-9]+ checks passed' $T/suds-ui-$s.log | tail -1 | cut -d' ' -f1)
   rows+=("$s|${checks:--}|$result|$((SECONDS - t0))")
+  while IFS= read -r l; do [ -n "$l" ] && known+=("$s|$l"); done < <(grep -E '^ *KNOWN DEFECT ' $T/suds-ui-$s.log | sed -E 's/^ +//')
 done
 
 echo
 printf '%-20s %9s  %-6s %6s\n' script checks result secs
 printf '%-20s %9s  %-6s %6s\n' -------------------- --------- ------ ------
 for r in "${rows[@]}"; do IFS='|' read -r n c res sec <<< "$r"; printf '%-20s %9s  %-6s %6s\n' "$n" "$c" "$res" "$sec"; done
+if [ ${#known[@]} -gt 0 ]; then
+  echo; echo "known defects (registered in docs/RELEASE.md, Known defects; they do not fail a script):"
+  for k in "${known[@]}"; do echo "  ${k%%|*}: ${k#*|}"; done
+fi
 # Why each failed script failed, repeated here at the end: a CI log is read from its tail, and a crash (an
 # uncaught error rather than a FAIL line) would otherwise sit thousands of lines up, above the accessibility audit.
 for s in "${failed[@]}"; do echo; echo "---- $s: last lines of its output"; grep -v '^\[2m' $T/suds-ui-$s.log | grep -vE '^ *ok ' | tail -20; done
@@ -145,6 +153,17 @@ if [ -n "${GITHUB_ACTIONS:-}" ] && [ ${#failed[@]} -gt 0 ]; then
       echo "::error file=scripts/ui/$s.mjs,title=$suite::$s: $l"
       [ -n "${GITHUB_STEP_SUMMARY:-}" ] && printf -- '- `%s`: %s\n' "$s" "${l//%25/%}" >> "$GITHUB_STEP_SUMMARY"
     done <<< "$why"
+  done
+fi
+# Each known defect as a ::warning (not an ::error): seen, named and linked to its register row, without turning the job
+# red, so a job that is red again means something else failed. One that did not reproduce is a warning too: close its row.
+if [ -n "${GITHUB_ACTIONS:-}" ] && [ ${#known[@]} -gt 0 ]; then
+  suite="${GITHUB_JOB:-browser} (${SUDS_BROWSER:-chromium})"
+  [ -n "${GITHUB_STEP_SUMMARY:-}" ] && printf '### %s: %d known defect line(s)\n\n' "$suite" "${#known[@]}" >> "$GITHUB_STEP_SUMMARY"
+  for k in "${known[@]}"; do
+    s=${k%%|*}; l=${k#*|}; l=${l//%/%25}; l=${l//$'\r'/}
+    echo "::warning file=scripts/ui/$s.mjs,title=$suite known defect::$s: $l"
+    [ -n "${GITHUB_STEP_SUMMARY:-}" ] && printf -- '- `%s`: %s\n' "$s" "${l//%25/%}" >> "$GITHUB_STEP_SUMMARY"
   done
 fi
 echo "total $((SECONDS - suite_start)) s (of which $reset_secs s reseeding the office server between scripts); $( [ $fail = 0 ] && echo 'all passed' || echo 'FAILURES above' )"

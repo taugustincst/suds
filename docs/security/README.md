@@ -10,6 +10,7 @@ For county IT, security and privacy reviewers. Everything here describes control
 | --- | --- |
 | What the system is, where PHI flows, trust boundaries (the county view and connection, passkeys and SUDS Server included) | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | How to report a vulnerability | [../../SECURITY.md](../../SECURITY.md) |
+| The operative controls to test first (the release checksum's second channel, private vulnerability reporting, signed tags) and whether each is in force | [OPERATIVE-CONTROLS.md](OPERATIVE-CONTROLS.md) |
 | Every encrypted field, where each kind of data can flow, retention (test-checked) | [DATA-INVENTORY.md](DATA-INVENTORY.md) |
 | Attackers, threats, mitigations, the attack classes fixed in 1.15.4–1.16.4, residual risks | [THREAT-MODEL.md](THREAT-MODEL.md) |
 | Encryption at rest and in transit, keys, rotation, customer-managed keys | [ENCRYPTION-AND-KEYS.md](ENCRYPTION-AND-KEYS.md) |
@@ -19,6 +20,7 @@ For county IT, security and privacy reviewers. Everything here describes control
 | Retention, deletion, purge, data residency, subprocessors | [DATA-LIFECYCLE.md](DATA-LIFECYCLE.md) |
 | Dependencies, patching, scanning, the software bill of materials | [VULNERABILITY-MANAGEMENT.md](VULNERABILITY-MANAGEMENT.md), [../evidence/sbom-1.25.5.cdx.json](../evidence/sbom-1.25.5.cdx.json) |
 | How changes are made, tested and released | [SDLC.md](SDLC.md) |
+| Which release and repository controls are in force today (checksum channels, signed tags, private reporting), and how each is checked | [OPERATIVE-CONTROLS.md](OPERATIVE-CONTROLS.md) |
 | Breach / incident handling | [INCIDENT-RESPONSE.md](INCIDENT-RESPONSE.md) |
 | SOC 2 Trust Services Criteria mapping and gaps | [SOC2-READINESS.md](SOC2-READINESS.md) |
 | A pre-answered vendor security questionnaire (HECVAT-Lite / CAIQ style) | [QUESTIONNAIRE.md](QUESTIONNAIRE.md) |

@@ -183,10 +183,12 @@ test('the compliance check fails an empty or short offsite copy, and its "last b
 
   fs.copyFileSync(first.file, path.join(offsite, name));
   assert.equal(host().result, 'pass', host().evidence);
-  // A temporary folder on the data's own disk is a whole copy, but not an offsite one (1.25.5, H3): a warning.
-  const sameDisk = fs.statSync(offsite).dev === fs.statSync(dir).dev;
-  assert.equal(app('app.offsite').result, sameDisk ? 'warn' : 'pass', app('app.offsite').evidence);
-  if (sameDisk) assert.match(app('app.offsite').evidence, /same disk as the data/);
+  // A temporary folder on the data's own disk is a whole copy, but not an offsite one (1.25.5, H3): a warning. So is
+  // one in memory, where /tmp is a tmpfs (1.25.6, J13).
+  const place = scheduled.offsitePlacement(offsite);
+  assert.equal(app('app.offsite').result, place.volatile || place.sameDisk ? 'warn' : 'pass', app('app.offsite').evidence);
+  if (place.sameDisk) assert.match(app('app.offsite').evidence, /same disk as the data/);
+  if (place.volatile) assert.match(app('app.offsite').evidence, /in memory \((tmpfs|ramfs)\)/);
 });
 
 test('the recovery drill refuses an empty offsite copy as its restore source', async () => {
@@ -217,6 +219,8 @@ test('a copy across two filesystems (the data disk and a tmpfs) is whole', { ski
     const copy = path.join(shm, path.basename(out.file));
     assert.equal(fs.statSync(copy).size, fs.statSync(out.file).size);
     assert.equal(sha(copy), sha(out.file));
+    // In memory, so not an offsite copy (1.25.6, J13), but a warning only: the copy above is still made and checked.
+    if (scheduled.mountType(fs.realpathSync(shm)) === 'tmpfs') assert.match(scheduled.offsitePlacement(shm).volatile, /in memory \(tmpfs\), so it does not survive a restart and is not an offsite copy/);
   } finally { fs.rmSync(shm, { recursive: true, force: true }); }
 });
 

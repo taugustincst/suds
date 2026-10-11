@@ -13,13 +13,16 @@ maintainer, and a release waits for the owner to tag it: this is a best-effort c
 
 ## How to report
 
-Use **GitHub's private vulnerability reporting** for this repository: the **Security** tab → **Report a
-vulnerability** (<https://github.com/taugustincst/suds/security/advisories/new>). Only the repository's maintainers
-see the report. If your programme has a signed support agreement, you may also use the security contact it names.
+**GitHub's private vulnerability reporting** for this repository (**owner-pending**: to be enabled in the
+repository settings; as of 2026-10-11 it is not on): once enabled, the **Security** tab → **Report a vulnerability**
+(<https://github.com/taugustincst/suds/security/advisories/new>). Only the repository's maintainers see the report.
+If your programme has a signed support agreement, you may also use the security contact it names.
 
-If the **Report a vulnerability** button is missing, private reporting has not been switched on yet (an owner
-setting); open a public issue titled only "Security contact request", **with no details**, and the maintainer will
-arrange a private channel.
+Until private reporting is enabled (the **Report a vulnerability** button is missing), report to the owner-published
+security contact: **[owner to complete: the security contact address — owner-pending]**. If that is not published
+yet either, open a public issue titled only "Security contact request", **with no details at all** (no description
+of the issue, the component or the steps), and the maintainer will arrange a private channel. Never put vulnerability
+details in a public issue, a pull request or a discussion.
 
 ## What to include
 

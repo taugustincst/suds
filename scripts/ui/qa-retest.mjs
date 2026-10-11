@@ -19,7 +19,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { makeChecks, until, settle, signInAgain, PLAYWRIGHT_WEBKIT_LINUX, WEBKIT_LINUX_SW_CACHE, passRecoveryCode } from './assert.mjs';
+import { makeChecks, until, settle, signInAgain, PLAYWRIGHT_WEBKIT_LINUX, WEBKIT_LINUX_SW_CACHE, passRecoveryCode, firstLoad } from './assert.mjs';
 // A page of the older build has no activity hook (window.__sudsActivity) to wait on; pace it the old way.
 const pace = async (p) => ((await p.evaluate(() => !!window.__sudsActivity).catch(() => false)) ? settle(p) : p.waitForTimeout(150));
 // SUDS_BROWSER=webkit (or firefox) runs this script in that engine instead of Chromium; CI's WebKit smoke
@@ -49,7 +49,7 @@ for (const [label, base] of surfaces) {
   page.on('pageerror', e => errors.push(`${label}: PAGEERROR ${e.message}`));
   page.on('console', m => { if (m.type() === 'error') errors.push(`${label}: CONSOLE ${m.text().slice(0, 250)}`); });
   const go = (hash) => page.goto(base + '#/' + hash);
-  await go(''); await page.waitForSelector('input[name=display_name]', { timeout: 15000 });
+  await firstLoad(page, base + '#/', 'input[name=display_name]', { timeout: 15000 });
   // The tester's own account: a one-word, all-capitals display name, administrator.
   await page.fill('input[name=display_name]', 'QATEST'); await page.selectOption('select[name=role]', 'admin');
   await page.fill('input[name=username]', 'qatest'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
@@ -195,7 +195,7 @@ for (const [label, base] of surfaces) {
     // Each defect is its own step: one that throws is reported and the next still runs.
     const step = async (name, fn) => { try { await fn(); } catch (e) { fail(`${L}: ${name}: ${e.message.split('\n')[0]}`); await page.keyboard.press('Escape').catch(() => {}); } };
     try {
-      await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 15000 });
+      await firstLoad(page, base + '/', 'input[name=display_name]', { timeout: 15000, quiet: true }); // reported by the catch below
       await page.getByRole('textbox', { name: /Your name/ }).fill('QATEST QA Engineer');
       await page.getByRole('textbox', { name: /Username/ }).fill('qatest-new');
       // The first account on a device is its administrator; the tester set it up as one (Settings is checked below).
@@ -447,7 +447,7 @@ else if (buildOldSite()) {
     // --- the tester's history, on the old build ---
     let ctx = await browserType.launchPersistentContext(profile, phone);
     let page = ctx.pages()[0] || await ctx.newPage();
-    await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 15000 });
+    await firstLoad(page, base + '/', 'input[name=display_name]', { timeout: 15000, quiet: true }); // reported by the catch below
     await page.fill('input[name=display_name]', 'QATEST'); await page.selectOption('select[name=role]', 'admin');
     await page.fill('input[name=username]', 'qatest'); await page.fill('input[name=password]', 'Navigator2026!!'); await page.fill('input[name=confirm]', 'Navigator2026!!');
     await page.click('button[type=submit]'); await page.waitForSelector('.layout', { timeout: 15000 }); await passRecoveryCode(page); await dismissTour(page);

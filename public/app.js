@@ -504,6 +504,29 @@ export function passkeyGraceText(g) {
 export function passkeyGraceNotice(g) {
   return h('div', { class: 'banner warn', 'data-passkey-grace-notice': '1' }, h('div', {}, passkeyGraceText(g)));
 }
+// SUDS on this device in a browser tab on an iPhone or iPad (1.25.6, J7). Safari deletes all of a site's
+// script-writable storage, IndexedDB included, after seven days of Safari use without a visit to the site (since
+// Safari 13.1); a Home Screen web app is counted on its own. Detected conservatively: iOS, or iPadOS (which reports a
+// Mac with a touch screen), on WebKit, and not opened from the Home Screen. Advice only; nothing is blocked.
+export function iosBrowserTab() {
+  try {
+    const ua = navigator.userAgent || '';
+    const ios = /\b(iPhone|iPad|iPod)\b/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (!ios || !/AppleWebKit\//.test(ua)) return false;
+    return !(navigator.standalone === true || (!!window.matchMedia && window.matchMedia('(display-mode: standalone)').matches));
+  } catch { return false; }
+}
+export const IOS_TAB_REASON = 'On iPhone and iPad, Safari deletes everything a website keeps on the device, records included, after 7 days of using Safari without opening that website.';
+const IOS_TAB_DISMISSED = 'suds.iosTabNoticeDismissed';
+/** While SUDS on this device is used in a Safari tab: one line on every page, dismissed for this session only. */
+function iosTabNotice() {
+  if (!state.local || window.SUDS_STATIC_HOST !== true || !iosBrowserTab()) return;
+  try { if (sessionStorage.getItem(IOS_TAB_DISMISSED) === '1') return; } catch { /* shown */ }
+  const el = banner('In a Safari tab, records can be deleted after 7 days without a visit: add SUDS to your Home Screen.', 'warn',
+    { id: 'ios-safari-tab', compact: true, announceText: `${IOS_TAB_REASON} Add SUDS to your Home Screen (Share, then Add to Home Screen) and use it from there, and keep downloading backups.`,
+      onDismiss: () => { try { sessionStorage.setItem(IOS_TAB_DISMISSED, '1'); } catch { /* back at the next load */ } } });
+  if (el) { el.dataset.iosSafariTab = '1'; el.insertBefore(h('a', { href: 'get-app.html', class: 'btn sm', 'data-ios-home-screen-how': '1' }, 'How'), el.lastChild); }
+}
 export function banner(message, kind = 'warn', { id = message, short = null, compact: always = false, announceText = null, onDismiss = null } = {}) {
   // After the skip link, which stays the first thing a keyboard reaches on every page.
   const host = document.getElementById('banners') || (() => { const b = h('div', { id: 'banners' }); skipLink().after(b); return b; })();
@@ -669,6 +692,7 @@ function wipeLocalDatabase() {
       // The whole store: the sealed database (under an epoch key since 1.9.3), its epoch, the vault holding
       // every account's wrap of its key, and a pre-1.9.3 copy; and any keys 1.11 or earlier left in localStorage.
       t.objectStore('kv').clear();
+      // Closed once the clear is committed: the page reloads next, and this connection must not outlive it (1.25.6).
       t.oncomplete = () => { req.result.close(); resolve(); };
       t.onerror = () => { req.result.close(); reject(t.error); };
     };
@@ -2411,6 +2435,7 @@ export async function loadSession() {
     // Drafts typed by someone else in this tab are not theirs to see; this person's own kept drafts come back.
     claimDrafts();
     if (!state.mfaPending && !state.user.must_change_password) offerKeptDrafts();
+    iosTabNotice();
     // Two-step verification is required of this role but not set up yet. There is a grace period, after which
     // the server refuses every request until it is done -- so say when that is, and where to do it, instead of
     // a vague "please enroll" that reads as advisory right up until the day everything stops working.

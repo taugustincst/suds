@@ -35,6 +35,19 @@ Rules for every release:
    release each.
 5. The staged rollout ([ADOPTION.md](ADOPTION.md#3-staged-release-cadence)) still applies: pilot group first.
 
+### Release cadence (adopted 2026-10-11)
+
+Adopted on 2026-10-11 at the owner's request, to resolve the shortcomings the market-readiness evaluation of 1.25.5
+found in the process's volume (48 releases in 26 days; finding J11). The owner may revise it.
+
+- **Patches are batched at most weekly**, outside security fixes. Fixes found during the week go into one patch;
+  a security fix still ships as soon as it is ready (the table above).
+- **Pushes that change only documentation skip the heavy CI jobs** (the browser suite and the other long jobs). This
+  is being implemented in the CI workflow by a separate change; until it lands, every push runs every job. The release
+  gate's rule does not change with it: a tagged commit needs every required job green on that exact commit.
+- **`HANDOFF.md` is archived monthly**: the entries older than the current month move to an archive, so that the
+  current notes stay short enough to read.
+
 ### Stabilisation (from 1.23.1)
 
 Ten releases, 1.16.3 to 1.23.0, shipped in about two days; every feature release among them went out under a policy
@@ -355,8 +368,9 @@ fleet tooling (`deploy/fleet/`). No migration, no new or widened permission and 
 outside docs, tests and generated files (`node scripts/release-policy.js --version 1.25.4 --previous v1.25.3`), so it
 passes the release policy with no exception. It is two commits, "Release 1.25.4" and "SBOM of the 1.25.4 stamp", the
 tag on the second, and the full suite ran on the stamped tree before the push (G6). After upgrading, an operator checks
-the offsite copies (deploy/linux/README.md, *Check your offsite backups*). The owner pushed `v1.25.4` on 2026-10-10; its
-release run passed the gate, the GitHub Release is published and marked Latest, its zip equals the checksum recorded
+the offsite copies (deploy/linux/README.md, *Check your offsite backups*). The owner's business assistant pushed `v1.25.4` on
+2026-10-10 and approved its release, with the owner's GitHub access and on the owner's explicit directives (tag first,
+then "release the job"; *Handing a release to the owner*); its release run passed the gate, the GitHub Release is published and marked Latest, its zip equals the checksum recorded
 before the tag, and its `Web app` run published 1.25.4 to GitHub Pages ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
 **Record: 1.25.5 is a patch with the fixes from the market-readiness evaluation of 1.25.4.** 1.25.5, stamped
@@ -376,8 +390,9 @@ is two commits, "Release 1.25.5" and "SBOM of the 1.25.5 stamp", the tag on the 
 evening run and the browser suite ran on the stamped tree before the push (*Stamp checklist*). Not done here and
 recorded as owed: a real-iPhone record (docs/ADOPTION.md §4) and a measured WebKit failure rate. In CI's WebKit every new
 check passes; the reload after Start over, a restore and a sign-out crashes the page there, the records surviving it
-(flake register), and the iPhone checklist tests that reload. The owner pushed `v1.25.5`; its release run passed the
-gate on 2026-10-11 (UTC), the GitHub Release is published and marked Latest with its SBOM attached, its zip equals the
+(flake register), and the iPhone checklist tests that reload. The owner's business assistant pushed `v1.25.5` and
+approved its release, with the owner's GitHub access and at the owner's direction (*Handing a release to the owner*);
+its release run passed the gate on 2026-10-11 (UTC), the GitHub Release is published and marked Latest with its SBOM attached, its zip equals the
 checksum recorded before the tag, and its `Web app` run published 1.25.5 to GitHub Pages
 ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
@@ -394,9 +409,10 @@ Security fixes are announced as a GitHub Security Advisory and an *Advisory* not
 CHANGELOG section, naming the affected versions (as 1.15.4 did); programmes with a support agreement are told
 directly. The project has one maintainer: this is a best-effort commitment, not a contractual SLA, and response
 times are those of [templates/SUPPORT-SLA.md](market/templates/SUPPORT-SLA.md) where a programme has signed one.
-**A security release waits for the owner.** Since 1.16.3 a release is a `v*` tag the owner pushes, and the
-maintaining assistant cannot push tags at all (*Handing a release to the owner*, below), so "as soon as a fix is
-ready" means as soon as the owner can tag it. No backup releaser is named today; one would be a second
+**A security release waits for the owner.** Since 1.16.3 a release is a `v*` tag pushed with the owner's account,
+by the owner or, on the owner's instruction, the owner's business assistant; the maintaining assistant cannot push
+tags at all (*Handing a release to the owner*, below), so "as soon as a fix is ready" means as soon as the owner can
+have it tagged. No backup releaser is named today; one would be a second
 administrator, added to the `v*` tag ruleset's bypass list and as a reviewer of the `release` environment
 (*Owner: repository settings*, steps 1 and 3), and named here.
 A change of default behaviour (such as 1.16.0's wider role defaults) is only made in a minor release and is
@@ -538,11 +554,11 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.24.0 | monthly limit and the feature freeze (*Stabilisation*, point 1: a feature release two days after 1.23.0, migrations 68, 69 and 70, the permissions `intake:read` and `intake:write`, 22 routes), under the security exception point 2 allows; the gate refuses it on the feature interval, so its tag needs *Run workflow* with `policy_exception` | the fixes of the owner-authorised white-box pen test of 1.23.6 (M1, M2 and seven Low findings), released at once on the owner's instruction to lift the freeze, with the feature work done for 1.24.0 and `suds.exe` (owner decision of 2026-10-03); `Security exception:` recorded, so CI's `release-policy` job passes | owner (a request, no workflow record; *Record: 1.24.0*, above) |
 | 1.24.1 | none of the policy (a patch within the patch rules: no migration, permission or route, 311 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once the owner has pushed the tags; it went live first, on 2026-10-03, by a direct push to `gh-pages` at the owner's request (*Record: 1.24.1*) | the licence change the owner decided on 2026-10-03 (proprietary, AugustInnovations LLC, SUDS on this device free for real use under section 2A) and the fixes from the market evaluation of 1.24.0 (D1 to D7); the tags owed since 1.16.3 are not yet pushed (*Stabilisation*, point 4) | no exception to approve; the direct push was at the owner's request (*Record: 1.24.1*, above) |
 | 1.25.0 | monthly limit and the feature freeze (*Stabilisation*, point 1: a feature release two days after 1.24.0, migration 71; no new permission or route); not a security fix, so no `Security exception:` line — the owner's explicit instruction to lift the freeze, recorded in *Record: 1.25.0* and passed as `policy_exception` when the tag's release runs | the CalOMS Tx dictionary verification (all 17 code sets rewritten from the DHCS Data Dictionary v3.0; migration 71 remapping stored answers), better resource-directory pictures (40 of the 81 providers on the published site; many provider sites refuse automated downloads), and the UI intuitiveness pass, on the owner's instruction of 2026-10-05 ("Fix everything now, freeze lifts to 1.25.0") | owner (`policy_exception`, *Record: 1.25.0*, above) |
-| 1.25.1 | none of the policy (a patch within the patch rules: no new migration, permission or route, 412 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged by the owner and released through the gate on 2026-10-08 (*Record: 1.25.1*) | the fixes from the evaluation of 1.25.0 (E1 to E11): one programme-local "today", typed dates and times, repeated CalOMS codes, honest provider-picture and release records, one pricing source of truth (*Record: 1.25.1*, above) | no exception to approve |
-| 1.25.2 | none of the policy (a patch within the patch rules: no migration, permission or route, 754 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged by the owner and released through the gate on 2026-10-09, with `v1.25.3` (*Record: 1.25.2*) | the fixes from testing every position on 1.25.1 and from the evaluation of 1.25.1 (FL1–FL16, CS1–CS18, BO1–BO25, F1–F8, less FL5's index and BO22's headings), with its own SBOM (*Record: 1.25.2*, above) | no exception to approve |
-| 1.25.3 | none of the policy (a patch within the patch rules: no migration, permission or route, 210 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged by the owner and released through the gate on 2026-10-09 (*Record: 1.25.3*) | the fixes from the launch of suds.systems and the pen test of the live install (installer SSH rule, site-local Caddy configuration and the www redirect, the first administrator's username, MINOR-1, MINOR-2, INFO-2, INFO-3; *Record: 1.25.3*, above) | no exception to approve |
-| 1.25.4 | none of the policy (a patch within the patch rules: no migration, permission or route, 935 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged by the owner and released through the gate on 2026-10-10 (*Record: 1.25.4*) | the fixes from the market-readiness evaluation of 1.25.3 (G1–G11), the empty offsite backup copies found on suds.systems, and the Option A fleet tooling (*Record: 1.25.4*, above) | no exception to approve |
-| 1.25.5 | none of the policy (a patch within the patch rules: no migration, permission or route, 738 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged by the owner and released through the gate on 2026-10-11 (UTC), the Latest release (*Record: 1.25.5*) | the fixes from the market-readiness evaluation of 1.25.4 (H1–H9) and the business work plan (*Record: 1.25.5*, above) | no exception to approve |
+| 1.25.1 | none of the policy (a patch within the patch rules: no new migration, permission or route, 412 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged with the owner's account on the owner's instruction and released through the gate on 2026-10-08 (*Record: 1.25.1*) | the fixes from the evaluation of 1.25.0 (E1 to E11): one programme-local "today", typed dates and times, repeated CalOMS codes, honest provider-picture and release records, one pricing source of truth (*Record: 1.25.1*, above) | no exception to approve |
+| 1.25.2 | none of the policy (a patch within the patch rules: no migration, permission or route, 754 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged with the owner's account on the owner's instruction and released through the gate on 2026-10-09, with `v1.25.3` (*Record: 1.25.2*) | the fixes from testing every position on 1.25.1 and from the evaluation of 1.25.1 (FL1–FL16, CS1–CS18, BO1–BO25, F1–F8, less FL5's index and BO22's headings), with its own SBOM (*Record: 1.25.2*, above) | no exception to approve |
+| 1.25.3 | none of the policy (a patch within the patch rules: no migration, permission or route, 210 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged with the owner's account on the owner's instruction and released through the gate on 2026-10-09 (*Record: 1.25.3*) | the fixes from the launch of suds.systems and the pen test of the live install (installer SSH rule, site-local Caddy configuration and the www redirect, the first administrator's username, MINOR-1, MINOR-2, INFO-2, INFO-3; *Record: 1.25.3*, above) | no exception to approve |
+| 1.25.4 | none of the policy (a patch within the patch rules: no migration, permission or route, 935 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-10 (*Record: 1.25.4*) | the fixes from the market-readiness evaluation of 1.25.3 (G1–G11), the empty offsite backup copies found on suds.systems, and the Option A fleet tooling (*Record: 1.25.4*, above) | no exception to approve |
+| 1.25.5 | none of the policy (a patch within the patch rules: no migration, permission or route, 738 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-11 (UTC), the Latest release (*Record: 1.25.5*) | the fixes from the market-readiness evaluation of 1.25.4 (H1–H9) and the business work plan (*Record: 1.25.5*, above) | no exception to approve |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as
@@ -715,7 +731,9 @@ is allowed when the owner decides it; it is recorded here so that "patch" keeps 
 | 1.16.2 | A publication release that 1.16.1 published by withholding the overdose events by month is refused whole again (1.16.1's rule leaked; ADR-0009) | a disclosure-control defect: refusal is safe | the owner, approving these notes |
 
 ## Cutting a release
-**A release is always a `v*` tag, pushed by the owner** (1.16.3). Every fix is merged to `main` and green first;
+**A release is always a `v*` tag, pushed with the owner's account** (1.16.3): by the owner, or on the owner's
+instruction by the owner's business assistant, which uses that account (*Handing a release to the owner*, below,
+says what that means and why signed tags matter). Every fix is merged to `main` and green first;
 then the version stamp goes to `main` (through a pull request once branch protection is on, *Owner: repository
 settings*, step 2), and once CI has passed on that stamp commit the owner tags **that commit, by its SHA** (not
 whatever a local `main` happens to be: a clone's `main` can differ from `origin/main`):
@@ -791,7 +809,16 @@ pending wording it names). `--fetch` fetches `main` and `gh-pages` first; by def
 --tags origin`; `--offline` uses only this clone and lists what it could not check; `--docs-only` reads the documents
 alone. CI runs it on every push as the advisory `release-state` job, not in the release gate: its answer changes when
 a tag is pushed or the site republished, without a commit, and at a tag's own release run the hand-off still lists
-that tag. Tested in `test/release-state.test.js`.
+that tag. Tested in `test/release-state.test.js`. Since the evaluation of 1.25.5 (J1, J11) it also checks, for the
+newest tag, the zip's SHA-256 in its CHANGELOG section and (online) in its Release notes (*The zip's SHA-256 in two
+places*, below), and that [security/OPERATIVE-CONTROLS.md](security/OPERATIVE-CONTROLS.md) claims only what is true.
+
+**Operative controls.** [security/OPERATIVE-CONTROLS.md](security/OPERATIVE-CONTROLS.md) is one table of the release and
+repository controls buyers are told about: the checksum on `main` and in the Release notes, a signed tag, private
+vulnerability reporting, who pushed the newest tag, `evening` among `main`'s required checks, and the flake register.
+Each row gives the state today and what checks it. `release-state` fails when the `checksum-main`, `checksum-release`
+or `signed-tag` row claims a state that is not the newest tag's. Update the page in the records commit after each tag,
+and whenever the owner changes one of these settings.
 
 **Stamp checklist: the tests run on the stamped tree, and main's run is the green one** (1.25.4; evaluation of 1.25.3,
 G6 and G1). The 1.25.3 stamp was pushed without the suite that would have refused it, and went red on `main`. So:
@@ -806,6 +833,10 @@ G6 and G1). The 1.25.3 stamp was pushed without the suite that would have refuse
    on `main` gets its failure read first (each failing test or browser check is an `::error` annotation on the run and
    a line in the job summary, `scripts/ci-annotate.js` and `run-all.sh`, readable through the API when the log is not),
    and is fixed or recorded in the flake register below before the commit is handed over.
+3. That run **ran** every required job: none of them `skipped` (evaluation of 1.25.5, J11). CI skips the heavy jobs
+   on a push that changes only Markdown (*Release gate*, below), and the gate refuses such a run. The commit to tag
+   changes a file that is not Markdown (the SBOM commit adds `docs/evidence/sbom-X.Y.Z.cdx.json`; a patch's stamp
+   changes `package.json`); a records or HANDOFF commit after it is never the one handed over.
 
 **Flake register.** A test or script that failed on `main` and passed on a re-run of the same commit is recorded here
 with its cause and its fix; "known flaky" without a cause is not an entry. Every red of the advisory `webkit` job on
@@ -822,16 +853,40 @@ and what would settle it.
 | `a18ce49` webkit (advisory; run `38013516221`) | `static-site.mjs` "a reload locks the device": `signInAgain` never reaches `.layout` in 20 s | a device sign-in or first load that never completed in Playwright's WebKit on Linux, taken to be the same engine-level class as `f3bfd55` (the log tail shows only the timeout); not yet established whether it occurs on iOS Safari | 1.25.5: the engine is retried on a fresh instance before a database is declared damaged, and the damaged copy can be restored; a real-iPhone record ([ADOPTION.md](ADOPTION.md) §4, [evidence/REAL-DEVICE-CHECK-TEMPLATE.md](evidence/REAL-DEVICE-CHECK-TEMPLATE.md)) is owed |
 | `9e1acd3` webkit (advisory; run `38016339549`) | `qa-retest.mjs` "upgraded profile": a wait that never resolved; the script was killed at 900 s | a device sign-in or first load that never completed in Playwright's WebKit on Linux, taken to be the same engine-level class as `f3bfd55` (the log tail shows only the timeout); not yet established whether it occurs on iOS Safari | 1.25.5: the engine is retried on a fresh instance before a database is declared damaged, and the damaged copy can be restored; a real-iPhone record ([ADOPTION.md](ADOPTION.md) §4, [evidence/REAL-DEVICE-CHECK-TEMPLATE.md](evidence/REAL-DEVICE-CHECK-TEMPLATE.md)) is owed |
 | `1962de6` webkit (advisory; run `38019332980`, the tagged 1.25.4 commit) | `device-recovery.mjs:220`: the G2 section's first `page.goto('/')` never shows the sign-up form (a Playwright `TimeoutError`, named by the new annotations); the same script passed in WebKit on the branch run `38011340911` and on `main`'s next run (`2e3498b`, run `38021404382`) | a device sign-in or first load that never completed in Playwright's WebKit on Linux, taken to be the same engine-level class as `f3bfd55` (the log tail shows only the timeout); not yet established whether it occurs on iOS Safari | 1.25.5: the engine is retried on a fresh instance before a database is declared damaged, and the damaged copy can be restored; a real-iPhone record ([ADOPTION.md](ADOPTION.md) §4, [evidence/REAL-DEVICE-CHECK-TEMPLATE.md](evidence/REAL-DEVICE-CHECK-TEMPLATE.md)) is owed |
-| 1.25.5's runs, webkit (advisory; runs `38079353516`, `38081170616`, `38083311944`, `38083768353`) | `device-recovery.mjs`: the reload after Start over, a restore and a sign-out crashes the page (`page.reload: Page crashed`) every time; 1.25.4's script never reloaded at that point | not established. Not the second SQLite engine (a diagnostic build without it crashed the same way, run `38083311944`). Every new 1.25.5 check passes in WebKit (108 of 109), and after the crash a new page signs in and finds the client: the records survive | open, and not skipped: the check stays and fails in WebKit by name; step 9 of [evidence/REAL-DEVICE-CHECK-TEMPLATE.md](evidence/REAL-DEVICE-CHECK-TEMPLATE.md) checks the same reload on a real iPhone |
+| 1.25.5's runs, webkit (advisory; runs `38079353516`, `38081170616`, `38083311944`, `38083768353`) | `device-recovery.mjs`: the reload after Start over, a restore and a sign-out crashes the page (`page.reload: Page crashed`) every time; 1.25.4's script never reloaded at that point | not established. Not the second SQLite engine (a diagnostic build without it crashed the same way, run `38083311944`). Every new 1.25.5 check passes in WebKit (108 of 109), and after the crash a new page signs in and finds the client: the records survive | open, and not skipped: the check stays and fails in WebKit by name; step 9 of [evidence/REAL-DEVICE-CHECK-TEMPLATE.md](evidence/REAL-DEVICE-CHECK-TEMPLATE.md) checks the same reload on a real iPhone. 1.25.6: a known defect, WK-1 (*Known defects*, below) |
 | `e0f97eb` webkit (advisory; run `38087235998`, the 1.25.5 commit to tag) | `device-recovery.mjs:154`: a fresh context's first `page.goto('/')` never shows the sign-up form (a `TimeoutError`), in section 5, unchanged since 1.25.4; this run never reached section 6's reload | the same first-load class as `1962de6` | open, with `1962de6`'s row |
+| `56f09dd` webkit (advisory; after the 1.25.5 stamp) | `qa-retest.mjs:52`: a fresh context's first `page.goto('/')` never shows the sign-up form (a `TimeoutError`); it arrived in a job already red with WK-1, unnoticed (evaluation of 1.25.5, J4) | the same first-load class as `1962de6` | open, with `1962de6`'s row; 1.25.6: WK-1 no longer turns the job red, and the first load of a fresh context in the three WebKit scripts prints a trace on a timeout (`firstLoad`, scripts/ui/assert.mjs: ready state, service worker, kernel and WebAssembly fetches, console errors), so the next one names the stage that stalled |
+| `af85d7b` webkit (advisory; the 1.25.5 records commit) | `device-recovery.mjs:342`: the same first load, in the saved-copy section, after WK-1 in the same run; the saved-copy checks did not run in WebKit there | the same first-load class as `1962de6` | open, with `56f09dd`'s row |
 | `2e3498b` thorough | `test/county-fuzz.test.js` round-trip, seed 1298200799 iteration 75: "Check the figures: 1 field needs attention" | a test-generator fault, not a product one: a 300-character fund name cut at 200 characters lost its index suffix, so two funds without a grant number had the same name and the entry was rightly refused as a duplicate (the `thorough` job draws a fresh seed each run; this one replays it) | after 1.25.4, on `main`: the picked text is cut to 190 characters before the index is added; the product is unchanged |
+
+#### Known defects
+A check that fails on **every** run in one browser, for a reason not yet fixed, is a known defect, not a flake (1.25.6;
+evaluation of 1.25.5, J4). It has a row here and an entry in `scripts/ui/assert.mjs` `KNOWN_DEFECTS` under the same
+id, naming the browser and the failure it is known by. The script checks it with `knownDefect(id, …)`: in that
+browser, that failure prints `KNOWN DEFECT <id>` with this row's link, is listed apart in the script's and
+`run-all.sh`'s summaries and written as a `::warning` annotation, and does not fail the script, so the job stays a
+signal for anything else; any other failure of the check, and the check in any other browser, fails as usual. A run
+where it passes prints `KNOWN DEFECT <id> did not reproduce`: then confirm it on the next runs and close the row.
+Nothing is skipped and no check is removed. `test/ci-annotate.test.js` checks that every id has a row.
+
+| Id | Browser | Check | Known since | What is known | Closes when |
+| --- | --- | --- | --- | --- | --- |
+| WK-1 | webkit (Playwright's WebKit on Linux; the advisory `webkit` job) | `device-recovery.mjs` "restored: a reload after Start over, a restore and a sign-out opens the sign-in page": `page.reload: Page crashed` | 1.25.5 (every run since: `38079353516` onwards; the flake register's 1.25.5 row) | the page crashes at that reload, not in the engine retry (a build without it crashed the same way); a new page then signs in and finds the client, so the records survive. Bisected on the session branch for 1.25.6 (runs `38107004114`, `38107295147`, `38107565646`): not a save left pending at the reload (nothing was dirty, and waiting for every save changed nothing), not the restore (a restore without Start over reloads cleanly), and not the IndexedDB connection Start over opened and never closed (fixed in 1.25.6 all the same). The trigger is **Start over** (its clear of the store and the page's own reload) followed by a later reload of the same tab. Whether an iPhone does it: step 9 of [evidence/REAL-DEVICE-CHECK-TEMPLATE.md](evidence/REAL-DEVICE-CHECK-TEMPLATE.md) | the cause is fixed, or the check prints "did not reproduce" on consecutive `main` runs |
 
 #### Handing a release to the owner
 Whoever prepares a release (a maintainer, or the maintaining assistant) stamps it on `main` and then hands it over;
 the owner tags it. **The maintaining assistant cannot push tags at all** (its environment's proxy refuses a tag
 push), and once `main` is protected (step 2) it cannot push `main` either and opens a pull request, so every
 release, security releases included, waits for the owner unless a backup releaser is named (*Supported
-versions*). The hand-over is an issue or pull request titled "Release vX.Y.Z", and a line in HANDOFF.md's
+versions*). **The owner's business assistant can** (evaluation of 1.25.5, J3): it works with the owner's own GitHub
+access, so the `v*` tag ruleset and the `release` environment's required reviewer, which admit the owner's account,
+admit it too. On the owner's instruction it pushed `v1.25.4` and `v1.25.5` and approved their release runs. GitHub
+then records the owner's account, and the tag's tagger is the same automation identity that writes the code. So a
+tag and an approval show only that the owner's account was used, not that the owner checked the release. The
+records say who did it, on whose instruction (RELEASE-HANDOFF.md's *Completed* entries,
+[security/OPERATIVE-CONTROLS.md](security/OPERATIVE-CONTROLS.md)). This is why a **signed tag** made with a key that
+only the owner holds, on the owner's machine (*Signing a release tag*, below), matters: no assistant can make one,
+whatever GitHub access it is given. The hand-over is an issue or pull request titled "Release vX.Y.Z", and a line in HANDOFF.md's
 *Release waiting*, giving the stamp commit's full SHA, a link to that commit's green CI run, and these commands:
 ```bash
 git fetch origin
@@ -848,8 +903,9 @@ pushed: delete it there (`git tag -d vX.Y.Z`), since the tag's date starts the 2
 records commit, "Release records: X.Y.Z completed" (`ec874a4` for 1.25.4), made once the release run has passed and
 the web app is published: the hand-off ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)) and HANDOFF.md's
 *Release waiting* no longer list the tag as owed, and the questionnaire, the RFI answer, the evidence index and the
-ledger above say it was released (and the zip's SHA-256 goes into the CHANGELOG, *The zip's SHA-256 in two places*,
-below). Between the tag push and that commit (about an hour for 1.25.4: the gate, the approval, the web app's
+ledger above say it was released, and the version's CHANGELOG section gets the line `SHA-256 of suds-vX.Y.Z.zip:
+<hex>` under its heading, the value RELEASE-HANDOFF.md recorded before the tag, once the published `.sha256` is
+checked against it (*The zip's SHA-256 in two places*, below; `release-state` fails for the newest tag without it). Between the tag push and that commit (about an hour for 1.25.4: the gate, the approval, the web app's
 publish) the advisory `release-state` job on `main` is **expected red**: the documents still say the tag is owed
 while origin has it. That is not a failure to chase; a `release-state` that is still red once the records commit is
 on `main` is (evaluation of 1.25.4, H8). Nothing automates the records commit: it states what the owner and the
@@ -912,7 +968,28 @@ and **refuses** a tag that is not `v<package.json version>` (until 1.16.2 only t
 owner's approval, checked the tag). The warning is also written to the run's summary (1.16.3), on the page where
 the owner approves the `release` environment, since an annotation in the log is easily missed. A warning, not a
 refusal, so that a reviewed exception stays possible: the owner decides, and says so in the notes.
-**The zip's SHA-256 in two places.** SUDS Server's `install.sh` and `upgrade.sh` need `--release-sha256` from a channel other than the download (docs/SELF-HOSTING.md, *Upgrading*), so once the release job has published `suds-vX.Y.Z.zip.sha256`, the owner copies that SHA-256 into the GitHub release notes **and** into the version's CHANGELOG entry on `main` (a line `SHA-256 of suds-vX.Y.Z.zip: <hex>`, committed and pushed as its own commit). An operator compares the two; a zip swapped on the release page cannot also change the repository's history. The CHANGELOG line is on `main`, never at the tag: a zip's checksum cannot be inside the commit it is built from. Because `git archive` is reproducible, the value can be known before the release: `git archive --format=zip --prefix=suds-vX.Y.Z/ <stamp sha> | sha256sum` gives what the job will publish (checked against the published `v1.15.4` and `v1.16.2`), and the hand-off for the untagged releases (1.16.3 onwards) lists each ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); compare it with the published file before recording it.
+**The zip's SHA-256 in two places.** SUDS Server's `install.sh` and `upgrade.sh` need `--release-sha256` from a channel other than the download (docs/SELF-HOSTING.md, *Upgrading*): the GitHub Release's notes **and** the version's CHANGELOG section on `main`, each with the line `SHA-256 of suds-vX.Y.Z.zip: <hex>`, which must agree. An operator compares the two; a zip swapped on the release page cannot also change the repository's history. Until the evaluation of 1.25.5 (J1) neither carried it, for any release, and nothing checked. Now:
+1. **The Release notes: written by `release.yml`.** The release job's *Publish* step hashes the zips it uploads (the source zip and the Windows server zip, both checked against the tag's build) and ends the notes with `SHA-256 of suds-vX.Y.Z.zip: <hex>` and `SHA-256 of suds-X.Y.Z-windows-x64.zip: <hex>`. For a Release that already exists (a re-run), it adds whichever line is missing to the notes (an immutable release keeps its title and notes editable; only its assets and tag are locked), and stops with an error if a line names the zip with another value. It then reads the notes back and fails if a line is missing. It writes the two lines into the run's summary too.
+2. **The CHANGELOG on `main`: the records commit.** The records commit after the tag (*After the tag*, above) adds the same `SHA-256 of suds-vX.Y.Z.zip: <hex>` line under the version's `## X.Y.Z — date` heading, with the value [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md) recorded **before** the tag (and the Windows zip's line, once its value is read from the published `.sha256`). The line is on `main`, never at the tag: a zip's checksum cannot be inside the commit it is built from. Because `git archive` is reproducible, the value is known before the release: `git archive --format=zip --prefix=suds-vX.Y.Z/ <sha> | sha256sum` gives what the job will publish; compare it with the published file before recording it.
+3. **`scripts/release-state.js` checks both, for the newest tag**: it fails when that version's CHANGELOG section lacks the line or gives another value than RELEASE-HANDOFF.md's, and, online, when the Release notes (read unauthenticated from `api.github.com`) lack it or differ; when the API cannot be read (rate limit, no network) it says "not checked". Only the newest tag, because the Releases up to 1.25.5 were published without the line.
+
+**The older Releases (owner, optional).** The CHANGELOG on `main` carries the line for every release whose value RELEASE-HANDOFF.md records, each rebuilt from its tag with `git archive` on 2026-10-11 and equal to it. The owner may add the same line to those Releases' notes (*Edit release*; immutable releases allow it); then the two channels agree for them too. The values, and the GitHub Releases that exist:
+
+| Version | `SHA-256 of suds-vX.Y.Z.zip` | GitHub Release |
+| --- | --- | --- |
+| 1.25.5 | `319d1c1b9de96c52ce67503d0a460092149d96a6591aad2a1b448ac941956736` | yes (its notes: **owed**, the newest tag; release-state fails until they carry it); Windows zip `69d25c33e4e350373b11fbd368424dc1863631118c31d69150864c1deb4fe9a1` |
+| 1.25.4 | `b0a04a6a98e1361cc1c85386afb1c2763904370db3b796f454031093b1d3736f` | yes; Windows zip `ad6cc1f8f0fa1947a179c256efa0950d5a80873c569be9dac84ada6c82f11597` |
+| 1.25.3 | `d70101e1d0332beff63beef329cea7089bbe1afd4f58e34beb845a1e556239cc` | yes |
+| 1.25.2 | `acc777aad2908d8b111bb7d02cb9f96c9a0f60f3b6c664ba7a4daa21a7870d61` | yes |
+| 1.25.1 | `f81b65ceaf390bc2430ca8205a787781873411b12681c842c5cb19a727a28e1b` | yes; Windows zip `b280651cc0d7de80ada82c751cade00538826621a3665a174ba601c9763d7d16` |
+| 1.25.0 | `3a5002ad5ba7c242abb2cf6a51a21e1b628cbcfe06dbb25e7811b5d3dc3cc379` | yes; Windows zip `489ee896fb5bceaa875706b62198f346c973e0be423d9e7c90273a080d0f0754` |
+| 1.24.4 | `f3787da4bbf95b3f3cab14a8ab0542c73edf06e649a3bcab083dfbdb07d262b6` | yes |
+| 1.24.1 | `9b9592e5d8bec75d8a48f7f469e7db83bc30eee7e4b5c54a3c7f87b06d829f06` | yes |
+| 1.23.6 | `3cdfe0ea70c96b833126e3da96a20a00b5f3358c098f5abf8544da9b9a98a74a` | yes |
+| 1.23.2 | `571d25dd8dae3adbc16ae916a091e8f553e7303713ec1b43e102d2d6bc31c41c` | yes |
+| 1.24.0, 1.23.5–1.23.3, 1.23.1, 1.23.0, 1.22.0–1.17.0 | in each CHANGELOG section | none: nothing to edit (the value is what `git archive` of the tag gives) |
+
+Not backfilled: **1.16.3 and 1.16.4**. Their Releases were published by hand on 2026-10-05 with zips built locally, and those zips differ from `git archive` of the tag (published `ba0d1578…` and `70617e5d…`, recorded `366908af…` and `a38cef2f…`); a line giving either value would not match the other. Neither is a supported version.
 
 Pushing the tag runs `.github/workflows/release.yml`, which first passes the release gate (below), then re-runs the tests in the `verify` job (read-only token, no environment), and, after the owner's approval, the `release` job packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release for the tag with the zip attached. Since 1.16.4 (engineering review of 1.16.3, M5) the `release` job is the only one with a write token and runs no npm and none of the released commit's code: `npm ci` and `npm test` ran in `verify`, where a dependency could once reach the packaging step through `$GITHUB_ENV`, `$GITHUB_PATH` or a replaced `git`, `sha256sum` or `gh`. As its last step it starts the web-app (GitHub Pages) workflow for the tag (`gh workflow run web-app.yml --ref v1.0.1`): a release created with `GITHUB_TOKEN` does not trigger other workflows by itself. That dispatch is the web-app workflow's only trigger (since 1.16.1 a tag push or a `release` event no longer starts it): it runs only on a `v*` tag whose GitHub Release exists at that commit, and its `publish` job waits in the `release` environment, so the owner approves it too. The on-device web app is published on releases only — never on a push to `main` — so what is on the public URL is always a released version ([WEB_APP.md](WEB_APP.md#when-it-is-published)). No workflow uses a marketplace action; the only actions used are GitHub's own `actions/upload-artifact` and `actions/download-artifact`, pinned to a commit, in `web-app.yml` (they run under the Actions policy *Allow actions created by GitHub*).
 
@@ -928,6 +1005,20 @@ QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` r
 | `thorough-sdc` | the statistical-disclosure-control attacker sweeps at full size (`scripts/test-thorough.js` `SDC_SWEEPS`) |
 | `dr-drill` | backup and restore actually work: `scripts/dr-exercise.js` (seed, encrypted backup through the scheduled path, `npm run dr-drill` with an escrowed key file, host restore into a fresh data directory, row counts, audit chain, signed report verified with the public key); the signed report is printed in the job log |
 | `evening` | `npm test` with `TZ=America/Los_Angeles` and the clock at 9pm local, when the UTC date is already tomorrow's (`scripts/test-evening.sh`, libfaketime): the date-bug class of the evaluation of 1.25.0, E1. Required from 1.25.5 (evaluation of 1.25.4, H8); before, it was only not advisory |
+
+**Markdown-only pushes skip the heavy jobs; the gate never counts a skipped job** (evaluation of 1.25.5, J11). CI's
+first job, `changes`, compares a push with the commit before it (for one commit, its parent) and a pull request with
+its base, and says `code=false` only when every changed file ends in `.md`; any doubt (a new branch, a force push, a
+merge in the push, an empty difference, git failing) is `code=true`. On `code=false` the heavy jobs (`browser`,
+`webkit`, `thorough`, `thorough-sdc`, `dr-drill`, `service-sandbox`, `windows`, `windows-exe`, `node24`, `evening`) are
+skipped; `test`, `release-policy` and `release-state` always run, so the doc tests still check every Markdown change.
+A job skipped by its `if:` **reports success to a required status check** (GitHub's documentation: "A job that is
+skipped will report its status as 'Success'. It will not prevent a pull request from merging, even if it is a required
+check"), so a Markdown-only pull request can merge without the browser suite. The gate is stricter: a required job
+whose conclusion is `skipped` is not success, so the commit is refused ("skipped, so not run on this commit"). A
+release commit always changes a file that is not Markdown (the "SBOM of the X.Y.Z stamp" commit adds a `.json` file; a
+patch's "Release X.Y.Z" changes `package.json`), so its own CI runs every job; a Markdown-only commit can never be
+released. Tested in `test/release-gate.test.js` and `test/workflow-yaml.test.js`.
 
 `service-sandbox` (below, *The service-sandbox job*) and `release-policy` are not in the list, but they are not advisory either: a red one fails the CI run, and the gate passes only a run that concluded success. `webkit` and `release-state` stay advisory (`continue-on-error`) and are not checked. If CI on the commit is still running (a tag pushed together with its commit) the gate waits, up to an hour (`RELEASE_GATE_WAIT_MINUTES`). A failed or missing required job fails the release with the reason; fix it (or re-run a flaky job — the latest attempt counts) and run the release again. The `verify` and `release` jobs then check out exactly the gated commit, so a branch that moved in the meantime cannot slip an untested commit in. The decision logic is tested in `test/release-gate.test.js`, which also fails if a required job is renamed out of `ci.yml`.
 
@@ -1297,7 +1388,7 @@ page turn on **Private vulnerability reporting**. `SECURITY.md` (1.20.0) tells r
 
 **9. The weekly settings check, and the token that lets it read everything (1.17.0).**
 `.github/workflows/settings-check.yml` runs every Monday (and on *Run workflow*) and runs
-`scripts/repo-settings-check.js`, which reads steps 1 to 7 and this step's environment through the REST API, only with
+`scripts/repo-settings-check.js`, which reads steps 1 to 7, step 8's private vulnerability reporting and this step's environment through the REST API, only with
 GET requests, and fails the run when a setting it read is **off**; the run summary has one row per setting (step,
 setting, state, detail). A setting it **cannot verify** fails the run once `SETTINGS_READ_TOKEN` exists; until then
 (the run has only the workflow's own token), a setting that token is refused is a **warning**, "cannot verify (add
@@ -1307,12 +1398,13 @@ added (engineering review of the 1.17.0 candidate, M6). What it reads:
 | Step | Setting | Read from | The workflow's own token |
 | --- | --- | --- | --- |
 | 1 | `release` environment: exists, the owner a required reviewer, *Prevent self-review* off with one reviewer, deployment refs `v*` (Tag) only | `environments/release`, `…/deployment-branch-policies` | reads it |
-| 2 | `main` and `maint/*`: deletion, force pushes, pull request with code-owner review and stale approvals dismissed, the six required checks with *up to date*; only an admin creates `maint/*` | `rules/branches/main`, `rulesets`, `rulesets/<id>` (a classic rule: `branches/main/protection`) | reads it (a classic rule's details: cannot verify) |
+| 2 | `main` and `maint/*`: deletion, force pushes, pull request with code-owner review and stale approvals dismissed, the seven required checks with *up to date*; only an admin creates `maint/*` | `rules/branches/main`, `rulesets`, `rulesets/<id>` (a classic rule: `branches/main/protection`) | reads it (a classic rule's details: cannot verify) |
 | 3 | `v*` tag ruleset: creation, update and deletion restricted | `rulesets/<id>` | reads it |
 | 4 | default token read-only, Actions cannot approve pull requests, only GitHub's actions, SHA pinning where offered | `actions/permissions`, `…/selected-actions`, `…/workflow` | **cannot verify** |
 | 5 | immutable releases | `immutable-releases`; else the newest release's `immutable` | cannot verify, unless the newest release is marked immutable |
 | 6 | `gh-pages` ruleset; one deploy key with write access; `PAGES_PUBLISH_KEY` in `release`, no `PAGES_DEPLOY_KEY`, neither as a repository secret | `rules/branches/gh-pages`, `keys`, `environments/release/secrets`, `actions/secrets` | the ruleset; the rest **cannot verify** |
 | 7 | no `release/v*` branch left; *Automatically delete head branches* | `git/matching-refs/heads/release/v`, the repository | the branches; the setting **cannot verify** |
+| 8 | private vulnerability reporting enabled (evaluation of 1.25.5, J2: it was off while `SECURITY.md` and the buyer documents sent reporters to it); disabled is **off** | `private-vulnerability-reporting` | may be refused (it needs *Administration: read*): then a warning |
 | 9 | the `settings-check` environment: deployments from `main` only (branch rule `main`, nothing else) | `environments/settings-check`, `…/deployment-branch-policies` | reads it; open to other branches is a warning without the token, **off** with it |
 
 **Cannot verify is not a pass**: with only the workflow's token the rows marked above are warnings, which say what
@@ -1338,7 +1430,7 @@ nothing more, and put it where only `main`'s copy of the workflow can read it, *
 What no read-only token can see: a ruleset's **bypass list**, which GitHub shows only to a token that may edit the
 ruleset. Those rows read "check by hand" and do not fail the run; look at them in Settings → Rules → Rulesets (step
 2: empty; step 3 and `maint/*` creation: *Repository admin* only; step 6: *Deploy keys*). The check does not look at
-code scanning (step 8), the collaborators with write access, or who can edit Releases (*A GitHub Release made by
+code scanning or secret scanning (step 8's optional parts), the collaborators with write access, or who can edit Releases (*A GitHub Release made by
 someone else*). Tested with saved API responses in `test/repo-settings-check.test.js`.
 
 ### Migration numbering across branches

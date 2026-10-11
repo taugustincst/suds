@@ -141,6 +141,9 @@ staging VM of the same image with `--dry-run`, then for real (docs/SELF-HOSTING.
 
 Downloads without internet access: fetch `node-<v>-linux-x64.tar.xz` and `caddy_<v>_linux_amd64.tar.gz` (versions in
 `pins`) and the release zip elsewhere, copy them over, and pass `--node-tarball`, `--caddy-tarball`, `--source` and
-`--release-sha256` (from the GitHub Release notes and the version's CHANGELOG section on `main`, which must agree —
-not the tagged commit's own CHANGELOG, which cannot hold the checksum of a zip built from it); each is still checked
+`--release-sha256` (from the version's CHANGELOG section on `main`: a line `SHA-256 of suds-vX.Y.Z.zip: <hex>`, added
+by the records commit after each tag, from 1.25.5 on, with older values backfilled where recorded; and from the
+GitHub Release notes, where the release job writes the same line from 1.25.6 (for earlier releases the owner may add
+it); where both carry it they must agree, and `docs/evidence/RELEASE-HANDOFF.md` on `main` also records it — never
+the tagged commit's own CHANGELOG, which cannot hold the checksum of a zip built from it); each is still checked
 against its pinned or given checksum. Every path option must be a plain absolute path (letters, digits, `. _ / -`).

@@ -1,6 +1,6 @@
 'use strict';
 // Scheduled check of the repository settings docs/RELEASE.md asks the owner to make ("Owner: repository settings",
-// steps 1 to 7): until 1.17.0 they were written down and assumed, and three releases went out with none of them in
+// steps 1 to 7, and step 8's private vulnerability reporting since the evaluation of 1.25.5, J2): until 1.17.0 they were written down and assumed, and three releases went out with none of them in
 // force while CI said nothing (engineering reviews of 1.16.1 M2, 1.16.2 L5, 1.16.3 L6). This reads them through the
 // REST API with a read-only token and fails when a setting is off, or cannot be read.
 //
@@ -70,7 +70,8 @@ async function collect(get) {
   for (const p of ['rules/branches/gh-pages', 'environments/release', 'environments/release/deployment-branch-policies',
     'environments/settings-check', 'environments/settings-check/deployment-branch-policies',
     'environments/release/secrets?per_page=100', 'actions/secrets?per_page=100', 'actions/permissions', 'actions/permissions/workflow',
-    'immutable-releases', 'releases/latest', 'keys?per_page=100', 'git/matching-refs/heads/maint/', 'git/matching-refs/heads/release/v']) await read(p);
+    'immutable-releases', 'releases/latest', 'keys?per_page=100', 'git/matching-refs/heads/maint/', 'git/matching-refs/heads/release/v',
+    'private-vulnerability-reporting']) await read(p);
   const perms = data['actions/permissions'];
   if (perms.status === 200 && perms.body && perms.body.allowed_actions === 'selected') await read('actions/permissions/selected-actions');
   return data;
@@ -264,6 +265,11 @@ function evaluateAll(data, ctx) {
   else add('7', 'No `release/v*` branches', (rel.body || []).length ? 'off' : 'ok', (rel.body || []).length ? `${rel.body.length} left (each carries the workflow files of its day)` : '');
   if (ok200(repo) && typeof repo.body.delete_branch_on_merge === 'boolean') add('7', 'Automatically delete head branches', repo.body.delete_branch_on_merge ? 'ok' : 'off', '');
   else add('7', 'Automatically delete head branches', 'unverified', ok200(repo) ? `not shown to this token: needs a token with ${WHY.admin}` : unreadable(repo));
+  // ---- Step 8: private vulnerability reporting (not optional: SECURITY.md and the buyer documents send reporters to it;
+  // evaluation of 1.25.5, J2: it was off while they did). Code scanning and secret scanning stay optional and unchecked.
+  const pvr = r('private-vulnerability-reporting');
+  if (ok200(pvr) && pvr.body && typeof pvr.body.enabled === 'boolean') add('8', 'Private vulnerability reporting', pvr.body.enabled ? 'ok' : 'off', pvr.body.enabled ? 'enabled' : 'disabled: reporters have no private channel (Settings → Code security → Private vulnerability reporting → Enable; owner)');
+  else add('8', 'Private vulnerability reporting', 'unverified', ok200(pvr) ? 'the answer did not say whether it is enabled' : unreadable(pvr, WHY.admin));
   // ---- Step 9: the settings-check environment, limited to main before it holds the token ----
   // The workflow's `environment: settings-check` makes the environment on its first run, open to every branch: a
   // secret added to it then would reach a branch's edited copy of the workflow. Limited to `main` first (RELEASE.md

@@ -74,6 +74,11 @@ backup and restore, the damaged-copy path, the home-screen install) are
 yet, and the advisory WebKit job's sign-in failures on `main` ([RELEASE.md](RELEASE.md), *Flake register*) make it
 owed before SUDS on this device is recommended for iPhones beyond a pilot.
 
+**On an iPhone, SUDS on this device must be added to the Home Screen** (Safari → Share → *Add to Home Screen*) and
+opened from that icon. Safari deletes a site's stored data, records included, after seven days of Safari use without
+a visit to the site, so records kept in a Safari tab can be lost after a week away. Make the Home Screen step part of
+setting up every iPhone, and keep a current passphrase backup on another device.
+
 ## 5. Drills
 
 | Drill | How often | What proves it worked |

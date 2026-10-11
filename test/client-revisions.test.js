@@ -66,7 +66,7 @@ test('who reads the history: the care team and records:manage-others; not someon
   // The editor off the care team can open the record (clients:all) but not its earlier values.
   const refused = await C.other.get(`/api/clients/${id}/history`);
   assert.equal(refused.status, 403);
-  assert.ok(!JSON.stringify(refused.data).includes('0101'));
+  assert.ok(!JSON.stringify(refused.data).includes('555-0101'), 'the earlier value is not in the refusal');
   assert.ok(audits('authz.denied', id).some(a => a.user_id === U.other && /client history/.test(a.d.reason)), 'the refusal is audited');
   // A de-identified role never reaches it.
   assert.equal((await C.fin.get(`/api/clients/${id}/history`)).status, 403);

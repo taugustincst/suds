@@ -132,10 +132,19 @@ test('an image whose seal no longer checks is refused as damaged (integrity), an
   assert.equal(r.status, 503, JSON.stringify(r.data));
   assert.equal(r.data.deviceDamaged, true); assert.equal(r.data.integrity, true);
   assert.match(r.data.error, /failed its integrity check/); assert.match(r.data.error, /Nothing has been deleted/);
+  // 1.25.6, J6: AES-GCM is all or nothing, so no saved copy of this image can be restored: it is not offered, only a
+  // backup is, and Start over is said only to someone who has one.
+  assert.match(r.data.error, /only a backup can bring the records back/);
+  assert.doesNotMatch(r.data.error, /save the damaged copy|the copy you saved/i, 'the saved copy is not offered as a way back');
+  assert.match(r.data.error, /If you have a backup: Start over.*Restore from a backup.*If you have no backup, do not Start over/s);
+  assert.equal(r.data.error.split('Start over').length - 1, 2, 'Start over is named only for those with a backup, and as what not to do without one');
   assert.ok(seen.some((x) => /could not be decrypted/.test(x)), seen.join(' / '));
   assert.equal(L.phase(), 'locked');
   assert.ok(same((await getKey('damaged_db')).image.ct, flipped.ct), 'the altered image is kept');
-  assert.ok(same(Buffer.from(JSON.parse(await L.damagedCopy()).image.ct.b64, 'base64'), flipped.ct), 'and offered as a file');
+  assert.ok(same(Buffer.from(JSON.parse(await L.damagedCopy()).image.ct.b64, 'base64'), flipped.ct), 'and still readable through the kernel (the sign-in page does not offer it)');
+  const again = await quietly(() => signIn());
+  assert.equal(again.r.data.repeated, true); assert.equal(again.r.data.integrity, true);
+  assert.match(again.r.data.error, /Nothing has been deleted\. Only a backup can bring the records back/, 'the same damage again: no "close the browser" step');
   await putKey(key, stored);
   assert.equal((await signIn()).status, 200, 'the good image opens again');
   await call('POST', '/api/auth/logout', {});

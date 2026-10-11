@@ -2,7 +2,8 @@ name: Repository settings
 # Checks, weekly and on demand, that the repository settings docs/RELEASE.md asks the owner to make are in force
 # ("Owner: repository settings", steps 1 to 7): the rulesets for main, maint/*, v* tags and gh-pages, the `release`
 # environment's reviewers and deployment refs, immutable releases, the default workflow token and allowed actions,
-# the deploy key and its secret, and stale release branches. It fails, with a table in the run summary, when a
+# the deploy key and its secret, stale release branches, and (step 8) private vulnerability reporting, which
+# SECURITY.md sends reporters to (evaluation of 1.25.5, J2: it was off). It fails, with a table in the run summary, when a
 # setting is off or cannot be read (scripts/repo-settings-check.js; 1.17.0, engineering reviews of 1.16.1 M2,
 # 1.16.2 L5 and 1.16.3 L6). Uses no action and changes nothing: every request is a GET.
 # Until SETTINGS_READ_TOKEN exists, what the workflow's own token cannot read is a warning, not a failure, so the run

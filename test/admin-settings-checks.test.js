@@ -100,16 +100,44 @@ test('an offsite folder on the same disk as the data is saved with a warning, an
     assert.equal(st.level, 'warn'); assert.match(st.detail, /same disk as the data/);
     const hard = (await admin.get('/api/admin/security/hardening')).data.items.find((i) => i.id === 'backups');
     assert.equal(hard.done, false); assert.match(hard.why, /same disk as the data, so it is not an offsite copy/); assert.match(hard.status, /same disk/);
-    // Another filesystem (a tmpfs here) is a copy off the data's disk: no warning, and the item is done.
+    // Another filesystem that is in memory (/dev/shm, a tmpfs) is no offsite copy either (1.25.6, J13): it does not
+    // survive a restart. Saved with a warning, as the same disk is; Security status warns and the item is not done.
     let other = null; try { other = fs.mkdtempSync('/dev/shm/suds-offsite-'); } catch {}
-    if (other && fs.statSync(other).dev !== fs.statSync(data).dev) {
+    if (other && fs.statSync(other).dev !== fs.statSync(data).dev && require('../server/scheduled-backup').mountType(fs.realpathSync(other)) === 'tmpfs') {
       try {
         const o = await put({ backup_offsite_dir: other });
-        assert.equal(o.status, 200); assert.equal(o.data.warnings, undefined);
-        assert.equal((await admin.get('/api/admin/security/status')).data.items.find((i) => i.name === 'Offsite copy').level, 'ok');
-        assert.equal((await admin.get('/api/admin/security/hardening')).data.items.find((i) => i.id === 'backups').done, true);
+        assert.equal(o.status, 200, JSON.stringify(o.data));
+        assert.match((o.data.warnings || []).join(' '), /is in memory \(tmpfs\), so it does not survive a restart and is not an offsite copy/);
+        const st2 = (await admin.get('/api/admin/security/status')).data.items.find((i) => i.name === 'Offsite copy');
+        assert.equal(st2.level, 'warn'); assert.match(st2.detail, /in memory \(tmpfs\)/);
+        const hard2 = (await admin.get('/api/admin/security/hardening')).data.items.find((i) => i.id === 'backups');
+        assert.equal(hard2.done, false); assert.match(hard2.why, /in memory \(tmpfs\), so it does not survive a restart/); assert.match(hard2.status, /copy in memory/);
       } finally { fs.rmSync(other, { recursive: true, force: true }); }
     } else if (other) fs.rmSync(other, { recursive: true, force: true });
     assert.equal((await H.client().get('/api/admin/security/status')).status, 401, 'and none of it without signing in');
   } finally { await put({ backup_offsite_dir: '', backup_schedule_hours: '0' }); fs.rmSync(sameDisk, { recursive: true, force: true }); }
+});
+
+// 1.25.6, J13: which filesystem holds a folder, read from /proc/self/mountinfo with no native code: the longest mount
+// point that contains it, the later of two at the same point (a mount over a mount), escaped spaces decoded.
+test('mountType finds the filesystem of a path from mountinfo: the longest mount point, the top one of an overmount', () => {
+  const { mountType } = require('../server/scheduled-backup');
+  const info = [
+    '22 1 8:1 / / rw,relatime shared:1 - ext4 /dev/sda1 rw',
+    '30 22 0:25 / /dev/shm rw,nosuid,nodev shared:4 - tmpfs tmpfs rw',
+    '31 22 0:26 / /srv/suds-offsite rw,relatime - tmpfs tmpfs rw,size=65536k',
+    '32 22 0:27 / /mnt/back\\040up rw,relatime shared:9 - nfs4 nas:/export rw',
+    '33 22 0:28 / /mnt/ram rw - ramfs ramfs rw',
+    '34 22 8:17 / /mnt/disk rw - xfs /dev/sdb1 rw',
+    '35 34 0:29 / /mnt/disk rw - tmpfs tmpfs rw',
+    '36 22 8:33 / /srv/suds-offsite-real rw - ext4 /dev/sdc1 rw',
+  ].join('\n');
+  assert.equal(mountType('/var/lib/suds', info), 'ext4');
+  assert.equal(mountType('/dev/shm/suds-offsite', info), 'tmpfs');
+  assert.equal(mountType('/srv/suds-offsite', info), 'tmpfs');
+  assert.equal(mountType('/srv/suds-offsite-real/x', info), 'ext4', 'a mount point is a whole path component, not a prefix of a name');
+  assert.equal(mountType('/mnt/back up/suds', info), 'nfs4', 'an escaped space in a mount point');
+  assert.equal(mountType('/mnt/ram/x', info), 'ramfs');
+  assert.equal(mountType('/mnt/disk/x', info), 'tmpfs', 'the mount on top of another at the same point');
+  assert.equal(mountType('/x', ''), null);
 });

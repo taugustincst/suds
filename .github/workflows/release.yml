@@ -395,7 +395,14 @@ jobs:
           # Who released it: the account that pushed the tag or dispatched the workflow (and, on a re-run, who re-ran it).
           by="Released by @${RELEASE_ACTOR} (${GITHUB_EVENT_NAME}, run ${GITHUB_RUN_ID})"
           if [ -n "${RELEASE_TRIGGERING_ACTOR}" ] && [ "${RELEASE_TRIGGERING_ACTOR}" != "${RELEASE_ACTOR}" ]; then by="${by}, re-run by @${RELEASE_TRIGGERING_ACTOR}"; fi
-          notes="${notes:-See CHANGELOG.md}"$'\n\n'"---"$'\n'"${by}."
+          # The zips' SHA-256, one line each (evaluation of 1.25.5, J1): the Release notes are one of the two channels
+          # upgrade.sh's --release-sha256 is taken from; the other is the version's CHANGELOG section on main, where the
+          # records commit adds the same line (a zip's checksum cannot be inside the commit it is built from).
+          # scripts/release-state.js compares the two for the newest tag. Hashed from the files this job uploads, which
+          # for an existing Release were checked byte for byte against its assets above.
+          src_line="SHA-256 of suds-$ver.zip: $(sha256sum "$RUNNER_TEMP/pkg/suds-$ver.zip" | cut -d' ' -f1)"
+          win_line="SHA-256 of suds-${ver#v}-windows-x64.zip: $(sha256sum "$RUNNER_TEMP/pkg/suds-${ver#v}-windows-x64.zip" | cut -d' ' -f1)"
+          notes="${notes:-See CHANGELOG.md}"$'\n\n'"${src_line}"$'\n\n'"${win_line}"$'\n\n'"---"$'\n'"${by}."
           cd "$RUNNER_TEMP/pkg"
           # A published file is never replaced (until 1.16.1 a re-run uploaded over them): the check above said what
           # is missing, and refused a release that is not this workflow's or whose files are not the tag's.
@@ -415,7 +422,21 @@ jobs:
           # A draft this workflow left behind (a create interrupted before it published) is published now that its
           # files are checked (engineering review of 1.16.3, L1); a draft anyone else made was refused above.
           if [ "${PUBLISH_DRAFT}" = "true" ]; then gh release edit "$ver" --draft=false "$latest_flag"; fi
+          # A Release made before this run (a re-run, or one an older release.yml made) may lack the checksum lines: they
+          # are added to its notes, which an immutable release keeps editable. A line naming a zip with another value is
+          # never overwritten: it stops the job, since one of the two is not this release's zip.
+          have="$(gh release view "$ver" --json body --jq .body | tr -d '\r')"
+          add=""
+          for l in "${src_line}" "${win_line}"; do
+            if grep -qxF -- "$l" <<< "$have"; then continue; fi
+            if grep -qF -- "${l%%: *}:" <<< "$have"; then echo "::error::The notes of the Release $ver give another value than '${l}', the file built from the tag: find out which is right before anyone installs it"; exit 1; fi
+            add="${add}"$'\n\n'"${l}"
+          done
+          if [ -n "$add" ]; then gh release edit "$ver" --notes "${have}${add}"; fi
+          have="$(gh release view "$ver" --json body --jq .body | tr -d '\r')"
+          for l in "${src_line}" "${win_line}"; do grep -qxF -- "$l" <<< "$have" || { echo "::error::The notes of the Release $ver do not carry '${l}'"; exit 1; }; done
           echo "Published https://github.com/${GITHUB_REPOSITORY}/releases/tag/$ver"
+          { echo "### The zips' SHA-256 (the records commit adds the same lines to the ${ver#v} section of CHANGELOG.md on main)"; echo '```'; echo "${src_line}"; echo "${win_line}"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: What is published is this workflow's release, with the files built from the tag
         run: node "$RUNNER_TEMP/release-existing.js" --tag "${GITHUB_REF_NAME}" --dir "$RUNNER_TEMP/pkg" --repo "${GITHUB_REPOSITORY}" --after-publish
       # Only after the tests passed and the release exists. A release (or tag) this workflow creates with

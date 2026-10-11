@@ -13002,6 +13002,27 @@ var require_scheduled_backup = __commonJS({
     var FILE_RE2 = /^suds-\d.*\.db\.enc$/;
     var SNAP_RE = /^suds-snap-.*\.db\.enc$/;
     var OFFSITE_MISSING = "offsite directory does not exist (is the share mounted?)";
+    var within = (child, parent) => child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
+    function mountType(p, mountinfo = null) {
+      if (mountinfo === null) {
+        if (proc.platform !== "linux") return null;
+        try {
+          mountinfo = fs.readFileSync("/proc/self/mountinfo", "utf8");
+        } catch {
+          return null;
+        }
+      }
+      let best = null;
+      for (const line of mountinfo.split("\n")) {
+        const f = line.split(" ");
+        const dash = f.indexOf("-", 6);
+        if (f.length < 5 || dash < 0 || !f[dash + 1]) continue;
+        const point = f[4].replace(/\\([0-7]{3})/g, (_, o) => String.fromCharCode(parseInt(o, 8)));
+        if (within(p, point) && (!best || point.length >= best.point.length)) best = { point, type: f[dash + 1] };
+      }
+      return best ? best.type : null;
+    }
+    var VOLATILE_FS = /* @__PURE__ */ new Set(["tmpfs", "ramfs"]);
     function offsitePlacement(dir) {
       const real = (p) => {
         let r;
@@ -13012,17 +13033,19 @@ var require_scheduled_backup = __commonJS({
         }
         return proc.platform === "win32" ? r.toLowerCase() : r;
       };
-      const within = (child, parent) => child === parent || child.startsWith(parent.endsWith(path.sep) ? parent : parent + path.sep);
       const a = real(dir);
       const data = real(config2.dataDir);
       const inside = within(a, data) || within(data, a);
+      const type = inside ? null : mountType(a);
+      const volatile = VOLATILE_FS.has(type);
       let sameDisk = false;
       try {
-        sameDisk = !inside && fs.statSync(a).dev === fs.statSync(data).dev;
+        sameDisk = !inside && !volatile && fs.statSync(a).dev === fs.statSync(data).dev;
       } catch {
       }
       return {
         inside: inside ? "is inside the data directory (or contains it), so it is not an offsite copy: choose a share on another disk or machine" : null,
+        volatile: volatile ? `is in memory (${type}), so it does not survive a restart and is not an offsite copy` : null,
         sameDisk: sameDisk ? "is on the same disk as the data, so it is not an offsite copy: a failed disk takes both" : null
       };
     }
@@ -13313,7 +13336,7 @@ var require_scheduled_backup = __commonJS({
       }
       return Math.min(files.length, retain);
     }
-    module.exports = { runIfDue, run: run2, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, copyVerified, repairOffsite, prunePartials, offsitePlacement, newest, copyProblem, FILE_RE: FILE_RE2, SNAP_RE };
+    module.exports = { runIfDue, run: run2, runHeld, settings, firstRunPending, rpo, snapshot, snapshotIfDue, copyVerified, repairOffsite, prunePartials, offsitePlacement, mountType, newest, copyProblem, FILE_RE: FILE_RE2, SNAP_RE };
   }
 });
 
@@ -24476,7 +24499,8 @@ var require_security_status = __commonJS({
       const offNewest = offsite ? sb.newest(offsite).newest : null;
       const place = offsite ? sb.offsitePlacement(offsite) : {};
       const offBad = place.inside ? `This folder ${place.inside}.` : /offsite copy failed/.test(lastStatus) ? lastStatus : offNewest && sb.copyProblem(offNewest.file, offNewest.size);
-      add("Backups and recovery", "Offsite copy", !offsite ? "warn" : offBad ? "bad" : place.sameDisk ? "warn" : "ok", offsite ? offsite : "not configured", offsite ? offBad || (place.sameDisk ? `This folder ${place.sameDisk}. Point it at a mounted share on another host or site.` : "Each scheduled backup is copied here after it is verified, and the copy is checked against it (size and SHA-256).") : "Set an offsite directory (a mounted share on another host or site).", "server/scheduled-backup.js");
+      const notOff = place.volatile || place.sameDisk;
+      add("Backups and recovery", "Offsite copy", !offsite ? "warn" : offBad ? "bad" : notOff ? "warn" : "ok", offsite ? offsite : "not configured", offsite ? offBad || (notOff ? `This folder ${notOff}. Point it at a mounted share on another host or site.` : "Each scheduled backup is copied here after it is verified, and the copy is checked against it (size and SHA-256).") : "Set an offsite directory (a mounted share on another host or site).", "server/scheduled-backup.js");
       const drill = require_dr_drill().lastDrill();
       const drillAge = drill ? ageDays(drill.at) : null;
       const firstDrill = drill ? null : require_dr_drill().firstDrillPending();
@@ -26139,8 +26163,8 @@ var require_admin = __commonJS({
             if (k === "backup_offsite_dir" && v !== "" && !config2.local) {
               const problem = offsiteDirProblem(v);
               if (problem) throw badRequest(`backup_offsite_dir ${problem}`, { fields: { backup_offsite_dir: problem } });
-              const sameDisk = require_scheduled_backup().offsitePlacement(v).sameDisk;
-              if (sameDisk) warnings.push(`The offsite folder ${v} ${sameDisk}.`);
+              const place = require_scheduled_backup().offsitePlacement(v);
+              if (place.volatile || place.sameDisk) warnings.push(`The offsite folder ${v} ${place.volatile || place.sameDisk}.`);
             }
             if (k === "scim_group_roles" && v !== "") v = require_scim().normaliseGroupRoles(v);
             if (k === "programme_profile" && !require_programme().PROFILES[v]) throw badRequest(`programme_profile must be one of ${Object.keys(require_programme().PROFILES).join(", ")}`, { fields: { programme_profile: "choose a program profile" } });
@@ -49759,13 +49783,13 @@ var require_hardening = __commonJS({
         const offsite = db3.getSetting("backup_offsite_dir", "") || "";
         const failing = /offsite copy failed/.test(db3.getSetting("last_scheduled_backup_status", "") || "");
         const place = offsite ? require_scheduled_backup().offsitePlacement(offsite) : {};
-        const notOff = place.inside || place.sameDisk;
+        const notOff = place.inside || place.volatile || place.sameDisk;
         add({
           id: "backups",
           title: hours ? "Copy each backup off this server" : "Turn on scheduled backups",
           done: !!(hours && offsite) && !failing && !notOff,
           why: !hours ? "Nothing is backing this database up automatically. Set how often (every 4 hours is the production default), and a folder on another machine for a copy." : !offsite ? `Backups run every ${hours} hour${hours === 1 ? "" : "s"}, but only onto this server's own disk: a failed disk or a stolen server takes them with it. Name a mounted network share or drive for a second copy.` : notOff ? `The offsite folder ${offsite} ${notOff}. Name a mounted network share or a drive in another place.` : failing ? `The last backup's copy to ${offsite} failed: ${db3.getSetting("last_scheduled_backup_status", "")}` : `Every ${hours} hour${hours === 1 ? "" : "s"}, with a copy in ${offsite}.`,
-          status: !hours ? "off" : !offsite ? `every ${hours} h, local only` : notOff ? `every ${hours} h, ${place.inside ? "copy inside the data directory" : "copy on the same disk"}` : failing ? `every ${hours} h, offsite copy failing` : `every ${hours} h, copied offsite`,
+          status: !hours ? "off" : !offsite ? `every ${hours} h, local only` : notOff ? `every ${hours} h, ${place.inside ? "copy inside the data directory" : place.volatile ? "copy in memory (tmpfs)" : "copy on the same disk"}` : failing ? `every ${hours} h, offsite copy failing` : `every ${hours} h, copied offsite`,
           action: { label: hours ? "Set the offsite folder" : "Set up backups", href: settingsLink("backups", hours ? "backup_offsite_dir" : "backup_schedule_hours") }
         });
       }
@@ -57273,7 +57297,14 @@ async function damagedDevice(sealed, err2, { integrity = false } = {}) {
   } catch (e) {
     reportError(e);
   }
-  const found = integrity ? ": the copy stored in this browser failed its integrity check (it has changed since it was saved)" : again ? " again: the copy stored in this browser is damaged" : ". This may be this browser rather than the records";
+  if (integrity) {
+    return new import_http2.HttpError(
+      503,
+      `The records on this device could not be opened: the copy stored in this browser failed its integrity check (it has changed since it was saved). Nothing has been deleted. ${again ? "Only" : "Close the browser completely and log in again. If it still does not open, only"} a backup can bring the records back: the copy here cannot be repaired, and a saved copy of it cannot be restored. If you have a backup: Start over on this device, then Restore from a backup (or restore it in another browser). If you have no backup, do not Start over: it erases these records for good.`,
+      { deviceDamaged: true, locked: true, integrity, repeated: again }
+    );
+  }
+  const found = again ? " again: the copy stored in this browser is damaged" : ". This may be this browser rather than the records";
   return new import_http2.HttpError(
     503,
     `The records on this device could not be opened${found}. Nothing has been deleted, and a copy is kept on this device. First save the damaged copy${again ? " if you have not" : ", then close the browser completely and log in again"}. If it still does not open, use Restore from a backup with your latest backup or the copy you saved: in another browser, or in this one after Start over on this device.`,

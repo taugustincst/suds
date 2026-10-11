@@ -31,9 +31,17 @@ function evaluate(sha, runs, jobsByRun, required = REQUIRED_JOBS) {
     if (run.conclusion !== 'success') { problems.push(`run ${run.id} concluded ${run.conclusion} (${run.html_url || ''})`); continue; }
     const jobs = jobsByRun[run.id] || [];
     const missing = required.filter((n) => !jobs.some((j) => j.name === n));
-    const failed = required.filter((n) => jobs.some((j) => j.name === n && j.conclusion !== 'success'));
-    if (!missing.length && !failed.length) return { decision: 'pass', reason: `CI run ${run.id} succeeded for ${sha}, with ${required.join(', ')} all green`, run };
-    problems.push(`run ${run.id}: ${[missing.length ? `missing job(s) ${missing.join(', ')}` : '', failed.length ? `job(s) not successful: ${failed.join(', ')}` : ''].filter(Boolean).join('; ')}`);
+    // A required job skipped by its `if:` (ci.yml's `changes` job found only Markdown changed; evaluation of 1.25.5,
+    // J11) did not run, so it proved nothing: it is not success here, although GitHub reports a skipped job to a
+    // required status check as success. A Markdown-only commit can therefore never be released.
+    const skipped = required.filter((n) => jobs.some((j) => j.name === n && j.conclusion === 'skipped'));
+    const failed = required.filter((n) => !skipped.includes(n) && jobs.some((j) => j.name === n && j.conclusion !== 'success'));
+    if (!missing.length && !failed.length && !skipped.length) return { decision: 'pass', reason: `CI run ${run.id} succeeded for ${sha}, with ${required.join(', ')} all green`, run };
+    problems.push(`run ${run.id}: ${[
+      missing.length ? `missing job(s) ${missing.join(', ')}` : '',
+      failed.length ? `job(s) not successful: ${failed.join(', ')}` : '',
+      skipped.length ? `job(s) skipped, so not run on this commit (only Markdown changed?): ${skipped.join(', ')}; release a commit whose CI ran them` : '',
+    ].filter(Boolean).join('; ')}`);
   }
   if (mine.some((r) => r.status !== 'completed')) return { decision: 'wait', reason: `CI for ${sha} is still running${problems.length ? ` (earlier: ${problems.join(' | ')})` : ''}` };
   return { decision: 'fail', reason: `CI did not pass for ${sha}: ${problems.join(' | ')}` };

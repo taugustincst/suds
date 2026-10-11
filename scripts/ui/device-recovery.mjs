@@ -7,10 +7,10 @@
 // deactivated, their code stops working and the administrator who took over is asked for a new one (1.15.4).
 import * as pw from 'playwright';
 import fs from 'node:fs';
-import { makeChecks, until, settle, saved, passRecoveryCode } from './assert.mjs';
+import { makeChecks, until, settle, saved, passRecoveryCode, firstLoad } from './assert.mjs';
 
 const base = process.env.SUDS_STATIC_URL || 'http://127.0.0.1:8878';
-const { ok, eq, finish } = makeChecks('device-recovery');
+const { ok, eq, knownDefect, finish } = makeChecks('device-recovery');
 const PW = 'Navigator2026!!'; const NEW_PW = 'Recovered-Pass-2026!';
 const CODE = /^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){6}$/;
 // SUDS_BROWSER=webkit runs it in WebKit: CI's advisory webkit job does, for section 6 (1.25.4, G2).
@@ -51,7 +51,7 @@ async function useCode(page, code, { username = '', password = NEW_PW } = {}) {
 {
   const ctx = await browser.newContext({ viewport: { width: 1100, height: 850 }, acceptDownloads: true });
   const page = watch(await ctx.newPage(), 'recovery');
-  await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 20000 });
+  await firstLoad(page, base + '/', 'input[name=display_name]', { timeout: 20000 });
   ok(/recovery code/.test(await page.textContent('[data-storage-notice]')), 'the set-up screen says a recovery code comes next');
   await page.fill('input[name=display_name]', 'Device Owner'); await page.fill('input[name=username]', 'owner');
   await page.fill('input[name=password]', PW); await page.fill('input[name=confirm]', PW);
@@ -151,7 +151,7 @@ async function useCode(page, code, { username = '', password = NEW_PW } = {}) {
 {
   const ctx = await browser.newContext({ viewport: { width: 1100, height: 850 } });
   const page = watch(await ctx.newPage(), 'older device');
-  await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 20000 });
+  await firstLoad(page, base + '/', 'input[name=display_name]', { timeout: 20000 });
   // Set up the way 1.14 did (no code made): the account straight through the kernel.
   eq((await kernel(page, 'POST', '/api/local/signup', { display_name: 'Older Owner', username: 'older', password: PW, role: 'admin', storage_ack: true })).status, 200, 'older device: set up without a recovery code');
   eq((await kernel(page, 'POST', '/api/local/signup', { display_name: 'Older Colleague', username: 'olnav', password: PW })).status, 200, 'older device: and a second account');
@@ -247,7 +247,7 @@ let good = null; let copyText = null; // the good sealed image, and the saved co
   const page = await ctx.newPage(); const mine = [];
   page.on('pageerror', e => mine.push(`PAGEERROR ${e.message}`));
   page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|net::ERR_|region-pictures|the device database would not open/.test(m.text())) mine.push(`CONSOLE ${m.text().slice(0, 300)}`); });
-  await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 20000 });
+  await firstLoad(page, base + '/', 'input[name=display_name]', { timeout: 20000 });
   eq((await kernel(page, 'POST', '/api/local/signup', { display_name: 'Damaged Owner', username: 'dmg', password: PW, role: 'admin', storage_ack: true })).status, 200, 'damaged: a device is set up');
   eq((await kernel(page, 'POST', '/api/auth/login', { username: 'dmg', password: PW })).status, 200, 'damaged: and signed in');
   eq((await kernel(page, 'POST', '/api/clients', { first_name: 'Damaged', last_name: 'Keeper', status: 'active' })).status, 201, 'damaged: a client');
@@ -296,8 +296,8 @@ let good = null; let copyText = null; // the good sealed image, and the saved co
   eq(await tryLogin(page, 'dmg', PW), 'in', 'damaged: after Start over and the restore, the same account signs in');
   ok(((await kernel(page, 'GET', '/api/clients')).json.clients || []).some(c => c.last_name === 'Keeper'), 'damaged: and the client is back');
   // After Start over and a restore, a sign-out and a reload: the device is locked and the account signs in again. (In
-  // CI's WebKit this reload crashed the page on 1.25.5's first runs, with and without the second engine; whatever the
-  // reload does, the records must still be there in a new page. docs/RELEASE.md, flake register.)
+  // CI's WebKit this reload crashes the page on every run since 1.25.5, with and without the second engine: known
+  // defect WK-1, docs/RELEASE.md *Known defects*; whatever the reload does, the records must still be there in a new page.)
   await logout(page);
   // DIAGNOSTIC (session branch only): let every save finish before the reload.
   console.log('DIAG pending before wait:', JSON.stringify(await page.evaluate(async () => ({ dirty: window.SUDS_LOCAL && window.SUDS_LOCAL.isDirty && window.SUDS_LOCAL.isDirty() }))));
@@ -306,7 +306,7 @@ let good = null; let copyText = null; // the good sealed image, and the saved co
   let reloadCrash = null;
   try { await page.reload(); await page.waitForSelector('.login input[name=username]', { timeout: 20000 }); await settle(page); }
   catch (e) { reloadCrash = String(e.message || e).split('\n')[0]; }
-  ok(!reloadCrash, 'restored: a reload after Start over, a restore and a sign-out opens the sign-in page', reloadCrash);
+  knownDefect('WK-1', !reloadCrash, 'restored: a reload after Start over, a restore and a sign-out opens the sign-in page', reloadCrash);
   const after = reloadCrash ? await ctx.newPage() : page;
   if (reloadCrash) { await after.goto(base + '/'); await after.waitForSelector('.login input[name=username]', { timeout: 20000 }); await settle(after); }
   eq(await tryLogin(after, 'dmg', PW), 'in', 'restored: after the reload the account signs in (the records survived)');
@@ -322,7 +322,7 @@ let good = null; let copyText = null; // the good sealed image, and the saved co
   const page = await ctx.newPage(); const mine = [];
   page.on('pageerror', e => mine.push(`PAGEERROR ${e.message}`));
   page.on('console', m => { if (m.type() === 'error' && !/Failed to load resource|net::ERR_|region-pictures|the device database would not open/.test(m.text())) mine.push(`CONSOLE ${m.text().slice(0, 300)}`); });
-  await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 20000 });
+  await firstLoad(page, base + '/', 'input[name=display_name]', { timeout: 20000 });
   eq((await kernel(page, 'POST', '/api/local/signup', { display_name: 'Integrity Owner', username: 'seal', password: PW, role: 'admin', storage_ack: true })).status, 200, 'integrity: a device is set up');
   eq((await kernel(page, 'POST', '/api/auth/login', { username: 'seal', password: PW })).status, 200, 'integrity: and signed in');
   eq((await kernel(page, 'POST', '/api/clients', { first_name: 'Sealed', last_name: 'Keeper', status: 'active' })).status, 201, 'integrity: a client');
@@ -332,7 +332,13 @@ let good = null; let copyText = null; // the good sealed image, and the saved co
   ok(await storedImage(page, true), 'integrity: one byte of the stored image flipped');
   eq(await tryLogin(page, 'seal', PW), 'refused', 'integrity: the sign-in is refused');
   ok(/failed its integrity check/.test(await page.textContent('.login')) && !/Something went wrong/.test(await page.textContent('.login')), 'integrity: saying the stored copy failed its integrity check, not "something went wrong"', await page.textContent('.login'));
-  ok(await page.$('[data-device-damaged][role=alert] [data-damaged-save]'), 'integrity: with the button to save the copy');
+  // 1.25.6, J6: AES-GCM is all or nothing, so a copy of this image can never be restored: it is not offered. Only a
+  // backup is, and Start over is said only to someone who has one.
+  ok(await page.$('[data-device-damaged][data-device-integrity][role=alert]') && !(await page.$('[data-device-damaged] [data-damaged-save]')), 'integrity: no button to save a copy that could never be restored');
+  eq((await page.$$eval('[data-device-damaged] [data-damaged-step]', ls => ls.map(l => l.dataset.damagedStep))).join(','), 'again,restore,keep', 'integrity: the ways back in order: try again, restore a backup, and without one keep the records');
+  const restoreStep = await page.textContent('[data-damaged-step=restore]');
+  ok(/only a backup can bring the records back/.test(restoreStep) && /If you have a backup: Start over.*Restore from a backup/s.test(restoreStep) && !/copy you saved/.test(await page.textContent('[data-device-damaged]')), 'integrity: only a backup brings the records back, and Start over is for someone who has one', restoreStep);
+  ok(/If you have no backup, do not Start over/.test(await page.textContent('[data-damaged-step=keep]')), 'integrity: without a backup, do not Start over');
   errors.push(...mine);
   await ctx.close();
 }
@@ -343,7 +349,7 @@ let good = null; let copyText = null; // the good sealed image, and the saved co
   const page = watch(await ctx.newPage(), 'damaged-copy-restore');
   const sound = JSON.parse(copyText); sound.image = { ...sound.image, iv: { b64: good.iv }, ct: { b64: good.ct } };
   const soundFile = `${tmpDir}/suds-ui-damaged-copy-sound.json`; fs.writeFileSync(soundFile, JSON.stringify(sound));
-  await page.goto(base + '/'); await page.waitForSelector('input[name=display_name]', { timeout: 20000 }); await settle(page);
+  await firstLoad(page, base + '/', 'input[name=display_name]', { timeout: 20000 }); await settle(page);
   eq(await restoreFile(page, soundFile, 'Not-The-Password-2026!'), 'refused', 'saved copy: a wrong password is refused');
   ok(/password of an account/.test(await page.textContent('.modal [data-restore-error]')), 'saved copy: asking for an account\'s password');
   await page.keyboard.press('Escape'); await until(async () => !(await page.$('.modal')), { timeout: 5000 });

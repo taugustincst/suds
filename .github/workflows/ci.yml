@@ -23,6 +23,50 @@ env:
   # said only "Process completed with exit code 1". The browser suite's run-all.sh annotates its own failures.
   TEST_REPORTERS: --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./scripts/ci-annotate.js --test-reporter-destination=stdout
 jobs:
+  # Whether this push or pull request changes anything but Markdown (evaluation of 1.25.5, J11: every HANDOFF-only
+  # commit ran all thirteen jobs, the browser job about 30 minutes of them). The heavy jobs below are skipped only when
+  # it says code=false (`if: !cancelled() && needs.changes.outputs.code != 'false'`: if this job itself fails, its
+  # output is empty and they run); test, release-policy and release-state always run, so a docs-only change is still
+  # checked by every doc test. A push is compared with the commit before it (github.event.before; for a push of one
+  # commit, its parent), a pull request with its base (the merge commit's first parent). Any doubt is "code changed": a
+  # new branch, a force push or a base not found in the last 50 commits, a merge in what was pushed, an empty
+  # difference, git failing. A job skipped this way reports success to a required check (GitHub: "A job that is skipped
+  # will report its status as Success"), but never to the release gate: scripts/release-gate.js passes a commit only
+  # when each required job concluded success, and a skipped one did not, so a Markdown-only commit can never be
+  # released (the tagged commit, "SBOM of the X.Y.Z stamp" or a patch's "Release X.Y.Z", always changes a non-Markdown file).
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - name: What this push or pull request changes (anything but Markdown?)
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          TOKEN: ${{ github.token }}
+        run: |
+          code=true; why="no comparison could be made"
+          git init -q src && cd src
+          git remote add origin "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          base=""
+          if git fetch -q --filter=blob:none --depth 50 origin "${GITHUB_SHA}"; then
+            if [ "$EVENT" = pull_request ]; then
+              base="$(git rev-parse -q --verify "${GITHUB_SHA}^1" || true)"
+            elif [ "$EVENT" = push ] && [[ "$BEFORE" =~ ^[0-9a-f]{40}$ ]] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+              && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null && git merge-base --is-ancestor "$BEFORE" "${GITHUB_SHA}" \
+              && [ -z "$(git rev-list --min-parents=2 "${BEFORE}..${GITHUB_SHA}")" ]; then
+              base="$BEFORE"
+            fi
+          fi
+          if [ -n "$base" ] && files="$(git diff --no-renames --name-only "$base" "${GITHUB_SHA}")"; then
+            if [ -z "$files" ]; then why="no file changed"
+            elif grep -qv '\.md$' <<< "$files"; then why="a file other than Markdown changed"
+            else code=false; why="only Markdown changed ($(wc -l <<< "$files") file(s))"; fi
+          fi
+          echo "code=${code}" >> "$GITHUB_OUTPUT"
+          echo "code=${code}: ${why}${base:+ (compared with ${base})}" | tee -a "$GITHUB_STEP_SUMMARY"
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -84,6 +128,8 @@ jobs:
   # SUDS_THOROUGH (timing budgets), and the pure performance checks in test/thorough/, which npm test does
   # not run so that a busy runner cannot flake the required `test` job.
   thorough:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -118,6 +164,8 @@ jobs:
   # slower runner would have failed the release on a timeout, not a finding. Their own job, with room to spare;
   # required by the release gate like `thorough`.
   thorough-sdc:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -147,6 +195,8 @@ jobs:
           NODE_OPTIONS: ${{ env.TEST_REPORTERS }}
         run: node scripts/test-thorough.js --part sdc
   browser:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     # Measured on CI (1.17.0 candidate, runs 36612230830 and 36614997483): the whole job 27.9 min, the 51 scripts
     # 23 to 27 min, accessibility alone 595 to 634 s. 50 minutes is about 1.8 times that; a hang costs 50, not 75.
@@ -191,6 +241,8 @@ jobs:
   # https://nodejs.org/dist/v<version>/SHASUMS256.txt (after checking its signature, SHASUMS256.txt.asc) and
   # change both lines below in one commit. test/release-gate.test.js checks their shape.
   node24:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -222,6 +274,8 @@ jobs:
   # signature): a test tool on the runner, not a dependency of SUDS. Not advisory: a red run fails CI, so the
   # release gate refuses the commit.
   evening:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -263,6 +317,8 @@ jobs:
   # (scripts/dr-exercise.js; docs/security/BACKUP-AND-DR.md). Required by the release gate. The repository
   # uses no actions at all (not even actions/upload-artifact), so the signed report is printed into this log.
   dr-drill:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -303,6 +359,8 @@ jobs:
   # journal, a restart (NRestarts) or an unclean stop. A GitHub-hosted runner has systemd as PID 1 and passwordless
   # sudo. Not advisory; not in the release gate's required list yet (docs/RELEASE.md, "The service-sandbox job").
   service-sandbox:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -340,6 +398,8 @@ jobs:
   # while offline) are reported as SKIP here, with their diagnostics, and checked on an iPhone instead
   # (scripts/ui/assert.mjs PLAYWRIGHT_WEBKIT_LINUX); every other check in the two scripts still counts.
   webkit:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     continue-on-error: true
@@ -358,7 +418,9 @@ jobs:
         run: npm run build:local && scripts/ui/run-all.sh
   # What the release documents say (the questionnaire, the evidence index, RELEASE.md's supported versions and
   # ledger, the tag hand-off, HANDOFF.md's Release waiting entry, the CHANGELOG's dated sections) against the
-  # CHANGELOG, main's history, origin's tags and the version.json gh-pages serves (scripts/release-state.js;
+  # CHANGELOG, main's history, origin's tags and the version.json gh-pages serves; and the newest tag's zip SHA-256 in its
+# CHANGELOG section and its GitHub Release notes (read unauthenticated from api.github.com), the signature on its tag
+# object, and docs/security/OPERATIVE-CONTROLS.md's claims about both (scripts/release-state.js;
   # docs/RELEASE.md, stamp checklist). Advisory (continue-on-error), like webkit, and not in the release gate: its
   # answer changes when the owner pushes a tag or the site is republished, not only with the commit, and at a tag's
   # own release run the hand-off still, rightly, lists that tag as owed. A red run gets the documents fixed.
@@ -423,6 +485,8 @@ jobs:
   # not advisory: a red job fails the run, as release-policy does. The same smoke test runs on Linux in npm test.
   # NODE22_WIN_SHA256 is the win-x64.zip line of the same SHASUMS256.txt as NODE22_SHA256: bump both together.
   windows:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-2025
     timeout-minutes: 15
     env:
@@ -482,6 +546,8 @@ jobs:
   # together); WinSW-x64.exe of the WinSW release, by SHA-256; postject's npm tarball, by its registry integrity
   # (SHA-512), used as a build-time library only (docs/RELEASE.md, "The Windows server zip").
   windows-exe:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-2025
     timeout-minutes: 30
     env:

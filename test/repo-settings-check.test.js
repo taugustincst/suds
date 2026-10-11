@@ -22,8 +22,9 @@ const FORBIDDEN = { status: 403, body: { message: 'Resource not accessible by in
 test('every documented setting in force: all ok, nothing to check by hand', () => {
   const checks = run(configured());
   assert.deepEqual(checks.filter((c) => c.state !== 'ok'), []);
-  // Every step of RELEASE.md's owner settings but the optional code scanning (8) is checked, and step 9's environment.
-  assert.deepEqual([...new Set(checks.map((c) => c.step))], ['1', '2', '3', '4', '5', '6', '7', '9']);
+  // Every step of RELEASE.md's owner settings is checked (of step 8, private vulnerability reporting: code scanning
+  // stays optional), and step 9's environment.
+  assert.deepEqual([...new Set(checks.map((c) => c.step))], ['1', '2', '3', '4', '5', '6', '7', '8', '9']);
   assert.ok(checks.length >= 25, `${checks.length} checks`);
 });
 
@@ -98,6 +99,29 @@ test('step 9: the settings-check environment is limited to main', () => {
   assert.equal(state(C.evaluate(d, { ...CTX, readToken: false }), /settings-check/)[0], 'warn');
   d['environments/settings-check'] = { status: 404, body: { message: 'Not Found' } };
   assert.equal(state(C.evaluate(d, { ...CTX, readToken: false }), /settings-check/)[0], 'warn');
+});
+
+test('step 8: private vulnerability reporting, enabled or a finding; unreadable is "cannot verify" (evaluation of 1.25.5, J2)', async () => {
+  const d = configured();
+  const pvr = (x) => run(x).find((c) => c.setting === 'Private vulnerability reporting');
+  assert.deepEqual([pvr(d).step, pvr(d).state, pvr(d).detail], ['8', 'ok', 'enabled']);
+  // As the API answered for this repository on 2026-10-11: {"enabled":false}.
+  d['private-vulnerability-reporting'] = { status: 200, body: { enabled: false } };
+  assert.equal(pvr(d).state, 'off');
+  assert.match(pvr(d).detail, /^disabled: reporters have no private channel/);
+  // A token that may not read it: cannot verify (a warning until SETTINGS_READ_TOKEN exists), never a pass.
+  d['private-vulnerability-reporting'] = FORBIDDEN;
+  assert.equal(pvr(d).state, 'unverified');
+  assert.match(pvr(d).detail, /403\): needs a token with Administration: read/);
+  assert.equal(C.evaluate(d, { ...CTX, readToken: false }).find((c) => c.setting === 'Private vulnerability reporting').state, 'warn');
+  d['private-vulnerability-reporting'] = { status: 200, body: {} };
+  assert.equal(pvr(d).state, 'unverified');
+  // collect() asks for it.
+  const asked = [];
+  await C.collect(async (p) => { asked.push(p); return configured()[p] || { status: 404, body: {} }; });
+  assert.ok(asked.includes('private-vulnerability-reporting'));
+  // The run summary (what the weekly workflow shows) has its row.
+  assert.match(C.summary(run(d), { repo: CTX.repo, tokenKind: 'given' }), /\n\| 8 \| Private vulnerability reporting \| \*\*cannot verify\*\* \|/);
 });
 
 test('one setting off at a time is found, with what is wrong', () => {

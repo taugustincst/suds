@@ -66,5 +66,6 @@
   "releases/latest": { "status": 200, "body": { "tag_name": "v1.17.0", "immutable": true } },
   "keys?per_page=100": { "status": 200, "body": [ { "id": 31, "title": "gh-pages publish (release environment)", "read_only": false, "verified": true } ] },
   "git/matching-refs/heads/maint/": { "status": 200, "body": [ { "ref": "refs/heads/maint/1.16", "object": { "sha": "0000000000000000000000000000000000000001", "type": "commit" } } ] },
-  "git/matching-refs/heads/release/v": { "status": 200, "body": [] }
+  "git/matching-refs/heads/release/v": { "status": 200, "body": [] },
+  "private-vulnerability-reporting": { "status": 200, "body": { "enabled": true } }
 }

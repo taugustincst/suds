@@ -168,6 +168,39 @@ test('ci.yml: every job the release gate requires exists and is not advisory; on
   assert.ok(!REQUIRED_JOBS.includes('release-state'));
 });
 
+test('ci.yml: a `changes` job first; the heavy jobs skip a Markdown-only change, the cheap checks always run (evaluation of 1.25.5, J11)', () => {
+  const { jobs } = wf('ci.yml');
+  assert.equal(Object.keys(jobs)[0], 'changes', 'the first job');
+  const ch = jobs.changes;
+  assert.equal(ch.needs, undefined); assert.equal(ch.if, undefined); assert.equal(ch.permissions, undefined, 'the top-level read-only token');
+  assert.deepEqual(ch.outputs, { code: '${{ steps.diff.outputs.code }}' });
+  const step = ch.steps.find((s) => s.id === 'diff');
+  assert.ok(step, 'the step that decides');
+  assert.deepEqual(step.env, { EVENT: '${{ github.event_name }}', BEFORE: '${{ github.event.before }}', TOKEN: '${{ github.token }}' }, 'event data through the environment, never pasted into the script');
+  const run = step.run;
+  assert.match(run, /^code=true; /, '"code changed" unless shown otherwise');
+  assert.equal((run.match(/code=false/g) || []).length, 1, 'one place says only Markdown changed');
+  assert.match(run, /elif grep -qv '\\\.md\$' <<< "\$files"; then why="a file other than Markdown changed"\n\s+else code=false;/, 'false only when every changed file ends in .md');
+  assert.match(run, /if \[ -z "\$files" \]; then why="no file changed"/, 'an empty difference is doubt');
+  assert.match(run, /\[ "\$EVENT" = pull_request \][^\n]*\n\s+base="\$\(git rev-parse -q --verify "\$\{GITHUB_SHA\}\^1" \|\| true\)"/, 'a pull request against its base (the merge commit\'s first parent)');
+  assert.match(run, /"\$BEFORE" != 0{40}/, 'a new branch (no commit before) is doubt');
+  assert.match(run, /git merge-base --is-ancestor "\$BEFORE" "\$\{GITHUB_SHA\}"/, 'a force push is doubt');
+  assert.match(run, /git rev-list --min-parents=2 "\$\{BEFORE\}\.\.\$\{GITHUB_SHA\}"/, 'a merge in the push is doubt');
+  assert.match(run, /--no-renames --name-only/);
+  assert.doesNotMatch(run, /\| grep -q/, 'no `| grep -q` (under pipefail a SIGPIPE would read as "no match")');
+  assert.match(run, /echo "code=\$\{code\}" >> "\$GITHUB_OUTPUT"/);
+  // The heavy jobs wait for it and skip only on an explicit false (a failed `changes` leaves the output empty: they run).
+  const heavy = ['browser', 'webkit', 'thorough', 'thorough-sdc', 'dr-drill', 'service-sandbox', 'windows', 'windows-exe', 'node24', 'evening'];
+  for (const j of heavy) {
+    assert.equal(jobs[j].needs, 'changes', `${j} needs changes`);
+    assert.equal(jobs[j].if, "${{ !cancelled() && needs.changes.outputs.code != 'false' }}", `${j} skips only a Markdown-only change`);
+  }
+  for (const j of ['test', 'release-state', 'release-policy']) assert.ok(!jobs[j].needs && !jobs[j].if, `${j} always runs`);
+  assert.deepEqual(Object.keys(jobs).filter((j) => !heavy.includes(j)).sort(), ['changes', 'release-policy', 'release-state', 'test'], 'every other job is a heavy one, or one of the always-run checks');
+  // Every required job but `test` may be skipped, which the release gate refuses (test/release-gate.test.js).
+  for (const j of REQUIRED_JOBS) assert.ok(j === 'test' || heavy.includes(j), j);
+});
+
 test('ci.yml: the evening job runs npm test at 9pm in Los Angeles (scripts/test-evening.sh), and is not advisory', () => {
   // Evaluation of 1.25.0, E1: "today" taken as the UTC date dated an evening intake tomorrow. CI runs in UTC, where
   // the two dates agree, so the suite also runs with the local date behind the UTC one.
