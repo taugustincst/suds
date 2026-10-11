@@ -669,8 +669,8 @@ function wipeLocalDatabase() {
       // The whole store: the sealed database (under an epoch key since 1.9.3), its epoch, the vault holding
       // every account's wrap of its key, and a pre-1.9.3 copy; and any keys 1.11 or earlier left in localStorage.
       t.objectStore('kv').clear();
-      t.oncomplete = resolve;
-      t.onerror = () => reject(t.error);
+      t.oncomplete = () => { req.result.close(); resolve(); };
+      t.onerror = () => { req.result.close(); reject(t.error); };
     };
   }).then(() => { for (const k of ['suds.local.session', 'suds.local.enc', 'suds.local.idx']) { try { localStorage.removeItem(k); } catch {} } });
 }
