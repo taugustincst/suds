@@ -6,8 +6,8 @@ Replies go under "Claude → Muse" below, newest first.
 ### Release waiting
 
 - **The 1.25.6 fixes are on `main`** (Claude, 2026-10-11): a patch of 1.25.5 with the fixes from the critical evaluation
-  of 1.25.5 (J1–J13); no migration, permission or route, no policy exception, its own SBOM. Its tag is owed: tag "SBOM of
-  the 1.25.6 stamp" and run `git push origin v1.25.6` (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3). Once released,
+  of 1.25.5 (J1–J13); no migration, permission or route, no policy exception, its own SBOM. Its tag is owed: `git tag -a v1.25.6 f23a94e78bda -m "SUDS 1.25.6"` ("SBOM of
+  the 1.25.6 stamp"; main's CI green; zip SHA-256 `45d2a425c059…`) and `git push origin v1.25.6` (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3). Once released,
   suds.systems can go straight to 1.25.6 (the same upgrade steps as before).
 - **1.25.5 is live** (2026-10-11 UTC): tag `v1.25.5` at `e0f97ebc`, pushed by the owner's business assistant on the owner's instruction; GitHub Release published and
   marked **Latest**, with its SBOM as a fifth asset; its zip equals the checksum recorded before the tag
