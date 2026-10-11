@@ -32,15 +32,19 @@ function ensureBootstrap() {
     // Written straight to stdout, not through console.log: server/log.js tees the console to a file under
     // data/logs that is kept for 30 days, and a password does not belong in a log file. (log.js refuses
     // such a line as well, in case anything else ever prints one.)
-    const lines = ['==========================================================', `[suds] Created initial admin user "${username}"`];
-    if (generated) lines.push(`[suds] Temporary password: ${password}`);
-    lines.push('[suds] You will be required to change it at first login.');
-    if (generated && config.isProd) {
-      try {
-        fs.writeFileSync(passwordFilePath(), `${password}\n`, { mode: 0o600 });
-        lines.push(`[suds] The same password is in ${passwordFilePath()} (mode 0600); that file is deleted automatically once the password is changed.`);
-      } catch (e) { lines.push(`[suds] (could not write ${passwordFilePath()}: ${e.message})`); }
+    // Under systemd, stdout is the journal, which the adm group reads and which keeps the line after the password is
+    // changed (1.25.6, J12): there only the username and the 0600 file are named, unless the file cannot be written.
+    const journal = !!process.env.INVOCATION_ID || (!process.stdout.isTTY && !!process.env.JOURNAL_STREAM);
+    let inFile = false; let fileError = null;
+    if (generated && (config.isProd || journal)) {
+      try { fs.writeFileSync(passwordFilePath(), `${password}\n`, { mode: 0o600 }); inFile = true; } catch (e) { fileError = e.message; }
     }
+    const lines = ['==========================================================', `[suds] Created initial admin user "${username}"`];
+    if (generated && journal && inFile) lines.push(`[suds] Its temporary password is in ${passwordFilePath()} (mode 0600; not printed here, because this output goes to the system journal). That file is deleted automatically once the password is changed.`);
+    else if (generated) lines.push(`[suds] Temporary password: ${password}`);
+    lines.push('[suds] You will be required to change it at first login.');
+    if (generated && inFile && !journal) lines.push(`[suds] The same password is in ${passwordFilePath()} (mode 0600); that file is deleted automatically once the password is changed.`);
+    if (fileError) lines.push(`[suds] (could not write ${passwordFilePath()}: ${fileError})`);
     lines.push('==========================================================');
     process.stdout.write(lines.join('\n') + '\n');
   }

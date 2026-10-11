@@ -268,6 +268,9 @@ async function drive() {
   const pwFile = path.join(LAYOUT.data, 'first-admin-password.txt');
   await waitFor(`${pwFile} (the generated first-administrator password)`, 30, () => fs.existsSync(pwFile));
   const first = fs.readFileSync(pwFile, 'utf8').trim();
+  // Under systemd stdout is the journal (1.25.6, J12): the password is only in the 0600 file, never in the unit's log.
+  const unitJournal = sh('journalctl', ['-u', UNIT, '--no-pager', '-o', 'cat'], { quiet: true, allowFail: true }).stdout || '';
+  if (first && unitJournal.includes(first)) fail('the generated first-administrator password is in the unit\'s journal (server/bootstrap.js must name only the file under systemd)');
   const username = 'guest';
   const password = `Sandbox-${crypto.randomBytes(9).toString('base64url')}-7q!`;
   log('step: sign in as the first administrator and change the generated password');

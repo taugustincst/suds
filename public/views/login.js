@@ -1,4 +1,4 @@
-import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, startPage, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink, roleOptions, roleSummary, NOT_SAVED } from '../app.js';
+import { h, route, get, post, state, form, modal, openDeviceResetDialog, nav, navAndRender, startPage, render, loadRefData, loadSession, toast, clear, replaceHash, accessibilityLink, roleOptions, roleSummary, NOT_SAVED, iosBrowserTab, IOS_TAB_REASON } from '../app.js';
 import { restoreBackupButton, requestPersistentStorage, showRecoveryCode, resetRecoveryPrompt } from './local.js';
 import { passkeysPossible, platformAvailable, conditionalAvailable, getPasskey, signInWithPasskey, passkeyErrorMessage, withFingerprint, fingerprintIcon } from '../passkey.js';
 
@@ -195,7 +195,18 @@ function damagedNotice(d = {}) {
     const a = h('a', { href: url, download: `suds-damaged-device-copy-${new Date().toISOString().slice(0, 10)}.json` }); document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   };
-  const maybeBrowser = !d.repeated && !d.integrity;
+  // A seal that fails (1.25.6, J6): AES-GCM opens all or nothing, so the copy kept here, or one saved from it, can
+  // never be restored, and support cannot read it either. Neither is offered: only a backup brings the records back,
+  // and Start over is said only to someone who has one.
+  if (d.integrity) {
+    return h('div', { class: 'banner danger', role: 'alert', 'data-device-damaged': d.repeated ? 'again' : '1', 'data-device-integrity': '1' }, h('div', {},
+      h('p', {}, h('b', {}, 'The records stored on this device could not be opened: they failed an integrity check (they have changed since they were saved). '), 'Nothing has been deleted.'),
+      h('ol', {},
+        d.repeated ? null : h('li', { 'data-damaged-step': 'again' }, 'Close the browser completely (every window), open SUDS again and log in.'),
+        h('li', { 'data-damaged-step': 'restore' }, `${d.repeated ? 'Only' : 'If it still does not open, only'} a backup can bring the records back: the copy kept here cannot be repaired or restored. If you have a backup: Start over on this device, then Restore from a backup with it (or restore it in another browser).`),
+        h('li', { 'data-damaged-step': 'keep' }, h('b', {}, 'If you have no backup, do not Start over: '), 'it erases these records for good. Leave them as they are.'))));
+  }
+  const maybeBrowser = !d.repeated;
   return h('div', { class: 'banner danger', role: 'alert', 'data-device-damaged': d.repeated ? 'again' : '1' }, h('div', {},
     h('p', {}, h('b', {}, 'The records stored on this device could not be opened. '), maybeBrowser ? 'This may be this browser rather than the records. ' : '', 'Nothing has been deleted.'),
     h('ol', {},
@@ -341,9 +352,16 @@ function firstRun() {
     : h('div', {},
       h('div', { class: 'banner warn mb', 'data-browser-copy-warning': '1' }, h('div', {}, h('b', {}, 'This is an offline copy of the office SUDS. '), 'Its records are encrypted with the password you choose here, and SUDS locks when you log out or step away. Keep that password to yourself: if you forget it, the records on this device cannot be opened, and anything not yet synced is lost — the office copy is re-downloaded when you set the device up again. Keep real client information on the office SUDS unless your administrator has approved this device for field work.')),
       h('p', { class: 'small muted' }, 'Everything you record is kept in this browser on this device. Whenever you are near the office, tap Sync to exchange changes with the office SUDS — both directions.'));
+  // On an iPhone or iPad in a Safari tab (1.25.6, J7), the Home Screen comes first: records kept in a tab can be
+  // deleted after seven days without a visit, and a Home Screen app may not see what was set up in a tab.
+  const homeScreen = stat && iosBrowserTab()
+    ? h('div', { class: 'banner warn mb', 'data-ios-home-screen-step': '1' }, h('div', {}, h('b', {}, 'First, add SUDS to your Home Screen. '), IOS_TAB_REASON, ' Opened from its Home Screen icon, SUDS is not affected by that count.',
+      h('ol', {}, h('li', {}, 'Tap ', h('b', {}, 'Share'), ', then ', h('b', {}, 'Add to Home Screen'), '.'),
+        h('li', {}, 'Open SUDS from the new icon and set it up there. A Home Screen app may not see records made in a Safari tab.'))))
+    : null;
   return h('div', { 'data-first-run': '1' },
     h('p', { class: 'small' }, stat ? 'Create the first account on this device. You will manage it: backups, and whether other people may sign up here.' : 'Set up SUDS on this device.'),
-    notice, f, tryIt,
+    homeScreen, notice, f, tryIt,
     h('p', { class: 'small muted center mt' }, 'Have a backup from this or another device? ', restoreBackupButton({ link: true })));
 }
 

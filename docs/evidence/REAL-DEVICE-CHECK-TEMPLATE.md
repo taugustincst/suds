@@ -49,16 +49,22 @@ Record each result in the table under *Results* as **pass**, **fail** (with what
 (with why).
 
 1. **Open the site online.** Open the official address in Safari. The sign-in page opens on **Sign up** (a device with
-   no account), with no wording that calls it a demo or a trial. [Screenshot.]
+   no account), with no wording that calls it a demo or a trial. On an iPhone or iPad, above the form: *First, add SUDS
+   to your Home Screen*, with the reason (Safari deletes a website's records after 7 days without a visit); on Android,
+   no such step. Note it, then carry on in the tab for steps 2–4 (this run checks both). [Screenshot.]
 2. **Sign up.** Create the first account (it manages the device), choose a role, tick that you understand where the
    records are kept. The storage confirmation appears (*Storage: Protected* or *May be cleared by the browser*); note
    which. [Screenshot.]
 3. **Recovery code.** The recovery code is shown once. Use *Download as a text file* (and note where iOS saved it) or
    *Print*, then tick *I have saved my recovery code*. [Screenshot.]
-4. **Add a client.** Add one fictional client with a date of birth (for example 9 July 1981 typed as `7/9/81`) and one
+4. **Add a client.** In the Safari tab, every page shows the one-line notice *In a Safari tab, records can be deleted
+   after 7 days without a visit*; dismiss it once and check it stays away until Safari is closed (on Android: no notice).
+   Add one fictional client with a date of birth (for example 9 July 1981 typed as `7/9/81`) and one
    visit or contact. The client list shows it and the date of birth reads 1981, not 2081. [Screenshot.]
 5. **Add to Home Screen.** Safari → Share → *Add to Home Screen*. Open SUDS from the icon: it opens full-screen and asks
-   for a sign-in; sign in. [Screenshot.]
+   for a sign-in; sign in. The Safari-tab notice and set-up step do **not** show in the Home Screen app. If the icon
+   opens on **Sign up** with no account (the Home Screen app keeps its own storage), write that down and do steps 2–4
+   again from the icon. [Screenshot.]
 6. **Offline reload and unlock.** Turn on airplane mode. Close SUDS (swipe it away) and open it from the icon. SUDS opens
    with no connection, asks for the password, unlocks, and the client from step 4 is there. Turn airplane mode off. [Screenshot.]
 7. **Reload and sign in, ten times.** Online, from the icon: sign out (or reload), sign in, check the client list
@@ -83,8 +89,9 @@ Record each result in the table under *Results* as **pass**, **fail** (with what
     it, turn on airplane mode, open the icon: SUDS opens and unlocks with the password; then open *Use SUDS on your phone
     or tablet* (`get-app.html`, linked from the sign-in tips): it opens offline too. [Screenshot.]
 12. **The damaged-copy path** (only if it happens; never cause it on purpose with real data). If a sign-in says the
-    records stored on this device could not be opened: **do not choose Start over.** Use **Save the damaged copy** and
-    keep the file off the phone; note the exact message and the time. Then sign in again once: from 1.25.5 the engine is
+    records stored on this device could not be opened: **do not choose Start over.** Use **Save the damaged copy** when
+    the page offers it (from 1.25.6 it does not when the records *failed an integrity check*: no copy of those can be
+    restored) and keep the file off the phone; note the exact message and the time. Then sign in again once: from 1.25.5 the engine is
     retried before a database is declared damaged, so record whether the second attempt opened the records. If it did
     not, follow what the screen offers to restore (a backup from step 8, or the saved damaged copy where the release
     accepts it) and record what worked. Report it the same day (*Where the record goes*). [Screenshot.]
@@ -92,18 +99,22 @@ Record each result in the table under *Results* as **pass**, **fail** (with what
     overwrite, no error (ADOPTION §4).
 14. **Idle sign-out.** Leave SUDS signed in and untouched for 15 minutes: it locks; signing in again resumes where you
     were (ADOPTION §4).
-15. **Clean up.** Start over on this device (This device, or *Can't sign in?*) to erase the fictional records, or remove
+15. **A week away** (iPhone and iPad; the reason for step 5). After step 14, leave the fictional records in the Home
+    Screen app and do not open SUDS (icon or Safari) for **8 days**, while using Safari on the phone on most of those
+    days. Then open SUDS from the icon and sign in: the client from step 4 must be there. If it is gone, record it as a
+    failure word for word: the advice the set-up step gives is then wrong for that iOS version. [Screenshot.]
+16. **Clean up** (after step 15). Start over on this device (This device, or *Can't sign in?*) to erase the fictional records, or remove
     the site's data in Safari's settings. Delete the backup and recovery-code files, or keep them only with the record.
 
 ## Results
 
 | Step | Device 1 | Device 2 | Device 3 | Device 4 | Screenshot(s) |
 | --- | --- | --- | --- | --- | --- |
-| 1. Open online | | | | | |
+| 1. Open online (Home Screen step shown on iPhone, not Android?) | | | | | |
 | 2. Sign up (storage answer) | | | | | |
 | 3. Recovery code | | | | | |
 | 4. Add a client | | | | | |
-| 5. Add to Home Screen | | | | | |
+| 5. Add to Home Screen (no Safari-tab notice in the app? same records?) | | | | | |
 | 6. Offline reload and unlock | | | | | |
 | 7. Ten sign-ins (failures of 10) | | | | | |
 | 8. Passphrase backup (file size) | | | | | |
@@ -113,6 +124,7 @@ Record each result in the table under *Results* as **pass**, **fail** (with what
 | 12. Damaged-copy path (seen? outcome) | | | | | |
 | 13. Two tabs | | | | | |
 | 14. Idle sign-out | | | | | |
+| 15. A week away (records kept in the Home Screen app?) | | | | | |
 
 **Result:** `[pass / pass with notes / fail]` — one sentence per device.
 
