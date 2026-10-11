@@ -35,6 +35,19 @@ Rules for every release:
    release each.
 5. The staged rollout ([ADOPTION.md](ADOPTION.md#3-staged-release-cadence)) still applies: pilot group first.
 
+### Release cadence (adopted 2026-10-11)
+
+Adopted on 2026-10-11 at the owner's request, to resolve the shortcomings the market-readiness evaluation of 1.25.5
+found in the process's volume (48 releases in 26 days; finding J11). The owner may revise it.
+
+- **Patches are batched at most weekly**, outside security fixes. Fixes found during the week go into one patch;
+  a security fix still ships as soon as it is ready (the table above).
+- **Pushes that change only documentation skip the heavy CI jobs** (the browser suite and the other long jobs). This
+  is being implemented in the CI workflow by a separate change; until it lands, every push runs every job. The release
+  gate's rule does not change with it: a tagged commit needs every required job green on that exact commit.
+- **`HANDOFF.md` is archived monthly**: the entries older than the current month move to an archive, so that the
+  current notes stay short enough to read.
+
 ### Stabilisation (from 1.23.1)
 
 Ten releases, 1.16.3 to 1.23.0, shipped in about two days; every feature release among them went out under a policy
@@ -394,9 +407,9 @@ Security fixes are announced as a GitHub Security Advisory and an *Advisory* not
 CHANGELOG section, naming the affected versions (as 1.15.4 did); programmes with a support agreement are told
 directly. The project has one maintainer: this is a best-effort commitment, not a contractual SLA, and response
 times are those of [templates/SUPPORT-SLA.md](market/templates/SUPPORT-SLA.md) where a programme has signed one.
-**A security release waits for the owner.** Since 1.16.3 a release is a `v*` tag the owner pushes, and the
-maintaining assistant cannot push tags at all (*Handing a release to the owner*, below), so "as soon as a fix is
-ready" means as soon as the owner can tag it. No backup releaser is named today; one would be a second
+**A security release waits for the owner.** Since 1.16.3 a release is a `v*` tag pushed on the owner's instruction,
+and the maintaining assistant cannot push tags at all (*Handing a release to the owner*, below), so "as soon as a fix
+is ready" means as soon as the owner can have it tagged. No backup releaser is named today; one would be a second
 administrator, added to the `v*` tag ruleset's bypass list and as a reviewer of the `release` environment
 (*Owner: repository settings*, steps 1 and 3), and named here.
 A change of default behaviour (such as 1.16.0's wider role defaults) is only made in a minor release and is
@@ -829,7 +842,10 @@ and what would settle it.
 #### Handing a release to the owner
 Whoever prepares a release (a maintainer, or the maintaining assistant) stamps it on `main` and then hands it over;
 the owner tags it. **The maintaining assistant cannot push tags at all** (its environment's proxy refuses a tag
-push), and once `main` is protected (step 2) it cannot push `main` either and opens a pull request, so every
+push). The owner's business assistant can, using the owner's GitHub access, and has pushed release tags on the owner's
+instruction (`v1.25.5` among them), under the same shared identity and unsigned, so a tag does not show who pushed it
+until tags are signed (*Signing a release tag*, below). Once `main` is protected (step 2) the maintaining assistant
+cannot push `main` either and opens a pull request, so every
 release, security releases included, waits for the owner unless a backup releaser is named (*Supported
 versions*). The hand-over is an issue or pull request titled "Release vX.Y.Z", and a line in HANDOFF.md's
 *Release waiting*, giving the stamp commit's full SHA, a link to that commit's green CI run, and these commands:

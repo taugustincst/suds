@@ -191,13 +191,15 @@ field devices and participant codes (the scope bound to the account), the authen
 1.24.0, the Windows server. The project's own reviews
 and the attack classes fixed are in [../../security/THREAT-MODEL.md](../../security/THREAT-MODEL.md).
 
-**Q. How are vulnerabilities reported and fixed?** Privately through GitHub's private vulnerability reporting on
-the repository, as [SECURITY.md](../../../SECURITY.md) says (how to report, what to include, what to expect and
+**Q. How are vulnerabilities reported and fixed?** Privately, never with details in a public issue: through GitHub
+private vulnerability reporting (**owner-pending**: to be enabled in the repository settings) or, until it is, the
+owner-published security contact (**owner-pending**), as [SECURITY.md](../../../SECURITY.md) says (how to report, what to include, what to expect and
 the scope; a programme with a signed support agreement may also use the security contact it names); fixed in a
 security release with an advisory; the latest minor line gets every fix
 ([../../SUPPORT.md](../../SUPPORT.md); [../../RELEASE.md](../../RELEASE.md), *Supported versions*).
 **[owner to complete]: turn on private vulnerability reporting (RELEASE.md, *Owner: repository settings*, step 8),
-confirm SECURITY.md's response targets, and name a security contact address for the agreement.**
+publish the security contact address in SECURITY.md, confirm SECURITY.md's response targets, and name a security
+contact address for the agreement.**
 
 ## Incident response
 
@@ -263,7 +265,9 @@ contract ends is set by the licence agreement **[owner to decide]**. Any copy th
 ## Support
 
 **Q. What support is offered?**
-Today: the public issue tracker (best effort, never with client information) and private vulnerability reports.
+Today: the public issue tracker (best effort, never with client information); security reports through GitHub
+private vulnerability reporting (**owner-pending**: to be enabled in the repository settings) or, until then, the
+owner-published security contact (**owner-pending**), never a public issue with details.
 Contracted business-hours support exists only under a signed agreement; the SLA is a template with placeholders.
 No 24×7 support, no vendor on-call, no vendor-hosted service. Evidence: [../../SUPPORT.md](../../SUPPORT.md);
 [SUPPORT-SLA.md](SUPPORT-SLA.md). **[owner to complete]: hours, contacts, response targets, and the price

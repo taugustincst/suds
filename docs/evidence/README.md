@@ -7,6 +7,10 @@ This page is for a county IT, security, privacy or procurement reviewer. Each co
 - the **CI job** that runs on every push (`.github/workflows/ci.yml`);
 - the **artefact** a reviewer can take away.
 
+**The operative controls in one table.** [../security/OPERATIVE-CONTROLS.md](../security/OPERATIVE-CONTROLS.md) lists the
+few controls a reviewer should test first (the release checksum's second channel, private vulnerability reporting,
+signed tags, the flake register's entries) and whether each is in force today.
+
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
 **Version.** It describes 1.25.5: the commit "Release 1.25.5", a patch of 1.25.4 with the fixes from the market-readiness
@@ -33,7 +37,7 @@ tagged, through the gate and published. 1.24.1 makes SUDS proprietary
 `NOTICE` lists the third-party licences) and carries the fixes of the market evaluation of 1.24.0, with no
 migration, permission or route (*1.24.1: the licence and the evaluation fixes*, below). 1.24.0 is the stamp
 "Release 1.24.0" and the commit after it that adds its SBOM (on `main`, and published to GitHub Pages by a direct
-`gh-pages` push at the owner's request); the owner pushed its tag on 2026-10-05 with the others ([../RELEASE.md](../RELEASE.md),
+`gh-pages` push at the owner's request); its tag was pushed on the owner's instruction on 2026-10-05 with the others ([../RELEASE.md](../RELEASE.md),
 *Record: 1.24.0*). 1.24.0 carries the fixes of an owner-authorised white-box penetration test of 1.23.6 (a
 consent's purpose checked at every disclosure, an office deletion that stands against a sync push, a refused push
 to a signed note, and seven Low findings), released under a recorded security exception inside 1.23.0's 28 days,
@@ -202,7 +206,7 @@ sandbox on 2026-10-09 and 2026-10-10. These could not be, and why:
 
 ### Secure development, change control and releases
 
-- **Documents:** [SDLC.md](../security/SDLC.md); [../RELEASE.md](../RELEASE.md) (the gate, the policy, the owner settings); `.github/CODEOWNERS`.
+- **Documents:** [SDLC.md](../security/SDLC.md); [../RELEASE.md](../RELEASE.md) (the gate, the policy, the owner settings); [../security/OPERATIVE-CONTROLS.md](../security/OPERATIVE-CONTROLS.md) (the operative controls and whether each is in force); [../IP-PROVENANCE.md](../IP-PROVENANCE.md) (how the code is produced and the owner's recorded decisions); `.github/CODEOWNERS`.
 - **Tests:** `release-gate`, `release-policy`, `release-existing`, `release-site-check`, `migrations`, `migration-order`, `release-wording` `doc-currency` and `doc-content-currency` (the documents, and their content, keep up with a stamped release), and `release-state` (the release documents against the CHANGELOG, `main`, the tags and GitHub Pages; 1.21.0).
 - **CI:** Every push: `test`, `thorough`, `thorough-sdc`, `browser`, `node24`, `dr-drill` and `evening` (the gate's `REQUIRED_JOBS`); `webkit` is advisory.
 - **Status:** The gate is designed and enforced by the workflow. **Owner-pending:** the repository settings that make the approval and the tag rules binding (not in force); an independent reviewer (708 of the 727 commits up to the 1.21.0 documentation pass were written with an AI assistant; method in [QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md) #36a); signed releases.
@@ -327,7 +331,7 @@ sandbox on 2026-10-09 and 2026-10-10. These could not be, and why:
 ### Support and vulnerability reporting
 
 - **Documents:** [../SUPPORT.md](../SUPPORT.md); [`SECURITY.md`](../../SECURITY.md) (vulnerability reports: how, what to include, scope); [../market/templates/SUPPORT-SLA.md](../market/templates/SUPPORT-SLA.md) (an owner template).
-- **Status:** Channels today: the public issue tracker and private vulnerability reports. **Owner-pending:** turning on private vulnerability reporting, confirming `SECURITY.md`'s response targets, a signed support agreement and contacts.
+- **Status:** Channels today: the public issue tracker; for security issues, GitHub private vulnerability reporting once the owner enables it, and until then the owner-published security contact (both **owner-pending**; as of 2026-10-11 private reporting is off). **Owner-pending:** turning on private vulnerability reporting, publishing the security contact, confirming `SECURITY.md`'s response targets, a signed support agreement and contacts.
 
 ## Owner-pending: what only the owner can do
 

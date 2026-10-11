@@ -132,7 +132,9 @@ does not hold.
 
 9. SUPPORT AND IMPLEMENTATION
    Implementation: setup, spreadsheet import, configuration, training (docs/market/PILOT-KIT.md).
-   Support: today, the public issue tracker and private vulnerability reports (docs/SUPPORT.md);
+   Support: today, the public issue tracker (docs/SUPPORT.md). Security reports: GitHub private vulnerability
+   reporting (owner-pending: to be enabled in the repository settings) or, until then, the owner-published security
+   contact [owner to complete: the security contact address — owner-pending]; never a public issue with details (SECURITY.md);
    contracted business-hours support: [owner to complete from docs/market/templates/SUPPORT-SLA.md].
    Licence: SUDS Proprietary Licence (LICENSE); production licence agreement [owner to complete]; source visible; full data export on exit.
 

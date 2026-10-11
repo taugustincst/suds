@@ -10,6 +10,7 @@ For county IT, security and privacy reviewers. Everything here describes control
 | --- | --- |
 | What the system is, where PHI flows, trust boundaries (the county view and connection, passkeys and SUDS Server included) | [ARCHITECTURE.md](ARCHITECTURE.md) |
 | How to report a vulnerability | [../../SECURITY.md](../../SECURITY.md) |
+| The operative controls to test first (the release checksum's second channel, private vulnerability reporting, signed tags) and whether each is in force | [OPERATIVE-CONTROLS.md](OPERATIVE-CONTROLS.md) |
 | Every encrypted field, where each kind of data can flow, retention (test-checked) | [DATA-INVENTORY.md](DATA-INVENTORY.md) |
 | Attackers, threats, mitigations, the attack classes fixed in 1.15.4–1.16.4, residual risks | [THREAT-MODEL.md](THREAT-MODEL.md) |
 | Encryption at rest and in transit, keys, rotation, customer-managed keys | [ENCRYPTION-AND-KEYS.md](ENCRYPTION-AND-KEYS.md) |
