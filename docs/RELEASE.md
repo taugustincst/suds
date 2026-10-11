@@ -791,7 +791,16 @@ pending wording it names). `--fetch` fetches `main` and `gh-pages` first; by def
 --tags origin`; `--offline` uses only this clone and lists what it could not check; `--docs-only` reads the documents
 alone. CI runs it on every push as the advisory `release-state` job, not in the release gate: its answer changes when
 a tag is pushed or the site republished, without a commit, and at a tag's own release run the hand-off still lists
-that tag. Tested in `test/release-state.test.js`.
+that tag. Tested in `test/release-state.test.js`. Since the evaluation of 1.25.5 (J1, J11) it also checks, for the
+newest tag, the zip's SHA-256 in its CHANGELOG section and (online) in its Release notes (*The zip's SHA-256 in two
+places*, below), and that [security/OPERATIVE-CONTROLS.md](security/OPERATIVE-CONTROLS.md) claims only what is true.
+
+**Operative controls.** [security/OPERATIVE-CONTROLS.md](security/OPERATIVE-CONTROLS.md) is one table of the release and
+repository controls buyers are told about: the checksum on `main` and in the Release notes, a signed tag, private
+vulnerability reporting, who pushed the newest tag, `evening` among `main`'s required checks, and the flake register.
+Each row gives the state today and what checks it. `release-state` fails when the `checksum-main`, `checksum-release`
+or `signed-tag` row claims a state that is not the newest tag's. Update the page in the records commit after each tag,
+and whenever the owner changes one of these settings.
 
 **Stamp checklist: the tests run on the stamped tree, and main's run is the green one** (1.25.4; evaluation of 1.25.3,
 G6 and G1). The 1.25.3 stamp was pushed without the suite that would have refused it, and went red on `main`. So:
@@ -852,8 +861,9 @@ pushed: delete it there (`git tag -d vX.Y.Z`), since the tag's date starts the 2
 records commit, "Release records: X.Y.Z completed" (`ec874a4` for 1.25.4), made once the release run has passed and
 the web app is published: the hand-off ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)) and HANDOFF.md's
 *Release waiting* no longer list the tag as owed, and the questionnaire, the RFI answer, the evidence index and the
-ledger above say it was released (and the zip's SHA-256 goes into the CHANGELOG, *The zip's SHA-256 in two places*,
-below). Between the tag push and that commit (about an hour for 1.25.4: the gate, the approval, the web app's
+ledger above say it was released, and the version's CHANGELOG section gets the line `SHA-256 of suds-vX.Y.Z.zip:
+<hex>` under its heading, the value RELEASE-HANDOFF.md recorded before the tag, once the published `.sha256` is
+checked against it (*The zip's SHA-256 in two places*, below; `release-state` fails for the newest tag without it). Between the tag push and that commit (about an hour for 1.25.4: the gate, the approval, the web app's
 publish) the advisory `release-state` job on `main` is **expected red**: the documents still say the tag is owed
 while origin has it. That is not a failure to chase; a `release-state` that is still red once the records commit is
 on `main` is (evaluation of 1.25.4, H8). Nothing automates the records commit: it states what the owner and the
@@ -916,7 +926,28 @@ and **refuses** a tag that is not `v<package.json version>` (until 1.16.2 only t
 owner's approval, checked the tag). The warning is also written to the run's summary (1.16.3), on the page where
 the owner approves the `release` environment, since an annotation in the log is easily missed. A warning, not a
 refusal, so that a reviewed exception stays possible: the owner decides, and says so in the notes.
-**The zip's SHA-256 in two places.** SUDS Server's `install.sh` and `upgrade.sh` need `--release-sha256` from a channel other than the download (docs/SELF-HOSTING.md, *Upgrading*), so once the release job has published `suds-vX.Y.Z.zip.sha256`, the owner copies that SHA-256 into the GitHub release notes **and** into the version's CHANGELOG entry on `main` (a line `SHA-256 of suds-vX.Y.Z.zip: <hex>`, committed and pushed as its own commit). An operator compares the two; a zip swapped on the release page cannot also change the repository's history. The CHANGELOG line is on `main`, never at the tag: a zip's checksum cannot be inside the commit it is built from. Because `git archive` is reproducible, the value can be known before the release: `git archive --format=zip --prefix=suds-vX.Y.Z/ <stamp sha> | sha256sum` gives what the job will publish (checked against the published `v1.15.4` and `v1.16.2`), and the hand-off for the untagged releases (1.16.3 onwards) lists each ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); compare it with the published file before recording it.
+**The zip's SHA-256 in two places.** SUDS Server's `install.sh` and `upgrade.sh` need `--release-sha256` from a channel other than the download (docs/SELF-HOSTING.md, *Upgrading*): the GitHub Release's notes **and** the version's CHANGELOG section on `main`, each with the line `SHA-256 of suds-vX.Y.Z.zip: <hex>`, which must agree. An operator compares the two; a zip swapped on the release page cannot also change the repository's history. Until the evaluation of 1.25.5 (J1) neither carried it, for any release, and nothing checked. Now:
+1. **The Release notes: written by `release.yml`.** The release job's *Publish* step hashes the zips it uploads (the source zip and the Windows server zip, both checked against the tag's build) and ends the notes with `SHA-256 of suds-vX.Y.Z.zip: <hex>` and `SHA-256 of suds-X.Y.Z-windows-x64.zip: <hex>`. For a Release that already exists (a re-run), it adds whichever line is missing to the notes (an immutable release keeps its title and notes editable; only its assets and tag are locked), and stops with an error if a line names the zip with another value. It then reads the notes back and fails if a line is missing. It writes the two lines into the run's summary too.
+2. **The CHANGELOG on `main`: the records commit.** The records commit after the tag (*After the tag*, above) adds the same `SHA-256 of suds-vX.Y.Z.zip: <hex>` line under the version's `## X.Y.Z — date` heading, with the value [evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md) recorded **before** the tag (and the Windows zip's line, once its value is read from the published `.sha256`). The line is on `main`, never at the tag: a zip's checksum cannot be inside the commit it is built from. Because `git archive` is reproducible, the value is known before the release: `git archive --format=zip --prefix=suds-vX.Y.Z/ <sha> | sha256sum` gives what the job will publish; compare it with the published file before recording it.
+3. **`scripts/release-state.js` checks both, for the newest tag**: it fails when that version's CHANGELOG section lacks the line or gives another value than RELEASE-HANDOFF.md's, and, online, when the Release notes (read unauthenticated from `api.github.com`) lack it or differ; when the API cannot be read (rate limit, no network) it says "not checked". Only the newest tag, because the Releases up to 1.25.5 were published without the line.
+
+**The older Releases (owner, optional).** The CHANGELOG on `main` carries the line for every release whose value RELEASE-HANDOFF.md records, each rebuilt from its tag with `git archive` on 2026-10-11 and equal to it. The owner may add the same line to those Releases' notes (*Edit release*; immutable releases allow it); then the two channels agree for them too. The values, and the GitHub Releases that exist:
+
+| Version | `SHA-256 of suds-vX.Y.Z.zip` | GitHub Release |
+| --- | --- | --- |
+| 1.25.5 | `319d1c1b9de96c52ce67503d0a460092149d96a6591aad2a1b448ac941956736` | yes (its notes: **owed**, the newest tag; release-state fails until they carry it); Windows zip `69d25c33e4e350373b11fbd368424dc1863631118c31d69150864c1deb4fe9a1` |
+| 1.25.4 | `b0a04a6a98e1361cc1c85386afb1c2763904370db3b796f454031093b1d3736f` | yes; Windows zip `ad6cc1f8f0fa1947a179c256efa0950d5a80873c569be9dac84ada6c82f11597` |
+| 1.25.3 | `d70101e1d0332beff63beef329cea7089bbe1afd4f58e34beb845a1e556239cc` | yes |
+| 1.25.2 | `acc777aad2908d8b111bb7d02cb9f96c9a0f60f3b6c664ba7a4daa21a7870d61` | yes |
+| 1.25.1 | `f81b65ceaf390bc2430ca8205a787781873411b12681c842c5cb19a727a28e1b` | yes; Windows zip `b280651cc0d7de80ada82c751cade00538826621a3665a174ba601c9763d7d16` |
+| 1.25.0 | `3a5002ad5ba7c242abb2cf6a51a21e1b628cbcfe06dbb25e7811b5d3dc3cc379` | yes; Windows zip `489ee896fb5bceaa875706b62198f346c973e0be423d9e7c90273a080d0f0754` |
+| 1.24.4 | `f3787da4bbf95b3f3cab14a8ab0542c73edf06e649a3bcab083dfbdb07d262b6` | yes |
+| 1.24.1 | `9b9592e5d8bec75d8a48f7f469e7db83bc30eee7e4b5c54a3c7f87b06d829f06` | yes |
+| 1.23.6 | `3cdfe0ea70c96b833126e3da96a20a00b5f3358c098f5abf8544da9b9a98a74a` | yes |
+| 1.23.2 | `571d25dd8dae3adbc16ae916a091e8f553e7303713ec1b43e102d2d6bc31c41c` | yes |
+| 1.24.0, 1.23.5–1.23.3, 1.23.1, 1.23.0, 1.22.0–1.17.0 | in each CHANGELOG section | none: nothing to edit (the value is what `git archive` of the tag gives) |
+
+Not backfilled: **1.16.3 and 1.16.4**. Their Releases were published by hand on 2026-10-05 with zips built locally, and those zips differ from `git archive` of the tag (published `ba0d1578…` and `70617e5d…`, recorded `366908af…` and `a38cef2f…`); a line giving either value would not match the other. Neither is a supported version.
 
 Pushing the tag runs `.github/workflows/release.yml`, which first passes the release gate (below), then re-runs the tests in the `verify` job (read-only token, no environment), and, after the owner's approval, the `release` job packages `suds-v1.0.1.zip` (`git archive`, so no local data can leak) and publishes a GitHub Release for the tag with the zip attached. Since 1.16.4 (engineering review of 1.16.3, M5) the `release` job is the only one with a write token and runs no npm and none of the released commit's code: `npm ci` and `npm test` ran in `verify`, where a dependency could once reach the packaging step through `$GITHUB_ENV`, `$GITHUB_PATH` or a replaced `git`, `sha256sum` or `gh`. As its last step it starts the web-app (GitHub Pages) workflow for the tag (`gh workflow run web-app.yml --ref v1.0.1`): a release created with `GITHUB_TOKEN` does not trigger other workflows by itself. That dispatch is the web-app workflow's only trigger (since 1.16.1 a tag push or a `release` event no longer starts it): it runs only on a `v*` tag whose GitHub Release exists at that commit, and its `publish` job waits in the `release` environment, so the owner approves it too. The on-device web app is published on releases only — never on a push to `main` — so what is on the public URL is always a released version ([WEB_APP.md](WEB_APP.md#when-it-is-published)). No workflow uses a marketplace action; the only actions used are GitHub's own `actions/upload-artifact` and `actions/download-artifact`, pinned to a commit, in `web-app.yml` (they run under the Actions policy *Allow actions created by GitHub*).
 

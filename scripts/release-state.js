@@ -21,7 +21,13 @@
 //     answer say they were "published without a tag" and name the first and last of them (1.22.0);
 //   * CHANGELOG.md: inside a dated section "## X.Y.Z — date", a line calling another minor "the latest minor" or
 //     "the previous", or saying "checked against", "describe(s)", "not yet released" or "fix release" of another
-//     version. Legitimate history is in CHANGELOG_ALLOW below, each with its reason.
+//     version. Legitimate history is in CHANGELOG_ALLOW below, each with its reason;
+//   * the release checksum's two channels, for the newest tag (evaluation of 1.25.5, J1): that version's CHANGELOG
+//     section carries "SHA-256 of suds-vX.Y.Z.zip: <hex>" equal to the value docs/evidence/RELEASE-HANDOFF.md recorded
+//     before the tag, and (online) so do the GitHub Release's notes, read unauthenticated from api.github.com. Only
+//     the newest tag: the Releases up to 1.25.5 were published without the line (docs/RELEASE.md lists their values);
+//   * docs/security/OPERATIVE-CONTROLS.md (evaluation of 1.25.5, J11): the state each row it can verify claims (the
+//     checksum on main, the checksum in the Release notes, whether the newest tag is signed) is the true one.
 //
 //   node scripts/release-state.js              # the repository, plus `git ls-remote --tags origin` and the local
 //                                              # origin/main and origin/gh-pages refs, where they can be read
@@ -36,6 +42,9 @@
 // test/release-state.test.js; docs/RELEASE.md (stamp checklist) says when to run it.
 const fs = require('node:fs');
 const path = require('node:path');
+const http = require('node:http');
+const https = require('node:https');
+const tls = require('node:tls');
 const { execFileSync } = require('node:child_process');
 
 // ---------------------------------------------------------------------------------------------------- versions
@@ -293,12 +302,82 @@ function checkUntaggedDisclosure(docs, untagged) {
   return problems;
 }
 
+// ------------------------------------------------------------------------------------- the release checksum (J1)
+/** The zips a release publishes, by name. */
+const zipNames = (v) => ({ source: `suds-v${v}.zip`, windows: `suds-${v}-windows-x64.zip` });
+const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** The "SHA-256 of <name>: <hex>" lines of a text (a list item or in backticks too): [{ hex, line }]. */
+function checksumLines(text, name, firstLine = 1) {
+  const re = new RegExp(`^[ \\t]*(?:[-*][ \\t]+)?SHA-256 of \`?${reEsc(name)}\`?:[ \\t]*\`?([0-9a-f]{64})\`?[ \\t]*\\r?$`, 'gm');
+  return [...String(text || '').matchAll(re)].map((m) => ({ hex: m[1], line: firstLine - 1 + lineAt(text, m.index) }));
+}
+/** A version's dated CHANGELOG section: { text, line } (line: its heading's), or null. */
+function changelogSection(changelog, v) {
+  const text = String(changelog || '');
+  const m = new RegExp(`^## ${reEsc(v)} — \\d{4}-\\d{2}-\\d{2}\\s*$`, 'm').exec(text);
+  if (!m) return null;
+  const rest = text.slice(m.index + m[0].length);
+  const end = rest.search(/^## /m);
+  return { text: text.slice(m.index, m.index + m[0].length + (end < 0 ? rest.length : end)), line: lineAt(text, m.index) };
+}
+/**
+ * What docs/evidence/RELEASE-HANDOFF.md records of a version's zips: { source: [{ hex, line }], windows: [...] }.
+ * The source zip's value is in its table row (`| \`vX.Y.Z\` | … | \`<hex>\` |`), in a record bullet ("- `vX.Y.Z` —
+ * commit …, zip SHA-256 `<hex>`") and in a rebuild command's expected output ("# <hex>  suds-vX.Y.Z.zip"); the Windows
+ * zip's beside its name ("`suds-X.Y.Z-windows-x64.zip`, SHA-256 `<hex>`").
+ */
+function recordedChecksums(handoff, v) {
+  const text = String(handoff || '');
+  const lines = text.split('\n');
+  const source = []; const windows = [];
+  const tag = `\`v${v}\``;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (new RegExp(`^\\|\\s*${reEsc(tag)}\\s*\\|`).test(l)) {
+      const hex = l.match(/`([0-9a-f]{64})`/);
+      if (hex) source.push({ hex: hex[1], line: i + 1 });
+    } else if (l.startsWith(`- ${tag} —`) || l.startsWith(`- ${tag} -`)) {
+      let item = l;
+      for (let j = i + 1; j < lines.length && /^ {2,}\S/.test(lines[j]); j++) item += ` ${lines[j].trim()}`;
+      const hex = /zip SHA-256\s+`([0-9a-f]{64})`/.exec(item);
+      if (hex) source.push({ hex: hex[1], line: i + 1 });
+    }
+    const out = new RegExp(`^#\\s+([0-9a-f]{64})\\s+${reEsc(zipNames(v).source)}\\s*$`).exec(l);
+    if (out) source.push({ hex: out[1], line: i + 1 });
+  }
+  for (const m of text.matchAll(new RegExp(`\`${reEsc(zipNames(v).windows)}\`[^\`]{0,40}\`([0-9a-f]{64})\``, 'g'))) windows.push({ hex: m[1], line: lineAt(text, m.index) });
+  return { source, windows };
+}
+
+// ------------------------------------------------------------------------------- the operative controls page (J11)
+/**
+ * The rows of docs/security/OPERATIVE-CONTROLS.md this script can verify, and the states each may claim (the first
+ * **bold** words of its State cell): true when the control is in force, false when it is not.
+ */
+const CONTROL_STATES = {
+  'checksum-main': { 'in force': true, missing: false },
+  'checksum-release': { 'in force': true, missing: false },
+  'signed-tag': { signed: true, 'not signed': false },
+};
+/** The page's table rows: { id: { state, line } } for every row whose first cell starts with `an-id`. */
+function parseControls(text) {
+  const rows = {};
+  String(text || '').split('\n').forEach((l, i) => {
+    const m = /^\|\s*`([a-z0-9-]+)`/.exec(l);
+    if (!m) return;
+    const cells = l.split('|');
+    const state = /\*\*([^*]+)\*\*/.exec(cells[2] || '');
+    rows[m[1]] = { state: state ? state[1].trim().toLowerCase() : null, line: i + 1 };
+  });
+  return rows;
+}
+
 // -------------------------------------------------------------------------------------------------------- checks
-const P = (file, line, message, fix, code) => ({ file, line: line || 1, message, fix, code });
+const P =(file, line, message, fix, code) => ({ file, line: line || 1, message, fix, code });
 const FILES = {
   pkg: 'package.json', changelog: 'CHANGELOG.md', questionnaire: 'docs/security/QUESTIONNAIRE.md', evidence: 'docs/evidence/README.md',
   release: 'docs/RELEASE.md', handoff: 'docs/evidence/RELEASE-HANDOFF.md', notes: 'HANDOFF.md',
-  rfi: 'docs/market/templates/COUNTY-RFI-ANSWERS.md',
+  rfi: 'docs/market/templates/COUNTY-RFI-ANSWERS.md', controls: 'docs/security/OPERATIVE-CONTROLS.md',
 };
 const LIVE_DOCS = ['questionnaire', 'evidence', 'release', 'handoff', 'notes'];
 
@@ -307,9 +386,12 @@ const LIVE_DOCS = ['questionnaire', 'evidence', 'release', 'handoff', 'notes'];
  * null). `git`: null (not read), or { shallow, mainRef, commits: { sha: { exists, subject, parent, parentSubject, onMain } } }
  * (onMain null when there is no main ref). `remote`: null, or { tags: { 'v1.2.3': '<peeled commit sha>' } }.
  * `pages`: null, or { version, source }. `mainPkg`: null, or { version, stamped: [...] } from origin/main.
+ * `newestTag`: null (not known), or { tag: 'v1.2.3', signed: true | false | null (its tag object not in this clone),
+ * source }. `releaseNotes`: null (not fetched), or { tag, status: 'ok', body } | { tag, status: 'none' } (no GitHub
+ * Release) | { tag, status: 'unreachable', detail }.
  * Returns { problems, notChecked, info }.
  */
-function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = null }) {
+function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = null, newestTag = null, releaseNotes = null }) {
   const problems = [];
   const notChecked = [];
   const info = [];
@@ -485,9 +567,91 @@ function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = nul
   // 8. The CHANGELOG lint.
   for (const f of lintChangelog(docs.changelog || '')) problems.push(P(FILES.changelog, f.line, f.message, `say what was true of ${f.section} (${f.want}), or add the line to CHANGELOG_ALLOW in scripts/release-state.js with its reason if it is history`, 'changelog-version'));
 
+  // 9. The release checksum in two channels, and the signature, of the newest tag (evaluation of 1.25.5, J1 and J3).
+  const truth = checkNewestTag({ docs, newestTag, releaseNotes, problems, notChecked, info });
+
+  // 10. docs/security/OPERATIVE-CONTROLS.md claims only what is true (evaluation of 1.25.5, J11).
+  checkControls(docs.controls, truth, problems);
+
   problems.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line));
   return { problems, notChecked: [...new Set(notChecked)], info };
 }
+/** Section 9. Returns what is known to be true: { 'checksum-main', 'checksum-release', 'signed-tag' } (true, false or absent). */
+function checkNewestTag({ docs, newestTag, releaseNotes, problems, notChecked, info }) {
+  const truth = {};
+  if (!newestTag || !parseV(newestTag.tag)) {
+    notChecked.push('the release checksum and the signature of the newest tag (no v* tag known: --docs-only, or no tag in this clone)');
+    return truth;
+  }
+  const { tag } = newestTag;
+  const v = tag.replace(/^v/, '');
+  const names = zipNames(v);
+  info.push(`the newest tag is ${tag}${newestTag.source ? ` (${newestTag.source})` : ''}`);
+  const rec = docs.handoff != null ? recordedChecksums(docs.handoff, v) : { source: [], windows: [] };
+  const recorded = { source: [...new Set(rec.source.map((r) => r.hex))], windows: [...new Set(rec.windows.map((r) => r.hex))] };
+  for (const k of ['source', 'windows']) {
+    if (recorded[k].length > 1) problems.push(P(FILES.handoff, rec[k][0].line, `RELEASE-HANDOFF.md records ${recorded[k].length} different SHA-256 values for ${names[k]}: ${recorded[k].map((h) => `${h.slice(0, 12)}…`).join(', ')}`, `rebuild it from the tag, compare with the published .sha256, and keep the one value`, 'checksum-handoff-disagrees'));
+  }
+  const want = recorded.source.length === 1 ? recorded.source[0] : null;
+  if (!rec.source.length) problems.push(P(FILES.handoff, 1, `RELEASE-HANDOFF.md records no SHA-256 for ${names.source}, the newest tag's zip`, 'record it (the hand-off row, before the tag; docs/RELEASE.md, *Handing a release to the owner*)', 'checksum-unrecorded'));
+  const line = (hex) => `SHA-256 of ${names.source}: ${hex || '<the hex RELEASE-HANDOFF.md records>'}`;
+
+  // On main: the version's CHANGELOG section.
+  const sec = changelogSection(docs.changelog, v);
+  const onMain = { source: [], windows: [] };
+  if (!sec) problems.push(P(FILES.changelog, 1, `${tag} is the newest tag, but CHANGELOG.md has no dated section for ${v}`, `restore the "## ${v} — <date>" section`, 'checksum-no-section'));
+  else {
+    for (const k of ['source', 'windows']) onMain[k] = checksumLines(sec.text, names[k], sec.line);
+    if (!onMain.source.length) problems.push(P(FILES.changelog, sec.line, `the ${v} section has no line "SHA-256 of ${names.source}: <hex>", the second channel for upgrade.sh --release-sha256`, `add "${line(want)}" under its heading (the records commit, docs/RELEASE.md)`, 'checksum-changelog-missing'));
+    for (const k of ['source', 'windows']) {
+      for (const c of onMain[k]) {
+        if (recorded[k].length === 1 && c.hex !== recorded[k][0]) problems.push(P(FILES.changelog, c.line, `the ${v} section gives ${names[k]}'s SHA-256 as ${c.hex.slice(0, 12)}…; RELEASE-HANDOFF.md recorded ${recorded[k][0].slice(0, 12)}… before the tag`, `find out which is the release's before anyone installs it: rebuild it from ${tag} and compare with the published .sha256`, 'checksum-changelog-differs'));
+      }
+    }
+    truth['checksum-main'] = !!want && onMain.source.length > 0 && onMain.source.every((c) => c.hex === want);
+  }
+
+  // On GitHub: the Release's notes.
+  const relFile = `GitHub Release ${tag}`;
+  if (!releaseNotes) notChecked.push(`${tag}'s GitHub Release notes (not fetched: --offline or --docs-only)`);
+  else if (releaseNotes.status === 'none') notChecked.push(`${tag}'s GitHub Release notes (there is no GitHub Release for ${tag} yet)`);
+  else if (releaseNotes.status !== 'ok') notChecked.push(`${tag}'s GitHub Release notes (${releaseNotes.detail || 'api.github.com could not be read'})`);
+  else {
+    const body = String(releaseNotes.body || '');
+    const notes = { source: checksumLines(body, names.source), windows: checksumLines(body, names.windows) };
+    if (!notes.source.length) problems.push(P(relFile, 1, `the Release notes have no line "SHA-256 of ${names.source}: <hex>", the other channel for upgrade.sh --release-sha256`, `the owner edits the Release (Edit release) and adds "${line(want)}" (an immutable release keeps its notes editable; release.yml writes the line itself for the releases after 1.25.5)`, 'checksum-release-missing'));
+    const ref = {};
+    for (const k of ['source', 'windows']) {
+      ref[k] = recorded[k].length === 1 ? recorded[k][0] : (onMain[k][0] || {}).hex;
+      for (const c of notes[k]) if (ref[k] && c.hex !== ref[k]) problems.push(P(relFile, 1, `the Release notes give ${names[k]}'s SHA-256 as ${c.hex.slice(0, 12)}…; main records ${ref[k].slice(0, 12)}…`, `stop: find out which is the release's before anyone installs it (rebuild it from ${tag}, compare with the published .sha256)`, 'checksum-release-differs'));
+    }
+    truth['checksum-release'] = !!ref.source && notes.source.length > 0 && notes.source.every((c) => c.hex === ref.source);
+  }
+
+  // The tag's signature (docs/RELEASE.md, *Signing a release tag*).
+  if (newestTag.signed == null) notChecked.push(`whether ${tag} is signed (its tag object is not in this clone: git fetch origin tag ${tag})`);
+  else { truth['signed-tag'] = !!newestTag.signed; info.push(`${tag} is ${newestTag.signed ? 'a signed tag' : 'not signed'}`); }
+  return truth;
+}
+
+/** Section 10: every row the script can verify is there, uses a known state, and claims what is true. */
+function checkControls(text, truth, problems) {
+  if (text === undefined) return; // a caller that passes no page (tests of other sections)
+  const file = FILES.controls;
+  if (text == null) { problems.push(P(file, 1, 'the operative controls page is missing', 'restore it (docs/RELEASE.md, *Operative controls*)', 'controls-missing')); return; }
+  const rows = parseControls(text);
+  for (const [id, states] of Object.entries(CONTROL_STATES)) {
+    const row = rows[id];
+    const known = Object.keys(states).map((s) => `**${s}**`).join(' or ');
+    if (!row) { problems.push(P(file, 1, `no \`${id}\` row`, `restore the row, its State cell starting ${known}`, 'controls-row-missing')); continue; }
+    if (!row.state || !(row.state in states)) { problems.push(P(file, row.line, `the \`${id}\` row's state is ${row.state ? `"${row.state}"` : 'not given'}`, `start its State cell with ${known}`, 'controls-state-unknown')); continue; }
+    if (id in truth && states[row.state] !== truth[id]) {
+      const actual = Object.keys(states).find((s) => states[s] === truth[id]);
+      problems.push(P(file, row.line, `the \`${id}\` row says "${row.state}"; for the newest tag it is "${actual}"`, `say **${actual}**, and what that means for a county`, 'controls-claim'));
+    }
+  }
+}
+
 function sameSet(a, b) { const x = new Set(a), y = new Set(b); return x.size === y.size && [...x].every((v) => y.has(v)); }
 
 // ------------------------------------------------------------------------------------------------------------ IO
@@ -548,15 +712,97 @@ function readRemoteTags(root) {
   return { tags };
 }
 
-function run(root, { mode = 'online', fetch = false } = {}) {
+/**
+ * The newest v* tag: origin's (from `git ls-remote`) when `remote` is known, else this clone's; and whether its tag
+ * object carries a signature (an OpenPGP or SSH signature block), null when the object is not in this clone.
+ */
+function readNewestTag(root, remote) {
+  let tags; let source;
+  if (remote) { tags = Object.keys(remote.tags); source = 'origin'; } else {
+    const out = gitOut(root, ['for-each-ref', '--format=%(refname:short)', 'refs/tags/v*']);
+    if (out == null) return null;
+    tags = out.split('\n'); source = 'this clone\'s tags';
+  }
+  const tag = tags.filter((t) => /^v\d+\.\d+\.\d+$/.test(t)).sort(cmp).pop();
+  if (!tag) return null;
+  const type = gitOut(root, ['cat-file', '-t', `refs/tags/${tag}`]);
+  let signed = null;
+  if (type === 'commit') signed = false; // a lightweight tag: no tag object, no signature
+  else if (type === 'tag') signed = /-----BEGIN (?:PGP|SSH) SIGNATURE-----/.test(gitOut(root, ['cat-file', 'tag', `refs/tags/${tag}`]) || '');
+  return { tag, signed, source };
+}
+/** owner/name of the repository: GITHUB_REPOSITORY, else origin's URL. */
+function readRepoSlug(root) {
+  if (/^[\w.-]+\/[\w.-]+$/.test(process.env.GITHUB_REPOSITORY || '')) return process.env.GITHUB_REPOSITORY;
+  const url = gitOut(root, ['remote', 'get-url', 'origin']) || '';
+  const m = /github\.com[:/]+([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(url);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+/** Whether NO_PROXY names this host. */
+function noProxy(host) {
+  return String(process.env.NO_PROXY || process.env.no_proxy || '').split(',').map((s) => s.trim().replace(/^\*?\./, '')).filter(Boolean)
+    .some((h) => h === '*' || host === h || host.endsWith(`.${h}`));
+}
+/**
+ * GET a JSON document over HTTPS with node:https, unauthenticated. Through HTTPS_PROXY (an HTTP CONNECT tunnel) when
+ * it is set and NO_PROXY does not name the host. Resolves { status, body } (status 0 and `error` when unreachable).
+ */
+function httpsGetJson(url, { timeout = 15000 } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+    const u = new URL(url);
+    const headers = { 'user-agent': 'suds-release-state', accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', connection: 'close' };
+    const get = (extra) => {
+      const req = https.request({ host: u.hostname, port: 443, path: `${u.pathname}${u.search}`, method: 'GET', headers, timeout, ...extra }, (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (c) => { text += c; });
+        res.on('end', () => { let body = null; try { body = JSON.parse(text); } catch { body = null; } done({ status: res.statusCode, body }); });
+      });
+      req.on('timeout', () => req.destroy(new Error(`no answer in ${timeout / 1000} s`)));
+      req.on('error', (e) => done({ status: 0, error: e.message }));
+      req.end();
+    };
+    const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
+    if (!proxy || noProxy(u.hostname)) { get({}); return; }
+    let p;
+    try { p = new URL(proxy); } catch { done({ status: 0, error: 'HTTPS_PROXY is not a URL' }); return; }
+    const auth = p.username ? { 'proxy-authorization': `Basic ${Buffer.from(`${decodeURIComponent(p.username)}:${decodeURIComponent(p.password)}`).toString('base64')}` } : {};
+    const connect = http.request({ host: p.hostname, port: p.port || 80, method: 'CONNECT', path: `${u.hostname}:443`, headers: { host: `${u.hostname}:443`, ...auth }, timeout });
+    connect.on('connect', (res, socket) => {
+      // The tunnel's own socket: a reset after the answer must not become an uncaught 'error'.
+      socket.on('error', (e) => done({ status: 0, error: e.message }));
+      if (res.statusCode !== 200) { socket.destroy(); done({ status: 0, error: `the proxy refused the tunnel (HTTP ${res.statusCode})` }); return; }
+      get({ agent: false, createConnection: () => tls.connect({ socket, servername: u.hostname }) });
+    });
+    connect.on('timeout', () => connect.destroy(new Error(`the proxy gave no answer in ${timeout / 1000} s`)));
+    connect.on('error', (e) => done({ status: 0, error: e.message }));
+    connect.end();
+  });
+}
+/** The GitHub Release's notes for a tag, as evaluate's `releaseNotes` (unauthenticated: public data). */
+async function fetchReleaseNotes(slug, tag, get = httpsGetJson) {
+  if (!slug) return { tag, status: 'unreachable', detail: 'the repository is not known (set GITHUB_REPOSITORY, or an origin on github.com)' };
+  const base = process.env.GITHUB_API_URL || 'https://api.github.com';
+  const r = await get(`${base}/repos/${slug}/releases/tags/${encodeURIComponent(tag)}`);
+  if (r.status === 200 && r.body && typeof r.body === 'object') return { tag, status: 'ok', body: r.body.body || '' };
+  if (r.status === 404) return { tag, status: 'none' };
+  const why = r.status ? `api.github.com answered HTTP ${r.status}${r.body && r.body.message ? `: ${String(r.body.message).slice(0, 120)}` : ''}` : `api.github.com could not be reached: ${r.error}`;
+  return { tag, status: 'unreachable', detail: why };
+}
+
+function run(root, { mode = 'online', fetch = false, remote: givenRemote, releaseNotes = null } = {}) {
   const docs = readDocs(root);
   if (mode === 'docs-only') return evaluate({ docs });
   let fetched = false;
   if (fetch && mode === 'online') fetched = gitOk(root, ['fetch', '--quiet', 'origin', '+refs/heads/main:refs/remotes/origin/main', '+refs/heads/gh-pages:refs/remotes/origin/gh-pages']);
   const h = docs.handoff ? parseHandoff(docs.handoff) : { rows: [] };
   const git = readGit(root, h.rows.map((r) => r.commit));
-  const remote = mode === 'online' ? readRemoteTags(root) : null;
-  const result = evaluate({ docs, git, remote, pages: git ? readPages(root, fetched) : null, mainPkg: git ? readMainPkg(root) : null });
+  const remote = mode === 'online' ? (givenRemote !== undefined ? givenRemote : readRemoteTags(root)) : null;
+  const newestTag = git ? readNewestTag(root, remote) : null;
+  const notes = releaseNotes && newestTag && releaseNotes.tag === newestTag.tag ? releaseNotes : null;
+  const result = evaluate({ docs, git, remote, pages: git ? readPages(root, fetched) : null, mainPkg: git ? readMainPkg(root) : null, newestTag, releaseNotes: mode === 'online' ? notes : null });
   if (fetch && mode === 'online' && !fetched) result.notChecked.unshift('a fresh fetch of origin main and gh-pages (the fetch failed; the local refs were used)');
   if (mode === 'offline') result.notChecked.unshift('anything on origin (--offline)');
   return result;
@@ -584,13 +830,23 @@ if (require.main === module) {
     else if (a === '--root') root = path.resolve(args[++i] || '.');
     else { console.error(`usage: node scripts/release-state.js [--offline | --docs-only] [--fetch] [--root <dir>] [--json] (unknown: ${a})`); process.exit(2); }
   }
-  const result = run(root, { mode, fetch });
-  console.log(json ? JSON.stringify(result, null, 2) : format(result));
-  process.exitCode = result.problems.length ? 1 : 0;
+  (async () => {
+    // Online, the newest tag's GitHub Release notes are read first (an HTTPS request; run() itself stays synchronous).
+    let remote; let releaseNotes = null;
+    if (mode === 'online') {
+      remote = readRemoteTags(root);
+      const newest = readNewestTag(root, remote);
+      if (newest) releaseNotes = await fetchReleaseNotes(readRepoSlug(root), newest.tag);
+    }
+    const result = run(root, { mode, fetch, remote, releaseNotes });
+    console.log(json ? JSON.stringify(result, null, 2) : format(result));
+    process.exitCode = result.problems.length ? 1 : 0;
+  })().catch((e) => { console.error(`[release-state] could not run: ${e.stack || e}`); process.exitCode = 2; });
 }
 
 module.exports = {
   parseV, cmp, stampedVersions, targetVersion, parseQuestionnaire, parseEvidence, parseRelease, parseHandoff,
   parseHandoffNotes, liveClaims, lintChangelog, evaluate, run, format, CHANGELOG_ALLOW, FILES, UNTAGGED_MARKER,
-  disclosureSections, checkUntaggedDisclosure,
+  disclosureSections, checkUntaggedDisclosure, zipNames, checksumLines, changelogSection, recordedChecksums,
+  parseControls, CONTROL_STATES, readNewestTag, readRepoSlug, fetchReleaseNotes, httpsGetJson,
 };

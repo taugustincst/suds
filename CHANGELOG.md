@@ -4,6 +4,10 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## 1.25.5 — 2026-10-10
 
+SHA-256 of suds-v1.25.5.zip: 319d1c1b9de96c52ce67503d0a460092149d96a6591aad2a1b448ac941956736
+
+SHA-256 of suds-1.25.5-windows-x64.zip: 69d25c33e4e350373b11fbd368424dc1863631118c31d69150864c1deb4fe9a1
+
 A patch of 1.25.4 (docs/RELEASE.md, *Record: 1.25.5*): the fixes from the market-readiness evaluation of 1.25.4
 (H1–H9). No migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.25.5
 --previous v1.25.4` passes: 738 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It
@@ -72,6 +76,10 @@ upgrading administrator should know:
   the hosted offer's costs and opioid-settlement reporting collateral (docs/market/templates/).
 
 ## 1.25.4 — 2026-10-10
+
+SHA-256 of suds-v1.25.4.zip: b0a04a6a98e1361cc1c85386afb1c2763904370db3b796f454031093b1d3736f
+
+SHA-256 of suds-1.25.4-windows-x64.zip: ad6cc1f8f0fa1947a179c256efa0950d5a80873c569be9dac84ada6c82f11597
 
 A patch of 1.25.3 (docs/RELEASE.md, *Record: 1.25.4*): the fixes from the market-readiness evaluation of 1.25.3
 (G1–G11), the offsite-backup defect found on suds.systems after its upgrade to 1.25.3, and the Option A fleet tooling.
@@ -188,6 +196,8 @@ restarting. What an upgrading administrator should know:
 
 ## 1.25.3 — 2026-10-09
 
+SHA-256 of suds-v1.25.3.zip: d70101e1d0332beff63beef329cea7089bbe1afd4f58e34beb845a1e556239cc
+
 A patch of 1.25.2 (docs/RELEASE.md, *Record: 1.25.3*): the fixes from the launch report (SUDS Server live on Lightsail at
 suds.systems, HANDOFF 2026-10-08) and from the pen test of suds.systems. No migration, no new or widened permission and
 no new route (`node scripts/release-policy.js --version 1.25.3 --previous v1.25.2` passes: 210 lines added outside
@@ -230,6 +240,8 @@ the `www.suds.systems` block appended to `/etc/caddy/Caddyfile` into `/etc/caddy
   residual risks 23 and 24 (with the lockout's denial-of-service trade-off, the owner's decision).
 
 ## 1.25.2 — 2026-10-08
+
+SHA-256 of suds-v1.25.2.zip: acc777aad2908d8b111bb7d02cb9f96c9a0f60f3b6c664ba7a4daa21a7870d61
 
 A patch of 1.25.1 (docs/RELEASE.md, *Record: 1.25.2*): the fixes from testing every position on 1.25.1 (navigators,
 clinician, supervisor, administrator, finance, read-only, county user, device-only user and county IT; FL1–FL16,
@@ -416,6 +428,10 @@ Upgrading needs nothing beyond replacing the files and restarting. What an upgra
 
 ## 1.25.1 — 2026-10-08
 
+SHA-256 of suds-v1.25.1.zip: f81b65ceaf390bc2430ca8205a787781873411b12681c842c5cb19a727a28e1b
+
+SHA-256 of suds-1.25.1-windows-x64.zip: b280651cc0d7de80ada82c751cade00538826621a3665a174ba601c9763d7d16
+
 A patch of 1.25.0 (docs/RELEASE.md, *Record: 1.25.1*): the fixes from the evaluation of 1.25.0 (E1 to E11), with
 their tests and documentation. No new migration (migration 71's list mapping now keeps each code once, a reviewed edit
 of a released migration), no new or widened permission and no new route (`node scripts/release-policy.js --version
@@ -497,6 +513,10 @@ CalOMS file. What an upgrading administrator should know:
 
 ## 1.25.0 — 2026-10-05
 
+SHA-256 of suds-v1.25.0.zip: 3a5002ad5ba7c242abb2cf6a51a21e1b628cbcfe06dbb25e7811b5d3dc3cc379
+
+SHA-256 of suds-1.25.0-windows-x64.zip: 489ee896fb5bceaa875706b62198f346c973e0be423d9e7c90273a080d0f0754
+
 * **CalOMS Tx 1.25.0 (the owner lifted the feature freeze: "Fix everything now, freeze lifts to 1.25.0").** Dictionary-verified code sets: service types are ADM-4 codes 1–7; referral sources ADM-5 1–14; drug
   codes are unpadded 0–20 with 99901/99903 (fentanyl and "other" are 99903); routes are 1–4 with
   99902/99903; gender is CID-3 1–6 with 99900/99903; races are zero-padded 01–19 with 99900 (at most 5);
@@ -531,6 +551,8 @@ CalOMS file. What an upgrading administrator should know:
   view toggle (role, labels and pressed state announced).
 
 ## 1.24.4 — 2026-10-05
+
+SHA-256 of suds-v1.24.4.zip: f3787da4bbf95b3f3cab14a8ab0542c73edf06e649a3bcab083dfbdb07d262b6
 
 A patch of 1.24.3 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*): the defects 1.24.3's exact-commit CI
 found, and the introductory pricing. No migration, no new or widened permission and no new route. It
@@ -603,6 +625,8 @@ nothing beyond replacing the files and restarting.
 
 ## 1.24.1 — 2026-10-03
 
+SHA-256 of suds-v1.24.1.zip: 9b9592e5d8bec75d8a48f7f469e7db83bc30eee7e4b5c54a3c7f87b06d829f06
+
 A patch of 1.24.0 (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record: 1.24.1*): the licence change the
 owner decided on 2026-10-03, and fixes from the market evaluation of 1.24.0 (D1 to D7) with their tests and
 documentation. No migration, no new or widened permission and no new route (`node scripts/release-policy.js --version
@@ -662,6 +686,8 @@ From the market evaluation of 1.24.0 (no migration, route or permission):
 - The Windows smoke test in CI completes the setup wizard against the running service (HTTPS on) and signs in.
 
 ## 1.24.0 — 2026-10-03
+
+SHA-256 of suds-v1.24.0.zip: 77b58c2066a706cded48e0deb0bfb5491c17adb8b25413559b53ff50e7aae078
 
 A feature release (migrations 68, 69 and 70; new permissions `intake:read` and `intake:write`; 22 new routes:
 the incoming-referrals queue under `/api/incoming-referrals`, `POST /api/time/:id/merge` and `…/not-duplicate`,
@@ -1151,6 +1177,8 @@ permission or route is added. The guide for county IT is **docs/WINDOWS-SERVER.m
 
 ## 1.23.6 — 2026-10-02
 
+SHA-256 of suds-v1.23.6.zip: 3cdfe0ea70c96b833126e3da96a20a00b5f3358c098f5abf8544da9b9a98a74a
+
 A patch of 1.23.5 that ships **with an owner-approved policy exception** (docs/RELEASE.md, *Stabilisation (from
 1.23.1)*, and *Record: 1.23.6*). It is not a security fix: the owner decided that an administrator may change their
 own permissions, their own role and their own account during the feature freeze, which widens what an administrator
@@ -1222,6 +1250,8 @@ migration.
 
 ## 1.23.5 — 2026-10-02
 
+SHA-256 of suds-v1.23.5.zip: 100d8e8d144a5fcf370278d8fcb5a5606fd1b008bcc61da1c25dbb6c2f8b56be
+
 A patch of 1.23.4 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
 1.23.5*): fixes from the market evaluation of 1.23.4, tests and documentation, with no migration, no new or widened
 permission and no new route (`node scripts/release-policy.js --version 1.23.5 --previous v1.23.4 --previous-ref
@@ -1275,6 +1305,8 @@ record now asks first (the office still lets it be marked done).
 - Fixed: a sign reminder's Client box lost its own error description when it was given the reason it cannot be changed.
 
 ## 1.23.4 — 2026-10-01
+
+SHA-256 of suds-v1.23.4.zip: 48a312aa4b0c22654e90920c0f236ff0e6a39da0628bd0ade855f835c603387f
 
 A patch of 1.23.3 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
 1.23.4*): fixes from the market evaluation of 1.23.3 and the integration review, tests and documentation, with no
@@ -1340,6 +1372,8 @@ last draft was deleted now writes one more audit entry of its own (`task.update`
 
 ## 1.23.3 — 2026-10-01
 
+SHA-256 of suds-v1.23.3.zip: 9ffa1c319a8562276416957e20aa6c51250ca9e06e2ad2440ca4a4f20be30e28
+
 A patch of 1.23.2 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
 1.23.3*): fixes from the external retest of 1.23.2 and the integration review, tests and documentation, with no
 migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.23.3 --previous
@@ -1400,6 +1434,8 @@ the author's last draft was deleted is now *cancelled* (`task.update`, cause `de
   supervisor no longer countersigns notes, it stays open until the worker ticks it off.
 
 ## 1.23.2 — 2026-10-01
+
+SHA-256 of suds-v1.23.2.zip: 571d25dd8dae3adbc16ae916a091e8f553e7303713ec1b43e102d2d6bc31c41c
 
 A patch of 1.23.1 under the *Stabilisation* commitments (docs/RELEASE.md, *Stabilisation (from 1.23.1)*, and *Record:
 1.23.2*): fixes from the evaluation of 1.23.1 and its integration review, tests and documentation, with no migration,
@@ -1467,6 +1503,8 @@ deleting a referral, at the office or from a device, cancels its supervisor's re
   or cancelled with it; only a to-do linked to the call, or with a purpose in its title, is.
 
 ## 1.23.1 — 2026-10-01
+
+SHA-256 of suds-v1.23.1.zip: 38b1895c168d786b461b298181358b1b362eef24a66bb64f656e3a31b024124e
 
 A stabilisation patch of 1.23.0: fixes, tests, documentation and evidence, with no migration, no new or widened
 permission and no new route (`node scripts/release-policy.js --version 1.23.1 --previous v1.23.0 --previous-ref 9877d07`
@@ -1630,6 +1668,8 @@ Evidence and tests only; no change to what SUDS does. One finding for the owner,
   (`scripts/release-state.js`).
 
 ## 1.23.0 — 2026-10-01
+
+SHA-256 of suds-v1.23.0.zip: aa785678b0fe28967732fdf4826c5a89a25337c7fcae03512ca7105e45795a81
 
 A feature release (migration 67; new routes `POST /api/supervision/referrals/:id/remind`, `GET /api/me/field-device`,
 `POST /api/me/field-device/request`, `GET /api/admin/field-requests` and `POST /api/admin/field-requests/:userId/approve`
@@ -1798,6 +1838,8 @@ Released in 1.23.0. No migration, no new permission or route (the folded cards a
   `test/follow-ups.test.js`).
 
 ## 1.22.0 — 2026-10-01
+
+SHA-256 of suds-v1.22.0.zip: 0798dc42106c95139ff4ed7f72fb3d6b95f32b8ce9cb197e6f01a1970168f1c3
 
 A feature release (migrations 64, 65 and 66; the county publication consent routes; no new permission), released
 under a policy exception inside 1.21.0's 28 days (docs/RELEASE.md, *Record: 1.22.0*). It makes the day of the people
@@ -2073,6 +2115,8 @@ Released in 1.22.0. No migration, permission or route.
 
 ## 1.21.0 — 2026-09-30
 
+SHA-256 of suds-v1.21.0.zip: d1ff00523b89d5bf15a28ed4b2be2f4fc80b5978a214152a28aaf3fde9e5c7de
+
 A feature release (migrations 61, 62 and 63; the county publication, field-device, authenticator allow-list and
 county reminder routes; no new permission), released under a policy exception inside 1.20.0's 28 days
 (docs/RELEASE.md, *Record: 1.21.0*). It builds what the documents called planned: a screened **publication release**
@@ -2346,6 +2390,8 @@ makes a screened, publishable release of a county's combined figures for a perio
 
 ## 1.20.0 — 2026-09-30
 
+SHA-256 of suds-v1.20.0.zip: 048e928499fa3569dfcfc59af86633ad4f8176d3bba1c0dd2fe61b62c35fb9ff
+
 A feature release (migration 60 and the county-entered figures routes), released under a policy exception inside
 1.19.0's 28 days (docs/RELEASE.md, *Record: 1.20.0*). A county can now enter or import figures for a grantee not on
 SUDS, clearly marked as county-entered and always outranked by a signed file; SUDS Server's installer and first day
@@ -2544,6 +2590,8 @@ No code, migration, permission or route: documents for a county that funds sever
 
 ## 1.19.0 — 2026-09-30
 
+SHA-256 of suds-v1.19.0.zip: c927808937892f9c474a01eee07a8f13c390d54db98ae6425eaa3f99a19bf2ed
+
 A feature release (migrations 58 and 59 and the passkey routes), released under a policy exception inside 1.18.0's
 28 days (docs/RELEASE.md, *Record: 1.19.0*).
 
@@ -2663,6 +2711,8 @@ For the feature release after 1.18.0 (a migration and new routes; no new permiss
   removed under each other and which could delete a developer's real keys.
 
 ## 1.18.0 — 2026-09-30
+
+SHA-256 of suds-v1.18.0.zip: 23cc69abda81257e69b09700a637cd3dee0d88e59878a0f4c31456af1099a4cc
 
 A feature release (migrations 56 and 57, the `county:view` and `county:manage` permissions and new routes), released
 under a policy exception inside 1.17.0's 28 days (docs/RELEASE.md, *Record: 1.18.0*).
@@ -2871,6 +2921,8 @@ under a policy exception inside 1.17.0's 28 days (docs/RELEASE.md, *Record: 1.18
 
 ## 1.17.1 — 2026-09-29
 
+SHA-256 of suds-v1.17.1.zip: 541fe5006b1f78ba1f580bf97655d139c66d35a68936d8d00d4eb9fcf336e0dd
+
 ### Security (review of 1.17.0, r11; all Low)
 
 - **AI copilot monthly cap under concurrency.** A draft on its way to the provider is reserved before anything
@@ -2945,6 +2997,8 @@ under a policy exception inside 1.17.0's 28 days (docs/RELEASE.md, *Record: 1.18
   documentation tools and EHR add-ons (prices left for the owner to verify); the ROI worksheet has a copilot section.
 
 ## 1.17.0 — 2026-09-29
+
+SHA-256 of suds-v1.17.0.zip: da2504187c9f0073efd05cf99e02ef460bbde271c658a0c87a7456057d6d0ca1
 
 ### AI documentation copilot
 

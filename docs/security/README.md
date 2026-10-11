@@ -19,6 +19,7 @@ For county IT, security and privacy reviewers. Everything here describes control
 | Retention, deletion, purge, data residency, subprocessors | [DATA-LIFECYCLE.md](DATA-LIFECYCLE.md) |
 | Dependencies, patching, scanning, the software bill of materials | [VULNERABILITY-MANAGEMENT.md](VULNERABILITY-MANAGEMENT.md), [../evidence/sbom-1.25.5.cdx.json](../evidence/sbom-1.25.5.cdx.json) |
 | How changes are made, tested and released | [SDLC.md](SDLC.md) |
+| Which release and repository controls are in force today (checksum channels, signed tags, private reporting), and how each is checked | [OPERATIVE-CONTROLS.md](OPERATIVE-CONTROLS.md) |
 | Breach / incident handling | [INCIDENT-RESPONSE.md](INCIDENT-RESPONSE.md) |
 | SOC 2 Trust Services Criteria mapping and gaps | [SOC2-READINESS.md](SOC2-READINESS.md) |
 | A pre-answered vendor security questionnaire (HECVAT-Lite / CAIQ style) | [QUESTIONNAIRE.md](QUESTIONNAIRE.md) |
