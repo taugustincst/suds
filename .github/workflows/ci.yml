@@ -420,7 +420,8 @@ jobs:
   # ledger, the tag hand-off, HANDOFF.md's Release waiting entry, the CHANGELOG's dated sections) against the
   # CHANGELOG, main's history, origin's tags and the version.json gh-pages serves; and the newest tag's zip SHA-256 in its
 # CHANGELOG section and its GitHub Release notes (read unauthenticated from api.github.com), the signature on its tag
-# object, and docs/security/OPERATIVE-CONTROLS.md's claims about both (scripts/release-state.js;
+# object, main's rules and the newest release run's approvals (public, unauthenticated GETs; evaluation of 1.25.6,
+# K1), and docs/security/OPERATIVE-CONTROLS.md's claims about them (scripts/release-state.js;
   # docs/RELEASE.md, stamp checklist). Advisory (continue-on-error), like webkit, and not in the release gate: its
   # answer changes when the owner pushes a tag or the site is republished, not only with the commit, and at a tag's
   # own release run the hand-off still, rightly, lists that tag as owed. A red run gets the documents fixed.

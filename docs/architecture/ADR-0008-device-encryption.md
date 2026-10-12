@@ -188,6 +188,16 @@ does not store is the password its people type.
   app code identical to 1.25.3). Whether these engine errors happen on iOS Safari, and not only in Playwright's
   WebKit on Linux, is not yet established: the real-iPhone record of [docs/ADOPTION.md](../ADOPTION.md) §4
   ([checklist](../evidence/REAL-DEVICE-CHECK-TEMPLATE.md)) is owed.
+- **1.25.7 (evaluation of 1.25.6, K2).** The engine also failed at a first visit, with nothing stored (CI's WebKit
+  run 38118949645: "Could not start SUDS on this device: Out of bounds memory access" from the page that creates the
+  empty database), and the page offered Start over. `start` now starts the engine after the lock and the store are
+  read, and runs starting it, and opening or creating the database on it, once more on a new engine (`freshEngine`)
+  when that fails; a cleared key (`SUDS_KEY_LOST`) and a lock held by another window are not retried. If the second
+  engine fails too, the error is `SUDS_ENGINE_FAILED` with `nothingStored`: with nothing stored the page says it is
+  most likely this browser and offers Reload, not Start over (there is nothing to erase); with records the page is
+  the error and *Reset this device* as before. A device with records starts locked without opening the database, so
+  its engine is asked at sign-in (`unlockWith`, 1.25.5). Tests: test/device-engine-start.test.js;
+  scripts/ui/device-recovery.mjs section 7 in Chromium. The real-device checklist gains ten cold first loads.
 - While someone is signed in, the database and its key are in the page's memory, as any running app's are.
 - A page load always needs a sign-in, including the reload after a new release and "Use SUDS in this window".
 - Holding the store is now callback-free for image saves. Before this, an ordinary save issued its put from the

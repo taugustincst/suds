@@ -26,8 +26,15 @@
 //     section carries "SHA-256 of suds-vX.Y.Z.zip: <hex>" equal to the value docs/evidence/RELEASE-HANDOFF.md recorded
 //     before the tag, and (online) so do the GitHub Release's notes, read unauthenticated from api.github.com. Only
 //     the newest tag: the Releases up to 1.25.5 were published without the line (docs/RELEASE.md lists their values);
-//   * docs/security/OPERATIVE-CONTROLS.md (evaluation of 1.25.5, J11): the state each row it can verify claims (the
-//     checksum on main, the checksum in the Release notes, whether the newest tag is signed) is the true one.
+//   * a version handed over for tagging (evaluation of 1.25.6, K7): once its docs/evidence/RELEASE-HANDOFF.md row
+//     names the commit and the zip's SHA-256, its CHANGELOG section carries the same "SHA-256 of suds-vX.Y.Z.zip"
+//     line, added by the tag hand-off commit, so the second channel is on main before the tag exists;
+//   * docs/security/OPERATIVE-CONTROLS.md (evaluation of 1.25.5, J11; 1.25.6, K1): the state each row it can verify
+//     claims (the checksum on main, the checksum in the Release notes, whether the newest tag is signed, and, online,
+//     whether `main` has a ruleset, whether the newest release run waited for a reviewer, whether the newest
+//     Release is immutable) is the true one. Online it reads, unauthenticated, GET /repos/{repo}/rules/branches/main,
+//     the newest tag's "Release" run (GET /repos/{repo}/actions/runs?event=push&head_sha=<tag commit>) and its
+//     approvals (GET /repos/{repo}/actions/runs/<id>/approvals); a rate limit or no network is "not checked".
 //
 //   node scripts/release-state.js              # the repository, plus `git ls-remote --tags origin` and the local
 //                                              # origin/main and origin/gh-pages refs, where they can be read
@@ -35,6 +42,10 @@
 //   node scripts/release-state.js --offline    # no network: local git only; says what it could not check
 //   node scripts/release-state.js --docs-only  # the documents alone, no git at all (deterministic for a tree)
 //   ... [--root <dir>] [--json]
+//
+// HANDOFF.md is a log between assistants, not a buyer document (evaluation of 1.25.6, K5): the required test
+// (test/release-state.test.js, --docs-only) leaves its "is live" claims out (run(..., { notesLive: false })); this
+// CLI, and so CI's advisory `release-state` job, still checks them.
 //
 // Exit status: 0 no problem found, 1 problems (each printed as file:line, with a fix), 2 usage error. What could not
 // be checked (no network, a shallow clone without the commits, no gh-pages ref) is listed and is not a problem.
@@ -358,7 +369,13 @@ const CONTROL_STATES = {
   'checksum-main': { 'in force': true, missing: false },
   'checksum-release': { 'in force': true, missing: false },
   'signed-tag': { signed: true, 'not signed': false },
+  // Evaluation of 1.25.6, K1: the repository protections, read online (unauthenticated) from the public API.
+  'main-ruleset': { 'in force': true, off: false },
+  'release-reviewer': { 'in force': true, off: false },
+  'immutable-releases': { 'in force': true, off: false },
 };
+/** The rule types `main`'s ruleset must have for the `main-ruleset` row to be in force (RELEASE.md step 2). */
+const MAIN_RULES = ['deletion', 'non_fast_forward', 'pull_request', 'required_status_checks'];
 /** The page's table rows: { id: { state, line } } for every row whose first cell starts with `an-id`. */
 function parseControls(text) {
   const rows = {};
@@ -380,6 +397,8 @@ const FILES = {
   rfi: 'docs/market/templates/COUNTY-RFI-ANSWERS.md', controls: 'docs/security/OPERATIVE-CONTROLS.md',
 };
 const LIVE_DOCS = ['questionnaire', 'evidence', 'release', 'handoff', 'notes'];
+/** The same, without HANDOFF.md: what the required test cross-checks (evaluation of 1.25.6, K5). */
+const REQUIRED_LIVE_DOCS = LIVE_DOCS.filter((k) => k !== 'notes');
 
 /**
  * The checks. `docs`: { pkg, changelog, questionnaire, evidence, release, handoff, notes } texts (a missing file is
@@ -388,10 +407,12 @@ const LIVE_DOCS = ['questionnaire', 'evidence', 'release', 'handoff', 'notes'];
  * `pages`: null, or { version, source }. `mainPkg`: null, or { version, stamped: [...] } from origin/main.
  * `newestTag`: null (not known), or { tag: 'v1.2.3', signed: true | false | null (its tag object not in this clone),
  * source }. `releaseNotes`: null (not fetched), or { tag, status: 'ok', body } | { tag, status: 'none' } (no GitHub
- * Release) | { tag, status: 'unreachable', detail }.
+ * Release) | { tag, status: 'unreachable', detail }; when the Release says so, `immutable` (true or false) too.
+ * `protections`: null (not fetched), or { mainRules, releaseRun } (fetchProtections' answer). `notesLive`: false
+ * leaves HANDOFF.md's "is live" claims out (the required test; HANDOFF.md is a log, evaluation of 1.25.6, K5).
  * Returns { problems, notChecked, info }.
  */
-function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = null, newestTag = null, releaseNotes = null }) {
+function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = null, newestTag = null, releaseNotes = null, protections = null, notesLive = true }) {
   const problems = [];
   const notChecked = [];
   const info = [];
@@ -485,7 +506,7 @@ function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = nul
 
   // 4. Live on GitHub Pages: the claims agree with each other, and with gh-pages when it can be read.
   const claims = [];
-  for (const key of LIVE_DOCS) if (docs[key] != null) for (const c of liveClaims(docs[key])) claims.push({ ...c, file: FILES[key] });
+  for (const key of notesLive ? LIVE_DOCS : REQUIRED_LIVE_DOCS) if (docs[key] != null) for (const c of liveClaims(docs[key])) claims.push({ ...c, file: FILES[key] });
   if (pages) {
     info.push(`gh-pages serves ${pages.version} (${pages.source})`);
     for (const c of claims) if (c.version !== pages.version) problems.push(P(c.file, c.line, `says ${c.version} is live on GitHub Pages; gh-pages' version.json says ${pages.version}`, `say ${pages.version}, or that ${c.version} was published then replaced`, 'pages-live'));
@@ -570,6 +591,12 @@ function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = nul
   // 9. The release checksum in two channels, and the signature, of the newest tag (evaluation of 1.25.5, J1 and J3).
   const truth = checkNewestTag({ docs, newestTag, releaseNotes, problems, notChecked, info });
 
+  // 9b. A version handed over for tagging carries its checksum line on main before the tag (evaluation of 1.25.6, K7).
+  if (h) checkHandedOver({ docs, rows: h.rows, newestTag, problems });
+
+  // 9c. The repository protections, online (evaluation of 1.25.6, K1).
+  Object.assign(truth, checkProtections({ protections, releaseNotes, newestTag, notChecked, info }));
+
   // 10. docs/security/OPERATIVE-CONTROLS.md claims only what is true (evaluation of 1.25.5, J11).
   checkControls(docs.controls, truth, problems);
 
@@ -631,6 +658,64 @@ function checkNewestTag({ docs, newestTag, releaseNotes, problems, notChecked, i
   // The tag's signature (docs/RELEASE.md, *Signing a release tag*).
   if (newestTag.signed == null) notChecked.push(`whether ${tag} is signed (its tag object is not in this clone: git fetch origin tag ${tag})`);
   else { truth['signed-tag'] = !!newestTag.signed; info.push(`${tag} is ${newestTag.signed ? 'a signed tag' : 'not signed'}`); }
+  return truth;
+}
+
+/**
+ * Section 9b. The tag hand-off commit fills a version's RELEASE-HANDOFF.md row with the commit to tag and its zip's
+ * SHA-256, and adds "SHA-256 of suds-vX.Y.Z.zip: <hex>" to the version's CHANGELOG section in the same commit, before
+ * the tag (evaluation of 1.25.6, K7: 1.25.6's line reached main three hours after its Release, and the vendor's own
+ * upgrade ran in the gap). A filled row (h.rows: it names a commit and a zip) without the line, or with another value,
+ * is a problem; a row still pending (no commit or zip yet) may carry the line or not. The newest tag is section 9's.
+ */
+function checkHandedOver({ docs, rows, newestTag, problems }) {
+  for (const r of rows) {
+    if (newestTag && newestTag.tag === r.tag) continue;
+    const sec = changelogSection(docs.changelog, r.version);
+    if (!sec) continue; // section 3 reports a row with no dated section
+    const name = zipNames(r.version).source;
+    const found = checksumLines(sec.text, name, sec.line);
+    if (!found.length) problems.push(P(FILES.changelog, sec.line, `${r.tag} is handed over for tagging with its zip's SHA-256 recorded (RELEASE-HANDOFF.md:${r.line}), but the ${r.version} section has no line "SHA-256 of ${name}: <hex>"`, `add "SHA-256 of ${name}: ${r.zip}" under its heading, in the tag hand-off commit, before the tag (docs/RELEASE.md, *The zip's SHA-256 in two places*)`, 'checksum-changelog-missing'));
+    for (const c of found) if (c.hex !== r.zip) problems.push(P(FILES.changelog, c.line, `the ${r.version} section gives ${name}'s SHA-256 as ${c.hex.slice(0, 12)}…; RELEASE-HANDOFF.md:${r.line} records ${r.zip.slice(0, 12)}…`, `rebuild it (git archive --format=zip --prefix=suds-v${r.version}/ <commit> | sha256sum) and keep the one value in both places`, 'checksum-changelog-differs'));
+  }
+}
+
+/**
+ * Section 9c. What the public API says of the repository protections (evaluation of 1.25.6, K1): whether `main` has
+ * a ruleset with RELEASE.md step 2's rules, whether the newest tag's release run waited for a reviewer, whether its
+ * Release is immutable. Returns { 'main-ruleset', 'release-reviewer', 'immutable-releases' }: true, false or absent.
+ */
+function checkProtections({ protections, releaseNotes, newestTag, notChecked, info }) {
+  const truth = {};
+  if (releaseNotes && releaseNotes.status === 'ok' && typeof releaseNotes.immutable === 'boolean') {
+    truth['immutable-releases'] = releaseNotes.immutable;
+    info.push(`the GitHub Release ${releaseNotes.tag} is ${releaseNotes.immutable ? 'immutable' : 'not immutable'}`);
+  }
+  if (!protections) {
+    notChecked.push('the repository protections: main\'s rules and the newest release run\'s approvals (not fetched: --offline or --docs-only)');
+    return truth;
+  }
+  const m = protections.mainRules;
+  if (!m || m.status !== 'ok') notChecked.push(`main's rules (${(m && m.detail) || 'not read'})`);
+  else {
+    const types = new Set(m.rules || []);
+    truth['main-ruleset'] = MAIN_RULES.every((t) => types.has(t));
+    info.push(`main's rules (rules/branches/main): ${types.size ? [...types].join(', ') : 'none: no ruleset or branch rule applies to main'}`);
+  }
+  const r = protections.releaseRun;
+  const tag = (r && r.tag) || (newestTag && newestTag.tag) || 'the newest tag';
+  if (!r || r.status === 'unreachable') notChecked.push(`whether ${tag}'s release run waited for a reviewer (${(r && r.detail) || 'not read'})`);
+  else if (r.status === 'none') notChecked.push(`whether ${tag}'s release run waited for a reviewer (no "Release" run for its commit)`);
+  else {
+    const approved = (r.approvals || []).filter((a) => a.state === 'approved').length;
+    if (r.runStatus === 'waiting' || approved) {
+      truth['release-reviewer'] = true;
+      info.push(`${tag}'s release run ${r.id} ${approved ? `was approved (${approved} approval${approved === 1 ? '' : 's'})` : 'is waiting for a reviewer'}`);
+    } else if (r.runStatus === 'completed' && r.conclusion === 'success') {
+      truth['release-reviewer'] = false;
+      info.push(`${tag}'s release run ${r.id} succeeded with no approval recorded: the \`release\` environment did not wait for anyone`);
+    } else notChecked.push(`whether ${tag}'s release run waited for a reviewer (run ${r.id} is ${r.runStatus}${r.conclusion ? `, ${r.conclusion}` : ''}, with no approval recorded)`);
+  }
   return truth;
 }
 
@@ -786,15 +871,51 @@ async function fetchReleaseNotes(slug, tag, get = httpsGetJson) {
   if (!slug) return { tag, status: 'unreachable', detail: 'the repository is not known (set GITHUB_REPOSITORY, or an origin on github.com)' };
   const base = process.env.GITHUB_API_URL || 'https://api.github.com';
   const r = await get(`${base}/repos/${slug}/releases/tags/${encodeURIComponent(tag)}`);
-  if (r.status === 200 && r.body && typeof r.body === 'object') return { tag, status: 'ok', body: r.body.body || '' };
+  if (r.status === 200 && r.body && typeof r.body === 'object') return { tag, status: 'ok', body: r.body.body || '', ...(typeof r.body.immutable === 'boolean' ? { immutable: r.body.immutable } : {}) };
   if (r.status === 404) return { tag, status: 'none' };
-  const why = r.status ? `api.github.com answered HTTP ${r.status}${r.body && r.body.message ? `: ${String(r.body.message).slice(0, 120)}` : ''}` : `api.github.com could not be reached: ${r.error}`;
-  return { tag, status: 'unreachable', detail: why };
+  return { tag, status: 'unreachable', detail: apiWhy(r) };
+}
+/** Why an API answer could not be used: its HTTP status and message, or the network error. */
+function apiWhy(r) {
+  return r.status ? `api.github.com answered HTTP ${r.status}${r.body && r.body.message ? `: ${String(r.body.message).slice(0, 120)}` : ''}` : `api.github.com could not be reached: ${r.error}`;
+}
+/**
+ * The repository protections the public API shows to anyone (evaluation of 1.25.6, K1), as evaluate's `protections`:
+ * { mainRules: { status: 'ok', rules: [type, …] } | { status: 'unreachable', detail },
+ *   releaseRun: { tag, status: 'ok', id, runStatus, conclusion, approvals: [{ state }] } | { tag, status: 'none' } |
+ *               { tag, status: 'unreachable', detail } }.
+ * `commit`: the newest tag's peeled commit (from `git ls-remote`); its run is the push run named "Release".
+ */
+async function fetchProtections(slug, tag, commit, get = httpsGetJson) {
+  if (!slug) {
+    const u = { status: 'unreachable', detail: 'the repository is not known (set GITHUB_REPOSITORY, or an origin on github.com)' };
+    return { mainRules: u, releaseRun: { tag, ...u } };
+  }
+  const base = `${process.env.GITHUB_API_URL || 'https://api.github.com'}/repos/${slug}`;
+  const m = await get(`${base}/rules/branches/main`);
+  const mainRules = m.status === 200 && Array.isArray(m.body) ? { status: 'ok', rules: m.body.map((x) => x && x.type).filter(Boolean) } : { status: 'unreachable', detail: apiWhy(m) };
+  let releaseRun;
+  if (!tag || !/^[0-9a-f]{40}$/.test(String(commit || ''))) releaseRun = { tag, status: 'unreachable', detail: `${tag || 'the newest tag'}'s commit is not known (origin's tags not read)` };
+  else {
+    const runs = await get(`${base}/actions/runs?event=push&head_sha=${commit}&per_page=100`);
+    if (!(runs.status === 200 && runs.body && Array.isArray(runs.body.workflow_runs))) releaseRun = { tag, status: 'unreachable', detail: apiWhy(runs) };
+    else {
+      const run = runs.body.workflow_runs.filter((x) => x && x.name === 'Release').sort((a, b) => b.id - a.id)[0];
+      if (!run) releaseRun = { tag, status: 'none' };
+      else {
+        const ap = await get(`${base}/actions/runs/${run.id}/approvals`);
+        releaseRun = ap.status === 200 && Array.isArray(ap.body)
+          ? { tag, status: 'ok', id: run.id, runStatus: run.status, conclusion: run.conclusion || null, approvals: ap.body.map((a) => ({ state: a && a.state })) }
+          : { tag, status: 'unreachable', detail: apiWhy(ap) };
+      }
+    }
+  }
+  return { mainRules, releaseRun };
 }
 
-function run(root, { mode = 'online', fetch = false, remote: givenRemote, releaseNotes = null } = {}) {
+function run(root, { mode = 'online', fetch = false, remote: givenRemote, releaseNotes = null, protections = null, notesLive = true } = {}) {
   const docs = readDocs(root);
-  if (mode === 'docs-only') return evaluate({ docs });
+  if (mode === 'docs-only') return evaluate({ docs, notesLive });
   let fetched = false;
   if (fetch && mode === 'online') fetched = gitOk(root, ['fetch', '--quiet', 'origin', '+refs/heads/main:refs/remotes/origin/main', '+refs/heads/gh-pages:refs/remotes/origin/gh-pages']);
   const h = docs.handoff ? parseHandoff(docs.handoff) : { rows: [] };
@@ -802,7 +923,7 @@ function run(root, { mode = 'online', fetch = false, remote: givenRemote, releas
   const remote = mode === 'online' ? (givenRemote !== undefined ? givenRemote : readRemoteTags(root)) : null;
   const newestTag = git ? readNewestTag(root, remote) : null;
   const notes = releaseNotes && newestTag && releaseNotes.tag === newestTag.tag ? releaseNotes : null;
-  const result = evaluate({ docs, git, remote, pages: git ? readPages(root, fetched) : null, mainPkg: git ? readMainPkg(root) : null, newestTag, releaseNotes: mode === 'online' ? notes : null });
+  const result = evaluate({ docs, git, remote, pages: git ? readPages(root, fetched) : null, mainPkg: git ? readMainPkg(root) : null, newestTag, releaseNotes: mode === 'online' ? notes : null, protections: mode === 'online' ? protections : null, notesLive });
   if (fetch && mode === 'online' && !fetched) result.notChecked.unshift('a fresh fetch of origin main and gh-pages (the fetch failed; the local refs were used)');
   if (mode === 'offline') result.notChecked.unshift('anything on origin (--offline)');
   return result;
@@ -832,13 +953,16 @@ if (require.main === module) {
   }
   (async () => {
     // Online, the newest tag's GitHub Release notes are read first (an HTTPS request; run() itself stays synchronous).
-    let remote; let releaseNotes = null;
+    // Then the repository protections the public API shows (main's rules, the newest release run's approvals).
+    let remote; let releaseNotes = null; let protections = null;
     if (mode === 'online') {
       remote = readRemoteTags(root);
       const newest = readNewestTag(root, remote);
-      if (newest) releaseNotes = await fetchReleaseNotes(readRepoSlug(root), newest.tag);
+      const slug = readRepoSlug(root);
+      if (newest) releaseNotes = await fetchReleaseNotes(slug, newest.tag);
+      protections = await fetchProtections(slug, newest && newest.tag, newest && remote ? remote.tags[newest.tag] : null);
     }
-    const result = run(root, { mode, fetch, remote, releaseNotes });
+    const result = run(root, { mode, fetch, remote, releaseNotes, protections });
     console.log(json ? JSON.stringify(result, null, 2) : format(result));
     process.exitCode = result.problems.length ? 1 : 0;
   })().catch((e) => { console.error(`[release-state] could not run: ${e.stack || e}`); process.exitCode = 2; });
@@ -848,5 +972,6 @@ module.exports = {
   parseV, cmp, stampedVersions, targetVersion, parseQuestionnaire, parseEvidence, parseRelease, parseHandoff,
   parseHandoffNotes, liveClaims, lintChangelog, evaluate, run, format, CHANGELOG_ALLOW, FILES, UNTAGGED_MARKER,
   disclosureSections, checkUntaggedDisclosure, zipNames, checksumLines, changelogSection, recordedChecksums,
-  parseControls, CONTROL_STATES, readNewestTag, readRepoSlug, fetchReleaseNotes, httpsGetJson,
+  parseControls, CONTROL_STATES, MAIN_RULES, readNewestTag, readRepoSlug, fetchReleaseNotes, fetchProtections, httpsGetJson,
+  LIVE_DOCS, REQUIRED_LIVE_DOCS,
 };

@@ -124,9 +124,9 @@ freely. The facts counsel needs:
 - **The MIT versions.** Versions 1.24.0 and earlier were released under the MIT licence and stay MIT for the copies
   already received (`LICENSE`; the change was the owner's decision of 2026-10-03). Anyone holding such a copy may use,
   modify and redistribute it under the MIT terms. The SUDS Proprietary Licence covers 1.24.1 and later.
-- **How the code was produced.** SUDS is written with AI coding assistants under the owner's direction, reviewed and
-  merged by the owner, with no second human reviewer ([../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md)
-  #36a). The owner's recorded decisions, and what is and is not claimed about them, are in
+- **How the code was produced.** SUDS is written with AI coding assistants under the owner's direction; the assistants
+  commit and push to `main` on the owner's instructions, with no pull-request review and no second human reviewer
+  ([../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #36a). The owner's recorded decisions, and what is and is not claimed about them, are in
   [../../IP-PROVENANCE.md](../../IP-PROVENANCE.md).
 - **The Copyright Office's guidance.** In January 2025 the US Copyright Office published *Copyright and Artificial
   Intelligence, Part 2: Copyrightability*, which addresses the protection of material generated with AI and the role

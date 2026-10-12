@@ -355,7 +355,7 @@ function firstRun() {
   // On an iPhone or iPad in a Safari tab (1.25.6, J7), the Home Screen comes first: records kept in a tab can be
   // deleted after seven days without a visit, and a Home Screen app may not see what was set up in a tab.
   const homeScreen = stat && iosBrowserTab()
-    ? h('div', { class: 'banner warn mb', 'data-ios-home-screen-step': '1' }, h('div', {}, h('b', {}, 'First, add SUDS to your Home Screen. '), IOS_TAB_REASON, ' Opened from its Home Screen icon, SUDS is not affected by that count.',
+    ? h('div', { class: 'banner warn mb', 'data-ios-home-screen-step': '1' }, h('div', {}, h('b', {}, 'First, add SUDS to your Home Screen. '), IOS_TAB_REASON, ' Opened from its Home Screen icon, SUDS keeps its own count of days, which each day you open it resets.',
       h('ol', {}, h('li', {}, 'Tap ', h('b', {}, 'Share'), ', then ', h('b', {}, 'Add to Home Screen'), '.'),
         h('li', {}, 'Open SUDS from the new icon and set it up there. A Home Screen app may not see records made in a Safari tab.'))))
     : null;

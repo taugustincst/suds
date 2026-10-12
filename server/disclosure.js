@@ -733,10 +733,40 @@ function consentPurposeCodes({ type, purpose }) {
   return Object.keys(FHIR_PURPOSES).filter(code => consentCoversPurposeOfUse({ type, purpose }, code));
 }
 
-// The covering consents are worked out once per request from every live consent of a sharing type, and
-// cached until any consent or patient request changes (a revocation stamps updated_at, a restriction is
-// agreed), the Part 2 programme setting changes, or the date turns (expiry).
+// The covering consents are worked out once from every live consent of a sharing type (decrypting each one
+// takes about a tenth of a millisecond, so 20,000 consents would hold every FHIR request for seconds), and kept
+// until anything they depend on changes: the Part 2 programme setting, the date (expiry), or any row of
+// consents or patient_requests, or a client's deleted_at or merged_into. A row's updated_at cannot be the
+// signal (1.25.7: a server clock stepped back, or two writes in the same millisecond, left the maximum
+// unchanged and kept a revoked consent in force). Instead, triggers on this connection's TEMP schema (never
+// part of the database file, so no migration) call a function that counts every such change, whoever makes
+// it: a REST route, a device's sync push, a merge, an import or the retention purge. A write by another
+// process (a command-line script) moves SQLite's data_version, which is part of the key too. Whatever the
+// cache holds, recordFhir checks each disclosed client's consent again as the accounting row is written.
 const coverageCache = new Map();
+let coverageGeneration = 0;
+let coverageHandle = null;
+let coverageCounting = false;
+/** The change marker the cache is keyed on, or null when nothing may be kept (no caching). */
+function coverageMarker() {
+  const d = db.get();
+  if (d !== coverageHandle) {
+    // A new connection (opened, reopened, restored): nothing kept from the last one, and counting starts.
+    coverageCache.clear(); coverageGeneration++; coverageHandle = d; coverageCounting = false;
+    try {
+      d.function('suds_coverage_changed', () => { coverageGeneration++; return null; });
+      const on = [['consents', 'INSERT'], ['consents', 'UPDATE'], ['consents', 'DELETE'], ['patient_requests', 'INSERT'], ['patient_requests', 'UPDATE'], ['patient_requests', 'DELETE'],
+        ['clients', 'UPDATE OF deleted_at, merged_into'], ['clients', 'DELETE']];
+      d.exec(on.map(([t, ev], i) => `CREATE TEMP TRIGGER IF NOT EXISTS suds_coverage_${i} AFTER ${ev} ON main.${t} BEGIN SELECT suds_coverage_changed(); END;`).join('\n'));
+      coverageCounting = true;
+    } catch { /* this connection cannot count changes: every call works the coverage out afresh */ }
+  }
+  if (!coverageCounting) return null;
+  // Nothing worked out inside a transaction is kept: a rollback would undo the rows it saw but not the count.
+  const inTx = typeof d.isTransaction === 'boolean' ? d.isTransaction : (() => { try { d.exec('BEGIN'); d.exec('COMMIT'); return false; } catch { return true; } })();
+  if (inTx) return null;
+  return `${coverageGeneration}|${db.one('PRAGMA data_version').data_version}`;
+}
 /**
  * Map of client id -> id of the consent that covers disclosure to this FHIR recipient for this purpose (the
  * most recently signed one). Clients who were merged away or deleted, and clients with an agreed
@@ -745,12 +775,11 @@ const coverageCache = new Map();
 function fhirCoverage({ cacheKey, recipients, purposeOfUse, resourceType }) {
   // What the resource type is (C.CONSENT_INFO_CATEGORIES); '*' when none is named — covered for something.
   const category = CATEGORY_OF_FHIR_TYPE[resourceType] || '*';
-  const stamp = db.one(`SELECT (SELECT COUNT(*) FROM consents) n, (SELECT MAX(updated_at) FROM consents) u,
-    (SELECT COUNT(*) FROM patient_requests) rn, (SELECT MAX(updated_at) FROM patient_requests) ru`);
+  const marker = coverageMarker();
   const today = require('./local-date').today();
   const types = fhirConsentTypes();
-  const key = `${stamp.n}|${stamp.u}|${stamp.rn}|${stamp.ru}|${types.join(',')}|${today}|${recipients.join('\u0001')}|${purposeOfUse}|${category}`;
-  const hit = coverageCache.get(`${cacheKey}|${category}`);
+  const key = `${marker}|${types.join(',')}|${today}|${recipients.join('\u0001')}|${purposeOfUse}|${category}`;
+  const hit = marker === null ? null : coverageCache.get(`${cacheKey}|${category}`);
   if (hit && hit.key === key) return hit.map;
   const map = new Map();
   const restricted = new Set(db.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map(r => r.client_id));
@@ -765,6 +794,7 @@ function fhirCoverage({ cacheKey, recipients, purposeOfUse, resourceType }) {
     try { plain = { type: row.type, recipient: row.recipient_enc ? decrypt(row.recipient_enc) : '', purpose: row.purpose_enc ? decrypt(row.purpose_enc) : '', categories: row.info_categories }; } catch { continue; }
     if (consentCovers(plain, { recipients, purposeOfUse, category })) map.set(row.client_id, row.id);
   }
+  if (marker === null) return map;
   if (coverageCache.size > 100) coverageCache.clear();
   coverageCache.set(`${cacheKey}|${category}`, { key, map });
   return map;
@@ -779,11 +809,25 @@ function fhirCoverage({ cacheKey, recipients, purposeOfUse, resourceType }) {
 function recordFhir({ perClient, recipient, purposeOfUse, sourceRef, user, ip }) {
   if (!perClient.size) return 0;
   const purpose = `${FHIR_PURPOSES[purposeOfUse]?.display || purposeOfUse} (FHIR purpose of use ${purposeOfUse})`;
+  const today = require('./local-date').today();
+  let lapsed = 0;
   db.transaction(() => {
+    // Checked again as each row is written, whatever fhirCoverage worked out: the consent relied on is still
+    // unrevoked and unexpired, and the client is not deleted, merged away or under an agreed restriction.
+    for (const [clientId, { consentId }] of perClient) {
+      const live = consentId && db.one(`SELECT 1 FROM consents k JOIN clients c ON c.id=k.client_id WHERE k.id=? AND k.client_id=? AND k.revoked_at IS NULL
+        AND (k.expires_at IS NULL OR k.expires_at >= ?) AND c.deleted_at IS NULL AND c.merged_into IS NULL`, consentId, clientId, today);
+      if (!live || agreedRestrictions(clientId)) lapsed++;
+    }
+    if (lapsed) return;
     for (const [clientId, { consentId, what }] of perClient) {
       record({ clientId, consentId, recipient, purpose, what, method: 'FHIR API', basis: 'consent', source: 'fhir', sourceRef, user, ip });
     }
   });
+  if (lapsed) {
+    audit.log({ user, action: 'fhir.disclosure.refused', entity: 'disclosure', ip, success: false, details: { source_ref: sourceRef, lapsed_patients: lapsed } });
+    throw new HttpError(409, 'A patient\'s consent changed while this answer was being prepared (revoked, expired, or a restriction was agreed). Nothing was released; send the request again.');
+  }
   return perClient.size;
 }
 

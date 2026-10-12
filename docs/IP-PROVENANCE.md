@@ -12,8 +12,10 @@ Those are questions for counsel ([market/templates/COUNSEL-REVIEW-BRIEF.md](mark
 
 - **AI coding assistants, under the owner's direction.** As [security/QUESTIONNAIRE.md](security/QUESTIONNAIRE.md)
   #36a states: of the commits in the history of 1.25.0 (202 when it was counted), all were written with an AI coding
-  assistant; the work is done under the project rules in [`CLAUDE.md`](../CLAUDE.md), gated by the tests and CI, and
-  reviewed and merged by the owner; there is no second human reviewer and no independent code review.
+  assistant; the work is done under the project rules in [`CLAUDE.md`](../CLAUDE.md) and gated by the tests and CI.
+  The assistants commit and push to `main` themselves, on the owner's instructions and with the owner's GitHub
+  access; there is no pull-request review (the last pull request was merged on 2026-09-28), no second human reviewer
+  and no independent code review.
 - **Who does what.** The owner decides what SUDS is for, what it contains, how it is licensed and released, and which
   findings are fixed. A development assistant writes the code, tests and documents and runs the checks. The owner's
   business assistant carries out business steps on the owner's instructions (*Business work plan*,
@@ -61,8 +63,8 @@ by design, which parts the owner proposed and which were an assistant's proposal
 
 **Claimed:**
 - The decisions above were the owner's, as recorded at the time in the records named.
-- SUDS's code and documents were produced by AI coding assistants under the owner's direction, and merged by the owner
-  (QUESTIONNAIRE #36a).
+- SUDS's code and documents were produced by AI coding assistants under the owner's direction, and committed to `main`
+  by the assistants on the owner's instructions, with no pull-request review (QUESTIONNAIRE #36a).
 - Versions 1.24.0 and earlier were released under the MIT licence and stay MIT for the copies already received; from
   1.24.1 the SUDS Proprietary Licence applies ([`LICENSE`](../LICENSE)).
 

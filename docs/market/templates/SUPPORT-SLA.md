@@ -8,7 +8,7 @@
 >
 > **The support that exists without an agreement** — the programme's administrator, its IT partner or county,
 > the public issue tracker and, for security issues, GitHub private vulnerability reporting (owner-pending: to be
-> enabled in the repository settings) or, until then, the owner-published security contact (owner-pending) — is described in [../../SUPPORT.md](../../SUPPORT.md).
+> enabled in the repository settings) or the owner-published security contact (owner-pending) — is described in [../../SUPPORT.md](../../SUPPORT.md).
 
 ## Who runs the server decides who owns uptime
 

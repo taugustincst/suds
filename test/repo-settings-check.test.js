@@ -265,3 +265,27 @@ test('RELEASE.md documents the check, its token and what it cannot see', () => {
   assert.ok(step.length > 200, 'step 9: the settings-check token');
   for (const s of ['SETTINGS_READ_TOKEN', 'settings-check', 'Administration', 'Secrets', 'Environments', 'Read-only', 'bypass']) assert.ok(step.includes(s), `step 9 names ${s}`);
 });
+
+test('step 1: the newest release run waited for an approval (evaluation of 1.25.6, K1: v1.25.6\'s run lists none)', async () => {
+  const RUNS = 'actions/workflows/release.yml/runs?event=push&status=success&per_page=1';
+  const d = configured();
+  const row = (x, ctx = CTX) => C.evaluate(x, ctx).find((c) => c.setting === 'The newest release run waited for an approval');
+  assert.deepEqual([row(d).step, row(d).state, row(d).detail], ['1', 'ok', 'run 9001 (v1.17.0): approved by taugustincst']);
+  // As the API answered for v1.25.6's release run on 2026-10-12: no approval, while the environment cannot be read.
+  d[RUNS].body.workflow_runs[0] = { id: 38176517260, name: 'Release', head_branch: 'v1.25.6', status: 'completed', conclusion: 'success' };
+  d['actions/runs/38176517260/approvals'] = { status: 200, body: [] };
+  d['environments/release'] = FORBIDDEN;
+  assert.equal(row(d).state, 'off');
+  assert.match(row(d).detail, /^run 38176517260 \(v1\.25\.6\) was published with no approval recorded/);
+  assert.equal(row(d, { ...CTX, readToken: false }).state, 'off', 'read with the workflow\'s own token, so it fails without SETTINGS_READ_TOKEN too');
+  // No release yet: for the owner to look at; unreadable: cannot verify.
+  d[RUNS] = { status: 200, body: { total_count: 0, workflow_runs: [] } };
+  assert.equal(row(d).state, 'manual');
+  d[RUNS] = FORBIDDEN;
+  assert.equal(row(d).state, 'unverified');
+  // collect() asks for the newest run, then its approvals, once each.
+  const asked = [];
+  await C.collect(async (p) => { asked.push(p); return configured()[p] || { status: 404, body: {} }; });
+  assert.ok(asked.includes(RUNS) && asked.includes('actions/runs/9001/approvals'));
+  assert.equal(new Set(asked).size, asked.length);
+});

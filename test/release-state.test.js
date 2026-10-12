@@ -18,8 +18,8 @@ function world(o = {}) {
     pkg: JSON.stringify({ version: o.pkg || '1.3.0' }),
     changelog: o.changelog || [
       '# Changelog', '', '## Unreleased', '',
-      '## 1.3.0 — 2026-10-01', '', '- **Supported versions**: 1.3.x is the latest minor, 1.2.x the previous.', '- The questionnaire is checked against 1.3.0.', '',
-      '## 1.2.0 — 2026-09-01', '', '- Documents describe 1.2.0.', '',
+      '## 1.3.0 — 2026-10-01', '', `SHA-256 of suds-v1.3.0.zip: ${ZIP}`, '', '- **Supported versions**: 1.3.x is the latest minor, 1.2.x the previous.', '- The questionnaire is checked against 1.3.0.', '',
+      '## 1.2.0 — 2026-09-01', '', `SHA-256 of suds-v1.2.0.zip: ${ZIP}`, '', '- Documents describe 1.2.0.', '',
       '## 1.1.0 — 2026-08-01', '', '- First.', '', `SHA-256 of suds-v1.1.0.zip: ${ZIP110}`, '',
     ].join('\n'),
     questionnaire: o.questionnaire || [
@@ -74,6 +74,10 @@ const goodGit = () => ({
   },
 });
 const codes = (r) => r.problems.map((p) => p.code).sort();
+/** The public API's answers in a world where the owner's protections are on (evaluation of 1.25.6, K1). */
+const PROTECTED = { mainRules: { status: 'ok', rules: ['deletion', 'non_fast_forward', 'pull_request', 'required_status_checks'] }, releaseRun: { tag: 'v1.1.0', status: 'ok', id: 7, runStatus: 'completed', conclusion: 'success', approvals: [{ state: 'approved' }] } };
+/** As the API answered for this repository on 2026-10-12: no rule on main, and v1.25.6's run approved by no one. */
+const UNPROTECTED = { mainRules: { status: 'ok', rules: [] }, releaseRun: { tag: 'v1.1.0', status: 'ok', id: 7, runStatus: 'completed', conclusion: 'success', approvals: [] } };
 
 test('a consistent world has no problems, offline and online', () => {
   const docs = world();
@@ -81,7 +85,7 @@ test('a consistent world has no problems, offline and online', () => {
   assert.deepEqual(off.problems, []);
   assert.ok(off.notChecked.some((n) => /GitHub Pages/.test(n)) && off.notChecked.some((n) => /tags are pushed/.test(n)) && off.notChecked.some((n) => /commits/.test(n)), 'and says what it could not check');
   const on = RS.evaluate({ docs, git: goodGit(), remote: { tags: { 'v1.1.0': SHA('1') } }, pages: { version: '1.3.0', source: 'test' }, mainPkg: { version: '1.3.0', stamped: [] },
-    newestTag: { tag: 'v1.1.0', signed: false }, releaseNotes: { tag: 'v1.1.0', status: 'ok', body: `Notes.\r\n\r\nSHA-256 of suds-v1.1.0.zip: ${ZIP110}\r\n` } });
+    newestTag: { tag: 'v1.1.0', signed: false }, releaseNotes: { tag: 'v1.1.0', status: 'ok', body: `Notes.\r\n\r\nSHA-256 of suds-v1.1.0.zip: ${ZIP110}\r\n` }, protections: PROTECTED });
   assert.deepEqual(on.problems, []);
   assert.deepEqual(on.notChecked, []);
 });
@@ -283,7 +287,10 @@ test('parsers read the real documents\' shapes', () => {
 const KNOWN = [];
 
 test('the repository: the documents alone (deterministic) raise no finding but the known ones', () => {
-  const r = RS.run(path.join(__dirname, '..'), { mode: 'docs-only' });
+  // HANDOFF.md is a log between assistants, not a buyer document: its "is live" claims are left out of this required
+  // test (evaluation of 1.25.6, K5: a HANDOFF-only commit turned main's required `test` job red). The advisory
+  // `release-state` job (the CLI) still checks them.
+  const r = RS.run(path.join(__dirname, '..'), { mode: 'docs-only', notesLive: false });
   const unexpected = r.problems.filter((p) => !KNOWN.some(([f, m]) => p.file === f && p.message === m));
   assert.deepEqual(unexpected.map((p) => `${p.file}:${p.line}: ${p.message}`), []);
   assert.ok(r.notChecked.length >= 2, 'and it says what it did not check');
@@ -304,7 +311,10 @@ const CONTROLS = (o = {}) => [
   `| \`checksum-main\` On main. | **${o.main || 'in force'}** for v1.1.0 | release-state |`,
   `| \`checksum-release\` In the Release notes. | **${o.release || 'in force'}** | release-state online |`,
   `| \`signed-tag\` Signed. | **${o.signed || 'not signed'}**: owner action | release-state |`,
-  '| `private-reporting` Private reporting. | **off** | repo-settings-check |', '',
+  '| `private-reporting` Private reporting. | **off** | repo-settings-check |',
+  `| \`main-ruleset\` Main. | **${o.mainRuleset || 'in force'}** | release-state online |`,
+  `| \`release-reviewer\` Reviewer. | **${o.reviewer || 'in force'}** | release-state online |`,
+  `| \`immutable-releases\` Immutable. | **${o.immutable || 'in force'}** | release-state online |`, '',
 ].join('\n');
 const NEWEST = { tag: 'v1.1.0', signed: false };
 const notesWith = (hex, extra = '') => ({ tag: 'v1.1.0', status: 'ok', body: `Notes.\n\nSHA-256 of suds-v1.1.0.zip: ${hex}\n${extra}` });
@@ -330,8 +340,8 @@ test('the newest tag\'s zip SHA-256 is in its CHANGELOG section, equal to the ha
   assert.deepEqual(codes(unrecorded), ['checksum-unrecorded']);
   const two = RS.evaluate({ docs: world({ patch: { handoff: (t) => `${t}\n\`\`\`\n# ${'c'.repeat(64)}  suds-v1.1.0.zip\n\`\`\`\n` } }), newestTag: NEWEST });
   assert.deepEqual(codes(two), ['checksum-handoff-disagrees']);
-  // Only the newest tag: v1.2.0 and v1.3.0's sections carry no line, and are not asked to.
-  assert.ok(!/SHA-256 of suds-v1\.[23]\.0/.test(world().changelog));
+  // Older releases are not asked for the line (the Releases up to 1.25.5 were published without it).
+  assert.deepEqual(RS.evaluate({ docs: world({ patch: { changelog: (t) => t.replace(/^SHA-256 of suds-v1\.1\.0\.zip: .*\n/m, '') } }), newestTag: { tag: 'v1.3.0', signed: false } }).problems.filter((p) => p.code.startsWith('checksum-') && /1\.1\.0/.test(p.message)), []);
   // A newest tag with no dated section.
   assert.deepEqual(codes(RS.evaluate({ docs: world(), newestTag: { tag: 'v1.0.0', signed: false } })), ['checksum-no-section', 'checksum-unrecorded']);
 });
@@ -424,4 +434,97 @@ test('the real documents: the hand-off records v1.25.5\'s zips, the CHANGELOG ca
   const rows = RS.parseControls(read(RS.FILES.controls));
   for (const [id, states] of Object.entries(RS.CONTROL_STATES)) assert.ok(rows[id] && rows[id].state in states, `${id}: ${rows[id] && rows[id].state}`);
   for (const id of ['private-reporting', 'tag-pusher', 'evening-required', 'flake-register']) assert.ok(rows[id], `${id} row`);
+});
+
+// ---- Evaluation of 1.25.6: K5 (HANDOFF.md out of the required cross-check), K7 (the checksum line before the tag),
+// K1 (the repository protections against OPERATIVE-CONTROLS.md) ----
+
+test('K5: HANDOFF.md\'s "is live" claims can be left out (the required test), and are checked otherwise', () => {
+  // As on main at a85b6e0: HANDOFF.md says the next version is live before the records commit moved the others.
+  const docs = world({ patch: { notes: (t) => t.replace('1.3.0 is live', '1.4.0 is live') } });
+  const all = RS.evaluate({ docs });
+  assert.deepEqual(codes(all), ['pages-disagree']);
+  assert.equal(all.problems[0].file, 'HANDOFF.md');
+  assert.deepEqual(RS.evaluate({ docs, notesLive: false }).problems, []);
+  // Online, against gh-pages, the same option leaves it out too; the buyer documents are still checked.
+  assert.deepEqual(codes(RS.evaluate({ docs, notesLive: false, pages: { version: '1.4.0', source: 'test' } })), ['pages-live', 'pages-live'], 'the questionnaire and the hand-off');
+  assert.ok(RS.evaluate({ docs, notesLive: false, pages: { version: '1.4.0', source: 'test' } }).problems.every((p) => p.file !== 'HANDOFF.md'));
+  assert.deepEqual(RS.REQUIRED_LIVE_DOCS, RS.LIVE_DOCS.filter((k) => k !== 'notes'));
+});
+
+test('K7: a version handed over for tagging carries its zip\'s SHA-256 in its CHANGELOG section, equal to the hand-off\'s', () => {
+  // world(): v1.2.0 and v1.3.0 are owed, each row names its commit and zip, and each section has the line.
+  assert.deepEqual(RS.evaluate({ docs: world() }).problems, []);
+  const drop = (v) => (t) => t.replace(new RegExp(`^SHA-256 of suds-v${v.replace(/\./g, '\\.')}\\.zip: .*\\n`, 'm'), '');
+  const missing = RS.evaluate({ docs: world({ patch: { changelog: drop('1.3.0') } }) });
+  assert.deepEqual(codes(missing), ['checksum-changelog-missing']);
+  assert.equal(missing.problems[0].file, 'CHANGELOG.md');
+  assert.match(missing.problems[0].message, /v1\.3\.0 is handed over for tagging/);
+  assert.match(missing.problems[0].fix, new RegExp(`SHA-256 of suds-v1\\.3\\.0\\.zip: ${ZIP}.*tag hand-off commit, before the tag`));
+  const differs = RS.evaluate({ docs: world({ patch: { changelog: (t) => t.replace(`SHA-256 of suds-v1.2.0.zip: ${ZIP}`, `SHA-256 of suds-v1.2.0.zip: ${'d'.repeat(64)}`) } }) });
+  assert.deepEqual(codes(differs), ['checksum-changelog-differs']);
+  // A row the stamp cannot fill yet (no commit, no zip): the line is accepted, and not required.
+  const pending = (t) => t.replace(/^\| `v1\.3\.0` \|.*$/m, "| `v1.3.0` | the commit after `Release 1.3.0` | 2026-10-01 | recorded in a later commit on `main` |");
+  assert.deepEqual(RS.evaluate({ docs: world({ patch: { handoff: pending } }) }).problems, []);
+  assert.deepEqual(RS.evaluate({ docs: world({ patch: { handoff: pending, changelog: drop('1.3.0') } }) }).problems, []);
+  // Once the tag is the newest, section 9 checks it (one finding, not two).
+  assert.deepEqual(codes(RS.evaluate({ docs: world({ patch: { changelog: drop('1.3.0') } }), newestTag: { tag: 'v1.3.0', signed: false } })), ['checksum-changelog-missing']);
+});
+
+test('K1: the operative controls page against the public API: main\'s rules, the release run\'s approvals, an immutable Release', () => {
+  const ev = (o, extra = {}) => RS.evaluate({ docs: { ...world(), controls: CONTROLS(o) }, newestTag: NEWEST, releaseNotes: { ...notesWith(ZIP110), immutable: true }, ...extra });
+  assert.deepEqual(ev({}, { protections: PROTECTED }).problems, []);
+  // The repository as it is: the page says "in force"; the API says no rule on main and no approval.
+  const today = ev({}, { protections: UNPROTECTED, releaseNotes: { ...notesWith(ZIP110), immutable: false } });
+  assert.deepEqual(today.problems.map((p) => p.message), [
+    'the `main-ruleset` row says "in force"; for the newest tag it is "off"',
+    'the `release-reviewer` row says "in force"; for the newest tag it is "off"',
+    'the `immutable-releases` row says "in force"; for the newest tag it is "off"',
+  ]);
+  assert.ok(today.info.some((i) => /main's rules \(rules\/branches\/main\): none/.test(i)));
+  assert.ok(today.info.some((i) => /release run 7 succeeded with no approval recorded/.test(i)));
+  // The page saying "off" is right today, and wrong once the owner has made the settings.
+  assert.deepEqual(ev({ mainRuleset: 'off', reviewer: 'off', immutable: 'off' }, { protections: UNPROTECTED, releaseNotes: { ...notesWith(ZIP110), immutable: false } }).problems, []);
+  assert.deepEqual(codes(ev({ mainRuleset: 'off', reviewer: 'off' }, { protections: PROTECTED })), ['controls-claim', 'controls-claim']);
+  // A ruleset without all of step 2's rules is not "in force".
+  assert.deepEqual(codes(ev({}, { protections: { ...PROTECTED, mainRules: { status: 'ok', rules: ['deletion', 'non_fast_forward'] } } })), ['controls-claim']);
+  // A run waiting for its reviewer shows the reviewer is there; a run that failed before the release job says nothing.
+  assert.deepEqual(ev({}, { protections: { ...PROTECTED, releaseRun: { ...UNPROTECTED.releaseRun, runStatus: 'waiting', conclusion: null } } }).problems, []);
+  const failed = ev({ reviewer: 'off' }, { protections: { ...PROTECTED, releaseRun: { ...UNPROTECTED.releaseRun, conclusion: 'failure' } } });
+  assert.deepEqual(failed.problems, []);
+  assert.ok(failed.notChecked.some((n) => /run 7 is completed, failure, with no approval recorded/.test(n)));
+  // Rate-limited, no run, or offline: "not checked", and no claim is judged.
+  for (const p of [{ mainRules: { status: 'unreachable', detail: 'api.github.com answered HTTP 403: API rate limit exceeded' }, releaseRun: { tag: 'v1.1.0', status: 'unreachable', detail: 'api.github.com answered HTTP 403: API rate limit exceeded' } }, { mainRules: { status: 'unreachable', detail: 'x' }, releaseRun: { tag: 'v1.1.0', status: 'none' } }, null]) {
+    const r = ev({ mainRuleset: 'off', reviewer: 'in force' }, { protections: p });
+    assert.deepEqual(r.problems, [], JSON.stringify(p));
+    assert.ok(r.notChecked.some((n) => /main's rules|repository protections/.test(n)));
+  }
+  // The real page names every row it can verify, in a state this script knows.
+  const fs = require('node:fs');
+  const rows = RS.parseControls(fs.readFileSync(path.join(__dirname, '..', RS.FILES.controls), 'utf8'));
+  for (const id of ['main-ruleset', 'release-reviewer', 'immutable-releases', 'tag-ruleset', 'pages-ruleset', 'evening-required']) assert.ok(rows[id], `${id} row`);
+});
+
+test('fetchProtections: rules/branches/main, the tag commit\'s "Release" run and its approvals; anything else is "not checked"', async () => {
+  const SHA_T = 'a'.repeat(40);
+  const answers = {
+    'https://api.github.com/repos/o/r/rules/branches/main': { status: 200, body: [] },
+    [`https://api.github.com/repos/o/r/actions/runs?event=push&head_sha=${SHA_T}&per_page=100`]: { status: 200, body: { workflow_runs: [{ id: 5, name: 'CI', status: 'completed', conclusion: 'success' }, { id: 6, name: 'Release', status: 'completed', conclusion: 'success' }] } },
+    'https://api.github.com/repos/o/r/actions/runs/6/approvals': { status: 200, body: [] },
+  };
+  const asked = [];
+  const get = (over = {}) => async (url) => { asked.push(url); return over[url] || answers[url] || { status: 404, body: { message: 'Not Found' } }; };
+  const p = await RS.fetchProtections('o/r', 'v1.1.0', SHA_T, get());
+  assert.deepEqual(p, { mainRules: { status: 'ok', rules: [] }, releaseRun: { tag: 'v1.1.0', status: 'ok', id: 6, runStatus: 'completed', conclusion: 'success', approvals: [] } });
+  assert.deepEqual(asked, Object.keys(answers), 'three unauthenticated GETs, in order');
+  const limited = { status: 403, body: { message: 'API rate limit exceeded for 1.2.3.4.' } };
+  const r = await RS.fetchProtections('o/r', 'v1.1.0', SHA_T, get(Object.fromEntries(Object.keys(answers).map((k) => [k, limited]))));
+  assert.deepEqual([r.mainRules.status, r.releaseRun.status], ['unreachable', 'unreachable']);
+  assert.match(r.mainRules.detail, /HTTP 403: API rate limit exceeded/);
+  const noRun = await RS.fetchProtections('o/r', 'v1.1.0', SHA_T, get({ [Object.keys(answers)[1]]: { status: 200, body: { workflow_runs: [] } } }));
+  assert.equal(noRun.releaseRun.status, 'none');
+  assert.equal((await RS.fetchProtections('o/r', 'v1.1.0', null, get())).releaseRun.status, 'unreachable', 'no tag commit known');
+  assert.equal((await RS.fetchProtections(null, 'v1.1.0', SHA_T, get())).mainRules.status, 'unreachable', 'no repository known');
+  // The Release's own `immutable` flag is kept with its notes.
+  assert.deepEqual(await RS.fetchReleaseNotes('o/r', 'v1.1.0', async () => ({ status: 200, body: { body: 'x', immutable: false } })), { tag: 'v1.1.0', status: 'ok', body: 'x', immutable: false });
 });

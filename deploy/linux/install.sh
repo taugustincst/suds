@@ -560,9 +560,12 @@ if (( ${#new_keys[@]} )); then
   say "==================================================================================================="
 fi
 if [[ -e "$(P "$DATA_DIR/first-admin-password.txt")" ]] || (( DRY )); then
-  # The name is not printed anywhere else, and the one people guess ("admin") is not it (the 1.25.1 launch).
-  admin_user=$(env_get SUDS_ADMIN_USERNAME); admin_user=${admin_user:-guest}
-  say ""; say "First sign-in: open https://$DOMAIN and sign in with the username \"$admin_user\" (the first administrator) and the temporary password in $DATA_DIR/first-admin-password.txt (sudo cat it once; it is deleted when changed). You are asked to change it, then to enrol two-step verification."
+  # The name is not one anybody can guess (1.25.7: "admin-" and six random characters, chosen by SUDS at its first start,
+  # unless SUDS_ADMIN_USERNAME names it), so it is said here, from the 0600 file that holds it with the password.
+  admin_user=$(env_get SUDS_ADMIN_USERNAME)
+  [[ -n "$admin_user" ]] || admin_user=$(sed -n 's/^Username: //p' "$(P "$DATA_DIR/first-admin-password.txt")" 2>/dev/null | head -n 1 || true)
+  if [[ -n "$admin_user" ]]; then who="the username \"$admin_user\" (the first administrator; also in that file)"; else who="the username on the first line of that file (the first administrator)"; fi
+  say ""; say "First sign-in: the first administrator's username and temporary password are in $DATA_DIR/first-admin-password.txt (sudo cat it once; it is deleted when the password is changed, so note the username). Open https://$DOMAIN and sign in with $who and that password. You are asked to change it, then to enrol two-step verification."
 fi
 
 if (( ! SKIP_CHECK )); then run_compliance_check; fi

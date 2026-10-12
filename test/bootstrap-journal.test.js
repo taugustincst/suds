@@ -16,14 +16,17 @@ function firstStart(extra) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-bootstrap-journal-'));
   const env = { ...process.env, SUDS_ENV: 'production', SUDS_DATA_DIR: dir, SUDS_DB_PATH: path.join(dir, 'suds.db'),
     SUDS_ENCRYPTION_KEY: crypto.randomBytes(32).toString('hex'), SUDS_INDEX_KEY: crypto.randomBytes(32).toString('hex'), ...extra };
-  delete env.SUDS_ADMIN_PASSWORD; delete env.SUDS_ADMIN_USERNAME;
+  delete env.SUDS_ADMIN_PASSWORD; if (!('SUDS_ADMIN_USERNAME' in extra)) delete env.SUDS_ADMIN_USERNAME;
   for (const k of ['INVOCATION_ID', 'JOURNAL_STREAM']) if (!(k in extra)) delete env[k];
   const r = spawnSync(process.execPath, ['--no-warnings=ExperimentalWarning', '-e', "const r = require('./server/bootstrap').ensureBootstrap(); require('node:fs').writeFileSync(process.env.SUDS_DATA_DIR + '/made.json', JSON.stringify(r));"],
     { cwd: root, env, encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const made = JSON.parse(fs.readFileSync(path.join(dir, 'made.json'), 'utf8'));
   const file = path.join(dir, 'first-admin-password.txt');
-  const kept = fs.existsSync(file) ? { text: fs.readFileSync(file, 'utf8').trim(), mode: fs.statSync(file).mode & 0o777 } : null;
+  const kept = fs.existsSync(file) ? { text: fs.readFileSync(file, 'utf8'), mode: fs.statSync(file).mode & 0o777 } : null;
+  if (kept) Object.assign(kept, require('../server/bootstrap').parsePasswordFile(kept.text));
+  const setting = spawnSync(process.execPath, ['--no-warnings=ExperimentalWarning', '-e', "const db = require('./server/db'); db.open(); process.stdout.write(String(db.getSetting('bootstrap_admin_username', ''))); db.close();"], { cwd: root, env, encoding: 'utf8' }).stdout;
+  made.setting = setting;
   fs.rmSync(dir, { recursive: true, force: true });
   return { out: r.stdout + r.stderr, made, kept, file };
 }
@@ -33,21 +36,37 @@ test('under systemd (INVOCATION_ID) the temporary password is not printed: only 
   assert.ok(made.password && made.password.length >= 12);
   assert.ok(!out.includes(made.password), 'the password is not in the output (the journal)');
   assert.doesNotMatch(out, /Temporary password:/);
-  assert.match(out, /Created initial admin user "guest"/);
+  // The name is not "guest" any more (1.25.7, K6): "admin-" and six random letters and digits, printed, and recorded.
+  assert.match(made.username, /^admin-[a-z0-9]{6}$/);
+  assert.match(out, new RegExp(`Created initial admin user "${made.username}"`));
+  assert.equal(made.setting, made.username, 'recorded for the setup wizard and the scripts');
   assert.ok(out.includes(file), 'the file is named');
   assert.ok(kept, 'the file is written');
-  assert.equal(kept.text, made.password, 'and holds the password');
+  assert.equal(kept.text, `Username: ${made.username}\nTemporary password: ${made.password}\n`, 'and holds the username and the password');
+  assert.equal(kept.username, made.username); assert.equal(kept.password, made.password);
   assert.equal(kept.mode, 0o600);
 });
 
 test('stdout connected to the journal (JOURNAL_STREAM, not a terminal) is treated the same', () => {
   const { out, made, kept } = firstStart({ JOURNAL_STREAM: '8:12345' });
   assert.ok(!out.includes(made.password), 'the password is not in the output');
-  assert.equal(kept && kept.text, made.password);
+  assert.equal(kept && kept.password, made.password);
 });
 
 test('with no journal the password is printed as before, and the file is still written in production', () => {
   const { out, made, kept } = firstStart({});
   assert.ok(out.includes(`Temporary password: ${made.password}`), out);
-  assert.equal(kept && kept.text, made.password);
+  assert.equal(kept && kept.password, made.password);
+  assert.equal(kept.username, made.username);
+});
+
+test('SUDS_ADMIN_USERNAME still names the first administrator, and two servers never share a generated name (1.25.7, K6)', () => {
+  const named = firstStart({ SUDS_ADMIN_USERNAME: 'itadmin' });
+  assert.equal(named.made.username, 'itadmin'); assert.equal(named.made.setting, 'itadmin'); assert.equal(named.kept.username, 'itadmin');
+  const a = firstStart({}); const b = firstStart({});
+  assert.notEqual(a.made.username, b.made.username);
+  const B = require('../server/bootstrap');
+  const names = new Set(Array.from({ length: 200 }, () => B.generatedAdminUsername()));
+  assert.ok(names.size > 195, 'random, not a fixed list');
+  assert.deepEqual(B.parsePasswordFile('Old-Passw0rd!aA1\n'), { username: 'guest', password: 'Old-Passw0rd!aA1' }, 'a file from before 1.25.7');
 });

@@ -144,8 +144,8 @@ $FLEET_HOME/                        mode 0700, a private git repository (see bel
    - **9. Key escrow**: `/etc/suds/credentials` and the LUKS key, streamed from the VM straight into `gpg --encrypt`
      for the owner, written to `escrow/<slug>/keys-<time>.tar.gpg` (0400), its SHA-256 in the record and in
      `escrow/access.log`. Copy it to the owner's offline escrow medium the same day.
-   - **10. The record** (`STATUS=active`) and **first sign-in**: open `https://<name>`, sign in as **`guest`** with the
-     temporary password in `/var/lib/suds/first-admin-password.txt` on the VM (`sudo cat` it once; the run never prints
+   - **10. The record** (`STATUS=active`) and **first sign-in**: open `https://<name>`, sign in as the first administrator, with the
+     username (random, `admin-…`, from 1.25.7) and temporary password in `/var/lib/suds/first-admin-password.txt` on the VM (`sudo cat` it once; the run never prints
      it), change it, enrol two-step verification.
 4. A failed run is safe to repeat after the fix: what exists is kept (instance, IP, disks, records), install.sh is
    idempotent, a mounted disk is never formatted again.
@@ -171,7 +171,7 @@ credentials and go:
 1. `tenants/drill.env` from the example: `TENANT_SLUG=drill`, `WWW_REDIRECT=yes`, the admin networks, the region,
    `SUDS_VERSION` and `RELEASE_SHA256`, `ESCROW_GPG_RECIPIENT`.
 2. Dry run, read it; then `--apply`. Every assert must pass (`STATUS=active`, `LUKS=yes`, no `--allow-unencrypted-demo`).
-3. Sign in as `guest`, change the password, enrol two-step verification; check Settings › Security status.
+3. Sign in as the first administrator (the username in `/var/lib/suds/first-admin-password.txt`), change the password, enrol two-step verification; check Settings › Security status.
 4. `escrow.sh open drill --reason "drill: prove the escrow opens"`, compare the opened `suds_*` file names with
    `sudo ls /etc/suds/credentials` on the VM, shred the opened copy; `escrow.sh verify`.
 5. Export something from the drill server (Reports, or a backup file), and fill the receipt in `register/drill.env`:

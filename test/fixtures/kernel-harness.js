@@ -80,7 +80,7 @@ function fakeIndexedDB() {
  * Bundle and start the kernel. staticHost: SUDS on this device (the published web app; Sign up creates the
  * account, no office sync) or a device that syncs with an office server. Returns { L, cleanup }.
  */
-async function loadKernel({ staticHost = true } = {}) {
+async function loadKernel({ staticHost = true, start = true } = {}) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-kernel-'));
   const outfile = path.join(tmp, 'kernel.mjs');
   await require('esbuild').build(require('../../scripts/kernel-build-options').kernelBuildOptions(outfile));
@@ -100,8 +100,11 @@ async function loadKernel({ staticHost = true } = {}) {
   const realSetInterval = globalThis.setInterval;
   globalThis.setInterval = (...a) => { const t = realSetInterval(...a); if (t && t.unref) t.unref(); return t; };
   const kernel = await import(pathToFileURL(outfile).href);
+  const cleanup = () => fs.rmSync(tmp, { recursive: true, force: true });
+  // start: false leaves starting it to the test (as a page load does), which may expect it to fail.
+  if (!start) return { start: (opts = {}) => kernel.start({ wasmUrl: WASM_URL, ...opts }), cleanup };
   const L = await kernel.start({ wasmUrl: WASM_URL });
-  return { L, cleanup: () => fs.rmSync(tmp, { recursive: true, force: true }) };
+  return { L, cleanup };
 }
 /** Call the kernel as the page does; { status, data }. */
 const kernelCaller = (L) => async (method, p, body) => { const r = await L.handle(method, p, body); return { status: r.status, data: r.json !== undefined ? r.json : r.body }; };

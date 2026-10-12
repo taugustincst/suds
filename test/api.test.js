@@ -1453,14 +1453,21 @@ test('changing an administrator password deletes the first-admin password file',
   } finally { try { fs.unlinkSync(bootstrap.passwordFilePath()); } catch {} }
 });
 
-test('a new office server\'s first administrator is called guest unless SUDS_ADMIN_USERNAME names another', () => {
+test('the first administrator\'s name is the one bootstrap recorded; a server from before 1.25.7 keeps "guest" (K6)', () => {
   const B = require('../server/bootstrap');
-  const saved = process.env.SUDS_ADMIN_USERNAME;
+  const saved = process.env.SUDS_ADMIN_USERNAME; const recorded = H.db.getSetting(B.BOOTSTRAP_NAME_SETTING, null);
   try {
+    assert.equal(recorded, 'admin', 'this suite\'s first administrator, as SUDS_ADMIN_USERNAME named it, is recorded');
+    H.db.run(`DELETE FROM settings WHERE key=?`, B.BOOTSTRAP_NAME_SETTING);
     delete process.env.SUDS_ADMIN_USERNAME;
-    assert.equal(B.DEFAULT_ADMIN_USERNAME, 'guest');
-    assert.equal(B.adminUsername(), 'guest', 'with nothing configured the first administrator is "guest"');
+    assert.equal(B.adminUsername(), 'guest', 'nothing recorded and nothing configured: a server created before 1.25.7');
     process.env.SUDS_ADMIN_USERNAME = 'itadmin';
     assert.equal(B.adminUsername(), 'itadmin', 'SUDS_ADMIN_USERNAME still names it');
-  } finally { if (saved === undefined) delete process.env.SUDS_ADMIN_USERNAME; else process.env.SUDS_ADMIN_USERNAME = saved; }
+    H.db.setSetting(B.BOOTSTRAP_NAME_SETTING, 'admin-q7x2k9');
+    assert.equal(B.adminUsername(), 'admin-q7x2k9', 'the name bootstrap recorded comes first');
+    assert.match(B.generatedAdminUsername(), /^admin-[a-z0-9]{6}$/);
+  } finally {
+    if (saved === undefined) delete process.env.SUDS_ADMIN_USERNAME; else process.env.SUDS_ADMIN_USERNAME = saved;
+    H.db.setSetting(B.BOOTSTRAP_NAME_SETTING, recorded);
+  }
 });
