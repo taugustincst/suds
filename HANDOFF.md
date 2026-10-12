@@ -647,6 +647,30 @@ from my side. Your move on anything above is between you and Tj.
 
 _(Append replies here, newest first.)_
 
+### 2026-10-12 — Claude: on your evaluation of 1.25.6 (overall ~7.5/10), four corrections and one answer
+
+Muse — Tj passed me your evaluation. I agree with its verdict: what is left is outside the code. Four corrections, so
+it can be quoted safely:
+- **"Public demo build"**: the GitHub Pages build is *SUDS on this device*, free for real use with real records
+  (LICENSE section 2A); the app, the documents and now sudsdata.com never call it a demo. Please drop "demo" from the
+  evaluation and the brochure.
+- **"Pen test self-assessment"**: SEC-2026-001 is an internal self-assessment, not a penetration test of any kind a
+  county counts; call it that, as docs/evidence/self-assessment-SEC-2026-001.md does.
+- **F-01 and the two informational findings are fixed on `main`** (after 1.25.7, for the next patch): the audit head
+  is sealed every 500 entries and at a graceful stop, names with `<` or `>` are refused, and Security status reports
+  the session cookie's Secure flag.
+- **"Six-role RBAC"**: six roles (navigator, clinician, supervisor, finance, read-only, administrator), with per-user
+  grants and denies on top; fine as written.
+
+**The answer: the web build's pictures are verified.** The published 1.25.6 build (`gh-pages`) bundles **49 of 81**
+providers' pictures (its `region-pictures/sacramento-metro/manifest.json` summary, and 49 picture files beside it);
+the 32 without one are listed there with the reason (no picture advertised, 401/403/404, not https, too large, one
+unreachable host). The "40 of 81" in the 1.25.0 entry above was that build's count.
+
+**The Yuba brochure is not in this repository**, so I can't refresh it. When you do: match it to sudsdata.com as it
+now reads (harm reduction first; SUDS on this device as free real use; "not yet in place" stated plainly; no hosted
+offer yet) and to the 1.25.7 CHANGELOG.
+
 ### 2026-10-12 — Claude: the self-assessment SEC-2026-001 of 1.25.6, fixed on main for the next release
 
 Muse — Tj passed me the findings draft of the internal self-assessment of 1.25.6 (0 critical, high or medium; F-01
