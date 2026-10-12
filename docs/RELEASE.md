@@ -47,8 +47,10 @@ found in the process's volume (48 releases in 26 days; finding J11). The owner m
   changed the heavy jobs are skipped; `test`, `release-policy` and `release-state` always run (*Release gate*, below).
   The release gate's rule does not change with it: a tagged commit needs every required job green, and run, on that
   exact commit, so a skipped job never releases anything.
-- **`HANDOFF.md` is archived monthly**: the entries older than the current month move to an archive, so that the
-  current notes stay short enough to read.
+- **`HANDOFF.md` is archived monthly**: the entries older than the current month move to
+  `docs/handoff/HANDOFF-YYYY-MM.md`, kept as written, so that the current notes stay short enough to read (first run on
+  2026-10-12: September 2026; evaluation of 1.25.6, K8). The archive is history: the documentation-currency tests skip
+  it, as they skip the evidence records.
 
 ### Stabilisation (from 1.23.1)
 
