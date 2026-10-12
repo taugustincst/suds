@@ -74,7 +74,7 @@ const COMMANDS = {
       '                  the service, replaces app\\ (the old one is kept as app.previous), and starts the service again.',
       '                  Needs an elevated prompt.', DATA_HELP] },
   'create-admin': { usage: 'suds create-admin [<username>] [--data <folder>]', summary: 'Create an administrator account, or reset one\'s password.',
-    details: ['Asks for the password (or reads SUDS_ADMIN_PASSWORD). The account must change it at its first sign-in. The default name is "guest".', DATA_HELP] },
+    details: ['Asks for the password (or reads SUDS_ADMIN_PASSWORD). The account must change it at its first sign-in. Without a username:', 'the first administrator, if it is still there; otherwise a new one with a random name (admin-..., printed).', DATA_HELP] },
   'reset-admin': { usage: 'suds reset-admin <username> [--data <folder>]', summary: 'Let a locked-out administrator back in.',
     details: ['Sets a new temporary password (printed once), clears the lockout, two-step verification and passkeys of that one', 'administrator account, and records it in the audit log.', DATA_HELP] },
   'verify-audit-export': { usage: 'suds verify-audit-export <export.ndjson> [--public-key <file>] [--key-file <keys.json>] [--anchors <folder>] [--json]', summary: 'Check an audit export file away from the server.', details: [] },
@@ -719,7 +719,7 @@ async function cmdCreateAdmin(p) {
   const { dir } = resolveDataDir({ flag: p.opts.data });
   if (p.positional[0]) process.env.SUDS_ADMIN_USERNAME = p.positional[0];
   if (!process.env.SUDS_ADMIN_PASSWORD) {
-    const a = await askHidden(`New password for "${process.env.SUDS_ADMIN_USERNAME || 'guest'}" (at least 12 characters; not shown): `);
+    const a = await askHidden(`New password for ${process.env.SUDS_ADMIN_USERNAME ? `"${process.env.SUDS_ADMIN_USERNAME}"` : 'the administrator'} (at least 12 characters; not shown): `);
     const b = await askHidden('The same password again: ');
     if (a !== b) throw new CliError('The two passwords are not the same. Run suds create-admin again.');
     process.env.SUDS_ADMIN_PASSWORD = a;

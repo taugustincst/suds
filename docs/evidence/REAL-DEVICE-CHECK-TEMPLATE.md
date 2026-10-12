@@ -52,6 +52,10 @@ Record each result in the table under *Results* as **pass**, **fail** (with what
    no account), with no wording that calls it a demo or a trial. On an iPhone or iPad, above the form: *First, add SUDS
    to your Home Screen*, with the reason (Safari deletes a website's records after 7 days without a visit); on Android,
    no such step. Note it, then carry on in the tab for steps 2–4 (this run checks both). [Screenshot.]
+   **1b. Ten cold first loads (close Safari fully each time).** Before signing up: swipe Safari away in the app switcher,
+   open it again and open the official address; the Sign up page must appear. Do it ten times. Nothing is stored yet,
+   so nothing can be lost. If a load shows *SUDS could not start in this browser just now* or *Could not start SUDS on
+   this device* (CI's WebKit runs have, 1.25.7 K2), record the words, and whether **Reload** then brings the Sign up page.
 2. **Sign up.** Create the first account (it manages the device), choose a role, tick that you understand where the
    records are kept. The storage confirmation appears (*Storage: Protected* or *May be cleared by the browser*); note
    which. [Screenshot.]
@@ -111,6 +115,7 @@ Record each result in the table under *Results* as **pass**, **fail** (with what
 | Step | Device 1 | Device 2 | Device 3 | Device 4 | Screenshot(s) |
 | --- | --- | --- | --- | --- | --- |
 | 1. Open online (Home Screen step shown on iPhone, not Android?) | | | | | |
+| 1b. Ten cold first loads (failures of 10; words shown) | | | | | |
 | 2. Sign up (storage answer) | | | | | |
 | 3. Recovery code | | | | | |
 | 4. Add a client | | | | | |

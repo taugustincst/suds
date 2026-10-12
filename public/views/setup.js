@@ -52,7 +52,7 @@ route('setup', async () => {
     fundOpts ? { name: 'main_fund_settlement_hiaa', label: 'California High Impact Abatement Activity', type: 'select', placeholder: '— not recorded —', options: fundOpts.settlement_hiaa, span: true,
       help: 'Check the category against the agreement that governs the fund. Both can be changed later under Funding & spending.' } : null,
     { type: 'section', label: 'Administrator account (you)' },
-    { name: 'admin_display_name', label: 'Your name', required: true }, { name: 'admin_username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', value: 'guest', help: 'The first administrator is called guest unless you choose another name. You set its password below.' },
+    { name: 'admin_display_name', label: 'Your name', required: true }, { name: 'admin_username', label: 'Username', required: true, pattern: '[a-zA-Z0-9._@\\-]+', autocomplete: 'username', help: 'Choose a name that is hard to guess, not guest or admin: anyone who knows an administrator\'s username can lock the account for a while by typing wrong passwords. You set its password below.' },
     { name: 'admin_password', label: 'Password', type: 'password', required: true, autocomplete: 'new-password', help: '12+ characters with upper and lower case, a number and a symbol. Not your name or username, and not a common password.' }, { name: 'confirm', label: 'Confirm password', type: 'password', required: true, autocomplete: 'new-password' },
     { type: 'section', label: 'Who can reach SUDS' },
     { name: 'network', label: 'Access', type: 'select', noBlank: true, required: true, value: 'lan', options: [{ value: 'lan', label: 'Phones, tablets and other computers on the office network (recommended for mobile use)' }, { value: 'local', label: 'Only this computer' }], span: true },
@@ -121,9 +121,6 @@ route('setup', async () => {
     });
   }
   if (offlineSel) offlineSel.dataset.recommended = OFFLINE.harm_reduction.value;
-  // The username's help explains the "guest" default; once another name is typed it has nothing left to say.
-  const userIn = f.querySelector('input[name=admin_username]'); const userHelp = userIn && userIn.closest('.field')?.querySelector(':scope > .help');
-  if (userIn && userHelp) { const sync = () => { userHelp.hidden = userIn.value.trim().toLowerCase() !== 'guest'; }; userIn.addEventListener('input', sync); sync(); }
   // The settlement questions show only for opioid settlement money. A fund named as settlement money
   // ("County opioid settlement allocation") is taken to be that, until someone chooses the type themselves.
   const fundName = f.querySelector('input[name=main_fund_name]'); const fundType = f.querySelector('select[name=main_fund_type]');

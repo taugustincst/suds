@@ -148,10 +148,23 @@ test('Ubuntu 24.04: the plan installs the unit, generates each key root-only 060
   for (const d of ['+ ufw delete allow OpenSSH', '+ ufw delete allow 22/tcp', '+ ufw delete allow 22']) assert.ok(r.out.includes(`${d}\n`) && r.out.indexOf(`${d}\n`) < r.out.indexOf('+ ufw allow proto tcp from 10.20.0.0/16'), `the dry run shows ${d}, before the admin rule is added (after it, it deleted an --admin-cidr=0.0.0.0/0 rule: 1.25.1)`);
   assert.ok(r.out.indexOf('+ show the firewall rules now in force') > r.out.indexOf('compliance-check.js'), 'the rules in force are shown at the end');
   // The first administrator is named: nothing else tells a first-time operator it is not "admin" (the 1.25.1 launch).
-  assert.match(r.out, /First sign-in: open https:\/\/suds\.county\.example\.gov and sign in with the username "guest"/);
+  // From 1.25.7 the name is random, chosen at the first start, and read from the 0600 file (none in a dry run).
+  assert.match(r.out, /First sign-in: the first administrator's username and temporary password are in \/var\/lib\/suds\/first-admin-password\.txt .*Open https:\/\/suds\.county\.example\.gov and sign in with the username on the first line of that file/);
+  assert.ok(!/"guest"/.test(r.out), 'guest is no longer the first administrator');
   assert.ok(r.out.includes('+ systemctl enable --now systemd-timesyncd') && r.out.includes('+ timedatectl set-ntp true'), 'time sync');
   assert.ok(r.out.includes('+ systemctl enable --now apt-daily.timer apt-daily-upgrade.timer'), 'unattended security updates');
   assert.ok(r.out.includes('compliance-check.js'), 'finishes with the compliance check');
+  fs.rmSync(fx.dir, { recursive: true, force: true });
+});
+
+test('the first sign-in names the first administrator from its 0600 file, where SUDS wrote the random name (1.25.7, K6)', () => {
+  const fx = fixture();
+  fs.mkdirSync(path.join(fx.root, 'var/lib/suds'), { recursive: true });
+  fs.writeFileSync(path.join(fx.root, 'var/lib/suds/first-admin-password.txt'), 'Username: admin-k6q2z9\nTemporary password: not-read-here\n', { mode: 0o600 });
+  const r = run('install.sh', BASE, fx);
+  assert.equal(r.code, 0, r.all);
+  assert.match(r.out, /sign in with the username "admin-k6q2z9" \(the first administrator; also in that file\)/);
+  assert.ok(!r.all.includes('not-read-here'), 'the password is never printed');
   fs.rmSync(fx.dir, { recursive: true, force: true });
 });
 

@@ -176,7 +176,7 @@ test('the dry run prints the plan and every command, and calls nothing', () => {
     'prepare-host.sh 64 32 8', 'install.sh --domain=drill.suds.systems --admin-cidr=203.0.113.10/32 --admin-cidr6=2001:db8:10::/48 --offsite=/mnt/suds-offsite --anchors=/mnt/suds-anchors --tls=caddy --version=1.25.4',
     `--release-sha256=${sha256(Buffer.from('a stand-in for suds-v1.25.4.zip\n'))} --www-redirect`,
     '+ assert: a NEW SSH connection succeeds after the install session closed', '+ assert: ufw allows SSH (22) on IPv4 and on IPv6', '+ assert: /var/lib/suds is on an encrypted (LUKS/dm-crypt) volume',
-    `--recipient ${FPR}`, 'sign in as "guest"', '/var/lib/suds/first-admin-password.txt']) assert.ok(r.out.includes(s), `the plan shows: ${s}`);
+    `--recipient ${FPR}`, 'sign in as the first administrator, with the username and temporary password', '/var/lib/suds/first-admin-password.txt']) assert.ok(r.out.includes(s), `the plan shows: ${s}`);
   assert.ok(!r.all.includes(SECRET), 'the Porkbun secret is never printed');
   assert.ok(!r.out.includes('ufw allow proto'), 'no SSH rule added beside install.sh: it takes --admin-cidr6 itself (1.25.4, G10)');
   const steps = [...r.out.matchAll(/^== (\d+)\. /gm)].map((m) => Number(m[1]));
@@ -211,7 +211,7 @@ test('--apply runs the steps in order, passes every assert, escrows the keys and
   assert.equal(fs.statSync(path.join(fx.home, file)).mode & 0o777, 0o400);
   assert.equal(fs.statSync(path.join(fx.home, 'register/drill.env')).mode & 0o077, 0, 'the record is private');
   assert.ok(!r.all.includes('suds_encryption_key-value'), 'no key printed');
-  assert.match(r.out, /sign in as "guest"/); assert.match(r.out, /\/var\/lib\/suds\/first-admin-password\.txt/);
+  assert.match(r.out, /sign in as the first administrator/); assert.ok(!r.out.includes('"guest"'), 'no stock name (1.25.7, K6)'); assert.match(r.out, /\/var\/lib\/suds\/first-admin-password\.txt/);
   assert.match(r.err, /BAA_STATUS and QSOA_STATUS are blank/);
   // A second run keeps what exists: nothing is created twice.
   const again = provision(fx);
@@ -241,7 +241,7 @@ for (const [name, env, args, msg] of [
     assert.match(r.all, msg);
     assert.match(fx.rec(), /^STATUS=failed-asserts$/m);
     assert.ok(!fx.calls().some((c) => c.includes('--encrypt')), 'not escrowed, not live');
-    assert.ok(!r.out.includes('sign in as "guest"'), 'no go-live instructions');
+    assert.ok(!r.out.includes('sign in as the first administrator'), 'no go-live instructions');
   });
 }
 

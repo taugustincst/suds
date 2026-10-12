@@ -1,16 +1,21 @@
 'use strict';
 // Creates (or resets) an administrator account. Usage:
-//   SUDS_ADMIN_USERNAME=guest SUDS_ADMIN_PASSWORD='...' npm run create-admin   (guest is the default name)
+//   SUDS_ADMIN_USERNAME=<name> SUDS_ADMIN_PASSWORD='...' npm run create-admin
+// Without SUDS_ADMIN_USERNAME it resets the first administrator server/bootstrap.js created, if that account is
+// still there, and otherwise creates one with a random name ("admin-" and six letters and digits, printed): a
+// stock name such as "guest" lets anyone keep the account locked out with wrong passwords (1.25.7, K6).
 const db = require('../server/db');
 const { hashPassword, uuid } = require('../server/crypto');
 const auth = require('../server/auth');
 const audit = require('../server/audit');
-const username = process.env.SUDS_ADMIN_USERNAME || 'guest';
+const bootstrap = require('../server/bootstrap');
 const password = process.env.SUDS_ADMIN_PASSWORD;
 if (!password) { console.error('Set SUDS_ADMIN_PASSWORD'); process.exit(1); }
-const pwProblem = auth.passwordProblem(password, { username });
-if (pwProblem) { console.error(pwProblem); process.exit(1); }
 db.open();
+let username = process.env.SUDS_ADMIN_USERNAME;
+if (!username) username = db.one(`SELECT 1 FROM users WHERE username=?`, bootstrap.adminUsername()) ? bootstrap.adminUsername() : bootstrap.generatedAdminUsername();
+const pwProblem = auth.passwordProblem(password, { username });
+if (pwProblem) { console.error(pwProblem); db.close(); process.exit(1); }
 const ex = db.one(`SELECT id FROM users WHERE username=?`, username);
 if (ex) {
   db.run(`UPDATE users SET password_hash=?, role='admin', is_active=1, must_change_password=1, locked_until=NULL, failed_attempts=0, password_changed_at=?, updated_at=? WHERE id=?`, hashPassword(password), db.now(), db.now(), ex.id);

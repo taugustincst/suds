@@ -192,6 +192,7 @@ test('try-local: options, the Node version check, and the settings it sets aside
   assert.equal(env.PATH, '/bin');
   assert.equal(env.SUDS_ENV, 'development'); assert.equal(env.SUDS_DATA_DIR, '/x/data-try'); assert.equal(env.HOST, '127.0.0.1'); assert.equal(env.PORT, '8123');
   assert.equal(env.SEED_PASSWORD, T.SAMPLE_PASSWORD);
+  assert.equal(T.tryEnv('/x', 1, { SUDS_ADMIN_USERNAME: 'realadmin' }).SUDS_ADMIN_USERNAME, 'guest', 'the sample administrator is guest, whatever the real install calls its own (1.25.7: a real one is random)');
   assert.equal(T.tryEnv('/x', 1, { MFA_REQUIRED_ROLES: 'admin' }).MFA_REQUIRED_ROLES, '', 'two-step verification is not required of the sample accounts');
   for (const k of ['SUDS_DB_PATH', 'SUDS_ENCRYPTION_KEY_FILE', 'AUDIT_ANCHOR_DIR', 'TLS_CERT_PATH', 'CREDENTIALS_DIRECTORY', 'LOCAL_MODE_ENABLED', 'OIDC_ISSUER']) assert.equal(env[k], undefined, k);
 });

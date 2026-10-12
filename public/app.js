@@ -2678,14 +2678,19 @@ export async function boot(force = false) {
     try {
       await startLocalKernel(force);
     } catch (e) {
-      // Two specific failures need their own explanation rather than a raw message.
+      // Three specific failures need their own explanation rather than a raw message.
       const alreadyOpen = e && e.code === 'SUDS_ALREADY_OPEN';
+      // The browser's SQLite engine failed twice as it started (local/kernel.js start, 1.25.7, K2) on a device with
+      // nothing stored yet: most likely this browser, not anything SUDS keeps, and there is nothing to erase.
+      const engineOnly = e && e.code === 'SUDS_ENGINE_FAILED' && e.nothingStored;
       const msg = alreadyOpen
         ? 'SUDS is open in another tab or window on this device.'
-        : e && e.code === 'SUDS_KEY_LOST'
-          ? e.message
-          : 'Could not start SUDS on this device: ' + (e && e.message);
-      if (!alreadyOpen) { console.error(e); reportClientError({ kind: 'error', message: msg, stack: e && e.stack }); }
+        : engineOnly
+          ? 'SUDS could not start in this browser just now. Nothing is stored on this device yet, so nothing has been lost. This is most likely the browser, not SUDS: reload the page, or close the browser completely and open it again.'
+          : e && e.code === 'SUDS_KEY_LOST'
+            ? e.message
+            : 'Could not start SUDS on this device: ' + (e && e.message);
+      if (!alreadyOpen) { console.error(e); reportClientError({ kind: 'error', message: engineOnly ? `engine failed at start, twice: ${String(e.first).slice(0, 120)}; ${String(e.message).slice(0, 120)}` : msg, stack: e && e.stack }); }
       const app = document.getElementById('app');
       app.removeAttribute('aria-busy');
       clear(app);
@@ -2705,6 +2710,9 @@ export async function boot(force = false) {
             h('button', { class: 'btn primary', type: 'button', onClick: () => boot(true) }, 'Use SUDS in this window'),
             h('button', { class: 'btn', type: 'button', onClick: () => boot() }, 'Try again'),
           ),
+        ) : engineOnly ? h('div', { 'data-engine-failed': '1' },
+          h('div', { class: 'btn-row center mt' }, h('button', { class: 'btn primary', type: 'button', onClick: () => location.reload() }, 'Reload')),
+          h('p', { class: 'small muted center mt' }, 'On an iPhone or iPad: swipe Safari away in the app switcher, then open it again. If it still does not start, try another browser.'),
         ) : offerDeviceReset(),
       );
       return;

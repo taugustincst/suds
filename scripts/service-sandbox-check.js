@@ -14,7 +14,7 @@
 //   2. install the release's deploy/linux/suds.service UNCHANGED, plus the drop-in install.sh writes (10-site.conf:
 //      the anchor and offsite shares writable), start it, and check that systemd applies the sandbox the unit asks for
 //      (systemctl show: User, NoNewPrivileges, ProtectSystem, ..., and a system-call filter that refuses fchown);
-//   3. over HTTP on 127.0.0.1:8080, as the first administrator (the generated password from
+//   3. over HTTP on 127.0.0.1:8080, as the first administrator (the generated username and password from
 //      /var/lib/suds/first-admin-password.txt, changed at the first sign-in as SUDS requires): Back up now with the
 //      offsite share configured, then the offsite and local copies compared (size and SHA-256); an online snapshot
 //      written to the offsite share by the server's own timer; an audit anchor written to the anchor share, and the
@@ -262,16 +262,29 @@ async function compareCopies(file) {
   return off;
 }
 
+/**
+ * The first administrator from /var/lib/suds/first-admin-password.txt (server/bootstrap.js passwordFileText): a
+ * "Username:" and a "Temporary password:" line from 1.25.7; before that, the password alone, for "guest".
+ */
+function firstAdmin(text) {
+  const field = (k) => (String(text).match(new RegExp(`^${k}: (.+)$`, 'm')) || [])[1];
+  if (field('Temporary password') === undefined) return { username: 'guest', password: String(text).trim() };
+  return { username: String(field('Username') || '').trim(), password: field('Temporary password').trim() };
+}
+
 async function drive() {
   const api = client();
   // The first administrator, as an operator finds it (install.sh: "sudo cat it once").
   const pwFile = path.join(LAYOUT.data, 'first-admin-password.txt');
   await waitFor(`${pwFile} (the generated first-administrator password)`, 30, () => fs.existsSync(pwFile));
-  const first = fs.readFileSync(pwFile, 'utf8').trim();
+  const { username, password: first } = firstAdmin(fs.readFileSync(pwFile, 'utf8'));
   // Under systemd stdout is the journal (1.25.6, J12): the password is only in the 0600 file, never in the unit's log.
-  const unitJournal = sh('journalctl', ['-u', UNIT, '--no-pager', '-o', 'cat'], { quiet: true, allowFail: true }).stdout || '';
+  // The random name (1.25.7, K6) is what the operator needs from the journal: it says the name and the file, nothing more.
+  const journalOf = () => sh('journalctl', ['-u', UNIT, '--no-pager', '-o', 'cat'], { quiet: true, allowFail: true }).stdout || '';
+  await waitFor(`the unit's journal naming the first administrator "${username}"`, 30, () => journalOf().includes(`Created initial admin user "${username}"`));
+  const unitJournal = journalOf();
   if (first && unitJournal.includes(first)) fail('the generated first-administrator password is in the unit\'s journal (server/bootstrap.js must name only the file under systemd)');
-  const username = 'guest';
+  log(`  first administrator: ${username}`);
   const password = `Sandbox-${crypto.randomBytes(9).toString('base64url')}-7q!`;
   log('step: sign in as the first administrator and change the generated password');
   await api.call('POST', '/api/auth/login', { username, password: first });
@@ -401,4 +414,4 @@ async function main(argv) {
 }
 
 if (require.main === module) main(process.argv.slice(2)).then((c) => { process.exitCode = c; }, (e) => { console.error(e); process.exitCode = 1; });
-module.exports = { LAYOUT, SHOWN, drive, parseUnit, values, last, credentials, expectedProperties, parseShow, propertyProblems, syscallFilterProblem, siteDropIn, envFile, provisionJson, journalProblems, SYSCALLS, digest, main };
+module.exports = { LAYOUT, SHOWN, drive, firstAdmin, parseUnit, values, last, credentials, expectedProperties, parseShow, propertyProblems, syscallFilterProblem, siteDropIn, envFile, provisionJson, journalProblems, SYSCALLS, digest, main };

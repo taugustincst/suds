@@ -359,5 +359,45 @@ let good = null; let copyText = null; // the good sealed image, and the saved co
   await ctx.close();
 }
 
+// ---------------------------------------------------------------------------------------------------------
+// 7. (1.25.7, K2) The SQLite engine failing at a FIRST visit: CI's WebKit run of 1.25.6 showed "Could not start SUDS
+// on this device: Out of bounds memory access" with nothing stored, and the page offered Start over. Emulated here as
+// test/device-engine-start.test.js does in Node: each WebAssembly instance the page starts is numbered, and those up
+// to the limit throw that error when SQLite opens a database. One failing engine: start-up tries a new one and the
+// set-up form appears. Every engine failing: the page says nothing is stored yet, most likely the browser, and offers
+// a reload, not "Reset this device".
+// ---------------------------------------------------------------------------------------------------------
+{
+  const sqlWasm = fs.readFileSync(new URL('../../node_modules/sql.js/dist/sql-wasm.js', import.meta.url), 'utf8');
+  const openExport = (/f\._sqlite3_open=\(a,b\)=>\(f\._sqlite3_open=Z\.(\w+)\)/.exec(sqlWasm) || [])[1];
+  ok(!!openExport, 'engine faults: sql.js names its sqlite3_open export as this check expects');
+  const faulty = ({ name, upTo }) => {
+    let n = 0;
+    const wrap = (r) => {
+      if (!r || !r.instance) return r;
+      const mine = ++n; const real = r.instance.exports;
+      const exports = { ...real, [name]: (...a) => { if (mine <= upTo) throw new WebAssembly.RuntimeError('Out of bounds memory access'); return real[name](...a); } };
+      return { module: r.module, instance: { exports } };
+    };
+    for (const k of ['instantiate', 'instantiateStreaming']) { const real = WebAssembly[k].bind(WebAssembly); WebAssembly[k] = (...a) => real(...a).then(wrap); }
+  };
+  // The page logs the failure (console.error) by design, so these pages are not watched for console errors.
+  for (const [upTo, tag] of [[1, 'one engine fails'], [99, 'every engine fails']]) {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await ctx.addInitScript(faulty, { name: openExport, upTo });
+    const page = await ctx.newPage();
+    if (upTo === 1) {
+      await firstLoad(page, base + '/', 'input[name=display_name]', { timeout: 20000 });
+      ok(!(await page.$('.boot.error')), `engine faults (${tag}): no error screen; the set-up form appears`);
+    } else {
+      await firstLoad(page, base + '/', '[data-engine-failed]', { timeout: 20000 });
+      const said = (await page.textContent('.boot.error')).trim();
+      ok(/Nothing is stored on this device yet/.test(said) && /reload the page, or close the browser completely and open it again/.test(said), `engine faults (${tag}): says nothing is stored and to reload — ${said}`);
+      eq((await page.$$eval('#app a, #app button', (els) => els.map((x) => x.textContent.trim()))).join(' | '), 'Reload', `engine faults (${tag}): the one thing offered is Reload, not Reset this device`);
+    }
+    await ctx.close();
+  }
+}
+
 finish(errors.slice(0, 10));
 await browser.close();
