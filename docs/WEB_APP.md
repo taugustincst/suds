@@ -35,8 +35,10 @@ Open the published address on any phone, tablet or computer. There is nothing to
 4. **Add it to the home screen** for something that opens like an app: on iPhone, Safari's Share sheet →
    *Add to Home Screen*; on Android and desktop Chrome/Edge, the address bar offers *Install*. **On iPhone and
    iPad it is a set-up step, not an option:** Safari deletes all of a site's script-writable storage (IndexedDB,
-   so every record) after seven days of Safari use without a visit to the site (since Safari 13.1), and a Home
-   Screen web app is counted separately. In a Safari tab on iOS or iPadOS (not opened from the Home Screen:
+   so every record) after seven days of Safari use without a visit to the site (since Safari 13.1). A Home Screen
+   web app is not exempt from that rule: WebKit gives it **its own counter**, of days the app itself is used, and
+   each day it is opened is a visit, so WebKit does not expect its data to be deleted (WebKit, *Full Third-Party
+   Cookie Blocking and More*, 2020). A lost or wiped device still loses everything not in a backup. In a Safari tab on iOS or iPadOS (not opened from the Home Screen:
    `display-mode: standalone` false and `navigator.standalone` not true), the set-up page shows *First, add SUDS
    to your Home Screen* above the form (set it up from the new icon: a Home Screen app may not see records made in
    a tab), and every page afterwards shows a one-line notice, dismissible for the session. Nothing is blocked, and
@@ -86,8 +88,8 @@ register (`HIPAA.md`, *Risk register notes*).
 - **Clearing the browser's site data, or losing the device, loses the records.** So does a browser that evicts
   the site's storage when the device runs short of space, and so does **Safari on iPhone and iPad after seven days
   of Safari use without a visit to SUDS** (its cap on script-writable storage, since Safari 13.1): use SUDS there
-  from the Home Screen, which is counted on its own (WebKit has had a bug report that the exemption is not always
-  kept, so backups still matter), as the set-up page and the in-tab notice say (step 4 above). The app asks the browser to keep its storage
+  from the Home Screen, which has its own counter of days of use that each opening of the app resets (WebKit has had a
+  bug report that this is not always kept, so backups still matter), as the set-up page and the in-tab notice say (step 4 above). The app asks the browser to keep its storage
   ("persistent storage") when the first account is created; **This device** shows the answer —
   *Storage: Protected* or *May be cleared by the browser* — with a button to ask again. Installing the app to
   the home screen makes a browser more likely to agree.
@@ -233,7 +235,8 @@ own.
 nothing else — a push to `main` never republishes it. The workflow has one trigger, a dispatch on a release
 tag, and it is started in two ways:
 
-- `release.yml` finishes a release: after the gate, the owner's approval and the GitHub Release, it runs
+- `release.yml` finishes a release: after the gate, the tests (and the owner's approval, once the `release`
+  environment has a required reviewer: it has none today) and the GitHub Release, it runs
   `gh workflow run web-app.yml --ref v<version>` as its last step, because a release or tag that a workflow
   creates with `GITHUB_TOKEN` does not start other workflows (hence `actions: write` in `release.yml`);
 - someone starts it by hand (Actions → *Web app* → *Run workflow*, choosing the release tag as the ref) —
@@ -242,7 +245,8 @@ tag, and it is started in two ways:
 Either way it runs only on a `v*` tag ref and first checks that a GitHub Release (not a draft) exists for
 that tag and that the tag points at the very commit being built. Since 1.16.3 it is two jobs: `build` builds and
 checks the site with a read-only token and no secret, and `publish` runs in the **`release` environment**, so it
-waits for the owner's approval like the release itself (docs/RELEASE.md, *Owner control over releases*), then
+waits for the owner's approval like the release itself once that environment has a required reviewer (docs/RELEASE.md,
+*Owner control over releases*; it has none today, docs/security/OPERATIVE-CONTROLS.md), then
 pushes the site `build` handed over, and nothing else, with the environment's deploy key (docs/RELEASE.md, *Owner:
 repository settings*, step 6); its run summary says which credential pushed. Until 1.16.1 a bare `v*` tag push and a `release: published` event started it too, beside
 `release.yml` rather than after it: a tag whose gate failed, or that the owner never approved, was still

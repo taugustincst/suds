@@ -23,8 +23,10 @@ git archive --format=zip --prefix=suds-v1.25.6/ -o suds-v1.25.6.zip v1.25.6 && s
   CHANGELOG 2026-10-11), zip SHA-256 `45d2a425c059b4f6a428dbcdf27f056a228e92b7bde0de53e552eba141186725`; exact-commit CI 38117051426 (every required job
   green, none skipped; the advisory WebKit job green with WK-1 reported as a known defect). The full suite, the
   evening run and the browser suite ran on the stamped tree before it was pushed.
-- The owner's business assistant pushed the tag on the owner's instruction ("Tag and release 1.25.6", HANDOFF.md) and
-  approved the release. Release run 38176517260 succeeded; the GitHub Release was published at 21:36 UTC with five
+- The owner's business assistant pushed the tag on the owner's instruction ("Tag and release 1.25.6", HANDOFF.md). No
+  one approved the release: no approval step exists, because the `release` environment has no required reviewer (the
+  run's approvals: `[]`; its `release` job started 2 s after `verify`; evaluation of 1.25.6, K1, and
+  [../security/OPERATIVE-CONTROLS.md](../security/OPERATIVE-CONTROLS.md), `release-reviewer`). Release run 38176517260 succeeded; the GitHub Release was published at 21:36 UTC with five
   assets (the source zip and its `.sha256`, the Windows zip, unsigned, and its `.sha256`, and the SBOM), marked
   **Latest**. Its notes carry `SHA-256 of suds-v1.25.6.zip` and the Windows zip's line, written by `release.yml`. A
   download of each zip hashes to its `.sha256`; the SBOM asset is the tagged file byte for byte.
@@ -52,7 +54,8 @@ git archive --format=zip --prefix=suds-v1.25.5/ -o suds-v1.25.5.zip v1.25.5 && s
   job green, `evening` and `service-sandbox` included; the advisory WebKit job's timeout is in the flake register,
   docs/RELEASE.md). The full suite, the evening run and the browser suite ran on the stamped tree before it was pushed.
 - The owner's business assistant pushed the tag, at the owner's direction, with the owner's GitHub access (HANDOFF.md,
-  2026-10-10 evening), and approved the `release` environment the same way; the tag object is unsigned and its tagger
+  2026-10-10 evening). No one approved the release: the `release` environment has no required reviewer, so it did not
+  wait (the run's approvals: `[]`); the tag object is unsigned and its tagger
   is the shared automation identity (docs/RELEASE.md, *Handing a release to the owner*). Release run 38097790523 succeeded; the GitHub Release was published at 00:22 UTC on
   2026-10-11 with five assets: the source zip and its `.sha256`, the Windows zip (unsigned: the code-signing secrets are
   not set) and its `.sha256`, and its SBOM (`sbom-1.25.5`), the first Release to carry one. Marked **Latest**. The
@@ -79,8 +82,9 @@ git archive --format=zip --prefix=suds-v1.25.4/ -o suds-v1.25.4.zip v1.25.4 && s
   CHANGELOG 2026-10-10), zip SHA-256 `b0a04a6a98e1361cc1c85386afb1c2763904370db3b796f454031093b1d3736f`; exact-commit CI 38019332980 (every required
   job green; the advisory WebKit job's timeout is in the flake register, docs/RELEASE.md). The full suite, the evening
   run and the browser suite ran on the stamped tree before it was pushed (*Stamp checklist*).
-- The owner's business assistant pushed the tag on 2026-10-10 and approved the release, with the owner's GitHub access,
-  on the owner's explicit directives (tag first, then "release the job"; HANDOFF.md, 2026-10-10). Release run 38061810135 succeeded; the GitHub Release was published at
+- The owner's business assistant pushed the tag on 2026-10-10, with the owner's GitHub access, on the owner's explicit
+  directives (tag first, then "release the job"; HANDOFF.md, 2026-10-10). No one approved the release: the `release`
+  environment has no required reviewer, so it did not wait (the run's approvals: `[]`). Release run 38061810135 succeeded; the GitHub Release was published at
   15:07 UTC with its source and Windows zips (the Windows zip unsigned: the code-signing secrets are not set), marked
   **Latest**. The published `.sha256` equals the value recorded before the tag, and a download of the zip hashes to it.
 - Windows zip: `suds-1.25.4-windows-x64.zip`, SHA-256 `ad6cc1f8f0fa1947a179c256efa0950d5a80873c569be9dac84ada6c82f11597` (read from its `.sha256` asset and from a download).
@@ -131,7 +135,8 @@ git archive --format=zip --prefix=suds-v1.25.1/ -o suds-v1.25.1.zip v1.25.1 && s
 - `v1.25.1` — commit `03bdca9a7e77d3fa899b1a051536a6e9082ec71f` ("Release 1.25.1"; CHANGELOG 2026-10-08), zip SHA-256
   `f81b65ceaf390bc2430ca8205a787781873411b12681c842c5cb19a727a28e1b`, rebuilt twice from the commit before the tag and equal to the release asset's `.sha256`.
 - Exact-commit CI 37809832942 (all 12 jobs green) before the tag; the owner pushed the tag on 2026-10-08 (a session's
-  push was refused, HTTP 403, by the `v*` tag ruleset, as intended). Release run 37820056470 (success; the gate passed
+  push was refused, HTTP 403, by that session's own git proxy, which does not let an assistant push a tag; no tag
+  ruleset exists on the repository). Release run 37820056470 (success; the gate passed
   it as a patch with no `policy_exception`); published 2026-10-08T18:00:38Z, marked **Latest**.
 - Assets: `suds-v1.25.1.zip` + `.sha256`, `suds-1.25.1-windows-x64.zip` (SHA-256 `b280651cc0d7de80ada82c751cade00538826621a3665a174ba601c9763d7d16`, unsigned: the code-signing
   secrets are not set) + `.sha256`.
