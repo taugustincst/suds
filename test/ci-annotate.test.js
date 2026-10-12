@@ -113,6 +113,11 @@ test('knownDefect: reported, not failing, only in its browser and only for its f
     assert.equal(c.status, 1, 'in any other browser it is an ordinary failing check');
     assert.match(c.stdout, /^ FAIL {2}the reload opens the sign-in page — got "page\.reload: Page crashed"$/m);
     assert.doesNotMatch(c.stdout, /KNOWN DEFECT/);
+    // The same reload hanging rather than crashing is the same defect (main's run 38314191087); a wait for something
+    // else timing out is not.
+    const hung = run('webkit', "knownDefect('WK-1', false, 'the reload opens the sign-in page', 'page.reload: Timeout 30000ms exceeded.');");
+    assert.equal(hung.status, 0, hung.stdout + hung.stderr);
+    assert.match(hung.stdout, /KNOWN DEFECT WK-1 the reload opens the sign-in page/);
     const other = run('webkit', "knownDefect('WK-1', false, 'the reload opens the sign-in page', 'TimeoutError: waiting for selector');");
     assert.equal(other.status, 1, 'in its browser, a different failure is not the known defect');
     assert.match(other.stdout, /FAIL {2}the reload opens the sign-in page \(not the known defect WK-1's failure\)/);
