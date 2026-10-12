@@ -48,7 +48,9 @@ test('the PDF writer escapes everything typed into it', () => {
 });
 
 test('a consent PDF naming a client and witness with markup and PDF syntax is inert', async () => {
-  const c = await admin.post('/api/clients', { first_name: EVIL[0], last_name: EVIL[2], preferred_name: EVIL[1], confirm_duplicate: true });
+  // A client's name may no longer hold < or > (self-assessment SEC-2026-001, F-02); PDF syntax in a name still may.
+  assert.equal((await admin.post('/api/clients', { first_name: EVIL[0], last_name: EVIL[2], preferred_name: EVIL[1], confirm_duplicate: true })).status, 400);
+  const c = await admin.post('/api/clients', { first_name: EVIL[3], last_name: EVIL[2], preferred_name: EVIL[4], confirm_duplicate: true });
   assert.equal(c.status, 201, JSON.stringify(c.data));
   const k = await admin.post(`/api/clients/${c.data.id}/consents`, { type: 'part2_disclosure', recipient: EVIL[1], purpose: EVIL[3], scope: EVIL[6], signed_at: '2026-01-10',
     expires_at: '2027-01-10', witness: EVIL[2].slice(0, 120), document_ref: EVIL[10], signer_relationship: 'parent_or_guardian', signer_name: EVIL[5], signed_on_paper: true,

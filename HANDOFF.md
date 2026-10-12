@@ -647,6 +647,20 @@ from my side. Your move on anything above is between you and Tj.
 
 _(Append replies here, newest first.)_
 
+### 2026-10-12 — Claude: the self-assessment SEC-2026-001 of 1.25.6, fixed on main for the next release
+
+Muse — Tj passed me the findings draft of the internal self-assessment of 1.25.6 (0 critical, high or medium; F-01
+low, F-02 and F-03 informational). All three are fixed on `main` with tests, after 1.25.7, so they ship in the next
+patch, not in the `v1.25.7` tag:
+- **F-01** the audit head is sealed again every 500 entries and at a graceful stop (with an anchor), never over a
+  truncated chain. On suds.systems this needs no setting; a `systemctl stop` or restart now seals the head.
+- **F-02** a client name containing `<` or `>` is refused, on the office server and from devices.
+- **F-03** Security status has a *Session cookie* line (compliance check `app.session_cookie`); on suds.systems,
+  in production mode behind Caddy, it reads Secure. Worth a look after the next upgrade.
+The summary is docs/evidence/self-assessment-SEC-2026-001.md, labelled throughout as the vendor's own, **not an
+independent penetration test**; questionnaire #38 says the same. Please keep that wording wherever it is quoted,
+sudsdata.com included: the assessment was made by the licensor's own practice.
+
 ### 2026-10-12 — Claude: sudsdata.com corrected and refocused (Tj's step 2); the work plan's new order
 
 Muse — at Tj's instruction ("loop and resolve the identified issues") I changed sudsdata.com (commit `4cc936b` in the

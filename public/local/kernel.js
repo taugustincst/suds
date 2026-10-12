@@ -9276,7 +9276,13 @@ var require_audit = __commonJS({
         prevHash,
         hash2
       );
+      if (++sinceSeal >= CHECKPOINT_EVERY) {
+        sinceSeal = 0;
+        advanceHead({ quiet: true });
+      }
     }
+    var CHECKPOINT_EVERY = 500;
+    var sinceSeal = 0;
     function headPayload(lastId, lastHash, rowCount) {
       return `${lastId}|${lastHash}|${rowCount}`;
     }
@@ -9287,6 +9293,9 @@ var require_audit = __commonJS({
       const last = db3.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
       if (!last) return null;
       const rowCount = db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, last.id).n;
+      return seal2(last, rowCount, key);
+    }
+    function seal2(last, rowCount, key) {
       const head = sealHead(last.id, last.hash, rowCount, key);
       db3.setSetting("audit_head", head);
       db3.setSetting("audit_head_id", String(last.id));
@@ -9294,6 +9303,18 @@ var require_audit = __commonJS({
       db3.setSetting("audit_head_at", db3.now());
       console.log(`[suds] audit checkpoint id=${last.id} rows=${rowCount} head=${head}`);
       return { lastId: last.id, rowCount, head };
+    }
+    function advanceHead({ key = config2.indexKey, quiet = false } = {}) {
+      const h = checkHead({ key });
+      if (!h.checkpointed) return checkpoint({ key });
+      if (h.truncated) {
+        if (!quiet) console.error(`[suds] the audit head was not advanced: ${h.reason}`);
+        return null;
+      }
+      const last = db3.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
+      if (!last || last.id === h.checkpointId) return null;
+      const rows = Number(db3.getSetting("audit_head_rows", 0)) + db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id > ? AND id <= ?`, h.checkpointId, last.id).n;
+      return seal2(last, rows, key);
     }
     function sealHeadAtStart() {
       if (db3.getSetting("audit_head", null) && Number(db3.getSetting("audit_head_id", 0))) return null;
@@ -9364,12 +9385,12 @@ var require_audit = __commonJS({
     }
     function verifiedMarker({ key = config2.indexKey } = {}) {
       const id = Number(db3.getSetting("audit_verified_id", 0));
-      const seal2 = db3.getSetting("audit_verified_seal", null);
-      if (!id || !seal2) return null;
+      const seal3 = db3.getSetting("audit_verified_seal", null);
+      if (!id || !seal3) return null;
       const row = db3.one(`SELECT id, hash FROM audit_log WHERE id=?`, id);
       if (!row) return null;
       const expected = sealVerified(row.id, row.hash, key);
-      if (expected.length !== seal2.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(expected), import_buffer.Buffer.from(seal2))) return null;
+      if (expected.length !== seal3.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(expected), import_buffer.Buffer.from(seal3))) return null;
       return { id: row.id, hash: row.hash };
     }
     async function verifyChainAsync({ key = config2.indexKey, skipHead = false, incremental = false, batch } = {}) {
@@ -9472,7 +9493,7 @@ var require_audit = __commonJS({
       }
       return r;
     }
-    module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead, sealHeadAtStart };
+    module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, advanceHead, checkHead, sealHeadAtStart, CHECKPOINT_EVERY };
   }
 });
 
@@ -18101,6 +18122,12 @@ var require_clients2 = __commonJS({
           for (const f of ["first_name", "last_name"]) if (!has(`${f}_enc`)) fields2[f] = "is required (or give a participant code instead of a name)";
           out2.push(refuse("is missing a required field: a name, or a participant code", { message: "Enter a first and last name, or a participant code instead of a name.", fields: fields2 }));
         }
+        const nameFields = {};
+        for (const f of ["first_name", "last_name", "preferred_name"]) {
+          const v = row[`${f}_enc`];
+          if (v !== void 0 && v !== null && /[<>]/.test(String(v)) && (!c.existing || String(v) !== String(c.was(`${f}_enc`) ?? ""))) nameFields[f] = "cannot contain < or >";
+        }
+        if (Object.keys(nameFields).length) out2.push(refuse("has a name containing < or >", { message: "A name cannot contain < or >.", fields: nameFields }));
         const touched = Object.fromEntries(["dob_enc", "email_enc", "phone_enc", "alt_phone_enc"].map((k) => [k, row[k] !== void 0 && (!c.existing || String(row[k] ?? "") !== String(c.was(k) ?? "")) ? row[k] : void 0]));
         const fields = contactProblems(touched);
         if (Object.keys(fields).length) out2.push(flag(`was accepted, but its ${Object.keys(fields).map((f) => f.replace("_", " ")).join(" and ")} ${Object.keys(fields).length === 1 ? "does" : "do"} not look right (${Object.entries(fields).map(([k, m]) => `${k.replace("_", " ")} ${m}`).join("; ")}); the office will review it`, { message: "Validation failed", fields, code: "contact" }));
@@ -23324,6 +23351,7 @@ var require_compliance_rules = __commonJS({
       { id: "app.password_signin", item: "Password sign-in", rules: ["hipaa-312d"], info: "pass", remediation: 'Settings \u2192 Security policy \u2192 "Require single sign-on" with named break-glass administrators.' },
       { id: "app.password_policy", item: "Password policy", rules: ["hipaa-308a5iiD"], info: "pass", remediation: "Enforced in code (server/auth.js); nothing to configure." },
       { id: "app.admin_usernames", item: "Administrator usernames", rules: ["hipaa-312a1", "hipaa-312d"], remediation: "Rename any active administrator called guest or admin to a name that is hard to guess (Settings \u2192 Users & permissions \u2192 the account \u2192 Username)." },
+      { id: "app.session_cookie", item: "Session cookie", rules: ["hipaa-312e1", "part2-16a2i"], remediation: "Run SUDS Server with SUDS_ENV=production behind HTTPS (deploy/linux/install.sh sets it), so the session cookie is marked Secure." },
       { id: "app.session_timeout", item: "Session timeouts", rules: ["hipaa-312a2iii"], remediation: "Settings \u2192 Security policy: idle timeout 15 minutes or less." },
       { id: "app.backups", item: "Scheduled encrypted backups", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Settings \u2192 Scheduled backups: every 4 hours or less." },
       { id: "app.snapshots", item: "Frequent online snapshots", rules: ["hipaa-308a7iiA"], info: "pass", remediation: 'Optional: Settings \u2192 Scheduled backups \u2192 "Also snapshot every (minutes)" for a recovery point in minutes.' },
@@ -24464,6 +24492,15 @@ var require_security_status = __commonJS({
         guessable.length ? `${guessable.length} active administrator${guessable.length === 1 ? " is" : "s are"} called ${guessable.map((n) => `"${n}"`).join(" and ")}` : "no active administrator is called guest or admin",
         guessable.length ? `Anyone who knows an administrator's username can lock that account for ${config2.lockout.minutes} minutes with ${config2.lockout.maxAttempts} wrong passwords, as often as they like. Rename it to something hard to guess: Settings \u2192 Users & permissions, edit the account, Username (an administrator can rename their own account).` : "",
         "server/bootstrap.js; server/routes/users.js"
+      );
+      const secureCookie = !!(config2.tls.cert || config2.isProd);
+      add(
+        "Identity",
+        "Session cookie",
+        secureCookie ? "ok" : "warn",
+        secureCookie ? "HttpOnly, SameSite=Strict and Secure" : "HttpOnly and SameSite=Strict, but not Secure: SUDS runs in development mode with no TLS of its own",
+        secureCookie ? "" : "Behind HTTPS, run SUDS Server with SUDS_ENV=production (the installer does), so the browser never sends the session cookie over plain HTTP.",
+        "server/auth.js cookieHeader"
       );
       add("Identity", "Session timeouts", pol.idleMinutes <= 15 ? "ok" : "warn", `signed out after ${pol.idleMinutes} min idle; ${pol.absoluteHours} h maximum`, pol.idleMinutes <= 15 ? "" : "HIPAA automatic logoff: 15 minutes or less is typical.", "Settings \u2192 Security policy; server/auth.js resolveSession");
       const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;

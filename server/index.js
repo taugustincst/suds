@@ -133,5 +133,9 @@ for (const sig of stopSignals) process.on(sig, () => {
   console.log('[suds] shutting down…');
   // Flush the log file before exiting, so the last lines (often the reason for the stop) are not lost.
   // The hour's count of refused referral-link opens (and county connection calls) goes into the audit log before the database closes.
-  listener.stop(() => { try { require('./referral-links').flushRefusals(); } catch {} try { require('./county-connect').flushRefusals(); } catch {} try { db.close(); } catch {} require('./log').flush().finally(() => process.exit(0)); });
+  // The audit head is sealed, and anchored outside the database where anchoring is on, as the last thing before the
+  // database closes, so the entries since the last seal are covered too (self-assessment SEC-2026-001, F-01).
+  listener.stop(() => { try { require('./referral-links').flushRefusals(); } catch {} try { require('./county-connect').flushRefusals(); } catch {}
+    try { if (require('./audit').advanceHead() && config.auditAnchorHours > 0) require('./audit-anchor').safeWrite('shutdown'); } catch (e) { console.error('[suds] sealing the audit head at shutdown:', e && e.message); }
+    try { db.close(); } catch {} require('./log').flush().finally(() => process.exit(0)); });
 });

@@ -105,6 +105,15 @@ module.exports = define({
       const fields = {}; for (const f of ['first_name', 'last_name']) if (!has(`${f}_enc`)) fields[f] = 'is required (or give a participant code instead of a name)';
       out.push(refuse('is missing a required field: a name, or a participant code', { message: 'Enter a first and last name, or a participant code instead of a name.', fields }));
     }
+    // A person's name never needs < or > (self-assessment SEC-2026-001 of 1.25.6, F-02): the app writes names as text
+    // and the CSP blocks inline script, so nothing ran, but markup kept in a name waits for the first careless sink.
+    // Only a name this write sets or changes is checked; a record already holding one is not blocked from other edits.
+    const nameFields = {};
+    for (const f of ['first_name', 'last_name', 'preferred_name']) {
+      const v = row[`${f}_enc`];
+      if (v !== undefined && v !== null && /[<>]/.test(String(v)) && (!c.existing || String(v) !== String(c.was(`${f}_enc`) ?? ''))) nameFields[f] = 'cannot contain < or >';
+    }
+    if (Object.keys(nameFields).length) out.push(refuse('has a name containing < or >', { message: 'A name cannot contain < or >.', fields: nameFields }));
     const touched = Object.fromEntries(['dob_enc', 'email_enc', 'phone_enc', 'alt_phone_enc'].map(k => [k, row[k] !== undefined && (!c.existing || String(row[k] ?? '') !== String(c.was(k) ?? '')) ? row[k] : undefined]));
     const fields = contactProblems(touched);
     if (Object.keys(fields).length) out.push(flag(`was accepted, but its ${Object.keys(fields).map(f => f.replace('_', ' ')).join(' and ')} ${Object.keys(fields).length === 1 ? 'does' : 'do'} not look right (${Object.entries(fields).map(([k, m]) => `${k.replace('_', ' ')} ${m}`).join('; ')}); the office will review it`, { message: 'Validation failed', fields, code: 'contact' }));
