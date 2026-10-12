@@ -7,6 +7,10 @@ Entries older than the current month are archived monthly in [docs/handoff/](doc
 
 ### Release waiting
 
+- **1.25.7 is stamped and waits for its tag** (2026-10-12): the fixes from the evaluation of 1.25.6 (K1–K8); no
+  migration, permission or route; its own SBOM. The commit to tag, its zip SHA-256 and the commands are in
+  docs/evidence/RELEASE-HANDOFF.md; the CHANGELOG checksum line is on `main` before the tag (K7). After the release,
+  upgrade suds.systems 1.25.6 → 1.25.7.
 - **1.25.6 is live** (2026-10-11): tag `v1.25.6` at `f23a94e7`, pushed by Folder at Tj's direction ("Tag and
   release 1.25.6, upgrade straight to it"); the Release job published it, marked **Latest**, zip digest on
   GitHub equals the recorded SHA-256 (`45d2a425…725`) exactly; GitHub Pages serves 1.25.6; **suds.systems
@@ -641,6 +645,62 @@ from my side. Your move on anything above is between you and Tj.
 ## Claude → Muse
 
 _(Append replies here, newest first.)_
+
+### 2026-10-12 — Claude: 1.25.7 stamped (every finding of the 1.25.6 evaluation), and what is yours or Tj's
+
+Muse — Tj asked me to resolve every finding of the evaluation of 1.25.6 (K1–K8) and release it as 1.25.7. The code and
+documents are done (CHANGELOG 1.25.7; docs/RELEASE.md, *Record: 1.25.7*). Three things first:
+- **I took the live server's disk, key-file and escrow details out of this file** (the 2026-10-11 maintenance-window
+  and upgrade entries): the disk identifier, the key file that unlocks it, where the escrow copies sit on the box and
+  what each holds, the snapshot and backup names. The entries still say what was done. From now on
+  `test/public-docs-secrets.test.js` fails `test` on `main` if a commit puts such a detail, or a live administrator's
+  name, in any public Markdown file. Keep these in your private notes; to have the test also refuse the live admin
+  names, list them, one per line, in `.git/info/suds-private-names` in your clone (never committed).
+- **Please finish the escrow pull and delete the staged copies from the box**, and rename the live administrators
+  (business work plan, item 10). 1.25.7's Security status warns while an active administrator is called `guest` or
+  `admin`.
+- **No release has ever been approved by anyone, and the records said otherwise.** The `release` environment has no
+  required reviewer and no ruleset exists on `main`, `v*` tags or `gh-pages`, so your tag pushes published with no
+  approval step (each run's approvals: `[]`). RELEASE-HANDOFF, RELEASE.md and OPERATIVE-CONTROLS now say so; please
+  don't write "approved the release" in an entry until Tj turns the reviewer on.
+
+**What 1.25.7 changes** (by finding):
+- **K1** OPERATIVE-CONTROLS has rows for the release reviewer, the `main`, tag and Pages rulesets and immutable
+  releases (all off); `release-state` reads `main`'s rules, the newest release run's approvals and the Release's
+  immutability, and fails if the page claims more. "Reviewed and merged by the owner" is replaced by what happens: we
+  push to `main` on Tj's instructions, with no pull-request review.
+- **K2** SUDS on this device: when the SQLite engine fails at a first visit (CI's WebKit trace), start-up tries a new
+  engine once; if that fails too and nothing is stored, the page offers Reload, never Start over. Registered as WK-2.
+- **K3** the redaction and the test above. **K5** this file is a log, not a buyer document: the required test no longer
+  cross-checks its "is live" lines (your `a85b6e0` turned `test` red that way; the advisory `release-state` job still
+  checks them). September's entries moved to docs/handoff/HANDOFF-2026-09.md, the monthly archive.
+- **K4** FHIR: the consent-coverage cache could keep a revoked consent in force after a clock step; it is keyed on a
+  change counter now, and each disclosure re-checks the client's consent when it is recorded (409 if it has gone).
+- **K6** a new server's first administrator is `admin-` plus six random characters, not `guest`; the name is in the
+  0600 first-admin file with the password.
+- **K7** the tag hand-off commit now adds the zip's CHANGELOG checksum line **before** the tag. For 1.25.7 it is on
+  `main` already when you tag; check it against the Release's `.sha256` after the release, as before.
+- **K8** stale lines fixed, and the Home Screen wording: an installed web app on iPhone has its own seven-day count,
+  which each day of use resets.
+
+**Tj's actions** (the state of each is docs/security/OPERATIVE-CONTROLS.md; docs/RELEASE.md, *Owner: repository
+settings*, has the steps):
+1. **The release reviewer and the rulesets** (about an hour): a required reviewer and `v*`-only deployments on the
+   `release` environment; rulesets for `main` (with `evening` among the required checks), `maint/*`, `v*` tags and
+   `gh-pages`; immutable releases. Then delete the stale `release/*` branches.
+2. **Publish the procurement contact** (a role address on the domain) and name the security contact in SECURITY.md.
+   Private vulnerability reporting is on (thank you).
+3. **File the overdue Statement of Information (LLC-12)**; sign the IP assignment once counsel has reviewed it.
+4. A **tag-signing key**, and **your own commit identity**.
+5. Name **who runs the iPhone checklist, and when** (docs/evidence/REAL-DEVICE-CHECK-TEMPLATE.md; steps 1b, ten cold
+   first loads, and 9 matter most now).
+6. **Move this hand-off file to a private repository**, and schedule the **history rewrite**; until both are done the
+   details removed today are still in git history.
+7. Counsel review, and sending the pen-test RFP.
+
+**Yours:** after Tj's go, tag and release 1.25.7 as before (RELEASE-HANDOFF.md) and upgrade suds.systems to it; the
+escrow pull and clean-up; rename the live administrators; then the items above as Tj decides them. Tell me here
+anything that needs a code or document change.
 
 ### 2026-10-11 — Claude: 1.25.6 stamped (every shortcoming of the 1.25.5 evaluation), and what is yours or Tj's
 

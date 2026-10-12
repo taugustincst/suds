@@ -2,6 +2,64 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.25.7 — 2026-10-12
+
+A patch of 1.25.6 (docs/RELEASE.md, *Record: 1.25.7*): the fixes from the evaluation of 1.25.6 (K1–K8). No migration,
+no new or widened permission and no new route (`node scripts/release-policy.js --version 1.25.7 --previous v1.25.6`
+passes: 346 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It passes the release
+policy with no exception. Upgrading needs nothing beyond replacing the files and restarting. What an upgrading
+administrator should know:
+
+* **A new office server's first administrator has a random name**, `admin-` and six letters and digits, unless
+  `SUDS_ADMIN_USERNAME` names it; it is printed at first start and written, with the temporary password, to the 0600
+  `first-admin-password.txt`. An existing server keeps its administrator's name, but **Security status** now warns
+  while an active administrator is called `guest` or `admin`: with five failures locking an account, a well-known name
+  lets anyone keep the one account that can fix things locked. Rename it (**Settings → Users & permissions** → the account → **Username**).
+* **FHIR disclosures re-check each client's consent when they are recorded.** A consent revoked while the server's
+  clock stepped back could stay in force for the FHIR API until the clock caught up; it no longer can, and a disclosure
+  whose consent has gone is refused (409) and audited.
+* **SUDS on this device retries its start-up once** when the browser's SQLite engine fails at a first visit, and when
+  nothing is stored yet it offers a reload, never Start over.
+* **The release checksum's CHANGELOG line is on `main` before the tag** (from this release), and both channels can be
+  written by the same GitHub account until the owner's repository protections exist (docs/SELF-HOSTING.md, *Upgrading*).
+
+### Fixed
+
+- **The FHIR consent-coverage cache could keep a revoked consent in force** (K4). The cache was keyed on the newest
+  `updated_at`, so a change that did not raise it (a clock stepped back, two writes in the same millisecond) went
+  unseen. It is now keyed on a change counter kept by triggers on consents, patient requests and clients (soft deletes
+  and merges included), and the disclosure re-checks each client's consent inside the transaction that writes the
+  accounting record; the test is deterministic.
+- **WebKit's SQLite engine failing at a first visit showed an error that offered Start over** (K2). Start-up asks a new
+  engine once before failing; with nothing stored the page says so and offers Reload only. Registered as WK-2
+  (docs/RELEASE.md, *Known defects*); the iPhone checklist adds ten cold first loads.
+- **Every new server's first administrator was called `guest`** (K6), as above; `create-admin` without a name never
+  creates `guest`, and the setup wizard no longer pre-fills it.
+- **The set-up text said a Home Screen app is "not affected" by Safari's seven-day count**: it has its own count, which
+  each day of use resets (K8).
+
+### Changed (CI, release and records)
+
+- **The records said releases were approved, and code reviewed and merged by the owner** (K1). No ruleset exists on
+  `main`, `v*` tags or `gh-pages`, and the `release` environment has no required reviewer, so no release run has been
+  approved by anyone; the assistants push to `main` on the owner's instructions without pull-request review. The
+  records, the questionnaire, the buyer guide and IP-PROVENANCE now say so. docs/security/OPERATIVE-CONTROLS.md has rows
+  for the release reviewer, the `main`, tag and Pages rulesets and immutable releases (all off), and `release-state`
+  reads `main`'s rules, the newest release run's approvals and the Release's immutability, and fails when the page
+  claims more.
+- **Private vulnerability reporting is on** (since 2026-10-12); the documents that called it owner-pending say so.
+- **No operational secret of a live server in public Markdown** (K3): `test/public-docs-secrets.test.js` fails on disk
+  identifiers, key-file and escrow paths, undocumented paths in the root account's home and live administrator names;
+  the live server's disk, key and escrow details are out of HANDOFF.md.
+- **HANDOFF.md is a log between assistants, not a buyer document** (K5): the required test no longer cross-checks its
+  "is live" lines, which turned `test` red on `main` when a fact was recorded before the records commit. The advisory
+  `release-state` job still checks them. September's entries are archived (docs/handoff/HANDOFF-2026-09.md), as the
+  monthly archive adopted with 1.25.6 says.
+- **The checksum's second channel comes before the tag** (K7): the tag hand-off commit adds `SHA-256 of
+  suds-vX.Y.Z.zip` to the version's section here, and `release-state` requires it once the hand-off names the zip.
+- Stale records corrected (K8): the Markdown-only CI skip landed in 1.25.6; `release-state` checks the newest tag's
+  notes; tags up to v1.25.6 are unsigned.
+
 ## 1.25.6 — 2026-10-11
 
 SHA-256 of suds-v1.25.6.zip: 45d2a425c059b4f6a428dbcdf27f056a228e92b7bde0de53e552eba141186725

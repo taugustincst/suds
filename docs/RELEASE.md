@@ -426,6 +426,25 @@ of 1.25.6, K1); its release run passed the gate on 2026-10-11, the GitHub Releas
 (written by `release.yml`), its zip equals the checksum recorded before the tag, and its `Web app` run published 1.25.6
 to GitHub Pages ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
+**Record: 1.25.7 is a patch with the fixes from the evaluation of 1.25.6.** 1.25.7, stamped 2026-10-12, is a patch
+of 1.25.6 inside 1.25.0's 28 days (*Stabilisation*, point 1). It fixes the evaluation's findings K1–K8: the records'
+claims of release approvals and owner review, which no setting supports, with OPERATIVE-CONTROLS rows for the release
+reviewer, the rulesets and immutable releases, all off, and `release-state` reading them (K1); a retry on a new SQLite
+engine at a device's first start-up, registered as WK-2 (K2); the live server's disk, key and escrow details out of
+HANDOFF.md, with a test that refuses such details in public Markdown (K3); the FHIR consent-coverage cache keyed on a
+change counter, with a per-client re-check when a disclosure is recorded (K4); HANDOFF.md's "is live" lines out of the
+required cross-check (K5); a random name for a new server's first administrator, and a Security status warning while
+one is called `guest` or `admin` (K6); the CHANGELOG checksum line in the tag hand-off commit, before the tag (K7); stale
+records, the Home Screen wording and the first monthly HANDOFF archive (K8). Private vulnerability reporting is on
+(since 2026-10-12). No migration, no new or widened permission and no new route, 346 lines added outside docs, tests and
+generated files (`node scripts/release-policy.js --version 1.25.7 --previous v1.25.6`), so it passes the release
+policy with no exception. It is two commits, "Release 1.25.7" and "SBOM of the 1.25.7 stamp", the tag on the second,
+and the full suite, the evening run and the browser suite ran on the stamped tree before the push. It is the first
+release whose CHANGELOG line comes in the tag hand-off commit, before the tag. Owner actions it cannot do: the
+`release` environment's required reviewer, the rulesets for `main` (with `evening`), `maint/*`, `v*` tags and
+`gh-pages`, immutable releases, the stale `release/*` branches, a published security and procurement contact, and
+signed tags. Its tag is owed ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
+
 
 ### Supported versions
 
@@ -590,6 +609,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.25.4 | none of the policy (a patch within the patch rules: no migration, permission or route, 935 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-10 (*Record: 1.25.4*) | the fixes from the market-readiness evaluation of 1.25.3 (G1–G11), the empty offsite backup copies found on suds.systems, and the Option A fleet tooling (*Record: 1.25.4*, above) | no exception to approve |
 | 1.25.5 | none of the policy (a patch within the patch rules: no migration, permission or route, 738 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-11 (UTC) (*Record: 1.25.5*) | the fixes from the market-readiness evaluation of 1.25.4 (H1–H9) and the business work plan (*Record: 1.25.5*, above) | no exception to approve |
 | 1.25.6 | none of the policy (a patch within the patch rules: no migration, permission or route, 490 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-11, the Latest release (*Record: 1.25.6*) | the fixes from the critical evaluation of 1.25.5 (J1–J13; *Record: 1.25.6*, above) | no exception to approve |
+| 1.25.7 | none of the policy (a patch within the patch rules: no migration, permission or route, 346 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once its tag `v1.25.7` is pushed | the fixes from the evaluation of 1.25.6 (K1–K8; *Record: 1.25.7*, above) | no exception to approve |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as
