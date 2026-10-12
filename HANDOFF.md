@@ -699,14 +699,31 @@ settings*, has the steps):
    details removed today are still in git history.
 7. Counsel review, and sending the pen-test RFP.
 
-**Tj's note, 2026-10-12 (relayed in my session):** two more sites are tied to suds.systems. **sudsdata.com** is the
-information site for potential buyers, and **clinicalperimeter.com** is to perform SUDS's penetration test (business work
-plan, items 1 and 3). Two cautions. First, the buyer site must say what the buyer documents say: proprietary, never "open
-source"; each control as OPERATIVE-CONTROLS states it (no release approval or rulesets yet); no "independently tested"
-until a report exists. Second, a county accepts a pen test as independent only from a tester with no common ownership,
-control or financial interest with AugustInnovations LLC or Tj. If Clinical Perimeter is Tj's own, its report counts as
-the vendor's own test (QUESTIONNAIRE #38, like the 2026-10-08 live test) and the independent test is still owed. Please
-get Tj's answer in writing before the engagement, and send me the scope it signs so the documents can name it.
+**The two sites (Tj, 2026-10-12; I read both sites' repositories).** sudsdata.com is SUDS's information site for buyers;
+clinicalperimeter.com is **AugustInnovations LLC dba Clinical Perimeter**, the LLC's own security practice. So:
+- **Clinical Perimeter cannot be SUDS's independent pen test.** It is the licensor. A test of SUDS by it counts as the
+  vendor's own (QUESTIONNAIRE #38), and its attestation letter for SUDS would be a self-attestation; never call it
+  independent or third-party. The independent test (work plan item 3) is still owed. sudsdata.com rightly says nothing
+  about a pen test.
+- **sudsdata.com checked against the repository.** Pricing matches `procurement.json` exactly; support response,
+  disk encryption and the AWS BAA match the records. Please fix these, in order:
+  1. **"Public demo" for the GitHub Pages build.** It is *SUDS on this device*, free for real use at that address
+     (LICENSE section 2A, Tj's decision of 2026-10-03), and the app and documents never call it a demo. The site says
+     "demo" and "never enter real client information into the demo", the opposite of the licence. Describe it as SUDS on
+     this device: free, records kept only in that browser. If Tj now wants it to be a demo, that reverses a recorded
+     decision, and the licence and documents would have to change first; tell me.
+  2. **"Every scheduled backup is copied off-host."** True only if the offsite folder is off the instance. If it is a
+     disk attached to the same VM, say "copied to a separate disk and verified"; a same-VM disk is not off-site.
+  3. **"Backups are regularly restored."** One drill from the offsite copy is recorded (2026-10-11). Say that, or turn
+     on the monthly drill (Settings → *Recovery drill every month*) first.
+  4. **"The production system as it runs today."** The box holds fictional data only, and its restore test, the
+     off-box escrow pull and the escrowed-key drill are still open before any real records (your 2026-10-11 entry).
+     Real pilot data waits for those, and for counsel's review of the BAA and QSOA it says the LLC signs (item 2).
+     Also confirm the AWS account holding the BAA is the LLC's.
+  5. **"Runs 1.25.6"** (twice): update it when suds.systems runs 1.25.7.
+  6. **"Talk to the person who built it":** the questionnaire (#36a) tells buyers the code is written with AI
+     assistants; "who runs it" avoids the contradiction.
+- The contact the site publishes should also go in the app's procurement page, which is still empty (item 1).
 
 **Yours:** after Tj's go, tag and release 1.25.7 as before (RELEASE-HANDOFF.md) and upgrade suds.systems to it; the
 escrow pull and clean-up; rename the live administrators; then the items above as Tj decides them. Tell me here
