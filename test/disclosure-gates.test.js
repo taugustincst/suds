@@ -262,8 +262,50 @@ test('the FHIR API applies the same element check: an incomplete consent covers 
   H.db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,rule_version,discloser,signer_relationship,created_by,info_categories) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'all')`,
     id, c, 'part2_disclosure', encrypt('Gate HIE'), encrypt('Treatment'), encrypt('Summary'), '2026-09-01', '2099-01-01', 1, '2024', 'This program', 'patient', navId);
   assert.ok(!D.fhirCoverage({ cacheKey: 'gate-a', recipients: ['Gate HIE'], purposeOfUse: 'TREAT' }).has(c), 'no revocation, redisclosure or refusal statements: not covered');
-  H.db.run(`UPDATE consents SET revocation_right_given=1, redisclosure_notice_given=1, refusal_consequences_given=1, updated_at=? WHERE id=?`, new Date().toISOString(), id);
+  // The same updated_at as the row already had (two writes in one millisecond, as on CI run 38118949645): the
+  // change is still seen, because the coverage cache does not rely on updated_at (1.25.7, K4).
+  const same = H.db.one(`SELECT updated_at FROM consents WHERE id=?`, id).updated_at;
+  H.db.run(`UPDATE consents SET revocation_right_given=1, redisclosure_notice_given=1, refusal_consequences_given=1, updated_at=? WHERE id=?`, same, id);
   assert.equal(D.fhirCoverage({ cacheKey: 'gate-a', recipients: ['Gate HIE'], purposeOfUse: 'TREAT' }).get(c), id, 'complete: covered');
+});
+
+test('the FHIR coverage cache sees a revocation whatever its updated_at, and the accounting re-checks the consent (1.25.7, K4)', async () => {
+  const D = require('../server/disclosure'); const { encrypt } = require('../server/crypto');
+  const c = await newClient();
+  const full = (updatedAt) => { const id = randomUUID(); H.db.run(`INSERT INTO consents(id,client_id,type,recipient_enc,purpose_enc,scope_enc,signed_at,expires_at,signed_on_paper,rule_version,discloser,signer_relationship,created_by,info_categories,revocation_right_given,redisclosure_notice_given,refusal_consequences_given,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'all',1,1,1,?)`,
+    id, c, 'part2_disclosure', encrypt('Clock HIE'), encrypt('Treatment'), encrypt('Summary'), '2026-09-01', '2099-01-01', 1, '2024', 'This program', 'patient', navId, updatedAt); return id; };
+  const covered = () => D.fhirCoverage({ cacheKey: 'gate-clock', recipients: ['Clock HIE'], purposeOfUse: 'TREAT' }).get(c);
+  // The evaluation's reproduction: a covering consent, and another consent saved later, which holds MAX(updated_at).
+  const k1 = full('2099-12-31T10:00:00.000Z');
+  H.db.run(`INSERT INTO consents(id,client_id,type,signed_at,created_by,updated_at) VALUES(?,?,?,?,?,?)`, randomUUID(), c, 'treatment', '2026-10-12', navId, '2099-12-31T10:05:00.000Z');
+  assert.equal(covered(), k1, 'covered');
+  // The server clock stepped back a minute (an NTP correction, a VM restore): the revocation's updated_at is earlier.
+  H.db.run(`UPDATE consents SET revoked_at=?, updated_at=? WHERE id=?`, '2099-12-31T09:59:00.000Z', '2099-12-31T09:59:00.000Z', k1);
+  assert.equal(covered(), undefined, 'a revocation stamped in the past is seen at once');
+  // Two writes in the same millisecond: the consent and its revocation carry the same updated_at.
+  const k2 = full('2099-12-31T10:05:00.000Z');
+  assert.equal(covered(), k2);
+  H.db.run(`UPDATE consents SET revoked_at=?, updated_at=? WHERE id=?`, '2099-12-31T10:05:00.000Z', '2099-12-31T10:05:00.000Z', k2);
+  assert.equal(covered(), undefined, 'a revocation in the same millisecond is seen at once');
+  // A client deleted or merged away, which touches no consent, is not covered either.
+  const k3 = full('2099-12-31T10:05:00.000Z');
+  assert.equal(covered(), k3);
+  H.db.run(`UPDATE clients SET deleted_at=? WHERE id=?`, '2099-12-31T10:05:00.000Z', c);
+  assert.equal(covered(), undefined, 'deleted');
+  H.db.run(`UPDATE clients SET deleted_at=NULL WHERE id=?`, c);
+  assert.equal(covered(), k3, 'restored');
+  // The accounting re-checks each client's consent as it is written: a revocation between working out the
+  // answer and recording it releases nothing and writes no accounting row.
+  const user = H.db.one(`SELECT * FROM users WHERE id=?`, adminId);
+  const perClient = new Map([[c, { consentId: covered(), what: 'FHIR search Patient: 1 resource' }]]);
+  H.db.run(`UPDATE consents SET revoked_at=? WHERE id=?`, '2099-12-31T10:06:00.000Z', k3);
+  assert.throws(() => D.recordFhir({ perClient, recipient: 'Clock HIE', purposeOfUse: 'TREAT', sourceRef: 'fhir:k4-recheck', user, ip: '127.0.0.1' }), (e) => e.status === 409 && /Nothing was released/.test(e.message));
+  assert.ok(!H.db.one(`SELECT 1 FROM disclosures WHERE source_ref='fhir:k4-recheck'`), 'nothing accounted');
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='fhir.disclosure.refused' AND details LIKE '%k4-recheck%'`), 'the refusal is audited');
+  // A live consent is accounted as before.
+  const k4 = full('2099-12-31T10:07:00.000Z');
+  assert.equal(D.recordFhir({ perClient: new Map([[c, { consentId: k4, what: 'FHIR search Patient: 1 resource' }]]), recipient: 'Clock HIE', purposeOfUse: 'TREAT', sourceRef: 'fhir:k4-live', user, ip: '127.0.0.1' }), 1);
+  assert.ok(H.db.one(`SELECT 1 FROM disclosures WHERE source_ref='fhir:k4-live' AND consent_id=?`, k4));
 });
 
 test('a pushed court order is checked like one recorded at the office', async () => {

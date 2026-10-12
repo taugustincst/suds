@@ -54103,14 +54103,56 @@ var require_disclosure = __commonJS({
       return Object.keys(FHIR_PURPOSES).filter((code) => consentCoversPurposeOfUse({ type, purpose }, code));
     }
     var coverageCache = /* @__PURE__ */ new Map();
+    var coverageGeneration = 0;
+    var coverageHandle = null;
+    var coverageCounting = false;
+    function coverageMarker() {
+      const d = db3.get();
+      if (d !== coverageHandle) {
+        coverageCache.clear();
+        coverageGeneration++;
+        coverageHandle = d;
+        coverageCounting = false;
+        try {
+          d.function("suds_coverage_changed", () => {
+            coverageGeneration++;
+            return null;
+          });
+          const on = [
+            ["consents", "INSERT"],
+            ["consents", "UPDATE"],
+            ["consents", "DELETE"],
+            ["patient_requests", "INSERT"],
+            ["patient_requests", "UPDATE"],
+            ["patient_requests", "DELETE"],
+            ["clients", "UPDATE OF deleted_at, merged_into"],
+            ["clients", "DELETE"]
+          ];
+          d.exec(on.map(([t, ev], i) => `CREATE TEMP TRIGGER IF NOT EXISTS suds_coverage_${i} AFTER ${ev} ON main.${t} BEGIN SELECT suds_coverage_changed(); END;`).join("\n"));
+          coverageCounting = true;
+        } catch {
+        }
+      }
+      if (!coverageCounting) return null;
+      const inTx = typeof d.isTransaction === "boolean" ? d.isTransaction : (() => {
+        try {
+          d.exec("BEGIN");
+          d.exec("COMMIT");
+          return false;
+        } catch {
+          return true;
+        }
+      })();
+      if (inTx) return null;
+      return `${coverageGeneration}|${db3.one("PRAGMA data_version").data_version}`;
+    }
     function fhirCoverage({ cacheKey, recipients, purposeOfUse, resourceType }) {
       const category = CATEGORY_OF_FHIR_TYPE[resourceType] || "*";
-      const stamp2 = db3.one(`SELECT (SELECT COUNT(*) FROM consents) n, (SELECT MAX(updated_at) FROM consents) u,
-    (SELECT COUNT(*) FROM patient_requests) rn, (SELECT MAX(updated_at) FROM patient_requests) ru`);
+      const marker = coverageMarker();
       const today = require_local_date().today();
       const types = fhirConsentTypes();
-      const key = `${stamp2.n}|${stamp2.u}|${stamp2.rn}|${stamp2.ru}|${types.join(",")}|${today}|${recipients.join("")}|${purposeOfUse}|${category}`;
-      const hit = coverageCache.get(`${cacheKey}|${category}`);
+      const key = `${marker}|${types.join(",")}|${today}|${recipients.join("")}|${purposeOfUse}|${category}`;
+      const hit = marker === null ? null : coverageCache.get(`${cacheKey}|${category}`);
       if (hit && hit.key === key) return hit.map;
       const map = /* @__PURE__ */ new Map();
       const restricted = new Set(db3.all(`SELECT DISTINCT client_id FROM patient_requests WHERE kind='restriction' AND status='fulfilled'`).map((r) => r.client_id));
@@ -54128,6 +54170,7 @@ var require_disclosure = __commonJS({
         }
         if (consentCovers(plain, { recipients, purposeOfUse, category })) map.set(row.client_id, row.id);
       }
+      if (marker === null) return map;
       if (coverageCache.size > 100) coverageCache.clear();
       coverageCache.set(`${cacheKey}|${category}`, { key, map });
       return map;
@@ -54135,11 +54178,23 @@ var require_disclosure = __commonJS({
     function recordFhir({ perClient, recipient, purposeOfUse, sourceRef, user, ip }) {
       if (!perClient.size) return 0;
       const purpose = `${FHIR_PURPOSES[purposeOfUse]?.display || purposeOfUse} (FHIR purpose of use ${purposeOfUse})`;
+      const today = require_local_date().today();
+      let lapsed = 0;
       db3.transaction(() => {
+        for (const [clientId, { consentId }] of perClient) {
+          const live = consentId && db3.one(`SELECT 1 FROM consents k JOIN clients c ON c.id=k.client_id WHERE k.id=? AND k.client_id=? AND k.revoked_at IS NULL
+        AND (k.expires_at IS NULL OR k.expires_at >= ?) AND c.deleted_at IS NULL AND c.merged_into IS NULL`, consentId, clientId, today);
+          if (!live || agreedRestrictions(clientId)) lapsed++;
+        }
+        if (lapsed) return;
         for (const [clientId, { consentId, what }] of perClient) {
           record({ clientId, consentId, recipient, purpose, what, method: "FHIR API", basis: "consent", source: "fhir", sourceRef, user, ip });
         }
       });
+      if (lapsed) {
+        audit3.log({ user, action: "fhir.disclosure.refused", entity: "disclosure", ip, success: false, details: { source_ref: sourceRef, lapsed_patients: lapsed } });
+        throw new HttpError3(409, "A patient's consent changed while this answer was being prepared (revoked, expired, or a restriction was agreed). Nothing was released; send the request again.");
+      }
       return perClient.size;
     }
     module.exports = {
