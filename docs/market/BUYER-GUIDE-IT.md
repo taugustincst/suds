@@ -295,8 +295,7 @@ it from the same evidence and will not answer "yes" to a control that is not in 
 - **What exists today** ([docs/SUPPORT.md](../SUPPORT.md)): the programme's own administrator, then whoever runs
   the server (IT partner or county), then the SUDS project's public issue tracker,
   <https://github.com/taugustincst/suds/issues> (defects, questions, accessibility barriers; never client
-  information), and, for security issues, GitHub private vulnerability reporting (**owner-pending**: to be enabled in
-  the repository settings) or, until it is, the owner-published security contact (`[owner to complete]`,
+  information), and, for security issues, GitHub private vulnerability reporting (on since 2026-10-12) or the owner-published security contact (`[owner to complete]`,
   **owner-pending**), never a public issue with details ([SECURITY.md](../../SECURITY.md)). Accessibility reports have published
   targets ([docs/accessibility/STATEMENT.md](../accessibility/STATEMENT.md)); everything else is best effort.
 - **Contracted vendor support** exists only under a signed agreement; [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)
