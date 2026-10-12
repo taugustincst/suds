@@ -25,6 +25,7 @@ test**; docs/evidence/self-assessment-SEC-2026-001.md): 0 critical, high or medi
 ## 1.25.7 — 2026-10-12
 
 SHA-256 of suds-v1.25.7.zip: ae11609a7f9b8896d88e89c828d7acfed4d3d3fe6d72f3202c9a079f2dd2d96f
+SHA-256 of suds-1.25.7-windows-x64.zip: 3163a8783a2383d6e6a390721f6e5d1aebb20b8fedac18f8ce33d6a30e7cb40a
 
 A patch of 1.25.6 (docs/RELEASE.md, *Record: 1.25.7*): the fixes from the evaluation of 1.25.6 (K1–K8). No migration,
 no new or widened permission and no new route (`node scripts/release-policy.js --version 1.25.7 --previous v1.25.6`
