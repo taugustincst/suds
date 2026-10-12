@@ -140,6 +140,16 @@ test('HANDOFF.md\'s Release waiting entry names the same tags, and exists while 
   assert.deepEqual(codes(r), ['notes-missing']);
 });
 
+test('once the hand-off notes have moved to the private repository, HANDOFF.md is not cross-checked, and says so', () => {
+  // HANDOFF.md absent, or a pointer marked as moved: no Release waiting entry is required while tags are owed, and
+  // the result names what it did not check. A HANDOFF.md that is still the log keeps the check (the test above).
+  for (const notes of [null, '# Handoff\n\n<!-- handoff: moved -->\nThe notes are in the private operations repository.\n']) {
+    const r = RS.evaluate({ docs: world({ notes }) });
+    assert.deepEqual(codes(r), [], String(notes));
+    assert.ok(r.notChecked.some((n) => /HANDOFF\.md's \*Release waiting\* entry/.test(n)), 'it says the entry was not checked');
+  }
+});
+
 test('live on GitHub Pages: against gh-pages, or against each other offline', () => {
   const docs = world({ patch: { evidence: (t) => `${t}\n1.2.0 (\`aaaaaaa\`, live on GitHub Pages) is released.\n` } });
   const off = RS.evaluate({ docs });

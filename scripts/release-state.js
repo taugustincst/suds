@@ -13,7 +13,8 @@
 //     "Release X.Y.Z" (or "SBOM of the X.Y.Z stamp", the commit after that stamp); its `git tag -a`, `for c in` and
 //     `git push` lines name the same commits and tags; its title and counts match the table; and whether each tag
 //     is pushed, which the page says none is;
-//   * HANDOFF.md's *Release waiting* entry: the same tags, and gone once they are pushed;
+//   * HANDOFF.md's *Release waiting* entry: the same tags, and gone once they are pushed (not checked once the notes
+//     have moved to the private operations repository: HANDOFF.md absent, or a pointer marked `<!-- handoff: moved -->`);
 //   * every "X.Y.Z is live" / "live on GitHub Pages" / "is what GitHub Pages serves" against gh-pages' version.json
 //     (and, offline, against each other);
 //   * a stamped version newer than the newest pushed tag that the hand-off does not list;
@@ -397,6 +398,8 @@ const FILES = {
   rfi: 'docs/market/templates/COUNTY-RFI-ANSWERS.md', controls: 'docs/security/OPERATIVE-CONTROLS.md',
 };
 const LIVE_DOCS = ['questionnaire', 'evidence', 'release', 'handoff', 'notes'];
+/** HANDOFF.md as a pointer once the notes have moved to the private operations repository. */
+const NOTES_MOVED = /<!--\s*handoff:\s*moved\b/i;
 /** The same, without HANDOFF.md: what the required test cross-checks (evaluation of 1.25.6, K5). */
 const REQUIRED_LIVE_DOCS = LIVE_DOCS.filter((k) => k !== 'notes');
 
@@ -460,7 +463,12 @@ function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = nul
 
   // 3. The hand-off page, against the CHANGELOG, its own commands and HANDOFF.md.
   const h = docs.handoff != null ? parseHandoff(docs.handoff) : null;
-  const notes = docs.notes != null ? parseHandoffNotes(docs.notes) : null;
+  // The hand-off notes between the assistants may move to a private operations repository (evaluation of 1.25.6, K3):
+  // HANDOFF.md is then absent, or a pointer that says so. Its *Release waiting* entry is no longer here to check;
+  // RELEASE-HANDOFF.md stays the record of what is owed.
+  const notesMoved = docs.notes == null || NOTES_MOVED.test(docs.notes);
+  const notes = notesMoved ? null : parseHandoffNotes(docs.notes);
+  if (notesMoved) notChecked.push('HANDOFF.md\'s *Release waiting* entry (the hand-off notes are not in this repository: they have moved to the private operations repository)');
   // Rows with a commit, and rows whose commit the stamp cannot hold yet (checked for everything but the commit).
   const all = h ? [...h.rows, ...(h.pending || [])] : [];
   const owedTags = all.map((r) => r.tag);
@@ -499,7 +507,7 @@ function evaluate({ docs, git = null, remote = null, pages = null, mainPkg = nul
       if (notes.versions.length && !sameSet(tagsOfVersions, owedTags)) problems.push(P(FILES.notes, notes.versionsLine, `*Release waiting* names ${notes.versions.join(', ')}; RELEASE-HANDOFF.md's table has ${all.map((r) => r.version).join(', ')}`, 'name the same versions', 'notes-mismatch'));
       if (notes.push && !sameSet(notes.push.tags, owedTags)) problems.push(P(FILES.notes, notes.push.line, `*Release waiting*'s push names ${notes.push.tags.join(' ')}; the hand-off ${owedTags.join(' ')}`, 'the same push as the hand-off', 'notes-mismatch'));
       if (notes.count && NUMBER_WORDS.indexOf(notes.count.word) !== all.length) problems.push(P(FILES.notes, notes.count.line, `"tags all ${notes.count.word}"; the hand-off has ${all.length}`, 'make the count match', 'notes-mismatch'));
-    } else if (all.length) {
+    } else if (all.length && !notesMoved) {
       problems.push(P(FILES.notes, 1, `RELEASE-HANDOFF.md lists ${all.length} tags owed, but HANDOFF.md has no *Release waiting* entry`, 'add the entry, pointing at the hand-off', 'notes-missing'));
     }
   }

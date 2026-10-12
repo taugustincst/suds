@@ -97,7 +97,10 @@ test('the newest HANDOFF.md entry and the newest CHANGELOG.md mention give the b
   const root = path.join(__dirname, '..');
   const n = /\$\{SCRIPTS:-([^}]+)\}; do/.exec(fs.readFileSync(path.join(root, 'scripts', 'ui', 'run-all.sh'), 'utf8'))[1].trim().split(/\s+/).length;
   const first = (file, re) => { const m = re.exec(fs.readFileSync(path.join(root, file), 'utf8')); return m ? Number(m[1]) : null; };
-  assert.equal(first('HANDOFF.md', /browser suite is \**(\d+) scripts/i), n, 'HANDOFF.md\'s newest count');
+  // HANDOFF.md may have moved to the private operations repository (absent, or a pointer marked as moved).
+  const notesPath = path.join(root, 'HANDOFF.md');
+  const notesHere = fs.existsSync(notesPath) && !/<!--\s*handoff:\s*moved\b/i.test(fs.readFileSync(notesPath, 'utf8'));
+  if (notesHere) assert.equal(first('HANDOFF.md', /browser suite is \**(\d+) scripts/i), n, 'HANDOFF.md\'s newest count');
   assert.equal(first('CHANGELOG.md', /the suite is now (\d+) scripts/i), n, 'CHANGELOG.md\'s newest count');
 });
 
