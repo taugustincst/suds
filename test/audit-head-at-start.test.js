@@ -65,7 +65,9 @@ test('the first start seals the audit head and writes the first anchor; deleting
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('a graceful stop seals the entries written since the last seal and anchors them (self-assessment SEC-2026-001, F-01)', async () => {
+// On Windows, child.kill('SIGTERM') ends the process at once (no handler runs), so a graceful stop cannot be sent this
+// way; the seal itself is tested on every platform in test/sec-2026-001.test.js.
+test('a graceful stop seals the entries written since the last seal and anchors them (self-assessment SEC-2026-001, F-01)', { skip: process.platform === 'win32' && 'no graceful stop by signal on Windows' }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-head-at-stop-'));
   try {
     // A failed sign-in writes audit entries after the first-start seal; the stop must cover them.
