@@ -80,6 +80,7 @@ const APP_CHECKS = [
   { id: 'app.password_signin', item: 'Password sign-in', rules: ['hipaa-312d'], info: 'pass', remediation: 'Settings → Security policy → "Require single sign-on" with named break-glass administrators.' },
   { id: 'app.password_policy', item: 'Password policy', rules: ['hipaa-308a5iiD'], info: 'pass', remediation: 'Enforced in code (server/auth.js); nothing to configure.' },
   { id: 'app.admin_usernames', item: 'Administrator usernames', rules: ['hipaa-312a1', 'hipaa-312d'], remediation: 'Rename any active administrator called guest or admin to a name that is hard to guess (Settings → Users & permissions → the account → Username).' },
+  { id: 'app.session_cookie', item: 'Session cookie', rules: ['hipaa-312e1', 'part2-16a2i'], remediation: 'Run SUDS Server with SUDS_ENV=production behind HTTPS (deploy/linux/install.sh sets it), so the session cookie is marked Secure.' },
   { id: 'app.session_timeout', item: 'Session timeouts', rules: ['hipaa-312a2iii'], remediation: 'Settings → Security policy: idle timeout 15 minutes or less.' },
   { id: 'app.backups', item: 'Scheduled encrypted backups', rules: ['hipaa-308a7iiA', 'hipaa-310d2iv'], remediation: 'Settings → Scheduled backups: every 4 hours or less.' },
   { id: 'app.snapshots', item: 'Frequent online snapshots', rules: ['hipaa-308a7iiA'], info: 'pass', remediation: 'Optional: Settings → Scheduled backups → "Also snapshot every (minutes)" for a recovery point in minutes.' },

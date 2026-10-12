@@ -167,6 +167,12 @@ function status({ host = true } = {}) {
   const guessable = db.all(`SELECT username FROM users WHERE is_active=1 AND role='admin' AND lower(username) IN ('guest','admin') ORDER BY username`).map((u) => u.username);
   add('Identity', 'Administrator usernames', guessable.length ? 'warn' : 'ok', guessable.length ? `${guessable.length} active administrator${guessable.length === 1 ? ' is' : 's are'} called ${guessable.map((n) => `"${n}"`).join(' and ')}` : 'no active administrator is called guest or admin',
     guessable.length ? `Anyone who knows an administrator's username can lock that account for ${config.lockout.minutes} minutes with ${config.lockout.maxAttempts} wrong passwords, as often as they like. Rename it to something hard to guess: Settings → Users & permissions, edit the account, Username (an administrator can rename their own account).` : '', 'server/bootstrap.js; server/routes/users.js');
+  // The session cookie carries Secure in production mode or when SUDS terminates TLS itself (server/auth.js
+  // cookieHeader). A server reached over HTTPS through a proxy but started in development mode would send it without
+  // (self-assessment SEC-2026-001 of 1.25.6, F-03), so the setting is reported rather than assumed.
+  const secureCookie = !!(config.tls.cert || config.isProd);
+  add('Identity', 'Session cookie', secureCookie ? 'ok' : 'warn', secureCookie ? 'HttpOnly, SameSite=Strict and Secure' : 'HttpOnly and SameSite=Strict, but not Secure: SUDS runs in development mode with no TLS of its own',
+    secureCookie ? '' : 'Behind HTTPS, run SUDS Server with SUDS_ENV=production (the installer does), so the browser never sends the session cookie over plain HTTP.', 'server/auth.js cookieHeader');
   add('Identity', 'Session timeouts', pol.idleMinutes <= 15 ? 'ok' : 'warn', `signed out after ${pol.idleMinutes} min idle; ${pol.absoluteHours} h maximum`, pol.idleMinutes <= 15 ? '' : 'HIPAA automatic logoff: 15 minutes or less is typical.', 'Settings → Security policy; server/auth.js resolveSession');
 
   // ---- Backups and recovery ----

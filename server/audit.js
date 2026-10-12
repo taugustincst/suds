@@ -29,6 +29,7 @@ function log({ user, action, entity, entityId, clientId, ip, success = true, det
   const hash = chainHash(payload);
   db.run(`INSERT INTO audit_log(at,user_id,username,action,entity,entity_id,client_id,ip,success,details,prev_hash,hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
     at, user?.id || null, user?.username || null, action, entity || null, entityId || null, clientId || null, ip || null, success ? 1 : 0, detailsStr, prevHash, hash);
+  if (++sinceSeal >= CHECKPOINT_EVERY) { sinceSeal = 0; advanceHead({ quiet: true }); }
 }
 
 // ---- head checkpoint ----
@@ -38,6 +39,13 @@ function log({ user, action, entity, entityId, clientId, ip, success = true, det
 // stand at or before it, are sealed with the index key, which lives outside the database. Anyone who
 // truncates the table cannot re-seal a shorter chain, and the same line goes to the log file, which is
 // collected off the box, so even deleting the setting leaves evidence.
+// Between two seals the newest entries can still be removed without a trace by someone who can write the database
+// file: the chain stays perfect up to what is left, and the sealed head lies before them. The daily verification
+// alone left a window of a day, and on a new install everything after the first-start seal (self-assessment
+// SEC-2026-001 of 1.25.6, F-01). So the head also advances every CHECKPOINT_EVERY entries and at a graceful shutdown
+// (advanceHead, server/index.js), which shrinks the window to the newest few hundred entries.
+const CHECKPOINT_EVERY = 500;
+let sinceSeal = 0;
 function headPayload(lastId, lastHash, rowCount) { return `${lastId}|${lastHash}|${rowCount}`; }
 function sealHead(lastId, lastHash, rowCount, key = config.indexKey) { return crypto.createHmac('sha256', key).update(headPayload(lastId, lastHash, rowCount)).digest('hex'); }
 /** Seal the current head. `key` defaults to the index key in use; key rotation passes the new key explicitly. */
@@ -45,6 +53,9 @@ function checkpoint({ key = config.indexKey } = {}) {
   const last = db.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
   if (!last) return null;
   const rowCount = db.one(`SELECT COUNT(*) n FROM audit_log WHERE id <= ?`, last.id).n;
+  return seal(last, rowCount, key);
+}
+function seal(last, rowCount, key) {
   const head = sealHead(last.id, last.hash, rowCount, key);
   db.setSetting('audit_head', head);
   db.setSetting('audit_head_id', String(last.id));
@@ -53,6 +64,21 @@ function checkpoint({ key = config.indexKey } = {}) {
   // Never PHI: two integers and an HMAC. Written at info level so it lands in the collected log file.
   console.log(`[suds] audit checkpoint id=${last.id} rows=${rowCount} head=${head}`);
   return { lastId: last.id, rowCount, head };
+}
+/**
+ * Move the sealed head forward to the newest entry, but only over a chain that still matches the last seal: a
+ * truncation since then is left for verification to report (scheduledVerify records it), never sealed over. Rows
+ * after the last seal are counted on their own, so this costs one check of the old head, not a count of the table.
+ * No seal yet: the first one. Returns the new head, or null when nothing was sealed.
+ */
+function advanceHead({ key = config.indexKey, quiet = false } = {}) {
+  const h = checkHead({ key });
+  if (!h.checkpointed) return checkpoint({ key });
+  if (h.truncated) { if (!quiet) console.error(`[suds] the audit head was not advanced: ${h.reason}`); return null; }
+  const last = db.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
+  if (!last || last.id === h.checkpointId) return null;
+  const rows = Number(db.getSetting('audit_head_rows', 0)) + db.one(`SELECT COUNT(*) n FROM audit_log WHERE id > ? AND id <= ?`, h.checkpointId, last.id).n;
+  return seal(last, rows, key);
 }
 /**
  * At every start of the office server (server/index.js): seal the head now if none has ever been sealed. Until
@@ -295,4 +321,4 @@ async function scheduledVerify({ full = false, batch } = {}) {
   return r;
 }
 
-module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, checkHead, sealHeadAtStart };
+module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, advanceHead, checkHead, sealHeadAtStart, CHECKPOINT_EVERY };

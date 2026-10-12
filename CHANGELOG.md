@@ -2,6 +2,26 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+Fixes from the internal self-assessment SEC-2026-001 of 1.25.6 (the vendor's own, **not an independent penetration
+test**; docs/evidence/self-assessment-SEC-2026-001.md): 0 critical, high or medium findings; 1 low, 2 informational.
+
+### Fixed
+
+- **The newest audit entries could be removed unseen until the next daily seal** (F-01, Low). The sealed head now also
+  advances every 500 entries and at a graceful stop (with an anchor outside the database where anchoring is on), and
+  only over a chain that still matches the last seal: a truncation is reported, never sealed over.
+- **A client's name could hold markup** (F-02, Informational): nothing ran (names are written as text, and the CSP
+  blocks inline script), but a name containing `<` or `>` is now refused, on the office server and from devices.
+- **Security status reports whether the session cookie is marked Secure** (F-03, Informational), with the compliance
+  check `app.session_cookie`: behind HTTPS, run SUDS Server in production mode.
+
+### Changed
+
+- `release-state` no longer requires HANDOFF.md once the notes between the assistants have moved to the private
+  operations repository (HANDOFF.md absent, or a pointer marked `<!-- handoff: moved -->`).
+
 ## 1.25.7 — 2026-10-12
 
 SHA-256 of suds-v1.25.7.zip: ae11609a7f9b8896d88e89c828d7acfed4d3d3fe6d72f3202c9a079f2dd2d96f

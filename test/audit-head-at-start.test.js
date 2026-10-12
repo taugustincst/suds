@@ -14,14 +14,22 @@ const ROOT = path.join(__dirname, '..');
 const KEYS = { SUDS_ENCRYPTION_KEY: '5a'.repeat(32), SUDS_INDEX_KEY: '6b'.repeat(32), SUDS_SIGNING_KEY: '7c'.repeat(32) };
 
 /** Start server/index.js on `dir` until it says it is listening, then stop it. Resolves with its output. */
-function startAndStop(dir) {
+function startAndStop(dir, { before = null, port = 0 } = {}) {
   return new Promise((resolve, reject) => {
-    const env = { PATH: process.env.PATH || '', HOME: dir, SUDS_ENV: 'test', SUDS_DATA_DIR: dir, SUDS_DB_PATH: path.join(dir, 'suds.db'), HOST: '127.0.0.1', PORT: '0',
+    const env = { PATH: process.env.PATH || '', HOME: dir, SUDS_ENV: 'test', SUDS_DATA_DIR: dir, SUDS_DB_PATH: path.join(dir, 'suds.db'), HOST: '127.0.0.1', PORT: String(port),
       SUDS_ADMIN_USERNAME: 'admin', SUDS_ADMIN_PASSWORD: 'AdminPassw0rd!x', SUDS_SKIP_SETUP: '1', LOG_FORMAT: 'text', TZ: process.env.TZ || '', ...KEYS };
     const child = spawn(process.execPath, ['--no-warnings=ExperimentalWarning', path.join(ROOT, 'server', 'index.js')], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`server did not start:\n${out}`)); }, 30_000);
-    const seen = (d) => { out += d; if (/listening on/.test(out) && !child.stopping) { child.stopping = true; child.kill('SIGTERM'); } };
+    const seen = (d) => {
+      out += d;
+      const m = /listening on (\S+)/.exec(out);
+      if (m && !child.stopping) {
+        child.stopping = true;
+        // `before`: something to do against the running server (it is given its address) before it is stopped.
+        Promise.resolve(before && before(`http://127.0.0.1:${port}`)).catch(() => {}).finally(() => child.kill('SIGTERM'));
+      }
+    };
     child.stdout.on('data', seen); child.stderr.on('data', seen);
     child.on('exit', () => { clearTimeout(timer); resolve(out); });
   });
@@ -54,5 +62,17 @@ test('the first start seals the audit head and writes the first anchor; deleting
       const h = audit.checkHead();
       assert.equal(h.truncated, true, JSON.stringify(h));
     } finally { db.close(); }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a graceful stop seals the entries written since the last seal and anchors them (self-assessment SEC-2026-001, F-01)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-head-at-stop-'));
+  try {
+    // A failed sign-in writes audit entries after the first-start seal; the stop must cover them.
+    const port = await new Promise((resolve) => { const srv = require('node:net').createServer().listen(0, '127.0.0.1', () => { const p = srv.address().port; srv.close(() => resolve(p)); }); });
+    const out = await startAndStop(dir, { port, before: (base) => fetch(base + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'nobody', password: 'wrong-password-1' }) }) });
+    assert.equal((out.match(/audit checkpoint id=/g) || []).length, 2, out);
+    const reasons = fs.readdirSync(path.join(dir, 'audit-anchors')).filter((f) => f.endsWith('.json')).map((f) => JSON.parse(fs.readFileSync(path.join(dir, 'audit-anchors', f), 'utf8')).reason).sort();
+    assert.deepEqual(reasons, ['first-start', 'shutdown']);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
