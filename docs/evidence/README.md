@@ -13,9 +13,10 @@ signed tags, the flake register's entries) and whether each is in force today.
 
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
-**Version.** It describes 1.25.6: the commit "Release 1.25.6", a patch of 1.25.5 with the fixes from the evaluation of
-1.25.5, no policy exception and an SBOM of its own, `sbom-1.25.6` ([../RELEASE.md](../RELEASE.md), *Record: 1.25.6*;
-tagged and released on 2026-10-11, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.25.5, a patch of 1.25.4 with the fixes from the market-readiness
+**Version.** It describes 1.25.7: the commit "Release 1.25.7", a patch of 1.25.6 with the fixes from the evaluation of
+1.25.6, no policy exception and an SBOM of its own, `sbom-1.25.7` ([../RELEASE.md](../RELEASE.md), *Record: 1.25.7*; its
+tag is owed, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.25.6, a patch of 1.25.5 with the fixes from the evaluation of
+1.25.5, has `sbom-1.25.6`. 1.25.5, a patch of 1.25.4 with the fixes from the market-readiness
 evaluation of 1.25.4, has `sbom-1.25.5`. 1.25.4, a patch of 1.25.3 with the fixes from
 the market-readiness evaluation of 1.25.3 and the empty offsite backups found on suds.systems, has `sbom-1.25.4`. 1.25.3,
 a patch of 1.25.2 with the fixes from the launch of suds.systems and the pen test of the live install, has `sbom-1.25.3`. 1.25.2,
@@ -65,6 +66,7 @@ and that was never published.)
 
 | File | What it is | How to check it |
 | --- | --- | --- |
+| [sbom-1.25.7.cdx.json](sbom-1.25.7.cdx.json) | CycloneDX 1.5 software bill of materials for 1.25.7 (generated from the "Release 1.25.7" stamp; the release is tagged on the commit that adds it, and the Release carries it as an asset), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject) | `node scripts/sbom.js --ref <the Release 1.25.7 commit>` reproduces it |
 | [sbom-1.25.6.cdx.json](sbom-1.25.6.cdx.json) | CycloneDX 1.5 software bill of materials for 1.25.6 (generated from the "Release 1.25.6" stamp; the release is tagged on the commit that adds it, and the Release carries it as an asset), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject) | `node scripts/sbom.js --ref <the Release 1.25.6 commit>` reproduces it |
 | [sbom-1.25.5.cdx.json](sbom-1.25.5.cdx.json) | CycloneDX 1.5 software bill of materials for 1.25.5 (generated from the "Release 1.25.5" stamp; the release is tagged on the commit that adds it, and from 1.25.5 the Release carries it as an asset), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject) | `node scripts/sbom.js --ref <the Release 1.25.5 commit>` reproduces it |
 | [sbom-1.25.4.cdx.json](sbom-1.25.4.cdx.json) | CycloneDX 1.5 software bill of materials for 1.25.4 (generated from the "Release 1.25.4" stamp; the release is tagged on the commit that adds it), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject) | `node scripts/sbom.js --ref <the Release 1.25.4 commit>` reproduces it |

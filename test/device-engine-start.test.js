@@ -29,6 +29,11 @@ const quietly = async (fn) => { const seen = []; const e = console.error; const 
 let start; let cleanup;
 before(async () => {
   assert.ok(OPEN_EXPORT, 'sql.js names its sqlite3_open export as this test expects');
+  // Each start() below stands for a new document, but this process is one page. Node 24 has navigator.locks, and the
+  // kernel holds its single-writer lock until the page is gone, so a second start() here would find it held ("open in
+  // another window"; CI's node24 job on 1.25.7's candidate). The lock is not what this tests: it is left out, as on
+  // Node 22, which has no navigator.locks (the lock's own checks: scripts/ui/multitab.mjs).
+  if (globalThis.navigator && navigator.locks) Object.defineProperty(navigator, 'locks', { value: undefined, configurable: true });
   faultyEngines();
   ({ start, cleanup } = await loadKernel({ staticHost: true, start: false }));
 });

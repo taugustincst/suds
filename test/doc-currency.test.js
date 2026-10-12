@@ -88,8 +88,9 @@ test('every SBOM link outside the evidence index is to the newest SBOM', () => {
   walk(path.join(ROOT, 'docs'));
   const stale = [];
   for (const f of files) {
-    // The evidence index lists every SBOM as history; everything else points at the current one.
-    if (f === path.join(ROOT, 'docs', 'evidence', 'README.md') || !fs.existsSync(f)) continue;
+    // The evidence index lists every SBOM as history, and so does the HANDOFF archive (docs/handoff/, entries kept as
+    // written); everything else points at the current one.
+    if (f === path.join(ROOT, 'docs', 'evidence', 'README.md') || f.startsWith(path.join(ROOT, 'docs', 'handoff') + path.sep) || !fs.existsSync(f)) continue;
     for (const m of fs.readFileSync(f, 'utf8').matchAll(/sbom-(\d+\.\d+\.\d+)\.cdx\.json/g)) if (m[1] !== newest) stale.push(`${path.relative(ROOT, f)}: sbom-${m[1]}`);
   }
   assert.deepEqual(stale, [], `link sbom-${newest}.cdx.json`);

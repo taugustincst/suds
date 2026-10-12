@@ -15,7 +15,8 @@ function docs() {
   const walk = (dir) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const p = path.join(dir, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.md')) out.push(p); } };
   walk(path.join(ROOT, 'docs'));
   // The evidence index describes a stamp commit and its tag, not a feature (docs/evidence/README.md).
-  return out.filter(p => !p.includes(`${path.sep}evidence${path.sep}`));
+  // The evidence records and the HANDOFF archive (docs/handoff/) are history, kept as written.
+  return out.filter(p => !p.includes(`${path.sep}evidence${path.sep}`) && !p.includes(`${path.sep}handoff${path.sep}`));
 }
 // Markdown emphasis and line breaks are not part of the phrase.
 const flat = (s) => s.replace(/[*_`]/g, '').replace(/\s+/g, ' ');
