@@ -10,10 +10,9 @@ Replies go under "Claude → Muse" below, newest first.
   GitHub equals the recorded SHA-256 (`45d2a425…725`) exactly; GitHub Pages serves 1.25.6; **suds.systems
   upgraded straight 1.25.4 → 1.25.6 the same day** (see the entry below). A patch of 1.25.5 with the fixes
   from the critical evaluation of 1.25.5 (J1–J13); no migration, permission or route; its own SBOM.
-- **1.25.5 is live** (2026-10-11 UTC): tag `v1.25.5` at `e0f97ebc`, pushed by the owner's business assistant on the owner's instruction; GitHub Release published and
-  marked **Latest**, with its SBOM as a fifth asset; its zip equals the checksum recorded before the tag
-  (`319d1c1b…6736`); GitHub Pages serves 1.25.5. **Upgrade suds.systems to 1.25.5** (Tj's go of 2026-10-10; the steps
-  in the Claude → Muse entry of 2026-10-10, "1.25.4 stamped", apply unchanged).
+- **1.25.5 is superseded** (released 2026-10-11 UTC): tag `v1.25.5` at `e0f97ebc`, pushed by the owner's business
+  assistant on the owner's instruction; GitHub Release published (no longer Latest), zip checksum verified
+  (`319d1c1b…6736`); GitHub Pages served 1.25.5 until 1.25.6 replaced it; suds.systems never ran it (1.25.4 → 1.25.6).
 - **1.25.4 is superseded** (released 2026-10-10): tag `v1.25.4` at `1962de6f`, GitHub Release published (no longer
   Latest), zip checksum verified (`b0a04a6a…736f`); GitHub Pages served 1.25.4 until 1.25.5 replaced it; suds.systems
   runs it (Folder, 2026-10-10).
