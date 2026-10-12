@@ -46,7 +46,9 @@ const SAMPLE_ACCOUNTS = [
   { username: 'afinance', role: 'finance' },
   { username: 'rreader', role: 'read-only' },
 ];
-const ADMIN_USERNAME = 'guest'; // server/bootstrap.js DEFAULT_ADMIN_USERNAME (SUDS_ADMIN_USERNAME is set aside below)
+// Fictional data on this computer only, so the administrator keeps the easy name a tester types; a real office server's
+// first administrator gets a random one (server/bootstrap.js, 1.25.7). Passed as SUDS_ADMIN_USERNAME below.
+const ADMIN_USERNAME = 'guest';
 
 class TryError extends Error {}
 
@@ -151,7 +153,7 @@ function tryEnv(dataDir, port, base = process.env) {
   for (const [k, v] of Object.entries(base)) if (!SET_ASIDE.test(k)) env[k] = v;
   return Object.assign(env, {
     SUDS_ENV: 'development', SUDS_DATA_DIR: dataDir, HOST, PORT: String(port),
-    SUDS_ADMIN_PASSWORD: SAMPLE_PASSWORD, SEED_PASSWORD: SAMPLE_PASSWORD,
+    SUDS_ADMIN_USERNAME: ADMIN_USERNAME, SUDS_ADMIN_PASSWORD: SAMPLE_PASSWORD, SEED_PASSWORD: SAMPLE_PASSWORD,
     // Fictional data on this computer only: two-step verification is never required of the sample accounts, so a
     // tester is not locked out once the grace period from the day the accounts were made has passed.
     MFA_REQUIRED_ROLES: '',

@@ -18,8 +18,8 @@ const C = require('../constants');
 // (keys from env, or SUDS_SKIP_SETUP=1) use the bootstrap admin printed at first start instead.
 function setupNeeded() { return !config.setupComplete && !config.isTest && config.keySource !== 'env' && !process.env.SUDS_SKIP_SETUP; }
 function userCount() { return db.one(`SELECT COUNT(*) n FROM users`).n; }
-// The placeholder is the first administrator server/bootstrap.js created: "guest" unless SUDS_ADMIN_USERNAME
-// names another (1.12.4 renamed it and this check still looked for "admin", so a new server skipped the wizard).
+// The placeholder is the first administrator server/bootstrap.js created, by the name it recorded ("guest" on a
+// server created before 1.25.7; 1.12.4 renamed it and this check still looked for "admin", so a new server skipped the wizard).
 const bootstrapName = () => require('../bootstrap').adminUsername();
 function onlyBootstrapAdmin() { return db.one(`SELECT COUNT(*) n FROM users WHERE NOT (username=? AND must_change_password=1 AND last_login_at IS NULL)`, bootstrapName()).n === 0; }
 /**

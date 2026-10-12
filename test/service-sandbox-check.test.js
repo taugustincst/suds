@@ -115,3 +115,11 @@ test('ci.yml: the service-sandbox job runs the check as root on the pinned Node,
   const journal = job.steps.find((s) => /journalctl -u suds\.service/.test(s.run || ''));
   assert.ok(journal && journal.if === 'always()', 'the unit\'s journal is printed whatever happened');
 });
+
+test('the first administrator is read from the 0600 file as server/bootstrap.js writes it (1.25.7, K6), and as before', () => {
+  const B = require('../server/bootstrap');
+  const text = B.passwordFileText('admin-x7k2p9', 'Temp-Passw0rd!aA1');
+  assert.deepEqual(S.firstAdmin(text), { username: 'admin-x7k2p9', password: 'Temp-Passw0rd!aA1' });
+  assert.deepEqual(S.firstAdmin(text), B.parsePasswordFile(text), 'the check reads it as SUDS does');
+  assert.deepEqual(S.firstAdmin('Old-Passw0rd!aA1\n'), { username: 'guest', password: 'Old-Passw0rd!aA1' }, 'a file from before 1.25.7 holds the password alone');
+});

@@ -344,6 +344,24 @@ test('SSO required: refused until OIDC is configured and a break-glass admin is 
   assert.equal(back.status, 200, 'switched off again, passwords work for everyone');
 });
 
+test('Security status warns while an active administrator is called guest or admin, and the compliance check carries it (1.25.7, K6)', async () => {
+  const line = async () => (await admin.get('/api/admin/security/status')).data.items.find((i) => i.name === 'Administrator usernames');
+  const named = await line();
+  assert.equal(named.level, 'warn', 'this suite signs in as "admin"');
+  assert.match(named.value, /1 active administrator is called "admin"/);
+  assert.match(named.detail, /Rename it/); assert.equal(named.check_id, 'app.admin_usernames');
+  const g = makeUser('guest', 'admin');
+  assert.match((await line()).value, /2 active administrators are called "admin" and "guest"/);
+  db.run(`UPDATE users SET is_active=0 WHERE id=?`, g.id);
+  const me = db.one(`SELECT id FROM users WHERE username='admin'`).id;
+  db.run(`UPDATE users SET username='ops-lead-7' WHERE id=?`, me);
+  try {
+    const ok = await line();
+    assert.equal(ok.level, 'ok', 'renamed, and the other one deactivated');
+    assert.equal(require('../server/compliance-rules').forItem('Administrator usernames').id, 'app.admin_usernames');
+  } finally { db.run(`UPDATE users SET username='admin' WHERE id=?`, me); db.run(`DELETE FROM users WHERE id=?`, g.id); }
+});
+
 test('Security status: every group reported, admin only, and honest about attestation', async () => {
   const r = await admin.get('/api/admin/security/status');
   assert.equal(r.status, 200);

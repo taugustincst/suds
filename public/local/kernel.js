@@ -23323,6 +23323,7 @@ var require_compliance_rules = __commonJS({
       { id: "app.authenticator_allowlist", item: "Authenticator allow-list (passkeys)", rules: ["hipaa-312d"], info: "pass", remediation: "Optional (off by default): Settings \u2192 Authenticator allow-list accepts only the authenticator models the programme lists, proven by attestation; keep its FIDO Metadata Service file current (docs/FINGERPRINT.md)." },
       { id: "app.password_signin", item: "Password sign-in", rules: ["hipaa-312d"], info: "pass", remediation: 'Settings \u2192 Security policy \u2192 "Require single sign-on" with named break-glass administrators.' },
       { id: "app.password_policy", item: "Password policy", rules: ["hipaa-308a5iiD"], info: "pass", remediation: "Enforced in code (server/auth.js); nothing to configure." },
+      { id: "app.admin_usernames", item: "Administrator usernames", rules: ["hipaa-312a1", "hipaa-312d"], remediation: "Rename any active administrator called guest or admin to a name that is hard to guess (Settings \u2192 Users & permissions \u2192 the account \u2192 Username)." },
       { id: "app.session_timeout", item: "Session timeouts", rules: ["hipaa-312a2iii"], remediation: "Settings \u2192 Security policy: idle timeout 15 minutes or less." },
       { id: "app.backups", item: "Scheduled encrypted backups", rules: ["hipaa-308a7iiA", "hipaa-310d2iv"], remediation: "Settings \u2192 Scheduled backups: every 4 hours or less." },
       { id: "app.snapshots", item: "Frequent online snapshots", rules: ["hipaa-308a7iiA"], info: "pass", remediation: 'Optional: Settings \u2192 Scheduled backups \u2192 "Also snapshot every (minutes)" for a recovery point in minutes.' },
@@ -24455,6 +24456,15 @@ var require_security_status = __commonJS({
         "server/auth.js login()"
       );
       add("Identity", "Password policy", "info", `${config2.password.minLength}+ characters with upper, lower, digit and symbol, not containing the username or name and not a common password; expires after ${pol.passwordMaxAgeDays} days; locked for ${config2.lockout.minutes} min after ${config2.lockout.maxAttempts} failures`, "Hashed with scrypt (N=32768).", "server/auth.js passwordProblem, server/password-strength.js, server/crypto.js");
+      const guessable = db3.all(`SELECT username FROM users WHERE is_active=1 AND role='admin' AND lower(username) IN ('guest','admin') ORDER BY username`).map((u) => u.username);
+      add(
+        "Identity",
+        "Administrator usernames",
+        guessable.length ? "warn" : "ok",
+        guessable.length ? `${guessable.length} active administrator${guessable.length === 1 ? " is" : "s are"} called ${guessable.map((n) => `"${n}"`).join(" and ")}` : "no active administrator is called guest or admin",
+        guessable.length ? `Anyone who knows an administrator's username can lock that account for ${config2.lockout.minutes} minutes with ${config2.lockout.maxAttempts} wrong passwords, as often as they like. Rename it to something hard to guess: Settings \u2192 Users & permissions, edit the account, Username (an administrator can rename their own account).` : "",
+        "server/bootstrap.js; server/routes/users.js"
+      );
       add("Identity", "Session timeouts", pol.idleMinutes <= 15 ? "ok" : "warn", `signed out after ${pol.idleMinutes} min idle; ${pol.absoluteHours} h maximum`, pol.idleMinutes <= 15 ? "" : "HIPAA automatic logoff: 15 minutes or less is typical.", "Settings \u2192 Security policy; server/auth.js resolveSession");
       const hours = Number(db3.getSetting("backup_schedule_hours", "0")) || 0;
       const lastBackup = db3.getSetting("last_scheduled_backup_at", null);

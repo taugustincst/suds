@@ -111,3 +111,20 @@ test('reset-admin removes the administrator\'s passkeys too (audited, cause "cli
     assert.equal(JSON.parse(after.reset).passkeys_removed, 2, 'and counted in the reset\'s own entry');
   } finally { fs.rmSync(dir3, { recursive: true, force: true }); }
 });
+
+test('create-admin without a username never makes a "guest": it resets the first administrator, or names a new one at random (1.25.7, K6)', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'suds-create-admin-'));
+  const e = { SUDS_DATA_DIR: d, SUDS_DB_PATH: path.join(d, 'suds.db'), SUDS_ADMIN_USERNAME: '', SUDS_ADMIN_PASSWORD: 'Original-Pass-2026!' };
+  try {
+    const made = node(['scripts/create-admin.js'], e);
+    assert.equal(made.status, 0, made.stderr);
+    const name = (made.stdout.match(/Created admin "(admin-[a-z0-9]{6})"/) || [])[1];
+    assert.ok(name, made.stdout);
+    const r = spawnSync(process.execPath, ['--no-warnings=ExperimentalWarning', '-e', `const db = require('./server/db'); db.open(); process.stdout.write(JSON.stringify(db.all("SELECT username FROM users").map(u => u.username))); db.close();`], { cwd: root, env: { ...env, ...e }, encoding: 'utf8' });
+    assert.deepEqual(JSON.parse(r.stdout), [name], 'one administrator, not called guest');
+    // With the first administrator recorded (server/bootstrap.js), it is that account that is reset.
+    spawnSync(process.execPath, ['--no-warnings=ExperimentalWarning', '-e', `const db = require('./server/db'); db.open(); db.setSetting('bootstrap_admin_username', ${JSON.stringify(name)}); db.close();`], { cwd: root, env: { ...env, ...e }, encoding: 'utf8' });
+    const again = node(['scripts/create-admin.js'], e);
+    assert.equal(again.status, 0, again.stderr); assert.match(again.stdout, new RegExp(`Reset password for existing admin "${name}"`));
+  } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});

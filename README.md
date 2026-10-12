@@ -274,11 +274,11 @@ npm run seed          # dev database with demo staff logins and the fictional sa
 npm start             # http://127.0.0.1:8080
 ```
 
-Demo logins (password `Navigator2026!!`): `mrivera` / `dchen` (navigators), `kpatel` (clinician), `jwalker` (supervisor), `afinance` (finance). The first administrator is `guest` (or `SUDS_ADMIN_USERNAME`); its password is printed once when the database is created, unless `SUDS_ADMIN_PASSWORD` sets it.
+Demo logins (password `Navigator2026!!`): `mrivera` / `dchen` (navigators), `kpatel` (clinician), `jwalker` (supervisor), `afinance` (finance). The first administrator is named by `SUDS_ADMIN_USERNAME`, or else gets a random name (`admin-` and six letters and digits, from 1.25.7), which the seed prints; its password is printed once when the database is created, unless `SUDS_ADMIN_PASSWORD` sets it.
 
 Without a terminal, an administrator can add the same fictional data set from inside the app (**Load sample data** on the empty home screen or under Settings) and remove it again in one click; a local-mode copy offers it on its Sync screen.
 
-Without seeding, the first start creates the administrator `guest` (or `SUDS_ADMIN_USERNAME`) and prints a temporary password; the setup wizard then replaces it with the account you choose.
+Without seeding, the first start creates the first administrator (`SUDS_ADMIN_USERNAME`, or a random `admin-…` name) and prints its name and a temporary password; the setup wizard then replaces it with the account you choose.
 
 ## Production for IT teams
 
