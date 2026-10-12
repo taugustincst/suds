@@ -4,6 +4,10 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## 1.25.6 — 2026-10-11
 
+SHA-256 of suds-v1.25.6.zip: 45d2a425c059b4f6a428dbcdf27f056a228e92b7bde0de53e552eba141186725
+
+SHA-256 of suds-1.25.6-windows-x64.zip: 062a141cf518fc1b1cebe6a3bf15f94078c12b553f5e2d9af84ac665d9b4e3e2
+
 A patch of 1.25.5 (docs/RELEASE.md, *Record: 1.25.6*): the fixes from the critical evaluation of 1.25.5 (J1–J13). No
 migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.25.6 --previous
 v1.25.5` passes: 490 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It passes the
