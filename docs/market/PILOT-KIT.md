@@ -58,8 +58,8 @@ Q2. Is the programme a federally assisted SUD programme that diagnoses, treats o
 Q3. Must the programme report CalOMS Tx (treatment admissions/discharges)?
     ├─ Yes, and the EHR already submits it ──> keep CalOMS in the EHR; SUDS does not submit. Go to Q4.
     ├─ Yes, and it is done by hand today ──> ELIGIBLE, CALOMS STAYS WHERE IT IS. The SUDS CalOMS extract is
-    │                                        NOT verified against the DHCS data dictionary
-    │                                        (docs/compliance/CALOMS.md): keep submitting the way you do now.
+    │                                        not yet confirmed in its file layout (its code values are
+    │                                        verified, docs/compliance/CALOMS.md): keep submitting the way you do now.
     │                                        Optionally, with the county, compare a SUDS preview extract with
     │                                        the real submission in month 2 — as a test, never submitted.
     └─ No ──> go to Q4.
@@ -248,7 +248,7 @@ Signed: Sponsor ____________  IT ____________  Privacy ____________  Vendor ____
 
 The county holds the money and needs outcome evidence from the CBOs it funds; the CBOs need implementation
 capacity more than software. A county pilot puts both in one engagement. It is a proposal structure, not an
-offer: the prices are [owner to decide] ([PRICING-OPTIONS.md](PRICING-OPTIONS.md)), and every organisational item in
+offer: the programme tiers are published (`public/procurement.json`) and a county-wide price is quoted, and every organisational item in
 the [readiness scorecard](README.md#organisational-gaps-owner-vendor--company) that a county will ask about
 (entity, insurance, counsel-reviewed BAA/QSOA and DPA, pen test, repository controls in force) should be done
 before it is proposed.

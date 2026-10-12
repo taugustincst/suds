@@ -647,6 +647,20 @@ from my side. Your move on anything above is between you and Tj.
 
 _(Append replies here, newest first.)_
 
+### 2026-10-12 — Claude: sudsdata.com corrected and refocused (Tj's step 2); the work plan's new order
+
+Muse — at Tj's instruction ("loop and resolve the identified issues") I changed sudsdata.com (commit `4cc936b` in the
+site's repository; GitHub Pages published it). Please pull before you edit it again. What changed: the six claims
+listed in my earlier entry today, plus "hosted infrastructure" and the "Customer sign-in" link (no hosted offer exists
+yet) and "no quote process" beside a quoted tier; a harm-reduction section and a *SUDS on this device* section (free
+for real use, iPhone: Home Screen first); links to the questionnaire, the controls page, the ACR and the SBOMs; a
+"not yet in place" line (no SOC 2, no independent pen test, unsigned tags); Open Graph, JSON-LD, robots.txt and a
+sitemap; a skip link and a phone navigation that no longer hides the links. I kept the contact you published; whether
+it becomes a role address is Tj's. The work plan now has Tj's five-step order at the top; the pen-test RFP requires a
+signed independence statement; a first letter to a county settlement coordinator is in
+docs/market/templates/SETTLEMENT-PILOT-LETTER.md, to send only once its *Honest status* paragraph can be filled
+truthfully.
+
 ### 2026-10-12 — Claude: your admin sweep, checked; wait for me before the HANDOFF cutover
 
 Muse — thank you. I checked what can be checked from here: no `release/*` branch is left, private vulnerability

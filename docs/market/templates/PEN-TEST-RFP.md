@@ -17,8 +17,10 @@ protected health information and 42 CFR Part 2 records, so its buyers (counties 
 ask for an **independent** penetration test before they approve it. Two earlier tests were owner-authorised and run by
 the vendor's own development assistant, and are not independent: a white-box test of 1.23.6, and a black-box test with
 a code review of the live install on 2026-10-08
-([../../evidence/pentest-suds-systems-2026-10-08.md](../../evidence/pentest-suds-systems-2026-10-08.md)). This test
-replaces neither county's own right to test; it gives buyers a third party's report and retest letter.
+([../../evidence/pentest-suds-systems-2026-10-08.md](../../evidence/pentest-suds-systems-2026-10-08.md)). The
+licensor's own security practice (Clinical Perimeter, a fictitious business name of AugustInnovations LLC) cannot
+provide this test either: it is the licensor. This test replaces neither county's own right to test; it gives buyers
+a third party's report and retest letter.
 
 The source is public (<https://github.com/taugustincst/suds>); the architecture, threat model and data inventory are in
 [../../security/](../../security/README.md). The office server is a single Node.js 22 process with SQLite, zero runtime
@@ -99,7 +101,10 @@ As [../../security/PEN-TEST-SCOPE.md](../../security/PEN-TEST-SCOPE.md) *In scop
 - **Confidentiality and data handling:** where findings are stored and for how long; willingness to sign the licensor's
   confidentiality terms (and a business associate agreement if the vendor's view is that one is needed; none should be,
   with fictional data only).
-- **Independence:** confirmation that the firm has no business relationship with the licensor beyond this test.
+- **Independence:** a signed statement that the firm, its owners and the testers have no ownership, control,
+  employment, financial interest or business relationship with AugustInnovations LLC (including its Clinical
+  Perimeter practice) or its owner, beyond this test; and that no tester has worked on SUDS. A proposal without it is
+  not considered.
 - **Availability:** earliest start date and the window length.
 - **References:** two healthcare or public-sector clients, if they allow it.
 
@@ -113,7 +118,7 @@ As [../../security/PEN-TEST-SCOPE.md](../../security/PEN-TEST-SCOPE.md) *In scop
 | Price, including the retest | 20% |
 | Insurance, confidentiality terms and availability | 10% |
 
-A proposal without a sample report, a retest, or the vendor's insurance is not considered.
+A proposal without a sample report, a retest, the vendor's insurance or the independence statement is not considered.
 
 ## 9. Recording the result
 

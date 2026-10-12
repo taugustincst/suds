@@ -21,8 +21,10 @@ several CBOs, implementation packaged as forward-deployed services, and support 
   proprietary software of AugustInnovations LLC ([LICENSE](../../../LICENSE)). Anyone may use SUDS on this device
   at its official GitHub Pages address free of charge, real records included (section 2A), and may evaluate the
   office server for up to 90 days with fictional data, without paying. Production use of the office server needs a
-  licence agreement signed by AugustInnovations LLC; its price is **[owner to decide]** and not yet published (the Pricing line of the
-  procurement page, `public/procurement.json`, is blank). Copies of 1.24.0 and earlier keep their MIT rights.
+  licence agreement signed by AugustInnovations LLC. Its introductory prices are published on the procurement page
+  (`public/procurement.json`, effective October 2026) and at sudsdata.com: a 90-day pilot at $2,500 (credited in
+  full), Program at $4,800 a year (one site, up to 30 staff), Multi-Site at $12,000 a year (up to 5 sites and 150
+  staff), and County-Wide by quote. Copies of 1.24.0 and earlier keep their MIT rights.
 - **What is also paid for is services**: getting a programme running, supporting it, and (planned) running the
   server for programmes that cannot. Each is priced as a **flat annual amount per programme**, not per user, so
   a grant budget can carry it as one line and adding a part-time outreach worker costs nothing.

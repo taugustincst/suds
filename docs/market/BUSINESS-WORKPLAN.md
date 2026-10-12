@@ -25,6 +25,23 @@ with what exists, what the owner must decide, the steps, and where each result i
   naming that action.
 - Headline effects are the evaluation's estimates, not promises.
 
+## The order to work in (owner, 2026-10-12)
+
+From the market-potential evaluation of 2026-10-12: SUDS's best first buyers are county opioid-settlement
+administrators sponsoring harm-reduction programmes, not county EHR replacements. Tj set this order:
+
+| Step | What | Items below | State (2026-10-12) |
+| --- | --- | --- | --- |
+| 1 | **Paperwork** (hours, almost no cost): file the Statement of Information (LLC-12) and the Clinical Perimeter fictitious business name; sign the IP assignment; turn on the GitHub release protections; tag 1.25.7; a role contact address | 0, 1, 9 and the repository settings ([../RELEASE.md](../RELEASE.md), *Owner: repository settings*) | Owner actions, open. 1.25.7 is stamped with its tag command in [../evidence/RELEASE-HANDOFF.md](../evidence/RELEASE-HANDOFF.md); stale `release/*` branches deleted and private reporting on (Muse) |
+| 2 | **Fix and refocus sudsdata.com** (about a day): a harm-reduction section; the free browser build offered as real use, not a demo | 1 | **Done 2026-10-12** (Claude, site commit `4cc936b`): the claims the repository contradicted are corrected, a harm-reduction section and a *SUDS on this device* section added, links to the security questionnaire, controls page, ACR and SBOMs, Open Graph and structured data, no WCAG 2.1 AA finding. Still the owner's: the contact address it shows |
+| 3 | **Counsel review and insurance** (real money, weeks): the agreements; cyber and technology E&O cover (county templates ask about $2M each) | 2, 6 | Briefs ready: [templates/COUNSEL-REVIEW-BRIEF.md](templates/COUNSEL-REVIEW-BRIEF.md), [templates/INSURANCE-QUOTE-BRIEF.md](templates/INSURANCE-QUOTE-BRIEF.md) |
+| 4 | **Independent pen test** from a firm with no tie to the LLC | 3 | The RFP now requires a signed independence statement and excludes the licensor's own practice ([templates/PEN-TEST-RFP.md](templates/PEN-TEST-RFP.md)) |
+| 5 | **Reference pilots**: one to three harm-reduction pilots paid by a county's settlement administrator | 7 | First letter ready: [templates/SETTLEMENT-PILOT-LETTER.md](templates/SETTLEMENT-PILOT-LETTER.md); pilot plan [COUNTY-KIT.md](COUNTY-KIT.md). Send after steps 1 and 3 at least, so its *Honest status* paragraph can say the agreements are reviewed and the insurance bound |
+
+Pricing questions the evaluation raised, for Tj (no change made): Multi-Site at $12,000 looks low against every
+benchmark found; a County-Wide quote has room at $25,000–$100,000 or more; and if the owner hosts, $4,800 a year is
+below the $10,000–20,000 a year the hosted-offer worksheet estimates hosting costs.
+
 ## Summary
 
 | # | Item | Owner | Status (2026-10-12) | Next step | Headline effect (evaluation of 1.25.4, or of 1.25.5 where marked) |

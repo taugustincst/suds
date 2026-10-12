@@ -116,7 +116,7 @@ does not hold.
    controls. Evidence: docs/HIPAA.md, docs/compliance/PART2.md. BAA and Part 2 QSOA: provided.
 
 6. STATE REPORTING AND INTEGRATION
-   CalOMS Tx capture/validation/extract (docs/compliance/CALOMS.md) -- built, but the layout and code sets are NOT verified against the DHCS data dictionary; do not submit until verified with DHCS/county; encounter hand-off to the county
+   CalOMS Tx capture/validation/extract (docs/compliance/CALOMS.md) -- built; the code values are verified against the DHCS CalOMS Tx Data Dictionary v3.0 (2026-10-05, 1.25.0), but the extract's file layout is not yet confirmed with DHCS or the county's channel; do not submit until it is; encounter hand-off to the county
    EHR (docs/SCOPE.md); FHIR R4 read API and bulk export with Part 2 consent enforcement
    (docs/integration/FHIR.md); OIDC SSO; Excel/CSV import and export.
 

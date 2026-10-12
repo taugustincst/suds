@@ -85,7 +85,7 @@ The pitch is the three jobs above. Everything else is there for programmes that 
 | --- | --- |
 | Outreach encounters, calls and texts, anonymous contacts, overdose and reversal events | Care plan, problem list, six-dimension assessment (ASAM-aligned; the ASAM Criteria are not included), PHQ-9 / GAD-7 / AUDIT-C, optional DAST-10 |
 | Supplies by item, site and lot; naloxone / test-strip distribution | Clinical notes (SOAP/DAP/BIRP/GIRP) with signature and countersignature |
-| Referrals with consent check, warm hand-off and loop closure; verified resource directory | CalOMS Tx capture and extract (**not verified against the DHCS data dictionary**; do not submit until verified) |
+| Referrals with consent check, warm hand-off and loop closure; verified resource directory | CalOMS Tx capture and extract (code values **verified** against the DHCS data dictionary v3.0; the file layout is **not yet confirmed**: do not submit until it is) |
 | Funding sources, budget lines, expenditures and approvals, staff time by grant | FHIR R4 read API and the county EHR encounter hand-off |
 | Funder report; naloxone distribution log in the style of the DHCS Naloxone Distribution Project; opioid-settlement expenditure report by allowable-use category (**each to be checked against the funder's current template**) | County forms library |
 | Consents, accounting of disclosures, audit, MFA, SSO | |
@@ -284,7 +284,7 @@ support is business-hours ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md))
 **"The source is public — why pay?"**
 Being able to see the code is not a licence to use it. SUDS on this device is free at its official address, real
 records included; the office server may be evaluated free for 90 days with fictional data, and production use of
-it needs a licence agreement ([LICENSE](../../LICENSE); price **[owner to decide]**). Programmes and
+it needs a licence agreement ([LICENSE](../../LICENSE); the introductory prices are published in `public/procurement.json`). Programmes and
 counties also pay, if they choose, for the people around it:
 implementation delivered alongside your team (discovery, deployment, data migration, training, reporting setup),
 business-hours support and (when offered) hosting. The current hypothesis is flat annual amounts per programme
