@@ -160,7 +160,8 @@ export async function firstLoad(page, url, selector, { timeout = 20000, quiet = 
 // script; anything else, and the same check in any other browser, is an ordinary check. A known defect that does not
 // reproduce says so, so its row can be closed.
 export const KNOWN_DEFECTS = {
-  'WK-1': { browser: 'webkit', signature: /Page crashed/,
+  // The same reload either crashes the page or hangs it (page.reload timing out; first on main's run 38314191087).
+  'WK-1': { browser: 'webkit', signature: /Page crashed|page\.reload: Timeout/,
     title: 'Playwright WebKit on Linux crashes the page at the reload after Start over, a restore and a sign-out (the records survive)',
     register: 'docs/RELEASE.md#known-defects' },
 };
