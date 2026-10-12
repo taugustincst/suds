@@ -2,7 +2,9 @@
 // Scheduled check of the repository settings docs/RELEASE.md asks the owner to make ("Owner: repository settings",
 // steps 1 to 7, and step 8's private vulnerability reporting since the evaluation of 1.25.5, J2): until 1.17.0 they were written down and assumed, and three releases went out with none of them in
 // force while CI said nothing (engineering reviews of 1.16.1 M2, 1.16.2 L5, 1.16.3 L6). This reads them through the
-// REST API with a read-only token and fails when a setting is off, or cannot be read.
+// REST API with a read-only token and fails when a setting is off, or cannot be read. Since the evaluation of 1.25.6
+// (K1) it also reads what the newest successful release run did: a run published with no approval recorded
+// (`actions/runs/<id>/approvals` → []) did not wait for a reviewer, and that is "off" with any token.
 //
 //   node scripts/repo-settings-check.js --repo owner/name            # GH_TOKEN (or GITHUB_TOKEN) in the environment
 //   node scripts/repo-settings-check.js --repo owner/name --fixtures responses.json   # offline, from saved responses
@@ -32,7 +34,8 @@ const path = require('node:path');
 let REQUIRED_JOBS;
 try { ({ REQUIRED_JOBS } = require('./release-gate')); } catch { REQUIRED_JOBS = ['test', 'thorough', 'thorough-sdc', 'browser', 'node24', 'dr-drill', 'evening']; }
 
-const ADMIN_ROLE_ID = 5; // actor_id of the "Repository admin" role in a ruleset's bypass list
+const ADMIN_ROLE_ID = 5;
+const RELEASE_RUNS = 'actions/workflows/release.yml/runs?event=push&status=success&per_page=1'; // actor_id of the "Repository admin" role in a ruleset's bypass list
 const SAMPLE = { tag: 'refs/tags/v0.0.0', maint: 'refs/heads/maint/0.0' };
 
 /** A ruleset ref pattern (fnmatch: `*` within one path segment, `**` across) as a RegExp. */
@@ -72,6 +75,11 @@ async function collect(get) {
     'environments/release/secrets?per_page=100', 'actions/secrets?per_page=100', 'actions/permissions', 'actions/permissions/workflow',
     'immutable-releases', 'releases/latest', 'keys?per_page=100', 'git/matching-refs/heads/maint/', 'git/matching-refs/heads/release/v',
     'private-vulnerability-reporting']) await read(p);
+  // The newest successful release run and its approvals (evaluation of 1.25.6, K1): what the `release` environment
+  // did, readable with the workflow's own token (Actions: read) even where the environment's settings are not.
+  const runs = await read(RELEASE_RUNS);
+  const newest = runs.status === 200 && runs.body && Array.isArray(runs.body.workflow_runs) ? runs.body.workflow_runs[0] : null;
+  if (newest && newest.id) await read(`actions/runs/${newest.id}/approvals`);
   const perms = data['actions/permissions'];
   if (perms.status === 200 && perms.body && perms.body.allowed_actions === 'selected') await read('actions/permissions/selected-actions');
   return data;
@@ -155,6 +163,23 @@ function evaluateAll(data, ctx) {
         const ps = (pol.body.branch_policies || []).map((p) => `${p.name} (${p.type || 'branch'})`);
         add('1', 'Deployment refs of `release`: the `v*` tags only', ps.length === 1 && ps[0] === 'v* (tag)' ? 'ok' : 'off', ps.join(', ') || 'none listed');
       }
+    }
+  }
+
+  // What the newest successful release run shows (evaluation of 1.25.6, K1): a run that published with no approval
+  // recorded did not wait for a reviewer, whatever the environment's settings say now.
+  const runs = r(RELEASE_RUNS);
+  const ranSetting = 'The newest release run waited for an approval';
+  if (!ok200(runs) || !runs.body || !Array.isArray(runs.body.workflow_runs)) add('1', ranSetting, 'unverified', unreadable(runs, 'Actions: read'));
+  else if (!runs.body.workflow_runs.length) add('1', ranSetting, 'manual', 'no successful release run yet: check it at the next release');
+  else {
+    const run = runs.body.workflow_runs[0];
+    const ap = r(`actions/runs/${run.id}/approvals`);
+    const name = `run ${run.id}${run.head_branch ? ` (${run.head_branch})` : ''}`;
+    if (!ok200(ap) || !Array.isArray(ap.body)) add('1', ranSetting, 'unverified', unreadable(ap, 'Actions: read'));
+    else {
+      const approved = ap.body.filter((a) => a && a.state === 'approved');
+      add('1', ranSetting, approved.length ? 'ok' : 'off', approved.length ? `${name}: approved by ${approved.map((a) => (a.user && a.user.login) || '?').join(', ')}` : `${name} was published with no approval recorded: the \`release\` job did not wait for anyone`);
     }
   }
 
