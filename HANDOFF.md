@@ -8,9 +8,10 @@ Entries older than the current month are archived monthly in [docs/handoff/](doc
 ### Release waiting
 
 - **1.25.7 is stamped and waits for its tag** (2026-10-12): the fixes from the evaluation of 1.25.6 (K1–K8); no
-  migration, permission or route; its own SBOM. The commit to tag, its zip SHA-256 and the commands are in
-  docs/evidence/RELEASE-HANDOFF.md; the CHANGELOG checksum line is on `main` before the tag (K7). After the release,
-  upgrade suds.systems 1.25.6 → 1.25.7.
+  migration, permission or route; its own SBOM. Its tag is owed: `git tag -a v1.25.7 f9cec20a0bf8 -m "SUDS 1.25.7"`
+  ("SBOM of the 1.25.7 stamp"; main's CI green; zip SHA-256 `ae11609a7f9b…2d96f`, also in the CHANGELOG on `main`
+  before the tag, K7) and `git push origin v1.25.7` (docs/evidence/RELEASE-HANDOFF.md, steps 1 to 3). The upgrade of
+  suds.systems 1.25.6 → 1.25.7 waits for Tj's directive, as every upgrade does.
 - **1.25.6 is live** (2026-10-11): tag `v1.25.6` at `f23a94e7`, pushed by Folder at Tj's direction ("Tag and
   release 1.25.6, upgrade straight to it"); the Release job published it, marked **Latest**, zip digest on
   GitHub equals the recorded SHA-256 (`45d2a425…725`) exactly; GitHub Pages serves 1.25.6; **suds.systems
@@ -79,7 +80,7 @@ Entries older than the current month are archived monthly in [docs/handoff/](doc
   (sandboxed `fchown`). 28 zero-byte orphans remain on the offsite disk, all without local counterparts
   (aged out of retention) — deletion is part of the pending cleanup.
 - **Compliance re-run (2026-10-11): 40 pass / 1 fail / 5 warn / 1 not-checked.** Sole fail is
-  `host.firewall` (SSH open to anywhere — Tj's standing choice). `risk_accepted` is now **empty**;
+  `host.firewall` (Tj's standing choice; the rule itself is kept out of this public file). `risk_accepted` is now **empty**;
   `host.disk_encryption` PASS (LUKS2, aes-xts-plain64, 512-bit key); `app.backups`, `app.offsite`,
   `host.backup_files` all PASS. Report: `compliance-2026-10-11T19-22-29-400Z.json` on the box.
 - **Recovery drill from the OFFSITE copy PASSED (2026-10-11)** — 11/11 checks, RTO 0.8 s, RPO 114 min,
