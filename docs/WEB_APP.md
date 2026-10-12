@@ -120,6 +120,8 @@ under **Can't sign in?**, and what each does to the records:
 
 When the records will not open at sign-in, the page says so and keeps a copy: save it (**Save the damaged copy**), close the browser and log in again, then use **Restore from a backup** with the latest backup or the saved copy, which opens with the password of an account from that device (1.25.5; docs/architecture/ADR-0008-device-encryption.md). When the stored records fail their integrity check instead, no copy of them can ever be restored, so none is offered: only a backup brings them back, and the page says to **Start over** only if you have one (1.25.6).
 
+When SUDS will not start at all on a first visit, before anything is stored, the page says *SUDS could not start in this browser just now*: nothing is stored on the device yet, so nothing is lost, and it is most likely the browser (its SQLite engine failed as it started; SUDS has already tried once more on a new one). Reload, or close the browser completely and open it again; on an iPhone or iPad, swipe Safari away in the app switcher first. It offers no Start over, since there is nothing to erase (1.25.7). A device that already holds records shows its sign-in page as before, and the ways back above.
+
 **The recovery code.** At set-up, after the first account is created, the app shows the code once on its own
 screen (*Download as a text file*, *Print*, and a required *I have saved my recovery code* box before going
 on). The device administrator can make a new one under **This device → Recovery code**, after typing their

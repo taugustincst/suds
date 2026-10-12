@@ -57629,7 +57629,6 @@ async function lockedAnswer(method, path, body) {
   return refused(401, "This device is locked. Sign in to continue.");
 }
 async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLockLost: onLockLost2, force } = {}) {
-  await sqlite_default.init(wasmUrl);
   if (auditWorkerUrl) import_publication_release.default.setDeviceAuditRunner(auditRunner(auditWorkerUrl));
   if (onLockLost2) sqlite_default.onLockLost(onLockLost2);
   const locked = await sqlite_default.acquireLock({ force: !!force });
@@ -57651,18 +57650,47 @@ async function start({ wasmUrl, auditWorkerUrl, onSaveError: onSaveError2, onLoc
     } catch {
     }
   }
-  if (isSealed(stored) && hasAccounts(theVault)) {
-    phase = "locked";
-    sqlite_default.setOpenAllowed(false);
-  } else if (stored && !isSealed(stored)) {
-    phase = "legacy";
-    await newKeyMaterial(legacyKeys());
-    openDatabase(stored);
-  } else {
-    phase = "fresh";
-    theVault = null;
-    await newKeyMaterial(null);
-    openDatabase(null);
+  const engineStep = async () => {
+    await sqlite_default.init(wasmUrl);
+    if (isSealed(stored) && hasAccounts(theVault)) {
+      phase = "locked";
+      sqlite_default.setOpenAllowed(false);
+    } else if (stored && !isSealed(stored)) {
+      phase = "legacy";
+      await newKeyMaterial(legacyKeys());
+      openDatabase(stored);
+    } else {
+      phase = "fresh";
+      theVault = null;
+      await newKeyMaterial(null);
+      openDatabase(null);
+    }
+  };
+  const nothingStored = !stored && !hasAccounts(theVault);
+  try {
+    await engineStep();
+  } catch (e) {
+    if (e && e.code === "SUDS_KEY_LOST") throw e;
+    try {
+      import_db2.default.close();
+    } catch {
+    }
+    console.warn("[suds-local] the SQLite engine failed while starting; trying once more on a new engine:", String(e && e.message).slice(0, 300));
+    try {
+      await sqlite_default.freshEngine();
+      await engineStep();
+    } catch (e2) {
+      if (e2 && e2.code === "SUDS_KEY_LOST") throw e2;
+      try {
+        import_db2.default.close();
+      } catch {
+      }
+      const err2 = new Error(String(e2 && e2.message || e2));
+      err2.code = "SUDS_ENGINE_FAILED";
+      err2.nothingStored = nothingStored;
+      err2.first = String(e && e.message).slice(0, 300);
+      throw err2;
+    }
   }
   router = new import_http2.Router();
   const missing = import_app.LOCAL_ROUTE_MODULES.filter((n) => !routeLoaders[n]);

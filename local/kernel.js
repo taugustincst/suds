@@ -526,7 +526,7 @@ async function lockedAnswer(method, path, body) {
 }
 
 export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, force } = {}) {
-  await sqlite.init(wasmUrl);
+  // The SQLite engine is started below, after the lock and the store are read (1.25.7, K2).
   // A publication release's audit runs in a Web Worker (public/local/audit-worker.js), not on this page's thread
   // (local/audit-runner.js; server/publication-release.js falls back to the page where no worker can start).
   if (auditWorkerUrl) publicationRelease.setDeviceAuditRunner(auditRunner(auditWorkerUrl));
@@ -556,14 +556,36 @@ export async function start({ wasmUrl, auditWorkerUrl, onSaveError, onLockLost, 
   theVault = await sqlite.getMeta(VAULT_KEY);
   // Sessions and restore markers are no longer kept in localStorage: every page load starts signed out.
   for (const k of ['suds.local.session', RESTORED_KEY]) { try { localStorage.removeItem(k); } catch {} }
-  if (vault.isSealed(stored) && vault.hasAccounts(theVault)) {
-    phase = 'locked'; sqlite.setOpenAllowed(false);
-  } else if (stored && !vault.isSealed(stored)) {
-    phase = 'legacy'; await newKeyMaterial(legacyKeys());
-    openDatabase(stored);
-  } else {
-    phase = 'fresh'; theVault = null; await newKeyMaterial(null);
-    openDatabase(null);
+  // The engine can fail inside itself as it starts, as it can at sign-in (unlockWith): CI's WebKit run of 1.25.6 saw
+  // "Out of bounds memory access" at a first visit, with nothing stored (1.25.7, K2). Starting it, and opening or
+  // creating the database on it, is tried once more on a new engine before anything is said; a key that was cleared
+  // (SUDS_KEY_LOST) is not the engine and is not tried again. If the second engine fails too, the error says whether
+  // anything is stored here: with nothing, the page says it is most likely this browser and to reload, and does not
+  // offer to erase what does not exist.
+  const engineStep = async () => {
+    await sqlite.init(wasmUrl);
+    if (vault.isSealed(stored) && vault.hasAccounts(theVault)) {
+      phase = 'locked'; sqlite.setOpenAllowed(false);
+    } else if (stored && !vault.isSealed(stored)) {
+      phase = 'legacy'; await newKeyMaterial(legacyKeys());
+      openDatabase(stored);
+    } else {
+      phase = 'fresh'; theVault = null; await newKeyMaterial(null);
+      openDatabase(null);
+    }
+  };
+  const nothingStored = !stored && !vault.hasAccounts(theVault);
+  try { await engineStep(); } catch (e) {
+    if (e && e.code === 'SUDS_KEY_LOST') throw e;
+    try { db.close(); } catch {}
+    console.warn('[suds-local] the SQLite engine failed while starting; trying once more on a new engine:', String(e && e.message).slice(0, 300));
+    try { await sqlite.freshEngine(); await engineStep(); } catch (e2) {
+      if (e2 && e2.code === 'SUDS_KEY_LOST') throw e2;
+      try { db.close(); } catch {}
+      const err = new Error(String((e2 && e2.message) || e2));
+      err.code = 'SUDS_ENGINE_FAILED'; err.nothingStored = nothingStored; err.first = String(e && e.message).slice(0, 300);
+      throw err;
+    }
   }
 
   router = new Router();
