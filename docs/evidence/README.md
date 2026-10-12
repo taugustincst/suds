@@ -204,7 +204,7 @@ sandbox on 2026-10-09 and 2026-10-10. These could not be, and why:
 - **Documents:** [VULNERABILITY-MANAGEMENT.md](../security/VULNERABILITY-MANAGEMENT.md); [`SECURITY.md`](../../SECURITY.md) (how to report); the SBOM ([sbom-1.24.0.cdx.json](sbom-1.24.0.cdx.json)); `.github/dependabot.yml`.
 - **Tests:** `sbom` (the server requires only Node built-ins; the committed SBOM equals a fresh run), `kernel-parity`.
 - **CI:** `test` (the kernel and schema must match their sources); Node pinned by SHA-256. `windows-exe` builds the Windows server zip from inputs pinned by hash (Node.js win-x64, WinSW, postject) and smoke-tests it; the SBOM lists them (`windows-cli`, `windows-build` tests).
-- **Status:** The server has zero runtime npm packages, and the SBOM is published. The security policy is `SECURITY.md`. **Owner-pending:** CodeQL and secret scanning (repository settings), turning on private vulnerability reporting and confirming `SECURITY.md`'s response targets, and a penetration test. SAST and DAST are not in CI.
+- **Status:** The server has zero runtime npm packages, and the SBOM is published. The security policy is `SECURITY.md`. **Owner-pending:** CodeQL and secret scanning (repository settings), confirming `SECURITY.md`'s response targets (private vulnerability reporting has been on since 2026-10-12), and a penetration test. SAST and DAST are not in CI.
 
 ### Secure development, change control and releases
 
@@ -333,7 +333,7 @@ sandbox on 2026-10-09 and 2026-10-10. These could not be, and why:
 ### Support and vulnerability reporting
 
 - **Documents:** [../SUPPORT.md](../SUPPORT.md); [`SECURITY.md`](../../SECURITY.md) (vulnerability reports: how, what to include, scope); [../market/templates/SUPPORT-SLA.md](../market/templates/SUPPORT-SLA.md) (an owner template).
-- **Status:** Channels today: the public issue tracker; for security issues, GitHub private vulnerability reporting once the owner enables it, and until then the owner-published security contact (both **owner-pending**; as of 2026-10-11 private reporting is off). **Owner-pending:** turning on private vulnerability reporting, publishing the security contact, confirming `SECURITY.md`'s response targets, a signed support agreement and contacts.
+- **Status:** Channels today: the public issue tracker; for security issues, GitHub private vulnerability reporting (on since 2026-10-12), or the owner-published security contact (**owner-pending**). **Owner-pending:** publishing the security contact, confirming `SECURITY.md`'s response targets, a signed support agreement and contacts.
 
 ## Owner-pending: what only the owner can do
 

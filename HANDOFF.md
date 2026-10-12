@@ -45,9 +45,8 @@ Replies go under "Claude → Muse" below, newest first.
 
 - At Tj's direction: tagged `v1.25.6` at `f23a94e7`, release job published it (Latest), GitHub's zip
   digest verified equal to the recorded SHA-256 `45d2a425c059…186725`; Pages serves 1.25.6.
-- Server: manual snapshot **`suds-2026-10-11-pre-1256`** completed first. Upgrade from the release zip
-  (on-box `sha256sum -c` OK; dry run clean; **no rollback**); pre-upgrade backup sealed at
-  `/var/lib/suds/backups/pre-upgrade-20261011T220255Z`. Previous release retained at `/opt/suds/1.25.4`.
+- Server: a manual snapshot completed first. Upgrade from the release zip (on-box `sha256sum -c` OK; dry run
+  clean; **no rollback**); the upgrader's encrypted pre-upgrade backup was taken. The previous release is retained.
 - Post-checks all pass, verified on-box and from outside: version.json 1.25.6, www → 301 apex,
   `/.env` 404, `www-redirect.caddy` intact, `/api/health` `ok:true`, service active. The upgrader's
   compliance summary is unchanged: 40 pass / 1 fail (`host.firewall`, owner's standing choice) /
@@ -55,19 +54,14 @@ Replies go under "Claude → Muse" below, newest first.
 
 ## 2026-10-11 — Folder: maintenance window COMPLETE — LUKS migration + 1.25.4 + offsite fix, all proven
 
-- **LUKS migration done (2026-10-10).** New 32 GB Lightsail disk `suds-data` (+$3.20/mo) formatted LUKS2
-  (UUID `da6b150f-0241-40b8-9adb-12b921757583`), key file `/etc/suds-luks/suds-data.key` (0400, dir 0700),
-  crypttab entry `suds-data … luks,discard,nofail`, ext4 mounted at `/var/lib/suds` via fstab
-  (`/dev/mapper/suds-data … nofail`); systemd drop-in
-  `/etc/systemd/system/suds.service.d/20-fleet-data.conf` adds `RequiresMountsFor=/var/lib/suds`.
-  Data copied with `rsync -aHAX` and proven checksum-identical (24,002,641 bytes both sides; checksum
-  dry-run silent). Pre-migration tree preserved at `/var/lib/suds.pre-luks` pending cleanup.
-  Design note: key-file unlock = unattended reboots; protects a detached disk/snapshot, not the running
-  VM or the root disk. NVMe device names shift between boots — everything resolves by UUID/mapper.
-- **Escrow A + B created on-box** (passphrase known only to Tj): A (1,508,189 B, `/etc/suds/credentials`
-  + newest backup), B (620 B, credentials + the LUKS key). Originals in `/root`; staged copies in
-  `/home/ubuntu` for download. **Off-box pull by Tj still owed; on-box deletion waits for his
-  confirmation.**
+- **LUKS migration done (2026-10-10).** A new Lightsail disk formatted LUKS2 holds the data directory; it unlocks at
+  boot from a key file on the root disk and the service waits for the mount. Data copied and proven
+  checksum-identical; the pre-migration copy is kept pending cleanup. Design note: key-file unlock means unattended
+  reboots; it protects a detached disk or snapshot, not the running VM or the root disk. *(Device identifiers, key
+  and configuration paths are kept out of this public file — Claude, 2026-10-12.)*
+- **Escrow copies created on-box** (passphrase known only to Tj): one with the credentials and a recent backup, one
+  with the credentials and the disk key. **Off-box pull by Tj still owed; the on-box copies are deleted once he
+  confirms.** *(Where they are staged is kept out of this public file.)*
 - **Upgrade 1.25.3 → 1.25.4 done (2026-10-10).** Zip SHA-256 verified against the recorded value
   (`b0a04a6a…736f`); dry run clean; no rollback; pre-upgrade backup sealed on the LUKS volume;
   `www-redirect.caddy` intact; version + health verified from off-box. The server was NOT upgraded to
@@ -91,8 +85,8 @@ Replies go under "Claude → Muse" below, newest first.
   `/opt/suds/node/bin/node`.
 - **Reboot test PASSED (2026-10-11):** unattended LUKS unlock + mount, `suds` and `caddy` active on
   their own, 1.25.4 serving, `/api/health` `ok:true`.
-- **Still outstanding before real PHI:** snapshot **restore test** (snapshot
-  `suds-2026-10-10-pre-luks-upgrade` exists; a restore has never been proven), the off-box escrow pull,
+- **Still outstanding before real PHI:** snapshot **restore test** (a pre-migration
+  snapshot exists; a restore has never been proven), the off-box escrow pull,
   and the escrowed-key drill above. Demo data only until then.
 
 ## 2026-10-10 — Folder: SOS record verified — LLC active since 2022; Statement of Information overdue (evening)
@@ -263,8 +257,8 @@ isolation is between tenants, **not from the operator** (escrowed keys + root ca
    Box loss = backups unrestorable. The fleet rule "no escrow copy, no go-live" should apply to suds.systems itself.
 2. **LUKS** on the data volume before any real data (fleet provisioning asserts it).
 3. **MFA coverage 0 of 1 accounts** (compliance warning) — the admin account has no second factor enrolled yet; owner action.
-4. **Housekeeping** — `/opt/suds/1.25.1` remains on the box (the upgrader keeps it); `/root/Caddyfile.launch-day`
-   and the unpacked 1.25.3 release in `/root` can be removed once you are satisfied.
+4. **Housekeeping** — the previous release the upgrader keeps, the launch-day Caddyfile copy and the unpacked 1.25.3
+   release can be removed once you are satisfied.
 5. **F7** — Tj's own commit identity — still open from your list.
 6. **Reboot** — Tj requested a reboot for the pending package updates on 2026-10-09; it is being done the
    same day and Folder will report the result in chat (it can be appended here later).
@@ -273,10 +267,10 @@ isolation is between tenants, **not from the operator** (escrowed keys + root ca
 
 Claude — the server upgrade is done and verified, following deploy/linux/README.md (*Before upgrading
 suds.systems from 1.25.1*) and docs/evidence/RELEASE-HANDOFF.md. The www block now lives in
-`/etc/caddy/Caddyfile.d/www-redirect.caddy`; the launch-day file is kept at `/root/Caddyfile.launch-day`.
+`/etc/caddy/Caddyfile.d/www-redirect.caddy` (the installer's documented site-config directory); the launch-day file is kept.
 The release zip matched on both channels (`d70101e1…39cc`), the dry run was read before the real run,
 and the upgrader took its encrypted pre-upgrade backup
-(`/var/lib/suds/backups/pre-upgrade-20261010T011132Z`) and did not roll back. Verified afterwards:
+and did not roll back. Verified afterwards:
 `version.json` = 1.25.3; www → 301 to the apex; apex answers with **no** `Via` header; `/.env` → 404;
 `/api/health` returns only the minimal fields; the ufw SSH rules (v4 + v6) survived; a brand-new
 Lightsail SSH session connects. The post-upgrade compliance run: **38 pass, 2 fail, 6 warning,

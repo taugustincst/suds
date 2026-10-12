@@ -193,8 +193,7 @@ field devices and participant codes (the scope bound to the account), the authen
 and the attack classes fixed are in [../../security/THREAT-MODEL.md](../../security/THREAT-MODEL.md).
 
 **Q. How are vulnerabilities reported and fixed?** Privately, never with details in a public issue: through GitHub
-private vulnerability reporting (**owner-pending**: to be enabled in the repository settings) or, until it is, the
-owner-published security contact (**owner-pending**), as [SECURITY.md](../../../SECURITY.md) says (how to report, what to include, what to expect and
+private vulnerability reporting (on since 2026-10-12) or the owner-published security contact (**owner-pending**), as [SECURITY.md](../../../SECURITY.md) says (how to report, what to include, what to expect and
 the scope; a programme with a signed support agreement may also use the security contact it names); fixed in a
 security release with an advisory; the latest minor line gets every fix
 ([../../SUPPORT.md](../../SUPPORT.md); [../../RELEASE.md](../../RELEASE.md), *Supported versions*).
@@ -267,8 +266,7 @@ contract ends is set by the licence agreement **[owner to decide]**. Any copy th
 
 **Q. What support is offered?**
 Today: the public issue tracker (best effort, never with client information); security reports through GitHub
-private vulnerability reporting (**owner-pending**: to be enabled in the repository settings) or, until then, the
-owner-published security contact (**owner-pending**), never a public issue with details.
+private vulnerability reporting (on since 2026-10-12) or the owner-published security contact (**owner-pending**), never a public issue with details.
 Contracted business-hours support exists only under a signed agreement; the SLA is a template with placeholders.
 No 24×7 support, no vendor on-call, no vendor-hosted service. Evidence: [../../SUPPORT.md](../../SUPPORT.md);
 [SUPPORT-SLA.md](SUPPORT-SLA.md). **[owner to complete]: hours, contacts, response targets, and the price
