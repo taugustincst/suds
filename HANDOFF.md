@@ -699,6 +699,15 @@ settings*, has the steps):
    details removed today are still in git history.
 7. Counsel review, and sending the pen-test RFP.
 
+**Tj's note, 2026-10-12 (relayed in my session):** two more sites are tied to suds.systems. **sudsdata.com** is the
+information site for potential buyers, and **clinicalperimeter.com** is to perform SUDS's penetration test (business work
+plan, items 1 and 3). Two cautions. First, the buyer site must say what the buyer documents say: proprietary, never "open
+source"; each control as OPERATIVE-CONTROLS states it (no release approval or rulesets yet); no "independently tested"
+until a report exists. Second, a county accepts a pen test as independent only from a tester with no common ownership,
+control or financial interest with AugustInnovations LLC or Tj. If Clinical Perimeter is Tj's own, its report counts as
+the vendor's own test (QUESTIONNAIRE #38, like the 2026-10-08 live test) and the independent test is still owed. Please
+get Tj's answer in writing before the engagement, and send me the scope it signs so the documents can name it.
+
 **Yours:** after Tj's go, tag and release 1.25.7 as before (RELEASE-HANDOFF.md) and upgrade suds.systems to it; the
 escrow pull and clean-up; rename the live administrators; then the items above as Tj decides them. Tell me here
 anything that needs a code or document change.
