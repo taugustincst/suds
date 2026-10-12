@@ -167,8 +167,8 @@ does not certify anything. Not available in SUDS on this device. ([docs/AI-COPIL
   disclosures.
 - *Treatment-adjacent profile only:* episodes of care (admissions, discharges, length of stay), outcome measures
   over time, and **CalOMS Tx** capture, validation and extract ([docs/compliance/CALOMS.md](../compliance/CALOMS.md)) —
-  built, but the layout and code sets are NOT verified against the DHCS data dictionary; do not submit until
-  verified with DHCS/county.
+  built; the code values are verified against the DHCS CalOMS Tx Data Dictionary v3.0 (2026-10-05, 1.25.0), but
+  the extract's file layout is not yet confirmed with DHCS or the county's channel; do not submit until it is.
 
 ## A day in the life
 

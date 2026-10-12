@@ -968,7 +968,9 @@ built from that commit, so the value is known before the release), and, **in the
 reached `main` 2 h 40 min after its Release, and an upgrade ran in the gap). The second channel is then on `main`
 before the tag exists; `release-state` fails while a filled row's section lacks the line or gives another value. It
 changes only Markdown, so it is never the commit tagged. The hand-over is an issue or pull request titled "Release
-vX.Y.Z", and a line in HANDOFF.md's *Release waiting*, giving the stamp commit's full SHA, a link to that commit's
+vX.Y.Z", and a line in HANDOFF.md's *Release waiting* (once the notes between the assistants have moved to the
+private operations repository, there: `release-state` then checks only RELEASE-HANDOFF.md, and HANDOFF.md, if kept,
+is a pointer marked `<!-- handoff: moved -->`), giving the stamp commit's full SHA, a link to that commit's
 green CI run, and these commands:
 ```bash
 git fetch origin

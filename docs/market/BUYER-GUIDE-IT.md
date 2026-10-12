@@ -283,7 +283,7 @@ it from the same evidence and will not answer "yes" to a control that is not in 
 | Need | How |
 | --- | --- |
 | County EHR (SmartCare, Netsmart…) | SUDS sits beside the EHR as the Part 2-controlled record of outreach, navigation and referral work, not in place of it. Encounter hand-off export of services the EHR needs to record or bill ([docs/SCOPE.md](../SCOPE.md)); FHIR R4 read API and bulk export with Part 2 consent enforcement ([docs/integration/FHIR.md](../integration/FHIR.md)) |
-| State reporting | CalOMS Tx extract for the county's submission ([docs/compliance/CALOMS.md](../compliance/CALOMS.md)); built, but the layout and code sets are NOT verified against the DHCS data dictionary; do not submit until verified with DHCS/county |
+| State reporting | CalOMS Tx extract for the county's submission ([docs/compliance/CALOMS.md](../compliance/CALOMS.md)); built; the code values are verified against the DHCS CalOMS Tx Data Dictionary v3.0 (2026-10-05, 1.25.0), but the extract's file layout is not yet confirmed with DHCS or the county's channel; do not submit until it is |
 | Identity | OIDC single sign-on |
 | Existing spreadsheets | Excel/CSV import with templates and validation ([docs/USER_GUIDE.md](../USER_GUIDE.md), *Importing spreadsheets*) |
 | Field notes | Pocket AI and OneNote import through a review queue; write-only intake API keys ([docs/IMPORTS.md](../IMPORTS.md)) |
