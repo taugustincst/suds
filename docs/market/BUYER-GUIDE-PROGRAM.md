@@ -10,7 +10,8 @@ what a day looks like, and what we need from you. The companion guide for your I
 
 **Is SUDS right for your programme?** Yes, if your work is outreach contacts, naloxone and supply
 distribution and grant reporting tracked today in spreadsheets, paper logs or a shared drive — **and** you have
-an IT partner (or a county sponsor) who can run a small server; SUDS is not a hosted service yet. No, if you need
+an IT partner (or a county sponsor) who can run a small server, or you choose vendor hosting (offered from October
+2026, included in the annual plans; no customer is hosted yet: [HOSTING.md](HOSTING.md)). No, if you need
 a system to bill DMC, prescribe, or be your treatment medical record — keep that in your EHR
 ([POSITIONING.md](POSITIONING.md), *The boundary*). The decision tree in [PILOT-KIT.md](PILOT-KIT.md) settles the
 grey cases (Part 2 records, CalOMS, DMC).
@@ -215,4 +216,5 @@ actually took ([PILOT-KIT.md](PILOT-KIT.md), section 5).
 1. Read [POSITIONING.md](POSITIONING.md) and share [BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md) with IT.
 2. Run the eligibility check in [PILOT-KIT.md](PILOT-KIT.md).
 3. Estimate value with [templates/ROI-CALCULATOR.md](templates/ROI-CALCULATOR.md).
-4. Agree pilot terms ([templates/PRICING.md](templates/PRICING.md)) and a purchasing route ([PROCUREMENT.md](PROCUREMENT.md)).
+4. Agree pilot terms (the published 90-day pilot, $14,500 flat and credited toward the first annual plan:
+   [`public/procurement.json`](../../public/procurement.json)) and a purchasing route ([PROCUREMENT.md](PROCUREMENT.md)).

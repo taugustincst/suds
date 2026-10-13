@@ -94,8 +94,10 @@ does not hold.
 
 3. DEPLOYMENT AND HOSTING
    Self-hosted by the programme's IT partner or county-hosted (single server or container; Node.js 22,
-   no third-party runtime packages). Vendor-hosted single-tenant: [planned, not offered / available
-   from ___ once docs/market/HOSTING.md is complete]. See docs/market/HOSTING.md.
+   no third-party runtime packages). Vendor-hosted: offered from October 2026 by AugustInnovations LLC,
+   one isolated instance per customer with its own database and encryption keys (never a shared
+   database), included in the Program, Multi-Site and County-Wide plans; no customer is hosted yet and
+   the hosting fleet's first real drill has not been run. See docs/market/HOSTING.md.
 
 4. SECURITY
    Field-level AES-256-GCM encryption of client identifiers and free text (coded fields on the
@@ -127,18 +129,23 @@ does not hold.
 8. BACKUP, RECOVERY AND AVAILABILITY
    Scheduled encrypted backups with off-host copy; restore from the UI; DR drill with measured
    RTO/RPO ([docs/security/BACKUP-AND-DR.md](../security/BACKUP-AND-DR.md)). Single-instance architecture per programme (no clustering), stated as
-   a design choice. Uptime is the operator's (programme IT partner or county); the vendor makes no
-   uptime commitment unless a hosted tier is contracted (templates/SUPPORT-SLA.md).
+   a design choice. Uptime is the operator's (programme IT partner or county, or the vendor for a
+   vendor-hosted programme). The vendor makes no uptime commitment for an office server on customer
+   infrastructure, and publishes none for hosted plans (templates/SUPPORT-SLA.md).
 
 9. SUPPORT AND IMPLEMENTATION
    Implementation: setup, spreadsheet import, configuration, training (docs/market/PILOT-KIT.md).
-   Support: today, the public issue tracker (docs/SUPPORT.md). Security reports: GitHub private vulnerability
+   Support: on a paid plan, email support with a response within 2 business days; otherwise the public
+   issue tracker (docs/SUPPORT.md). Security reports: GitHub private vulnerability
    reporting (on since 2026-10-12) or the owner-published security contact [owner to complete: the security contact address — owner-pending]; never a public issue with details (SECURITY.md);
    contracted business-hours support: [owner to complete from docs/market/templates/SUPPORT-SLA.md].
    Licence: SUDS Proprietary Licence (LICENSE); production licence agreement [owner to complete]; source visible; full data export on exit.
 
 10. PRICING
-    [Per user per month, volume-tiered; implementation fee; pilot terms] — see templates/PRICING.md.
+    Published in public/procurement.json (USD, effective October 2026): 90-day pilot $14,500 flat
+    (credited in full toward the first annual plan); Program $24,500 a year; Multi-Site $49,500 a
+    year; County-Wide $98,000 a year. Hosting on the vendor's fleet is included in the annual plans;
+    prices exclude customer infrastructure for a self-hosted office server.
 ```
 
 ## Contract exhibits the county will expect
@@ -152,7 +159,7 @@ does not hold.
 | **DGS IT general provisions / cloud computing SaaS special provisions** | Counties often borrow the state's terms; CMAS contracts include them. Read the current versions from DGS; they cover security, data location, breach notice, termination and transition. | DGS website (confirm current versions) |
 | **Accessibility (ADA / Section 508 / Gov. Code §7405 & §11135)** | State and many county contracts require conformance to WCAG 2.x AA / Section 508 and remediation of reported barriers. Offer an **accessibility warranty**: conformance as stated in the ACR, and remediation of confirmed barriers within an agreed time. | [docs/accessibility/ACR-WCAG21.md](../accessibility/ACR-WCAG21.md) |
 | **Insurance** | Commercial general liability, professional / technology errors and omissions, **cyber liability** (privacy breach, notification costs), workers' compensation, auto if on-site. County sets the limits; certificates naming the county as additional insured. | Vendor to-do |
-| **Support SLA** | Business-hours support, severity levels, response targets; hosted-tier terms only if that tier is offered. | [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md) |
+| **Support SLA** | Business-hours support, severity levels, response targets (paid plans: email, a response within 2 business days); hosted-service terms for a vendor-hosted customer, with no uptime commitment published. | [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md) |
 | **Pricing schedule** | Tiers, implementation fee, pilot terms, price holds. | [templates/PRICING.md](templates/PRICING.md) |
 | **Exit / transition** | Data return format and timing, deletion certificate, transition assistance. | [PILOT-KIT.md](PILOT-KIT.md), section 6; DPA |
 | **County forms** | W-9 / Payee Data Record, conflict-of-interest, anti-discrimination, debarment, Iran/Darfur certifications as applicable. | County purchasing |
@@ -168,7 +175,7 @@ Owner: **vendor / company**. These are organisational tasks the software cannot 
 | 3 | **Insurance**: general liability, tech E&O, cyber liability (common county asks are $1M–$5M per claim; confirm) | Contract exhibit; also protects the company | Before first paid pilot |
 | 4 | **Signed-off BAA/QSOA and DPA templates**, reviewed by the vendor's own counsel | Every PHI contract needs them | Before first paid pilot |
 | 5 | **Support SLA** in place: support mailbox, business-hours response targets the vendor can meet, named escalation; template reviewed by counsel ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)) | Contract exhibit | Before first paid pilot |
-| 6 | **Vendor-hosted environment** — the full checklist in [HOSTING.md](HOSTING.md) (US region, cloud BAA, one instance per customer, offsite backups, monitoring, on-call, insurance, pen test) | CBOs without IT partners | After three pilots have measured support hours |
+| 6 | **Vendor-hosted environment** — offered from October 2026 (owner decision of 2026-10-12) with no customer yet; the open items of the checklist in [HOSTING.md](HOSTING.md) (the fleet's first real drill, offsite backups that leave the zone, monitoring, on-call, insurance, pen test) | CBOs without IT partners | The drill before the first hosted customer; the rest as the checklist says |
 | 7 | **Independent penetration test** of the application and the hosted environment, findings remediated, letter of attestation | County IT gate | Phase 1 (months 2–4) |
 | 8 | **SOC 2 Type 1** (from the readiness assessment in `docs/security/`), scoped to the hosted service | County IT gate | Months 4–8 |
 | 9 | **SOC 2 Type 2** (observation period typically 3–12 months after Type 1) | Larger counties, CalMHSA | Months 10–18 |

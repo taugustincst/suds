@@ -20,7 +20,7 @@ model). Each CBO in it still runs sections 1–7. The county's side of it (the c
 | --- | --- |
 | **Programme** | One non-billing programme: outreach, harm reduction, naloxone / supply distribution, prevention-funded outreach or navigation. A SABG primary-prevention provider may pilot its group and community events (recorded and summarised since 1.17.0), but SUDS produces no PPSDS file: it keeps keying PPSDS itself, from the prevention activity summary. Programme profile *Harm reduction & outreach* unless the programme needs the clinical modules. |
 | **Users** | N = 5–15: navigators / outreach workers, their supervisor, a programme lead (super-user), one finance user if budgets are in scope, one administrator. |
-| **Deployment** | Self-hosted by the programme's IT partner, or hosted by a sponsoring county ([HOSTING.md](HOSTING.md)). Vendor hosting is not offered. Local mode off unless a documented field need is agreed; where it is, outreach phones are **field devices** (released in 1.21.0: only the worker's own recent caseload, without contact, intake, legal or clinical details; from 1.22.0 every device of a field worker's account is held to it, and only an administrator's *Keep everything* keeps a device whole; from 1.23.0 a worker asks for one from the app, *Set up this phone for the field*, and an administrator approves it; [../PLATFORM.md](../PLATFORM.md), *Field devices*), and a harm-reduction programme may turn on *participant codes first*. Without local mode, from 1.23.0 an outreach phone on the office app keeps a contact that names nobody while there is no signal and sends it later (no PHI in the browser). |
+| **Deployment** | Self-hosted by the programme's IT partner, hosted by a sponsoring county, or vendor-hosted ([HOSTING.md](HOSTING.md): offered from October 2026; no customer is hosted yet, and the fleet's first real drill is still to run). Local mode off unless a documented field need is agreed; where it is, outreach phones are **field devices** (released in 1.21.0: only the worker's own recent caseload, without contact, intake, legal or clinical details; from 1.22.0 every device of a field worker's account is held to it, and only an administrator's *Keep everything* keeps a device whole; from 1.23.0 a worker asks for one from the app, *Set up this phone for the field*, and an administrator approves it; [../PLATFORM.md](../PLATFORM.md), *Field devices*), and a harm-reduction programme may turn on *participant codes first*. Without local mode, from 1.23.0 an outreach phone on the office app keeps a contact that names nobody while there is no signal and sends it later (no PHI in the browser). |
 | **Data** | The pilot group's real caseload, supplies, resources, grants and budget. Parallel run with the existing spreadsheets for the first 30 days, then SUDS as the working record if the day-30 check-in agrees. |
 | **Out of scope** | DMC billing, prescribing, the treatment medical record, other programmes, integrations beyond file exports (FHIR and the EHR hand-off can be tried with county IT, not put into production, unless agreed). |
 | **Length** | 90 days from go-live, plus 2–3 weeks of setup before it. |
@@ -196,7 +196,8 @@ The programme (or the county, where it is the data owner) owns its data. If the 
    recorded) and per-table CSV; FHIR bulk export where enabled. The vendor confirms completeness against
    table row counts.
 2. **Database and keys** stay with whoever hosted the pilot (the programme's IT partner or the county); they
-   never left.
+   never left. For a vendor-hosted pilot the vendor delivers the export, then tears the instance down (its disks and
+   escrowed keys) once the programme confirms it, as the agreement says.
 3. **Deletion** of any copy the vendor held for support: all copies, including backups, deleted within 30
    days of confirmed receipt; written certificate of deletion ([templates/DPA-DRAFT.md](templates/DPA-DRAFT.md)).
 4. **Records retention**: the programme keeps what its retention rules require; SUDS's own retention clock
@@ -212,7 +213,7 @@ Copy and fill at day 90.
 PILOT EVALUATION — SUDS
 Programme:                         County / CBO:
 Pilot dates:                       Users (N):
-Deployment: [ ] IT-partner self-hosted  [ ] county-hosted
+Deployment: [ ] IT-partner self-hosted  [ ] county-hosted  [ ] vendor-hosted
 Eligibility outcome: [ ] eligible  [ ] with hand-off  [ ] with Part 2 controls  [ ] CalOMS kept outside SUDS
 
 METRICS                         Baseline    Day 30    Day 60    Day 90    Target    Met?
@@ -259,7 +260,7 @@ before it is proposed.
 | --- | --- |
 | **Sponsor** | A county behavioural-health or public-health department that funds harm-reduction or outreach CBOs (settlement, SOR / NDP, SABG prevention-funded outreach) |
 | **CBOs** | 2–3, each passing the eligibility check (section 2) on its own; at least one with a settlement-funded programme |
-| **Hosting** | County-hosted (one server per CBO, on county infrastructure) or each CBO's IT partner. Vendor hosting is not offered |
+| **Hosting** | County-hosted (one server per CBO, on county infrastructure), each CBO's IT partner, or vendor-hosted (one isolated instance per CBO; offered from October 2026, no customer hosted yet: [HOSTING.md](HOSTING.md)) |
 | **Length** | 2–4 weeks of county discovery, then each CBO's 90-day pilot, staggered by 2–4 weeks so the vendor is not deploying three at once |
 | **Paid work (FDE packages)** | Discovery (county and each CBO), deployment, data migration, training, reporting setup against each funder's template, county programme management ([PRICING-OPTIONS.md](PRICING-OPTIONS.md), model D) |
 | **Out of scope** | Everything section 1 excludes; the AI copilot (1.17.0) for any CBO that has not recorded its BAA and Part 2 QSOA with the AI provider under Settings → AI copilot, after county counsel has reviewed its data flow (where a CBO has, the copilot is in scope for that CBO and section 5's copilot arm applies; never for SUD counseling notes, never on SUDS on this device); secure referral links (1.17.0; off by default) unless counsel has reviewed the link design as built and the pilot server is reachable from the internet; pooled benchmarks across CBOs, which are not built; the county view (released in 1.18.0) is in scope only on a build that has it |

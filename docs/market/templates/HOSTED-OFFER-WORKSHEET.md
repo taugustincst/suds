@@ -1,17 +1,22 @@
 # Hosted offer: cost and price worksheet
 
 > **DRAFT — a worksheet for the owner; every `[INPUT]` is to be filled from real quotes and bills, not from this
-> page.** The hosted service is **planned, not offered** ([../HOSTING.md](../HOSTING.md)): nothing here is a price or an
-> offer. Item 8 of [../BUSINESS-WORKPLAN.md](../BUSINESS-WORKPLAN.md). The planning ranges in HOSTING.md's *Unit-cost
-> model* are assumptions; this worksheet replaces them with the owner's numbers.
+> page.** The hosted service is **offered from October 2026** (owner decision of 2026-10-12), with no customer hosted
+> yet ([../HOSTING.md](../HOSTING.md)); its price is the published plans, not this page. This worksheet checks the
+> published prices against real costs: nothing here is a price or an offer. Item 8 of
+> [../BUSINESS-WORKPLAN.md](../BUSINESS-WORKPLAN.md). The planning ranges in HOSTING.md's *Unit-cost model* are
+> assumptions; this worksheet replaces them with the owner's numbers.
 
 **What is already decided or built.** The operator is AugustInnovations LLC (owner decision of 2026-10-09; see the
-entity question, workplan item 0). SUDS is **multi-tenant**: the model is **Option A: one SUDS Server per customer** on AWS Lightsail with the
-fleet tooling in [`deploy/fleet/`](../../../deploy/fleet/README.md): its own VM, static IP, a LUKS-encrypted data
-disk, an "offsite" disk and an anchor disk, keys escrowed to the owner. The tooling is tested against stand-ins only;
-its first real run is the drill tenant, which awaits the owner's go. The published prices are for **self-hosted**
-plans for self-hosted use and exclude customer infrastructure; hosted tiers include hosting on the multi-tenant fleet ([`public/procurement.json`](../../../public/procurement.json); fees reworked 2026-10-12): 90-day pilot
-$14,500 flat (credited), Program $24,500 a year, Multi-site $49,500 a year, County-wide $98,000 a year.
+entity question, workplan item 0). SUDS is offered as a **multi-tenant fleet** of isolated instances: the model is
+**Option A: one SUDS Server per customer** on AWS Lightsail with the fleet tooling in
+[`deploy/fleet/`](../../../deploy/fleet/README.md): its own VM, static IP, database and keys, a LUKS-encrypted data
+disk, an "offsite" disk and an anchor disk, keys escrowed to the owner; never a shared database. The tooling is tested
+against stand-ins only; its first real run is the drill tenant, which awaits the owner's go. The published prices
+(owner decision of 2026-10-12; [`public/procurement.json`](../../../public/procurement.json)) are a 90-day pilot at
+$14,500 flat (credited in full), Program at $24,500 a year, Multi-site at $49,500 a year and County-wide at $98,000 a
+year. Hosting on the fleet is included in the annual plans; for a self-hosted office server the same prices exclude
+the customer's infrastructure.
 
 ## 1. Per-customer infrastructure (monthly)
 
@@ -63,13 +68,16 @@ Fill from the AWS Lightsail price list for the region (`us-west-2` today) and, a
 | Fixed costs per customer per year (section 3 ÷ customers) | `[CALC]` | `[CALC]` | `[CALC]` |
 | **Cost per customer per year** | `[CALC]` | `[CALC]` | `[CALC]` |
 | Target margin `[%]` | `[CALC]` | `[CALC]` | `[CALC]` |
-| **Price per customer per year (hosting on top of, or including, the licence plan)** | `[CALC]` | `[CALC]` | `[CALC]` |
+| **Lowest price that covers it** | `[CALC]` | `[CALC]` | `[CALC]` |
+| Published price of the customer's plan (Program $24,500, Multi-site $49,500, County-wide $98,000 a year), hosting included | `[INPUT]` | `[INPUT]` | `[INPUT]` |
 
-## 5. Questions for Tj (each a DECISION FOR TJ)
+## 5. Questions for the owner
 
-1. **Structure.** Is hosting an add-on to the published Program and Multi-site plans, or a separate all-in hosted plan?
-   Does the pilot tier include hosting?
-2. **Price.** The annual hosted price per programme (and per site or per account above a limit), from section 4.
+Decided on 2026-10-12: **structure and price.** Hosting is included in the published Program, Multi-site and
+County-wide plans, not an add-on, and has no separate price. Still open, each the owner's decision:
+
+1. **The pilot.** Whether a pilot is hosted on the fleet: the published pilot text does not say.
+2. **The check.** Whether section 4 shows the published prices cover the costs, at the number of customers expected.
 3. **Minimum customers.** How many committed customers before the fixed costs (insurance, on-call, pen test) are taken
    on?
 4. **On-call promise.** Business hours only (as the support template says today), or after-hours for an added fee, and
@@ -82,7 +90,7 @@ Fill from the AWS Lightsail price list for the region (`us-west-2` today) and, a
 
 ## 6. Recording the result
 
-When the owner decides: the hosted tier's text in `pricing` in `public/procurement.json` (and its static text in
-`public/procurement.html`), [../HOSTING.md](../HOSTING.md) (status line, checklist, unit-cost model), QUESTIONNAIRE #2
-and [PRICING.md](PRICING.md). The filled worksheet with real quotes stays outside the repository; only the published
-price comes in.
+The 2026-10-12 decision is recorded in `pricing` in `public/procurement.json` (and its static text in
+`public/procurement.html`), [../HOSTING.md](../HOSTING.md) (status line, checklist, unit-cost model) and
+QUESTIONNAIRE #2. A later change goes to the same places. The filled worksheet with real quotes stays outside the
+repository; only the published price comes in.

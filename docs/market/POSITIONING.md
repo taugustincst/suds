@@ -69,13 +69,16 @@ event record in SUDS and key PPSDS from the summary; it cannot submit from SUDS 
 | Order | Buyer | Why them |
 | --- | --- | --- |
 | **1** | **Small and mid-sized harm-reduction and prevention CBOs** (roughly 3–40 staff) funded by **opioid-settlement** allocations, **SOR** / the **Naloxone Distribution Project**, or **SABG prevention** funds spent on outreach and distribution (not primary-prevention reporting) — running today on spreadsheets, shared drives and paper sign-out sheets | The pain (quarter-end reporting, supply counts, anonymous contacts) is theirs daily; the buyer is the programme director; the purchase is small enough for a programme budget |
-| **2** | **Their IT partner** (a managed-IT provider, a fiscal sponsor's IT, or a staff member who runs servers) | Today SUDS is self-hosted, so every CBO customer needs one; they are the gate, not the champion |
+| **2** | **Their IT partner** (a managed-IT provider, a fiscal sponsor's IT, or a staff member who runs servers) | A self-hosted CBO customer needs one; they are the gate, not the champion. A CBO that chooses vendor hosting (offered from October 2026) does not |
 | **3** | **Counties, as sponsors of CBO pilots** — a county SUD / behavioral-health or public-health department that funds CBOs and wants consistent, privacy-safe outcome data from them | The county holds the money (settlement allocations, SABG, county funds) and needs outcome evidence from its grantees: "sell to the money". A county can host its CBOs' instances or fund their implementation, and is the natural steward of any pooled outcome data ([DATA-NETWORK.md](DATA-NETWORK.md)). The first county sale is a sponsored pilot of 2–3 CBOs with paid implementation ([PILOT-KIT.md](PILOT-KIT.md)); selling SUDS *to* a county as a department system is a later, slower sale (procurement 6–24+ months) |
 
-**Hosting, honestly.** SUDS is not a hosted service today. A CBO runs it through its **IT partner** (a VM, an
-office server or a container), or a **sponsoring county hosts it**. A **vendor-hosted single-tenant tier** is
-planned and will not be offered until the checklist in [HOSTING.md](HOSTING.md) is done. A CBO with neither an
-IT partner nor a county sponsor is **not yet a fit** — say so rather than sell to it.
+**Hosting, honestly.** A CBO runs SUDS through its **IT partner** (a VM, an office server or a container), or a
+**sponsoring county hosts it**, or, from October 2026, **the vendor hosts it**: AugustInnovations LLC runs a
+multi-tenant fleet in which each customer has its own isolated instance, database and encryption keys, included in
+the Program, Multi-Site and County-Wide plans (owner decision of 2026-10-12). No customer is hosted yet: the fleet
+tooling has been tested only against stand-ins, its first real drill has not been run, no uptime commitment is
+published, insurance is not bound and the agreements are not yet reviewed by counsel ([HOSTING.md](HOSTING.md)). Say
+all of that to a CBO with neither an IT partner nor a county sponsor before it chooses vendor hosting.
 
 ## Core, and optional modules
 
@@ -246,9 +249,10 @@ Whether that internal-use limit on SUD counseling notes meets the programme's ow
 question for its counsel ([docs/compliance/PART2.md](../compliance/PART2.md)).
 
 **"Who runs the server?"**
-Today, your IT partner or a sponsoring county — not the vendor. SUDS makes that job small (one process, built-in
-backups, a restore drill, a health endpoint), but it is a real job; [HOSTING.md](HOSTING.md) lists it. A
-vendor-hosted tier is planned, not offered.
+Your IT partner or a sponsoring county, or, from October 2026, the vendor. SUDS makes that job small (one process,
+built-in backups, a restore drill, a health endpoint), but it is a real job; [HOSTING.md](HOSTING.md) lists it.
+Vendor hosting is offered (one isolated instance per customer, in business hours, with no uptime commitment
+published), but no customer is hosted yet and the fleet's first real drill is still to run.
 
 **"A single server is a single point of failure."**
 True, and stated openly. Availability comes from encrypted, scheduled, off-host backups, a tested restore and a
@@ -284,12 +288,13 @@ support is business-hours ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md))
 **"The source is public — why pay?"**
 Being able to see the code is not a licence to use it. SUDS on this device is free at its official address, real
 records included; the office server may be evaluated free for 90 days with fictional data, and production use of
-it needs a licence agreement ([LICENSE](../../LICENSE); the introductory prices are published in `public/procurement.json`). Programmes and
-counties also pay, if they choose, for the people around it:
-implementation delivered alongside your team (discovery, deployment, data migration, training, reporting setup),
-business-hours support and (when offered) hosting. The current hypothesis is flat annual amounts per programme
-([templates/PRICING.md](templates/PRICING.md)); other models (per active user, county site licence) are options
-the owner has not decided ([PRICING-OPTIONS.md](PRICING-OPTIONS.md)). Nothing is a quote.
+it needs a licence agreement ([LICENSE](../../LICENSE)). The prices are published in `public/procurement.json`
+(effective October 2026): a 90-day pilot at $14,500 flat (credited in full toward the first annual plan), Program at
+$24,500 a year, Multi-Site at $49,500 a year and County-Wide at $98,000 a year. They pay for the people around the
+code: onboarding, the BAA and QSOA, updates, email support and, on the annual plans, hosting on the vendor's fleet;
+they exclude the customer's own infrastructure for a self-hosted office server. Final terms are set in a licence
+agreement signed by AugustInnovations LLC; [templates/PRICING.md](templates/PRICING.md) and
+[PRICING-OPTIONS.md](PRICING-OPTIONS.md) are superseded records of how pricing was worked out.
 
 **"Will an AI read our clients' records?"**
 Only if you turn it on. An AI documentation copilot is available from 1.17.0 ([docs/AI-COPILOT.md](../AI-COPILOT.md)). It runs only from an

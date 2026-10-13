@@ -11,7 +11,8 @@
 > Confidentiality of Medical Information Act (Civil Code 56 et seq.) and any state, county or grant terms.
 >
 > They are written for **the hosted service**, where AugustInnovations LLC operates the customer's SUDS instance and
-> signs both agreements (owner decision of 2026-10-09; the hosted service is not offered yet: [../HOSTING.md](../HOSTING.md)),
+> signs both agreements (owner decision of 2026-10-09; the hosted service is offered from October 2026, owner decision
+> of 2026-10-12, with no customer hosted yet and these drafts not yet reviewed by counsel: [../HOSTING.md](../HOSTING.md)),
 > and they also serve where the vendor's staff can reach a customer-hosted production system or its backups for
 > support. A customer-hosted install the vendor never reaches may not need either; counsel decides. They are Exhibits B
 > and C of the [licence and subscription agreement](LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md).

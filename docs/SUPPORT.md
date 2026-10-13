@@ -13,7 +13,7 @@ The same channels are named in:
 | Who | For what | How |
 | --- | --- | --- |
 | **1. Your programme's SUDS administrator** | Accounts, passwords, two-step verification, permissions, settings, lists, anything about your own records | In person. The programme contact your county or programme set up is shown at the foot of the SUDS sign-in page and on its Accessibility page |
-| **2. Whoever runs your server**: your IT partner or county IT | The server being down, backups and restores, certificates, sign-in through your identity provider, upgrades, a lost or stolen device | Your programme's own IT arrangement. For an office server, they run it, not the SUDS project ([market/HOSTING.md](market/HOSTING.md)) |
+| **2. Whoever runs your server**: your IT partner or county IT, or, for a vendor-hosted programme, AugustInnovations LLC | The server being down, backups and restores, certificates, sign-in through your identity provider, upgrades, a lost or stolen device | Your programme's own IT arrangement for a self-hosted office server. For a vendor-hosted one (offered from October 2026; no customer is hosted yet), the vendor runs it, by email in business hours ([market/HOSTING.md](market/HOSTING.md)) |
 | **3. The SUDS project's public issue tracker** | Defects, questions about how SUDS works, accessibility barriers (title them "Accessibility:"), a publication period SUDS refused, suggestions | <https://github.com/taugustincst/suds/issues>. **Never include client information**: no names, dates of birth, notes or screenshots of records. Give the version (shown in the footer), the page, what you did and what happened. Anyone can read the tracker. If you cannot use GitHub, ask your administrator to file it for you |
 | **4. Security vulnerabilities**: privately, never in a public issue | A way to read or change data you should not be able to, bypass sign-in, or tamper with the audit log or a release | GitHub private vulnerability reporting on the repository (on since 2026-10-12: **Security → Report a vulnerability**), or the maintainer contact in your support agreement. Without a GitHub account, the owner-published security contact (**owner-pending**); never a public issue with details. How to report, what to include and the scope are in [SECURITY.md](../SECURITY.md); see also [security/VULNERABILITY-MANAGEMENT.md](security/VULNERABILITY-MANAGEMENT.md). Never send real client information |
 
@@ -24,13 +24,13 @@ The same channels are named in:
   - **A security release waits for the owner to tag it.** No backup releaser is named today.
   - This is a best-effort commitment from a project with one maintainer, not a contractual SLA.
 - **Everything else in the issue tracker** is best effort. There are no response-time commitments.
-- **Contracted support** exists only under a signed agreement. [market/templates/SUPPORT-SLA.md](market/templates/SUPPORT-SLA.md) is a **template for the owner and counsel to complete**: its hours, channels, contacts and response targets are placeholders until an agreement fills them in. No such agreement exists today.
+- **Contracted support** exists only under a signed agreement. The published paid plans include email support with a response within 2 business days (`public/procurement.json`). [market/templates/SUPPORT-SLA.md](market/templates/SUPPORT-SLA.md) is a **template for the owner and counsel to complete**: its hours, channels, contacts and other targets are placeholders until an agreement fills them in. No such agreement exists today.
 
 ## What is not offered
 
-- **No 24×7 support, no phone line and no vendor on-call.** Out of hours, the operator restores service with the runbooks in [security/BACKUP-AND-DR.md](security/BACKUP-AND-DR.md) and [DEPLOYMENT.md](DEPLOYMENT.md).
-- **No vendor-hosted service** ([market/HOSTING.md](market/HOSTING.md): planned, not offered).
-- **No vendor access to your server or your data** unless you grant it. Granting it needs a BAA and a Part 2 QSOA first ([security/QUESTIONNAIRE.md](security/QUESTIONNAIRE.md) #4).
+- **No 24×7 support, no phone line and no vendor on-call.** Out of hours, the operator restores service with the runbooks in [security/BACKUP-AND-DR.md](security/BACKUP-AND-DR.md) and [DEPLOYMENT.md](DEPLOYMENT.md). For a vendor-hosted programme the operator is the vendor, which is one person and works business hours.
+- **No uptime commitment**: none for office servers on customer infrastructure, and none is published for hosted plans. Vendor hosting itself is offered from October 2026 (one isolated instance per customer), but no customer is hosted yet and the fleet's first real drill has not been run ([market/HOSTING.md](market/HOSTING.md)).
+- **No vendor access to a self-hosted server or its data** unless you grant it. Granting it needs a BAA and a Part 2 QSOA first; a vendor-hosted programme signs both before its first real record ([security/QUESTIONNAIRE.md](security/QUESTIONNAIRE.md) #4).
 
 ## Staying informed
 

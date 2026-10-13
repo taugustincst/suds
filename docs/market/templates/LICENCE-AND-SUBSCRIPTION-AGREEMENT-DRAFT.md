@@ -10,7 +10,7 @@
 >
 > Fees and multi-tenant hosted-service wording reworked 2026-10-12 at the owner's direction (Pilot $14,500, Program $24,500/yr, Multi-site $49,500/yr, County-wide $98,000/yr, hosting included).
 >
-> It is written to match what is published today: the licence ([`LICENSE`](../../../LICENSE)), the introductory
+> It is written to match what is published today: the licence ([`LICENSE`](../../../LICENSE)), the
 > tiers and support terms on the procurement page ([`public/procurement.json`](../../../public/procurement.json)),
 > the support template ([SUPPORT-SLA.md](SUPPORT-SLA.md)) and the hosting page ([../HOSTING.md](../HOSTING.md)). Where
 > they change, change this text with them.
@@ -73,11 +73,13 @@ this device, free, at its official address.
 
 ## 3. Hosted Service
 
-> *Drafting note: on `[[date of this draft: 2026-10-10]]` the Hosted Service is **not offered** (../HOSTING.md, "Before
-> the vendor-hosted tier can be offered"). Licensor has decided that it, AugustInnovations LLC, will be the operator and
-> will sign the BAAs and QSOAs; the provisioning tooling exists (`deploy/fleet/`) but has not yet been run against real
-> infrastructure, the hosted price is not set, and insurance, on-call and counsel review are not in place. Delete this
-> section from any agreement signed before the Hosted Service is offered.*
+> *Drafting note: on `[[date of this draft: 2026-10-12]]` the Hosted Service is **offered** (owner decision of
+> 2026-10-12), with its price included in the Plans (section 4.1), and no customer is hosted yet (../HOSTING.md,
+> "What the hosted service has, and what it still lacks"). Licensor, AugustInnovations LLC, is the operator and signs
+> the BAAs and QSOAs. The provisioning tooling (`deploy/fleet/`) has not yet been run against real infrastructure (its
+> drill tenant is still to run); no uptime commitment is published; insurance, after-hours on-call and counsel review
+> are not in place. Tell Customer which of these are still open when it signs. Delete this section from an Office
+> Server Licence.*
 
 3.1 **The service.** The Hosted Service is multi-tenant: Licensor serves many customers from one operated fleet.
 Licensor will provide Customer with an instance of the Software that is Customer's alone: a virtual machine
@@ -104,7 +106,7 @@ and second factors secure, and tells Licensor promptly of any suspected compromi
 
 ## 4. Plans, the pilot and fees
 
-4.1 **Plans.** The Plans and their introductory prices, as published by Licensor on `[[date]]` (USD; excluding
+4.1 **Plans.** The Plans and their prices, as published by Licensor on `[[date]]` (USD; excluding
 Customer's own infrastructure for an Office Server Licence):
 
 | Plan | Price | Scope |
@@ -113,7 +115,7 @@ Customer's own infrastructure for an Office Server Licence):
 | **Program** | $24,500 a year | A single site, up to 30 staff accounts. The Business Associate Agreement and the Qualified Service Organization Agreement, hosting on Licensor's multi-tenant fleet, all updates and email support included |
 | **Multi-site** | $49,500 a year | Up to 5 sites and 150 staff accounts. Everything in Program, plus onboarding assistance |
 | **County-wide** | $98,000 a year | Unlimited sites and staff within one county. Everything in Multi-site, plus onboarding, training and a named support contact |
-| **Hosted Service** (if offered) | Included in the Plan | Section 3. SUDS is multi-tenant: each Customer's instance is isolated, with its own database and encryption keys |
+| **Hosted Service** | Included in the Program, Multi-site and County-wide Plans | Section 3. SUDS is multi-tenant: each Customer's instance is isolated, with its own database and encryption keys |
 
 *Drafting note: the Business Associate Agreement the published tiers include is Exhibit B; a Part 2 programme also
 needs Exhibit C. For an Office Server Licence, Licensor needs them only if it will have access to Customer Data
@@ -260,8 +262,9 @@ counsel.]]`
 per claim and technology errors-and-omissions insurance of at least $[[…]] per claim, and will provide certificates
 of insurance on request.]]`
 
-> *Drafting note: on `[[2026-10-10]]` Licensor holds no such insurance (../HOSTING.md, checklist item 7). Do not sign
-> with this clause filled in until the policies are bound, and do not offer the Hosted Service without them.*
+> *Drafting note: on `[[2026-10-12]]` Licensor holds no such insurance (../HOSTING.md, checklist item 7). Do not sign
+> with this clause filled in until the policies are bound. The Hosted Service is offered (2026-10-12) while they are
+> not yet bound: counsel advises whether a Hosted Service agreement may be signed before they are.*
 
 ## 13. Indemnification
 

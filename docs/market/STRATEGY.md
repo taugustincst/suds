@@ -269,10 +269,10 @@ feature.
 ### 7. Pricing that reflects near-zero marginal cost
 
 The software's marginal cost is near zero. The cost of serving a programme is not: implementation, support, and
-(if offered) hosting and assurance ([HOSTING.md](HOSTING.md), *Unit-cost model*), plus model calls for the
+hosting (offered from October 2026) and assurance ([HOSTING.md](HOSTING.md), *Unit-cost model*), plus model calls for the
 copilot. SUDS is proprietary from 1.24.1 (owner decision of 2026-10-03; [LICENSE](../../LICENSE)), so a price can buy a
 licence to the code as well as a service. [PRICING-OPTIONS.md](PRICING-OPTIONS.md) sets out the models and a worksheet for the owner.
-The owner has decided: the introductory tiers in [`public/procurement.json`](../../public/procurement.json) (90-day pilot $2,500 flat, Program $4,800 a year, Multi-site $12,000 a year, County-wide custom) are the published prices, shown on the procurement page; [templates/PRICING.md](templates/PRICING.md) is the superseded hypothesis, kept as a record.
+The owner has decided: the tiers in [`public/procurement.json`](../../public/procurement.json) are the published prices, shown on the procurement page, reworked on 2026-10-12 to a 90-day pilot at $14,500 flat (credited in full), Program at $24,500 a year, Multi-site at $49,500 a year and County-wide at $98,000 a year, with hosting on the vendor's multi-tenant fleet (one isolated instance per customer) included in the annual plans; they replace the introductory tiers first published in October 2026. [templates/PRICING.md](templates/PRICING.md) is the superseded hypothesis, kept as a record.
 
 ## Moat: what public code cannot copy
 
@@ -374,7 +374,7 @@ until counsel and one pilot have looked at it.
 | A cross-organisation referral network (organisations that join and accept referrals in SUDS) | **Planned**, not scheduled |
 | Inbound FHIR referrals | **Design placeholder** ([docs/integration/FHIR.md](../integration/FHIR.md)) |
 | De-identified outcomes and benchmarking dataset | **Design only** ([DATA-NETWORK.md](DATA-NETWORK.md)) |
-| Vendor-hosted tier | **Planned — not offered** ([HOSTING.md](HOSTING.md)) |
+| Vendor hosting (one isolated instance per customer) | **Offered from October 2026; no customer hosted yet** ([HOSTING.md](HOSTING.md)): the fleet tooling is tested against stand-ins only and its first real drill has not been run |
 
 ## Risks
 
@@ -408,5 +408,5 @@ until counsel and one pilot have looked at it.
 ## Rules that still apply
 
 The rules at the end of [README.md](README.md) apply to this strategy: no certification claim, no time saving
-before a pilot measures it, no hosting claim before it is offered, and "planned" with a release or "not
-scheduled" for everything not built.
+before a pilot measures it, no hosting claim beyond what [HOSTING.md](HOSTING.md) says is in place, and "planned"
+with a release or "not scheduled" for everything not built.
