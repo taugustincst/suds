@@ -24,7 +24,8 @@ can choose **Part 2 compliance module (beside an EHR)** instead: the consent, di
 with patients and encounters imported from the EHR ([docs/integration/EHR-PART2-LAYER.md](docs/integration/EHR-PART2-LAYER.md)). SUDS is **not** an EHR, does not create Drug
 Medi-Cal claims, and has no eMAR or e-prescribing. It is proprietary software of AugustInnovations LLC ([LICENSE](LICENSE)), with its source visible: SUDS on this
 device is free to use at its official GitHub Pages address, and the office server, after a 90-day evaluation, runs
-under a signed licence agreement; it is not a hosted service. Positioning, buyer guides, hosting models, the pilot kit
+under a signed licence agreement, on the programme's own server or, from October 2026, on an isolated instance
+AugustInnovations LLC hosts for it (no customer is hosted yet). Positioning, buyer guides, hosting models, the pilot kit
 and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:
 [docs/architecture/README.md](docs/architecture/README.md).
 

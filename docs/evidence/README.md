@@ -13,9 +13,11 @@ signed tags, the flake register's entries) and whether each is in force today.
 
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
-**Version.** It describes 1.25.7: the commit "Release 1.25.7", a patch of 1.25.6 with the fixes from the evaluation of
-1.25.6, no policy exception and an SBOM of its own, `sbom-1.25.7` ([../RELEASE.md](../RELEASE.md), *Record: 1.25.7*; its
-tag is owed, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.25.6, a patch of 1.25.5 with the fixes from the evaluation of
+**Version.** It describes 1.25.8: the commit "Release 1.25.8", a patch of 1.25.7 with the fixes from the self-assessment
+SEC-2026-001 and the owner's new pricing, no policy exception and an SBOM of its own, `sbom-1.25.8`
+([../RELEASE.md](../RELEASE.md), *Record: 1.25.8*; its tag is owed, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.25.7, a
+patch of 1.25.6 with the fixes from the evaluation of 1.25.6, tagged and released on 2026-10-12, has `sbom-1.25.7`.
+1.25.6, a patch of 1.25.5 with the fixes from the evaluation of
 1.25.5, has `sbom-1.25.6`. 1.25.5, a patch of 1.25.4 with the fixes from the market-readiness
 evaluation of 1.25.4, has `sbom-1.25.5`. 1.25.4, a patch of 1.25.3 with the fixes from
 the market-readiness evaluation of 1.25.3 and the empty offsite backups found on suds.systems, has `sbom-1.25.4`. 1.25.3,
@@ -66,6 +68,7 @@ and that was never published.)
 
 | File | What it is | How to check it |
 | --- | --- | --- |
+| [sbom-1.25.8.cdx.json](sbom-1.25.8.cdx.json) | CycloneDX 1.5 software bill of materials for 1.25.8 (generated from the "Release 1.25.8" stamp; the release is tagged on the commit that adds it, and the Release carries it as an asset), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject) | `node scripts/sbom.js --ref <the Release 1.25.8 commit>` reproduces it |
 | [sbom-1.25.7.cdx.json](sbom-1.25.7.cdx.json) | CycloneDX 1.5 software bill of materials for 1.25.7 (generated from the "Release 1.25.7" stamp; the release is tagged on the commit that adds it, and the Release carries it as an asset), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject) | `node scripts/sbom.js --ref <the Release 1.25.7 commit>` reproduces it |
 | [sbom-1.25.6.cdx.json](sbom-1.25.6.cdx.json) | CycloneDX 1.5 software bill of materials for 1.25.6 (generated from the "Release 1.25.6" stamp; the release is tagged on the commit that adds it, and the Release carries it as an asset), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject) | `node scripts/sbom.js --ref <the Release 1.25.6 commit>` reproduces it |
 | [sbom-1.25.5.cdx.json](sbom-1.25.5.cdx.json) | CycloneDX 1.5 software bill of materials for 1.25.5 (generated from the "Release 1.25.5" stamp; the release is tagged on the commit that adds it, and from 1.25.5 the Release carries it as an asset), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject) | `node scripts/sbom.js --ref <the Release 1.25.5 commit>` reproduces it |
@@ -363,7 +366,7 @@ These close review questions that software cannot. The status of each is on the 
    - an independent code reviewer or second maintainer, and a named backup releaser;
    - an independent statistical review of the publication method;
    - a third-party accessibility review and screen-reader testing;
-   - SOC 2, only if a hosted tier is ever offered.
+   - SOC 2, scoped to the hosted service (offered from October 2026; no customer is hosted yet).
 8. **Release signing.** Signed release tags, made by the owner with a key whose public half is published ([../RELEASE.md](../RELEASE.md), *Signing a release tag*; every tag up to `v1.25.6` is unsigned); and Sigstore signing or GitHub artifact attestations in the release workflow (a workflow change for the owner to approve).
 9. **Installer run on real VMs.** `deploy/linux/install.sh` and `upgrade.sh` on a fresh Ubuntu 24.04 VM and a fresh RHEL 9 VM, recorded and committed back: [INSTALLER-VM-RUN.md](INSTALLER-VM-RUN.md). So far they have run in a fake root (tests), on Ubuntu in a systemd container (most recently [1.25.3](installer-container-run-2026-10-10-v1.25.3/README.md)), and once on a real Ubuntu 24.04 VM: the vendor's own suds.systems (1.25.1, AWS Lightsail, 2026-10-08), reported in prose only. Its transcript, compliance report and drill report, signed on the server, are not committed here yet; RHEL 9 has never run on a VM.
 

@@ -443,7 +443,26 @@ and the full suite, the evening run and the browser suite ran on the stamped tre
 release whose CHANGELOG line comes in the tag hand-off commit, before the tag. Owner actions it cannot do: the
 `release` environment's required reviewer, the rulesets for `main` (with `evening`), `maint/*`, `v*` tags and
 `gh-pages`, immutable releases, the stale `release/*` branches, a published security and procurement contact, and
-signed tags. Its tag is owed ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
+signed tags. The owner's business assistant pushed `v1.25.7` on the owner's instruction; no one approved its release
+(the `release` environment has no required reviewer); its release run passed the gate on 2026-10-12, the GitHub Release
+is published and marked Latest, and its `Web app` run published 1.25.7 to GitHub Pages
+([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
+
+**Record: 1.25.8 is a patch with the fixes from the self-assessment SEC-2026-001 and the owner's new pricing.** 1.25.8,
+stamped 2026-10-13, is a patch of 1.25.7 inside 1.25.0's 28 days (*Stabilisation*, point 1). It fixes the three findings
+of the vendor's own internal self-assessment of 1.25.6 (not an independent penetration test;
+[evidence/self-assessment-SEC-2026-001.md](evidence/self-assessment-SEC-2026-001.md)): the audit head sealed every 500
+entries and at a graceful stop (F-01, Low), client names with `<` or `>` refused (F-02), and Security status reporting
+the session cookie's Secure flag (F-03). It carries the owner's published pricing of 2026-10-12 (Pilot $14,500, Program
+$24,500, Multi-Site $49,500, County-Wide $98,000 a year, hosting on the multi-tenant fleet included) with the buyer
+documents brought in line (hosted and self-hosted options; no customer hosted yet; the fleet's first real drill still to
+run), the market documents' CalOMS, pricing and Part 2 corrections, the pen-test RFP's independence requirement, the
+move of the notes between the assistants to a private repository, and the WebKit known defect WK-1 widened to the same
+reload hanging. No migration, no new or widened permission and no new route, 73 lines added outside docs, tests and
+generated files (`node scripts/release-policy.js --version 1.25.8 --previous v1.25.7`), so it passes the release policy
+with no exception. It is two commits, "Release 1.25.8" and "SBOM of the 1.25.8 stamp", the tag on the second, and the
+full suite, the evening run and the browser suite ran on the stamped tree before the push. Its tag is owed
+([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
 
 ### Supported versions
@@ -609,7 +628,8 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.25.4 | none of the policy (a patch within the patch rules: no migration, permission or route, 935 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-10 (*Record: 1.25.4*) | the fixes from the market-readiness evaluation of 1.25.3 (G1–G11), the empty offsite backup copies found on suds.systems, and the Option A fleet tooling (*Record: 1.25.4*, above) | no exception to approve |
 | 1.25.5 | none of the policy (a patch within the patch rules: no migration, permission or route, 738 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-11 (UTC) (*Record: 1.25.5*) | the fixes from the market-readiness evaluation of 1.25.4 (H1–H9) and the business work plan (*Record: 1.25.5*, above) | no exception to approve |
 | 1.25.6 | none of the policy (a patch within the patch rules: no migration, permission or route, 490 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-11, the Latest release (*Record: 1.25.6*) | the fixes from the critical evaluation of 1.25.5 (J1–J13; *Record: 1.25.6*, above) | no exception to approve |
-| 1.25.7 | none of the policy (a patch within the patch rules: no migration, permission or route, 346 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once its tag `v1.25.7` is pushed | the fixes from the evaluation of 1.25.6 (K1–K8; *Record: 1.25.7*, above) | no exception to approve |
+| 1.25.7 | none of the policy (a patch within the patch rules: no migration, permission or route, 346 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-12 (*Record: 1.25.7*) | the fixes from the evaluation of 1.25.6 (K1–K8; *Record: 1.25.7*, above) | no exception to approve |
+| 1.25.8 | none of the policy (a patch within the patch rules: no migration, permission or route, 73 lines; a patch is allowed inside the feature freeze, so no exception is needed). Its `release.yml` run publishes it once its tag `v1.25.8` is pushed | the fixes from the self-assessment SEC-2026-001 of 1.25.6 and the owner's pricing of 2026-10-12 (*Record: 1.25.8*, above) | no exception to approve |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as

@@ -7,8 +7,8 @@
 > not add after-hours or uptime commitments the vendor cannot staff ([../HOSTING.md](../HOSTING.md)).
 >
 > **The support that exists without an agreement** — the programme's administrator, its IT partner or county,
-> the public issue tracker and, for security issues, GitHub private vulnerability reporting (owner-pending: to be
-> enabled in the repository settings) or the owner-published security contact (owner-pending) — is described in [../../SUPPORT.md](../../SUPPORT.md).
+> the public issue tracker and, for security issues, GitHub private vulnerability reporting (on since
+> 2026-10-12) or the owner-published security contact (owner-pending) — is described in [../../SUPPORT.md](../../SUPPORT.md).
 
 ## Who runs the server decides who owns uptime
 
@@ -16,7 +16,7 @@
 | --- | --- | --- |
 | Self-hosted by the programme or its IT partner | The programme / IT partner | Software support in business hours |
 | County-hosted | The county (its own uptime, monitoring and on-call) | Software support in business hours |
-| Vendor-hosted single-tenant | The vendor — **only when that tier is offered** (it is planned, not offered today) | Software support, plus the *Vendor-hosted tier* section below |
+| Vendor-hosted (one isolated instance per customer) | The vendor — **offered from October 2026** (owner decision of 2026-10-12); no customer is hosted yet | Software support, plus the *Vendor-hosted service* section below |
 
 ## Coverage
 
@@ -60,14 +60,17 @@ the vendor helps in support hours.
 - A suspected breach at a customer is the customer's incident to lead (their privacy officer and IT); the vendor
   assists in support hours and, where a BAA applies, meets its notification duties under that BAA.
 
-## Vendor-hosted tier (only when offered)
+## Vendor-hosted service
 
-This section applies only after the vendor-hosted tier exists and the checklist in [../HOSTING.md](../HOSTING.md)
-is complete. Until then, delete it from any contract.
+This section applies to a vendor-hosted customer. Vendor hosting is offered from October 2026 and included in the
+published annual plans, but no customer is hosted yet, and several items of the checklist in
+[../HOSTING.md](../HOSTING.md) are still open (the fleet's first real drill, a backup copy that leaves the zone,
+monitoring, after-hours on-call, insurance): state the open ones to the customer, and delete this section from a
+self-hosted customer's contract.
 
 | | |
 | --- | --- |
-| Uptime target | `[owner to complete: 99.0]`% monthly in support hours, excluding scheduled maintenance. A higher or 24×7 target only with staffed after-hours on-call in place and named in the contract. SUDS is one server per programme (no clustering); recovery is by restore, not failover |
+| Uptime target | **None is published for hosted plans** (2026-10-12). If the owner sets one: `[owner to complete: 99.0]`% monthly in support hours, excluding scheduled maintenance. A higher or 24×7 target only with staffed after-hours on-call in place and named in the contract. SUDS is one server per programme (no clustering); recovery is by restore, not failover |
 | Scheduled maintenance | Outside 8:00–18:00 Pacific, `[owner to complete: 5]` business days' notice |
 | Backups | Encrypted, offsite (separate account), at least `[owner to complete: daily]`, with `[owner to complete: 30]` days kept; monthly restore drill with the result shared |
 | Recovery targets | RTO and RPO set from the vendor's own measured drill for that instance, stated in the contract |
@@ -81,5 +84,5 @@ operator made; use of local mode or SUDS on this device outside documented guida
 
 ## Reporting
 
-Quarterly for subscribers: tickets by severity and time to first response. Monthly uptime report for the
-vendor-hosted tier, when offered.
+Quarterly for subscribers: tickets by severity and time to first response. For a vendor-hosted customer, a monthly
+availability report, if the contract asks for one.

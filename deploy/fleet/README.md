@@ -65,8 +65,9 @@ $FLEET_HOME/                        mode 0700, a private git repository (see bel
   It is the licensor (`LICENSE`), so no separate licence for hosted operation is needed; were any other company ever to
   operate it, that company would need a written licence from AugustInnovations LLC first (`LICENSE` section 3). The
   customer-facing agreement is the draft [licence and subscription agreement](../../docs/market/templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md),
-  with the BAA and QSOA as its exhibits (all for counsel). [docs/market/HOSTING.md](../../docs/market/HOSTING.md) lists what else must exist before a
-  hosted service is offered.
+  with the BAA and QSOA as its exhibits (all for counsel). The hosted service is offered from October 2026 (owner
+  decision of 2026-10-12), with no tenant provisioned yet; [docs/market/HOSTING.md](../../docs/market/HOSTING.md) lists
+  what it has in place and what it still lacks.
 - **LUKS before real data.** The provisioning run fails unless `/var/lib/suds` is on a LUKS (dm-crypt) volume.
   `--allow-unencrypted-demo` downgrades that to a loud warning for a demonstration tenant, and records `DEMO_ONLY=yes`
   in the tenant record: such a tenant must never hold a real client's record.

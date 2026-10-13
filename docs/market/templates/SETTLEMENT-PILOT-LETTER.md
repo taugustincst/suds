@@ -37,19 +37,20 @@ its outcomes and spending for the funds the county pays for. The county sees eve
 no client records.
 
 **The pilot.** Ninety days with [one to three] programmes, on fictional data first and real records only after the
-agreements are signed. Each programme runs SUDS on its own office server (or, for a very small team, free in a browser
-on one device). At day 90 you and the programmes decide whether to continue, with measures agreed at the start (the
-pilot plan is attached).
+agreements are signed. Each programme runs SUDS on its own office server, on its own infrastructure or hosted by us
+on an isolated instance of its own (or, for a very small team, free in a browser on one device). At day 90 you and the
+programmes decide whether to continue, with measures agreed at the start (the pilot plan is attached).
 
-**Cost.** $2,500 per programme for the pilot, credited in full toward the first year; after that $4,800 a year per
-programme (up to 30 staff) or $12,000 for up to five sites. A county-wide arrangement is quoted to your scope. The
+**Cost.** $14,500 per programme for the pilot, credited in full toward the first year; after that $24,500 a year per
+programme (up to 30 staff) or $49,500 for up to five sites. A county-wide arrangement is $98,000 a year. The
 published prices are at sudsdata.com.
 
 **Honest status.** [Fill from the work plan on the day you send it. For example: SUDS has no customers yet; this would
-be among its first pilots. The business associate and QSO agreements are [drafts under counsel's review / reviewed by
-counsel]. Cyber and technology E&O insurance: [in place, limits / being bound]. An independent penetration test is
-[commissioned from (firm), due (date) / not yet commissioned]. The security questionnaire, accessibility report and
-software bill of materials are public, and I'm glad to walk your IT and privacy reviewers through them.]
+be among its first pilots, and no customer is hosted by us yet. The business associate and QSO agreements are
+[drafts under counsel's review / reviewed by counsel]. Cyber and technology E&O insurance: [in place, limits / being
+bound]. An independent penetration test is [commissioned from (firm), due (date) / not yet commissioned]. The security
+questionnaire, accessibility report and software bill of materials are public, and I'm glad to walk your IT and
+privacy reviewers through them.]
 
 Could we have a 30-minute call in the next two weeks? I can show the outreach and county views on fictional data.
 

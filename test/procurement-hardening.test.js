@@ -56,10 +56,12 @@ test('only an administrator may publish them, and each value is checked', async 
 test('the static build ships public/procurement.json with the licensor\'s legal entity, the published pricing, and one repository URL', () => {
   const j = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'public', 'procurement.json'), 'utf8'));
   assert.equal(j.legal_entity, 'AugustInnovations LLC', 'the licensor (LICENSE, owner decision of 2026-10-03)');
-  assert.match(j.pricing, /90-DAY PILOT — \$2,500 flat/, 'the pilot tier is published');
-  assert.match(j.pricing, /PROGRAM — \$4,800 \/ year/, 'the program tier is published');
-  assert.match(j.pricing, /MULTI-SITE — \$12,000 \/ year/, 'the multi-site tier is published');
-  assert.match(j.pricing, /COUNTY-WIDE — custom/, 'the county-wide tier is published');
+  // The tiers the owner set on 2026-10-12 (hosting on the multi-tenant fleet included).
+  assert.match(j.pricing, /90-DAY PILOT — \$14,500 flat/, 'the pilot tier is published');
+  assert.match(j.pricing, /PROGRAM — \$24,500 \/ year/, 'the program tier is published');
+  assert.match(j.pricing, /MULTI-SITE — \$49,500 \/ year/, 'the multi-site tier is published');
+  assert.match(j.pricing, /COUNTY-WIDE — \$98,000 \/ year/, 'the county-wide tier is published');
+  assert.match(j.pricing, /its own isolated instance, with its own database and encryption keys/, 'hosted customers never share a database');
   // The CalOMS promise is no wider than what is verified: the code sets, not the file layout (docs/compliance/CALOMS.md).
   assert.match(j.pricing, /CalOMS code-set validation against the DHCS dictionary included; file layout confirmed with your county/);
   assert.doesNotMatch(j.pricing, /CalOMS extract validation/);

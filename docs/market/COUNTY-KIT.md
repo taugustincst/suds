@@ -64,9 +64,10 @@ counts and money, encrypted at rest), the county code and the audit log.
 | **Network** | Staff reach it over HTTPS. Without the connection, nothing else needs to reach it: the files arrive by the county's usual file transfer. With the connection, the CBOs' servers must reach `/api/county-connect/v1/` only, through the county's TLS proxy (with `TRUST_PROXY=1`) or a VPN ([../COUNTY-VIEW.md](../COUNTY-VIEW.md), *Exposure*) |
 | **Security review** | Short, because no client record is ever on it: the review questions and their evidence are in [../evidence/README.md](../evidence/README.md); the RFI answers in [templates/COUNTY-RFI-ANSWERS.md](templates/COUNTY-RFI-ANSWERS.md) |
 
-The CBOs' own servers are separate: each CBO runs its own office server (self-hosted by its IT partner, or hosted
-by the county on county infrastructure, one server per CBO: [HOSTING.md](HOSTING.md)). Vendor hosting is not
-offered.
+The CBOs' own servers are separate: each CBO runs its own office server (self-hosted by its IT partner, hosted by
+the county on county infrastructure, or, from October 2026, hosted by the vendor on an isolated instance of its own;
+one server per CBO: [HOSTING.md](HOSTING.md)). Vendor hosting has no customer yet, and its fleet's first real drill
+has not been run.
 
 ## What each CBO does
 
@@ -168,7 +169,7 @@ Agree the targets before starting; record the baseline with the current process 
 | Licence agreement, BAA / Part 2 QSOA and DPA | [templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md](templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md), [templates/BAA-QSOA-DRAFT.md](templates/BAA-QSOA-DRAFT.md), [templates/DPA-DRAFT.md](templates/DPA-DRAFT.md) | Drafts; not reviewed by counsel. Needed where the vendor can reach a CBO's PHI; the county server holds none |
 | Support terms | [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md), [../SUPPORT.md](../SUPPORT.md) | Template |
 | Pilot plan per CBO | [PILOT-KIT.md](PILOT-KIT.md) | Written |
-| Pricing | [PRICING-OPTIONS.md](PRICING-OPTIONS.md) (model C, county site licence; model D, services) | Nothing decided |
+| Pricing | [`public/procurement.json`](../../public/procurement.json): a 90-day pilot at $14,500 flat per site, Program at $24,500 a year, Multi-Site at $49,500 a year, County-Wide at $98,000 a year (unlimited sites and staff within one county) | Published (effective October 2026) |
 
 ## The evidence packet
 
@@ -200,8 +201,8 @@ Software cannot close these. A county will ask about each; say plainly that it i
 - **[owner to complete]: penetration test.** No independent test has been done (the vendor's own owner-authorised
   tests, of 1.23.6 and of its live install on 2026-10-08, are not independent); the scope is written for a
   county-commissioned test ([../security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md)).
-- **[owner to complete]: pricing.** Nothing is decided ([PRICING-OPTIONS.md](PRICING-OPTIONS.md)); do not quote a
-  number from this kit.
+- **Pricing** is published ([`public/procurement.json`](../../public/procurement.json), effective October 2026): quote
+  only those tiers; final terms are set in a licence agreement signed by AugustInnovations LLC.
 - **[owner to complete]: counsel review** of the BAA/QSOA and DPA drafts, and of the questions in
   [DATA-NETWORK.md](DATA-NETWORK.md), *What counsel must review* (items 1, 4 and 5 bear on the county view).
 - **[owner to complete]: data contribution agreement.** The draft in

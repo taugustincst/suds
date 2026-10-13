@@ -10,9 +10,10 @@ holds.
 The software is not what holds SUDS back. The evaluation of 1.25.4 kept the market-readiness headline at **3.0 of 5**
 because "every gating item is still an owner action": a buyer has nobody to contact, nothing reviewed to sign, no
 independent penetration test, no signed binary, no confirmed CalOMS layout, no insurance, no reference and no hosted
-price. Its smallest set to reach **3.5** is a published contact, a counsel-reviewed agreement, a completed independent
-pen test with fixes released, and CI kept as stable as it is; **4.0** adds code signing with a county-like Windows
-run, CalOMS confirmation, insurance and one reference pilot in production. This page puts those actions in order,
+price (since 2026-10-12 hosting is offered and priced: included in the published annual plans; item 8). Its smallest
+set to reach **3.5** is a published contact, a counsel-reviewed agreement, a completed independent pen test with fixes
+released, and CI kept as stable as it is; **4.0** adds code signing with a county-like Windows run, CalOMS
+confirmation, insurance and one reference pilot in production. This page puts those actions in order,
 with what exists, what the owner must decide, the steps, and where each result is recorded afterwards.
 
 **Rules for using this page.**
@@ -38,9 +39,12 @@ administrators sponsoring harm-reduction programmes, not county EHR replacements
 | 4 | **Independent pen test** from a firm with no tie to the LLC | 3 | The RFP now requires a signed independence statement and excludes the licensor's own practice ([templates/PEN-TEST-RFP.md](templates/PEN-TEST-RFP.md)) |
 | 5 | **Reference pilots**: one to three harm-reduction pilots paid by a county's settlement administrator | 7 | First letter ready: [templates/SETTLEMENT-PILOT-LETTER.md](templates/SETTLEMENT-PILOT-LETTER.md); pilot plan [COUNTY-KIT.md](COUNTY-KIT.md). Send after steps 1 and 3 at least, so its *Honest status* paragraph can say the agreements are reviewed and the insurance bound |
 
-Pricing questions the evaluation raised, for Tj (no change made): Multi-Site at $12,000 looks low against every
-benchmark found; a County-Wide quote has room at $25,000–$100,000 or more; and if the owner hosts, $4,800 a year is
-below the $10,000–20,000 a year the hosted-offer worksheet estimates hosting costs.
+Pricing, decided by the owner on 2026-10-12. The evaluation found the introductory Multi-Site price low against every
+benchmark, room in a County-Wide quote, and a Program price below what the hosted-offer worksheet estimates hosting
+costs. The reworked tiers in `public/procurement.json` answer it: a 90-day pilot at $14,500 flat (credited in full),
+Program at $24,500 a year, Multi-Site at $49,500 a year and County-Wide at $98,000 a year, with hosting on the
+multi-tenant fleet (one isolated instance per customer) included in the annual plans. Self-hosting stays available,
+the prices excluding the customer's infrastructure.
 
 ## Summary
 
@@ -55,7 +59,7 @@ below the $10,000–20,000 a year the hosted-offer worksheet estimates hosting c
 | 5 | CalOMS layout confirmed with a county | Muse, with Tj's approval to send | Not done | Read the DHCS 2026 FAQ; send [templates/CALOMS-CONFIRMATION-REQUEST.md](templates/CALOMS-CONFIRMATION-REQUEST.md) | +0.1 to +0.25 |
 | 6 | Insurance: cyber liability and technology E&O | Tj | None | Quotes with [templates/INSURANCE-QUOTE-BRIEF.md](templates/INSURANCE-QUOTE-BRIEF.md), after item 0 | +0.1 |
 | 7 | A reference pilot under a signed agreement | Tj | None | After items 1, 2 and 6 | +0.25 to +0.5, over months |
-| 8 | A hosted offer and its price | Tj | Operator decided; no price, insurance or on-call | Fill [templates/HOSTED-OFFER-WORKSHEET.md](templates/HOSTED-OFFER-WORKSHEET.md) | +0.25 once priced, insured and offered |
+| 8 | A hosted offer and its price | Owner | **Offered and priced** (2026-10-12: hosting included in the published annual plans); no customer hosted; the fleet's first real drill not run; no insurance, no on-call, no uptime commitment published | Run the drill tenant; fill [templates/HOSTED-OFFER-WORKSHEET.md](templates/HOSTED-OFFER-WORKSHEET.md) from its real bills | +0.25 once priced, insured and offered: priced and offered now, insurance still owed (item 6) |
 | 9 | Signed release tags; separate commit identities | Tj | Procedure written; `v1.25.5` unsigned, one shared identity, pushed by Muse on Tj's instruction (the questionnaire now says so) | Make the signing key | Small; removes a supply-chain question |
 | 10 | suds.systems hygiene | Muse, on Tj's directives | Runs 1.25.6 (HANDOFF, 2026-10-11); the upgrade to 1.25.7 waits for Tj's directive; the administrator accounts keep known names; the escrow copies are still staged on the box; the hand-off notes are public (the disk, key and escrow details were taken out in 1.25.7) | The 1.25.7 upgrade on Tj's go; rename the administrator accounts; the off-box escrow pull and deleting the staged copies; plan the private operations repository and the history rewrite | Small, but it is the box a county is shown |
 | 11 | The real-iPhone check | Tj or a pilot lead | None recorded; no one named, no date | **DECISION FOR TJ**: a named owner and a date; then run [../evidence/REAL-DEVICE-CHECK-TEMPLATE.md](../evidence/REAL-DEVICE-CHECK-TEMPLATE.md) | Can move the device-only verdict on iPhone |
@@ -80,7 +84,7 @@ decisions (item 2).
 | Executive one-pager | The short version in [README.md](README.md), [POSITIONING.md](POSITIONING.md), [BUYER-GUIDE-PROGRAM.md](BUYER-GUIDE-PROGRAM.md) | The repository's wording rules ([README.md](README.md), *Rules for anyone using this pack*) |
 | Pilot evaluation framework | [PILOT-KIT.md](PILOT-KIT.md), *Measurement plan and success metrics* and *Pilot evaluation template* | Folded into the v2 licence draft (its pilot section and an exhibit); PILOT-KIT is aligned with it before the first pilot |
 | County outreach email draft | [COUNTY-KIT.md](COUNTY-KIT.md) and item 5's CalOMS request | The facts in the repository |
-| Business-readiness checklist | This page, [README.md](README.md) *Organisational gaps* and [HOSTING.md](HOSTING.md) *Before the vendor-hosted tier can be offered* | Keep one list: this page, with Muse's copy pointing here |
+| Business-readiness checklist | This page, [README.md](README.md) *Organisational gaps* and [HOSTING.md](HOSTING.md) *What the hosted service has, and what it still lacks* | Keep one list: this page, with Muse's copy pointing here |
 
 ## 0a. Private vulnerability reporting (minutes)
 
@@ -338,16 +342,24 @@ decisions (item 2).
 ## 8. A hosted offer and its price
 
 - **Why it matters.** "CBO with no IT: No hosted offer, no hosted price." +0.25 once priced, insured and offered.
+- **Decided (owner, 2026-10-12).** Vendor hosting is offered: AugustInnovations LLC operates a multi-tenant fleet in
+  which each customer runs in its own isolated instance, with its own database and encryption keys (never a shared
+  database), and hosting is included in the Program ($24,500 a year), Multi-Site ($49,500) and County-Wide ($98,000)
+  plans in `public/procurement.json`. Self-hosting stays available.
 - **What already exists.** [HOSTING.md](HOSTING.md) (models, the 12-item checklist, a unit-cost model);
   [`deploy/fleet/`](../../deploy/fleet/README.md) (Option A: one Lightsail VM per tenant, tested against stand-ins only);
-  the operator decision (AugustInnovations LLC, 2026-10-09); the published self-hosted tiers;
+  the operator decision (AugustInnovations LLC, 2026-10-09); the published tiers;
   [templates/HOSTED-OFFER-WORKSHEET.md](templates/HOSTED-OFFER-WORKSHEET.md).
-- **DECISION FOR TJ.** The hosted price per programme; who is on call outside business hours (HOSTING.md item 6: one
-  person cannot promise 24×7); the first real fleet run (the drill tenant, which awaits Tj's go and credentials).
-- **Steps (Muse).** Fill the worksheet's inputs from real quotes and the drill tenant's actual bills; run the drill
-  tenant on Tj's go; work through HOSTING.md's checklist; draft the hosted tier's text for `procurement.json` for Tj.
-- **Send to.** Nobody until the offer exists.
-- **Done when.** Every HOSTING.md checklist item is done and the hosted price is published.
+- **Still open.** No customer is hosted. The fleet's first real run (the drill tenant, which awaits the owner's go and
+  credentials) has not happened. No uptime commitment is published for hosted plans, and nobody is on call outside
+  business hours (HOSTING.md item 6: one person cannot promise 24×7). Insurance is not bound (item 6), and the BAA and
+  QSOA are not yet reviewed by counsel (item 2).
+- **DECISION FOR THE OWNER.** Who is on call outside business hours, if anyone; when the drill tenant runs.
+- **Steps.** Run the drill tenant on the owner's go; fill the worksheet's inputs from real quotes and the drill
+  tenant's actual bills, and check them against the published prices; work through HOSTING.md's checklist.
+- **Send to.** Buyers, with every open item above stated.
+- **Done when.** The drill tenant has run, insurance is bound, the agreements are reviewed, and the first hosted
+  customer's instance is provisioned under signed agreements.
 - **Recorded in.** [HOSTING.md](HOSTING.md) (the status line and checklist); `pricing` in `public/procurement.json`;
   QUESTIONNAIRE #2.
 
@@ -378,7 +390,7 @@ decisions (item 2).
   release order alone does not cover an upgrade).
   (b) Whether SSH stays open to `0.0.0.0/0` and `::/0` or is limited to an administration network; check first how the
   Lightsail browser terminal reaches the box, so narrowing it does not lock the operator out (the launch's finding cost
-  a rebuild). (c) When LUKS is set up (before any real record: a rebuild onto an encrypted volume).
+  a rebuild). (c) LUKS: done; the data volume has been encrypted since 2026-10-10.
 - **Steps (Muse, each on Tj's directive).**
   1. The upgrade to 1.25.5 and HANDOFF's six steps: escrow first, upgrade, count `status=31/SYS` in the journal, Back up
      now, compare offsite and local sizes, delete the unrepairable 0-byte files, compliance re-run, recovery drill from
@@ -388,7 +400,7 @@ decisions (item 2).
   3. Two-step sign-in (MFA) on every administrator account (the compliance check reports 0 of 1).
   4. The owner-held escrow copy of `/etc/suds/credentials` and the backup passphrase, kept off AWS (snapshots in the same
      account are not escrow), and one **snapshot restore test**.
-  5. LUKS on the data volume before any real data.
+  5. LUKS on the data volume before any real data: done (encrypted since 2026-10-10).
   6. DMARC for the domain (item 1).
   7. Housekeeping (the old release tree and launch-day files) and the pending reboot, as HANDOFF lists.
   8. **Rename the live administrator accounts** away from known names: the default first administrator's username is
