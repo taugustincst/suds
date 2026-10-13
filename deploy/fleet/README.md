@@ -166,6 +166,9 @@ $FLEET_HOME/                        mode 0700, a private git repository (see bel
 
 ## The drill tenant (`drill.suds.systems`)
 
+The full step-by-step run, with the go/no-go checks, the recovery, reboot, snapshot and upgrade stages and the evidence
+to record: [DRILL-RUNBOOK.md](DRILL-RUNBOOK.md). The outline:
+
 Prove the whole pipeline before the first real tenant, and again after any change to these scripts, with the owner's
 credentials and go:
 
