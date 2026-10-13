@@ -1,8 +1,8 @@
 # SUDS pricing (the earlier hypothesis, superseded by the published tiers)
 
-> **Superseded (2026-10-08) by the published tiers.** SUDS's prices are the introductory tiers published on
-> the procurement page: a 90-day pilot at $2,500 flat, Program at $4,800 a year, Multi-site at $12,000 a year and
-> County-wide at custom annual pricing, with the paid-plan support terms beside them. The single source is
+> **Superseded (2026-10-08) by the published tiers; fees reworked 2026-10-12.** SUDS's prices are the tiers published on
+> the procurement page: a 90-day pilot at $14,500 flat, Program at $24,500 a year, Multi-site at $49,500 a year and
+> County-wide at $98,000 a year (hosting on the multi-tenant fleet included), with the paid-plan support terms beside them. The single source is
 > [`public/procurement.json`](../../../public/procurement.json), shown on the app's [Security and procurement page](../../../public/procurement.html). Where this
 > document differs, the published tiers win; it is kept below unchanged as the record of how pricing was worked out.
 
@@ -22,9 +22,9 @@ several CBOs, implementation packaged as forward-deployed services, and support 
   at its official GitHub Pages address free of charge, real records included (section 2A), and may evaluate the
   office server for up to 90 days with fictional data, without paying. Production use of the office server needs a
   licence agreement signed by AugustInnovations LLC. Its introductory prices are published on the procurement page
-  (`public/procurement.json`, effective October 2026) and at sudsdata.com: a 90-day pilot at $2,500 (credited in
-  full), Program at $4,800 a year (one site, up to 30 staff), Multi-Site at $12,000 a year (up to 5 sites and 150
-  staff), and County-Wide by quote. Copies of 1.24.0 and earlier keep their MIT rights.
+  (`public/procurement.json`, effective October 2026) and at sudsdata.com: a 90-day pilot at $14,500 (credited in
+  full), Program at $24,500 a year (one site, up to 30 staff), Multi-Site at $49,500 a year (up to 5 sites and 150
+  staff), and County-Wide at $98,000 a year. Copies of 1.24.0 and earlier keep their MIT rights.
 - **What is also paid for is services**: getting a programme running, supporting it, and (planned) running the
   server for programmes that cannot. Each is priced as a **flat annual amount per programme**, not per user, so
   a grant budget can carry it as one line and adding a part-time outreach worker costs nothing.
@@ -39,7 +39,7 @@ withdrawn: it included vendor hosting that does not exist, and it charged counti
 | --- | --- | --- | --- |
 | **Implementation and onboarding** (one-time) | Setup-wizard walk-through with the programme's IT partner or county IT; lists, supplies, funding sources and budget lines; spreadsheet import; training (navigators, supervisors, finance, administrator); one restore drill with IT; funder-report check against the programme's grants | **$2,500–7,500** per programme, by data volume and number of grants | Available (owner delivers) |
 | **Support subscription** (annual) | Business-hours support per [SUPPORT-SLA.md](SUPPORT-SLA.md); release notes and upgrade help; security-release notices; answers to security questionnaires from the evidence pack; one check-in a quarter | **$3,000–6,000 / year** for a programme of up to ~15 staff; **$6,000–10,000 / year** up to ~40 | Available, business hours only |
-| **Vendor-hosted single-tenant tier** (annual) | One isolated instance, backups, monitoring, upgrades — *plus* the support subscription | **$10,000–20,000 / year** per programme (must cover the costs in [../HOSTING.md](../HOSTING.md)) | **Planned — not offered** until the HOSTING.md checklist is done |
+| **Vendor-hosted multi-tenant tier** (annual, per tenant) | One isolated instance per tenant on the vendor's fleet, backups, monitoring, upgrades — *plus* the support subscription | **$10,000–20,000 / year** per programme (must cover the costs in [../HOSTING.md](../HOSTING.md)) | **Planned — not offered** until the HOSTING.md checklist is done |
 | **Custom work** | Reports for a specific funder template, imports from another system | Quoted per job; folded into the SUDS code | Available |
 
 Self-hosted and county-hosted programmes need the production licence, then buy only the services they want:
