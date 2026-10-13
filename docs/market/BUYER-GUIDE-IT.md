@@ -12,8 +12,9 @@ accessibility, Part 2) mapped to the document, test or CI job that answers it, a
 
 **What SUDS is, in one line:** a single-server web application, Node.js built-ins only, that holds 42 CFR
 Part 2 and HIPAA-protected programme records for non-billing harm-reduction and prevention programmes. It is
-not an EHR, does not bill ([POSITIONING.md](POSITIONING.md)), and is **not a hosted service**: someone — you —
-runs the server. Who does what, including at 2am: [HOSTING.md](HOSTING.md).
+not an EHR, does not bill ([POSITIONING.md](POSITIONING.md)). Someone runs the server: **you** (self-hosted), or,
+from October 2026, **the vendor**, on an isolated instance of your own (vendor-hosted; no customer is hosted yet).
+Who does what, including at 2am: [HOSTING.md](HOSTING.md).
 
 ## Deployment options
 
@@ -21,31 +22,32 @@ runs the server. Who does what, including at 2am: [HOSTING.md](HOSTING.md).
 | --- | --- | --- | --- | --- |
 | **Self-hosted by the programme's IT partner** | The CBO's managed-IT provider or its own staff, on a VM, office server or container (`Dockerfile`, `docker-compose.yml` with a Caddy TLS proxy), or in the programme's own cloud account | The programme's server | CBOs with an IT partner | Available ([docs/INSTALL.md](../INSTALL.md), [docs/DEPLOYMENT.md](../DEPLOYMENT.md)). **SUDS Server** (released in 1.18.0): `deploy/linux/install.sh` sets up a hardened Ubuntu 24.04 or RHEL 9 VM (LUKS data disk, pinned Node and Caddy, sandboxed service, keys as root-only credentials, firewall) and a weekly signed compliance report ([docs/SELF-HOSTING.md](../SELF-HOSTING.md)). The installer is tested in a fake root with stub system commands; a run on a real VM of each distribution is still owed, so run it on a staging VM first |
 | **County-hosted** | County IT, for a county programme or a CBO the county sponsors | The county's server | County-sponsored pilots; data never leaves county infrastructure | Available (same) |
-| **Vendor-hosted, single-tenant** | The vendor, one isolated instance per programme in a US cloud region under a BAA with the cloud provider | The vendor-hosted instance | CBOs with no IT capacity | **Planned — not offered.** Requires the checklist in [HOSTING.md](HOSTING.md) (cloud BAA, offsite backups, monitoring, on-call, insurance, pen test). The operator would be AugustInnovations LLC, which signs the BAA and Part 2 QSOA (owner decision, 2026-10-09); today its only install is its own, with fictional data |
+| **Vendor-hosted** (multi-tenant fleet, one isolated instance per customer) | AugustInnovations LLC, which signs the BAA and Part 2 QSOA (owner decision, 2026-10-09): one AWS Lightsail VM per customer, with its own database and encryption keys (never a shared database), in a US region under the AWS business associate addendum | The vendor-hosted instance | CBOs with no IT capacity | **Offered from October 2026** (owner decision of 2026-10-12), included in the Program, Multi-Site and County-Wide plans ([`public/procurement.json`](../../public/procurement.json)). **No customer is hosted yet.** The fleet tooling ([`deploy/fleet/`](../../deploy/fleet/README.md)) is tested against stand-ins only, and its first real drill tenant has not been run; no uptime commitment is published; cyber and technology E&O insurance is not yet bound; the BAA and QSOA are drafts not yet reviewed by counsel. The vendor's only running install is its own (suds.systems), with fictional data. What is open: [HOSTING.md](HOSTING.md) |
 | **SUDS on this device** | Nobody — runs in one browser | That browser | A single navigator with no server; not recommended for county programmes that share records | Available ([docs/WEB_APP.md](../WEB_APP.md)) |
 
-Requirements (self-hosted or county-hosted): Node.js 22.13+, an encrypted disk for the data directory, TLS (built-in or a
-reverse proxy such as IIS ARR, nginx, Caddy or a cloud load balancer), outbound internet not required. One
-process and one SQLite database per programme; a second process is refused
+Requirements (self-hosted or county-hosted; the published prices exclude this infrastructure): Node.js 22.13+, an
+encrypted disk for the data directory, TLS (built-in or a reverse proxy such as IIS ARR, nginx, Caddy or a cloud load
+balancer), outbound internet not required. One process and one SQLite database per programme; a second process is
+refused
 ([docs/DEPLOYMENT.md](../DEPLOYMENT.md), *Single instance only*). Sized for dozens of users, not hundreds.
 
 ## What the operator does vs what the vendor provides
 
-"Operator" is whoever hosts: the programme's IT partner or the county.
+"Operator" is whoever hosts: the programme's IT partner or the county, or, for a vendor-hosted programme, the vendor.
 
-| | Self-hosted / county-hosted (operator) | Vendor-hosted (planned, not offered) |
+| | Self-hosted / county-hosted (operator) | Vendor-hosted (offered from October 2026; no customer hosted yet) |
 | --- | --- | --- |
 | Server, OS patching, disk encryption, firewall | Operator | Vendor |
 | TLS certificate | Operator | Vendor |
-| Encryption keys and custody | Operator (secrets manager or `data/keys.json`) | Vendor, with documented custody; programme may request a key-escrow arrangement |
+| Encryption keys and custody | Operator (secrets manager or `data/keys.json`) | Vendor, on the customer's own instance, with an escrowed copy whose every opening is logged; the vendor can decrypt the records, as the agreements say |
 | Backups, off-host copy, restore drills | Operator (built-in scheduler and drill help) | Vendor, with drill results shared |
 | Identity provider (SSO), if any | Programme or county | Programme or county (vendor configures the OIDC client) |
 | Upgrades | Operator installs tagged releases (vendor provides release, notes, checksum, business-hours help) | Vendor, pilot group first |
 | User accounts, roles, MFA enrolment | Programme's SUDS administrator | Programme's SUDS administrator |
 | Audit review, break-glass acknowledgement, participant requests | Programme | Programme |
-| Software defects, security fixes, support | Vendor, business hours ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)) | Vendor |
+| Software defects, security fixes, support | Vendor: on a paid plan, email support with a response within 2 business days ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)) | Vendor, the same |
 | BAA / Part 2 QSOA | Required if the vendor can access PHI (e.g. support on the server) | Required |
-| Uptime and 2am on-call | The operator's own | Vendor, only as staffed and written into the contract ([HOSTING.md](HOSTING.md)) |
+| Uptime and 2am on-call | The operator's own; the vendor makes no uptime commitment for a server on customer infrastructure | Vendor, business hours: no uptime commitment is published for hosted plans and there is no 24×7 on-call ([HOSTING.md](HOSTING.md)) |
 
 ## Identity and access
 
@@ -298,9 +300,11 @@ it from the same evidence and will not answer "yes" to a control that is not in 
   information), and, for security issues, GitHub private vulnerability reporting (on since 2026-10-12) or the owner-published security contact (`[owner to complete]`,
   **owner-pending**), never a public issue with details ([SECURITY.md](../../SECURITY.md)). Accessibility reports have published
   targets ([docs/accessibility/STATEMENT.md](../accessibility/STATEMENT.md)); everything else is best effort.
-- **Contracted vendor support** exists only under a signed agreement; [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)
-  is an **owner template** whose hours, contacts and response targets are `[owner to complete]`, for counsel review.
-  The vendor is one person today; there is no 24×7 support and no vendor on-call.
+- **Contracted vendor support** exists only under a signed agreement. The published paid plans include email support
+  with a response within 2 business days (`public/procurement.json`); [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md)
+  is an **owner template** whose hours, contacts and other targets are `[owner to complete]`, for counsel review.
+  The vendor is one person today; there is no 24×7 support, no vendor on-call and no uptime commitment, self-hosted
+  or vendor-hosted.
 - **Releases**: tagged, checksummed, with release notes. The exception: **releases 1.16.3 to 1.24.0 were published without a tag**, a GitHub Release or the release gate's approval. They were pushed directly to `gh-pages` and recorded as policy exceptions. Until the owner pushes their tags, verify one of those builds against its commit. Rebuild the zip and compare its SHA-256 with [docs/evidence/RELEASE-HANDOFF.md](../evidence/RELEASE-HANDOFF.md), and check the web app with `scripts/release-site-check.js` ([QUESTIONNAIRE.md](../security/QUESTIONNAIRE.md) #39). A pilot-group-first rollout is recommended
   ([docs/ADOPTION.md](../ADOPTION.md), section 3). Security fixes expedited.
 - **Freeze and support commitment (from 1.23.1, stabilisation):** no feature release before 2026-10-29, and only through the release gate with a tag the owner pushes; no further release-policy exception except to ship a security fix; **1.23.x was the supported line**, with every defect and security fix until 1.24.0 and security fixes only for 30 days after 1.24.0's release date (to 2026-11-02); every release tagged by the owner and published by the release workflow, with no direct publishing once the owed tags exist. CI checks the cadence and patch rules on every push (the `release-policy` job). One exception has been made since, and it is not a security fix: 1.23.6 lets an administrator change their own permissions, role and account, which the owner chose to ship during the freeze; no permission name changes, so the check passes, and the exception is recorded by hand with its safeguards (the lockout guard, a confirmation, `self: true` in the audit; [docs/RELEASE.md](../RELEASE.md), *Record: 1.23.6*). The second is the security exception the commitments allow: the owner lifted the freeze on 2026-10-02 to release the fixes of a white-box penetration test of 1.23.6 as **1.24.0**, two days after 1.23.0, recorded on its `Security exception:` line, which the `release-policy` job reads (*Record: 1.24.0*). **1.24.x is now the supported line**, and the next feature release comes no earlier than 2026-10-31. 1.24.1, a patch, needed no exception (*Record: 1.24.1*). These are a one-maintainer project's commitments, not a contractual SLA ([docs/RELEASE.md](../RELEASE.md), *Stabilisation (from 1.23.1)*)

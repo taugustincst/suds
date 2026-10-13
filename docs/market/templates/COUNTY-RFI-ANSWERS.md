@@ -9,17 +9,25 @@
 
 It is written for the county pilot ([../COUNTY-KIT.md](../COUNTY-KIT.md)): the county runs one SUDS server for the
 county view (no client data on it), and each CBO it funds runs its own office server. Where the answer differs
-between the two, both are given. The longer, question-by-question version is
+between the two, both are given. A CBO may instead choose vendor hosting (offered from October 2026; no customer is
+hosted yet); where an answer gives the CBO or its IT partner a duty for its server, the vendor performs it for a
+vendor-hosted CBO. The longer, question-by-question version is
 [../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md); the evidence index is
 [../../evidence/README.md](../../evidence/README.md).
 
 ## Hosting and deployment
 
 **Q. Is SUDS software-as-a-service? Who hosts it?**
-No. The county (for the county view) and each CBO or its IT partner install and operate it: SUDS Server on a
-Linux VM with the project's installer, a container, or the county's own cloud tenant. A vendor-hosted option is
-planned, not offered; if it is offered, AugustInnovations LLC operates it and signs the BAA and Part 2 QSOA. The
-vendor's own install, suds.systems, holds fictional data only and is not offered to customers. Evidence: [../../SELF-HOSTING.md](../../SELF-HOSTING.md),
+Either, as each organisation chooses. **Self-hosted:** the county (for the county view) and each CBO or its IT
+partner install and operate it: SUDS Server on a Linux VM with the project's installer, a container, or the county's
+own cloud tenant; the published prices exclude that infrastructure. **Vendor-hosted (offered from October 2026):**
+AugustInnovations LLC operates a multi-tenant fleet in which each customer runs in its own isolated instance, with its
+own database and encryption keys (never a shared database), and signs the BAA and Part 2 QSOA; hosting is included in
+the Program, Multi-Site and County-Wide plans. No customer is hosted yet: the fleet tooling is tested against
+stand-ins only and its first real drill tenant has not been run; no uptime commitment is published for hosted plans;
+cyber and technology E&O insurance is not yet bound; and the BAA and QSOA are drafts not yet reviewed by counsel. The
+vendor's own install, suds.systems (its data volume encrypted with LUKS since 2026-10-10), holds fictional data only
+and is not a customer's. Evidence: [../../SELF-HOSTING.md](../../SELF-HOSTING.md),
 [../../../deploy/linux/README.md](../../../deploy/linux/README.md), [../../DEPLOYMENT.md](../../DEPLOYMENT.md),
 [../HOSTING.md](../HOSTING.md).
 
@@ -66,8 +74,10 @@ verifies the county's certificate by host name. Evidence:
 ## Keys
 
 **Q. Who holds the encryption keys?**
-The county or CBO that runs the server, always: from its secrets manager or as root-only systemd credentials on
-SUDS Server. There is no vendor escrow. The server refuses to start with a key that does not match the database.
+Self-hosted: the county or CBO that runs the server, always: from its secrets manager or as root-only systemd
+credentials on SUDS Server, with no vendor escrow. Vendor-hosted: the vendor holds them on the customer's own
+instance, with an escrowed copy encrypted for the owner whose every opening is logged; the vendor can therefore decrypt
+the customer's records, under the BAA and QSOA. The server refuses to start with a key that does not match the database.
 Scripted, audited rotation. Evidence: [../../security/ENCRYPTION-AND-KEYS.md](../../security/ENCRYPTION-AND-KEYS.md);
 [../../DEPLOYMENT.md](../../DEPLOYMENT.md), *Key rotation runbook*; `test/backup.test.js`,
 `test/rotate-index-key.test.js`.
@@ -233,7 +243,9 @@ text; an Accessibility Conformance Report (VPAT 2.5, WCAG edition) and a stateme
   ([../../COUNTY-VIEW.md](../../COUNTY-VIEW.md), *Deferred*; [../DATA-NETWORK.md](../DATA-NETWORK.md), *What
   counsel must review*, items 1 and 4).
 - **The vendor** receives no PHI from a county- or CBO-hosted server unless given access; if it is (support on
-  the server, a database or backup), a BAA with Part 2 QSOA terms is required first. Drafts:
+  the server, a database or backup), a BAA with Part 2 QSOA terms is required first. A vendor-hosted CBO's records
+  are held by the vendor, as its business associate and qualified service organisation, under both agreements
+  signed before the first real record. Drafts:
   [BAA-QSOA-DRAFT.md](BAA-QSOA-DRAFT.md), [DPA-DRAFT.md](DPA-DRAFT.md), **not reviewed by counsel
   ([owner to complete])**.
 - **CMIA and Health and Safety Code §11845.5**: which applies to each CBO is for counsel
@@ -249,14 +261,18 @@ For a county- or CBO-hosted installation: **none**. The optional outbound connec
 administrator and are the organisation's own services (its identity provider, its Microsoft tenant for OneNote
 import, a syslog collector) or public websites, plus the optional AI copilot's provider on a CBO's server (off by
 default; only after that CBO records its own BAA and Part 2 QSOA with the provider). The county view adds none.
-Evidence: [../../security/DATA-LIFECYCLE.md](../../security/DATA-LIFECYCLE.md);
-[../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #5. **[owner to complete]: the list, if the
-vendor ever hosts.**
+For a vendor-hosted instance: Amazon Web Services (AWS Lightsail, under the AWS business associate addendum),
+which hosts the instance and its disks, with AugustInnovations LLC as the operator. Evidence:
+[../../security/DATA-LIFECYCLE.md](../../security/DATA-LIFECYCLE.md);
+[../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #5. **[owner to complete]: any other subprocessor
+of the hosted service.**
 
 ## Data ownership, exit and data return
 
 **Q. Who owns the data? What happens at the end of the contract?**
-The county owns the county server's data; each CBO owns its own. Both hold their databases and keys throughout.
+The county owns the county server's data; each CBO owns its own. A self-hosted organisation holds its database and
+keys throughout; for a vendor-hosted one the vendor holds them on the customer's own instance and delivers a complete
+export at the end of the contract.
 Exports: CSV and Excel of every table, the county view's Excel, CSV and tidy CSV, FHIR bulk export on a CBO's
 server; the database is a standard SQLite file. SUDS is proprietary: what may be kept running after the
 contract ends is set by the licence agreement **[owner to decide]**. Any copy the vendor held for support is deleted within 30 days with a certificate. Evidence:
@@ -268,10 +284,14 @@ contract ends is set by the licence agreement **[owner to decide]**. Any copy th
 **Q. What support is offered?**
 Today: the public issue tracker (best effort, never with client information); security reports through GitHub
 private vulnerability reporting (on since 2026-10-12) or the owner-published security contact (**owner-pending**), never a public issue with details.
-Contracted business-hours support exists only under a signed agreement; the SLA is a template with placeholders.
-No 24×7 support, no vendor on-call, no vendor-hosted service. Evidence: [../../SUPPORT.md](../../SUPPORT.md);
-[SUPPORT-SLA.md](SUPPORT-SLA.md). **[owner to complete]: hours, contacts, response targets, and the price
-([../PRICING-OPTIONS.md](../PRICING-OPTIONS.md)).**
+The published paid plans include email support with a response within 2 business days; contracted support is set in
+a signed agreement, and the SLA is a template with placeholders. The vendor runs a vendor-hosted customer's server
+(offered from October 2026; no customer hosted yet). No 24×7 support, no vendor on-call, and no uptime commitment:
+none for office servers on customer infrastructure, and none published for hosted plans. Prices (USD, effective
+October 2026): a 90-day pilot at $14,500 flat, credited in full toward the first annual plan; Program at $24,500 a
+year; Multi-Site at $49,500 a year; County-Wide at $98,000 a year
+([`public/procurement.json`](../../../public/procurement.json)). Evidence: [../../SUPPORT.md](../../SUPPORT.md);
+[SUPPORT-SLA.md](SUPPORT-SLA.md). **[owner to complete]: hours and contacts.**
 
 ## Company
 

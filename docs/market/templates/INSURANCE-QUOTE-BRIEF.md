@@ -23,9 +23,11 @@
 - **Product.** SUDS, proprietary case-management software for California substance-use-disorder (SUD) and
   harm-reduction programmes: outreach, naloxone and supply distribution, consent and disclosure accounting, state
   (CalOMS Tx) and funder reporting. Not an electronic health record; it does not bill or process payments.
-- **Services.** Licences for a self-hosted office server; a 90-day pilot, annual plans and email support at published
-  introductory prices ([`public/procurement.json`](../../../public/procurement.json)); implementation help. A hosted
-  service run by the licensor is **planned, not offered** ([../HOSTING.md](../HOSTING.md)).
+- **Services.** Licences for a self-hosted office server; a 90-day pilot ($14,500 flat), annual plans (Program
+  $24,500, Multi-Site $49,500 and County-Wide $98,000 a year) and email support at published prices
+  ([`public/procurement.json`](../../../public/procurement.json)); implementation help. A **hosted service** run by the
+  licensor, one isolated instance per customer on AWS, is **offered from October 2026** and included in the annual
+  plans (owner decision of 2026-10-12); **no customer is hosted yet** ([../HOSTING.md](../HOSTING.md)).
 - **Customers.** Community-based organisations and California counties.
 
 ## 3. Data handled
@@ -33,12 +35,13 @@
 | Question | Answer |
 | --- | --- |
 | Types | Protected health information (PHI) and **42 CFR Part 2** SUD treatment records (names, dates of birth, clinical notes, consents, services), held by the customer's SUDS |
-| Who holds it today | **The customer.** Self-hosted office server: on the customer's infrastructure. SUDS on this device: in the user's browser. The licensor receives no client records in either model ([../../security/DATA-INVENTORY.md](../../security/DATA-INVENTORY.md)) |
+| Who holds it today | **The customer.** Self-hosted office server: on the customer's infrastructure. SUDS on this device: in the user's browser. The licensor receives no client records in either model ([../../security/DATA-INVENTORY.md](../../security/DATA-INVENTORY.md)), and no customer is hosted yet |
 | Does the licensor hold any | Only fictional data, on its own install (suds.systems) |
-| If the hosted service starts | The licensor would hold customers' PHI and Part 2 records on AWS under the AWS business associate addendum, as their business associate and qualified service organisation; record counts `[ESTIMATE]` |
+| When the first hosted customer starts | The licensor will hold that customer's PHI and Part 2 records on AWS under the AWS business associate addendum, as its business associate and qualified service organisation; record counts `[ESTIMATE]` |
 | Payment card data | None |
 
-Ask the broker to quote **both**: the business as it is (no customer data held) and with the hosted service.
+Ask the broker to quote **both**: the business as it is (no customer data held) and with the hosted service, which is
+offered now.
 
 ## 4. Security controls (with evidence)
 
@@ -80,7 +83,7 @@ counties typically require of a software vendor of this size. `[KNOWN CONTRACT R
 ## 7. Questions to ask each broker
 
 1. Does the policy cover a software vendor that does **not** hold customer data today but licenses software that
-   processes PHI and Part 2 records, and what changes when the hosted service starts?
+   processes PHI and Part 2 records, and what changes when its hosted service takes its first customer?
 2. Is regulatory defence and penalty cover included for HIPAA, 42 CFR Part 2 and California law, and are fines covered
    where insurable?
 3. Is breach response (forensics, notification, call centre, credit monitoring) first-party cover, with the insurer's

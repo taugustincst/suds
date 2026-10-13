@@ -30,7 +30,7 @@ direction; the owner `[DOES / DOES NOT]` hold the copyright in the code personal
 | --- | --- | --- | --- |
 | **SUDS on this device** | Nobody: a web app the licensor publishes on GitHub Pages; it runs in the user's browser | The user's own device only; the licensor receives none of it | Available; free for real use at its official address (`LICENSE` section 2A) |
 | **Office server, self-hosted** | The programme, its IT partner, or its county, on its own infrastructure (Linux or Windows) | The programme | Available: 90-day evaluation with fictional data free; production needs a signed licence agreement (`LICENSE` sections 2 and 3) |
-| **Hosted by the licensor** | `[LICENSOR LEGAL ENTITY]`, one cloud VM per customer on AWS (under the AWS business associate addendum) | The licensor, as business associate and Part 2 qualified service organisation | **Planned, not offered** ([../HOSTING.md](../HOSTING.md)) |
+| **Hosted by the licensor** | `[LICENSOR LEGAL ENTITY]`, one cloud VM per customer on AWS (under the AWS business associate addendum) | The licensor, as business associate and Part 2 qualified service organisation | **Offered from October 2026** (owner decision of 2026-10-12), included in the annual plans; no customer hosted yet, and the agreements below not yet reviewed ([../HOSTING.md](../HOSTING.md)) |
 
 The licensor also runs one install of its own (suds.systems), with fictional data only; it is not a customer.
 
@@ -41,10 +41,10 @@ Review links point at the repository's default branch; a zip of the exact commit
 | # | Document | What it is | Status |
 | --- | --- | --- | --- |
 | 1 | [`LICENSE`](../../../LICENSE) | The SUDS Proprietary Licence: evaluation grant, the free-use grant for SUDS on this device (section 2A), everything else needs a signed agreement | In force since 1.24.1; written by the owner in plain English, never reviewed |
-| 2 | [LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md](LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md) | The signed agreement `LICENSE` section 3 requires: office-server licence, the planned hosted service, the pilot, fees, data, termination, liability, insurance, escrow | Draft, unreviewed, unsigned |
+| 2 | [LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md](LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md) | The signed agreement `LICENSE` section 3 requires: office-server licence, the hosted service (offered from October 2026), the pilot, fees, data, termination, liability, insurance, escrow | Draft, unreviewed, unsigned |
 | 3 | [BAA-QSOA-DRAFT.md](BAA-QSOA-DRAFT.md) | Exhibits B and C: a HIPAA business associate agreement (45 CFR 164.504(e)) and a Part 2 QSOA (42 CFR 2.11) | Draft, unreviewed |
 | 4 | [DPA-DRAFT.md](DPA-DRAFT.md) | Data processing addendum | Draft, unreviewed |
-| 5 | [SUPPORT-SLA.md](SUPPORT-SLA.md) | Support service levels (business hours; hosted terms only when offered) | Template, unreviewed |
+| 5 | [SUPPORT-SLA.md](SUPPORT-SLA.md) | Support service levels (business hours; hosted-service terms, with no uptime commitment published) | Template, unreviewed |
 | 6 | The owner's own drafts, held outside the repository: `[v2 of the licence and subscription agreement and of the BAA/QSOA, built on 2 and 3 with the owner's earlier pilot agreement and BAA folded in, and a reconciliation memo listing the open choices]` | Send **one** text per document: either 2 and 3, or their v2, as the owner decides; the memo goes with it | Unreviewed: `[ATTACHMENTS]` |
 | 7 | [DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](DATA-CONTRIBUTION-AGREEMENT-DRAFT.md) (optional, later) | A CBO-to-county agreement for aggregate figures | Draft; only when a county pilot needs it |
 | 8 | [IP-ASSIGNMENT-DRAFT.md](IP-ASSIGNMENT-DRAFT.md) | A copyright and IP assignment from the individual contributor(s) to the LLC (section 5) | Draft for counsel, unsigned |

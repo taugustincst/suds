@@ -1,10 +1,13 @@
 # SUDS pricing options (for the owner to decide)
 
-> **Superseded (2026-10-08) by the published tiers.** SUDS's prices are the introductory tiers published on
-> the procurement page: a 90-day pilot at $2,500 flat, Program at $4,800 a year, Multi-site at $12,000 a year and
-> County-wide at custom annual pricing, with the paid-plan support terms beside them. The single source is
+> **Superseded (2026-10-08) by the published tiers; fees reworked 2026-10-12.** SUDS's prices are the tiers published
+> on the procurement page: a 90-day pilot at $14,500 flat (credited in full toward the first annual plan), Program at
+> $24,500 a year, Multi-site at $49,500 a year and County-wide at $98,000 a year, with hosting on the vendor's
+> multi-tenant fleet included in the annual plans and the paid-plan support terms beside them. The single source is
 > [`public/procurement.json`](../../public/procurement.json), shown on the app's [Security and procurement page](../../public/procurement.html). Where this
-> document differs, the published tiers win; it is kept below unchanged as the record of how pricing was worked out.
+> document differs, the published tiers win; it is kept below as the record of how pricing was worked out. Its
+> "when offered" for hosting dates from before 2026-10-12: vendor hosting is now offered, with no customer hosted
+> yet ([HOSTING.md](HOSTING.md)).
 
 **Status: options, not a price list.** Nothing here is decided, quoted or offered. Every value in the worksheet
 is **[owner to decide]**. Until the owner decides, the published hypothesis is
@@ -79,7 +82,7 @@ only against a figure the buyer has given.
 | **Structure** | A county pays one annual amount covering support (and, when offered, hosting) for up to N CBOs it funds, with a price per additional CBO. Implementation for each CBO priced separately (model D) or as a per-CBO allowance inside the licence |
 | **What it buys** | Support for each CBO; a county contact; one security review for all of them; and the **county view** across the CBOs (released in 1.18.0; [../COUNTY-VIEW.md](../COUNTY-VIEW.md)): the county's own SUDS server (a county-only install: no client data on it) set up with the county code and each CBO's key, key exchange at each CBO's kickoff, help importing the signed quarterly files, and support for the combined view, its quarter-by-quarter trend and its Excel, CSV and tidy CSV files. Publishing combined figures is in it on a build that has the publication screen (1.21.0: screened releases of the combined figures, naming only CBOs whose written consent to publication the county recorded, released in 1.22.0). Not in it: a published dashboard, benchmarks across CBOs (Tier 2). County-entered figures for grantees not on SUDS are released in 1.20.0: in it only on a build that has them |
 | **For** | "Sell to the money": one buyer, one procurement, many programmes; CBOs without IT capacity get a sponsor; the county gets consistent outcome data |
-| **Against** | Long procurement; the county may expect hosting, which is not offered; one contract concentrates revenue; the county, not the vendor, must be the data steward for any benchmarking ([DATA-NETWORK.md](DATA-NETWORK.md)) |
+| **Against** | Long procurement; the county may expect hosting (offered from October 2026, with no customer hosted yet); one contract concentrates revenue; the county, not the vendor, must be the data steward for any benchmarking ([DATA-NETWORK.md](DATA-NETWORK.md)) |
 | **Note** | The contract is a licence agreement (LICENSE: production use needs one) plus services. Say in the proposal what each covers |
 | **The package** | What the county runs, what each CBO does, a 3-CBO timeline and the documents a county asks for: [COUNTY-KIT.md](COUNTY-KIT.md). Price nothing from it: every number here is [owner to decide] |
 
@@ -118,9 +121,9 @@ programmes that cannot contract with an AI provider themselves.
 | **Community** | Public code for evaluation (90 days, fictional data; [LICENSE](../../LICENSE)), documentation, public issue tracker; no response target | Free; production needs a licence |
 | **Standard** | Business-hours support per [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md); upgrade help; security notices; questionnaire answers | The base of models A–C |
 | **Enhanced** | Standard plus a quarterly review, a named contact, faster business-hours targets, help with each release's upgrade | Only when capacity exists to honour it |
-| **Hosted** | Vendor-hosted single-tenant instance plus Enhanced | **Planned — not offered** until the [HOSTING.md](HOSTING.md) checklist is done |
+| **Hosted** | Vendor-hosted instance (one per customer) plus Enhanced | Superseded: hosting on the vendor's fleet is included in the published annual plans (2026-10-12); no customer hosted yet ([HOSTING.md](HOSTING.md)) |
 
-No tier may promise 24×7 support or an uptime figure until [HOSTING.md](HOSTING.md) says it is offered.
+No tier may promise 24×7 support or an uptime figure: none is published, for hosted plans or office servers.
 
 ## How the models combine
 
