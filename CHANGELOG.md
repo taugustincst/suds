@@ -5,6 +5,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 ## 1.25.8 — 2026-10-13
 
 SHA-256 of suds-v1.25.8.zip: d216110fb948654df3a2d1a622eced483179e17ed35341db35224ffdb26cee3e
+SHA-256 of suds-1.25.8-windows-x64.zip: 9902268e15056aa7908929dd5dce265f25e4cdf467ff6915a773e171e549f00d
 
 A patch of 1.25.7 (docs/RELEASE.md, *Record: 1.25.8*): the fixes from the internal self-assessment SEC-2026-001 of
 1.25.6, the owner's new published pricing with hosting included, and the market documents brought in line with both.
