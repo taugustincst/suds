@@ -2,25 +2,58 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.25.8 — 2026-10-13
 
-Fixes from the internal self-assessment SEC-2026-001 of 1.25.6 (the vendor's own, **not an independent penetration
-test**; docs/evidence/self-assessment-SEC-2026-001.md): 0 critical, high or medium findings; 1 low, 2 informational.
+A patch of 1.25.7 (docs/RELEASE.md, *Record: 1.25.8*): the fixes from the internal self-assessment SEC-2026-001 of
+1.25.6, the owner's new published pricing with hosting included, and the market documents brought in line with both.
+No migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.25.8
+--previous v1.25.7` passes: 73 lines added outside docs, tests and generated files, of the 1,500 a patch may add). It
+passes the release policy with no exception. Upgrading needs nothing beyond replacing the files and restarting. What an
+upgrading administrator should know:
+
+* **The audit log's head is sealed more often**: every 500 entries and at every graceful stop (with an anchor outside
+  the database where anchoring is on). Nothing to configure; a `systemctl stop` or restart now seals it.
+* **A client's name can no longer contain `<` or `>`**, on the office server or from a device. Existing records are not
+  touched; an edit that changes such a name is refused until the characters are removed.
+* **Security status has a *Session cookie* line** (compliance check `app.session_cookie`): it warns when SUDS Server
+  runs outside production mode with no TLS of its own, so the session cookie would not be marked Secure. Behind HTTPS,
+  run it with `SUDS_ENV=production` (the installer does).
+* **Published pricing changed** (owner's decision of 2026-10-12; the procurement page, `public/procurement.json`): a
+  90-day pilot at $14,500 (credited in full), Program at $24,500 a year, Multi-Site at $49,500 a year and County-Wide at
+  $98,000 a year, with hosting on the vendor's multi-tenant fleet included (each customer in its own instance, with its
+  own database and keys). Self-hosting remains. No customer is hosted yet.
+
+The self-assessment was the vendor's own, **not an independent penetration test**
+(docs/evidence/self-assessment-SEC-2026-001.md): no critical, high or medium finding; one low and two informational.
 
 ### Fixed
 
 - **The newest audit entries could be removed unseen until the next daily seal** (F-01, Low). The sealed head now also
-  advances every 500 entries and at a graceful stop (with an anchor outside the database where anchoring is on), and
-  only over a chain that still matches the last seal: a truncation is reported, never sealed over.
+  advances every 500 entries and at a graceful stop, and only over a chain that still matches the last seal: a
+  truncation is reported, never sealed over.
 - **A client's name could hold markup** (F-02, Informational): nothing ran (names are written as text, and the CSP
-  blocks inline script), but a name containing `<` or `>` is now refused, on the office server and from devices.
-- **Security status reports whether the session cookie is marked Secure** (F-03, Informational), with the compliance
-  check `app.session_cookie`: behind HTTPS, run SUDS Server in production mode.
+  blocks inline script), but a name containing `<` or `>` is now refused (server/rules/clients.js, so the office routes
+  and sync push both enforce it).
+- **Nothing reported whether the session cookie is marked Secure** (F-03, Informational): Security status and the
+  compliance check now do.
+- **The market documents contradicted each other and the product**: seven said the CalOMS Tx code sets were not
+  verified (their values were, in 1.25.0; only the file layout is unconfirmed); several still gave the old prices or
+  said vendor hosting is not offered; the Part 2 accounting-of-disclosures right was not marked as on hold (the 2024
+  rule tolls it until HHS revises HIPAA's accounting standard). They now agree with the procurement page and with what
+  is in place.
 
 ### Changed
 
-- `release-state` no longer requires HANDOFF.md once the notes between the assistants have moved to the private
-  operations repository (HANDOFF.md absent, or a pointer marked `<!-- handoff: moved -->`).
+- **Pricing and hosting** as above; the buyer documents (questionnaire, buyer guides, RFI answers, positioning, pilot
+  kit, support, hosting) describe both the hosted and the self-hosted option, and say plainly that no customer is
+  hosted yet and the fleet's first real provisioning drill is still to run.
+- **The pen-test RFP requires a signed independence statement** and says the licensor's own security practice cannot
+  provide the test; a first letter to a county opioid-settlement coordinator
+  (docs/market/templates/SETTLEMENT-PILOT-LETTER.md); the business work plan opens with the owner's five steps.
+- **The notes between the assistants moved to a private repository**; `release-state` no longer requires HANDOFF.md
+  when it is absent or a pointer marked `<!-- handoff: moved -->`.
+- **CI**: the WebKit known defect WK-1 covers the same reload hanging as well as crashing; the graceful-stop seal is
+  not tested by signal on Windows, where a signal cannot stop a process gracefully.
 
 ## 1.25.7 — 2026-10-12
 

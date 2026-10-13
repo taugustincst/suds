@@ -13,9 +13,11 @@ signed tags, the flake register's entries) and whether each is in force today.
 
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
-**Version.** It describes 1.25.7: the commit "Release 1.25.7", a patch of 1.25.6 with the fixes from the evaluation of
-1.25.6, no policy exception and an SBOM of its own, `sbom-1.25.7` ([../RELEASE.md](../RELEASE.md), *Record: 1.25.7*; its
-tag is owed, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.25.6, a patch of 1.25.5 with the fixes from the evaluation of
+**Version.** It describes 1.25.8: the commit "Release 1.25.8", a patch of 1.25.7 with the fixes from the self-assessment
+SEC-2026-001 and the owner's new pricing, no policy exception and an SBOM of its own, `sbom-1.25.8`
+([../RELEASE.md](../RELEASE.md), *Record: 1.25.8*; its tag is owed, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.25.7, a
+patch of 1.25.6 with the fixes from the evaluation of 1.25.6, tagged and released on 2026-10-12, has `sbom-1.25.7`.
+1.25.6, a patch of 1.25.5 with the fixes from the evaluation of
 1.25.5, has `sbom-1.25.6`. 1.25.5, a patch of 1.25.4 with the fixes from the market-readiness
 evaluation of 1.25.4, has `sbom-1.25.5`. 1.25.4, a patch of 1.25.3 with the fixes from
 the market-readiness evaluation of 1.25.3 and the empty offsite backups found on suds.systems, has `sbom-1.25.4`. 1.25.3,
