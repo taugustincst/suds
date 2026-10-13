@@ -152,10 +152,9 @@ published (2026-10-08). **1.25.2 and 1.25.3 are tagged, have been through the ga
 published (2026-10-09). 1.25.4 is tagged, has been through the gate, and its GitHub Release is published
 (2026-10-10). 1.25.5 is tagged, has been through the gate, and its GitHub Release is published (2026-10-11). 1.25.6 is
 tagged, has been through the gate, and its GitHub Release is published (2026-10-11). 1.25.7 is tagged, has been through
-the gate, and its GitHub Release is published, marked Latest (2026-10-12); 1.25.7 is what GitHub Pages serves**
+the gate, and its GitHub Release is published, marked Latest (2026-10-12). 1.25.8 is tagged, has been through
+the gate, and its GitHub Release is published, marked Latest (2026-10-13); 1.25.8 is what GitHub Pages serves**
 ([../evidence/RELEASE-HANDOFF.md](../evidence/RELEASE-HANDOFF.md)).
-1.25.8, stamped 2026-10-13, waits for its tag; until it is pushed it is not published, and there is no tag or published
-zip to check it against. Verify against the commit instead: the hand-off lists the stamp commit and its zip SHA-256, and
 `scripts/release-site-check.js` checks a published web app byte for byte against the commit's build.
 `scripts/release-state.js` fails while any release is untagged and this answer and #36 do not say so.
 
