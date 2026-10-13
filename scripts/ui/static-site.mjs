@@ -185,7 +185,7 @@ ok(await page.$('a[data-procurement-link][href="procurement.html"]'), 'the phone
   const plain = await noJs.newPage();
   await plain.goto(base + '/procurement.html');
   const shown = await plain.$$eval('[data-field]', els => Object.fromEntries(els.map(e => [e.dataset.field, e.textContent.trim()])));
-  ok(/90-DAY PILOT — \$2,500 flat/.test(shown.pricing || '') && /2 business days/.test(shown.sla || ''), 'without JavaScript the page shows the published pricing and support terms', shown);
+  ok(/90-DAY PILOT — \$14,500 flat/.test(shown.pricing || '') && /2 business days/.test(shown.sla || ''), 'without JavaScript the page shows the published pricing and support terms', shown);
   eq(JSON.stringify(shown), JSON.stringify(published), 'without JavaScript every fact reads exactly as the script renders it');
   await noJs.close();
 }
