@@ -7,8 +7,8 @@
 > not add after-hours or uptime commitments the vendor cannot staff ([../HOSTING.md](../HOSTING.md)).
 >
 > **The support that exists without an agreement** — the programme's administrator, its IT partner or county,
-> the public issue tracker and, for security issues, GitHub private vulnerability reporting (owner-pending: to be
-> enabled in the repository settings) or the owner-published security contact (owner-pending) — is described in [../../SUPPORT.md](../../SUPPORT.md).
+> the public issue tracker and, for security issues, GitHub private vulnerability reporting (on since
+> 2026-10-12) or the owner-published security contact (owner-pending) — is described in [../../SUPPORT.md](../../SUPPORT.md).
 
 ## Who runs the server decides who owns uptime
 
