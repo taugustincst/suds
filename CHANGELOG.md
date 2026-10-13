@@ -4,6 +4,8 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## 1.25.8 — 2026-10-13
 
+SHA-256 of suds-v1.25.8.zip: d216110fb948654df3a2d1a622eced483179e17ed35341db35224ffdb26cee3e
+
 A patch of 1.25.7 (docs/RELEASE.md, *Record: 1.25.8*): the fixes from the internal self-assessment SEC-2026-001 of
 1.25.6, the owner's new published pricing with hosting included, and the market documents brought in line with both.
 No migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.25.8
