@@ -18,7 +18,7 @@ For county IT, security and privacy reviewers. Everything here describes control
 | Audit logging, immutability, log collection, auditor export | [LOGGING-AND-AUDIT.md](LOGGING-AND-AUDIT.md) |
 | Backups, RPO/RTO, tested recovery, standby | [BACKUP-AND-DR.md](BACKUP-AND-DR.md) |
 | Retention, deletion, purge, data residency, subprocessors | [DATA-LIFECYCLE.md](DATA-LIFECYCLE.md) |
-| Dependencies, patching, scanning, the software bill of materials | [VULNERABILITY-MANAGEMENT.md](VULNERABILITY-MANAGEMENT.md), [../evidence/sbom-1.25.7.cdx.json](../evidence/sbom-1.25.7.cdx.json) |
+| Dependencies, patching, scanning, the software bill of materials | [VULNERABILITY-MANAGEMENT.md](VULNERABILITY-MANAGEMENT.md), [../evidence/sbom-1.25.8.cdx.json](../evidence/sbom-1.25.8.cdx.json) |
 | How changes are made, tested and released | [SDLC.md](SDLC.md) |
 | Which release and repository controls are in force today (checksum channels, signed tags, private reporting), and how each is checked | [OPERATIVE-CONTROLS.md](OPERATIVE-CONTROLS.md) |
 | Breach / incident handling | [INCIDENT-RESPONSE.md](INCIDENT-RESPONSE.md) |
