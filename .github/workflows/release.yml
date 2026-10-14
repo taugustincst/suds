@@ -227,7 +227,7 @@ jobs:
           node scripts/build-windows.js --node-zip "$env:RUNNER_TEMP\node-$env:NODE22_VERSION-win-x64.zip" --winsw "$env:RUNNER_TEMP\WinSW-x64.exe" --postject "$env:RUNNER_TEMP\postject-$env:POSTJECT_VERSION.tgz" --stage "$env:RUNNER_TEMP\stage" --no-zip
           if ($LASTEXITCODE -ne 0) { Write-Output "::error::scripts/build-windows.js failed"; exit 1 }
       - name: Hand the staged files to the signing job
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-stage
           path: ${{ runner.temp }}/stage
@@ -299,7 +299,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Output "::error::packing the Windows zip failed"; exit 1 }
           Get-ChildItem "$env:RUNNER_TEMP\win" | Format-Table -AutoSize Name, Length | Out-String | Write-Output
       - name: Hand the zip to the release job
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: suds-windows-x64
           path: ${{ runner.temp }}/win
