@@ -114,7 +114,9 @@ $FLEET_HOME/                        mode 0700, a private git repository (see bel
 ## Provision a tenant
 
 1. `cp deploy/fleet/tenant.env.example "$FLEET_HOME/tenants/<slug>.env"` and fill it. `ADMIN_CIDR`/`ADMIN_CIDR6` are
-   the networks you run the scripts from (`curl -4 https://checkip.amazonaws.com`); install.sh refuses to run if this
+   the networks you run the scripts from (`curl -4 https://checkip.amazonaws.com`), and both are required; with no IPv6
+   address, set `ADMIN_CIDR6` to a network in the never-routed documentation prefix `2001:db8::/32`, which keeps SSH over
+   IPv6 closed. install.sh refuses to run if this
    SSH session comes from outside `ADMIN_CIDR` (or over IPv6, unless `ADMIN_CIDR6` is `::/0`).
 2. **Dry run:** `deploy/fleet/provision-tenant.sh "$FLEET_HOME/tenants/<slug>.env"`. It prints every step and command
    and calls nothing. Read it.

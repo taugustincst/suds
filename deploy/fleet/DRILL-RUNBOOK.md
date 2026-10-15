@@ -40,7 +40,10 @@ ops directory), never in this repository or in a public note. Stop at any **ABOR
    `main`; they must agree). Download `suds-v1.25.7.zip` from the GitHub Release into `FLEET_HOME/releases/` and check
    it: `sha256sum releases/suds-v1.25.7.zip`.
 3. Decide the drill's date, and that the operator runs it from a network whose address goes in `ADMIN_CIDR`
-   (`curl -4 https://checkip.amazonaws.com`) and, if any, `ADMIN_CIDR6`.
+   (`curl -4 https://checkip.amazonaws.com`) and whose IPv6 network goes in `ADMIN_CIDR6`. Both are required (the
+   scripts refuse a settings file without `ADMIN_CIDR6`). An operator with no IPv6 address, such as AWS CloudShell, sets
+   a network from the documentation prefix `2001:db8::/32` (for example `2001:db8:1::/48`): it is never routed, so SSH
+   over IPv6 stays closed.
 
 ## 1. Go / no-go (operator, with the owner) — Gate 1
 
