@@ -255,6 +255,7 @@ What is still missing:
 - **What exists today** ([../SUPPORT.md](../SUPPORT.md)):
   - the programme's administrator and its IT partner or county;
   - the public issue tracker, <https://github.com/taugustincst/suds/issues> (no client information);
+  - the vendor's contact for procurement and licensing, *Licensing, AugustInnovations LLC*, `info@suds.systems`, <https://sudsdata.com/#pilot> (published on the Security & procurement page from 1.25.9; a role address, monitored by the owner);
   - private vulnerability reports through GitHub private vulnerability reporting (on since 2026-10-12) or the owner-published security contact (**owner-pending**; #48);
   - accessibility reports, with their published targets.
 - **A Security & procurement page in the app (1.24.0).** Linked from the sign-in page and the menu, it needs no account and links the buyer documents and templates; its pricing (the four tiers, reworked on 2026-10-12: a 90-day pilot at $14,500 flat, Program at $24,500 a year, Multi-Site at $49,500 a year and County-Wide at $98,000 a year) and its paid-plan support terms (email support with a response within 2 business days) are published (since 1.24.4, from `public/procurement.json`, also written into the page itself so it reads the same without JavaScript); its contact name, email and website still read *Not yet published by the maintainer* until the owner fills them (`public/procurement.json`, or an office's Settings › Program). **Owner item:** the contact lines.

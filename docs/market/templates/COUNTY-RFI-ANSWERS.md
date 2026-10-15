@@ -292,7 +292,8 @@ none for office servers on customer infrastructure, and none published for hoste
 October 2026): a 90-day pilot at $14,500 flat, credited in full toward the first annual plan; Program at $24,500 a
 year; Multi-Site at $49,500 a year; County-Wide at $98,000 a year
 ([`public/procurement.json`](../../../public/procurement.json)). Evidence: [../../SUPPORT.md](../../SUPPORT.md);
-[SUPPORT-SLA.md](SUPPORT-SLA.md). **[owner to complete]: hours and contacts.**
+[SUPPORT-SLA.md](SUPPORT-SLA.md). Contact: *Licensing, AugustInnovations LLC*, `info@suds.systems` (the Security &
+procurement page, from 1.25.9). **[owner to complete]: support hours.**
 
 ## Company
 
