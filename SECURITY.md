@@ -19,7 +19,7 @@ maintainers see the report.
 If your programme has a signed support agreement, you may also use the security contact it names.
 
 If you cannot use it (no GitHub account, or the **Report a vulnerability** button is missing), report to the owner-published
-security contact: **[owner to complete: the security contact address — owner-pending]**. If that is not published
+security contact: **security@suds.systems**. If that is not published
 yet either, open a public issue titled only "Security contact request", **with no details at all** (no description
 of the issue, the component or the steps), and the maintainer will arrange a private channel. Never put vulnerability
 details in a public issue, a pull request or a discussion.
