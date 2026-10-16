@@ -4,6 +4,8 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## 1.25.9 — 2026-10-15
 
+SHA-256 of suds-v1.25.9.zip: ca1d7d3d22dc790dc9bbe37594aa627f854847adbf3452857df1bb65684f4ac0
+
 A patch of 1.25.8 (docs/RELEASE.md, *Record: 1.25.9*): the Security & procurement page names the software vendor's
 contact. Released as soon as it was ready, on the owner's instruction, two days after 1.25.8. No migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.25.9
 --previous v1.25.8` passes: 9 lines added outside docs, tests and generated files, of the 1,500 a patch may add). Upgrading
