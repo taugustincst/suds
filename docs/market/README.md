@@ -36,12 +36,12 @@ inventory and pen-test scope (stated as not yet commissioned), the accessibility
 [BAA/QSOA](templates/BAA-QSOA-DRAFT.md), [DPA](templates/DPA-DRAFT.md) and [SLA](templates/SUPPORT-SLA.md) templates,
 each on the repository's default branch (`repository_url` in `public/procurement.json`). Its contact block publishes
 the legal entity (AugustInnovations LLC), the pricing tiers (reworked on 2026-10-12) and the paid-plan support terms
-(since 1.24.4; the page also carries them as static text, so they read the same without JavaScript). Contact name, email
-and web page read *Not yet published by the maintainer* until the owner fills them: the three empty keys of
-`public/procurement.json` for the published SUDS on this device, and Settings › Program › Security & procurement
-page (the `procurement_*` settings) on an office server, where from 1.25.2 they appear under *This program*, apart
-from the vendor's terms (*Not yet published by this program* when blank). **Owner item:** fill the vendor's three; SUDS
-invents none of them.
+(since 1.24.4; the page also carries them as static text, so they read the same without JavaScript), and from 1.25.9
+the vendor's contact: *Licensing, AugustInnovations LLC*, `info@suds.systems` and `https://sudsdata.com/#pilot` (the
+owner's choice of 2026-10-15; a role address on the product domain, never a person's own), in `public/procurement.json`
+on every copy. An office server's own administrator publishes the programme's facts under Settings › Program ›
+Security & procurement page (the `procurement_*` settings); from 1.25.2 they appear under *This program*, apart from
+the vendor's terms (*Not yet published by this program* when blank). SUDS invents none of them.
 
 ## Index
 

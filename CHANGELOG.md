@@ -2,6 +2,34 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.25.9 — 2026-10-15
+
+SHA-256 of suds-v1.25.9.zip: ca1d7d3d22dc790dc9bbe37594aa627f854847adbf3452857df1bb65684f4ac0
+
+A patch of 1.25.8 (docs/RELEASE.md, *Record: 1.25.9*): the Security & procurement page names the software vendor's
+contact. Released as soon as it was ready, on the owner's instruction, two days after 1.25.8. No migration, no new or widened permission and no new route (`node scripts/release-policy.js --version 1.25.9
+--previous v1.25.8` passes: 9 lines added outside docs, tests and generated files, of the 1,500 a patch may add). Upgrading
+needs nothing beyond replacing the files and restarting.
+
+### Changed
+
+- **The Security & procurement page names who to contact** about buying or licensing SUDS: *Licensing,
+  AugustInnovations LLC*, `info@suds.systems` and <https://sudsdata.com/#pilot> (`public/procurement.json`, the owner's
+  choice of 2026-10-15; a role address on the product domain, never a person's own). Until now those three lines read
+  *Not yet published by the maintainer*. They are the software vendor's, on every copy; an office server's own
+  procurement settings stay the programme's, under *This program* (1.25.2), and are still blank until its administrator
+  fills them.
+- **The records**: the security controls page describes the repository settings turned on on 2026-10-13 (a `main`
+  ruleset against deletion and force pushes, a required release reviewer and immutable releases, the last two shown
+  first by this release); the fleet documents say `ADMIN_CIDR6` is required, with a never-routed documentation prefix for
+  an operator with no IPv6; the business work plan and the buyer documents are brought up to date.
+
+### Fixed
+
+- **A test that failed in the first minute after midnight** (Street outreach Undo: it read *My shift*, which counts from
+  the start of the day, a minute after logging a contact). It now reads the shift from an hour back. The app is
+  unchanged.
+
 ## 1.25.8 — 2026-10-13
 
 SHA-256 of suds-v1.25.8.zip: d216110fb948654df3a2d1a622eced483179e17ed35341db35224ffdb26cee3e

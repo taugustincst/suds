@@ -65,7 +65,10 @@ test('the static build ships public/procurement.json with the licensor\'s legal 
   // The CalOMS promise is no wider than what is verified: the code sets, not the file layout (docs/compliance/CALOMS.md).
   assert.match(j.pricing, /CalOMS code-set validation against the DHCS dictionary included; file layout confirmed with your county/);
   assert.doesNotMatch(j.pricing, /CalOMS extract validation/);
-  for (const f of ['contact_email', 'contact_name', 'contact_url']) assert.equal(j[f], '', `${f} is blank: the owner supplies it`);
+  // The vendor's contact, a role address on the product domain (owner, 2026-10-15; 1.25.9): never a person's own.
+  assert.equal(j.contact_name, 'Licensing, AugustInnovations LLC');
+  assert.equal(j.contact_email, 'info@suds.systems');
+  assert.equal(j.contact_url, 'https://sudsdata.com/#pilot');
   assert.match(j.sla, /2 business days/, 'the paid-plan support terms are published');
   assert.match(j.repository_url, /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/);
   assert.match(j.default_branch, /^[\w./-]+$/);

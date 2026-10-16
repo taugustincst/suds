@@ -158,8 +158,8 @@ ok(await page.$eval('#static-local', el => !el.classList.contains('hidden') && /
 eq((await page.$$eval('a', as => as.filter(a => /^Open SUDS$/.test(a.textContent.trim())).map(a => a.getAttribute('href')))).join('|'), './', 'one "Open SUDS" link, which opens this site (the notice no longer repeats it)');
 ok(await page.$eval('#static-url', el => /127\.0\.0\.1/.test(el.textContent) && !/get-app/.test(el.textContent)), 'the address shown is this site\'s, not a server\'s', await page.$eval('#static-url', el => el.textContent));
 // The Security & procurement page (1.24.0), for organizations evaluating SUDS: in the build, linked, with its
-// documents on the repository's default branch (this build ships no docs/), and the maintainer's contact blank
-// until procurement.json says otherwise. It asks no office server for anything.
+// documents on the repository's default branch (this build ships no docs/), and the vendor's contact from
+// procurement.json (1.25.9). It asks no office server for anything.
 ok(await page.$('a[data-procurement-link][href="procurement.html"]'), 'the phone/tablet page links to Security & procurement');
 {
   const asked = [];
@@ -175,7 +175,10 @@ ok(await page.$('a[data-procurement-link][href="procurement.html"]'), 'the phone
   ok(/Penetration test: not yet commissioned/.test(await page.textContent('main')), 'the pen-test status is stated as it is');
   const blanks = await page.$$eval('[data-field]', els => els.map(e => [e.dataset.field, e.dataset.published, e.textContent.trim()]));
   eq(blanks.length, 6, 'six facts in the contact block');
-  ok(blanks.every(([f, pub, t]) => (f === 'legal_entity' ? pub === '1' && t === 'AugustInnovations LLC' : ['pricing', 'sla'].includes(f) ? pub === '1' : pub === '0' && t === 'Not yet published by the maintainer')), 'the licensor, pricing and support terms are published; the contact facts say "Not yet published by the maintainer" until the owner fills them in', blanks);
+  ok(blanks.every(([, pub]) => pub === '1'), 'all six facts are published: the licensor, the contact (1.25.9), pricing and support terms', blanks);
+  eq(blanks.find(([f]) => f === 'legal_entity')[2], 'AugustInnovations LLC', 'the licensor');
+  eq(await page.getAttribute('[data-field="contact_email"] a', 'href'), 'mailto:info@suds.systems', 'the contact email is a mail link to the role address');
+  eq(await page.getAttribute('[data-field="contact_url"] a', 'href'), 'https://sudsdata.com/#pilot', 'the contact page is a link');
   ok(!/\bdemo\b|evaluation copy/i.test((await page.textContent('main')).replace(/organizations evaluating/i, '')), 'no demo or evaluation-copy wording about SUDS itself');
   eq(asked.length, 0, 'the page asked no server API for anything', asked);
   page.off('request', onReq);

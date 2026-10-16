@@ -57,7 +57,10 @@ test('Undo on Street outreach: a worker takes back their own contact, the stock 
   const contact = (c) => c.post('/api/interventions', { type: 'outreach', occurred_at: minutesAgo(1), location: 'street', modality: 'in_person', supply_site_id: office, supplies: [{ item_id: kit, quantity: 2 }] });
   const a = ok(await contact(nav));
   assert.equal(onHand(), 8);
-  const shift = async () => ok(await nav.get('/api/outreach/shift'), 200).contacts;
+  // From an hour back, not the default start of today: a run that crosses midnight would otherwise count yesterday's
+  // contact out of today's shift (a local run at 00:01 UTC, 2026-10-16).
+  const since = encodeURIComponent(minutesAgo(60));
+  const shift = async () => ok(await nav.get(`/api/outreach/shift?since=${since}`), 200).contacts;
   const before = await shift();
   // Someone else's contact cannot be taken back by another navigator.
   const other = ok(await contact(nav2));

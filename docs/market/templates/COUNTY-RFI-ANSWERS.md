@@ -164,7 +164,7 @@ Zero runtime dependencies: the server uses only Node.js built-ins; a production 
 Build-time tooling is listed separately. A CycloneDX SBOM per release, reproducible from the commit. Dependabot
 for build tooling, the container base and CI actions. Evidence:
 [../../security/VULNERABILITY-MANAGEMENT.md](../../security/VULNERABILITY-MANAGEMENT.md);
-[../../evidence/sbom-1.25.8.cdx.json](../../evidence/sbom-1.25.8.cdx.json) (`node scripts/sbom.js`,
+[../../evidence/sbom-1.25.9.cdx.json](../../evidence/sbom-1.25.9.cdx.json) (`node scripts/sbom.js`,
 `test/sbom.test.js`).
 
 **Q. Release integrity: how does the county know the build it runs is the released code?** **Releases 1.16.3 to
@@ -178,8 +178,9 @@ published (2026-10-08). 1.25.2 and 1.25.3 are tagged, have been through the gate
 published (2026-10-09). 1.25.4 is tagged, has been through the gate, and its GitHub Release is published
 (2026-10-10). 1.25.5 is tagged, has been through the gate, and its GitHub Release is published (2026-10-11). 1.25.6 is
 tagged, has been through the gate, and its GitHub Release is published (2026-10-11). 1.25.7 is tagged, has been
-through the gate, and its GitHub Release is published, marked Latest (2026-10-12) (docs/evidence/RELEASE-HANDOFF.md).
-1.25.8, stamped 2026-10-13, waits for its tag; until it is pushed it is not
+through the gate, and its GitHub Release is published (2026-10-12). 1.25.8 is tagged, has been through the gate, and its
+GitHub Release is published, marked Latest (2026-10-13) (docs/evidence/RELEASE-HANDOFF.md).
+1.25.9, stamped 2026-10-15, waits for its tag; until it is pushed it is not
 published, and there is no tag or published zip to check it against. Verify against the commit instead. Each
 commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
 release zip, which anyone can rebuild with `git archive` and compare. `scripts/release-site-check.js` checks a
@@ -292,7 +293,8 @@ none for office servers on customer infrastructure, and none published for hoste
 October 2026): a 90-day pilot at $14,500 flat, credited in full toward the first annual plan; Program at $24,500 a
 year; Multi-Site at $49,500 a year; County-Wide at $98,000 a year
 ([`public/procurement.json`](../../../public/procurement.json)). Evidence: [../../SUPPORT.md](../../SUPPORT.md);
-[SUPPORT-SLA.md](SUPPORT-SLA.md). **[owner to complete]: hours and contacts.**
+[SUPPORT-SLA.md](SUPPORT-SLA.md). Contact: *Licensing, AugustInnovations LLC*, `info@suds.systems` (the Security &
+procurement page, from 1.25.9). **[owner to complete]: support hours.**
 
 ## Company
 

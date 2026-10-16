@@ -1,9 +1,9 @@
 # Business work plan: the owner actions that move market readiness
 
 **For:** the owner (Tj), who decides, and the owner's business assistant (Muse), who carries out the steps.
-**As of:** 2026-10-10, SUDS 1.25.4; **updated 2026-10-11** with the market-readiness evaluation of 1.25.5 (its
-findings J1–J11: private vulnerability reporting, the entity's filings and the IP assignment, the iPhone checklist,
-suds.systems hygiene). **Source:** the market-readiness evaluation of 1.25.4 (section 9, *Owner and business
+**As of:** 2026-10-15, SUDS 1.25.8; **updated 2026-10-15** with the all-perspectives evaluation of 1.25.8
+(1.25.8 released and the server upgraded 2026-10-13; repository protections in place; the penetration-test RFP
+sent, proposals due 2026-10-27; the fleet drill staged, at Gate 1). **Source:** the market-readiness evaluation of 1.25.4 (section 9, *Owner and business
 actions*) and of 1.25.5 (section 10), HANDOFF.md's open owner decisions and the documents this repository already
 holds.
 
@@ -48,20 +48,20 @@ the prices excluding the customer's infrastructure.
 
 ## Summary
 
-| # | Item | Owner | Status (2026-10-12) | Next step | Headline effect (evaluation of 1.25.4, or of 1.25.5 where marked) |
+| # | Item | Owner | Status (2026-10-15) | Next step | Headline effect (evaluation of 1.25.4, or of 1.25.5 where marked) |
 | --- | --- | --- | --- | --- | --- |
 | 0a | **Private vulnerability reporting** | Tj | **Done (on since 2026-10-12)**; the buyer documents say so. The security contact itself is still to publish (item 1) | — | Restored the security lens's prerequisite (evaluation of 1.25.5, J2) |
 | 0 | Legal entity: AugustInnovations LLC | Tj | **Registered and Active** (filed 2022; the Secretary of State record Muse checked on 2026-10-10); the licensor (Tj's decision, 2026-10-10). **Owed:** the Statement of Information (LLC-12), overdue since 10/31/2024; the FTB franchise-tax status, unconfirmed; a written IP and copyright assignment to the LLC | File the LLC-12; confirm the FTB status; sign the assignment ([templates/IP-ASSIGNMENT-DRAFT.md](templates/IP-ASSIGNMENT-DRAFT.md), with counsel) | None on its own; a precondition for any agreement (items 1, 2, 6, 7 and 8) |
-| 1 | Publish a procurement contact (minutes, once decided: the mailbox exists) | Tj decides, Muse fills | **Partly:** sudsdata.com, the information site for buyers (published 2026-10-12), names a contact address on the product domain; the app's procurement page (`public/procurement.json`) still has empty contact fields, and SECURITY.md names no security contact | **DECISION FOR TJ**: the same contact (or a role address) in `procurement.json`, and the security contact. What sudsdata.com says must match the buyer documents: see HANDOFF, 2026-10-12, *The two sites* | +0.25 together with item 2 |
-| 2 | Counsel review: licence, agreement, BAA/QSOA, DPA, SLA | Tj engages, Muse prepares | Drafts only, unreviewed; owner-side v2 drafts reconciled with the repository's | Brief ready: [templates/COUNSEL-REVIEW-BRIEF.md](templates/COUNSEL-REVIEW-BRIEF.md) | +0.25 together with item 1 |
-| 3 | Independent penetration test | Tj approves and pays, Muse runs the process | Not started; the RFP is on hold. **Clinical Perimeter (clinicalperimeter.com, published 2026-10-12) is AugustInnovations LLC's own security practice** ("AugustInnovations LLC dba Clinical Perimeter"; the fictitious business name filing is still to be made), so a test of SUDS by it is the vendor's own test, like the 2026-10-08 live test (QUESTIONNAIRE #38): never "independent" or "third-party", and its attestation letter is a self-attestation for SUDS | **DECISION FOR TJ**: an independent tester (no common ownership, control or financial interest with AugustInnovations LLC or Tj), on [../security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md) against a staging copy; send the RFP when ready | +0.25 to +0.5 (an independent test only) |
+| 1 | Publish a procurement contact (minutes, once decided: the mailbox exists) | Tj decides, Muse fills | **Vendor contact done in 1.25.9** (stamped 2026-10-15; live once its tag is pushed): `public/procurement.json` names *Licensing, AugustInnovations LLC*, `info@suds.systems` and `https://sudsdata.com/#pilot`, the contact sudsdata.com has published since 2026-10-12. The vendor's contact is the file's, on every copy; the office server's Settings fields are that programme's own (*This program*, 1.25.2), so no sign-in is needed for it. **Owed:** keep the mailbox behind `info@` past its trial (ends 2026-10-22), or the published contact stops working; SECURITY.md still names no security contact | Keep the mailbox; tag 1.25.9; add the security contact to SECURITY.md once the security mailbox forward exists at the registrar; optionally fill suds.systems' own *This program* fields with the same values | +0.25 together with item 2 |
+| 2 | Counsel review: licence, agreement, BAA/QSOA, DPA, SLA | Tj engages, Muse prepares | Drafts only, unreviewed; owner-side v2 drafts reconciled with the repository's; a send-ready counsel engagement packet was prepared 2026-10-13 (BAA/QSOA questions, the licence cap question, the entity's overdue filing disclosed up front) | Brief ready: [templates/COUNSEL-REVIEW-BRIEF.md](templates/COUNSEL-REVIEW-BRIEF.md) | +0.25 together with item 1 |
+| 3 | Independent penetration test | Tj approves and pays, Muse runs the process | **Sent 2026-10-12** to three of the four shortlisted vendors (one submission unconfirmed — do not resubmit blind; watch for its confirmation); proposals due **2026-10-27**, selection ~2026-10-28/29, testing window Nov 2–20; a scoring sheet is prepared (a signed independence statement is a knock-out). **Clinical Perimeter (clinicalperimeter.com, published 2026-10-12) is AugustInnovations LLC's own security practice** ("AugustInnovations LLC dba Clinical Perimeter"; the fictitious business name filing is still to be made), so a test of SUDS by it is the vendor's own test, like the 2026-10-08 live test (QUESTIONNAIRE #38): never "independent" or "third-party", and its attestation letter is a self-attestation for SUDS | Score the proposals when they land and select ~2026-10-28/29 (owner's decision); the tester must be independent (no common ownership, control or financial interest with AugustInnovations LLC or the owner), on [../security/PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md) against a staging copy | +0.25 to +0.5 (an independent test only) |
 | 4 | Code signing for the Windows server | Tj | Not done: `suds.exe` and `suds-service.exe` unsigned | **DECISION FOR TJ**: certificate or signing service | +0.1 to +0.25 (with a county-like Windows run) |
-| 5 | CalOMS layout confirmed with a county | Muse, with Tj's approval to send | Not done | Read the DHCS 2026 FAQ; send [templates/CALOMS-CONFIRMATION-REQUEST.md](templates/CALOMS-CONFIRMATION-REQUEST.md) | +0.1 to +0.25 |
-| 6 | Insurance: cyber liability and technology E&O | Tj | None | Quotes with [templates/INSURANCE-QUOTE-BRIEF.md](templates/INSURANCE-QUOTE-BRIEF.md), after item 0 | +0.1 |
+| 5 | CalOMS layout confirmed with a county | Muse, with Tj's approval to send | Confirmation letter prepared send-ready 2026-10-13 (routes via the county CalOMS coordinator; states the layout is unconfirmed). Not sent | Read the DHCS 2026 FAQ; send [templates/CALOMS-CONFIRMATION-REQUEST.md](templates/CALOMS-CONFIRMATION-REQUEST.md) | +0.1 to +0.25 |
+| 6 | Insurance: cyber liability and technology E&O | Tj | None bound; a vendor shortlist with a direct-quote first choice and 12 bind questions for the owner was prepared 2026-10-13 | Quotes with [templates/INSURANCE-QUOTE-BRIEF.md](templates/INSURANCE-QUOTE-BRIEF.md), after item 0 | +0.1 |
 | 7 | A reference pilot under a signed agreement | Tj | None | After items 1, 2 and 6 | +0.25 to +0.5, over months |
-| 8 | A hosted offer and its price | Owner | **Offered and priced** (2026-10-12: hosting included in the published annual plans); no customer hosted; the fleet's first real drill not run; no insurance, no on-call, no uptime commitment published | Run the drill tenant; fill [templates/HOSTED-OFFER-WORKSHEET.md](templates/HOSTED-OFFER-WORKSHEET.md) from its real bills | +0.25 once priced, insured and offered: priced and offered now, insurance still owed (item 6) |
-| 9 | Signed release tags; separate commit identities | Tj | Procedure written; `v1.25.5` unsigned, one shared identity, pushed by Muse on Tj's instruction (the questionnaire now says so) | Make the signing key | Small; removes a supply-chain question |
-| 10 | suds.systems hygiene | Muse, on Tj's directives | Runs 1.25.6 (HANDOFF, 2026-10-11); the upgrade to 1.25.7 waits for Tj's directive; the administrator accounts keep known names; the escrow copies are still staged on the box; the hand-off notes are public (the disk, key and escrow details were taken out in 1.25.7) | The 1.25.7 upgrade on Tj's go; rename the administrator accounts; the off-box escrow pull and deleting the staged copies; plan the private operations repository and the history rewrite | Small, but it is the box a county is shown |
+| 8 | A hosted offer and its price | Owner | **Offered and priced** (2026-10-12: hosting included in the published annual plans); no customer hosted; the fleet's first real drill not run — its runbook is on `main` and staging is complete in the operator environment (ops directory, key pair, release zip hash-verified); Gate 1 waits on two owner items, the escrow key's public half and a working DNS-provider API key in the ops file; no insurance, no on-call, no uptime commitment published | Run the drill tenant; fill [templates/HOSTED-OFFER-WORKSHEET.md](templates/HOSTED-OFFER-WORKSHEET.md) from its real bills | +0.25 once priced, insured and offered: priced and offered now, insurance still owed (item 6) |
+| 9 | Signed release tags; separate commit identities | Tj | **Partly done (2026-10-13):** immutable releases are enabled and the release environment requires the owner's approval; release tags are still unsigned and one shared commit identity remains | Make the signing key | Small; removes a supply-chain question |
+| 10 | suds.systems hygiene | Muse, on Tj's directives | Runs **1.25.8** (upgraded 2026-10-13; pre-upgrade snapshot kept); a planned administrator-account rename did not take effect, and the assistant's saved login needs a password reset through the owner's account; the escrow copies are still staged on the box; the off-box escrow pull and the escrowed-key drill are still owed; an October snapshot-restore test proved the restore mechanics but not the service starting on the restored box (UNVERIFIED); the private operations repository exists (since 2026-10-12) and the public hand-off file is a pointer to it | The off-box escrow pull and deleting the staged copies; retry the restore service-level proof; the git-history rewrite when the owner schedules it | Small, but it is the box a county is shown |
 | 11 | The real-iPhone check | Tj or a pilot lead | None recorded; no one named, no date | **DECISION FOR TJ**: a named owner and a date; then run [../evidence/REAL-DEVICE-CHECK-TEMPLATE.md](../evidence/REAL-DEVICE-CHECK-TEMPLATE.md) | Can move the device-only verdict on iPhone |
 | 12 | Opioid-settlement reporting collateral | Muse | Draft one-pager in the repository | Check against the current DHCS form; review | Sales, before the 30 Sept 2027 cycle |
 
@@ -159,38 +159,31 @@ decisions (item 2).
 
 ## 1. Publish a procurement contact
 
-- **Why it matters.** "Who do I contact and pay? **Nobody is named.**" (evaluation, section 7). The procurement page
-  shows *Not yet published by the maintainer* for the contact name, email and web page. With item 2, worth about +0.25.
-- **What already exists.** [`public/procurement.json`](../../public/procurement.json): `contact_email`, `contact_name`
-  and `contact_url` are empty; `legal_entity`, `pricing` and `sla` are filled. The page is `public/procurement.html`,
+- **Why it matters.** "Who do I contact and pay? **Nobody is named.**" (evaluation, section 7). Until 1.25.9 the
+  procurement page showed *Not yet published by the maintainer* for the contact name, email and web page. With item 2,
+  worth about +0.25.
+- **What already exists.** [`public/procurement.json`](../../public/procurement.json): from 1.25.9 every field is
+  filled, the contact with the licensing role address (`info@suds.systems`). The page is `public/procurement.html`,
   linked from every sign-in page; its static text must match the JSON word for word
   (`test/procurement-hardening.test.js`). An office server has its own copy under Settings › Program › Security &
   procurement page (`server/procurement.js`). Business email now exists on the product domain (HANDOFF, 2026-10-10):
   a mailbox on a **free trial that ends 2026-10-22** (keep-or-cancel decision due before then), with role forwards
   `info@` and `support@`; **DMARC is not configured yet**.
-- **DECISION FOR TJ.**
-  1. **The address.** Recommended: a **role address** on the product domain (for example the existing `info@`, or a
-     new `sales@` or `procurement@` forward), never a personal mailbox, so it survives staff changes and does not
-     publish a person's address. `[CONTACT EMAIL]`.
-  2. **The name.** A role ("SUDS sales", "Licensing, AugustInnovations LLC") rather than a personal name.
-     `[CONTACT NAME]`.
-  3. **The web page.** `[CONTACT URL]`: for example the product domain's own page, if it will describe the
-     offer, or the repository's procurement page.
-  4. **Keep the mailbox** past the 2026-10-22 trial (the contact must not bounce after it is published).
+- **Decided (2026-10-15).** The address `info@suds.systems` (a role forward on the product domain); the name
+  *Licensing, AugustInnovations LLC*; the web page `https://sudsdata.com/#pilot`. **Still Tj's:** keep the mailbox
+  past the 2026-10-22 trial (the contact must not bounce once it is published).
 - **Steps (Muse).**
   1. Before publishing: add a DMARC record for the product domain (start with `p=none` and a reporting address, tighten
      later), confirm SPF and the MX records, and send a test message to and from the role address.
-  2. Prepare the change: the three fields in `public/procurement.json` and the matching static text in
-     `public/procurement.html`; it goes out in the next release (the static site is published from a release), with
-     `npm test` passing.
+  2. **Done in 1.25.9:** the three fields in `public/procurement.json` and the matching static text in
+     `public/procurement.html` (the static site and the release zip carry them once `v1.25.9` is tagged).
   3. On suds.systems, enter the same three values under Settings › Program › Security & procurement page.
   4. Set a monitored inbox rule: replies within the published SLA (2 business days, `procurement.json` `sla`).
 - **Send to.** Nobody; this is publication.
 - **Done when.** The procurement page, on the published site and on suds.systems, shows the three values, and a message
   to the address is answered.
-- **Recorded in.** `public/procurement.json`; [README.md](README.md) (the paragraph on the contact block, which says
-  "**Owner item:** fill the vendor's three"); [templates/COUNTY-RFI-ANSWERS.md](templates/COUNTY-RFI-ANSWERS.md) and
-  QUESTIONNAIRE #6a and #49 where they say the contact is to be completed.
+- **Recorded in.** `public/procurement.json`; [README.md](README.md) (the paragraph on the contact block);
+  [templates/COUNTY-RFI-ANSWERS.md](templates/COUNTY-RFI-ANSWERS.md) and QUESTIONNAIRE #49 (all from 1.25.9).
 
 ## 2. Counsel review of the licence and the agreements
 
