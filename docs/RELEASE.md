@@ -478,9 +478,11 @@ on the owner's instruction of 2026-10-15** ("I want it when it's ready"), two da
 (adopted 2026-10-11)* batches patches at most weekly outside security fixes, this one is no security fix, and the owner,
 who may revise that cadence, set it aside for this patch. It is recorded here as that one departure; the cadence stands
 for the next patch. It also carries a test fix: the Street outreach Undo test failed in the first minute after midnight
-(its *My shift* read counted from the start of the day). Its tag is owed
-([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)); it is the first release whose run waits for the owner's
-approval (`release-reviewer`) and is published immutable (`immutable-releases`).
+(its *My shift* read counted from the start of the day). The owner's business assistant tagged it and pushed it with
+the owner's GitHub access at the owner's direction on 2026-10-16. It is the first release whose run waited for an
+approval (`release-reviewer`): the release job and its `Web app` run were approved with the owner's account by the
+business assistant, at the owner's direction, as each approval's comment says. Its GitHub Release is published,
+**immutable** (`immutable-releases`), and marked Latest ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
 
 ### Supported versions
@@ -648,7 +650,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.25.6 | none of the policy (a patch within the patch rules: no migration, permission or route, 490 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-11, the Latest release (*Record: 1.25.6*) | the fixes from the critical evaluation of 1.25.5 (J1–J13; *Record: 1.25.6*, above) | no exception to approve |
 | 1.25.7 | none of the policy (a patch within the patch rules: no migration, permission or route, 346 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-12 (*Record: 1.25.7*) | the fixes from the evaluation of 1.25.6 (K1–K8; *Record: 1.25.7*, above) | no exception to approve |
 | 1.25.8 | none of the policy (a patch within the patch rules: no migration, permission or route, 73 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged from the owner's side and released through the gate on 2026-10-13 (*Record: 1.25.8*) | the fixes from the self-assessment SEC-2026-001 of 1.25.6 and the owner's pricing of 2026-10-12 (*Record: 1.25.8*, above) | no exception to approve |
-| 1.25.9 | none of the release policy's rules (a patch within the patch rules: no migration, permission or route, 9 lines). Tagged when ready, two days after 1.25.8, on the owner's instruction of 2026-10-15: the owner set aside the weekly batching of patches (*Release cadence*) for this one; its `release.yml` run publishes it once `v1.25.9` is pushed and the owner approves the run | the vendor's contact on the Security & procurement page, and the records since 1.25.8 (*Record: 1.25.9*, above) | no exception to approve |
+| 1.25.9 | none of the release policy's rules (a patch within the patch rules: no migration, permission or route, 9 lines). Tagged when ready, two days after 1.25.8, on the owner's instruction of 2026-10-15: the owner set aside the weekly batching of patches (*Release cadence*) for this one; released through the gate on 2026-10-16, its run approved with the owner's account at the owner's direction (*Record: 1.25.9*) | the vendor's contact on the Security & procurement page, and the records since 1.25.8 (*Record: 1.25.9*, above) | no exception to approve |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as
