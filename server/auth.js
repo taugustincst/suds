@@ -127,6 +127,9 @@ function passkeyCount(userId) {
 // from a hospital, a jail, a detox, probation or a court, another provider, the person or their family. intake:read sees
 // every open referral (a referred person is nobody's client yet, so there is no caseload to scope it by: intake is a
 // shared desk) and an accepted one only when it may open its client (caseload scoping), intake:write records referrals, logs attempts to reach the person, assigns them and accepts or closes them.
+// policies:manage (docs/integration/POWERDMS.md) sees every staff member's policy sign-offs, imports the PowerDMS
+// signature or training report and records or removes a sign-off by hand. Supervisors and administrators; everyone
+// sees their own sign-offs without it. No client data is involved.
 // Held by the roles that take people on: navigators, clinicians, supervisors and administrators; never finance or
 // read-only, whose roles identify nobody (permissions.js grantProblem refuses the grant). Accepting a referral into a
 // client also needs clients:read (an existing record the person may open) or clients:write (a new one).
@@ -135,12 +138,12 @@ const PERMS = {
                'interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*','budget:read','budget:write','budget:approve','budget:manage',
                'notes:admin:read','notes:admin:write','notes:clinical:breakglass','consents:*','imports:*','graph:import','reports:read','assignments:manage','export:read','export:identified','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','clients:legal-hold','patient-requests:*','careplan:read',
-               'complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*','county:view','county:manage','intake:read','intake:write'],
+               'complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*','county:view','county:manage','intake:read','intake:write','policies:manage'],
   supervisor: ['clients:read','clients:write','clients:all','records:manage-others','interventions:*','calls:*','time:read','time:write','time:all','time:approve','resources:*','referrals:*','tasks:*',
                'budget:read','budget:write','budget:approve','budget:manage','notes:admin:read','notes:admin:write','notes:clinical:read','notes:clinical:write',
                'consents:*','imports:*','graph:import','reports:read','assignments:manage','audit:read','export:read','export:identified','users:read','forms:*',
                'notes:cosign','time:approve','episodes:*','overdose:*','clients:merge','documents:read','documents:write','disclosures:override','patient-requests:*',
-               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*','ai:draft','county:view','intake:read','intake:write'],
+               'careplan:*','assessments:*','complaints:*','incidents:*','court-orders:*','agreements:*','reports:internal','reports:exact','reports:funder','supplies:*','ai:draft','county:view','intake:read','intake:write','policies:manage'],
   // Front-line staff hold export:read so the Export buttons on their own screens work; without
   // export:identified every file they can produce is de-identified (Safe Harbor), and caseload-scoped for a
   // person denied clients:all. budget:read (1.16.0): a clinician sees programme spending; no budget:write.

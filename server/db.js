@@ -937,6 +937,15 @@ const migrations = [
       upd.run(encrypt(JSON.stringify(a)), service, r.id);
     }
   },
+  // 72: PowerDMS (docs/integration/POWERDMS.md): a policy document's PowerDMS link, the revision staff must sign and the
+  // roles asked to sign it; who has signed which revision (policy_acknowledgements) and each report imported
+  // (policy_ack_imports). policy_ack_imports is created first: an acknowledgement names the import it came from.
+  (d) => {
+    addColumn(d, 'policy_documents', 'powerdms_url', 'TEXT');
+    addColumn(d, 'policy_documents', 'revision', 'TEXT');
+    addColumn(d, 'policy_documents', 'ack_roles', 'TEXT');
+    createTablesFromSchema(d, safeSchema(), ['policy_ack_imports', 'policy_acknowledgements'], 72);
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];
