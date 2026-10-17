@@ -2,7 +2,7 @@
 
 How a CBO (or a county sponsoring one) can buy implementation and support for SUDS, what the contract needs, and
 what the vendor still has to do to be buyable through each route. SUDS is proprietary: evaluation is free, and
-production use needs a licence agreement ([LICENSE](../../LICENSE); [templates/PRICING.md](templates/PRICING.md)).
+production use needs a licence agreement ([LICENSE](../../LICENSE); the published plans: [../BROCHURE.md](../BROCHURE.md), *Plans*, and `public/procurement.json`).
 
 > This is general guidance, not legal or procurement advice. Every county sets its own purchasing thresholds
 > and rules in its purchasing ordinance and policy manual. **Confirm local limits and required forms with the
@@ -160,7 +160,7 @@ does not hold.
 | **Accessibility (ADA / Section 508 / Gov. Code §7405 & §11135)** | State and many county contracts require conformance to WCAG 2.x AA / Section 508 and remediation of reported barriers. Offer an **accessibility warranty**: conformance as stated in the ACR, and remediation of confirmed barriers within an agreed time. | [docs/accessibility/ACR-WCAG21.md](../accessibility/ACR-WCAG21.md) |
 | **Insurance** | Commercial general liability, professional / technology errors and omissions, **cyber liability** (privacy breach, notification costs), workers' compensation, auto if on-site. County sets the limits; certificates naming the county as additional insured. | Vendor to-do |
 | **Support SLA** | Business-hours support, severity levels, response targets (paid plans: email, a response within 2 business days); hosted-service terms for a vendor-hosted customer, with no uptime commitment published. | [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md) |
-| **Pricing schedule** | Tiers, implementation fee, pilot terms, price holds. | [templates/PRICING.md](templates/PRICING.md) |
+| **Pricing schedule** | Tiers, implementation fee, pilot terms, price holds. | The published plans: [../BROCHURE.md](../BROCHURE.md), *Plans*, from [`public/procurement.json`](../../public/procurement.json) |
 | **Exit / transition** | Data return format and timing, deletion certificate, transition assistance. | [PILOT-KIT.md](PILOT-KIT.md), section 6; DPA |
 | **County forms** | W-9 / Payee Data Record, conflict-of-interest, anti-discrimination, debarment, Iran/Darfur certifications as applicable. | County purchasing |
 

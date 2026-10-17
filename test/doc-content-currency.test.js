@@ -136,6 +136,7 @@ function docs() {
   for (const f of walk(path.join(ROOT, 'docs'), '.md')) {
     const r = rel(f).split(path.sep);
     if (r[1] === 'evidence' && r.length > 3) continue;
+    if (r[1] === 'archive') continue; // superseded documents, each true of its own date (docs/archive/README.md)
     out.push(f);
   }
   return out;
@@ -181,11 +182,11 @@ test('the threat model and the README\'s "What\'s new" name the stamped minor', 
 // ---- 4. Buyer documents mention the stamped minor ----
 
 const BUYER_DOCS = [
-  'README.md',
+  'README.md', 'docs/BROCHURE.md', 'docs/TECH-SPECS.md',
   'docs/security/QUESTIONNAIRE.md', 'docs/security/ARCHITECTURE.md', 'docs/security/DATA-LIFECYCLE.md',
   'docs/security/DATA-INVENTORY.md', 'docs/security/LOGGING-AND-AUDIT.md', 'docs/security/THREAT-MODEL.md',
   'docs/market/README.md', 'docs/market/BUYER-GUIDE-IT.md', 'docs/market/BUYER-GUIDE-PROGRAM.md',
-  'docs/market/PILOT-KIT.md', 'docs/market/STRATEGY.md', 'docs/market/EVALUATION-RESPONSE.md',
+  'docs/market/PILOT-KIT.md', 'docs/market/STRATEGY.md', 'docs/market/BUSINESS-PLAN.md',
 ];
 
 test('every buyer document names a version on the stamped minor line', () => {

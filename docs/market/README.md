@@ -1,6 +1,8 @@
 # SUDS market and procurement pack
 
-For the people selling, buying and approving SUDS. The short version:
+For the people selling, buying and approving SUDS. **Start with** the two-page [brochure](../BROCHURE.md), the
+[technical specifications](../TECH-SPECS.md) and, for the business, the [business plan](BUSINESS-PLAN.md); the rest of
+this pack is the detail behind them. The short version:
 
 > **Privacy controls built to support 42 CFR Part 2, for the outreach and harm-reduction work that happens beside
 > an EHR — or without one: field-ready outreach (named or anonymous, on a phone, offline where the programme
@@ -17,7 +19,8 @@ For the people selling, buying and approving SUDS. The short version:
 **Strategy (September 2026).** A critical evaluation offered three options: keep SUDS as a portfolio piece (A),
 commit to the compliance and security work (B), or cut the EHR-adjacent framing and reposition around one
 workflow (C). The owner chose **B and C together**: do the work, and aim it at harm-reduction outreach, supply
-and grant reporting. [EVALUATION-RESPONSE.md](EVALUATION-RESPONSE.md) answers each point with its status.
+and grant reporting. The response to that evaluation is archived ([../archive/](../archive/README.md)); where SUDS
+stands now is in [BUSINESS-PLAN.md](BUSINESS-PLAN.md).
 
 **Go-to-market for 1.17.0 (29 September 2026).** The owner's strategy builds on that choice
 ([STRATEGY.md](STRATEGY.md)): *create* an AI documentation copilot (the first build: **released in 1.17.0**),
@@ -47,9 +50,11 @@ the vendor's terms (*Not yet published by this program* when blank). SUDS invent
 
 | Document | For | What it covers |
 | --- | --- | --- |
+| **[../BROCHURE.md](../BROCHURE.md)** | Buyers, everyone | The two-page product brochure: what SUDS does, the ways to run it, the plans and prices, where things stand |
+| **[../TECH-SPECS.md](../TECH-SPECS.md)** | IT, security, procurement | The technical specifications on one page, each line linked to its detail |
+| **[BUSINESS-PLAN.md](BUSINESS-PLAN.md)** | Owner, partners, investors | The business plan in one place: where SUDS stands, market, offer, order of work, roadmap, budget, risks, measures, open decisions |
 | [BUSINESS-WORKPLAN.md](BUSINESS-WORKPLAN.md) | Owner, the owner's business assistant | The ordered owner and business actions that move market readiness (evaluation of 1.25.4): what exists, each **DECISION FOR TJ**, the steps, who to send what to, when it is done and where the result is recorded |
 | [STRATEGY.md](STRATEGY.md) | Owner, partners, sponsors | The 1.17.0 go-to-market strategy: segments, wedges, sequencing (copilot first), the FDE model, built vs planned, risks, metrics |
-| [PRICING-OPTIONS.md](PRICING-OPTIONS.md) | Owner | The pricing models that were weighed (per active user, per organisation, county site licence, FDE services, support tiers), with a worksheet; superseded by the published tiers (2026-10-12), kept as a record |
 | [DATA-NETWORK.md](DATA-NETWORK.md) | Owner, counsel, county privacy | The outcomes dataset and referral network as moats: a design (Tier 1, the county view, released in 1.18.0; the rest not built) with the HIPAA, Part 2 and California analysis and what counsel must review |
 | [POSITIONING.md](POSITIONING.md) | Everyone | Category, buyer order, core vs optional modules, the boundary, key messages, objection handling |
 | [BUYER-GUIDE-PROGRAM.md](BUYER-GUIDE-PROGRAM.md) | Programme directors | Outreach, supplies and funder reporting in SUDS, a day in the life, what we need from you |
@@ -59,14 +64,12 @@ the vendor's terms (*Not yet published by this program* when blank). SUDS invent
 | [PILOT-KIT.md](PILOT-KIT.md) | Sponsor, pilot lead, vendor | 90-day pilot: scope, eligibility decision tree, roles, week-by-week plan, **measurement plan**, exit plan, evaluation template |
 | [COUNTY-KIT.md](COUNTY-KIT.md) | County sponsor, county IT and privacy, CBOs | The county pilot package for the county view: what the county runs, what each CBO does, a 3-CBO timeline, measures, data flows, the documents a county asks for |
 | [PROCUREMENT.md](PROCUREMENT.md) | Purchasing, counsel, vendor | Small purchase, CMAS, RFI/RFP, CalMHSA; RFI boilerplate; contract exhibits; vendor to-do list |
-| [EVALUATION-RESPONSE.md](EVALUATION-RESPONSE.md) | Owner, reviewers | Point-by-point response to the critical evaluation, with evidence and what is still open |
 | [templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md](templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md) | Counsel, buyers | The SUDS licence and subscription agreement `LICENSE` requires, for an office-server licence and the hosted service (offered from October 2026), matching the published tiers (**DRAFT — for review by counsel before use; not legal advice**) |
 | [templates/BAA-QSOA-DRAFT.md](templates/BAA-QSOA-DRAFT.md) | Counsel | HIPAA business associate agreement (45 CFR 164.504(e)) and 42 CFR Part 2 QSOA templates for the hosted service (**DRAFT — for review by counsel before use; not legal advice**) |
 | [templates/DPA-DRAFT.md](templates/DPA-DRAFT.md) | Counsel | Data processing addendum (**DRAFT — for counsel review, not legal advice**) |
 | [templates/COUNTY-RFI-ANSWERS.md](templates/COUNTY-RFI-ANSWERS.md) | County IT, privacy, purchasing | Answers to a county's IT and privacy RFI, each with its evidence in the repository (**template; organisational answers are owner-pending**) |
 | [templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md](templates/DATA-CONTRIBUTION-AGREEMENT-DRAFT.md) | Counsel, county, CBOs | CBO ↔ county agreement for the county view's aggregate figures (**DRAFT — for counsel review, not legal advice**) |
 | [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md) | IT, purchasing, counsel | Business-hours support, severity levels, response targets; hosted-service terms, with no uptime commitment published (**template for counsel review**) |
-| [templates/PRICING.md](templates/PRICING.md) | Buyers, vendor | Free on one device; the published tiers (reworked 2026-10-12: pilot $14,500, Program $24,500 a year, Multi-Site $49,500 a year, County-Wide $98,000 a year); the earlier hypothesis of paid services at flat annual amounts per programme (**superseded, kept as a record**) |
 | [templates/ROI-CALCULATOR.md](templates/ROI-CALCULATOR.md) | Programme directors | Worksheet: staff time, report hours, supply waste — with measured pilot numbers only |
 | [templates/CASE-STUDY-TEMPLATE.md](templates/CASE-STUDY-TEMPLATE.md) | Vendor, reference CBOs | Structure for the first CBO case studies |
 | [templates/COUNSEL-REVIEW-BRIEF.md](templates/COUNSEL-REVIEW-BRIEF.md) | Owner, counsel | Cover brief for counsel's review of the licence and the agreement drafts: documents in priority order, the questions, what is out of scope (**draft to be completed**) |
@@ -77,6 +80,7 @@ the vendor's terms (*Not yet published by this program* when blank). SUDS invent
 | [templates/HOSTED-OFFER-WORKSHEET.md](templates/HOSTED-OFFER-WORKSHEET.md) | Owner | Cost worksheet that checks the published prices, which include hosting, against the hosted service's real costs (**inputs to be filled from real quotes**) |
 | [templates/OSF-REPORTING-ONE-PAGER.md](templates/OSF-REPORTING-ONE-PAGER.md) | Counties, CBO directors | How SUDS supports the DHCS opioid settlement expenditure report (**draft collateral; check against the current DHCS form before each cycle**) |
 | [templates/SETTLEMENT-PILOT-LETTER.md](templates/SETTLEMENT-PILOT-LETTER.md) | Owner, county settlement coordinators | A first letter proposing a 90-day harm-reduction pilot paid from a county's settlement allocation, with an honest-status paragraph to fill on the day it is sent |
+| [../archive/](../archive/README.md) | Anyone checking history | Superseded documents: the pricing options and pricing hypothesis (replaced by the published plans), the response to the September 2026 evaluation (replaced by the business plan), the removed native apps |
 
 The product documentation these point to: [README](../../README.md) · [PLATFORM](../PLATFORM.md) ·
 [INSTALL](../INSTALL.md) · [DEPLOYMENT](../DEPLOYMENT.md) · [ADOPTION](../ADOPTION.md) · [HIPAA](../HIPAA.md) ·
@@ -90,7 +94,7 @@ model and the data inventory.
 | Phase | Goal | Done when |
 | --- | --- | --- |
 | **1. Become sellable** | Legal entity, insurance, counsel-reviewed templates; release gate and recovery drill evidenced; independent penetration test; harm-reduction reports checked against real funder templates | Vendor to-do items 1–5 done; pen test report in hand |
-| **2. Three pilot CBOs** | Small/mid harm-reduction or prevention CBOs with an IT partner or a county sponsor — preferably 2–3 CBOs under one sponsoring county, with paid implementation (the FDE service); measured pilots ([PILOT-KIT.md](PILOT-KIT.md)); pricing tested ([templates/PRICING.md](templates/PRICING.md), [PRICING-OPTIONS.md](PRICING-OPTIONS.md)) | Three pilots evaluated with measured baselines; at least two signed case studies; pricing hypotheses updated with what was learned |
+| **2. Three pilot CBOs** | Small/mid harm-reduction or prevention CBOs with an IT partner or a county sponsor — preferably 2–3 CBOs under one sponsoring county, with paid implementation (the FDE service); measured pilots ([PILOT-KIT.md](PILOT-KIT.md)); pricing tested against the published plans ([BUSINESS-PLAN.md](BUSINESS-PLAN.md), *The offer*) | Three pilots evaluated with measured baselines; at least two signed case studies; pricing hypotheses updated with what was learned |
 | **3. County sponsorship** | Counties sponsor or host CBO instances, or CBOs choose vendor hosting; respond to RFIs; check the hosted service's costs against measured support hours ([HOSTING.md](HOSTING.md)) | One county sponsoring more than one CBO; hosting decision recorded |
 | **Later** | Direct county department sales, CMAS, CalMHSA channel, SOC 2 | Only after the above |
 
@@ -155,7 +159,7 @@ Software cannot close these. Suggested timeline from the start of Phase 1.
 | Licence and subscription agreement, BAA/QSOA and DPA templates reviewed by vendor counsel | Vendor / company | Month 1–2 | Drafts in [templates/](templates/) (the [licence and subscription agreement](templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md) since 2026-10-10), not reviewed |
 | Support (business hours) and SLA template reviewed by counsel | Vendor / company | Month 1–2 | Owner template drafted (`[owner to complete]` placeholders); today's channels are the public issue tracker and, for security issues, GitHub private vulnerability reporting (on since 2026-10-12) or the owner-published security contact (**owner-pending**) ([../SUPPORT.md](../SUPPORT.md); the security policy is [SECURITY.md](../../SECURITY.md), with response targets for the owner to confirm) |
 | Vendor-hosted environment ([HOSTING.md](HOSTING.md) checklist) | Vendor / company | The drill tenant before the first hosted customer | Offered from October 2026 (owner decision of 2026-10-12); no customer hosted yet. Operator decided (AugustInnovations LLC); the AWS business associate addendum accepted for the account of the vendor's own install, suds.systems (2026-10-08; fictional data only, data volume encrypted with LUKS since 2026-10-10); the fleet tooling tested against stand-ins only, not yet run against real infrastructure; no uptime commitment published |
-| Pricing validated with 3 pilot customers | Vendor / company | Phase 2 | Tiers published and reworked on 2026-10-12 ([`public/procurement.json`](../../public/procurement.json)); not yet validated by a paying programme. [templates/PRICING.md](templates/PRICING.md) and [PRICING-OPTIONS.md](PRICING-OPTIONS.md) are superseded records |
+| Pricing validated with 3 pilot customers | Vendor / company | Phase 2 | Tiers published and reworked on 2026-10-12 ([`public/procurement.json`](../../public/procurement.json)); not yet validated by a paying programme. The earlier pricing records are archived ([../archive/](../archive/README.md)) |
 | Counsel: the AI copilot's data flow — BAA and Part 2 QSOA terms for an AI provider; what "identifiers removed" may be called; whether SUD counseling notes may be drafted with it (1.17.0 excludes them, the conservative default) | Vendor / company counsel | Before any pilot turns the copilot on (released in 1.17.0) | Not started |
 | Counsel and a county: data stewardship for pooled outcomes, and the one-time referral-link design as built ([DATA-NETWORK.md](DATA-NETWORK.md), *What counsel must review*) | Vendor / company counsel, county | Before any pooled figure, and before any programme switches on secure referral links (released in 1.17.0; off by default) | Not started (the dataset is design only) |
 | Independent penetration test, findings remediated | Vendor / company | Month 2–4 | Not started |

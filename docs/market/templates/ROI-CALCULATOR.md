@@ -21,7 +21,7 @@ SUDS saves. No pilot has measured SUDS yet; do not show the example numbers to a
 | J | Supply spend per year (naloxone, test strips, hygiene kits) ($) | | 20,000 |
 | K | Share of supplies wasted today (expired, lost, uncounted) (%) | | 8 |
 | L | Share wasted with tracked stock (%) | | 4 |
-| M | Annual cost: support subscription if bought ([PRICING.md](PRICING.md), unvalidated), plus your IT partner's hours to run the server | | 4,500 + 1,500 = 6,000 |
+| M | Annual cost: the plan bought (the published plans: [../../BROCHURE.md](../../BROCHURE.md), *Plans*), plus your IT partner's hours to run the server | | 4,500 + 1,500 = 6,000 |
 | N | One-time implementation fee, if bought ($) | | 5,000 |
 
 ## Calculations

@@ -270,7 +270,7 @@ No, and we will not say otherwise. What exists: control documentation and a SOC 
 `docs/security/`, a pre-answered questionnaire, and source code anyone can review (public; licensed under [LICENSE](../../LICENSE)). The vendor's own tests
 are not independent: an owner-authorised white-box test of 1.23.6, and a black-box test of its live install on
 2026-10-08 that found no critical, high or medium issue ([summary](../evidence/pentest-suds-systems-2026-10-08.md)). An
-independent penetration test and SOC 2 are open vendor items ([EVALUATION-RESPONSE.md](EVALUATION-RESPONSE.md)).
+independent penetration test and SOC 2 are open vendor items ([BUSINESS-PLAN.md](BUSINESS-PLAN.md), *The order of work*).
 
 **"Is it accessible?"**
 A WCAG 2.1 AA self-assessment and an Accessibility Conformance Report (VPAT format) are published at
@@ -293,8 +293,8 @@ it needs a licence agreement ([LICENSE](../../LICENSE)). The prices are publishe
 $24,500 a year, Multi-Site at $49,500 a year and County-Wide at $98,000 a year. They pay for the people around the
 code: onboarding, the BAA and QSOA, updates, email support and, on the annual plans, hosting on the vendor's fleet;
 they exclude the customer's own infrastructure for a self-hosted office server. Final terms are set in a licence
-agreement signed by AugustInnovations LLC; [templates/PRICING.md](templates/PRICING.md) and
-[PRICING-OPTIONS.md](PRICING-OPTIONS.md) are superseded records of how pricing was worked out.
+agreement signed by AugustInnovations LLC; [templates/PRICING.md](../archive/PRICING-HYPOTHESIS.md) and
+[PRICING-OPTIONS.md](../archive/PRICING-OPTIONS.md) are superseded records of how pricing was worked out.
 
 **"Will an AI read our clients' records?"**
 Only if you turn it on. An AI documentation copilot is available from 1.17.0 ([docs/AI-COPILOT.md](../AI-COPILOT.md)). It runs only from an

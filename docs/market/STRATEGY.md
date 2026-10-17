@@ -22,7 +22,7 @@ The strategy has three parts:
 The first build is the AI copilot.
 
 Each part below says what is built, what is planned, and an honest assessment. The companion documents are
-[PRICING-OPTIONS.md](PRICING-OPTIONS.md) (pricing models for the owner to decide) and
+[../archive/PRICING-OPTIONS.md](../archive/PRICING-OPTIONS.md) (the pricing models that were weighed; archived, superseded by the published plans) and
 [DATA-NETWORK.md](DATA-NETWORK.md) (the dataset and referral network as moats: a design, with the privacy
 and legal analysis).
 
@@ -106,7 +106,7 @@ draft is audited without its text, under a monthly cap and a per-person limit.
   - **Accuracy and liability.** A drafted note that is signed unread is the signer's note. The design answers
     this (drafts only, human signs); the pilot must measure how often drafts are changed, and training must say
     that the signer owns the content.
-  - **Cost.** Model calls are the one cost that grows with use. See [PRICING-OPTIONS.md](PRICING-OPTIONS.md).
+  - **Cost.** Model calls are the one cost that grows with use. See the archived [pricing options](../archive/PRICING-OPTIONS.md).
 - *What must be true before it is sold.* Counsel has reviewed the BAA/QSOA template for an AI provider; the
   provider's terms (retention, training on inputs, region) are recorded; the outbound payload is audited
   without its content; a pilot has measured the time to a signed note, with and without the copilot.
@@ -271,8 +271,8 @@ feature.
 The software's marginal cost is near zero. The cost of serving a programme is not: implementation, support, and
 hosting (offered from October 2026) and assurance ([HOSTING.md](HOSTING.md), *Unit-cost model*), plus model calls for the
 copilot. SUDS is proprietary from 1.24.1 (owner decision of 2026-10-03; [LICENSE](../../LICENSE)), so a price can buy a
-licence to the code as well as a service. [PRICING-OPTIONS.md](PRICING-OPTIONS.md) sets out the models and a worksheet for the owner.
-The owner has decided: the tiers in [`public/procurement.json`](../../public/procurement.json) are the published prices, shown on the procurement page, reworked on 2026-10-12 to a 90-day pilot at $14,500 flat (credited in full), Program at $24,500 a year, Multi-site at $49,500 a year and County-wide at $98,000 a year, with hosting on the vendor's multi-tenant fleet (one isolated instance per customer) included in the annual plans; they replace the introductory tiers first published in October 2026. [templates/PRICING.md](templates/PRICING.md) is the superseded hypothesis, kept as a record.
+licence to the code as well as a service. The archived [pricing options](../archive/PRICING-OPTIONS.md) set out the models that were weighed.
+The owner has decided: the tiers in [`public/procurement.json`](../../public/procurement.json) are the published prices, shown on the procurement page, reworked on 2026-10-12 to a 90-day pilot at $14,500 flat (credited in full), Program at $24,500 a year, Multi-site at $49,500 a year and County-wide at $98,000 a year, with hosting on the vendor's multi-tenant fleet (one isolated instance per customer) included in the annual plans; they replace the introductory tiers first published in October 2026. [templates/PRICING.md](../archive/PRICING-HYPOTHESIS.md) is the superseded hypothesis, kept as a record.
 
 ## Moat: what public code cannot copy
 
@@ -385,7 +385,7 @@ until counsel and one pilot have looked at it.
 | **Single maintainer** | Every wedge, every engagement and every security fix goes through one person; most commits are AI-assisted and there is no independent reviewer | A second reviewer for sync, disclosure and audit; a second person for delivery; say "one person" to buyers, as the pack already does |
 | **Public code** | The source stays visible (and 1.24.0 and earlier stay MIT); a larger vendor may copy features | Licence the code and price services; the moat is contracts, network, data and delivery; public code stays a trust asset |
 | **CalOMS dependence on DHCS** | The layout is unverified and DHCS owns the specification and the submission process | Say "to verify"; one county test file before selling the wedge; keep it optional |
-| **Pricing vs support cost** | A low price per user does not cover business-hours support, implementation and assurance for small programmes; the copilot adds usage costs | Price services separately; measure support hours in pilots; floor per programme ([PRICING-OPTIONS.md](PRICING-OPTIONS.md)) |
+| **Pricing vs support cost** | A low price per user does not cover business-hours support, implementation and assurance for small programmes; the copilot adds usage costs | Price services separately; measure support hours in pilots; floor per programme ([PRICING-OPTIONS.md](../archive/PRICING-OPTIONS.md)) |
 | **Publication screen limits** | Public dashboards inherit the refused band and the absence of an independent statistical review | Funder views use exact submissions to the funder; public figures only after review |
 | **Organisational readiness** | Nothing purchasable yet; county IT will ask for insurance, pen test and repository controls | Step 0 of the sequence, before any sale |
 | **Scope creep toward an EHR** | The copilot, CalOMS and FHIR pull toward clinical depth | Keep *The boundary* in [POSITIONING.md](POSITIONING.md); qualify billing programmes out |
