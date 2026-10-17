@@ -9,8 +9,8 @@ const M = require('./clients-model');
 const audit = require('./audit');
 
 const DEMO_PREFIX = 'DEMO-';
-const TABLES = ['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'caloms_records', 'episodes', 'assignments', 'clients', 'prevention_events', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_ledger', 'supply_items'];
-const SYNCED = new Set(['client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'caloms_records', 'episodes', 'assignments', 'clients', 'prevention_events', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_ledger', 'supply_items']);
+const TABLES = ['policy_acknowledgements', 'policy_documents', 'client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'caloms_records', 'episodes', 'assignments', 'clients', 'prevention_events', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_ledger', 'supply_items'];
+const SYNCED = new Set(['policy_documents', 'client_form_files', 'client_forms', 'form_templates', 'expenditures', 'disclosures', 'part2_notices', 'consents', 'note_addenda', 'notes', 'tasks', 'referrals', 'time_entries', 'calls', 'interventions', 'caloms_records', 'episodes', 'assignments', 'clients', 'prevention_events', 'budget_lines', 'funding_sources', 'resource_photos', 'resources', 'supply_ledger', 'supply_items']);
 
 function rng(seed) { let a = seed >>> 0; return () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
@@ -347,6 +347,19 @@ function seed({ actor, workers, clinician = null, supervisor, seedValue = 42 }) 
       db.run(`INSERT INTO prevention_events(id,user_id,event_date,title,event_type,strategy,iom_category,audience,location,hours,attendance,attendance_estimated,funding_source_id,notes_enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         track('prevention_events', uuid()), workers[off % workers.length], day(off), title, type, strategy, iom, audience, where, hours, att, est, type === 'training' ? fund2 : null, encrypt('Sign-in sheet kept on paper; headcount only. (Sample data)'));
     }
+
+    // Two policies kept in PowerDMS (docs/integration/POWERDMS.md): links to fictional PowerDMS documents, the revision
+    // staff must sign and the roles asked to sign it, with some of the workers' signatures recorded (sign-offs: Policy
+    // sign-offs). The addresses are made up; a real county's are its own PowerDMS site's.
+    const pol1 = track('policy_documents', uuid()); const pol2 = track('policy_documents', uuid());
+    db.run(`INSERT INTO policy_documents(id,title,category,description,effective_date,powerdms_url,revision,ack_roles,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?)`,
+      pol1, 'Naloxone Distribution Policy', 'policy', 'Who may hand out naloxone, how kits are logged, and what to do after a reversal. (Sample data: the PowerDMS link is fictional.)', day(90).slice(0, 10), 'https://powerdms.com/ui/document/900101', '3', 'clinician,navigator', supervisor);
+    db.run(`INSERT INTO policy_documents(id,title,category,description,effective_date,powerdms_url,revision,ack_roles,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?)`,
+      pol2, 'Part 2 Confidentiality and Disclosures', 'policy', 'Consent, the disclosure gate and the accounting of disclosures under 42 CFR Part 2. (Sample data: the PowerDMS link is fictional.)', day(60).slice(0, 10), 'https://powerdms.com/ui/document/900102', '1', 'clinician,navigator,supervisor', supervisor);
+    workers.forEach((w, i) => {
+      if (i % 2 === 0) db.run(`INSERT OR IGNORE INTO policy_acknowledgements(id,document_id,user_id,revision,acknowledged_at,source,recorded_by) VALUES(?,?,?,?,?,?,?)`, track('policy_acknowledgements', uuid()), pol1, w, '3', day(20 + i).slice(0, 10), 'manual', supervisor);
+      db.run(`INSERT OR IGNORE INTO policy_acknowledgements(id,document_id,user_id,revision,acknowledged_at,source,recorded_by) VALUES(?,?,?,?,?,?,?)`, track('policy_acknowledgements', uuid()), pol2, w, '1', day(30 + i).slice(0, 10), 'manual', supervisor);
+    });
 
     // CalOMS Tx records for three episodes (server/caloms.js): admissions on two open episodes, and an admission and
     // a discharge on the closed one. The coded answers are one encrypted document, as caloms.save() writes them. No

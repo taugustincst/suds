@@ -254,6 +254,8 @@ async function pagesFor(page) {
       if (a.can('reports:read') && (a.can('reports:internal') || a.can('clients:read'))) out.push('supplies?tab=ssp');
     }
     if (out.includes('supervision') && a.can('audit:read')) out.push('supervision?tab=breakglass');
+    // Policy sign-offs (docs/integration/POWERDMS.md): everyone's own; the staff view and the PowerDMS import for policies:manage.
+    if (out.includes('signoffs') && !a.state.local && a.can('policies:manage')) out.push('signoffs?tab=staff', 'signoffs?tab=import');
     // The county view's other sections (docs/COUNTY-VIEW.md).
     if (out.includes('county')) {
       // …and the by-quarter view over the two quarters the sample files cover (prepareOffice).
@@ -508,7 +510,7 @@ const BUTTON_DIALOGS = [
   ['client/:client/consents', '+ Consent'], ['client/:client/consents', '+ Disclosure'], ['client/:client/requests', '+ Request'],
   ['client/:client/team', '+ Assign worker'], ['client/:client/budget', '+ Record client assistance'],
   ['admin?tab=users', '+ New user'], ['admin?tab=apikeys', '+ New API key'], ['budget', '+ Funding source'], ['budget', '+ Line'],
-  ['forms', '+ Add a county form'], ['forms', '+ Fill out a form'], ['documents', '+ Upload'], ['supplies', '+ Add item'],
+  ['forms', '+ Add a county form'], ['forms', '+ Fill out a form'], ['documents', '+ Add'], ['supplies', '+ Add item'],
   ['supplies', 'Receive stock'], ['supplies', 'Move'], ['supplies', 'Adjust'], ['supplies?tab=lots', 'Dispose'], ['supplies?tab=setup', '+ Add site'], ['supplies?tab=setup', 'Edit'],
   ['overdose', '+ Record an event'], ['resources', '+ Add resource'],
   // Clinical depth: the problem list, the care plan, ASAM and each outcome measure.

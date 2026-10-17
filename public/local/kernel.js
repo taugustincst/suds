@@ -6731,7 +6731,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.25.9" : "local",
+      version: true ? "1.26.0" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -7411,10 +7411,45 @@ CREATE TABLE IF NOT EXISTS policy_documents (
   is_active INTEGER NOT NULL DEFAULT 1,
   uploaded_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  -- PowerDMS (migration 72; docs/integration/POWERDMS.md): the county's own copy of a policy can live in its
+  -- PowerDMS site, where staff read and sign it. powerdms_url is that document's https address on powerdms.com (a
+  -- document may be a link with no file here); revision is the revision staff must have signed; ack_roles the roles
+  -- whose staff must sign it (comma-separated, e.g. 'navigator,clinician'; empty: nobody is asked).
+  powerdms_url TEXT,
+  revision TEXT,
+  ack_roles TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category);
 CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at);
+-- Who has signed which revision of a policy (migration 72): imported from a PowerDMS signature or training report, or
+-- recorded by hand. No client data. Office server only (server/sync-tables.js server_only): staff compliance is the
+-- programme's record, and a device has its own accounts.
+CREATE TABLE IF NOT EXISTS policy_acknowledgements (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL REFERENCES policy_documents(id),
+  user_id TEXT NOT NULL REFERENCES users(id),
+  revision TEXT NOT NULL DEFAULT '',
+  acknowledged_at TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('powerdms','manual')),
+  import_id TEXT REFERENCES policy_ack_imports(id),
+  recorded_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (document_id, user_id, revision)
+);
+CREATE INDEX IF NOT EXISTS idx_policy_acknowledgements_user ON policy_acknowledgements(user_id);
+-- Each PowerDMS report imported (migration 72): the file's name, its SHA-256 and the counts, never the rows.
+CREATE TABLE IF NOT EXISTS policy_ack_imports (
+  id TEXT PRIMARY KEY,
+  filename TEXT,
+  sha256 TEXT NOT NULL,
+  rows_read INTEGER NOT NULL DEFAULT 0,
+  recorded INTEGER NOT NULL DEFAULT 0,
+  already INTEGER NOT NULL DEFAULT 0,
+  unmatched INTEGER NOT NULL DEFAULT 0,
+  imported_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 
 CREATE TABLE IF NOT EXISTS referrals (
   id TEXT PRIMARY KEY,
@@ -10012,6 +10047,8 @@ var require_constants = __commonJS({
       POPULATIONS: ["adults", "adolescents", "women", "men", "pregnant_parenting", "families", "veterans", "lgbtq", "justice_involved", "unhoused", "older_adults", "native_american", "spanish_speakers", "deaf_hard_of_hearing"],
       FORM_CATEGORIES: ["consent_release", "intake_screening", "assessment", "treatment_plan", "referral", "assistance_request", "transportation", "housing", "benefits", "discharge", "incident", "grievance", "other"],
       DOCUMENT_CATEGORIES: ["policy", "procedure", "contract"],
+      // The staff roles (server/auth.js PERMS), in the order the Users page lists them; a policy names the roles that must sign it (server/powerdms.js).
+      STAFF_ROLES: ["navigator", "clinician", "supervisor", "finance", "readonly", "admin"],
       FORM_FIELD_TYPES: ["text", "textarea", "date", "number", "checkbox", "select", "signature", "section", "note"],
       FORM_AUTOFILL: ["client.full_name", "client.first_name", "client.last_name", "client.preferred_name", "client.dob", "client.phone", "client.email", "client.address", "client.city", "client.zip", "client.client_code", "client.gender", "client.pronouns", "client.insurance", "client.medicaid_id", "client.emergency_contact", "client.primary_substance", "client.mat_status", "client.intake_date", "worker.name", "worker.title", "org.name", "org.county", "today"],
       // The overdose form's "What happened" and "Given by". The kinds are fixed by a CHECK constraint on
@@ -11310,6 +11347,7 @@ var require_permissions = __commonJS({
       ["county:manage", "Manage county submissions", "Register the programmes whose signed submissions the county accepts (each by its public key), import their files and withdraw one. Administrators by default."],
       ["intake:read", "See incoming referrals", "The intake queue: every referral to the program from a hospital, jail, detox, probation or court, another provider, the person or their family, with the person's name, contact details and needs, before they are a client. Open referrals are not limited to a caseload; an accepted one is shown only to those who may open its client. Navigators, clinicians, supervisors and administrators by default."],
       ["intake:write", "Work incoming referrals", "Record a referral to the program, log attempts to reach the person, assign it, and accept it (linking or creating the client record) or close it as declined, unable to reach or referred elsewhere. Navigators, clinicians, supervisors and administrators by default."],
+      ["policies:manage", "Manage policy sign-offs", "See which staff have signed the current revision of each required policy, import the PowerDMS signature or training report, and record or remove a sign-off by hand. Everyone sees their own sign-offs without it."],
       ["ai:draft", "Use the AI documentation copilot", "Ask the AI copilot for a draft (progress note sections, assessment narratives, care plan and CalOMS suggestions) from text they give it, with identifiers replaced before it is sent. Only while an administrator has recorded the agreement with the provider and switched the copilot on. Clinicians, supervisors and navigators by default."]
     ];
     var PERMISSION_CATALOG = DEFS.map(([name, label, description]) => ({
@@ -14524,7 +14562,12 @@ var require_sync_tables = __commonJS({
         // people nobody has met, and a device that syncs with an office refuses the routes (the office keeps the queue);
         // SUDS on this device, with no office, keeps its own. An accepted referral's client travels as every client does.
         "incoming_referrals",
-        "incoming_referral_attempts"
+        "incoming_referral_attempts",
+        // policy_acknowledgements and policy_ack_imports (migration 72, docs/integration/POWERDMS.md): who has signed which
+        // revision of a policy, imported from PowerDMS or recorded by hand, and each import. Staff compliance is the
+        // office's record; a device has its own accounts and asks nobody to sign anything.
+        "policy_acknowledgements",
+        "policy_ack_imports"
       ],
       // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
       // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
@@ -14556,6 +14599,8 @@ var require_sync_tables = __commonJS({
         authenticator_metadata: [],
         incoming_referrals: ["referrer_name_enc", "referrer_phone_enc", "referrer_email_enc", "reason_enc", "first_name_enc", "last_name_enc", "dob_enc", "phone_enc", "notes_enc", "outcome_reason_enc"],
         incoming_referral_attempts: ["notes_enc"],
+        policy_acknowledgements: [],
+        policy_ack_imports: [],
         idempotency_keys: ["response_enc"]
       },
       // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
@@ -14665,7 +14710,10 @@ var require_sync_tables = __commonJS({
         ["incoming_referrals", "assigned_to"],
         ["incoming_referrals", "closed_by"],
         ["incoming_referrals", "created_by"],
-        ["incoming_referral_attempts", "user_id"]
+        ["incoming_referral_attempts", "user_id"],
+        ["policy_acknowledgements", "user_id"],
+        ["policy_acknowledgements", "recorded_by"],
+        ["policy_ack_imports", "imported_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -14968,18 +15016,249 @@ var require_resource_photos = __commonJS({
   }
 });
 
+// server/powerdms.js
+var require_powerdms = __commonJS({
+  "server/powerdms.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var C = require_constants();
+    var ROLES = C.STAFF_ROLES;
+    function urlProblem(v) {
+      if (v == null || v === "") return null;
+      let u;
+      try {
+        u = new URL(String(v));
+      } catch {
+        return "must be a web address starting with https://";
+      }
+      if (u.protocol !== "https:") return "must be a web address starting with https://";
+      if (u.username || u.password) return "must not contain a user name or password";
+      const host = u.hostname.toLowerCase();
+      if (host !== "powerdms.com" && !host.endsWith(".powerdms.com")) return "must be an address on powerdms.com (the PowerDMS document's own link)";
+      return null;
+    }
+    function normaliseRoles(v) {
+      if (v == null || v === "") return null;
+      const list = (Array.isArray(v) ? v : String(v).split(",")).map((s) => String(s).trim()).filter(Boolean);
+      const bad = list.filter((r) => !ROLES.includes(r));
+      if (bad.length) throw new Error(`unknown role${bad.length > 1 ? "s" : ""}: ${bad.join(", ")} (one of ${ROLES.join(", ")})`);
+      const out2 = [...new Set(list)].sort();
+      return out2.length ? out2.join(",") : null;
+    }
+    var rolesOf = (stored) => stored ? String(stored).split(",").filter(Boolean) : [];
+    function documentNumber(url) {
+      if (!url) return null;
+      const s = String(url);
+      const m = /\/documents?\/(\d{2,})(?:[/?#]|$)/i.exec(s) || /[?&](?:document_?id|docid|id)=(\d{2,})/i.exec(s);
+      return m ? m[1] : null;
+    }
+    var COLUMNS = {
+      email: ["email", "emailaddress", "useremail", "workemail"],
+      username: ["username", "login", "loginname", "userid", "employeeid", "employeenumber", "badgenumber"],
+      name: ["name", "user", "fullname", "employee", "employeename", "member", "person", "signer", "assignee"],
+      first: ["firstname", "first", "givenname"],
+      last: ["lastname", "last", "surname", "familyname"],
+      docnum: ["documentid", "docid", "documentnumber", "docnumber", "courseid"],
+      title: ["document", "documentname", "documenttitle", "title", "policy", "policyname", "course", "coursename", "training", "trainingname"],
+      revision: ["revision", "revisionnumber", "rev", "version", "documentrevision", "revisionname"],
+      date: ["signeddate", "datesigned", "signaturedate", "signedon", "signed", "completed", "completiondate", "datecompleted", "completedon", "completeddate", "acknowledgeddate", "dateacknowledged", "date"],
+      status: ["status", "signaturestatus", "signedstatus", "completionstatus", "state"]
+    };
+    var key = (h) => String(h || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    function findColumns(headers) {
+      const keys = headers.map(key);
+      const out2 = {};
+      for (const [field, names] of Object.entries(COLUMNS)) {
+        for (const n of names) {
+          const i = keys.indexOf(n);
+          if (i >= 0 && !Object.values(out2).includes(headers[i])) {
+            out2[field] = headers[i];
+            break;
+          }
+        }
+      }
+      return out2;
+    }
+    var SIGNED = /\b(signed|complete|completed|acknowledged|passed|done|yes)\b/i;
+    var NOT_SIGNED = /\b(unsigned|not signed|pending|incomplete|not complete|assigned|overdue|expired|failed|no)\b/i;
+    function readDate(v) {
+      if (v == null || v === "") return null;
+      if (typeof v === "number" && Number.isFinite(v) && v > 2e4 && v < 8e4) {
+        const d = new Date(Math.round((v - 25569) * 864e5));
+        return isNaN(d) ? null : d.toISOString().slice(0, 10);
+      }
+      const s = String(v).trim();
+      let m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(s);
+      if (m) return real(+m[1], +m[2], +m[3]);
+      m = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})\b/.exec(s);
+      if (m) {
+        const y = m[3].length === 2 ? 2e3 + +m[3] : +m[3];
+        return real(y, +m[1], +m[2]);
+      }
+      return null;
+    }
+    function real(y, mo, d) {
+      if (y < 1990 || y > 2100) return null;
+      const dt = new Date(Date.UTC(y, mo - 1, d));
+      return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d ? dt.toISOString().slice(0, 10) : null;
+    }
+    function nameKey(s) {
+      if (!s) return "";
+      let t = String(s).normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+      if (t.includes(",")) {
+        const [a, b] = t.split(",", 2);
+        t = `${b} ${a}`;
+      }
+      return t.replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean).join(" ");
+    }
+    function matchReport(sheet, { users, documents, have = /* @__PURE__ */ new Set() }) {
+      const col = findColumns(sheet.headers || []);
+      const missing = [];
+      if (!col.email && !col.username && !col.name && !(col.first && col.last)) missing.push("who (an email, user name or name column)");
+      if (!col.docnum && !col.title) missing.push("which document (a document ID or document name column)");
+      if (!col.date) missing.push("when (a signed or completed date column)");
+      if (missing.length) {
+        const e = new Error(`This report has no column for ${missing.join("; ")}. Its columns are: ${(sheet.headers || []).filter(Boolean).join(", ") || "none"}.`);
+        e.columns = col;
+        throw e;
+      }
+      const byEmail = /* @__PURE__ */ new Map();
+      const byUser = /* @__PURE__ */ new Map();
+      const byName = /* @__PURE__ */ new Map();
+      for (const u of users) {
+        if (u.email) byEmail.set(String(u.email).toLowerCase().trim(), u);
+        byUser.set(String(u.username).toLowerCase(), u);
+        const k = nameKey(u.display_name);
+        if (k) byName.set(k, [...byName.get(k) || [], u]);
+      }
+      const byNumber = /* @__PURE__ */ new Map();
+      const byTitle = /* @__PURE__ */ new Map();
+      for (const d of documents) {
+        const n = documentNumber(d.powerdms_url);
+        if (n) byNumber.set(n, d);
+        const t = nameKey(d.title);
+        if (t) byTitle.set(t, [...byTitle.get(t) || [], d]);
+      }
+      const rows = [];
+      const seen2 = /* @__PURE__ */ new Set();
+      (sheet.rows || []).forEach((r, i) => {
+        const cell = (c) => c && r[c] != null ? String(r[c]).trim() : "";
+        const staff = cell(col.name) || [cell(col.first), cell(col.last)].filter(Boolean).join(" ") || cell(col.email) || cell(col.username);
+        const docLabel = cell(col.title) || cell(col.docnum);
+        const out2 = { line: i + 2, staff, document: docLabel, revision: cell(col.revision), acknowledged_at: col.date ? readDate(r[col.date]) : null };
+        if (!staff && !docLabel) return;
+        const status = cell(col.status);
+        if (status && (NOT_SIGNED.test(status) || !SIGNED.test(status))) {
+          rows.push({ ...out2, outcome: "not_signed" });
+          return;
+        }
+        let user = null;
+        let ambiguous = false;
+        const email = cell(col.email).toLowerCase();
+        const uname = cell(col.username).toLowerCase();
+        if (email && byEmail.has(email)) user = byEmail.get(email);
+        else if (uname && byUser.has(uname)) user = byUser.get(uname);
+        else if (email && byUser.has(email)) user = byUser.get(email);
+        else {
+          const k2 = nameKey(cell(col.name) || [cell(col.first), cell(col.last)].filter(Boolean).join(" "));
+          const hits = k2 ? byName.get(k2) || [] : [];
+          if (hits.length === 1) user = hits[0];
+          else if (hits.length > 1) ambiguous = true;
+        }
+        if (!user) {
+          rows.push({ ...out2, outcome: ambiguous ? "ambiguous_staff" : "unknown_staff" });
+          return;
+        }
+        let doc = null;
+        const num = cell(col.docnum).replace(/\D/g, "");
+        if (num && byNumber.has(num)) doc = byNumber.get(num);
+        else {
+          const hits = byTitle.get(nameKey(cell(col.title))) || [];
+          if (hits.length === 1) doc = hits[0];
+        }
+        if (!doc) {
+          rows.push({ ...out2, user_id: user.id, outcome: "unknown_document" });
+          return;
+        }
+        if (!out2.acknowledged_at) {
+          rows.push({ ...out2, user_id: user.id, document_id: doc.id, outcome: "no_date" });
+          return;
+        }
+        const k = `${doc.id}|${user.id}|${out2.revision}`;
+        const outcome = have.has(k) || seen2.has(k) ? "already" : "record";
+        seen2.add(k);
+        rows.push({ ...out2, user_id: user.id, document_id: doc.id, outcome });
+      });
+      const counts = {};
+      for (const r of rows) counts[r.outcome] = (counts[r.outcome] || 0) + 1;
+      return { columns: col, rows, counts };
+    }
+    function compliance(documents, users, acks) {
+      const docs = documents.filter((d) => d.is_active && rolesOf(d.ack_roles).length);
+      const byPair = /* @__PURE__ */ new Map();
+      for (const a of acks) {
+        const k = `${a.document_id}|${a.user_id}`;
+        byPair.set(k, [...byPair.get(k) || [], a]);
+      }
+      const status = (d, u) => {
+        const list = (byPair.get(`${d.id}|${u.id}`) || []).slice().sort((a, b) => String(b.acknowledged_at).localeCompare(String(a.acknowledged_at)));
+        const current2 = list.find((a) => !d.revision || a.revision === d.revision) || null;
+        const latest = list[0] || null;
+        return { required: rolesOf(d.ack_roles).includes(u.role), current: !!current2, acknowledgement: current2 || latest };
+      };
+      const staff = users.map((u) => {
+        const items = docs.map((d) => ({ document_id: d.id, ...status(d, u) })).filter((x) => x.required);
+        return { id: u.id, display_name: u.display_name, role: u.role, required: items.length, signed: items.filter((x) => x.current).length, items };
+      });
+      const perDocument = docs.map((d) => {
+        const owed = staff.filter((s) => s.items.some((x) => x.document_id === d.id));
+        const signed = owed.filter((s) => s.items.find((x) => x.document_id === d.id).current).length;
+        return { id: d.id, title: d.title, revision: d.revision || null, powerdms_url: d.powerdms_url || null, roles: rolesOf(d.ack_roles), owed: owed.length, signed };
+      });
+      return { documents: perDocument, staff };
+    }
+    module.exports = { ROLES, urlProblem, normaliseRoles, rolesOf, documentNumber, findColumns, readDate, nameKey, matchReport, compliance };
+  }
+});
+
 // server/rules/policy_documents.js
 var require_policy_documents = __commonJS({
   "server/rules/policy_documents.js"(exports, module) {
     "use strict";
     init_globals_inject();
     var C = require_constants();
-    var { define: define2 } = require_core();
+    var { define: define2, refuse } = require_core();
+    var P2 = require_powerdms();
     module.exports = define2({
       table: "policy_documents",
       deviceColumns: ["content_type", "bytes", "search_text", "is_active"],
       createdBy: ["uploaded_by"],
-      fields: { title: { type: "string", required: true, maxLen: 200 }, category: { type: "string", required: true, enum: C.DOCUMENT_CATEGORIES }, description: { type: "string", maxLen: 2e3 }, effective_date: { type: "date" }, expires_at: { type: "date" }, filename: { type: "string", maxLen: 200 } }
+      fields: {
+        title: { type: "string", required: true, maxLen: 200 },
+        category: { type: "string", required: true, enum: C.DOCUMENT_CATEGORIES },
+        description: { type: "string", maxLen: 2e3 },
+        effective_date: { type: "date" },
+        expires_at: { type: "date" },
+        filename: { type: "string", maxLen: 200 },
+        powerdms_url: { type: "string", maxLen: 500 },
+        revision: { type: "string", maxLen: 60 },
+        ack_roles: { type: "string", maxLen: 120 }
+      },
+      check(row, c) {
+        const out2 = [];
+        const url = c.plain("powerdms_url");
+        const problem = P2.urlProblem(url);
+        if (problem) out2.push(refuse(`powerdms_url ${problem}`, { fields: { powerdms_url: problem }, permanent: true }));
+        const roles = c.plain("ack_roles");
+        if (roles) {
+          try {
+            P2.normaliseRoles(roles);
+          } catch (e) {
+            out2.push(refuse(`ack_roles: ${e.message}`, { fields: { ack_roles: e.message }, permanent: true }));
+          }
+        }
+        return out2;
+      }
     });
   }
 });
@@ -24940,8 +25219,8 @@ var require_demo = __commonJS({
     var M = require_clients_model();
     var audit3 = require_audit();
     var DEMO_PREFIX = "DEMO-";
-    var TABLES = ["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "part2_notices", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "caloms_records", "episodes", "assignments", "clients", "prevention_events", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_ledger", "supply_items"];
-    var SYNCED = /* @__PURE__ */ new Set(["client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "part2_notices", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "caloms_records", "episodes", "assignments", "clients", "prevention_events", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_ledger", "supply_items"]);
+    var TABLES = ["policy_acknowledgements", "policy_documents", "client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "part2_notices", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "caloms_records", "episodes", "assignments", "clients", "prevention_events", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_ledger", "supply_items"];
+    var SYNCED = /* @__PURE__ */ new Set(["policy_documents", "client_form_files", "client_forms", "form_templates", "expenditures", "disclosures", "part2_notices", "consents", "note_addenda", "notes", "tasks", "referrals", "time_entries", "calls", "interventions", "caloms_records", "episodes", "assignments", "clients", "prevention_events", "budget_lines", "funding_sources", "resource_photos", "resources", "supply_ledger", "supply_items"]);
     function rng(seed2) {
       let a = seed2 >>> 0;
       return () => {
@@ -25729,6 +26008,36 @@ P: ${P2} (Sample data)`), encrypt3(JSON.stringify(i % 4 === 0 ? { S, O, A, P: P2
             encrypt3("Sign-in sheet kept on paper; headcount only. (Sample data)")
           );
         }
+        const pol1 = track("policy_documents", uuid2());
+        const pol2 = track("policy_documents", uuid2());
+        db3.run(
+          `INSERT INTO policy_documents(id,title,category,description,effective_date,powerdms_url,revision,ack_roles,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?)`,
+          pol1,
+          "Naloxone Distribution Policy",
+          "policy",
+          "Who may hand out naloxone, how kits are logged, and what to do after a reversal. (Sample data: the PowerDMS link is fictional.)",
+          day(90).slice(0, 10),
+          "https://powerdms.com/ui/document/900101",
+          "3",
+          "clinician,navigator",
+          supervisor
+        );
+        db3.run(
+          `INSERT INTO policy_documents(id,title,category,description,effective_date,powerdms_url,revision,ack_roles,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?)`,
+          pol2,
+          "Part 2 Confidentiality and Disclosures",
+          "policy",
+          "Consent, the disclosure gate and the accounting of disclosures under 42 CFR Part 2. (Sample data: the PowerDMS link is fictional.)",
+          day(60).slice(0, 10),
+          "https://powerdms.com/ui/document/900102",
+          "1",
+          "clinician,navigator,supervisor",
+          supervisor
+        );
+        workers.forEach((w, i) => {
+          if (i % 2 === 0) db3.run(`INSERT OR IGNORE INTO policy_acknowledgements(id,document_id,user_id,revision,acknowledged_at,source,recorded_by) VALUES(?,?,?,?,?,?,?)`, track("policy_acknowledgements", uuid2()), pol1, w, "3", day(20 + i).slice(0, 10), "manual", supervisor);
+          db3.run(`INSERT OR IGNORE INTO policy_acknowledgements(id,document_id,user_id,revision,acknowledged_at,source,recorded_by) VALUES(?,?,?,?,?,?,?)`, track("policy_acknowledgements", uuid2()), pol2, w, "1", day(30 + i).slice(0, 10), "manual", supervisor);
+        });
         const CALOMS_BASE = { admission_transaction: "1", service_type: "1", days_waited: 3, prior_episodes: 0, medication: "1", calworks: "0", criminal_justice: "1", gender_identity: "5", sexual_orientation: "1", race: ["01"], ethnicity: "1", veteran: "0", disability: ["1"], zip_code: "00000", education_grade: 12, children_under_18: 0, children_cps: 0, pregnant: "0", consent: "1", primary_age_first_use: 19, secondary_drug: "0", primary_days_used: 10, alcohol_days: 0, employment_status: "3", paid_work_days: 0, school_enrolled: "0", job_training: "0", arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 2, mh_diagnosis: "0", mh_er_visits_30: 0, psych_inpatient_days_30: 0, psych_meds: 0, family_conflict_days_30: 1, social_support_days_30: 4, lives_with_user: 0 };
         const CALOMS_DISCHARGE = { discharge_status: "1", primary_days_used: 0, alcohol_days: 0, iv_use_30: 0, employment_status: "1", paid_work_days: 20, school_enrolled: "0", job_training: "0", living_arrangement: "3", arrests_30: 0, jail_days_30: 0, prison_days_30: 0, er_visits_30: 0, hospital_nights_30: 0, physical_health_days_30: 0, mh_diagnosis: "0", mh_er_visits_30: 0, psych_inpatient_days_30: 0, psych_meds: 0, family_conflict_days_30: 0, social_support_days_30: 12, lives_with_user: 0 };
         for (const [i, answers] of [
@@ -40165,6 +40474,17 @@ var require_documents = __commonJS({
       return SERVABLE_TYPES.has(String(t || "").toLowerCase().split(";")[0].trim()) ? String(t).split(";")[0].trim() : "application/octet-stream";
     }
     var shape = require_rules().forTable("policy_documents").fields;
+    var rules = require_rules();
+    var P2 = require_powerdms();
+    function withRoles(v, body) {
+      if (body.ack_roles === void 0) return v;
+      try {
+        return { ...v, ack_roles: P2.normaliseRoles(body.ack_roles) };
+      } catch (e) {
+        throw badRequest("Validation failed", { fields: { ack_roles: e.message } });
+      }
+    }
+    var asStored = (body) => body && Array.isArray(body.ack_roles) ? { ...body, ack_roles: body.ack_roles.map(String).join(",") } : body;
     var out2 = (row) => row && { ...row, has_file: !!row.file_b64, searchable: !!row.search_text, file_b64: void 0, search_text: void 0 };
     module.exports = (r) => {
       r.get("/api/documents", auth3.requireAuth, auth3.requirePerm("documents:read"), (ctx) => {
@@ -40183,7 +40503,7 @@ var require_documents = __commonJS({
           const like = `%${word.replace(/[%_]/g, "\\$&")}%`;
           params.push(like, like, like);
         }
-        const rows = db3.all(`SELECT id,title,category,description,effective_date,expires_at,filename,content_type,bytes,is_active,uploaded_by,created_at,updated_at, (file_b64 IS NOT NULL) has_file, (search_text IS NOT NULL AND search_text<>'') searchable, search_text
+        const rows = db3.all(`SELECT id,title,category,description,effective_date,expires_at,filename,content_type,bytes,is_active,uploaded_by,created_at,updated_at,powerdms_url,revision,ack_roles, (file_b64 IS NOT NULL) has_file, (search_text IS NOT NULL AND search_text<>'') searchable, search_text
       FROM policy_documents ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY category, title`, ...params);
         const snippet = (text) => {
           if (!q || !text) return null;
@@ -40207,34 +40527,40 @@ var require_documents = __commonJS({
         return { document: out2(d) };
       });
       r.post("/api/documents", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
-        const v = validate(ctx.body, shape);
+        const v = withRoles(validate(asStored(ctx.body), shape), ctx.body);
         const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, "File");
-        if (!file) throw badRequest("A file is required");
+        if (!file && !v.powerdms_url) throw badRequest("A file or a PowerDMS link is required");
+        rules.assertWrite("policy_documents", v, ctx);
         const id = uuid2();
         db3.run(
-          `INSERT INTO policy_documents(id,title,category,description,effective_date,expires_at,filename,content_type,bytes,file_b64,search_text,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO policy_documents(id,title,category,description,effective_date,expires_at,filename,content_type,bytes,file_b64,search_text,uploaded_by,powerdms_url,revision,ack_roles) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           id,
           v.title,
           v.category,
           v.description || null,
           v.effective_date || null,
           v.expires_at || null,
-          v.filename || `${v.title}.${FILE_TYPES[file.type]}`,
-          file.type,
-          file.buf.length,
-          file.b64,
-          extractText(file.buf, file.type) || null,
-          ctx.user.id
+          file ? v.filename || `${v.title}.${FILE_TYPES[file.type]}` : null,
+          file ? file.type : null,
+          file ? file.buf.length : 0,
+          file ? file.b64 : null,
+          file ? extractText(file.buf, file.type) || null : null,
+          ctx.user.id,
+          v.powerdms_url || null,
+          v.revision || null,
+          v.ack_roles || null
         );
-        audit3.log({ user: ctx.user, action: "document.create", entity: "policy_document", entityId: id, ip: ctx.ip, details: { title: v.title, category: v.category, bytes: file.buf.length } });
+        audit3.log({ user: ctx.user, action: "document.create", entity: "policy_document", entityId: id, ip: ctx.ip, details: { title: v.title, category: v.category, bytes: file ? file.buf.length : 0, powerdms: !!v.powerdms_url, ack_roles: v.ack_roles || null } });
         ctx.status = 201;
         return { id };
       });
       r.put("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
-        const d = db3.one(`SELECT id, updated_at, is_active FROM policy_documents WHERE id=?`, ctx.params.id);
+        const d = db3.one(`SELECT id, updated_at, is_active, powerdms_url, revision, ack_roles, file_b64 IS NOT NULL has_file FROM policy_documents WHERE id=?`, ctx.params.id);
         if (!d) throw notFound();
         require_crud().assertFresh(ctx, d, "document");
-        const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+        const v = withRoles(validate(asStored(ctx.body), Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true }), ctx.body);
+        rules.assertWrite("policy_documents", v, ctx, { existing: d });
+        if (v.powerdms_url === null && !d.has_file && !(ctx.body.file_url || ctx.body.file)) throw badRequest("A document with no file needs its PowerDMS link", { fields: { powerdms_url: "required while there is no file" } });
         const v2 = validate({ is_active: ctx.body.is_active }, { is_active: { type: "boolean" } }, { partial: true });
         const sets = Object.keys(v).map((k) => `${k}=?`);
         const params = Object.keys(v).map((k) => v[k]);
@@ -40251,7 +40577,7 @@ var require_documents = __commonJS({
         const stamp2 = db3.now();
         db3.run(`UPDATE policy_documents SET ${sets.join(", ")}, updated_at=? WHERE id=?`, ...params, stamp2, d.id);
         const reactivated = !!v2.is_active && !d.is_active;
-        audit3.log({ user: ctx.user, action: reactivated ? "document.reactivate" : "document.update", entity: "policy_document", entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)) } });
+        audit3.log({ user: ctx.user, action: reactivated ? "document.reactivate" : "document.update", entity: "policy_document", entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)), ...v.revision !== void 0 && v.revision !== d.revision ? { revision: v.revision } : {} } });
         return { ok: true, updated_at: stamp2 };
       });
       r.delete("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
@@ -45647,6 +45973,155 @@ var require_patient_requests2 = __commonJS({
   }
 });
 
+// server/routes/policies.js
+var require_policies = __commonJS({
+  "server/routes/policies.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var { badRequest, notFound } = require_http();
+    var { validate } = require_validate();
+    var { uuid: uuid2 } = require_crypto();
+    var P2 = require_powerdms();
+    var MAX_REPORT_BYTES = 5 * 1024 * 1024;
+    var PREVIEW_ROWS = 500;
+    var activeUsers = () => db3.all(`SELECT id, username, email, display_name, role FROM users WHERE is_active=1 AND access_status='active' ORDER BY display_name, username`);
+    var documents = () => db3.all(`SELECT id, title, category, powerdms_url, revision, ack_roles, is_active FROM policy_documents`);
+    function reportFile(body) {
+      const v = body && (body.file_url ?? body.file);
+      if (typeof v !== "string" || !v) throw badRequest("Choose the PowerDMS report file (Excel or CSV)");
+      const m = /^data:[\w.+/-]*;base64,([A-Za-z0-9+/=\s]+)$/.exec(v);
+      const b643 = (m ? m[1] : v).replace(/\s+/g, "");
+      if (!/^[A-Za-z0-9+/=]+$/.test(b643)) throw badRequest("The report must be sent as base64");
+      const buf = import_buffer.Buffer.from(b643, "base64");
+      if (!buf.length) throw badRequest("The report is empty");
+      if (buf.length > MAX_REPORT_BYTES) throw badRequest("The report is too large (max 5 MB): export it for a shorter period or fewer documents");
+      const filename = typeof body.filename === "string" ? body.filename.slice(0, 200) : "powerdms-report";
+      return { buf, filename };
+    }
+    function readReport(body) {
+      const { buf, filename } = reportFile(body);
+      let parsed;
+      try {
+        parsed = require_spreadsheet().parseFile(buf, filename);
+      } catch {
+        throw badRequest("This file could not be read as an Excel workbook or a CSV file");
+      }
+      const sheet = (parsed.sheets || []).find((s) => (s.rows || []).length) || (parsed.sheets || [])[0];
+      if (!sheet) throw badRequest("The file has no sheet with rows in it");
+      const have = new Set(db3.all(`SELECT document_id, user_id, revision FROM policy_acknowledgements`).map((a) => `${a.document_id}|${a.user_id}|${a.revision}`));
+      let match;
+      try {
+        match = P2.matchReport(sheet, { users: activeUsers(), documents: documents().filter((d) => d.is_active), have });
+      } catch (e) {
+        throw badRequest(e.message);
+      }
+      return { ...match, filename, sha256: crypto3.createHash("sha256").update(buf).digest("hex"), sheet: sheet.name };
+    }
+    var OUTCOME_LABELS = {
+      record: "Will be recorded",
+      already: "Already recorded",
+      not_signed: "Not signed (by its status)",
+      unknown_staff: "No SUDS account matches",
+      ambiguous_staff: "More than one SUDS account has this name",
+      unknown_document: "No policy here matches",
+      no_date: "No signed date"
+    };
+    module.exports = (r) => {
+      r.get("/api/policies/mine", auth3.requireAuth, (ctx) => {
+        const me = ctx.user;
+        const docs = documents().filter((d) => d.is_active && P2.rolesOf(d.ack_roles).includes(me.role));
+        const acks = db3.all(`SELECT id, document_id, user_id, revision, acknowledged_at, source FROM policy_acknowledgements WHERE user_id=?`, me.id);
+        const c = P2.compliance(docs, [{ id: me.id, display_name: me.display_name, role: me.role }], acks);
+        const items = c.staff[0] ? c.staff[0].items : [];
+        const policies = docs.map((d) => {
+          const s = items.find((x) => x.document_id === d.id) || {};
+          return { id: d.id, title: d.title, category: d.category, revision: d.revision || null, powerdms_url: d.powerdms_url || null, signed: !!s.current, acknowledgement: s.acknowledgement || null };
+        }).sort((a, b) => Number(a.signed) - Number(b.signed) || a.title.localeCompare(b.title));
+        return { policies, outstanding: policies.filter((p) => !p.signed).length };
+      });
+      r.get("/api/policies/compliance", auth3.requireAuth, auth3.requirePerm("policies:manage"), (ctx) => {
+        const acks = db3.all(`SELECT id, document_id, user_id, revision, acknowledged_at, source FROM policy_acknowledgements`);
+        const c = P2.compliance(documents(), activeUsers(), acks);
+        const staff = c.staff.filter((s) => s.required);
+        audit3.log({ user: ctx.user, action: "policy.compliance_view", entity: "policy_acknowledgement", ip: ctx.ip, details: { documents: c.documents.length, staff: staff.length } });
+        return { documents: c.documents, staff, outstanding: staff.reduce((n, s) => n + (s.required - s.signed), 0) };
+      });
+      r.post("/api/policies/report/preview", auth3.requireAuth, auth3.requirePerm("policies:manage"), (ctx) => {
+        const m = readReport(ctx.body);
+        audit3.log({ user: ctx.user, action: "policy.report_preview", entity: "policy_ack_import", ip: ctx.ip, details: { sha256: m.sha256, rows: m.rows.length, counts: m.counts } });
+        return { filename: m.filename, sheet: m.sheet, columns: m.columns, counts: m.counts, labels: OUTCOME_LABELS, rows: m.rows.slice(0, PREVIEW_ROWS), truncated: m.rows.length > PREVIEW_ROWS, total: m.rows.length };
+      });
+      r.post("/api/policies/report/import", auth3.requireAuth, auth3.requirePerm("policies:manage"), (ctx) => {
+        const m = readReport(ctx.body);
+        const toRecord = m.rows.filter((x) => x.outcome === "record");
+        const id = uuid2();
+        const now2 = db3.now();
+        const unmatched = m.rows.filter((x) => !["record", "already", "not_signed"].includes(x.outcome)).length;
+        db3.transaction(() => {
+          db3.run(
+            `INSERT INTO policy_ack_imports(id,filename,sha256,rows_read,recorded,already,unmatched,imported_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+            id,
+            m.filename,
+            m.sha256,
+            m.rows.length,
+            toRecord.length,
+            m.counts.already || 0,
+            unmatched,
+            ctx.user.id,
+            now2
+          );
+          for (const x of toRecord) {
+            db3.run(
+              `INSERT OR IGNORE INTO policy_acknowledgements(id,document_id,user_id,revision,acknowledged_at,source,import_id,recorded_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+              uuid2(),
+              x.document_id,
+              x.user_id,
+              x.revision || "",
+              x.acknowledged_at,
+              "powerdms",
+              id,
+              ctx.user.id,
+              now2
+            );
+          }
+        });
+        audit3.log({ user: ctx.user, action: "policy.report_import", entity: "policy_ack_import", entityId: id, ip: ctx.ip, details: { sha256: m.sha256, rows: m.rows.length, recorded: toRecord.length, counts: m.counts } });
+        ctx.status = 201;
+        return { id, recorded: toRecord.length, counts: m.counts, labels: OUTCOME_LABELS };
+      });
+      r.get("/api/policies/imports", auth3.requireAuth, auth3.requirePerm("policies:manage"), () => ({
+        imports: db3.all(`SELECT i.id, i.filename, i.rows_read, i.recorded, i.already, i.unmatched, i.created_at, u.display_name imported_by_name FROM policy_ack_imports i LEFT JOIN users u ON u.id=i.imported_by ORDER BY i.created_at DESC LIMIT 50`)
+      }));
+      r.post("/api/policies/acknowledgements", auth3.requireAuth, auth3.requirePerm("policies:manage"), (ctx) => {
+        const v = validate(ctx.body, { document_id: { type: "string", required: true, maxLen: 64 }, user_id: { type: "string", required: true, maxLen: 64 }, revision: { type: "string", maxLen: 60 }, acknowledged_at: { type: "date", required: true } });
+        const doc = db3.one(`SELECT id, is_active FROM policy_documents WHERE id=?`, v.document_id);
+        if (!doc || !doc.is_active) throw badRequest("Choose a policy in effect", { fields: { document_id: "not a policy in effect" } });
+        const user = db3.one(`SELECT id FROM users WHERE id=? AND is_active=1`, v.user_id);
+        if (!user) throw badRequest("Choose an active staff account", { fields: { user_id: "not an active account" } });
+        if (v.acknowledged_at > db3.now().slice(0, 10)) throw badRequest("A sign-off cannot be dated in the future", { fields: { acknowledged_at: "in the future" } });
+        const exists3 = db3.one(`SELECT id FROM policy_acknowledgements WHERE document_id=? AND user_id=? AND revision=?`, v.document_id, v.user_id, v.revision || "");
+        if (exists3) throw badRequest("This sign-off is already recorded for that revision");
+        const id = uuid2();
+        db3.run(`INSERT INTO policy_acknowledgements(id,document_id,user_id,revision,acknowledged_at,source,recorded_by) VALUES(?,?,?,?,?,?,?)`, id, v.document_id, v.user_id, v.revision || "", v.acknowledged_at, "manual", ctx.user.id);
+        audit3.log({ user: ctx.user, action: "policy.acknowledge", entity: "policy_acknowledgement", entityId: id, ip: ctx.ip, details: { document_id: v.document_id, user_id: v.user_id, revision: v.revision || "", source: "manual" } });
+        ctx.status = 201;
+        return { id };
+      });
+      r.delete("/api/policies/acknowledgements/:id", auth3.requireAuth, auth3.requirePerm("policies:manage"), (ctx) => {
+        const a = db3.one(`SELECT id, document_id, user_id, revision, source FROM policy_acknowledgements WHERE id=?`, ctx.params.id);
+        if (!a) throw notFound();
+        db3.run(`DELETE FROM policy_acknowledgements WHERE id=?`, a.id);
+        audit3.log({ user: ctx.user, action: "policy.acknowledgement_remove", entity: "policy_acknowledgement", entityId: a.id, ip: ctx.ip, details: { document_id: a.document_id, user_id: a.user_id, revision: a.revision, source: a.source } });
+        return { ok: true };
+      });
+    };
+  }
+});
+
 // server/routes/prevention.js
 var require_prevention2 = __commonJS({
   "server/routes/prevention.js"(exports, module) {
@@ -49101,7 +49576,7 @@ var require_region_pictures = __commonJS({
       }
       return null;
     }
-    var VERSION3 = true ? "1.25.9" : null.version;
+    var VERSION3 = true ? "1.26.0" : null.version;
     var USER_AGENT = `SUDS/${VERSION3} (+https://github.com/taugustincst/suds) region pictures`;
     var ACCEPT_PAGE = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
     var ACCEPT_PICTURE = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8";
@@ -52137,6 +52612,7 @@ var init_ = __esm({
       "./routes/part2.js": () => require_part2(),
       "./routes/passkeys.js": () => require_passkeys2(),
       "./routes/patient-requests.js": () => require_patient_requests2(),
+      "./routes/policies.js": () => require_policies(),
       "./routes/prevention.js": () => require_prevention2(),
       "./routes/referral-links.js": () => require_referral_links2(),
       "./routes/referrals.js": () => require_referrals(),
@@ -52335,9 +52811,10 @@ var require_app2 = __commonJS({
       "ai",
       "county",
       "county-connect",
-      "passkeys"
+      "passkeys",
+      "policies"
     ];
-    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors", "fhir", "security", "scim", "ai", "referral-links", "county", "county-connect", "passkeys"].includes(m));
+    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors", "fhir", "security", "scim", "ai", "referral-links", "county", "county-connect", "passkeys", "policies"].includes(m));
     var LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS \u2014 local mode is off</title>
 <style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.5}h1{font-size:1.4rem}a{color:#0b5}</style></head>
 <body><h1>Local mode is turned off on this server</h1>
@@ -52360,6 +52837,8 @@ var require_app2 = __commonJS({
       // provider pictures
       /^\/api\/imports\//,
       // OneNote / spreadsheet / data imports
+      /^\/api\/policies\/report\//,
+      // a PowerDMS signature or training report (up to 5 MB)
       /^\/api\/sync\/(push|blob)(\/|$)/
       // a local-mode device's sync payload and attachments
     ];
@@ -52736,7 +53215,8 @@ var require_auth2 = __commonJS({
         "county:view",
         "county:manage",
         "intake:read",
-        "intake:write"
+        "intake:write",
+        "policies:manage"
       ],
       supervisor: [
         "clients:read",
@@ -52792,7 +53272,8 @@ var require_auth2 = __commonJS({
         "ai:draft",
         "county:view",
         "intake:read",
-        "intake:write"
+        "intake:write",
+        "policies:manage"
       ],
       // Front-line staff hold export:read so the Export buttons on their own screens work; without
       // export:identified every file they can produce is de-identified (Safe Harbor), and caseload-scoped for a
@@ -55321,6 +55802,15 @@ var require_db = __commonJS({
           const service = r.service_type && SERVICE[String(r.service_type)] ? SERVICE[String(r.service_type)] : r.service_type;
           upd.run(encrypt3(JSON.stringify(a)), service, r.id);
         }
+      },
+      // 72: PowerDMS (docs/integration/POWERDMS.md): a policy document's PowerDMS link, the revision staff must sign and the
+      // roles asked to sign it; who has signed which revision (policy_acknowledgements) and each report imported
+      // (policy_ack_imports). policy_ack_imports is created first: an acknowledgement names the import it came from.
+      (d) => {
+        addColumn(d, "policy_documents", "powerdms_url", "TEXT");
+        addColumn(d, "policy_documents", "revision", "TEXT");
+        addColumn(d, "policy_documents", "ack_roles", "TEXT");
+        createTablesFromSchema(d, safeSchema(), ["policy_ack_imports", "policy_acknowledgements"], 72);
       }
     ];
     var PERF_INDEXES_47 = [

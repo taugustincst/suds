@@ -2,6 +2,42 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.26.0 — 2026-10-17
+
+A feature release (docs/RELEASE.md, *Record: 1.26.0*): PowerDMS policy links and staff sign-offs. **Migration 72**
+(schema version 72): three columns on `policy_documents` and two new tables, applied automatically at start-up; take a
+backup first, as before any upgrade. One new permission, *Manage policy sign-offs* (`policies:manage`), held by
+supervisors and administrators, and new routes under `/api/policies/`.
+
+Owner exception: released twelve days after 1.25.0, inside the 28 days between feature releases, on the owner's instruction of 2026-10-17 ("Release now", then the choice to change the control and release); not a security fix
+
+It is the first release under the revised exception rule (docs/RELEASE.md, *Stabilisation*, point 2): the owner may
+release a feature release sooner on a recorded `Owner exception:` line. That is weaker than the rule as first written
+(only a security fix), and the security questionnaire says so. The release workflow still refuses it until the owner
+runs it with `policy_exception`, which puts the reason at the top of these notes.
+
+### Added
+
+- **PowerDMS policy links and staff sign-offs** (docs/integration/POWERDMS.md; migration 72; the permission *Manage
+  policy sign-offs*, `policies:manage`). A policy in Policies & contracts can be the county's PowerDMS document (its
+  link, the revision staff must sign, the roles asked to sign it). **Policy sign-offs** shows each person what they must
+  sign and whether they have signed the current revision; supervisors and administrators see everyone's, record or
+  remove a sign-off by hand, and import PowerDMS's signature or training report (Excel or CSV), previewed before
+  anything is recorded. SUDS does not connect to PowerDMS. Office server only; no client data. With its browser
+  script `policy-signoffs`, the suite is now 61 scripts.
+
+### Changed
+
+- **The release policy check reads an owner exception.** CI's `release-policy` job passes a feature release inside the
+  28 days when its CHANGELOG section or its *Record* has a line `Owner exception: <reason>`, and names it as the
+  owner's, never as a security fix. It lifts only the interval, never a patch's rules (`scripts/release-policy-ci.js`,
+  `test/release-policy-ci.test.js`).
+
+### Fixed
+
+- **A browser test that failed on some dates** (offline outreach: the tap on a to-do landed on its *Open the referral*
+  button when the row's text was short). It now taps the row's text. The app is unchanged.
+
 ## 1.25.9 — 2026-10-15
 
 SHA-256 of suds-v1.25.9.zip: ca1d7d3d22dc790dc9bbe37594aa627f854847adbf3452857df1bb65684f4ac0

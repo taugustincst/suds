@@ -614,10 +614,45 @@ CREATE TABLE IF NOT EXISTS policy_documents (
   is_active INTEGER NOT NULL DEFAULT 1,
   uploaded_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  -- PowerDMS (migration 72; docs/integration/POWERDMS.md): the county's own copy of a policy can live in its
+  -- PowerDMS site, where staff read and sign it. powerdms_url is that document's https address on powerdms.com (a
+  -- document may be a link with no file here); revision is the revision staff must have signed; ack_roles the roles
+  -- whose staff must sign it (comma-separated, e.g. 'navigator,clinician'; empty: nobody is asked).
+  powerdms_url TEXT,
+  revision TEXT,
+  ack_roles TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_policy_documents_cat ON policy_documents(category);
 CREATE INDEX IF NOT EXISTS idx_policy_documents_updated ON policy_documents(updated_at);
+-- Who has signed which revision of a policy (migration 72): imported from a PowerDMS signature or training report, or
+-- recorded by hand. No client data. Office server only (server/sync-tables.js server_only): staff compliance is the
+-- programme's record, and a device has its own accounts.
+CREATE TABLE IF NOT EXISTS policy_acknowledgements (
+  id TEXT PRIMARY KEY,
+  document_id TEXT NOT NULL REFERENCES policy_documents(id),
+  user_id TEXT NOT NULL REFERENCES users(id),
+  revision TEXT NOT NULL DEFAULT '',
+  acknowledged_at TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('powerdms','manual')),
+  import_id TEXT REFERENCES policy_ack_imports(id),
+  recorded_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (document_id, user_id, revision)
+);
+CREATE INDEX IF NOT EXISTS idx_policy_acknowledgements_user ON policy_acknowledgements(user_id);
+-- Each PowerDMS report imported (migration 72): the file's name, its SHA-256 and the counts, never the rows.
+CREATE TABLE IF NOT EXISTS policy_ack_imports (
+  id TEXT PRIMARY KEY,
+  filename TEXT,
+  sha256 TEXT NOT NULL,
+  rows_read INTEGER NOT NULL DEFAULT 0,
+  recorded INTEGER NOT NULL DEFAULT 0,
+  already INTEGER NOT NULL DEFAULT 0,
+  unmatched INTEGER NOT NULL DEFAULT 0,
+  imported_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 
 CREATE TABLE IF NOT EXISTS referrals (
   id TEXT PRIMARY KEY,

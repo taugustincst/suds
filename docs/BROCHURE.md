@@ -2,7 +2,7 @@
 
 **For** community-based organisations and county programmes doing street outreach, harm reduction, naloxone and
 test-strip distribution, and SUD navigation, and for the county and settlement funders who pay for that work.
-**From** AugustInnovations LLC, California. **Version 1.25.9** (October 2026).
+**From** AugustInnovations LLC, California. **Version 1.26.0** (October 2026).
 
 ## What it does
 
@@ -12,7 +12,7 @@ test-strip distribution, and SUD navigation, and for the county and settlement f
 | Keep supplies straight | Naloxone, test strips, syringes and other supplies tracked by site and lot with expiry dates. Contacts draw stock down, oldest lot first, and expiring lots are flagged. |
 | Protect Part 2 records | Consents that name the recipient, one gate for every disclosure with an accounting of disclosures, encryption of client identifiers and free text, and an audit log that shows tampering. |
 | Report to funders without retyping | Funder reports, an NDP-style naloxone log, a syringe services summary, and opioid-settlement spending and outcomes by fund. A county can receive each programme's signed aggregate file and see every funded programme side by side. No client records leave the programme. |
-| Run the programme | Clients, referrals with loop closure, to-dos, notes with signatures, staff time and budgets with approvals, and a verified resource directory. |
+| Run the programme | Clients, referrals with loop closure, to-dos, notes with signatures, staff time and budgets with approvals, and a verified resource directory. Policies the county keeps in PowerDMS, with each person's sign-offs read from its report. |
 | Work beside an EHR, or without one | An optional Part 2 module beside the EHR, a FHIR R4 read API, and CalOMS Tx capture with code sets verified against the DHCS data dictionary. SUDS is not an EHR and does not bill Drug Medi-Cal. |
 
 ## Three ways to use it

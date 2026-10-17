@@ -28,7 +28,16 @@ hosted yet).
 | **Try it free** | SUDS on this device: https://taugustincst.github.io/suds/ |
 | **Contact** | Licensing, AugustInnovations LLC, info@suds.systems; security reports: [SECURITY.md](SECURITY.md) |
 
-## What's new in 1.25 (1.25.0 to 1.25.9)
+## What's new in 1.26.0
+
+* **PowerDMS policy sign-offs:** a policy in Policies & contracts can be the county's PowerDMS document, with the
+  revision staff must sign and who signs it; **Policy sign-offs** shows each person what they owe, and supervisors import
+  PowerDMS's signature report to record who signed (office server; no client data; no live PowerDMS connection)
+  ([docs/integration/POWERDMS.md](docs/integration/POWERDMS.md)). Migration 72 runs at start-up.
+* Released twelve days after 1.25.0 on a recorded owner exception to the 28 days between feature releases
+  ([docs/RELEASE.md](docs/RELEASE.md), *Stabilisation*, point 2).
+
+## What was new in 1.25 (1.25.0 to 1.25.9)
 
 * **1.25.0:** CalOMS Tx code sets rewritten and verified against the DHCS Data Dictionary v3.0 (the upload file layout
   is still the county's to confirm) ([docs/compliance/CALOMS.md](docs/compliance/CALOMS.md)).

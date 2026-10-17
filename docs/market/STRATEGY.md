@@ -1,13 +1,14 @@
 # SUDS go-to-market strategy
 
 **Status: the owner's strategy, written down and assessed, 29 September 2026; its *Built vs planned* table is current to
-1.25.0.** It replaces nothing in the rest of this pack until a row below says it is done. Everything described as
+1.26.0.** It replaces nothing in the rest of this pack until a row below says it is done. Everything described as
 *planned* is not in a released version of SUDS. It was first written at 1.17.0, whose features are **released in
 1.17.0**. Under *Stabilisation* ([docs/RELEASE.md](../RELEASE.md)) 1.24.0 came early, under its one security exception (the
 fixes of an owner-authorised white-box penetration test of 1.23.6); 1.25.0 came early too, on the owner's explicit
-instruction to lift the freeze ("Fix everything now, freeze lifts to 1.25.0") — not a security exception — and the next
-feature release comes no earlier than 28 days after 1.25.0's release date (the date of its tag) and only through the
-release gate; `test/release-wording.test.js` keeps these lines honest at each stamp.
+instruction to lift the freeze ("Fix everything now, freeze lifts to 1.25.0") — not a security exception; and 1.26.0
+(PowerDMS policy sign-offs) came twelve days after 1.25.0 under the first recorded owner exception, a rule the owner
+added on 2026-10-17 (*Stabilisation*, point 2). The next feature release comes no earlier than 28 days after 1.26.0, and
+only through the release gate; `test/release-wording.test.js` keeps these lines honest at each stamp.
 
 The strategy has three parts:
 
@@ -339,7 +340,7 @@ until counsel and one pilot have looked at it.
 
 ## Built vs planned, exactly
 
-| Capability | State on 5 October 2026 (1.25.0) |
+| Capability | State on 17 October 2026 (1.26.0) |
 | --- | --- |
 | Outreach, anonymous contacts, supplies, funder reporting, settlement report and DHCS/county layouts | **Built** (layouts not checked against current official templates) |
 | Local mode (offline copy, office sync) | **Built**, off by default; the wizard recommends it for harm reduction |
@@ -375,6 +376,7 @@ until counsel and one pilot have looked at it.
 | Inbound FHIR referrals | **Design placeholder** ([docs/integration/FHIR.md](../integration/FHIR.md)) |
 | De-identified outcomes and benchmarking dataset | **Design only** ([DATA-NETWORK.md](DATA-NETWORK.md)) |
 | Vendor hosting (one isolated instance per customer) | **Offered from October 2026; no customer hosted yet** ([HOSTING.md](HOSTING.md)): the fleet tooling is tested against stand-ins only and its first real drill has not been run |
+| PowerDMS policy links and staff sign-offs (a policy linked to the county's PowerDMS document; sign-offs read from its signature or training report) | **Released in 1.26.0** ([docs/integration/POWERDMS.md](../integration/POWERDMS.md)); office server only; no live PowerDMS connection (it publishes no API documentation), the report file is the integration |
 
 ## Risks
 

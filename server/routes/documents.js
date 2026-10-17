@@ -41,6 +41,15 @@ function safeContentType(t) { return SERVABLE_TYPES.has(String(t || '').toLowerC
 
 // A document's fields: the table's rules (server/rules/policy_documents.js), which sync push applies too.
 const shape = require('../rules').forTable('policy_documents').fields;
+const rules = require('../rules');
+const P = require('../powerdms');
+// The roles asked to sign, stored sorted and comma-separated (server/powerdms.js normaliseRoles); a list or a string in.
+function withRoles(v, body) {
+  if (body.ack_roles === undefined) return v;
+  try { return { ...v, ack_roles: P.normaliseRoles(body.ack_roles) }; } catch (e) { throw badRequest('Validation failed', { fields: { ack_roles: e.message } }); }
+}
+// The body as the validator reads it: a list of roles as the comma-separated string it is stored as.
+const asStored = (body) => (body && Array.isArray(body.ack_roles) ? { ...body, ack_roles: body.ack_roles.map(String).join(',') } : body);
 const out = (row) => row && ({ ...row, has_file: !!row.file_b64, searchable: !!row.search_text, file_b64: undefined, search_text: undefined });
 
 module.exports = (r) => {
@@ -53,7 +62,7 @@ module.exports = (r) => {
     if (cat) { where.push('category=?'); params.push(cat); }
     // Every word must appear somewhere in the title, description or the file's own text.
     for (const word of q.split(/\s+/).filter(Boolean)) { where.push(`(lower(title) LIKE ? ESCAPE '\\' OR lower(COALESCE(description,'')) LIKE ? ESCAPE '\\' OR lower(COALESCE(search_text,'')) LIKE ? ESCAPE '\\')`); const like = `%${word.replace(/[%_]/g, '\\$&')}%`; params.push(like, like, like); }
-    const rows = db.all(`SELECT id,title,category,description,effective_date,expires_at,filename,content_type,bytes,is_active,uploaded_by,created_at,updated_at, (file_b64 IS NOT NULL) has_file, (search_text IS NOT NULL AND search_text<>'') searchable, search_text
+    const rows = db.all(`SELECT id,title,category,description,effective_date,expires_at,filename,content_type,bytes,is_active,uploaded_by,created_at,updated_at,powerdms_url,revision,ack_roles, (file_b64 IS NOT NULL) has_file, (search_text IS NOT NULL AND search_text<>'') searchable, search_text
       FROM policy_documents ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY category, title`, ...params);
     // A few words around the first match, so the reader can see why this document came up.
     const snippet = (text) => { if (!q || !text) return null; const t = String(text); const i = t.toLowerCase().indexOf(q.split(/\s+/)[0]); if (i < 0) return null; const s = Math.max(0, i - 60), e = Math.min(t.length, i + 100); return (s ? '…' : '') + t.slice(s, e) + (e < t.length ? '…' : ''); };
@@ -72,19 +81,25 @@ module.exports = (r) => {
     return { document: out(d) };
   });
   r.post('/api/documents', auth.requireAuth, auth.requirePerm('documents:write'), (ctx) => {
-    const v = validate(ctx.body, shape);
+    const v = withRoles(validate(asStored(ctx.body), shape), ctx.body);
     const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, 'File');
-    if (!file) throw badRequest('A file is required');
+    // A document is a file kept here, or the county's PowerDMS document (a link, read and signed there), or both.
+    if (!file && !v.powerdms_url) throw badRequest('A file or a PowerDMS link is required');
+    rules.assertWrite('policy_documents', v, ctx);
     const id = uuid();
-    db.run(`INSERT INTO policy_documents(id,title,category,description,effective_date,expires_at,filename,content_type,bytes,file_b64,search_text,uploaded_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-      id, v.title, v.category, v.description || null, v.effective_date || null, v.expires_at || null, v.filename || `${v.title}.${FILE_TYPES[file.type]}`, file.type, file.buf.length, file.b64, extractText(file.buf, file.type) || null, ctx.user.id);
-    audit.log({ user: ctx.user, action: 'document.create', entity: 'policy_document', entityId: id, ip: ctx.ip, details: { title: v.title, category: v.category, bytes: file.buf.length } });
+    db.run(`INSERT INTO policy_documents(id,title,category,description,effective_date,expires_at,filename,content_type,bytes,file_b64,search_text,uploaded_by,powerdms_url,revision,ack_roles) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      id, v.title, v.category, v.description || null, v.effective_date || null, v.expires_at || null, file ? (v.filename || `${v.title}.${FILE_TYPES[file.type]}`) : null, file ? file.type : null, file ? file.buf.length : 0, file ? file.b64 : null, file ? extractText(file.buf, file.type) || null : null, ctx.user.id,
+      v.powerdms_url || null, v.revision || null, v.ack_roles || null);
+    audit.log({ user: ctx.user, action: 'document.create', entity: 'policy_document', entityId: id, ip: ctx.ip, details: { title: v.title, category: v.category, bytes: file ? file.buf.length : 0, powerdms: !!v.powerdms_url, ack_roles: v.ack_roles || null } });
     ctx.status = 201; return { id };
   });
   r.put('/api/documents/:id', auth.requireAuth, auth.requirePerm('documents:write'), (ctx) => {
-    const d = db.one(`SELECT id, updated_at, is_active FROM policy_documents WHERE id=?`, ctx.params.id); if (!d) throw notFound();
+    const d = db.one(`SELECT id, updated_at, is_active, powerdms_url, revision, ack_roles, file_b64 IS NOT NULL has_file FROM policy_documents WHERE id=?`, ctx.params.id); if (!d) throw notFound();
     require('../crud').assertFresh(ctx, d, 'document');
-    const v = validate(ctx.body, Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true });
+    const v = withRoles(validate(asStored(ctx.body), Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true }), ctx.body);
+    rules.assertWrite('policy_documents', v, ctx, { existing: d });
+    // Clearing the link of a document that has no file would leave nothing to read.
+    if (v.powerdms_url === null && !d.has_file && !(ctx.body.file_url || ctx.body.file)) throw badRequest('A document with no file needs its PowerDMS link', { fields: { powerdms_url: 'required while there is no file' } });
     const v2 = validate({ is_active: ctx.body.is_active }, { is_active: { type: 'boolean' } }, { partial: true });
     const sets = Object.keys(v).map(k => `${k}=?`); const params = Object.keys(v).map(k => v[k]);
     for (const k of Object.keys(v2)) { sets.push(`${k}=?`); params.push(v2[k]); }
@@ -94,7 +109,7 @@ module.exports = (r) => {
     db.run(`UPDATE policy_documents SET ${sets.join(', ')}, updated_at=? WHERE id=?`, ...params, stamp, d.id);
     // Back in effect after being retired (the Undo after Retire) is its own entry.
     const reactivated = !!v2.is_active && !d.is_active;
-    audit.log({ user: ctx.user, action: reactivated ? 'document.reactivate' : 'document.update', entity: 'policy_document', entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)) } });
+    audit.log({ user: ctx.user, action: reactivated ? 'document.reactivate' : 'document.update', entity: 'policy_document', entityId: d.id, ip: ctx.ip, details: { fields: Object.keys(v).concat(Object.keys(v2)), ...(v.revision !== undefined && v.revision !== d.revision ? { revision: v.revision } : {}) } });
     return { ok: true, updated_at: stamp };
   });
   // Soft delete (retire), same as the form template library — the library is a record of what has been in

@@ -439,7 +439,7 @@ decisions (item 2).
   sections 3–5; the draft [templates/OSF-REPORTING-ONE-PAGER.md](templates/OSF-REPORTING-ONE-PAGER.md). Muse's
   county brochure (owner-side): its PDF was regenerated from the revised HTML on 2026-10-06 (proprietary wording, the
   four tiers, 1.25.0) and the older MIT-wording PDF is marked not to be distributed (HANDOFF, later 2026-10-10); it
-  still describes 1.25.0 while the published site serves 1.25.4. The six role pamphlets have **placeholders, not
+  was made for 1.25.0, and the product has moved on since (1.26.0 is stamped). The six role pamphlets have **placeholders, not
   screenshots** (15 screens to recapture).
 - **DECISION FOR TJ.** Approve the one-pager's wording for use; which counties to send it to, and when (ahead of the
   spring budgeting for the next cycle, not in September).
