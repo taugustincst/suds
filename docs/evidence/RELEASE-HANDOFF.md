@@ -1,6 +1,79 @@
-# Release hand-off: the record
+# Release hand-off: v1.26.0 to tag, then the record
 
-No tag is owed. Each release's record is added here once its tag is pushed and verified.
+> **The owner actions: run step 1, push the tag (step 2), then run the release with its policy exception (step 3).**
+> 1.26.0 is a feature release twelve days after 1.25.0, inside the 28 days between feature releases, on the owner's
+> recorded exception (not a security fix; [../RELEASE.md](../RELEASE.md), *Record: 1.26.0*). **The tag's own run fails
+> its gate**: `release.yml`'s release policy refuses a feature release inside the 28 days unless the run is given
+> `policy_exception`, and a tag push cannot give it. So after the push, run the workflow again on the tag with
+> `policy_exception` set (step 3); the release job prints it at the top of the release notes. Then approve the release
+> job in the `release` environment, and its `Web app` run, as for 1.25.9
+> ([../security/OPERATIVE-CONTROLS.md](../security/OPERATIVE-CONTROLS.md), `release-reviewer`). **Tj approving it in person
+> is better** than the business assistant approving with the owner's account: this is the first release on an owner
+> exception, and the approval's comment is what records who decided. A session's tag push is refused by the session's
+> own git proxy. Whoever pushes the tag and approves the run, the *Completed* entry records who did.
+>
+> The zip's checksum line goes into the CHANGELOG's 1.26.0 section in the commit that fills the row below, before the
+> tag. After the release, the records commit checks the published `.sha256` against it and adds the Windows zip's line.
+
+1.26.0 is a feature release (*Record: 1.26.0*): migration 72, the permission `policies:manage`, routes under
+`/api/policies/`. Its tag goes on the commit after "Release 1.26.0": "SBOM of the 1.26.0 stamp".
+
+## The one release
+
+| Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
+| --- | --- | --- | --- |
+| `v1.26.0` | the commit after `Release 1.26.0` ("SBOM of the 1.26.0 stamp": `git log -1 --format=%H --grep='^SBOM of the 1.26.0 stamp$' origin/main`) | 2026-10-17 | `<filled after the SBOM commit>`; rebuild it with the command below |
+
+A zip is a function of its commit (`git archive`); the release job refuses to publish a Release whose zip is not byte
+for byte its own build (`scripts/release-existing.js`). Compare the `.sha256` beside the published zip with a rebuild:
+
+```bash
+R1260=$(git log -1 --format=%H --grep='^SBOM of the 1.26.0 stamp$' origin/main)
+git archive --format=zip --prefix=suds-v1.26.0/ -o suds-v1.26.0.zip "$R1260" && sha256sum suds-v1.26.0.zip
+```
+
+## 1. Check (from any clone)
+
+```bash
+git fetch origin
+R1260=$(git log -1 --format=%H --grep='^SBOM of the 1.26.0 stamp$' origin/main)
+for c in $R1260; do
+  git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
+done
+git show -s --format='%h %s' $R1260   # "SBOM of the 1.26.0 stamp"
+git show origin/main:package.json | grep '"version"'                            # 1.26.0
+gh run list --workflow ci.yml --branch main --commit $R1260 --event push --limit 1   # completed, success (main's own run)
+git ls-remote --tags origin | grep 'v1.26.0'   # not there yet: the tag is what this hand-off is for
+```
+
+## 2. Tag, and push
+
+```bash
+git tag -a v1.26.0 "$R1260" -m "SUDS 1.26.0"
+git push origin v1.26.0
+```
+
+(With a published signing key, `git tag -s` instead: docs/RELEASE.md, *Signing a release tag*.)
+
+## 3. Run the release with its policy exception
+
+The push starts `release.yml`, and its gate fails at *Release policy* (a feature release 12 days after `v1.25.0`). That
+red run is expected and publishes nothing. Then, in Actions → *Release* → *Run workflow*: choose the tag `v1.26.0`
+under *Use workflow from*, type `release` in *confirm*, and set *policy_exception* to the recorded line:
+
+```text
+released twelve days after 1.25.0, inside the 28 days between feature releases, on the owner's instruction of 2026-10-17 ("Release now", then the choice to change the control and release); not a security fix
+```
+
+or from a terminal:
+
+```bash
+gh workflow run release.yml --ref v1.26.0 -f confirm=release -f policy_exception="released twelve days after 1.25.0, inside the 28 days between feature releases, on the owner's instruction of 2026-10-17 (\"Release now\", then the choice to change the control and release); not a security fix"
+```
+
+| Tag | Its gate (main's scripts) | Latest? Web app? | What the owner does |
+| --- | --- | --- | --- |
+| `v1.26.0` | **Passes only with `policy_exception`**: a feature release inside the 28 days after `v1.25.0` (*Record: 1.26.0*); green CI on the exact commit, every required job run (none skipped) | **Latest**, and it starts a `Web app` run; it attaches its zips and `sbom-1.26.0.cdx.json`, writes both zips' SHA-256 into the Release notes, and puts the exception at their top; the Windows zip unsigned while the certificate secrets are not set | Approve the release job in Actions (the `release` environment's reviewer), then its `Web app` run, which publishes 1.26.0 to GitHub Pages |
 
 ## v1.25.9: released
 

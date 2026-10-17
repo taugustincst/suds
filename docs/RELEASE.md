@@ -81,7 +81,9 @@ a stabilisation release, 1.23.1, and these commitments, which hold until this se
 3. **1.24.x was the supported line until 1.25.0.** It got every defect and security fix as a patch until 1.25.0 was
    released; from then, security fixes only, for **30 days after 1.25.0's release date** (the date of its tag; plan
    as if they run from its stamp, 2026-10-05), from `maint/1.24` (*Supported versions* and *Backports*, below).
-   1.25.x is the supported line now; 1.23.x and older get nothing more.
+   1.25.x was the supported line until 1.26.0; once 1.26.0 is released, 1.25.x gets security fixes only, for 30 days,
+   and 1.24.x nothing more, though its 30 days after 1.25.0 had not run out (*Supported versions*, below). 1.23.x and
+   older get nothing more.
 4. **Every release is tagged by the owner and published by `release.yml`.** The owner pushes the `vX.Y.Z` tag; the
    GitHub Release, its zip and checksum come from `release.yml`, and GitHub Pages is updated by the `Web app` run that
    release starts, whose publish job runs in the `release` environment (it would wait for the owner's approval once
@@ -491,14 +493,42 @@ approval (`release-reviewer`): the release job and its `Web app` run were approv
 business assistant, at the owner's direction, as each approval's comment says. Its GitHub Release is published,
 **immutable** (`immutable-releases`), and marked Latest ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
+**Record: 1.26.0 is a feature release on the owner's exception.** 1.26.0, stamped 2026-10-17, is a feature release
+twelve days after 1.25.0 (stamped 2026-10-05, released 2026-10-06), inside the 28 days between feature releases, which
+would allow it from 2026-11-02. It carries PowerDMS policy links and staff sign-offs
+([integration/POWERDMS.md](integration/POWERDMS.md)): migration 72 (three columns on `policy_documents`, the tables
+`policy_acknowledgements` and `policy_ack_imports`), one new permission, *Manage policy sign-offs* (`policies:manage`,
+granted to supervisors and administrators), and the routes under `/api/policies/`, office server only. It also carries
+the change to the release policy check that lets it through, a browser-test fix for a date-dependent tap, and a
+correction of the questionnaire's commit count (#36a: the figure of 202 was counted in a shallow clone).
+
+**It is not a security fix**, and nothing here calls it one. The owner asked for PowerDMS ("Create power dms views and
+integration") and then for its release ("Go", then "Release now"). Told that *Stabilisation* point 2, as written,
+allowed no exception but a security fix and that CI's `release-policy` job would fail the stamp, the owner chose, on
+2026-10-17, to change the control rather than wait for 2026-11-02 or label the release a security fix: point 2 now
+lets the owner record an exception to the 28-day interval, and `scripts/release-policy-ci.js` reads it. So it is
+recorded, on a line of its own, as:
+
+Owner exception: released twelve days after 1.25.0, inside the 28 days between feature releases, on the owner's instruction of 2026-10-17 ("Release now", then the choice to change the control and release); not a security fix
+
+What that costs, said plainly: the commitment buyers were told of (no further exception but a security fix) is weaker
+from today, and the questionnaire (#36) and the IT buyer guide say so; 1.24.x loses the rest of its 30 days of
+security fixes once 1.26.0 is released (*Supported versions*, below); and the next feature release comes no earlier
+than 28 days after 1.26.0. The release workflow is unchanged: its gate refuses a feature release inside the 28 days
+unless the run is given `policy_exception`, so the owner (or the owner's business assistant at the owner's direction)
+runs the tag's release with `policy_exception` set to the line above, which the release job prints at the top of the
+notes, and the `release` environment's reviewer approves it. It is two commits, "Release 1.26.0" and "SBOM of the
+1.26.0 stamp", the tag on the second, and the full suite, the evening run and the browser suite (61 scripts) ran on
+the stamped tree before the push. Its tag is owed ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
+
 
 ### Supported versions
 
 | Line | Gets | For how long |
 | --- | --- | --- |
-| **The latest minor** (today 1.25.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
-| **The previous minor** (today 1.24.x, until 30 days after 1.25.0's release date: the date of its tag, 2026-10-06) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.24` is made from `v1.24.4`'s line) | **30 days** after the next minor's release date, then none |
-| Anything older (today 1.23.x and before: once 1.25.0 was released, 1.23.x stopped being the previous minor, whatever was left of its 30 days after 1.24.0; 1.22.x stopped when 1.24.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
+| **The latest minor** (today 1.26.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
+| **The previous minor** (today 1.25.x, until 30 days after 1.26.0's release date: the date of its tag, which is owed; plan as if they run from its stamp, 2026-10-17, to 2026-11-16) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.25` is made from `v1.25.9`'s line when the first backport is needed) | **30 days** after the next minor's release date, then none |
+| Anything older (today 1.24.x and before: once 1.26.0 is released, 1.24.x stops being the previous minor, whatever is left of its 30 days after 1.25.0, which ran to about 2026-11-05; 1.26.0's early release, on the owner's exception, shortens them; 1.23.x stopped when 1.25.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's
 CHANGELOG section, naming the affected versions (as 1.15.4 did); programmes with a support agreement are told
@@ -658,6 +688,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.25.7 | none of the policy (a patch within the patch rules: no migration, permission or route, 346 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-12 (*Record: 1.25.7*) | the fixes from the evaluation of 1.25.6 (K1–K8; *Record: 1.25.7*, above) | no exception to approve |
 | 1.25.8 | none of the policy (a patch within the patch rules: no migration, permission or route, 73 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged from the owner's side and released through the gate on 2026-10-13 (*Record: 1.25.8*) | the fixes from the self-assessment SEC-2026-001 of 1.25.6 and the owner's pricing of 2026-10-12 (*Record: 1.25.8*, above) | no exception to approve |
 | 1.25.9 | none of the release policy's rules (a patch within the patch rules: no migration, permission or route, 9 lines). Tagged when ready, two days after 1.25.8, on the owner's instruction of 2026-10-15: the owner set aside the weekly batching of patches (*Release cadence*) for this one; released through the gate on 2026-10-16, its run approved with the owner's account at the owner's direction (*Record: 1.25.9*) | the vendor's contact on the Security & procurement page, and the records since 1.25.8 (*Record: 1.25.9*, above) | no exception to approve |
+| 1.26.0 | the 28 days between feature releases (a feature release twelve days after 1.25.0; migration 72, the permission `policies:manage`, routes under `/api/policies/`); not a security fix, so no `Security exception:` line — the first `Owner exception:` line, under *Stabilisation* point 2 as the owner revised it on 2026-10-17. Its `release.yml` run publishes it once `v1.26.0` is pushed and the run is given `policy_exception` and approved | PowerDMS policy links and staff sign-offs, on the owner's instruction of 2026-10-17 ("Release now", then the choice to change the control and release) (*Record: 1.26.0*, above) | owner (`policy_exception`, *Record: 1.26.0*, above) |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as

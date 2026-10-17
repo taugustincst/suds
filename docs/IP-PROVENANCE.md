@@ -11,8 +11,9 @@ Those are questions for counsel ([market/templates/COUNSEL-REVIEW-BRIEF.md](mark
 ## How the code and documents are produced
 
 - **AI coding assistants, under the owner's direction.** As [security/QUESTIONNAIRE.md](security/QUESTIONNAIRE.md)
-  #36a states: of the commits in the history of 1.25.0 (202 when it was counted), all were written with an AI coding
-  assistant; the work is done under the project rules in [`CLAUDE.md`](../CLAUDE.md) and gated by the tests and CI.
+  #36a states: of the 1,257 commits in the history of 1.26.0 up to its stamp, all but the repository's one-line
+  initial commit were written with an AI coding assistant, or merge a pull request it wrote (the figure of 202 given
+  before 1.26.0 was counted in a shallow clone); the work is done under the project rules in [`CLAUDE.md`](../CLAUDE.md) and gated by the tests and CI.
   The assistants commit and push to `main` themselves, on the owner's instructions and with the owner's GitHub
   access; there is no pull-request review (the last pull request was merged on 2026-09-28), no second human reviewer
   and no independent code review.

@@ -68,7 +68,10 @@ supervisor's override; and passwords that contain a person's name or a common wo
 ([docs/compliance/PART2.md](../compliance/PART2.md), *Purpose match*). Navigators, clinicians and supervisors get two
 new permissions for the intake queue; finance and read-only do not. 1.25.0 changes little your staff will notice:
 the CalOMS Tx code sets are corrected against the DHCS data dictionary (so a treatment extract's answers are the
-dictionary's values), every resource-directory card shows a picture, and the call and text forms are plainer.
+dictionary's values), every resource-directory card shows a picture, and the call and text forms are plainer. 1.26.0
+adds **Policy sign-offs** for a programme whose county keeps its policies in PowerDMS: each person sees the policies
+they must sign and whether they have, and a supervisor imports PowerDMS's signature report to keep it current
+([../integration/POWERDMS.md](../integration/POWERDMS.md)).
 A referral network partner organisations join (beyond the
 1.17.0 one-time secure links) is planned and not scheduled ([STRATEGY.md](STRATEGY.md)). Choose SUDS for what it does
 today.
