@@ -518,8 +518,10 @@ than 28 days after 1.26.0. The release workflow is unchanged: its gate refuses a
 unless the run is given `policy_exception`, so the owner (or the owner's business assistant at the owner's direction)
 runs the tag's release with `policy_exception` set to the line above, which the release job prints at the top of the
 notes, and the `release` environment's reviewer approves it. It is two commits, "Release 1.26.0" and "SBOM of the
-1.26.0 stamp", the tag on the second, and the full suite, the evening run and the browser suite (61 scripts) ran on
-the stamped tree before the push. Its tag is owed ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
+1.26.0 stamp", the tag on the second. The full suite and the evening run passed on the stamped tree before the push;
+the browser suite passed 60 of its 61 scripts there, and `local-mode` timed out once at a sign-in after a reload, then
+passed alone twice (49 of 49), and passed in CI's browser job on the commit to tag (run 39074014149, every required job
+green); it is entered in the flake register. Its tag is owed ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
 
 ### Supported versions
@@ -1004,6 +1006,7 @@ and what would settle it.
 | `e0f97eb` webkit (advisory; run `38087235998`, the 1.25.5 commit to tag) | `device-recovery.mjs:154`: a fresh context's first `page.goto('/')` never shows the sign-up form (a `TimeoutError`), in section 5, unchanged since 1.25.4; this run never reached section 6's reload | the same first-load class as `1962de6` | open, with `1962de6`'s row |
 | `56f09dd` webkit (advisory; after the 1.25.5 stamp) | `qa-retest.mjs:52`: a fresh context's first `page.goto('/')` never shows the sign-up form (a `TimeoutError`); it arrived in a job already red with WK-1, unnoticed (evaluation of 1.25.5, J4) | the same first-load class as `1962de6` | open, with `1962de6`'s row; 1.25.6: WK-1 no longer turns the job red, and the first load of a fresh context in the three WebKit scripts prints a trace on a timeout (`firstLoad`, scripts/ui/assert.mjs: ready state, service worker, kernel and WebAssembly fetches, console errors), so the next one names the stage that stalled |
 | `af85d7b` webkit (advisory; the 1.25.5 records commit) | `device-recovery.mjs:342`: the same first load, in the saved-copy section, after WK-1 in the same run; the saved-copy checks did not run in WebKit there | the same first-load class as `1962de6` | open, with `56f09dd`'s row |
+| `381a107` browser, a local full run before the push (not CI) | `local-mode.mjs:36`: after a reload, `signInAgain` never reaches `.layout` in 20 s (a `TimeoutError`), in Chromium | not established. It passed alone twice on the same tree (49 of 49) and in CI's `browser` job on the same commit (run 39074014149); the symptom is `a18ce49`'s, seen there in WebKit. What would settle it: a trace on the timeout, as `firstLoad` prints for a first load | open |
 | `2e3498b` thorough | `test/county-fuzz.test.js` round-trip, seed 1298200799 iteration 75: "Check the figures: 1 field needs attention" | a test-generator fault, not a product one: a 300-character fund name cut at 200 characters lost its index suffix, so two funds without a grant number had the same name and the entry was rightly refused as a duplicate (the `thorough` job draws a fresh seed each run; this one replays it) | after 1.25.4, on `main`: the picked text is cut to 190 characters before the index is added; the product is unchanged |
 
 #### Known defects
