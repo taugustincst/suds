@@ -1,63 +1,38 @@
-# Release hand-off: v1.25.9 to tag, then the record
+# Release hand-off: the record
 
-> **The one owner action: run step 1, then step 2's tag command and its push.** It publishes 1.25.9: the tag starts
-> `release.yml` (gate, verify, release), the release marks `v1.25.9` Latest, and its `Web app` run republishes GitHub
-> Pages. **The release now waits for the owner's approval**: the `release` environment has had a required reviewer since
-> 2026-10-13, so after the gate passes the release job waits in Actions until the owner approves it, and so does its
-> `Web app` run ([../security/OPERATIVE-CONTROLS.md](../security/OPERATIVE-CONTROLS.md), `release-reviewer`). Releases
-> are immutable from the same day: the Release is published once, with every file. **Tag it as soon as this
-> row is filled** (the owner's instruction of 2026-10-15; [../RELEASE.md](../RELEASE.md), *Record: 1.25.9*). A session's tag push is refused by the
-> session's own git proxy. Whoever pushes the tag (the owner, or the owner's business assistant on the owner's instruction), the *Completed* entry records who did.
->
-> The zip's checksum line goes into the CHANGELOG's 1.25.9 section in the commit that fills the row below, before the
-> tag. After the release, the records commit checks the published `.sha256` against it and adds the Windows zip's line.
+No tag is owed. Each release's record is added here once its tag is pushed and verified.
 
-1.25.9 is a patch of 1.25.8 (*Record: 1.25.9*). No migration, no new or widened permission and no new route. Its tag goes
-on the commit after "Release 1.25.9": "SBOM of the 1.25.9 stamp".
+## v1.25.9: released
 
-## The one release
-
-| Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
+| Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 |
 | --- | --- | --- | --- |
-| `v1.25.9` | `b2335784101e6bd9922e4ce4593f1106b859575b` ("SBOM of the 1.25.9 stamp", after the stamp `f090e01`; main's own CI run 38833228852, every required job green) | 2026-10-15 | `ca1d7d3d22dc790dc9bbe37594aa627f854847adbf3452857df1bb65684f4ac0` |
-
-The SHA-256 above was rebuilt twice from the commit, identical, and the same line is in the CHANGELOG's 1.25.9 section on
-`main` before the tag. A zip is a function of its commit (`git archive`); the release job refuses to publish a Release whose zip is not byte
-for byte its own build (`scripts/release-existing.js`). Compare the `.sha256` beside the published zip with a rebuild:
+| `v1.25.9` | `b2335784` ("SBOM of the 1.25.9 stamp") | 2026-10-15 | `ca1d7d3d22dc790dc9bbe37594aa627f854847adbf3452857df1bb65684f4ac0` (recorded before the tag; the release asset matches) |
 
 ```bash
-R1259=b2335784101e6bd9922e4ce4593f1106b859575b
-git archive --format=zip --prefix=suds-v1.25.9/ -o suds-v1.25.9.zip "$R1259" && sha256sum suds-v1.25.9.zip
+git fetch origin tag v1.25.9
+git archive --format=zip --prefix=suds-v1.25.9/ -o suds-v1.25.9.zip v1.25.9 && sha256sum suds-v1.25.9.zip
+# ca1d7d3d22dc790dc9bbe37594aa627f854847adbf3452857df1bb65684f4ac0  suds-v1.25.9.zip
 ```
 
-## 1. Check (from any clone)
+## Completed: v1.25.9 (2026-10-16)
 
-```bash
-git fetch origin
-R1259=b2335784101e6bd9922e4ce4593f1106b859575b
-for c in $R1259; do
-  git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
-done
-git show -s --format='%h %s' $R1259   # "SBOM of the 1.25.9 stamp"
-git show origin/main:package.json | grep '"version"'                            # 1.25.9
-gh run list --workflow ci.yml --branch main --commit $R1259 --event push --limit 1   # completed, success (main's own run)
-git ls-remote --tags origin | grep 'v1.25.9'   # not there yet: the tag is what this hand-off is for
-```
-
-## 2. Tag, and push
-
-```bash
-git tag -a v1.25.9 "$R1259" -m "SUDS 1.25.9"
-git push origin v1.25.9
-```
-
-(With a published signing key, `git tag -s` instead: docs/RELEASE.md, *Signing a release tag*.)
-
-## 3. What the tag's run does
-
-| Tag | Its gate (main's scripts) | Latest? Web app? | What the owner does |
-| --- | --- | --- | --- |
-| `v1.25.9` | **Passes**: a patch of `v1.25.8` with no migration, permission or route, within the size limit (*Record: 1.25.9*); green CI on the exact commit, every required job run (none skipped) | **Latest**, and it starts a `Web app` run; it attaches its zips and `sbom-1.25.9.cdx.json`, and writes both zips' SHA-256 into the Release notes; the Windows zip unsigned while the certificate secrets are not set | Approve the release job in Actions (the `release` environment's reviewer), then its `Web app` run, which publishes 1.25.9 to GitHub Pages |
+- `v1.25.9` — commit `b2335784101e6bd9922e4ce4593f1106b859575b` ("SBOM of the 1.25.9 stamp", after the stamp `f090e01`;
+  CHANGELOG 2026-10-15), zip SHA-256 `ca1d7d3d22dc790dc9bbe37594aa627f854847adbf3452857df1bb65684f4ac0`; exact-commit CI 38833228852 (every required job
+  green, none skipped). A patch of 1.25.8: the software vendor's contact on the Security & procurement page. No
+  migration, permission or route. Tagged as soon as it was ready, two days after 1.25.8, on the owner's instruction
+  (*Record: 1.25.9*).
+- The tag is annotated and unsigned (tagger *Folder*): the owner's business assistant tagged it and pushed it with the
+  owner's GitHub access, at the owner's direction. **The first release under the 2026-10-13 settings.** Release run
+  38838362653 passed the gate and waited at the `release` environment; it was approved with the owner's account by the
+  business assistant at the owner's direction (the approval's comment: "Approved by Folder at owner's direction"), and
+  the GitHub Release was published at 02:46 UTC on 2026-10-16, **immutable**, with five assets (the source zip and its
+  `.sha256`, the Windows zip, unsigned, and its `.sha256`, and the SBOM), marked **Latest**. The published zip's digest
+  equals the value recorded before the tag. Both zips' lines are in the Release notes.
+- Windows zip: `suds-1.25.9-windows-x64.zip`, SHA-256 `7b6d7515e44618c48ac0878c13c0f18ee6ee6996e8216e583b98cf035446ff93`.
+- Pages: `v1.25.9`'s `Web app` run (38842133259) waited for the same approval, given the same way, and succeeded
+  (04:39 UTC); `gh-pages`' `version.json` reads **1.25.9**.
+- suds.systems is not upgraded by a release: it runs 1.25.8 until the owner directs the upgrade.
+- The records commit adds the Windows zip's line to the CHANGELOG's 1.25.9 section.
 
 ## v1.25.8: released
 
