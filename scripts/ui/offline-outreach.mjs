@@ -345,7 +345,9 @@ try {
   // On a phone, the reminder (a row that opens the to-do) offers it too.
   const mob = await session('mrivera', PW, { width: 390, height: 844 });
   await mob.go('tasks');
-  await mob.page.click(`.compact-row:has-text("${reminder.title}") .secondary`);
+  // On the row's text, not the middle of its second line: that line also holds the row's own Open the referral button,
+  // which sat in the middle when the due date read "due Oct 17, 2026" (2026-10-17), and opened the referral instead.
+  await mob.page.click(`.compact-row:has-text("${reminder.title}") .secondary span:first-child`);
   await mob.page.waitForSelector('.modal-bg .modal [data-task-source="referral"]');
   await mob.page.click('.modal-bg .modal [data-task-source="referral"]');
   ok(await until(() => mob.page.$('.modal-bg .modal button[type=submit]:text-is("Record outcome")')), 'on a phone, the reminder\'s Open the referral opens Record outcome');
