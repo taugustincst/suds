@@ -46,11 +46,34 @@ test('a minor within 28 days of the previous feature release fails; after, it pa
   assert.equal(early.action, 'fail');
   assert.match(early.reason, /19 days after the feature release 1\.23\.0.*no earlier than 2026-10-29/);
   assert.match(early.reason, /Security exception: <reason>/);
+  assert.match(early.reason, /Owner exception: <reason>/);
   const ok = C.plan({ version: '1.24.0', stamped: [{ version: '1.24.0', date: '2026-10-29' }, ...stamped], tags, handoffRows, now: at('2026-11-02') });
   assert.equal(ok.action, 'pass');
   const sec = C.plan({ version: '1.24.0', stamped: s, tags, handoffRows, now: at('2026-10-20'), exception: 'CVE fix in the session code' });
   assert.equal(sec.action, 'pass');
   assert.match(sec.reason, /security exception.*CVE fix/);
+});
+
+test('an owner exception lets a minor through inside the 28 days, named as the owner\'s and not as a security fix', () => {
+  const s = [{ version: '1.24.0', date: '2026-10-20' }, ...stamped];
+  const own = C.plan({ version: '1.24.0', stamped: s, tags, handoffRows, now: at('2026-10-20'), ownerException: 'the owner\'s instruction of 2026-10-20' });
+  assert.equal(own.action, 'pass');
+  assert.match(own.reason, /owner's exception recorded for 1\.24\.0, not a security fix/);
+  assert.match(own.reason, /policy_exception/);
+  assert.doesNotMatch(own.reason, /security exception/);
+  const both = C.plan({ version: '1.24.0', stamped: s, tags, handoffRows, now: at('2026-10-20'), exception: 'CVE fix', ownerException: 'sooner' });
+  assert.match(both.reason, /security exception.*CVE fix/);
+  // A patch's rules have no owner exception: work after a released version is still checked as a patch.
+  assert.equal(C.plan({ version: '1.23.0', stamped, tags, handoffRows, now: at('2026-10-05'), ownerException: 'sooner' }).action, 'patch');
+});
+
+test('the owner exception is read like the security one, and neither line stands for the other', () => {
+  const changelog = '## Unreleased\n\nOwner exception: not this one\n\n## 1.26.0 — 2026-10-17\n\n* **Owner exception:** released sooner on the owner\'s instruction\n\n## 1.25.9 — 2026-10-16\n';
+  assert.equal(C.ownerException('1.26.0', { changelog }), 'released sooner on the owner\'s instruction');
+  assert.equal(C.ownerException('1.25.9', { changelog }), null);
+  assert.equal(C.securityException('1.26.0', { changelog }), null, 'an owner exception is not a security one');
+  assert.equal(C.ownerException('1.24.0', { changelog: '## 1.24.0 — 2026-10-03\n\nSecurity exception: a token leak\n' }), null, 'nor a security exception an owner one');
+  assert.equal(C.ownerException('1.26.0', { release: '**Record: 1.26.0** early.\n\nOwner exception: go\n\n**Record: 1.25.9** none.\n' }), 'go');
 });
 
 test('an unstamped minor is dated today', () => {
@@ -87,6 +110,6 @@ test('the repository itself: this tree is planned as a patch of the newest relea
   const read = (f) => fs.readFileSync(path.join(root, f), 'utf8');
   const version = JSON.parse(read('package.json')).version;
   const changelog = read('CHANGELOG.md');
-  const p = C.plan({ version, stamped: stampedVersions(changelog), handoffRows: parseHandoff(read('docs/evidence/RELEASE-HANDOFF.md')).rows, tags: [], now: Date.parse('2026-10-02T00:00:00Z'), exception: C.securityException(version, { changelog, release: read('docs/RELEASE.md') }) });
+  const p = C.plan({ version, stamped: stampedVersions(changelog), handoffRows: parseHandoff(read('docs/evidence/RELEASE-HANDOFF.md')).rows, tags: [], now: Date.parse('2026-10-02T00:00:00Z'), exception: C.securityException(version, { changelog, release: read('docs/RELEASE.md') }), ownerException: C.ownerException(version, { changelog, release: read('docs/RELEASE.md') }) });
   assert.notEqual(p.action, 'fail', p.reason);
 });

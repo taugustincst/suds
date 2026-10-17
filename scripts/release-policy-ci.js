@@ -15,7 +15,10 @@
 //   * V is not released yet (stamped, or only bumped): a patch is checked against the newest release below it; a
 //     minor or major fails when it is stamped (or, unstamped, would be released today) less than
 //     FEATURE_INTERVAL_DAYS after the previous feature release, unless V's CHANGELOG section or its *Record* in
-//     docs/RELEASE.md has a line "Security exception: <reason>" - the one exception the stabilisation allows.
+//     docs/RELEASE.md has a line "Security exception: <reason>", or, since 1.26.0, "Owner exception: <reason>": the
+//     owner's recorded decision to release a feature sooner, which is not a security fix and is never called one
+//     (docs/RELEASE.md, "Stabilisation", point 2). Either only lifts the interval for a minor or major; a patch's
+//     rules have no exception here. release.yml's gate still needs its own `policy_exception` input to release it.
 // Dates are CHANGELOG release dates (the day a version was published), else the tag's date: a tag pushed weeks after
 // its release must not move the window. The patch rules themselves are scripts/release-policy.js's, run as a child
 // with --version, --previous and --previous-ref. With --fetch (what CI's job does) a hand-off commit missing from a
@@ -32,10 +35,11 @@ const nextPatch = (v) => { const p = parseVersion(v); return `${p[0]}.${p[1]}.${
 const isoDay = (t) => new Date(t).toISOString().slice(0, 10);
 
 /**
- * The line naming a security exception for `version`, from its CHANGELOG section or its `**Record: X.Y.Z**`
- * paragraph in docs/RELEASE.md: "Security exception: <reason>". Returns the reason, or null.
+ * The line recording an exception of `label` ('Security exception' or 'Owner exception') for `version`, from its
+ * CHANGELOG section or its `**Record: X.Y.Z**` paragraph in docs/RELEASE.md: "<label>: <reason>". Returns the
+ * reason, or null.
  */
-function securityException(version, { changelog = '', release = '' } = {}) {
+function recordedException(label, version, { changelog = '', release = '' } = {}) {
   const esc = version.replace(/\./g, '\\.');
   const block = (text, start) => {
     const m = start.exec(text); if (!m) return '';
@@ -43,12 +47,17 @@ function securityException(version, { changelog = '', release = '' } = {}) {
     const end = rest.search(/^## |^\*\*Record: /m);
     return end < 0 ? rest : rest.slice(0, end);
   };
+  const line = new RegExp(`^\\s*(?:[*-]\\s+)?\\**${label}:\\**\\s*(\\S[^\\n]*)$`, 'im');
   for (const body of [block(changelog, new RegExp(`^## ${esc}\\b[^\\n]*$`, 'm')), block(release, new RegExp(`^\\*\\*Record: ${esc}\\b[^\\n]*$`, 'm'))]) {
-    const m = /^\s*(?:[*-]\s+)?\**Security exception:\**\s*(\S[^\n]*)$/im.exec(body);
+    const m = line.exec(body);
     if (m) return m[1].trim();
   }
   return null;
 }
+/** A security fix that cannot wait: "Security exception: <reason>". */
+const securityException = (version, docs) => recordedException('Security exception', version, docs);
+/** The owner's recorded decision to release a feature sooner (1.26.0): "Owner exception: <reason>". */
+const ownerException = (version, docs) => recordedException('Owner exception', version, docs);
 
 /**
  * The released versions CI can compare with: pushed tags (`tags`: ['v1.16.2', ...]) and the hand-off's rows that name
@@ -65,11 +74,12 @@ function releases(tags, handoffRows) {
 /**
  * The plan. `version`: package.json's; `stamped`: stampedVersions(CHANGELOG) ([{ version, date }]); `tags`, `handoffRows`:
  * as releases(); `tagDates`: { 'v1.16.0': ISO } for tags whose version has no CHANGELOG date; `now`: ms; `exception`:
- * securityException() for `version` (only read for a minor or major).
+ * securityException() for `version`, `ownerException`: ownerException() for it (both only read for a minor or major;
+ * a security exception is named first when both are recorded).
  * @returns {{ action: 'skip'|'patch'|'pass'|'fail', reason: string, version?: string, previous?: string, previousRef?: string }}
  *   'patch': run scripts/release-policy.js --version <version> --previous v<previous> --previous-ref <previousRef>
  */
-function plan({ version, stamped = [], tags = [], handoffRows = [], tagDates = {}, now = Date.now(), exception = null }) {
+function plan({ version, stamped = [], tags = [], handoffRows = [], tagDates = {}, now = Date.now(), exception = null, ownerException = null }) {
   if (!parseVersion(version)) return { action: 'fail', reason: `package.json's version ${version} is not X.Y.Z` };
   const rel = releases(tags, handoffRows);
   const dateOf = (v) => { const s = stamped.find((x) => x.version === v); if (s) return dayOf(s.date); const d = tagDates[`v${v}`]; return d ? dayOf(d) : NaN; };
@@ -106,7 +116,8 @@ function plan({ version, stamped = [], tags = [], handoffRows = [], tagDates = {
   if (when >= w.until) return { action: 'pass', reason: `${kind} release ${version} ${own2 ? `stamped ${own2.date}` : 'not stamped yet'}, ${days} days after ${feat}` };
   const what = `${kind} release ${version} ${own2 ? `stamped ${own2.date}` : 'not stamped yet (dated today)'}, ${days} days after the feature release ${feat}; feature releases come at most once every ${FEATURE_INTERVAL_DAYS} days (no earlier than ${isoDay(w.until)})`;
   if (exception) return { action: 'pass', reason: `${what}: allowed by the security exception recorded for ${version} (${exception})` };
-  return { action: 'fail', reason: `${what}. Make it a patch release, wait, or, for a security fix only, record "Security exception: <reason>" in its CHANGELOG section or its Record in docs/RELEASE.md` };
+  if (ownerException) return { action: 'pass', reason: `${what}: allowed by the owner's exception recorded for ${version}, not a security fix (${ownerException}); release.yml's gate needs policy_exception to release it` };
+  return { action: 'fail', reason: `${what}. Make it a patch release, wait, or record why in its CHANGELOG section or its Record in docs/RELEASE.md: "Security exception: <reason>" for a security fix, "Owner exception: <reason>" for the owner's decision to release sooner` };
 }
 
 function arg(name) { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : undefined; }
@@ -123,7 +134,8 @@ function main() {
   const tagDates = {};
   for (const t of tags) { if (stamped.some((s) => `v${s.version}` === t)) continue; try { tagDates[t] = git('for-each-ref', '--format=%(creatordate:iso-strict)', `refs/tags/${t}`) || null; } catch { /* unread: plan() fails closed */ } }
   const now = arg('--now') ? Date.parse(arg('--now')) : Date.now();
-  const p = plan({ version, stamped, tags, handoffRows, tagDates, now, exception: securityException(version, { changelog, release: read('docs/RELEASE.md') }) });
+  const docs = { changelog, release: read('docs/RELEASE.md') };
+  const p = plan({ version, stamped, tags, handoffRows, tagDates, now, exception: securityException(version, docs), ownerException: ownerException(version, docs) });
   console.log(`[release-policy-ci] ${p.action}: ${p.reason}`);
   const summary = (s) => { if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, s); };
   summary(`### Release policy on this push\n${p.action}: ${p.reason}\n`);
@@ -144,4 +156,4 @@ function main() {
 if (require.main === module) {
   try { process.exitCode = main(); } catch (e) { console.log(`::error::The release policy check could not run: ${e.message}`); process.exitCode = 1; }
 }
-module.exports = { plan, releases, securityException };
+module.exports = { plan, releases, securityException, ownerException };

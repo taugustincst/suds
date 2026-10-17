@@ -67,10 +67,17 @@ a stabilisation release, 1.23.1, and these commitments, which hold until this se
    penetration test of 1.23.6, under point 2's one exception, a security fix: 1.24.0 is stamped 2026-10-03, two days
    after 1.23.0, with its `Security exception:` line (*Record: 1.24.0*). The next feature release, 1.25.0, comes no
    earlier than 2026-10-31, 28 days after 1.24.0, and only through the release gate.
-2. **No further policy exceptions, except a security fix.** A release that breaks the cadence or the patch rules is
-   made only to ship a security fix that cannot wait, and its CHANGELOG section or its *Record* says so on a line of
-   its own, `Security exception: <reason>`, which the CI check below reads. An owner's wish for a feature sooner is
-   not an exception any more: it waits for the next feature release.
+2. **Policy exceptions: a security fix, or the owner's recorded decision.** A release that breaks the cadence or the
+   patch rules is made to ship a security fix that cannot wait, and its CHANGELOG section or its *Record* says so on a
+   line of its own, `Security exception: <reason>`, which the CI check below reads. **Revised by the owner on
+   2026-10-17** (for 1.26.0, PowerDMS, twelve days after 1.25.0): the owner may also release a feature release inside
+   the 28 days, on a line of its own, `Owner exception: <reason>`, quoting the owner's instruction. This weakens the
+   commitment as first written, which said an owner's wish for a feature sooner waits for the next feature release,
+   and it is said here and in the security questionnaire so that a reviewer sees it. Its limits: it lifts only the
+   28-day interval for a minor or major release, never a patch's rules (no migration, permission or route, and the
+   size limit); it is never written as, or counted as, a security exception; the CI check names it as the owner's in
+   its result; `release.yml`'s gate still refuses the release until the owner runs it with `policy_exception`, which
+   prints the reason at the top of the release notes; and each one has a row in the exceptions table.
 3. **1.24.x was the supported line until 1.25.0.** It got every defect and security fix as a patch until 1.25.0 was
    released; from then, security fixes only, for **30 days after 1.25.0's release date** (the date of its tag; plan
    as if they run from its stamp, 2026-10-05), from `maint/1.24` (*Supported versions* and *Backports*, below).
@@ -88,8 +95,8 @@ a stabilisation release, 1.23.1, and these commitments, which hold until this se
    are owed, the commit the hand-off records for it (`scripts/release-policy.js --previous-ref`). Work after a
    released version is checked as its next patch while the feature interval runs; a stamped patch that adds a
    migration, a permission or a route, or goes over the size limit, fails; a minor stamped within 28 days of the
-   previous feature release fails unless a security exception is recorded. A red `release-policy` job fails the CI
-   run, and the release gate refuses a commit whose CI run failed.
+   previous feature release fails unless a security exception, or since 1.26.0 an owner exception (point 2), is
+   recorded. A red `release-policy` job fails the CI run, and the release gate refuses a commit whose CI run failed.
 
 **Record: 1.23.1 ships without a policy exception.** 1.23.1 is a patch of 1.23.0 under the patch rules, the first
 release under *Stabilisation*: no migration, no new or widened permission, no new route, and 501 lines added outside
