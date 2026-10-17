@@ -80,7 +80,7 @@ The server is one Node.js process with one SQLite database. It scales up, not ou
 | FHIR R4 | A read API (Patient, EpisodeOfCare, Encounter, Consent, ServiceRequest, Task, Observation, DocumentReference) and Bulk Data `$export`, shared only under a live Part 2 consent; imports from an EHR's FHIR export ([integration/FHIR.md](integration/FHIR.md), [integration/EHR-PART2-LAYER.md](integration/EHR-PART2-LAYER.md)) |
 | REST API | Documented, with API keys for intake ([API.md](API.md)) |
 | Spreadsheets and notes | Excel and CSV import and export; Pocket AI and OneNote note import ([IMPORTS.md](IMPORTS.md)) |
-| PowerDMS (next feature release) | Policies linked to the county's PowerDMS documents, with the revision staff must sign and who signs it; staff sign-offs read from PowerDMS's signature or training report (Excel or CSV); no live API connection ([integration/POWERDMS.md](integration/POWERDMS.md)) |
+| PowerDMS (built for 1.26.0, not yet released) | Policies linked to the county's PowerDMS documents, with the revision staff must sign and who signs it; staff sign-offs read from PowerDMS's signature or training report (Excel or CSV); no live API connection ([integration/POWERDMS.md](integration/POWERDMS.md)) |
 | Accessibility | WCAG 2.1 AA, a self-assessment published as an ACR in VPAT 2.5 format; an automated check of every screen runs on each code change ([accessibility/ACR-WCAG21.md](accessibility/ACR-WCAG21.md)) |
 
 ## Optional features (off until an administrator turns them on)

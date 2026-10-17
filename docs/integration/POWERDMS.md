@@ -1,6 +1,6 @@
 # PowerDMS: policy links and staff sign-offs
 
-**Status: built on the `feature/powerdms` branch for the next feature release; not yet released.** Office server only.
+**Status: built for 1.26.0, not yet released** (on the `feature/powerdms` branch). Office server only.
 
 Many counties keep their policies in **PowerDMS** (NEOGOV), where staff read each policy and sign it, and every new
 revision is signed again. SUDS works beside it:

@@ -156,7 +156,7 @@ function importView(imports, refresh) {
         { label: 'Signed', render: x => (x.acknowledged_at ? fmt.date(x.acknowledged_at) : '—') },
         { label: 'What SUDS does', render: x => (x.outcome === 'record' ? badge(p.labels[x.outcome], 'ok') : x.outcome === 'already' ? p.labels[x.outcome] : badge(p.labels[x.outcome], 'warn')) },
       ], p.rows, { compact: { primary: x => [h('span', {}, x.staff || '—'), ' ', x.outcome === 'record' ? badge(p.labels[x.outcome], 'ok') : badge(p.labels[x.outcome], x.outcome === 'already' ? '' : 'warn')], secondary: x => `${x.document || '—'}${x.revision ? `, revision ${x.revision}` : ''}${x.acknowledged_at ? `, signed ${fmt.date(x.acknowledged_at)}` : ''} (line ${x.line})` } }),
-      p.truncated ? h('p', { class: 'small muted' }, `The first ${p.rows.length} rows are shown; all ${p.total} are counted above.`) : null,
+      ...(p.truncated ? [h('p', { class: 'small muted' }, `The first ${p.rows.length} rows are shown; all ${p.total} are counted above.`)] : []),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn primary', type: 'button', disabled: !n, 'data-report-import': '', onClick: async () => {
         const r = await post('/api/policies/report/import', { file_url: fileData, filename: fileName });
         toast(`${r.recorded} sign-off${r.recorded === 1 ? '' : 's'} recorded`, 'ok'); refresh();

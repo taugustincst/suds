@@ -55,6 +55,8 @@ test('a policy can be the county\'s PowerDMS document: a link instead of a file,
 });
 
 test('policies:manage is a supervisor\'s and an administrator\'s; everyone sees their own sign-offs', async () => {
+  const PERMS = require('../server/auth').PERMS;
+  assert.deepEqual(Object.keys(PERMS).filter(r => PERMS[r].includes('policies:manage')).sort(), ['admin', 'supervisor'], 'held by supervisors and administrators only');
   for (const c of [nav, fin]) {
     assert.equal((await c.get('/api/policies/compliance')).status, 403);
     assert.equal((await c.post('/api/policies/report/preview', { file_url: csv([['Email', 'Document', 'Date Signed']]) })).status, 403);

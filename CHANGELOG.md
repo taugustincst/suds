@@ -2,6 +2,20 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased (built for 1.26.0, not yet released)
+
+On the `feature/powerdms` branch, for the next feature release (no earlier than 2026-11-02 under the release cadence).
+
+### Added
+
+- **PowerDMS policy links and staff sign-offs** (docs/integration/POWERDMS.md; migration 72; the permission *Manage
+  policy sign-offs*, `policies:manage`). A policy in Policies & contracts can be the county's PowerDMS document (its
+  link, the revision staff must sign, the roles asked to sign it). **Policy sign-offs** shows each person what they must
+  sign and whether they have signed the current revision; supervisors and administrators see everyone's, record or
+  remove a sign-off by hand, and import PowerDMS's signature or training report (Excel or CSV), previewed before
+  anything is recorded. SUDS does not connect to PowerDMS. Office server only; no client data. With its browser
+  script `policy-signoffs`, the suite is now 61 scripts.
+
 ## 1.25.9 — 2026-10-15
 
 SHA-256 of suds-v1.25.9.zip: ca1d7d3d22dc790dc9bbe37594aa627f854847adbf3452857df1bb65684f4ac0

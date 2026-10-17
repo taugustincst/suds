@@ -45,7 +45,7 @@ Start with the short documents in **bold**. The others hold the detail they link
 | [SELF-HOSTING.md](SELF-HOSTING.md) · [WINDOWS-SERVER.md](WINDOWS-SERVER.md) · [DEPLOYMENT.md](DEPLOYMENT.md) | The hardened Linux server; the Windows server; services, proxies, Docker and key rotation |
 | [TRY-ON-WINDOWS.md](TRY-ON-WINDOWS.md) | Trying SUDS on a PC with fictional data |
 | [PLATFORM.md](PLATFORM.md) · [PERFORMANCE.md](PERFORMANCE.md) | The two ways to run SUDS and the offline copy; measured performance and sizing |
-| [API.md](API.md) · [integration/FHIR.md](integration/FHIR.md) · [integration/EHR-PART2-LAYER.md](integration/EHR-PART2-LAYER.md) · [integration/POWERDMS.md](integration/POWERDMS.md) | The REST API; FHIR R4; the Part 2 layer beside an EHR; PowerDMS policy links and staff sign-offs (next feature release) |
+| [API.md](API.md) · [integration/FHIR.md](integration/FHIR.md) · [integration/EHR-PART2-LAYER.md](integration/EHR-PART2-LAYER.md) · [integration/POWERDMS.md](integration/POWERDMS.md) | The REST API; FHIR R4; the Part 2 layer beside an EHR; PowerDMS policy links and staff sign-offs (built for 1.26.0, not yet released) |
 | [../deploy/fleet/README.md](../deploy/fleet/README.md) | The vendor's hosting fleet (one VM per customer) and its drill runbook |
 
 ## Maintainers

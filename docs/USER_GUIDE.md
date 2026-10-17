@@ -197,7 +197,7 @@ The **Supervision** page is the work waiting on a supervisor: notes to countersi
 * **Verify signature** on a signed note checks the note as it is stored now against what was signed: *Signature intact* means it is exactly as signed; *Changed after signing* means the stored note no longer matches — report it to your privacy officer. Click the signature hash to see it in full.
 * Do not put names or other identifiers in intervention *summary* fields — they are not encrypted. Use notes for anything sensitive.
 
-## Policy sign-offs (PowerDMS; office server, next feature release)
+## Policy sign-offs (PowerDMS; office server; built for 1.26.0, not yet released)
 
 If your county keeps its policies in PowerDMS, **Policy sign-offs** (under More) lists the policies your role must read
 and sign there. Each one says **Signed**, with the revision and the date, or **Needs your signature**. *Read and sign in
