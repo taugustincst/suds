@@ -13,7 +13,7 @@ const views = {
   clients: ['clients'], client: ['client'], interventions: ['interventions'], calls: ['calls'], time: ['time'],
   resources: ['resources', 'resource'], referrals: ['referrals'], incoming: ['incoming'], tasks: ['tasks'], budget: ['budget'], notes: ['notes'],
   imports: ['imports'], reports: ['reports'], admin: ['admin'], profile: ['profile'], setup: ['setup'], local: ['sync', 'recovery-code'],
-  forms: ['forms'], documents: ['documents'], supervision: ['supervision'], episodes: ['waitlist'],
+  forms: ['forms'], documents: ['documents', 'signoffs'], supervision: ['supervision'], episodes: ['waitlist'],
   overdose: ['overdose'], prevention: ['prevention'], funder: ['funder'], caloms: ['caloms'], supplies: ['supplies', 'ssp'], compliance: ['compliance'], suprt: ['suprt'],
   outreach: ['outreach', 'field-phone'], settlement: ['settlement'], county: ['county'], countyconnect: ['county-connect'],
 };

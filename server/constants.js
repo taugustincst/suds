@@ -149,6 +149,8 @@ module.exports = {
   POPULATIONS: ['adults', 'adolescents', 'women', 'men', 'pregnant_parenting', 'families', 'veterans', 'lgbtq', 'justice_involved', 'unhoused', 'older_adults', 'native_american', 'spanish_speakers', 'deaf_hard_of_hearing'],
   FORM_CATEGORIES: ['consent_release', 'intake_screening', 'assessment', 'treatment_plan', 'referral', 'assistance_request', 'transportation', 'housing', 'benefits', 'discharge', 'incident', 'grievance', 'other'],
   DOCUMENT_CATEGORIES: ['policy', 'procedure', 'contract'],
+  // The staff roles (server/auth.js PERMS), in the order the Users page lists them; a policy names the roles that must sign it (server/powerdms.js).
+  STAFF_ROLES: ['navigator', 'clinician', 'supervisor', 'finance', 'readonly', 'admin'],
   FORM_FIELD_TYPES: ['text', 'textarea', 'date', 'number', 'checkbox', 'select', 'signature', 'section', 'note'],
   FORM_AUTOFILL: ['client.full_name', 'client.first_name', 'client.last_name', 'client.preferred_name', 'client.dob', 'client.phone', 'client.email', 'client.address', 'client.city', 'client.zip', 'client.client_code', 'client.gender', 'client.pronouns', 'client.insurance', 'client.medicaid_id', 'client.emergency_contact', 'client.primary_substance', 'client.mat_status', 'client.intake_date', 'worker.name', 'worker.title', 'org.name', 'org.county', 'today'],
   // The overdose form's "What happened" and "Given by". The kinds are fixed by a CHECK constraint on

@@ -197,6 +197,26 @@ The **Supervision** page is the work waiting on a supervisor: notes to countersi
 * **Verify signature** on a signed note checks the note as it is stored now against what was signed: *Signature intact* means it is exactly as signed; *Changed after signing* means the stored note no longer matches — report it to your privacy officer. Click the signature hash to see it in full.
 * Do not put names or other identifiers in intervention *summary* fields — they are not encrypted. Use notes for anything sensitive.
 
+## Policy sign-offs (PowerDMS; office server, next feature release)
+
+If your county keeps its policies in PowerDMS, **Policy sign-offs** (under More) lists the policies your role must read
+and sign there. Each one says **Signed**, with the revision and the date, or **Needs your signature**. *Read and sign in
+PowerDMS* opens the policy in PowerDMS in a new tab. SUDS does not connect to PowerDMS: your signature shows here once a
+supervisor imports PowerDMS's signature report, so a policy you have just signed can say *Needs your signature* until then.
+
+**Supervisors and administrators** (Manage policy sign-offs) also see:
+
+- **Staff**: each policy with how many of the people asked have signed its current revision, and each person with what
+  they still have to sign. *Record a sign-off* records one by hand, for a signature PowerDMS shows that no report has
+  brought in yet, or one given on paper. *Remove* takes away one recorded in error. Both are audited.
+- **Import from PowerDMS**: choose the signature report (or a training completion report) exported from PowerDMS as
+  Excel or CSV. The preview shows every row and what SUDS will do with it, such as record it, already recorded, or no
+  SUDS account matches. Nothing is recorded until you choose *Record*.
+
+To ask staff to sign a policy, edit it under **Policies & contracts**: give its PowerDMS link and the revision, and tick
+the roles that must sign it. When PowerDMS publishes a new revision, change the revision here, and everyone asked owes a
+signature again. The details are in [integration/POWERDMS.md](integration/POWERDMS.md).
+
 ## AI documentation copilot (if your programme has switched it on)
 
 Some programmes turn on an AI copilot that drafts documentation for you to review (`docs/AI-COPILOT.md`). You

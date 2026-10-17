@@ -31,7 +31,7 @@ function rateLimitReset(key) { buckets.delete(key); }
 // out of the local-mode kernel.
 const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport', 'users', 'clients', 'assignments', 'episodes',
   'interventions', 'overdose', 'prevention', 'calls', 'time', 'supervision', 'resources', 'referrals', 'referral-links', 'incoming-referrals', 'tasks', 'budget', 'notes',
-  'consents', 'patient-requests', 'part2', 'compliance', 'careplan', 'assessments', 'suprt', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'security', 'options', 'regions', 'intake', 'client-errors', 'fhir', 'scim', 'ai', 'county', 'county-connect', 'passkeys'];
+  'consents', 'patient-requests', 'part2', 'compliance', 'careplan', 'assessments', 'suprt', 'forms', 'documents', 'imports', 'reports', 'caloms', 'handoff', 'admin', 'security', 'options', 'regions', 'intake', 'client-errors', 'fhir', 'scim', 'ai', 'county', 'county-connect', 'passkeys', 'policies'];
 
 // Not on a device: setup and app are office-server concerns (first-run wizard, connection info), sync is the
 // device's own runner, intake is an inbound API for other systems to call, and oidc needs a live identity
@@ -50,7 +50,9 @@ const ROUTE_MODULES = ['setup', 'auth', 'oidc', 'me', 'app', 'sync', 'dataimport
 // office server's host, and SUDS on this device does not offer one (deferred: unlocking a device with one).
 // incoming-referrals (the intake queue, server/incoming-referrals.js) IS in the kernel: SUDS on this device keeps its own
 // queue. A device that syncs with an office refuses its routes (the queue is the office's and never synchronised).
-const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir', 'security', 'scim', 'ai', 'referral-links', 'county', 'county-connect', 'passkeys'].includes(m));
+// policies is policy sign-offs and the PowerDMS report (docs/integration/POWERDMS.md): staff compliance is the office's
+// record, and a device has its own accounts and asks nobody to sign anything.
+const LOCAL_ROUTE_MODULES = ROUTE_MODULES.filter(m => !['setup', 'app', 'sync', 'intake', 'oidc', 'client-errors', 'fhir', 'security', 'scim', 'ai', 'referral-links', 'county', 'county-connect', 'passkeys', 'policies'].includes(m));
 
 // Served in place of the app shell when local mode is off (the wizard's answer in server.json, or LOCAL_MODE_ENABLED). No scripts, nothing to configure.
 const LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS — local mode is off</title>
@@ -80,6 +82,7 @@ const LARGE_BODY_ROUTES = [
   /^\/api\/forms\/[^/]+\/files(\/|$)/,       // attachments on a completed form
   /^\/api\/resources\/[^/]+\/photos(\/|$)/,  // provider pictures
   /^\/api\/imports\//,                       // OneNote / spreadsheet / data imports
+  /^\/api\/policies\/report\//,              // a PowerDMS signature or training report (up to 5 MB)
   /^\/api\/sync\/(push|blob)(\/|$)/,         // a local-mode device's sync payload and attachments
 ];
 // A route module may set the cap of one path of its own that is called without a session (bodyLimitFor): the county
