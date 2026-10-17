@@ -259,4 +259,4 @@ unless the table's rules say whose a row is (a resource photo: anyone who keeps 
 CalOMS answers are validated by `server/caloms.js` over REST only.
 
 No person other than the owner has yet reviewed the code end to end; an independent code review and penetration test are open items
-in [docs/market/EVALUATION-RESPONSE.md](../market/EVALUATION-RESPONSE.md).
+in [docs/market/EVALUATION-RESPONSE.md](../archive/EVALUATION-RESPONSE-2026-09.md).

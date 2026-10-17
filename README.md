@@ -6,198 +6,43 @@ naloxone and supply distribution, and outcome reporting to the people who fund i
 included.**
 
 SUDS is for community-based organisations and county programmes doing outreach, harm reduction, naloxone and
-test-strip distribution and prevention-funded outreach, usually on opioid-settlement, SOR / Naloxone Distribution
-Project or SABG prevention funding (group and community prevention events are recorded with their CSAP strategy,
-IOM category, hours and attendance, and summarised for a period; a PPSDS submission file is not produced — its
-mapping awaits the DHCS data dictionary; [POSITIONING.md](docs/market/POSITIONING.md)). It records outreach contacts
-(named or anonymous), draws supplies down from stock kept by item, site and lot, tracks referrals and a verified
-resource directory, holds grant budgets, expenditures and staff time with approvals, and produces the funder reports that go with them. Its privacy controls are built to support
-42 CFR Part 2: consents that name the recipient, one disclosure gate with an accounting of disclosures, AES-256-GCM
-encryption of client identifiers and free text, and a tamper-evident audit log of PHI reads and writes, sign-ins,
-exports, disclosures and configuration changes.
+test-strip distribution and SUD navigation, usually on opioid-settlement, SOR / Naloxone Distribution Project or SABG
+prevention funding. It records outreach contacts (named or anonymous), draws supplies down from stock kept by item,
+site and lot, tracks referrals and a verified resource directory, holds grant budgets, expenditures and staff time with
+approvals, and produces the funder reports that go with them. Its Part 2 controls: consents that name the recipient,
+one disclosure gate with an accounting of disclosures, AES-256-GCM encryption of client identifiers and free text, and
+a tamper-evident audit log. Treatment-adjacent programmes can switch on clinical modules (care plan, assessments,
+structured notes, CalOMS Tx, FHIR R4), or use SUDS as a Part 2 layer beside their EHR. SUDS is **not** an EHR, does
+not create Drug Medi-Cal claims, and has no eMAR or e-prescribing.
 
-**Optional modules.** Programmes that are treatment-adjacent can switch the *programme profile* from **Harm
-reduction & outreach** (the default) to **Treatment-adjacent** to show the clinical modules: care plan, problem
-list and assessments, structured clinical notes, CalOMS Tx (code sets verified against the DHCS Data Dictionary
-v3.0 in 1.25.0; the upload file layout is still the county's to confirm), a FHIR R4 feed and a county EHR encounter hand-off. A programme whose EHR stays the clinical record
-can choose **Part 2 compliance module (beside an EHR)** instead: the consent, disclosure and breach work leads,
-with patients and encounters imported from the EHR ([docs/integration/EHR-PART2-LAYER.md](docs/integration/EHR-PART2-LAYER.md)). SUDS is **not** an EHR, does not create Drug
-Medi-Cal claims, and has no eMAR or e-prescribing. It is proprietary software of AugustInnovations LLC ([LICENSE](LICENSE)), with its source visible: SUDS on this
-device is free to use at its official GitHub Pages address, and the office server, after a 90-day evaluation, runs
-under a signed licence agreement, on the programme's own server or, from October 2026, on an isolated instance
-AugustInnovations LLC hosts for it (no customer is hosted yet). Positioning, buyer guides, hosting models, the pilot kit
-and the readiness scorecard: [docs/market/README.md](docs/market/README.md). How it is built, for maintainers:
-[docs/architecture/README.md](docs/architecture/README.md).
+It is proprietary software of AugustInnovations LLC, with its source visible ([LICENSE](LICENSE)): SUDS on this device
+is free for real use at its official address, and the office server runs under a signed licence agreement after a
+90-day evaluation, on the programme's own server or on an isolated instance AugustInnovations LLC hosts (no customer is
+hosted yet).
 
-## What's new in 1.18.0 to 1.25.0
+| Start here | |
+| --- | --- |
+| **[Brochure](docs/BROCHURE.md)** | What SUDS does, the ways to run it, plans and prices, where things stand |
+| **[Technical specifications](docs/TECH-SPECS.md)** | Platform, sizing, security, recovery, standards, on one page |
+| **[Documentation map](docs/README.md)** | Every document, by reader: buyers, reviewers, staff, IT, maintainers, the business |
+| **Try it free** | SUDS on this device: https://taugustincst.github.io/suds/ |
+| **Contact** | Licensing, AugustInnovations LLC, info@suds.systems; security reports: [SECURITY.md](SECURITY.md) |
 
-**1.25.0**
+## What's new in 1.25 (1.25.0 to 1.25.9)
 
-* **CalOMS Tx code sets corrected against the DHCS data dictionary** ([docs/compliance/CALOMS.md](docs/compliance/CALOMS.md)):
-  all 17 code sets rewritten from the DHCS CalOMS Tx Data Dictionary (File Version 3.0, October 2024) — service
-  types, referral sources, drugs, routes, gender, races, ethnicities and disabilities; yes/no is numeric `1`/`0`
-  everywhere, with each element's `999xx` alternative values; four elements added (LEG-1 criminal justice status,
-  MED-7 medication prescribed, CID-19 consent for future contact, CID-20 sexual orientation) and sex at birth
-  removed; new edit checks from the dictionary. Migration 71 remaps stored answers to the dictionary's values
-  (unmappable answers are dropped so the edit checks flag them for the worker to re-ask). The extract's column
-  names and file layout are SUDS's own and still need the county's check before the first submission.
-* **Better resource pictures**: the starter directory's provider-picture download finds a picture for every
-  provider whose website allows an automated download. Many provider sites refuse automated downloads from the
-  build server, so the published site has pictures for fewer providers than it tries: how many, for each build, is
-  the `summary` in the site's `region-pictures/<region>/manifest.json`.
-* **UI intuitiveness pass**: plainer call and text form labels ("Client (optional)" with a plain-English help
-  line; "Also log this as a time entry" matching the visit form) and an accessible resource-directory view
-  toggle (role, labels and pressed state announced). On the owner's explicit instruction to lift the feature
-  freeze ("Fix everything now, freeze lifts to 1.25.0"), inside 1.24.0's 28 days — not a security exception
-  ([docs/RELEASE.md](docs/RELEASE.md), *Record: 1.25.0*).
+* **1.25.0:** CalOMS Tx code sets rewritten and verified against the DHCS Data Dictionary v3.0 (the upload file layout
+  is still the county's to confirm) ([docs/compliance/CALOMS.md](docs/compliance/CALOMS.md)).
+* **1.25.1 to 1.25.6:** the fixes from five rounds of evaluation and from the launch of the vendor's own SUDS Server:
+  safer installer defaults, offsite backups read back after every copy, recovery from a failing browser engine on
+  SUDS on this device, and the release checksum published in two places.
+* **1.25.7:** a revoked Part 2 consent can no longer stay in force through the FHIR consent cache; each new server's
+  first administrator gets a random name.
+* **1.25.8:** the audit log's head is sealed every 500 entries and at shutdown; client names refuse markup; Security
+  status reports the session cookie's Secure flag (the fixes of the internal self-assessment SEC-2026-001, the vendor's
+  own and not an independent test); the published plans, with vendor hosting included.
+* **1.25.9:** the Security & procurement page names the vendor's contact.
 
-**1.24.1**
-
-* **A new licence** ([LICENSE](LICENSE)): SUDS is proprietary software of AugustInnovations LLC from 1.24.1. SUDS on
-  this device stays free for real use at its official GitHub Pages address; anyone may evaluate the office server for
-  90 days with fictional data, and running it in production needs a signed licence agreement. 1.24.0 and earlier stay
-  MIT for the copies already received; third-party licences are in [NOTICE](NOTICE).
-* **Fixes from the market evaluation of 1.24.0**: `npm run try` no longer locks the sample accounts out with two-step
-  verification; Security status sees the HTTPS the setup wizard switched on without a restart; a common password with
-  an extra letter or two is refused; the referral form says when a consent names the provider but for another
-  purpose; a module switched off while you work takes its forms away after the refused save; a *Finish and sign*
-  reminder can no longer be marked done by its worker while their drafts are unsigned (it closes itself once they are
-  signed); and a device's first scheduled backup is due today, not overdue. No migration.
-
-**1.24.0**
-
-* **Security fixes from a white-box penetration test of 1.23.6** (owner-authorised; released at once under a recorded
-  security exception, [docs/RELEASE.md](docs/RELEASE.md), *Record: 1.24.0*): a consent now has to cover what a
-  disclosure is **for**, not only who receives it (42 CFR 2.31(a)(4)): **a TPO consent alone no longer covers a
-  referral for housing, employment, legal aid, benefits or family support**, which needs a consent that names that
-  purpose or a supervisor's override ([docs/compliance/PART2.md](docs/compliance/PART2.md)); a record deleted at the
-  office stays deleted whatever a phone sends; stronger passwords; sign-in limits per person, so one person's mistakes
-  no longer lock out a whole office; and a phone's sync sign-in can no longer change the account.
-* **Incoming referrals** ([docs/USER_GUIDE.md](docs/USER_GUIDE.md)): a queue for people referred **to** your
-  programme by a hospital, a jail, a detox, probation or a court, another provider, or the person or their family,
-  with each attempt to reach them, the time to first contact, and **Accept** into a new or existing client. Home and
-  Supervision show the queue in numbers. Office server only; never kept on a phone.
-* **Possible duplicate time**: time that looks already logged is asked about before it is saved, with **Merge**.
-  A supervisor's *Finish and sign* reminder opens the draft it is about. A departed worker's drafts can be handed on.
-* **Scheduled backups on SUDS on this device**, to a folder chosen once or as one download on Home, with a restore
-  check ([docs/WEB_APP.md](docs/WEB_APP.md)).
-* **For organisations choosing SUDS**: a Security & procurement page linked from the sign-in page, and a hardening
-  checklist on an administrator's Home and in Settings › Security status that ticks itself off as each setting is made.
-* **Windows**: `npm run try` runs SUDS with sample data on one computer, and the office server runs on Windows as
-  `suds.exe` with a Windows service ([docs/WINDOWS-SERVER.md](docs/WINDOWS-SERVER.md)). Upgrading runs migrations 68
-  to 70 on start.
-
-**1.23.0**
-
-* **Your follow-ups stay on your list** ([docs/USER_GUIDE.md](docs/USER_GUIDE.md)): a follow-up date on a call or
-  text, a visit or a referral puts a to-do on your list whether you set it when you record the work or add it later
-  by **Edit**; change the date and the to-do moves, clear it and the to-do is cancelled, and saving again never adds a
-  second one. SUDS leaves alone a to-do you have made your own. The same happens for work recorded on a phone, when it
-  syncs.
-* **A menu and a phone Home built for the worker**: navigators, peer navigators and clinicians in a harm-reduction or
-  treatment-adjacent programme have **Street outreach** in the main menu; on a phone, Home opens on **To-dos for
-  today**, then unsigned notes and clients to contact, with the program-wide figures folded until you open them; the
-  welcome card's **×** puts it away on every device. Supervisors, finance, read-only and administrators keep their
-  menus; permissions are unchanged.
-* **Street outreach with no signal**: on the office app, a contact that names nobody (no participant code, no notes)
-  is kept on the phone and sent by itself when the signal comes back or you next sign in, counted once however late;
-  the header says how many are waiting, and Street outreach lists them with **Send now** and **Discard**. Nothing that
-  could identify a person is kept in the browser.
-* **Set up this phone for the field**: a worker can read what a field device keeps and ask their administrator, who
-  approves under **Settings › Synced devices** ([docs/PLATFORM.md](docs/PLATFORM.md#field-devices)).
-* **Supervisors chase referrals in one place**: *Waiting to hear what happened* lists only referrals with no answer
-  yet, or an appointment nobody has said happened, oldest first, with **Remind worker** (a to-do for the worker who made
-  it) and **Record outcome**. My profile fits a 1366 px laptop. Upgrading runs migration 67 on start.
-
-**1.22.0**
-
-* **Easier days for frontline workers** ([docs/USER_GUIDE.md](docs/USER_GUIDE.md)): a call-back date on a call or text
-  now always makes its to-do (before, a date with *Follow-up needed* left unticked made none); *Today*, *Tomorrow*,
-  *In a week* and other quick dates on to-dos and follow-ups; **Where things stand** at the top of a client's Overview
-  (the last contact, the next to-do, open referrals); in street outreach *Save contact* stays in reach, **Undo** for
-  10 seconds and **Same as last contact**; a new note starts in your usual format; supervisors see who made each
-  referral still awaiting an outcome; a device that syncs with the office shows in the header whether changes are
-  waiting to be sent.
-* **The field scope follows the account**: once a worker's device is a field device, every device of that account is
-  held to the field scope, whatever device id it sends; only an administrator can keep one device whole (*Keep
-  everything*). **On upgrade, a whole device of such an account becomes a field device at its next sync** unless an
-  administrator marks it first ([docs/PLATFORM.md](docs/PLATFORM.md#field-devices)).
-* **County publication consent and corrections**: a release names only programmes whose written consent the county
-  has recorded; a withdrawn release's period can be published again as an audited correction; awards are also
-  pro-rated to the period ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#publication)).
-* **Safer defaults**: the authenticator allow-list stops a passkey it newly refuses only after a grace period (14 days
-  by default; [docs/FINGERPRINT.md](docs/FINGERPRINT.md#grace-period)), and a county file made by hand is version 1
-  unless the county is known to read version 2.
-* The penetration-test scope drawn from the threat model, release integrity stated plainly (1.16.3 to 1.22.0 were
-  published without a tag), the SUDS Server listener fixed under its sandbox, and the evidence re-run on 1.21.0.
-  Upgrading runs migrations 64 to 66 on start.
-
-**1.21.0**
-
-* **County publication releases**: County view › Publish makes a screened, publishable release of a county's
-  combined figures for a period, with the programme's own small-cell method audited against every programme's own
-  release (so a county total cannot give a small programme's figure away by subtraction), shown for review first,
-  recorded with its SHA-256 and never changed; withdrawal is a record of its own. Office server only; no new
-  permission ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#publication)).
-* **Award amounts and reminders in the county file**: the county file (schema version 2) carries each fund's award,
-  and the combined view shows spending against the award; Home reminds whoever makes the county file which one is
-  due. **Upgrade a county's server before its programmes send version 2 files**
-  ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#award-amounts-schema-version-2)).
-* **Field devices and participant codes first**: a device can hold only its worker's own recent caseload, without
-  contact, intake, legal or clinical details, enforced by the office on every sync; outreach records can start from a
-  participant code, with the name behind *Add a name*. Both off until an administrator turns them on
-  ([docs/PLATFORM.md](docs/PLATFORM.md#field-devices)).
-* **An authenticator allow-list for passkeys**: a programme can accept only the authenticator models it lists, each
-  proven by its attestation against a FIDO Metadata Service file the administrator loads (no outbound call). Off by
-  default; office server only ([docs/FINGERPRINT.md](docs/FINGERPRINT.md#authenticator-allow-list)).
-* A threat model and fuzz tests for the county surface and SUDS Server, a check of the release documents against the
-  repository, and a county evidence packet. Upgrading runs migrations 61 to 63 on start.
-
-**1.20.0**
-
-* **County-entered figures for grantees not on SUDS**: a county registers a grantee that does not run SUDS and
-  enters its figures for a period, or imports them from a CSV in the combined view's own layout, with the source
-  document they came from. They are marked *entered by the county — not signed by the program* in every view, file
-  and read-API answer, a signed file from the programme always outranks them, and the county can leave them out.
-  Office server only; no new permission ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#county-entered-figures)).
-* **SUDS Server's installer and first day**, fixed after a real install in a systemd container: both shares checked
-  in one refusal, the first backup and recovery drill run by the installer, `/api/health` not red while the first
-  scheduled backup is pending, passkeys' `WEBAUTHN_RP_ID` set from `--domain`, and the release-checksum record kept
-  across an interrupted run ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)).
-* **The county-contract kit** for a county that funds several programmes: a pilot kit, answers to a county's IT and
-  privacy RFI, and a data contribution agreement draft for counsel ([docs/market/COUNTY-KIT.md](docs/market/COUNTY-KIT.md)).
-
-**1.19.0**
-
-* **Fingerprint sign-in, authorization and signing** with passkeys (WebAuthn): sign in, finish two-step
-  verification, and confirm note signatures, countersignatures and time and spending approvals with the device's own
-  fingerprint reader, face unlock or screen lock. No biometric data reaches SUDS (the device matches the finger); a
-  passkey with user verification counts as two-step verification; each fingerprint-confirmed signature keeps signed
-  evidence an auditor re-verifies offline. Office server only, not SUDS on this device; needs HTTPS and
-  `WEBAUTHN_RP_ID` set before anyone enrols; each use can be switched off in Settings → Security policy
-  ([docs/FINGERPRINT.md](docs/FINGERPRINT.md)).
-
-**1.18.0**
-
-* **County view**: a programme sends its county a signed, aggregate quarterly file of its settlement outcomes (no
-  client-level data), and a county running SUDS, even a county-only install with no client records, sees its
-  programmes side by side. Internal and exact, not for publication; office server only
-  ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md)).
-* **County connection** (optional, off by default on both sides): the programme's server posts the same signed file
-  to the county's with a county-issued token and sees which periods the county still expects; the county's own
-  reporting tools read the combined view with expiring read tokens
-  ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#connecting)).
-* **SUDS Server**: a one-command hardened install on an Ubuntu 24.04 or RHEL 9 VM, with a weekly compliance check
-  whose signed report shows what it observed against the HIPAA Security Rule and 42 CFR §2.16, and lists what it
-  cannot see. Evidence, not a certification; the installer has been run for real on Ubuntu 24.04 in a systemd
-  container, most recently on 1.25.3 (with an upgrade from 1.25.1), and once on a real Ubuntu 24.04 VM, the vendor's own
-  suds.systems (whose two installer findings 1.25.3 fixes), but not yet on RHEL 9 by the project, so try it on a
-  staging VM first
-  ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)).
-
-1.17.0 and 1.17.1 added the AI documentation copilot (Anthropic, and from 1.17.1 Amazon Bedrock or Google Vertex AI;
-off by default), the street outreach screen, settlement outcomes, the Part 2 layer beside an EHR and least
-privilege by default for new installs. Everything, release by release: [CHANGELOG.md](CHANGELOG.md).
+Every change, release by release: [CHANGELOG.md](CHANGELOG.md).
 
 ## Two ways to run it
 
@@ -216,25 +61,25 @@ The sign-in page has two options, **Log in** and **Sign up** (link straight to e
 
 ## At a glance
 
-* **Platform:** the web application — served by an office SUDS server (the system of record for its programme), or published as SUDS on this device. It also imports field notes from **Pocket AI** and **Microsoft OneNote**. The native phone apps and the desktop launchers were removed in 1.9.3 (their source remains in git history) — see [docs/PLATFORM.md](docs/PLATFORM.md).
-* **Runtime:** Node.js ≥ 22.13 only (built-in SQLite, crypto, HTTP). No npm packages to install or audit on the office server. (The browser's local-mode kernel is a separate, committed bundle that does vendor a few pinned libraries in place of Node's built-ins — see [docs/WEB_APP.md](docs/WEB_APP.md#what-the-browser-kernel-is-built-from).)
-* **Data protection:** AES-256-GCM field-level encryption of client identifiers and free text (coded reporting fields rely on disk encryption — [docs/HIPAA.md](docs/HIPAA.md), *Data classification*), blind-index search, scrypt password hashing, TOTP MFA or a passkey (fingerprint, 1.19.0), role-based access (caseload scoping by per-user deny), 42 CFR Part 2 consent and disclosure accounting, and a hash-chained audit log.
-* **AI documentation copilot (1.17.0, optional):** drafts for a person to review and sign (notes, six-dimension assessments, care plan and CalOMS suggestions). Office server only, never on SUDS on this device or an offline copy; off until an administrator records the programme's BAA with Part 2 QSOA terms and counsel's review, then switches it on; identifiers SUDS holds are replaced before sending (not de-identification); never for SUD counseling notes or a client with an agreed restriction; a monthly cap, each call audited without its text ([docs/AI-COPILOT.md](docs/AI-COPILOT.md)).
-* **Settlement outcomes (1.17.0):** per opioid-settlement fund, spending by Exhibit E category beside the outcomes recorded for it, with cost per outcome; counts of people suppressed by default, never a publication release.
-* **County view (released in 1.18.0):** a programme sends the county a signed quarterly file of its settlement outcomes' exact aggregates for the funds that county pays for (no client-level data), and a county running SUDS imports its programmes' files and sees them side by side, summed and by quarter. Internal and exact (from 1.21.0 published only as a screened release, County view › Publish), people counted as each programme's own count, summed; office server only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md)).
-* **County connection (released in 1.18.0, optional):** off by default on both sides. The programme's server posts the same signed aggregate file to its county's SUDS server over HTTPS with a county-issued connection token (the file must still verify under the programme's registered key) and sees which periods are outstanding; the county's own systems read the combined view with read tokens that expire. Behind a proxy the county sets `TRUST_PROXY=1`; office servers only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#connecting)).
-* **SUDS Server (released in 1.18.0):** `deploy/linux/install.sh` for Ubuntu 24.04 or RHEL 9 (LUKS data disk, pinned Node and Caddy, a sandboxed service, keys as root-only credentials, firewall), upgrades that need the release zip's SHA-256 from a second channel, and a weekly compliance report signed with the check's own key (`npm run verify-compliance-report`). It shows what it observed; it does not make a programme compliant. Run for real on Ubuntu 24.04 in a systemd container ([docs/evidence/installer-container-run-2026-09-30/](docs/evidence/installer-container-run-2026-09-30/README.md); the installer fixes it led to are in 1.20.0) and in a fake root in CI; not yet on a real VM or on RHEL 9 by the project ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)).
-* **County-entered figures (released in 1.20.0):** a county enters or imports the figures of a grantee not on SUDS, marked as entered by the county, never signed, always outranked by a signed file, and possible to leave out; office server only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#county-entered-figures)).
-* **Fingerprint sign-in and signing (released in 1.19.0):** passkeys on the device's own authenticator for sign-in, two-step verification and confirming signatures and approvals; no biometric data held; signed evidence verifiable offline (`npm run verify-passkey-evidence`). Office server only, HTTPS and `WEBAUTHN_RP_ID` required ([docs/FINGERPRINT.md](docs/FINGERPRINT.md)).
-* **County publication releases (released in 1.21.0):** a screened, publishable release of the county's combined figures for a period, audited against every programme's own release, recorded and never changed; office server only ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md#publication)).
-* **Field devices and participant codes first (released in 1.21.0, optional):** a device that holds only its worker's own recent caseload without contact, intake, legal or clinical details, enforced at the office; outreach records that start from a participant code; both off until an administrator turns them on ([docs/PLATFORM.md](docs/PLATFORM.md#field-devices)).
-* **Authenticator allow-list (released in 1.21.0, optional):** passkeys only on the authenticator models the programme lists, proven by attestation against a FIDO Metadata Service file; off by default; office server only ([docs/FINGERPRINT.md](docs/FINGERPRINT.md#authenticator-allow-list)).
-* **Street outreach (1.17.0):** a one-handed phone screen for anonymous contacts that draws supplies from stock, works offline where offline copies are allowed, and counts the worker's shift.
-* **SSP participant code (1.17.0, optional):** an anonymous contact can carry the participant's self-built code, stored encrypted and counted by blind index, so the syringe services summary counts anonymous participants; no file prints a code ([docs/SUPPLIES.md](docs/SUPPLIES.md)).
-* **Secure referral links (1.17.0):** a one-time link, with a separate access code, to an organisation not on SUDS, carrying a minimal referral only under a Part 2 consent naming it. Office server only, **off by default**; counsel reviews the design before a programme switches it on ([docs/security/REFERRAL-LINKS.md](docs/security/REFERRAL-LINKS.md)).
-* **FHIR EHR import (1.17.0):** patients and encounters from a FHIR R4 Bundle or Bulk Data NDJSON file the EHR exports, through the spreadsheet import's preview and duplicate check. SUDS never connects to the EHR ([docs/integration/EHR-PART2-LAYER.md](docs/integration/EHR-PART2-LAYER.md)).
-* **CalOMS scheduling (1.17.0):** SUDS can check last month on a set day and prepare the submission file, with a worklist of errors by owner and a submission log. A prepared file is disclosed only when someone produces it; SUDS does not submit to DHCS, and the layout is not yet verified against the DHCS data dictionary ([docs/compliance/CALOMS.md](docs/compliance/CALOMS.md)).
-* **Documentation:** [Platform policy](docs/PLATFORM.md) · [Adopting SUDS (for a county CIO)](docs/ADOPTION.md) · [Deployment](docs/DEPLOYMENT.md) · [SUDS Server: self-hosting and the compliance boundary](docs/SELF-HOSTING.md) · [SUDS on this device (GitHub Pages)](docs/WEB_APP.md) · [API reference](docs/API.md) · [HIPAA & security controls](docs/HIPAA.md) · [Importing notes (Pocket AI / OneNote)](docs/IMPORTS.md) · [User guide](docs/USER_GUIDE.md) · [Quick start for workers (one-screen task cards)](docs/QUICK-START-WORKERS.md) · [Market & procurement pack](docs/market/README.md) · [Security evidence package for county IT](docs/security/README.md)
+* **Platform:** the web application only, served by an office SUDS server or published as SUDS on this device; it
+  imports field notes from Pocket AI and Microsoft OneNote ([docs/PLATFORM.md](docs/PLATFORM.md)).
+* **Runtime:** Node.js ≥ 22.13 built-ins only; no npm packages on the server
+  ([docs/WEB_APP.md](docs/WEB_APP.md#what-the-browser-kernel-is-built-from) for the browser engine's pinned libraries).
+* **Data protection:** field-level AES-256-GCM, blind-index search, scrypt, TOTP MFA or a passkey, role-based access
+  with caseload scoping, Part 2 consents and disclosure accounting, a hash-chained audit log
+  ([docs/HIPAA.md](docs/HIPAA.md), [docs/security/README.md](docs/security/README.md)).
+* **For funders:** the funder report, an NDP-style log, a syringe services summary, settlement outcomes by fund, and the
+  county view built from each programme's signed aggregate file ([docs/COUNTY-VIEW.md](docs/COUNTY-VIEW.md)).
+* **In the field:** a one-handed street-outreach screen for anonymous contacts, supplies drawn from stock by lot, an SSP
+  participant code, field devices and offline copies where allowed ([docs/SUPPLIES.md](docs/SUPPLIES.md)).
+* **Optional, off by default:** the AI documentation copilot (drafts for a person to review and sign;
+  [docs/AI-COPILOT.md](docs/AI-COPILOT.md)), the county connection, one-time secure referral links, passkey
+  allow-lists, FHIR import from an EHR, CalOMS scheduling.
+* **Servers:** a hardened Linux installer with a weekly signed compliance check
+  ([docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)), a Windows server zip ([docs/WINDOWS-SERVER.md](docs/WINDOWS-SERVER.md)),
+  Docker ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)).
+
+The full specifications: [docs/TECH-SPECS.md](docs/TECH-SPECS.md). Every document: [docs/README.md](docs/README.md).
 
 ## Get SUDS
 
@@ -271,11 +116,11 @@ To test SUDS on a Windows 11 PC (or a Mac or Linux machine) with fictional sampl
 
 ```bash
 git clone <repo> suds && cd suds
-npm run seed          # dev database with demo staff logins and the fictional sample data set (server/demo.js)
+npm run seed          # dev database with sample staff logins and the fictional sample data set (server/demo.js)
 npm start             # http://127.0.0.1:8080
 ```
 
-Demo logins (password `Navigator2026!!`): `mrivera` / `dchen` (navigators), `kpatel` (clinician), `jwalker` (supervisor), `afinance` (finance). The first administrator is named by `SUDS_ADMIN_USERNAME`, or else gets a random name (`admin-` and six letters and digits, from 1.25.7), which the seed prints; its password is printed once when the database is created, unless `SUDS_ADMIN_PASSWORD` sets it.
+Sample logins (password `Navigator2026!!`): `mrivera` / `dchen` (navigators), `kpatel` (clinician), `jwalker` (supervisor), `afinance` (finance). The first administrator is named by `SUDS_ADMIN_USERNAME`, or else gets a random name (`admin-` and six letters and digits, from 1.25.7), which the seed prints; its password is printed once when the database is created, unless `SUDS_ADMIN_PASSWORD` sets it.
 
 Without a terminal, an administrator can add the same fictional data set from inside the app (**Load sample data** on the empty home screen or under Settings) and remove it again in one click; a local-mode copy offers it on its Sync screen.
 

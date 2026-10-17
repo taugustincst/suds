@@ -3,7 +3,7 @@
 > **Superseded (2026-10-08) by the published tiers; fees reworked 2026-10-12.** SUDS's prices are the tiers published on
 > the procurement page: a 90-day pilot at $14,500 flat, Program at $24,500 a year, Multi-site at $49,500 a year and
 > County-wide at $98,000 a year (hosting on the multi-tenant fleet included), with the paid-plan support terms beside them. The single source is
-> [`public/procurement.json`](../../../public/procurement.json), shown on the app's [Security and procurement page](../../../public/procurement.html). Where this
+> [`public/procurement.json`](../../public/procurement.json), shown on the app's [Security and procurement page](../../public/procurement.html). Where this
 > document differs, the published tiers win; it is kept below unchanged as the record of how pricing was worked out.
 
 > **UNVALIDATED HYPOTHESIS — not a price list, a quote or an offer.** No programme has paid for SUDS yet. The
@@ -13,12 +13,12 @@
 
 The owner is weighing other models — per active user, per-organisation tiers, a county site licence covering
 several CBOs, implementation packaged as forward-deployed services, and support tiers — in
-[PRICING-OPTIONS.md](../PRICING-OPTIONS.md). Nothing there is decided; until it is, this page is the hypothesis.
+[PRICING-OPTIONS.md](PRICING-OPTIONS.md). Nothing there is decided; until it is, this page is the hypothesis.
 
 ## What is (and is not) being sold
 
 - **SUDS on this device is free; the office server needs a licence agreement after evaluation.** SUDS is
-  proprietary software of AugustInnovations LLC ([LICENSE](../../../LICENSE)). Anyone may use SUDS on this device
+  proprietary software of AugustInnovations LLC ([LICENSE](../../LICENSE)). Anyone may use SUDS on this device
   at its official GitHub Pages address free of charge, real records included (section 2A), and may evaluate the
   office server for up to 90 days with fictional data, without paying. Production use of the office server needs a
   licence agreement signed by AugustInnovations LLC. Its prices are published on the procurement page
@@ -39,8 +39,8 @@ withdrawn: it included vendor hosting that did not exist then, and it charged co
 | Offer | What it covers | Price hypothesis | Status |
 | --- | --- | --- | --- |
 | **Implementation and onboarding** (one-time) | Setup-wizard walk-through with the programme's IT partner or county IT; lists, supplies, funding sources and budget lines; spreadsheet import; training (navigators, supervisors, finance, administrator); one restore drill with IT; funder-report check against the programme's grants | **$2,500–7,500** per programme, by data volume and number of grants | Available (owner delivers) |
-| **Support subscription** (annual) | Business-hours support per [SUPPORT-SLA.md](SUPPORT-SLA.md); release notes and upgrade help; security-release notices; answers to security questionnaires from the evidence pack; one check-in a quarter | **$3,000–6,000 / year** for a programme of up to ~15 staff; **$6,000–10,000 / year** up to ~40 | Available, business hours only |
-| **Vendor-hosted multi-tenant tier** (annual, per tenant) | One isolated instance per tenant on the vendor's fleet, backups, monitoring, upgrades — *plus* the support subscription | **$10,000–20,000 / year** per programme (must cover the costs in [../HOSTING.md](../HOSTING.md)) | **Superseded (2026-10-12):** hosting is offered and included in the published annual plans, from $24,500 a year; no customer is hosted yet |
+| **Support subscription** (annual) | Business-hours support per [SUPPORT-SLA.md](../market/templates/SUPPORT-SLA.md); release notes and upgrade help; security-release notices; answers to security questionnaires from the evidence pack; one check-in a quarter | **$3,000–6,000 / year** for a programme of up to ~15 staff; **$6,000–10,000 / year** up to ~40 | Available, business hours only |
+| **Vendor-hosted multi-tenant tier** (annual, per tenant) | One isolated instance per tenant on the vendor's fleet, backups, monitoring, upgrades — *plus* the support subscription | **$10,000–20,000 / year** per programme (must cover the costs in [../HOSTING.md](../market/HOSTING.md)) | **Superseded (2026-10-12):** hosting is offered and included in the published annual plans, from $24,500 a year; no customer is hosted yet |
 | **Custom work** | Reports for a specific funder template, imports from another system | Quoted per job; folded into the SUDS code | Available |
 
 Self-hosted and county-hosted programmes need the production licence, then buy only the services they want:
@@ -50,7 +50,7 @@ implementation, support, both or neither. Whether the licence fee differs by hos
 
 | | |
 | --- | --- |
-| Pilot | 90 days ([PILOT-KIT.md](../PILOT-KIT.md)), self-hosted by the programme's IT partner or hosted by a sponsoring county |
+| Pilot | 90 days ([PILOT-KIT.md](../market/PILOT-KIT.md)), self-hosted by the programme's IT partner or hosted by a sponsoring county |
 | Price | A small fixed implementation fee at the low end of the range, paid from an administrative or settlement line, never waived: an unpaid pilot tests nothing about willingness to pay. Measured results and case-study permission are asked for, not traded for the fee. Support included for the pilot |
 | Conversion | The pilot's implementation fee is credited against the first year's support subscription if the programme signs within 60 days |
 

@@ -122,7 +122,7 @@ vendor may not fill it in.
 | **Adoption** | — | Weekly active pilot users / pilot users | ≥ 90% by week 4 |
 | **Staff satisfaction** | 5-question survey (1–5) on the current process at day 0 | Same survey at day 30 and 90 | Average ≥ 4 |
 | **IT effort** | — | Hours the IT partner / county spent on the server, per month (install, patches, backups, drill, incidents) | Recorded — feeds [HOSTING.md](HOSTING.md) |
-| **Vendor support effort** | — | Vendor hours per month, by ticket severity | Recorded — feeds [templates/PRICING.md](templates/PRICING.md) |
+| **Vendor support effort** | — | Vendor hours per month, by ticket severity | Recorded — feeds the pricing review ([BUSINESS-PLAN.md](BUSINESS-PLAN.md), *The offer*) |
 | **Safety / integrity** | — | Records lost, shown to the wrong person, or failed audit-chain verification | Zero (any one is a stop criterion, [docs/ADOPTION.md](../ADOPTION.md)) |
 
 ### Measurement worksheet: what SUDS already records
@@ -262,7 +262,7 @@ before it is proposed.
 | **CBOs** | 2–3, each passing the eligibility check (section 2) on its own; at least one with a settlement-funded programme |
 | **Hosting** | County-hosted (one server per CBO, on county infrastructure), each CBO's IT partner, or vendor-hosted (one isolated instance per CBO; offered from October 2026, no customer hosted yet: [HOSTING.md](HOSTING.md)) |
 | **Length** | 2–4 weeks of county discovery, then each CBO's 90-day pilot, staggered by 2–4 weeks so the vendor is not deploying three at once |
-| **Paid work (FDE packages)** | Discovery (county and each CBO), deployment, data migration, training, reporting setup against each funder's template, county programme management ([PRICING-OPTIONS.md](PRICING-OPTIONS.md), model D) |
+| **Paid work (FDE packages)** | Discovery (county and each CBO), deployment, data migration, training, reporting setup against each funder's template, county programme management (the services model weighed in [../archive/PRICING-OPTIONS.md](../archive/PRICING-OPTIONS.md), model D, archived) |
 | **Out of scope** | Everything section 1 excludes; the AI copilot (1.17.0) for any CBO that has not recorded its BAA and Part 2 QSOA with the AI provider under Settings → AI copilot, after county counsel has reviewed its data flow (where a CBO has, the copilot is in scope for that CBO and section 5's copilot arm applies; never for SUD counseling notes, never on SUDS on this device); secure referral links (1.17.0; off by default) unless counsel has reviewed the link design as built and the pilot server is reachable from the internet; pooled benchmarks across CBOs, which are not built; the county view (released in 1.18.0) is in scope only on a build that has it |
 
 ### What the county gets
@@ -323,12 +323,12 @@ compromised if its files should stop counting).
 | County files made on time after a reminder (1.21.0) | Each CBO's county reporting schedule, and County view › Submissions | Every CBO, every pilot quarter, by the date the county sets |
 | County staff hours to compile its grantees' figures | Baseline from the last period; same method in the pilot | Recorded; target agreed with the county |
 | Settlement spending recorded with an allowable use | Settlement report, per CBO | All settlement spending categorised |
-| Implementation hours per CBO against the estimate | Vendor time log | Recorded — feeds [PRICING-OPTIONS.md](PRICING-OPTIONS.md) |
+| Implementation hours per CBO against the estimate | Vendor time log | Recorded — feeds the pricing review ([BUSINESS-PLAN.md](BUSINESS-PLAN.md), *The offer*) |
 | Support hours per CBO per month | Ticket log | Recorded |
 | Integrity incidents | As section 5 | Zero |
 
 ### Decision at the end
 
-The county decides whether to continue (a county agreement covering its CBOs, [PRICING-OPTIONS.md](PRICING-OPTIONS.md)
-model C), extend, or stop. Each CBO decides for itself as in section 6: its data stays with whoever hosted it, and
+The county decides whether to continue (a county agreement covering its CBOs, such as the
+County-Wide plan in [BUSINESS-PLAN.md](BUSINESS-PLAN.md), *The offer*), extend, or stop. Each CBO decides for itself as in section 6: its data stays with whoever hosted it, and
 keeping the software in use needs a licence agreement ([LICENSE](../../LICENSE)).

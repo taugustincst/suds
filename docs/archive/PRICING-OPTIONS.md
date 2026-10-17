@@ -7,15 +7,15 @@
 > [`public/procurement.json`](../../public/procurement.json), shown on the app's [Security and procurement page](../../public/procurement.html). Where this
 > document differs, the published tiers win; it is kept below as the record of how pricing was worked out. Its
 > "when offered" for hosting dates from before 2026-10-12: vendor hosting is now offered, with no customer hosted
-> yet ([HOSTING.md](HOSTING.md)).
+> yet ([HOSTING.md](../market/HOSTING.md)).
 
 **Status: options, not a price list.** Nothing here is decided, quoted or offered. Every value in the worksheet
 is **[owner to decide]**. Until the owner decides, the published hypothesis is
-[templates/PRICING.md](templates/PRICING.md) (free evaluation; production under a signed licence agreement, with
+[templates/PRICING.md](PRICING-HYPOTHESIS.md) (free evaluation; production under a signed licence agreement, with
 implementation and support at flat annual amounts per programme), and it too is unvalidated: no programme has paid for SUDS yet.
 
 The strategy asks for pricing that reflects near-zero marginal cost: per user at a fraction of incumbents, or a
-county site licence ([STRATEGY.md](STRATEGY.md), *Capture 7*). This document sets out the models that could do
+county site licence ([STRATEGY.md](../market/STRATEGY.md), *Capture 7*). This document sets out the models that could do
 that, what each one actually charges for, and what the owner must decide.
 
 ## First principles
@@ -29,16 +29,16 @@ that, what each one actually charges for, and what the owner must decide.
    County IT values being able to keep running it without the vendor: a production agreement should say what
    happens to the licensee's copy and records if the agreement ends.
 2. **Software marginal cost is near zero; delivery cost is not.** The unit-cost model in
-   [HOSTING.md](HOSTING.md) puts routine operations and support at roughly 3–6 hours a programme a month (an
+   [HOSTING.md](../market/HOSTING.md) puts routine operations and support at roughly 3–6 hours a programme a month (an
    assumption until pilots measure it), and the fixed costs of assurance (insurance, pen test, SOC 2 if pursued,
    counsel) at tens of thousands of dollars a year. Those are the costs a price must cover.
 3. **The AI copilot has a real marginal cost.** Model calls are paid per use. They are small per note, but they
    grow with users and with how much each user drafts, so the copilot cannot be priced as if it were free.
 4. **Buyers pay from grants.** Most CBO spending comes from grant lines with administrative caps and
    allowability rules. A price must fit a line the funder allows and, ideally, a small-purchase threshold
-   ([PROCUREMENT.md](PROCUREMENT.md)). A county pays from its own budget or its settlement allocation.
+   ([PROCUREMENT.md](../market/PROCUREMENT.md)). A county pays from its own budget or its settlement allocation.
 5. **Services are the product under the FDE model.** Implementation is where the value and the hours are; it is
-   priced as its own offer, not hidden inside a subscription ([STRATEGY.md](STRATEGY.md), *The FDE model*).
+   priced as its own offer, not hidden inside a subscription ([STRATEGY.md](../market/STRATEGY.md), *The FDE model*).
 
 ## How incumbents price, in general terms
 
@@ -69,7 +69,7 @@ only against a figure the buyer has given.
 
 | | |
 | --- | --- |
-| **Structure** | A flat annual price per programme, by tier. Tiers by staff band (for example up to 15 and up to 40, as in [templates/PRICING.md](templates/PRICING.md)), or by number of funding sources reported |
+| **Structure** | A flat annual price per programme, by tier. Tiers by staff band (for example up to 15 and up to 40, as in [templates/PRICING.md](PRICING-HYPOTHESIS.md)), or by number of funding sources reported |
 | **What it buys** | As A, for the whole organisation |
 | **For** | One predictable grant line; adding a worker costs nothing; closest to the current hypothesis |
 | **Against** | Tier edges invite arguments; small programmes may still find it high; less upside as a programme grows |
@@ -82,9 +82,9 @@ only against a figure the buyer has given.
 | **Structure** | A county pays one annual amount covering support (and, when offered, hosting) for up to N CBOs it funds, with a price per additional CBO. Implementation for each CBO priced separately (model D) or as a per-CBO allowance inside the licence |
 | **What it buys** | Support for each CBO; a county contact; one security review for all of them; and the **county view** across the CBOs (released in 1.18.0; [../COUNTY-VIEW.md](../COUNTY-VIEW.md)): the county's own SUDS server (a county-only install: no client data on it) set up with the county code and each CBO's key, key exchange at each CBO's kickoff, help importing the signed quarterly files, and support for the combined view, its quarter-by-quarter trend and its Excel, CSV and tidy CSV files. Publishing combined figures is in it on a build that has the publication screen (1.21.0: screened releases of the combined figures, naming only CBOs whose written consent to publication the county recorded, released in 1.22.0). Not in it: a published dashboard, benchmarks across CBOs (Tier 2). County-entered figures for grantees not on SUDS are released in 1.20.0: in it only on a build that has them |
 | **For** | "Sell to the money": one buyer, one procurement, many programmes; CBOs without IT capacity get a sponsor; the county gets consistent outcome data |
-| **Against** | Long procurement; the county may expect hosting (offered from October 2026, with no customer hosted yet); one contract concentrates revenue; the county, not the vendor, must be the data steward for any benchmarking ([DATA-NETWORK.md](DATA-NETWORK.md)) |
+| **Against** | Long procurement; the county may expect hosting (offered from October 2026, with no customer hosted yet); one contract concentrates revenue; the county, not the vendor, must be the data steward for any benchmarking ([DATA-NETWORK.md](../market/DATA-NETWORK.md)) |
 | **Note** | The contract is a licence agreement (LICENSE: production use needs one) plus services. Say in the proposal what each covers |
-| **The package** | What the county runs, what each CBO does, a 3-CBO timeline and the documents a county asks for: [COUNTY-KIT.md](COUNTY-KIT.md). Price nothing from it: every number here is [owner to decide] |
+| **The package** | What the county runs, what each CBO does, a 3-CBO timeline and the documents a county asks for: [COUNTY-KIT.md](../market/COUNTY-KIT.md). Price nothing from it: every number here is [owner to decide] |
 
 ### D. Implementation and FDE services, packaged separately
 
@@ -93,7 +93,7 @@ a defined deliverable and an acceptance test.
 
 | Package | Scope | Deliverable / acceptance | Pricing basis |
 | --- | --- | --- | --- |
-| **Discovery** | Workflows, funders and their templates, current data, IT and privacy constraints; eligibility check ([PILOT-KIT.md](PILOT-KIT.md), section 2) | Written scope, data map, go/no-go | Fixed fee per programme or per county |
+| **Discovery** | Workflows, funders and their templates, current data, IT and privacy constraints; eligibility check ([PILOT-KIT.md](../market/PILOT-KIT.md), section 2) | Written scope, data map, go/no-go | Fixed fee per programme or per county |
 | **Deployment** | Install with the IT partner or county IT; setup wizard; TLS, SSO, backups; hardening checklist; restore drill | Server live; restore drill timed | Fixed fee; more for county-hosted with SSO |
 | **Data migration** | Spreadsheet or system export mapping; import; spot checks | Import reconciled against source row counts | By volume and number of sources |
 | **Training** | Navigators, supervisors, finance, administrator; super-user coaching | Every pilot user signed in with MFA | Per session or per programme |
@@ -119,9 +119,9 @@ programmes that cannot contract with an AI provider themselves.
 | Tier | What | Notes |
 | --- | --- | --- |
 | **Community** | Public code for evaluation (90 days, fictional data; [LICENSE](../../LICENSE)), documentation, public issue tracker; no response target | Free; production needs a licence |
-| **Standard** | Business-hours support per [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md); upgrade help; security notices; questionnaire answers | The base of models A–C |
+| **Standard** | Business-hours support per [templates/SUPPORT-SLA.md](../market/templates/SUPPORT-SLA.md); upgrade help; security notices; questionnaire answers | The base of models A–C |
 | **Enhanced** | Standard plus a quarterly review, a named contact, faster business-hours targets, help with each release's upgrade | Only when capacity exists to honour it |
-| **Hosted** | Vendor-hosted instance (one per customer) plus Enhanced | Superseded: hosting on the vendor's fleet is included in the published annual plans (2026-10-12); no customer hosted yet ([HOSTING.md](HOSTING.md)) |
+| **Hosted** | Vendor-hosted instance (one per customer) plus Enhanced | Superseded: hosting on the vendor's fleet is included in the published annual plans (2026-10-12); no customer hosted yet ([HOSTING.md](../market/HOSTING.md)) |
 
 No tier may promise 24×7 support or an uptime figure: none is published, for hosted plans or office servers.
 
@@ -137,7 +137,7 @@ The models are not exclusive. A plausible shape, for the owner to test rather th
 
 Fill in, then test with the first pilots. Keep the reasoning next to each number.
 
-### Costs to cover (from pilots; see [HOSTING.md](HOSTING.md))
+### Costs to cover (from pilots; see [HOSTING.md](../market/HOSTING.md))
 
 | Input | Value | Source |
 | --- | --- | --- |
@@ -202,5 +202,5 @@ Fill in, then test with the first pilots. Keep the reasoning next to each number
 - [ ] A small programme's total fits a grant line its funder allows and, if possible, its small-purchase threshold.
 - [ ] Any comparison with an incumbent uses a figure the buyer gave, marked to verify.
 - [ ] The proposal says what the licence agreement covers ([LICENSE](../../LICENSE)) and what the services cover.
-- [ ] [templates/PRICING.md](templates/PRICING.md) updated to match the decision, and the "unvalidated" label kept
+- [ ] [templates/PRICING.md](PRICING-HYPOTHESIS.md) updated to match the decision, and the "unvalidated" label kept
       until three pilots have paid.

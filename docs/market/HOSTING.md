@@ -128,5 +128,5 @@ Vendor hosting (C) is offered, but no customer is hosted yet and the fleet's fir
 pilot may be A, B or C. Whichever it is, measure the real support hours per programme per month, and the hosted
 instance's real monthly cost where it is C, and record them in
 [templates/HOSTED-OFFER-WORKSHEET.md](templates/HOSTED-OFFER-WORKSHEET.md) and
-[templates/PRICING.md](templates/PRICING.md), *What the pilots must answer*. Recommended: run the drill tenant
+the earlier pricing hypothesis's *What the pilots must answer* ([../archive/PRICING-HYPOTHESIS.md](../archive/PRICING-HYPOTHESIS.md), archived). Recommended: run the drill tenant
 (provision, sign in, open the escrow, export, tear down) before a pilot's real records are hosted.
