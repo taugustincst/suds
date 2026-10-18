@@ -34,8 +34,10 @@
 //     claims (the checksum on main, the checksum in the Release notes, whether the newest tag is signed, and, online,
 //     whether `main` has a ruleset, whether the newest release run waited for a reviewer, whether the newest
 //     Release is immutable) is the true one. Online it reads, unauthenticated, GET /repos/{repo}/rules/branches/main,
-//     the newest tag's "Release" run (GET /repos/{repo}/actions/runs?event=push&head_sha=<tag commit>) and its
-//     approvals (GET /repos/{repo}/actions/runs/<id>/approvals); a rate limit or no network is "not checked".
+//     the newest tag's "Release" run (GET /repos/{repo}/actions/runs?head_sha=<tag commit>: the newest one that
+//     succeeded, else the newest; since 1.26.0 not only pushes, because a release on a policy exception is published by a
+//     second run started by hand, the tag's own run having stopped at the gate) and its approvals
+//     (GET /repos/{repo}/actions/runs/<id>/approvals); a rate limit or no network is "not checked".
 //
 //   node scripts/release-state.js              # the repository, plus `git ls-remote --tags origin` and the local
 //                                              # origin/main and origin/gh-pages refs, where they can be read
@@ -905,10 +907,13 @@ async function fetchProtections(slug, tag, commit, get = httpsGetJson) {
   let releaseRun;
   if (!tag || !/^[0-9a-f]{40}$/.test(String(commit || ''))) releaseRun = { tag, status: 'unreachable', detail: `${tag || 'the newest tag'}'s commit is not known (origin's tags not read)` };
   else {
-    const runs = await get(`${base}/actions/runs?event=push&head_sha=${commit}&per_page=100`);
+    const runs = await get(`${base}/actions/runs?head_sha=${commit}&per_page=100`);
     if (!(runs.status === 200 && runs.body && Array.isArray(runs.body.workflow_runs))) releaseRun = { tag, status: 'unreachable', detail: apiWhy(runs) };
     else {
-      const run = runs.body.workflow_runs.filter((x) => x && x.name === 'Release').sort((a, b) => b.id - a.id)[0];
+      // The run that published the release, when there is one: a tag's own run stops at the gate when the release needs
+      // a policy exception, and the run started by hand with it is the one that waited for a reviewer.
+      const rel = runs.body.workflow_runs.filter((x) => x && x.name === 'Release').sort((a, b) => b.id - a.id);
+      const run = rel.find((x) => x.conclusion === 'success') || rel[0];
       if (!run) releaseRun = { tag, status: 'none' };
       else {
         const ap = await get(`${base}/actions/runs/${run.id}/approvals`);
