@@ -1,80 +1,44 @@
-# Release hand-off: v1.26.0 to tag, then the record
+# Release hand-off: the record
 
-> **The owner actions: run step 1, push the tag (step 2), then run the release with its policy exception (step 3).**
-> 1.26.0 is a feature release twelve days after 1.25.0, inside the 28 days between feature releases, on the owner's
-> recorded exception (not a security fix; [../RELEASE.md](../RELEASE.md), *Record: 1.26.0*). **The tag's own run fails
-> its gate**: `release.yml`'s release policy refuses a feature release inside the 28 days unless the run is given
-> `policy_exception`, and a tag push cannot give it. So after the push, run the workflow again on the tag with
-> `policy_exception` set (step 3); the release job prints it at the top of the release notes. Then approve the release
-> job in the `release` environment, and its `Web app` run, as for 1.25.9
-> ([../security/OPERATIVE-CONTROLS.md](../security/OPERATIVE-CONTROLS.md), `release-reviewer`). **Tj approving it in person
-> is better** than the business assistant approving with the owner's account: this is the first release on an owner
-> exception, and the approval's comment is what records who decided. A session's tag push is refused by the session's
-> own git proxy. Whoever pushes the tag and approves the run, the *Completed* entry records who did.
->
-> The zip's checksum line goes into the CHANGELOG's 1.26.0 section in the commit that fills the row below, before the
-> tag. After the release, the records commit checks the published `.sha256` against it and adds the Windows zip's line.
+No tag is owed. Each release's record is added here once its tag is pushed and verified.
 
-1.26.0 is a feature release (*Record: 1.26.0*): migration 72, the permission `policies:manage`, routes under
-`/api/policies/`. Its tag goes on the commit after "Release 1.26.0": "SBOM of the 1.26.0 stamp".
+## v1.26.0: released
 
-## The one release
-
-| Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
+| Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 |
 | --- | --- | --- | --- |
-| `v1.26.0` | `381a107a00d4dbb18eed84b2bef9d68e1197dc50` ("SBOM of the 1.26.0 stamp", after the stamp `7b84ed7`; main's own CI run 39074014149, every required job green) | 2026-10-17 | `70747be558257242652f79013f87a50b7f86a16940af56ac8875e50bf70923e6` |
-
-The SHA-256 above was rebuilt twice from the commit, identical, and the same line is in the CHANGELOG's 1.26.0 section on
-`main` before the tag. A zip is a function of its commit (`git archive`); the release job refuses to publish a Release whose zip is not byte
-for byte its own build (`scripts/release-existing.js`). Compare the `.sha256` beside the published zip with a rebuild:
+| `v1.26.0` | `381a107a` ("SBOM of the 1.26.0 stamp") | 2026-10-17 | `70747be558257242652f79013f87a50b7f86a16940af56ac8875e50bf70923e6` (recorded before the tag; the release asset matches) |
 
 ```bash
-R1260=381a107a00d4dbb18eed84b2bef9d68e1197dc50
-git archive --format=zip --prefix=suds-v1.26.0/ -o suds-v1.26.0.zip "$R1260" && sha256sum suds-v1.26.0.zip
+git fetch origin tag v1.26.0
+git archive --format=zip --prefix=suds-v1.26.0/ -o suds-v1.26.0.zip v1.26.0 && sha256sum suds-v1.26.0.zip
+# 70747be558257242652f79013f87a50b7f86a16940af56ac8875e50bf70923e6  suds-v1.26.0.zip
 ```
 
-## 1. Check (from any clone)
+## Completed: v1.26.0 (2026-10-17)
 
-```bash
-git fetch origin
-R1260=381a107a00d4dbb18eed84b2bef9d68e1197dc50
-for c in $R1260; do
-  git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
-done
-git show -s --format='%h %s' $R1260   # "SBOM of the 1.26.0 stamp"
-git show origin/main:package.json | grep '"version"'                            # 1.26.0
-gh run list --workflow ci.yml --branch main --commit $R1260 --event push --limit 1   # completed, success (main's own run)
-git ls-remote --tags origin | grep 'v1.26.0'   # not there yet: the tag is what this hand-off is for
-```
-
-## 2. Tag, and push
-
-```bash
-git tag -a v1.26.0 "$R1260" -m "SUDS 1.26.0"
-git push origin v1.26.0
-```
-
-(With a published signing key, `git tag -s` instead: docs/RELEASE.md, *Signing a release tag*.)
-
-## 3. Run the release with its policy exception
-
-The push starts `release.yml`, and its gate fails at *Release policy* (a feature release 12 days after `v1.25.0`). That
-red run is expected and publishes nothing. Then, in Actions → *Release* → *Run workflow*: choose the tag `v1.26.0`
-under *Use workflow from*, type `release` in *confirm*, and set *policy_exception* to the recorded line:
-
-```text
-released twelve days after 1.25.0, inside the 28 days between feature releases, on the owner's instruction of 2026-10-17 ("Release now", then the choice to change the control and release); not a security fix
-```
-
-or from a terminal:
-
-```bash
-gh workflow run release.yml --ref v1.26.0 -f confirm=release -f policy_exception="released twelve days after 1.25.0, inside the 28 days between feature releases, on the owner's instruction of 2026-10-17 (\"Release now\", then the choice to change the control and release); not a security fix"
-```
-
-| Tag | Its gate (main's scripts) | Latest? Web app? | What the owner does |
-| --- | --- | --- | --- |
-| `v1.26.0` | **Passes only with `policy_exception`**: a feature release inside the 28 days after `v1.25.0` (*Record: 1.26.0*); green CI on the exact commit, every required job run (none skipped) | **Latest**, and it starts a `Web app` run; it attaches its zips and `sbom-1.26.0.cdx.json`, writes both zips' SHA-256 into the Release notes, and puts the exception at their top; the Windows zip unsigned while the certificate secrets are not set | Approve the release job in Actions (the `release` environment's reviewer), then its `Web app` run, which publishes 1.26.0 to GitHub Pages |
+- `v1.26.0` — commit `381a107a00d4dbb18eed84b2bef9d68e1197dc50` ("SBOM of the 1.26.0 stamp", after the stamp `7b84ed7`;
+  CHANGELOG 2026-10-17), zip SHA-256 `70747be558257242652f79013f87a50b7f86a16940af56ac8875e50bf70923e6`; exact-commit CI 39074014149 (every required job
+  green, none skipped). A feature release twelve days after 1.25.0: PowerDMS policy sign-offs, migration 72, the
+  permission `policies:manage`, routes under `/api/policies/`. **The first release on a recorded owner exception**, not
+  a security fix (*Record: 1.26.0*).
+- The tag is annotated and unsigned (tagger *Folder*, 23:15 UTC): the owner's business assistant tagged it and pushed it
+  with the owner's GitHub access, at the owner's direction. The tag's own release run (39078308072) **failed at the
+  gate's release policy, as designed** (a feature release inside the 28 days, with no `policy_exception`), and published
+  nothing. The business assistant then ran *Release* on `v1.26.0` with `policy_exception` set to the recorded line (run
+  39078358170): its gate passed, measuring 11 days from `v1.25.0`'s tag, and wrote the exception at the top of the
+  Release notes. The run waited at the `release` environment and was approved with the owner's account by the business
+  assistant at the owner's direction (the approval's comment: "Owner approved in chat 2026-10-17 ('Run it now. I
+  approve'); approval submitted by Folder with the owner's account at his direction. First release on the recorded owner
+  policy exception."). The owner had been asked to approve it in person; the approval was given in chat instead. The
+  GitHub Release was published at 23:31 UTC on 2026-10-17, **immutable**, with five assets (the source zip and its
+  `.sha256`, the Windows zip, unsigned, and its `.sha256`, and the SBOM), marked **Latest**. The published zip's digest
+  and `.sha256` equal the value recorded before the tag. Both zips' lines are in the Release notes.
+- Windows zip: `suds-1.26.0-windows-x64.zip`, SHA-256 `d3c87a2af9734df9ba3545dfeef73482f51a0c848bcc8ab24f2934e01669d532`.
+- Pages: `v1.26.0`'s `Web app` run (39079341982) waited for an approval, given the same way, and succeeded (23:35 UTC);
+  `gh-pages`' `version.json` reads **1.26.0** (deploy commit `0f947e38`).
+- suds.systems is not upgraded by a release: it runs 1.25.8 until the owner directs the upgrade. 1.26.0 runs migration
+  72 at start-up.
+- The records commit adds the Windows zip's line to the CHANGELOG's 1.26.0 section.
 
 ## v1.25.9: released
 
