@@ -519,7 +519,7 @@ test('fetchProtections: rules/branches/main, the tag commit\'s "Release" run and
   const SHA_T = 'a'.repeat(40);
   const answers = {
     'https://api.github.com/repos/o/r/rules/branches/main': { status: 200, body: [] },
-    [`https://api.github.com/repos/o/r/actions/runs?event=push&head_sha=${SHA_T}&per_page=100`]: { status: 200, body: { workflow_runs: [{ id: 5, name: 'CI', status: 'completed', conclusion: 'success' }, { id: 6, name: 'Release', status: 'completed', conclusion: 'success' }] } },
+    [`https://api.github.com/repos/o/r/actions/runs?head_sha=${SHA_T}&per_page=100`]: { status: 200, body: { workflow_runs: [{ id: 5, name: 'CI', status: 'completed', conclusion: 'success' }, { id: 6, name: 'Release', status: 'completed', conclusion: 'success' }] } },
     'https://api.github.com/repos/o/r/actions/runs/6/approvals': { status: 200, body: [] },
   };
   const asked = [];
@@ -533,6 +533,15 @@ test('fetchProtections: rules/branches/main, the tag commit\'s "Release" run and
   assert.match(r.mainRules.detail, /HTTP 403: API rate limit exceeded/);
   const noRun = await RS.fetchProtections('o/r', 'v1.1.0', SHA_T, get({ [Object.keys(answers)[1]]: { status: 200, body: { workflow_runs: [] } } }));
   assert.equal(noRun.releaseRun.status, 'none');
+  // A release on a policy exception (1.26.0): the tag's own run stopped at the gate, and a run started by hand with
+  // policy_exception published it and waited for a reviewer. That run is the one read, whichever is newer.
+  const both = await RS.fetchProtections('o/r', 'v1.1.0', SHA_T, get({
+    [Object.keys(answers)[1]]: { status: 200, body: { workflow_runs: [{ id: 8, name: 'Release', status: 'completed', conclusion: 'failure' }, { id: 9, name: 'Release', status: 'completed', conclusion: 'success' }, { id: 10, name: 'Release', status: 'completed', conclusion: 'failure' }] } },
+    'https://api.github.com/repos/o/r/actions/runs/9/approvals': { status: 200, body: [{ state: 'approved' }] },
+  }));
+  assert.deepEqual([both.releaseRun.id, both.releaseRun.conclusion, both.releaseRun.approvals], [9, 'success', [{ state: 'approved' }]]);
+  const onlyFailed = await RS.fetchProtections('o/r', 'v1.1.0', SHA_T, get({ [Object.keys(answers)[1]]: { status: 200, body: { workflow_runs: [{ id: 8, name: 'Release', status: 'completed', conclusion: 'failure' }] } }, 'https://api.github.com/repos/o/r/actions/runs/8/approvals': { status: 200, body: [] } }));
+  assert.equal(onlyFailed.releaseRun.id, 8, 'with no successful run, the newest is read');
   assert.equal((await RS.fetchProtections('o/r', 'v1.1.0', null, get())).releaseRun.status, 'unreachable', 'no tag commit known');
   assert.equal((await RS.fetchProtections(null, 'v1.1.0', SHA_T, get())).mainRules.status, 'unreachable', 'no repository known');
   // The Release's own `immutable` flag is kept with its notes.

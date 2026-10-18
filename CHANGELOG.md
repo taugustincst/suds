@@ -5,6 +5,7 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 ## 1.26.0 — 2026-10-17
 
 SHA-256 of suds-v1.26.0.zip: 70747be558257242652f79013f87a50b7f86a16940af56ac8875e50bf70923e6
+SHA-256 of suds-1.26.0-windows-x64.zip: d3c87a2af9734df9ba3545dfeef73482f51a0c848bcc8ab24f2934e01669d532
 
 A feature release (docs/RELEASE.md, *Record: 1.26.0*): PowerDMS policy links and staff sign-offs. **Migration 72**
 (schema version 72): three columns on `policy_documents` and two new tables, applied automatically at start-up; take a

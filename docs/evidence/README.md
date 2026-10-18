@@ -16,7 +16,7 @@ signed tags, the flake register's entries) and whether each is in force today.
 **Version.** It describes 1.26.0: the commit "Release 1.26.0", a feature release with PowerDMS policy sign-offs
 (migration 72, the permission `policies:manage`), released twelve days after 1.25.0 on a recorded **owner exception**
 to the 28 days between feature releases (not a security fix), with an SBOM of its own, `sbom-1.26.0`
-([../RELEASE.md](../RELEASE.md), *Record: 1.26.0*; its tag is owed, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.25.9,
+([../RELEASE.md](../RELEASE.md), *Record: 1.26.0*; tagged and released on 2026-10-17, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.25.9,
 a patch of 1.25.8 that publishes the software vendor's contact, tagged and released on 2026-10-16, has `sbom-1.25.9`.
 1.25.8, a patch of 1.25.7 with the fixes from the
 self-assessment SEC-2026-001 and the owner's new pricing, tagged and released on 2026-10-13, has `sbom-1.25.8`. 1.25.7, a

@@ -180,13 +180,13 @@ published (2026-10-09). 1.25.4 is tagged, has been through the gate, and its Git
 tagged, has been through the gate, and its GitHub Release is published (2026-10-11). 1.25.7 is tagged, has been
 through the gate, and its GitHub Release is published (2026-10-12). 1.25.8 is tagged, has been through the gate, and its
 GitHub Release is published (2026-10-13). 1.25.9 is tagged, has been through the gate, was approved at the `release`
-environment, and its GitHub Release is published, immutable and marked Latest (2026-10-16)
-(docs/evidence/RELEASE-HANDOFF.md). 1.26.0, stamped 2026-10-17, waits for its tag; until it is pushed it is not
-published, and there is no tag or published zip to check it against. Verify against the commit instead. Each release commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
+environment, and its GitHub Release is published and immutable (2026-10-16). 1.26.0 is tagged, has been through the
+gate with the owner's recorded policy exception, was approved at the `release` environment, and its GitHub Release is
+published, immutable and marked Latest (2026-10-17) (docs/evidence/RELEASE-HANDOFF.md). Each release commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
 release zip, which anyone can rebuild with `git archive` and compare. `scripts/release-site-check.js` checks a
 published web app byte for byte against the commit's build. The steps are in
 [../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #39. Release tags and artefacts are not yet signed;
-signed tags are planned once the owner has a published key ([../../RELEASE.md](../../RELEASE.md), *Signing a release tag*). The 1.26.0 tag is owed;
+signed tags are planned once the owner has a published key ([../../RELEASE.md](../../RELEASE.md), *Signing a release tag*). No tag is owed;
 the release reviewer and immutable releases are on since 2026-10-13 (first applied to 1.25.9). **[owner to complete]: the
 remaining release protections: required review and checks on `main`, the `v*` tag and `gh-pages` rules
 (RELEASE.md, *Owner: repository settings*), and a tag-signing key.**

@@ -521,7 +521,16 @@ notes, and the `release` environment's reviewer approves it. It is two commits, 
 1.26.0 stamp", the tag on the second. The full suite and the evening run passed on the stamped tree before the push;
 the browser suite passed 60 of its 61 scripts there, and `local-mode` timed out once at a sign-in after a reload, then
 passed alone twice (49 of 49), and passed in CI's browser job on the commit to tag (run 39074014149, every required job
-green); it is entered in the flake register. Its tag is owed ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
+green); it is entered in the flake register. The owner's business assistant tagged it (tagger *Folder*) and pushed the
+tag with the owner's GitHub access on 2026-10-17. The tag's own run (39078308072) stopped at the gate's release policy, as
+designed; the business assistant then ran the release again on the tag with `policy_exception` set to the line above
+(run 39078358170), whose gate passed and printed the exception at the top of the Release notes. The gate measured 11
+days from `v1.25.0`'s tag (2026-10-06); this record and the CHANGELOG say twelve, from 1.25.0's stamp (2026-10-05). The
+release job and its `Web app` run (39079341982) were approved with the owner's account by the business assistant, at the
+owner's direction, each approval's comment quoting the owner's approval in chat ("Run it now. I approve"). The owner had
+been asked to approve this first owner exception in person; the approval was given in chat instead. Its GitHub Release
+is published, **immutable** and marked Latest, and GitHub Pages serves 1.26.0
+([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
 
 ### Supported versions
@@ -690,7 +699,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.25.7 | none of the policy (a patch within the patch rules: no migration, permission or route, 346 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged on the owner's instruction, by the owner's business assistant with the owner's GitHub access, and released through the gate on 2026-10-12 (*Record: 1.25.7*) | the fixes from the evaluation of 1.25.6 (K1–K8; *Record: 1.25.7*, above) | no exception to approve |
 | 1.25.8 | none of the policy (a patch within the patch rules: no migration, permission or route, 73 lines; a patch is allowed inside the feature freeze, so no exception is needed). Tagged from the owner's side and released through the gate on 2026-10-13 (*Record: 1.25.8*) | the fixes from the self-assessment SEC-2026-001 of 1.25.6 and the owner's pricing of 2026-10-12 (*Record: 1.25.8*, above) | no exception to approve |
 | 1.25.9 | none of the release policy's rules (a patch within the patch rules: no migration, permission or route, 9 lines). Tagged when ready, two days after 1.25.8, on the owner's instruction of 2026-10-15: the owner set aside the weekly batching of patches (*Release cadence*) for this one; released through the gate on 2026-10-16, its run approved with the owner's account at the owner's direction (*Record: 1.25.9*) | the vendor's contact on the Security & procurement page, and the records since 1.25.8 (*Record: 1.25.9*, above) | no exception to approve |
-| 1.26.0 | the 28 days between feature releases (a feature release twelve days after 1.25.0; migration 72, the permission `policies:manage`, routes under `/api/policies/`); not a security fix, so no `Security exception:` line — the first `Owner exception:` line, under *Stabilisation* point 2 as the owner revised it on 2026-10-17. Its `release.yml` run publishes it once `v1.26.0` is pushed and the run is given `policy_exception` and approved | PowerDMS policy links and staff sign-offs, on the owner's instruction of 2026-10-17 ("Release now", then the choice to change the control and release) (*Record: 1.26.0*, above) | owner (`policy_exception`, *Record: 1.26.0*, above) |
+| 1.26.0 | the 28 days between feature releases (a feature release twelve days after 1.25.0; migration 72, the permission `policies:manage`, routes under `/api/policies/`); not a security fix, so no `Security exception:` line — the first `Owner exception:` line, under *Stabilisation* point 2 as the owner revised it on 2026-10-17. Tagged by the owner's business assistant on the owner's instruction; the tag's own run stopped at the gate as designed, and the second run, given `policy_exception`, released it on 2026-10-17, approved with the owner's account at the owner's direction (*Record: 1.26.0*) | PowerDMS policy links and staff sign-offs, on the owner's instruction of 2026-10-17 ("Release now", then the choice to change the control and release) (*Record: 1.26.0*, above) | owner (`policy_exception`, *Record: 1.26.0*, above) |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as
