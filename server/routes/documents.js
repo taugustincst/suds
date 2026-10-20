@@ -24,7 +24,8 @@ function sniff(buf) {
   return null;
 }
 function fromDataUrl(v, maxBytes, label) {
-  if (typeof v !== 'string' || !v) return null;
+  if (v != null && typeof v !== 'string') throw badRequest(`${label} must be base64`); // was a 500 for an object (1.26.1, L1)
+  if (!v) return null;
   const m = /^data:([\w.+/-]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(v); const b64 = (m ? m[2] : v).replace(/\s+/g, '');
   if (!/^[A-Za-z0-9+/=]+$/.test(b64)) throw badRequest(`${label} must be base64`);
   const buf = Buffer.from(b64, 'base64'); if (!buf.length) throw badRequest(`${label} is empty`);

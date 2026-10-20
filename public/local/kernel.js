@@ -6731,7 +6731,7 @@ var require_config = __commonJS({
   "local/shims/config.js"(exports, module) {
     init_globals_inject();
     var config2 = {
-      version: true ? "1.26.0" : "local",
+      version: true ? "1.26.1" : "local",
       env: "local",
       isProd: true,
       isTest: false,
@@ -10858,8 +10858,8 @@ __export(zlib_exports, {
   inflateRawSync: () => inflateRawSync,
   inflateSync: () => inflateSync2
 });
-function inflateRawSync(buf) {
-  return import_buffer.Buffer.from(inflateSync(new Uint8Array(buf)));
+function inflateRawSync(buf, opts) {
+  return capped(inflateSync(new Uint8Array(buf)), opts);
 }
 function deflateRawSync(buf) {
   return import_buffer.Buffer.from(deflateSync(new Uint8Array(buf)));
@@ -10867,14 +10867,22 @@ function deflateRawSync(buf) {
 function deflateSync2(buf) {
   return import_buffer.Buffer.from(zlibSync(new Uint8Array(buf)));
 }
-function inflateSync2(buf) {
-  return import_buffer.Buffer.from(unzlibSync(new Uint8Array(buf)));
+function inflateSync2(buf, opts) {
+  return capped(unzlibSync(new Uint8Array(buf)), opts);
 }
-var zlib_default;
+var capped, zlib_default;
 var init_zlib = __esm({
   "local/shims/zlib.js"() {
     init_globals_inject();
     init_browser();
+    capped = (out2, opts) => {
+      if (opts && opts.maxOutputLength && out2.length > opts.maxOutputLength) {
+        const e = new RangeError("Cannot create a Buffer larger than maxOutputLength");
+        e.code = "ERR_BUFFER_TOO_LARGE";
+        throw e;
+      }
+      return import_buffer.Buffer.from(out2);
+    };
     zlib_default = { inflateRawSync, deflateRawSync, deflateSync: deflateSync2, inflateSync: inflateSync2 };
   }
 });
@@ -10984,7 +10992,10 @@ var require_http = __commonJS({
       for (const part of header.split(";")) {
         const i = part.indexOf("=");
         if (i < 0) continue;
-        out2[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+        try {
+          out2[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+        } catch {
+        }
       }
       return out2;
     }
@@ -15606,11 +15617,17 @@ var require_text = __commonJS({
       if (enc2 === "base64") return import_buffer.Buffer.from(body.replace(/\s+/g, ""), "base64");
       return import_buffer.Buffer.from(body, "latin1").toString("utf8");
     }
-    function unzip(buf) {
+    var UNZIP_MAX_ENTRY = 64 * 1024 * 1024;
+    var UNZIP_MAX_TOTAL = 128 * 1024 * 1024;
+    var UNZIP_MAX_ENTRIES = 1e4;
+    var TOO_LARGE = "This file expands to more than SUDS reads from one upload. Split it into smaller files.";
+    function unzip(buf, { only = null } = {}) {
       const files = /* @__PURE__ */ new Map();
       const eocd = buf.lastIndexOf(import_buffer.Buffer.from([80, 75, 5, 6]));
       if (eocd < 0) throw new Error("Not a ZIP archive");
       const count = buf.readUInt16LE(eocd + 10);
+      if (count > UNZIP_MAX_ENTRIES) throw new Error(TOO_LARGE);
+      let total = 0;
       let off = buf.readUInt32LE(eocd + 16);
       for (let i = 0; i < count; i++) {
         if (buf.readUInt32LE(off) !== 33639248) break;
@@ -15621,14 +15638,29 @@ var require_text = __commonJS({
         const name = buf.toString("utf8", off + 46, off + 46 + nlen);
         const lnlen = buf.readUInt16LE(lho + 26), lelen = buf.readUInt16LE(lho + 28);
         const dataStart = lho + 30 + lnlen + lelen;
-        const data = buf.subarray(dataStart, dataStart + csize);
-        files.set(name, method === 8 ? zlib.inflateRawSync(data) : import_buffer.Buffer.from(data));
         off += 46 + nlen + elen + clen2;
+        if (only && !only(name)) continue;
+        const data = buf.subarray(dataStart, dataStart + csize);
+        const room = Math.min(UNZIP_MAX_ENTRY, UNZIP_MAX_TOTAL - total);
+        let out2;
+        if (method === 8) {
+          try {
+            out2 = zlib.inflateRawSync(data, { maxOutputLength: Math.max(1, room) });
+          } catch (e) {
+            if (e instanceof RangeError || e.code === "ERR_BUFFER_TOO_LARGE") throw new Error(TOO_LARGE);
+            throw e;
+          }
+        } else {
+          if (data.length > room) throw new Error(TOO_LARGE);
+          out2 = import_buffer.Buffer.from(data);
+        }
+        total += out2.length;
+        files.set(name, out2);
       }
       return files;
     }
     function docxToText(buf) {
-      const files = unzip(buf);
+      const files = unzip(buf, { only: (n) => n === "word/document.xml" });
       const xml = files.get("word/document.xml");
       if (!xml) throw new Error("Not a DOCX file (word/document.xml missing)");
       let s = xml.toString("utf8");
@@ -15876,7 +15908,7 @@ var require_spreadsheet = __commonJS({
       return out2;
     }
     function readWorkbook(buf) {
-      const files = unzip(buf);
+      const files = unzip(buf, { only: (n) => /\.(xml|rels)$/i.test(n) });
       const get = (n) => {
         const f = files.get(n);
         return f ? f.toString("utf8") : null;
@@ -29580,14 +29612,9 @@ var require_auth = __commonJS({
       r.post("/api/auth/login", async (ctx) => {
         const { username, password } = validate(ctx.body, { username: { type: "string", required: true, maxLen: 100 }, password: { type: "string", required: true, maxLen: 500 } });
         const limiter = auth3.signInLimiter(ctx.ip, `user:${username.trim().toLowerCase()}`);
-        if (limiter.limited()) throw new HttpError3(429, "Too many login attempts. Try again later.");
-        let result;
-        try {
-          result = await auth3.login({ username, password, ctx });
-        } catch (e) {
-          limiter.fail();
-          throw e;
-        }
+        if (!limiter.attempt()) throw new HttpError3(429, "Too many login attempts. Try again later.");
+        const result = await auth3.login({ username, password, ctx });
+        limiter.succeeded();
         ctx.res.setHeader("Set-Cookie", auth3.cookieHeader(result.token));
         const out2 = { user: result.user, mfaPending: result.mfaPending, mfaMethods: result.mfaMethods, mfaSetupRequired: result.mfaSetupRequired, mfaSetupDeadline: result.mfaSetupDeadline };
         if (ctx.headers["x-sync-client"]) {
@@ -40450,7 +40477,8 @@ var require_documents = __commonJS({
       return null;
     }
     function fromDataUrl(v, maxBytes, label) {
-      if (typeof v !== "string" || !v) return null;
+      if (v != null && typeof v !== "string") throw badRequest(`${label} must be base64`);
+      if (!v) return null;
       const m = /^data:([\w.+/-]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(v);
       const b643 = (m ? m[2] : v).replace(/\s+/g, "");
       if (!/^[A-Za-z0-9+/=]+$/.test(b643)) throw badRequest(`${label} must be base64`);
@@ -46102,7 +46130,7 @@ var require_policies = __commonJS({
         if (!doc || !doc.is_active) throw badRequest("Choose a policy in effect", { fields: { document_id: "not a policy in effect" } });
         const user = db3.one(`SELECT id FROM users WHERE id=? AND is_active=1`, v.user_id);
         if (!user) throw badRequest("Choose an active staff account", { fields: { user_id: "not an active account" } });
-        if (v.acknowledged_at > db3.now().slice(0, 10)) throw badRequest("A sign-off cannot be dated in the future", { fields: { acknowledged_at: "in the future" } });
+        if (v.acknowledged_at > require_local_date().today()) throw badRequest("A sign-off cannot be dated in the future", { fields: { acknowledged_at: "in the future" } });
         const exists3 = db3.one(`SELECT id FROM policy_acknowledgements WHERE document_id=? AND user_id=? AND revision=?`, v.document_id, v.user_id, v.revision || "");
         if (exists3) throw badRequest("This sign-off is already recorded for that revision");
         const id = uuid2();
@@ -49576,7 +49604,7 @@ var require_region_pictures = __commonJS({
       }
       return null;
     }
-    var VERSION3 = true ? "1.26.0" : null.version;
+    var VERSION3 = true ? "1.26.1" : null.version;
     var USER_AGENT = `SUDS/${VERSION3} (+https://github.com/taugustincst/suds) region pictures`;
     var ACCEPT_PAGE = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
     var ACCEPT_PICTURE = "image/avif,image/webp,image/apng,image/*,*/*;q=0.8";
@@ -52055,7 +52083,7 @@ var require_sync = __commonJS({
     }
     function pullPage(user, since, limit2, serverNow, dropFrom = null, field = null) {
       const raw = {};
-      const capped = [];
+      const capped2 = [];
       const scopes = /* @__PURE__ */ new Map();
       for (const t of SYNC2.tables) {
         const newest = db3.one(`SELECT MAX(updated_at) m FROM ${t.name}`).m;
@@ -52071,11 +52099,11 @@ var require_sync = __commonJS({
           if (s.u < boundary) lastSafe = s.u;
           else break;
         }
-        capped.push(lastSafe !== null ? lastSafe : boundary);
+        capped2.push(lastSafe !== null ? lastSafe : boundary);
       }
-      const cursor = capped.length ? capped.reduce((a, b) => a < b ? a : b) : serverNow;
+      const cursor = capped2.length ? capped2.reduce((a, b) => a < b ? a : b) : serverNow;
       for (const [name, sc] of scopes) raw[name] = db3.all(`SELECT x.* FROM ${name} x WHERE x.updated_at > ? AND x.updated_at <= ? AND ${sc.sql} ORDER BY x.updated_at`, since, cursor, ...sc.params);
-      const out2 = baseAnswer(cursor, serverNow, capped.length === 0);
+      const out2 = baseAnswer(cursor, serverNow, capped2.length === 0);
       exportInto(out2, user, raw, cursor, dropFrom, field);
       if (newlyInScope(user, since, cursor, field).length) {
         out2.cursor = encodeCursor(cursor, { from: since, t: bfTables()[0].name, k: null, i: null });
@@ -52762,6 +52790,10 @@ var require_app2 = __commonJS({
     function rateLimitReset(key) {
       buckets.delete(key);
     }
+    function rateLimitRelease(key) {
+      const b = buckets.get(key);
+      if (b && b.count > 0) b.count--;
+    }
     var ROUTE_MODULES = [
       "setup",
       "auth",
@@ -52883,20 +52915,26 @@ var require_app2 = __commonJS({
           sendJson(res, e.status || 400, { error: e.message });
           return;
         }
-        const ctx = {
-          req,
-          res,
-          method: req.method,
-          path: url.pathname,
-          query: url.searchParams,
-          params: {},
-          headers: req.headers,
-          cookies: parseCookies(req.headers.cookie),
-          ip: clientIp(req),
-          user: null,
-          session: null,
-          body: null
-        };
+        let ctx;
+        try {
+          ctx = {
+            req,
+            res,
+            method: req.method,
+            path: url.pathname,
+            query: url.searchParams,
+            params: {},
+            headers: req.headers,
+            cookies: parseCookies(req.headers.cookie),
+            ip: clientIp(req),
+            user: null,
+            session: null,
+            body: null
+          };
+        } catch {
+          sendJson(res, 400, { error: "Malformed request" });
+          return;
+        }
         try {
           if (!url.pathname.startsWith("/api/") && !url.pathname.startsWith("/fhir/") && !url.pathname.startsWith("/scim/")) {
             if (!config2.localModeEnabled && (url.searchParams.get("local") === "1" || url.pathname.startsWith("/local/"))) {
@@ -52974,7 +53012,7 @@ var require_app2 = __commonJS({
         }
       };
     }
-    module.exports = { createHandler, rateLimit, rateLimited, rateLimitReset, bodyLimitFor, ROUTE_MODULES, LOCAL_ROUTE_MODULES: LOCAL_ROUTE_MODULES2 };
+    module.exports = { createHandler, rateLimit, rateLimited, rateLimitReset, rateLimitRelease, bodyLimitFor, ROUTE_MODULES, LOCAL_ROUTE_MODULES: LOCAL_ROUTE_MODULES2 };
   }
 });
 
@@ -53592,12 +53630,19 @@ var require_auth2 = __commonJS({
       const strongHow = (st2) => st2.passkey && st2.totp ? "Confirm with your fingerprint or enter the code from your authenticator app" : st2.passkey ? "Confirm with your fingerprint" : st2.totp ? "Enter the code from your authenticator app" : "Set up fingerprint sign-in or two-step verification under My profile, then try again";
       const checkPassword = async () => {
         const limiter = signInLimiter(ctx.ip, `account:${u.id}`);
-        if (limiter.limited()) throw new HttpError3(429, "Too many attempts. Try again later.");
-        if (!await verifyPasswordAsync(password, u.password_hash)) {
-          limiter.fail();
-          const locked = recordPasswordFailure(u);
-          failed(locked ? { reason: "locked after failures" } : void 0, locked ? "Password verification failed. The account is now locked after too many failed attempts." : "Password verification failed");
+        if (!limiter.attempt()) throw new HttpError3(429, "Too many attempts. Try again later.");
+        const locked = await oneAtATime(`account:${u.id}`, async () => {
+          if (lockedNow(u.id)) {
+            audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: "locked" } });
+            throw new HttpError3(423, "Account locked after too many failed attempts. Try again later or contact an administrator.");
+          }
+          return await verifyPasswordAsync(password, u.password_hash) ? null : recordPasswordFailure(u);
+        });
+        if (locked === null) {
+          limiter.succeeded();
+          return;
         }
+        failed(locked ? { reason: "locked after failures" } : void 0, locked ? "Password verification failed. The account is now locked after too many failed attempts." : "Password verification failed");
       };
       if (code) {
         if (!u.mfa_enabled || !u.mfa_secret_enc) {
@@ -53654,14 +53699,38 @@ var require_auth2 = __commonJS({
     function signInLimiter(ip, who) {
       const app = require_app2();
       const whoKey = `login-${who}@${ip}`, ipKey = `login-ip:${ip}`;
+      const limited = () => app.rateLimited(whoKey, config2.loginRateLimit) || app.rateLimited(ipKey, config2.loginIpRateLimit);
+      const fail = () => {
+        app.rateLimit(whoKey, config2.loginRateLimit, 15 * 6e4);
+        app.rateLimit(ipKey, config2.loginIpRateLimit, 15 * 6e4);
+      };
       return {
-        limited: () => app.rateLimited(whoKey, config2.loginRateLimit) || app.rateLimited(ipKey, config2.loginIpRateLimit),
-        fail: () => {
-          app.rateLimit(whoKey, config2.loginRateLimit, 15 * 6e4);
-          app.rateLimit(ipKey, config2.loginIpRateLimit, 15 * 6e4);
+        limited,
+        fail,
+        attempt: () => {
+          if (limited()) return false;
+          fail();
+          return true;
+        },
+        succeeded: () => {
+          app.rateLimitRelease(whoKey);
+          app.rateLimitRelease(ipKey);
         }
       };
     }
+    var accountTurns = /* @__PURE__ */ new Map();
+    function oneAtATime(key, fn) {
+      const run2 = (accountTurns.get(key) || Promise.resolve()).then(fn);
+      const done = run2.then(() => {
+      }, () => {
+      });
+      accountTurns.set(key, done);
+      done.then(() => {
+        if (accountTurns.get(key) === done) accountTurns.delete(key);
+      });
+      return run2;
+    }
+    var lockedNow = (id) => isLocked(db3.one(`SELECT locked_until FROM users WHERE id=?`, id) || {});
     var LOCKED_MESSAGE = "Account locked after too many failed attempts. Try again later or contact an administrator.";
     async function confirmPassword(ctx, password, { action, message = "Password is incorrect" }) {
       const u = db3.one(`SELECT id, password_hash, failed_attempts, locked_until FROM users WHERE id=?`, ctx.user.id);
@@ -53670,13 +53739,23 @@ var require_auth2 = __commonJS({
         throw new HttpError3(423, LOCKED_MESSAGE);
       }
       const limiter = signInLimiter(ctx.ip, `account:${u.id}`);
-      if (limiter.limited()) {
+      if (!limiter.attempt()) {
         audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: "rate limited" } });
         throw new HttpError3(429, "Too many attempts. Try again later.");
       }
-      if (await verifyPasswordAsync(password, u.password_hash)) return;
-      limiter.fail();
-      const locked = recordPasswordFailure(u);
+      const right = await oneAtATime(`account:${u.id}`, async () => {
+        if (lockedNow(u.id)) {
+          audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: "locked" } });
+          throw new HttpError3(423, LOCKED_MESSAGE);
+        }
+        if (await verifyPasswordAsync(password, u.password_hash)) return true;
+        return { locked: recordPasswordFailure(u) };
+      });
+      if (right === true) {
+        limiter.succeeded();
+        return;
+      }
+      const { locked } = right;
       clearReauth(ctx);
       audit3.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: "wrong password", ...locked ? { locked: true } : {} } });
       throw locked ? new HttpError3(423, `${message}. ${LOCKED_MESSAGE.replace("Account locked", "The account is now locked")}`) : unauthorized(message);
@@ -53712,9 +53791,12 @@ var require_auth2 = __commonJS({
     function recordPasswordFailure(user) {
       const row = db3.one(`SELECT failed_attempts FROM users WHERE id=?`, user.id);
       const attempts = (row && row.failed_attempts || 0) + 1;
-      const lock = attempts >= config2.lockout.maxAttempts ? new Date(Date.now() + config2.lockout.minutes * 6e4).toISOString() : null;
-      db3.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);
-      return !!lock;
+      if (attempts < config2.lockout.maxAttempts) {
+        db3.run(`UPDATE users SET failed_attempts=? WHERE id=?`, attempts, user.id);
+        return false;
+      }
+      db3.run(`UPDATE users SET failed_attempts=0, locked_until=? WHERE id=?`, new Date(Date.now() + config2.lockout.minutes * 6e4).toISOString(), user.id);
+      return true;
     }
     function clearFailures(userId) {
       db3.run(`UPDATE users SET failed_attempts=0, locked_until=NULL WHERE id=?`, userId);
@@ -53908,9 +53990,12 @@ var require_auth2 = __commonJS({
         failName("inactive");
       }
       if (isLocked(user)) locked(user);
-      if (!await verifyPasswordAsync(password || "", user.password_hash)) {
-        fail(recordPasswordFailure(user) ? "locked after failures" : "bad password");
-      }
+      await oneAtATime(`account:${user.id}`, async () => {
+        if (lockedNow(user.id)) locked(user);
+        if (!await verifyPasswordAsync(password || "", user.password_hash)) {
+          fail(recordPasswordFailure(user) ? "locked after failures" : "bad password");
+        }
+      });
       if (pendingWipe) wipeRequired(true);
       const pol = policy();
       const emergency = pol.ssoRequired && pol.ssoEmergencyAccounts.includes(String(user.username).toLowerCase());

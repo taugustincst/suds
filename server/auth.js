@@ -444,12 +444,16 @@ async function verifySigner(ctx, body, { action = 'note.sign.failed', purpose = 
   const strongHow = (st) => (st.passkey && st.totp ? 'Confirm with your fingerprint or enter the code from your authenticator app' : st.passkey ? 'Confirm with your fingerprint' : st.totp ? 'Enter the code from your authenticator app' : 'Set up fingerprint sign-in or two-step verification under My profile, then try again');
   const checkPassword = async () => {
     const limiter = signInLimiter(ctx.ip, `account:${u.id}`);
-    if (limiter.limited()) throw new HttpError(429, 'Too many attempts. Try again later.');
-    if (!(await verifyPasswordAsync(password, u.password_hash))) {
-      limiter.fail();
-      const locked = recordPasswordFailure(u);
-      failed(locked ? { reason: 'locked after failures' } : undefined, locked ? 'Password verification failed. The account is now locked after too many failed attempts.' : 'Password verification failed');
-    }
+    if (!limiter.attempt()) throw new HttpError(429, 'Too many attempts. Try again later.');
+    const locked = await oneAtATime(`account:${u.id}`, async () => {
+      if (lockedNow(u.id)) {
+        audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'locked' } });
+        throw new HttpError(423, 'Account locked after too many failed attempts. Try again later or contact an administrator.');
+      }
+      return (await verifyPasswordAsync(password, u.password_hash)) ? null : recordPasswordFailure(u);
+    });
+    if (locked === null) { limiter.succeeded(); return; }
+    failed(locked ? { reason: 'locked after failures' } : undefined, locked ? 'Password verification failed. The account is now locked after too many failed attempts.' : 'Password verification failed');
   };
   // A code that is given must verify, whatever else comes with it: a password with a made-up code is not a password
   // and a code (security review of the fingerprint work, finding 1). With both given, both are checked; the code is
@@ -524,15 +528,37 @@ async function verifyApprover(ctx, body, { action, purpose, bind }) {
  * (`passkey:<id>`) — and per address whatever the who (LOGIN_IP_RATE_LIMIT, the backstop against spraying). Keyed on
  * the address alone (up to 1.23.6, and for these re-authentications until 1.24.0), one person's wrong guesses refused
  * everyone behind an office's NAT address. Only failures are counted (`fail`); `limited` counts nothing.
+ *
+ * Where the check awaits (a password's scrypt), use `attempt` and `succeeded` instead (1.26.1, H1): `limited` then
+ * `fail` after the await let any number of guesses sent at once pass the check before the first was counted.
+ * `attempt` counts this one before anything is awaited (false, counting nothing, when either limit is reached) and
+ * `succeeded` gives it back, so only failures stay counted, as before.
  */
 function signInLimiter(ip, who) {
   const app = require('./app');
   const whoKey = `login-${who}@${ip}`, ipKey = `login-ip:${ip}`;
+  const limited = () => app.rateLimited(whoKey, config.loginRateLimit) || app.rateLimited(ipKey, config.loginIpRateLimit);
+  const fail = () => { app.rateLimit(whoKey, config.loginRateLimit, 15 * 60_000); app.rateLimit(ipKey, config.loginIpRateLimit, 15 * 60_000); };
   return {
-    limited: () => app.rateLimited(whoKey, config.loginRateLimit) || app.rateLimited(ipKey, config.loginIpRateLimit),
-    fail: () => { app.rateLimit(whoKey, config.loginRateLimit, 15 * 60_000); app.rateLimit(ipKey, config.loginIpRateLimit, 15 * 60_000); },
+    limited, fail,
+    attempt: () => { if (limited()) return false; fail(); return true; },
+    succeeded: () => { app.rateLimitRelease(whoKey); app.rateLimitRelease(ipKey); },
   };
 }
+/**
+ * Run `fn` for one account (`key`) after every earlier call for it has finished: the password checks of one account,
+ * one at a time (1.26.1, H1). Each reads the lock again when its turn comes, so guesses sent at once meet the lockout
+ * as guesses sent one after another do, and a right password behind five wrong ones finds the account locked.
+ */
+const accountTurns = new Map();
+function oneAtATime(key, fn) {
+  const run = (accountTurns.get(key) || Promise.resolve()).then(fn);
+  const done = run.then(() => {}, () => {});
+  accountTurns.set(key, done);
+  done.then(() => { if (accountTurns.get(key) === done) accountTurns.delete(key); });
+  return run;
+}
+const lockedNow = (id) => isLocked(db.one(`SELECT locked_until FROM users WHERE id=?`, id) || {});
 const LOCKED_MESSAGE = 'Account locked after too many failed attempts. Try again later or contact an administrator.';
 /**
  * The password of the person already signed in, given again to change it or to turn two-step verification
@@ -548,13 +574,20 @@ async function confirmPassword(ctx, password, { action, message = 'Password is i
     throw new HttpError(423, LOCKED_MESSAGE);
   }
   const limiter = signInLimiter(ctx.ip, `account:${u.id}`);
-  if (limiter.limited()) {
+  if (!limiter.attempt()) {
     audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'rate limited' } });
     throw new HttpError(429, 'Too many attempts. Try again later.');
   }
-  if (await verifyPasswordAsync(password, u.password_hash)) return;
-  limiter.fail();
-  const locked = recordPasswordFailure(u);
+  const right = await oneAtATime(`account:${u.id}`, async () => {
+    if (lockedNow(u.id)) {
+      audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'locked' } });
+      throw new HttpError(423, LOCKED_MESSAGE);
+    }
+    if (await verifyPasswordAsync(password, u.password_hash)) return true;
+    return { locked: recordPasswordFailure(u) };
+  });
+  if (right === true) { limiter.succeeded(); return; }
+  const { locked } = right;
   clearReauth(ctx);
   audit.log({ user: ctx.user, action, ip: ctx.ip, success: false, details: { reason: 'wrong password', ...(locked ? { locked: true } : {}) } });
   throw locked ? new HttpError(423, `${message}. ${LOCKED_MESSAGE.replace('Account locked', 'The account is now locked')}`) : unauthorized(message);
@@ -582,12 +615,14 @@ function confirmCode(ctx, code, { action }) {
 function clearReauth(ctx) { if (ctx.session) { db.run(`UPDATE sessions SET reauth_at=NULL WHERE id=?`, ctx.session.id); ctx.session.reauth_at = null; } }
 function isLocked(user) { return !!(user.locked_until && Date.parse(user.locked_until) > Date.now()); }
 /** Count a wrong password or authenticator code (sign-in, second step, enrolment, signature) toward the account lockout. True if it now locks the account. */
+// A failure never clears a lock (1.26.1, H1): it wrote locked_until=NULL below the threshold, so a wrong guess still
+// in flight when another locked the account unlocked it again.
 function recordPasswordFailure(user) {
   const row = db.one(`SELECT failed_attempts FROM users WHERE id=?`, user.id);
   const attempts = ((row && row.failed_attempts) || 0) + 1;
-  const lock = attempts >= config.lockout.maxAttempts ? new Date(Date.now() + config.lockout.minutes * 60000).toISOString() : null;
-  db.run(`UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?`, lock ? 0 : attempts, lock, user.id);
-  return !!lock;
+  if (attempts < config.lockout.maxAttempts) { db.run(`UPDATE users SET failed_attempts=? WHERE id=?`, attempts, user.id); return false; }
+  db.run(`UPDATE users SET failed_attempts=0, locked_until=? WHERE id=?`, new Date(Date.now() + config.lockout.minutes * 60000).toISOString(), user.id);
+  return true;
 }
 function clearFailures(userId) { db.run(`UPDATE users SET failed_attempts=0, locked_until=NULL WHERE id=?`, userId); }
 /**
@@ -850,9 +885,13 @@ async function login({ username, password, ctx }) {
     failName('inactive');
   }
   if (isLocked(user)) locked(user);
-  if (!(await verifyPasswordAsync(password || '', user.password_hash))) {
-    fail(recordPasswordFailure(user) ? 'locked after failures' : 'bad password');
-  }
+  // One password check at a time for the account, the lock read again at its turn (oneAtATime; 1.26.1, H1).
+  await oneAtATime(`account:${user.id}`, async () => {
+    if (lockedNow(user.id)) locked(user);
+    if (!(await verifyPasswordAsync(password || '', user.password_hash))) {
+      fail(recordPasswordFailure(user) ? 'locked after failures' : 'bad password');
+    }
+  });
   if (pendingWipe) wipeRequired(true);
   // Checked only once the password is right, so the answer says nothing about accounts to someone guessing.
   const pol = policy();

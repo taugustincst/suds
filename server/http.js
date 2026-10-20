@@ -71,7 +71,9 @@ function parseCookies(header) {
   for (const part of header.split(';')) {
     const i = part.indexOf('=');
     if (i < 0) continue;
-    out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    // A value that is not valid percent-encoding is left out (1.26.1, M1): it threw here, before the request's error
+    // handling, and the request was never answered.
+    try { out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim()); } catch { /* malformed: ignored */ }
   }
   return out;
 }
