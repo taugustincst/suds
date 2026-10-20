@@ -42,7 +42,7 @@ The server is one Node.js process with one SQLite database. It scales up, not ou
 | Server | Node.js 22 (≥ 22.13) built-ins only (`node:sqlite`, `node:crypto`, `node:http`). **No runtime npm packages** ([architecture/README.md](architecture/README.md)) |
 | Web app | Vanilla JavaScript modules with no build step and no third-party scripts, under a strict Content Security Policy |
 | Browser offline engine | A committed, reproducible bundle with seven small pinned libraries and SQLite (WebAssembly), all listed in the SBOM ([WEB_APP.md](WEB_APP.md)) |
-| SBOM | CycloneDX 1.5 for every release ([evidence/sbom-1.26.0.cdx.json](evidence/sbom-1.26.0.cdx.json)) |
+| SBOM | CycloneDX 1.5 for every release ([evidence/sbom-1.26.1.cdx.json](evidence/sbom-1.26.1.cdx.json)) |
 | Release integrity | Zip SHA-256 published in two channels; immutable GitHub Releases; a release run that waits for an approval ([security/OPERATIVE-CONTROLS.md](security/OPERATIVE-CONTROLS.md)) |
 
 ## Security
