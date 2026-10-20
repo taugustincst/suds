@@ -36,8 +36,10 @@ git archive --format=zip --prefix=suds-v1.26.0/ -o suds-v1.26.0.zip v1.26.0 && s
 - Windows zip: `suds-1.26.0-windows-x64.zip`, SHA-256 `d3c87a2af9734df9ba3545dfeef73482f51a0c848bcc8ab24f2934e01669d532`.
 - Pages: `v1.26.0`'s `Web app` run (39079341982) waited for an approval, given the same way, and succeeded (23:35 UTC);
   `gh-pages`' `version.json` reads **1.26.0** (deploy commit `0f947e38`).
-- suds.systems is not upgraded by a release: it runs 1.25.8 until the owner directs the upgrade. 1.26.0 runs migration
-  72 at start-up.
+- suds.systems was upgraded from 1.25.8 to 1.26.0 on 2026-10-17, on the owner's separate direction (migration 72 at
+  start-up). Its reboot unlocked the encrypted data disk and started SUDS unattended; the business assistant read it
+  live on 2026-10-20: version 1.26.0, health ok, up continuously since the upgrade. (Corrected on 2026-10-20: the first
+  version of this entry said it still ran 1.25.8.)
 - The records commit adds the Windows zip's line to the CHANGELOG's 1.26.0 section.
 
 ## v1.25.9: released
