@@ -25,6 +25,8 @@ function rateLimit(key, max, windowMs) {
 // to (failed sign-ins, say -- a whole office signing in at 8 a.m. from behind one router is not an attack).
 function rateLimited(key, max) { const b = buckets.get(key); return !!b && Date.now() <= b.reset && b.count >= max; }
 function rateLimitReset(key) { buckets.delete(key); }
+// Give back one counted attempt (a sign-in counted when it arrived, then succeeded: auth.signInLimiter).
+function rateLimitRelease(key) { const b = buckets.get(key); if (b && b.count > 0) b.count--; }
 
 // Every route module, in one place. The local kernel builds its router from LOCAL_ROUTE_MODULES below and
 // fails loudly if it is missing a loader for one, so adding a route file cannot silently leave the feature
@@ -131,12 +133,16 @@ function createHandler() {
     // Parsed before the try below used to mean a target the parser refused hung the socket; see parseRequestUrl.
     let url;
     try { url = parseRequestUrl(req.url, 'http://localhost'); } catch (e) { sendJson(res, e.status || 400, { error: e.message }); return; }
-    const ctx = {
-      req, res, method: req.method, path: url.pathname, query: url.searchParams, params: {},
-      headers: req.headers, cookies: parseCookies(req.headers.cookie),
-      ip: clientIp(req),
-      user: null, session: null, body: null,
-    };
+    // Built inside its own catch for the same reason (1.26.1, M1: a malformed cookie threw here and the request hung).
+    let ctx;
+    try {
+      ctx = {
+        req, res, method: req.method, path: url.pathname, query: url.searchParams, params: {},
+        headers: req.headers, cookies: parseCookies(req.headers.cookie),
+        ip: clientIp(req),
+        user: null, session: null, body: null,
+      };
+    } catch { sendJson(res, 400, { error: 'Malformed request' }); return; }
     try {
       if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/fhir/') && !url.pathname.startsWith('/scim/')) {
         // Local mode switched off: the shell page for /?local=1 and the kernel it would load are replaced by a
@@ -212,4 +218,4 @@ function createHandler() {
   };
 }
 
-module.exports = { createHandler, rateLimit, rateLimited, rateLimitReset, bodyLimitFor, ROUTE_MODULES, LOCAL_ROUTE_MODULES };
+module.exports = { createHandler, rateLimit, rateLimited, rateLimitReset, rateLimitRelease, bodyLimitFor, ROUTE_MODULES, LOCAL_ROUTE_MODULES };

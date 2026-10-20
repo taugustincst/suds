@@ -58,11 +58,19 @@ function decodePart(headers, body) {
 }
 
 // Minimal ZIP reader (stored + deflate) — enough for .docx / .onepkg-less exports. Returns Map<name, Buffer>.
-function unzip(buf) {
+// Inflating is capped (1.26.1, H2): a 1 MB upload that inflated to 1 GB blocked the process for seconds and took its
+// memory with it, and a larger one would end it for everyone. No entry may inflate past UNZIP_MAX_ENTRY, nor all of
+// them together past UNZIP_MAX_TOTAL, and an archive may list at most UNZIP_MAX_ENTRIES. `only` (a name test) leaves
+// the entries a reader does not need unread: a document's pictures, say.
+const UNZIP_MAX_ENTRY = 64 * 1024 * 1024, UNZIP_MAX_TOTAL = 128 * 1024 * 1024, UNZIP_MAX_ENTRIES = 10000;
+const TOO_LARGE = 'This file expands to more than SUDS reads from one upload. Split it into smaller files.';
+function unzip(buf, { only = null } = {}) {
   const files = new Map();
   const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
   if (eocd < 0) throw new Error('Not a ZIP archive');
   const count = buf.readUInt16LE(eocd + 10);
+  if (count > UNZIP_MAX_ENTRIES) throw new Error(TOO_LARGE);
+  let total = 0;
   let off = buf.readUInt32LE(eocd + 16);
   for (let i = 0; i < count; i++) {
     if (buf.readUInt32LE(off) !== 0x02014b50) break;
@@ -73,15 +81,21 @@ function unzip(buf) {
     const name = buf.toString('utf8', off + 46, off + 46 + nlen);
     const lnlen = buf.readUInt16LE(lho + 26), lelen = buf.readUInt16LE(lho + 28);
     const dataStart = lho + 30 + lnlen + lelen;
-    const data = buf.subarray(dataStart, dataStart + csize);
-    files.set(name, method === 8 ? zlib.inflateRawSync(data) : Buffer.from(data));
     off += 46 + nlen + elen + clen;
+    if (only && !only(name)) continue;
+    const data = buf.subarray(dataStart, dataStart + csize);
+    const room = Math.min(UNZIP_MAX_ENTRY, UNZIP_MAX_TOTAL - total);
+    let out;
+    if (method === 8) { try { out = zlib.inflateRawSync(data, { maxOutputLength: Math.max(1, room) }); } catch (e) { if (e instanceof RangeError || e.code === 'ERR_BUFFER_TOO_LARGE') throw new Error(TOO_LARGE); throw e; } }
+    else { if (data.length > room) throw new Error(TOO_LARGE); out = Buffer.from(data); }
+    total += out.length;
+    files.set(name, out);
   }
   return files;
 }
 
 function docxToText(buf) {
-  const files = unzip(buf);
+  const files = unzip(buf, { only: (n) => n === 'word/document.xml' });
   const xml = files.get('word/document.xml');
   if (!xml) throw new Error('Not a DOCX file (word/document.xml missing)');
   let s = xml.toString('utf8');

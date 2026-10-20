@@ -114,7 +114,8 @@ module.exports = (r) => {
     if (!doc || !doc.is_active) throw badRequest('Choose a policy in effect', { fields: { document_id: 'not a policy in effect' } });
     const user = db.one(`SELECT id FROM users WHERE id=? AND is_active=1`, v.user_id);
     if (!user) throw badRequest('Choose an active staff account', { fields: { user_id: 'not an active account' } });
-    if (v.acknowledged_at > db.now().slice(0, 10)) throw badRequest('A sign-off cannot be dated in the future', { fields: { acknowledged_at: 'in the future' } });
+    // The programme's today, not the UTC date, which is tomorrow's after 5 pm in California (1.26.1, L2).
+    if (v.acknowledged_at > require('../local-date').today()) throw badRequest('A sign-off cannot be dated in the future', { fields: { acknowledged_at: 'in the future' } });
     const exists = db.one(`SELECT id FROM policy_acknowledgements WHERE document_id=? AND user_id=? AND revision=?`, v.document_id, v.user_id, v.revision || '');
     if (exists) throw badRequest('This sign-off is already recorded for that revision');
     const id = uuid();

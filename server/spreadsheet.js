@@ -145,7 +145,8 @@ async function writeWorkbookAsync(sheets) {
 
 // ---------- XLSX reader (first sheet or all sheets → arrays of arrays) ----------
 function readWorkbook(buf) {
-  const files = unzip(buf);
+  // The workbook's XML parts only: pictures and other media are never read (importers/text.js unzip, 1.26.1, H2).
+  const files = unzip(buf, { only: (n) => /\.(xml|rels)$/i.test(n) });
   const get = (n) => { const f = files.get(n); return f ? f.toString('utf8') : null; };
   const wb = get('xl/workbook.xml'); if (!wb) throw new Error('Not an Excel (.xlsx) file');
   const rels = get('xl/_rels/workbook.xml.rels') || '';
