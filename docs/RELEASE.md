@@ -542,7 +542,9 @@ hand-recorded sign-off was checked against the UTC date (L2). Each has a test th
 widened permission and no new route, 116 lines added outside docs, tests and generated files (`node
 scripts/release-policy.js --version 1.26.1 --previous v1.26.0`), so it passes the release policy with no exception, and
 as a security fix it is released when ready, outside the weekly batching of patches (*Release cadence*). It is two
-commits, "Release 1.26.1" and "SBOM of the 1.26.1 stamp", the tag on the second. **Backport owed or waived:** under
+commits, "Release 1.26.1" and "SBOM of the 1.26.1 stamp", the tag on the second; the full suite and the evening run
+(2,217 tests each) and the browser suite (61 of 61 scripts) passed on the stamped tree, and CI run 39461033819 on the
+commit to tag, every required job green. **Backport owed or waived:** under
 *Supported versions* 1.25.x, the previous minor, gets security fixes from `maint/1.25` for 30 days after 1.26.0; the
 fixes apply to it (H1, H2 and M1 are older than 1.26.0), and no 1.25.x patch is published. suds.systems runs 1.26.0
 and no customer is known to run 1.25.x, so whether to publish 1.25.10 is the owner's decision, recorded here when made.
