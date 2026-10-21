@@ -159,8 +159,9 @@ suggestions for staff to review (`docs/AI-COPILOT.md`). Sending session text to 
 by a **business associate** (§164.502(e), §164.504(e)), so:
 
 * It is **off** until an administrator records the programme's BAA with the provider (who signed, when, its
-  reference), with Part 2 QSOA terms and counsel's review, and switches it on; the provider key lives only in
-  the server's environment (`ANTHROPIC_API_KEY`). Withdrawing the agreement switches it off. Office server only:
+  reference), with Part 2 QSOA terms and counsel's review, and switches it on; the provider key is in the
+  server's environment (`ANTHROPIC_API_KEY`) or, from 1.27.0 (built, not yet released), set by an administrator in
+  Settings and kept encrypted in the database, never shown again. Withdrawing the agreement switches it off. Office server only:
   SUDS on this device and local mode never call it.
 * **Minimum necessary:** only the text a worker gives for one client (and, for care plan suggestions, one
   assessment of that client they choose) is sent; never another client's data or anyone else's notes.

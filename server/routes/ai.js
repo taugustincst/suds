@@ -91,8 +91,7 @@ module.exports = (r) => {
     if (next.monthly_cost_cap !== null && !COST.priced(next)) throw badRequest('A monthly spending limit needs both prices, to estimate the cost', { fields: { monthly_cost_cap: 'enter the prices per million input and output tokens first' } });
     if (v.enabled === 1 && !was.enabled) {
       if (!was.attestation) throw badRequest('Record the programme\'s agreement (BAA / QSOA) with the AI provider before switching the copilot on', { fields: { enabled: 'needs the agreement recorded first' } });
-      if (!AI.keyConfigured()) throw badRequest(AP.id() === 'anthropic' ? 'This server has no AI provider key (ANTHROPIC_API_KEY in its environment). Set it and restart SUDS, then switch the copilot on.'
-        : `This server has no credentials for ${AP.label()} (${AP.describe().credentials_hint} in its environment). Set them and restart SUDS, then switch the copilot on.`, { fields: { enabled: 'no provider key on the server' } });
+      if (!AI.keyConfigured()) throw badRequest(`This server has no credentials for ${AP.label()} yet. Add them under Connection to the AI provider on this page (or in the server's environment), then switch the copilot on.`, { fields: { enabled: 'no provider credentials yet' } });
       if (AI.attestedProvider(was.attestation) !== AP.id()) throw badRequest(`The agreement recorded is with ${AP.label(AI.attestedProvider(was.attestation))}, but this server sends drafts to ${AP.label()}. Withdraw it and record the agreement with ${AP.label()} first.`, { fields: { enabled: 'the agreement is with another provider' } });
     }
     const changed = [];

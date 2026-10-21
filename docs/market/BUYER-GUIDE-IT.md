@@ -114,7 +114,7 @@ Staff browser ──HTTPS (TLS 1.2+)──> SUDS server (county or vendor host) 
 - **Optional AI documentation copilot (1.17.0, off by default):** when the programme records its BAA/QSOA with
   the AI provider and switches it on, the office server (never the browser) sends session text a worker gives,
   with that client's known identifiers replaced, to the provider's API over HTTPS (`api.anthropic.com`, or a
-  gateway set in `SUDS_AI_BASE_URL`; from 1.17.1 also Amazon Bedrock or Google Cloud Vertex AI, `SUDS_AI_PROVIDER`). The key (`ANTHROPIC_API_KEY`, or the cloud provider's credentials) is in the server environment only; no SDK or
+  gateway set in `SUDS_AI_BASE_URL`; from 1.17.1 also Amazon Bedrock or Google Cloud Vertex AI, `SUDS_AI_PROVIDER`). The key (`ANTHROPIC_API_KEY`, or the cloud provider's credentials) is in the server environment, or (built for 1.27.0, not yet released) set by an administrator in Settings, kept encrypted in the database and never shown again; no SDK or
   other package is added; each call is audited without its text and counted against a monthly cap. This is PHI
   to a business associate: see [docs/AI-COPILOT.md](../AI-COPILOT.md) for exactly what is sent and the residual
   risk.

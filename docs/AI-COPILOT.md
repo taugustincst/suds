@@ -47,10 +47,15 @@ administrator, under Settings → Users & permissions. And the client must be on
    and your counsel's review. Also settle with the provider how long it keeps request content (its data
    retention terms) — that is governed by your agreement, not by SUDS.
 2. **Choose the provider and give the server its credentials.** Anthropic's own API (the default), Amazon
-   Bedrock or Google Cloud Vertex AI (*Providers*, below): set `SUDS_AI_PROVIDER` and that provider's
-   credentials in the office server's environment (as `OIDC_CLIENT_SECRET` and the other secrets are:
-   `docs/DEPLOYMENT.md`) and restart SUDS. Credentials are never stored in the database, never sent to a
-   browser and never shown in Settings; Settings names the provider (and its region) the server is set up for.
+   Bedrock or Google Cloud Vertex AI (*Providers*, below). Either in the browser (built for 1.27.0, not yet
+   released): Settings → **AI copilot** → *Connection to the AI provider* (or Settings → **Server
+   configuration**) — choose the provider and paste its key; the change asks for your password again and takes
+   effect at once, with no restart. Or in the office server's environment, as before (`SUDS_AI_PROVIDER` and the
+   provider's credentials, as `OIDC_CLIENT_SECRET` and the other secrets are: `docs/DEPLOYMENT.md`), which wins
+   over anything set in the browser. A key set in the browser is kept in the database encrypted with the
+   encryption key (`server_config.value_enc`, re-encrypted by key rotation like every encrypted column) and is
+   in its backups; it is never sent back to a browser, shown in Settings, logged or audited. Where a county's
+   policy keeps secrets out of the database, set them in the environment instead.
 3. **Record the agreement.** Settings → **AI copilot** → *Agreement with the AI provider*: the provider, who
    signed for the programme, the date, the agreement's reference, and three confirmations (a BAA covering
    this use; it includes Part 2 QSOA terms; counsel has reviewed this use). All three are required. The

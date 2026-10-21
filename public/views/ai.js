@@ -12,6 +12,8 @@
 // and no "Suggest with AI" is shown: the administrator sees why under Settings › AI copilot. On SUDS on this
 // device (local mode) there is no copilot: the panel says why and offers nothing.
 import { h, get, post, put, del, state, form, modal, confirmDialog, toast, can, fmt, badge, emptyState, announce } from '../app.js';
+import { groupCard } from './server-config.js';
+import { settingHref } from './settings-nav.js';
 
 export const AI_NOTICE = 'AI draft — review before signing';
 
@@ -381,7 +383,9 @@ export function calomsCopilot({ clientId, form: f, type }) {
 // ---------------------------------------------------------------- Settings → AI copilot
 /** The administrator's tab: what the copilot does and sends, the agreement, the switch, model, cap and usage. */
 export async function aiSettingsTab(refresh) {
-  const s = await get('/api/ai/settings');
+  const [s, sc] = await Promise.all([get('/api/ai/settings'), get('/api/admin/server-config', { quiet: true }).catch(() => null)]);
+  // The provider and its key, set here since 1.27.0 (views/server-config.js): the row to go to when none is set.
+  const keyRow = { anthropic: 'ANTHROPIC_API_KEY', bedrock: 'AWS_ACCESS_KEY_ID', vertex: 'SUDS_AI_VERTEX_CREDENTIALS' }[s.provider.id] || 'SUDS_AI_PROVIDER';
   const a = s.attestation;
   const box = h('div', { 'data-ai-settings': '1' });
   const statusLine = s.status.available ? badge('On', 'ok') : badge('Off', 'warn');
@@ -397,9 +401,13 @@ export async function aiSettingsTab(refresh) {
     h('p', { class: 'banner warn small', 'data-ai-counsel': '1' }, 'Have your counsel review this use before switching it on: it is a use of client records by a business associate under HIPAA and a qualified service organization under 42 CFR Part 2. SUDS records what you attest; it does not make the arrangement compliant, and it makes no claim about the accuracy of what the AI drafts.'),
     h('p', { 'data-ai-provider': s.provider.id }, h('strong', {}, 'AI provider: '), s.provider.label,
       s.provider.region ? ` (region ${s.provider.region}${s.provider.project ? `, project ${s.provider.project}` : ''})` : '',
-      h('span', { class: 'muted small' }, ' — set on the server (SUDS_AI_PROVIDER); see docs/AI-COPILOT.md.')),
-    !s.key_configured ? h('p', { class: 'banner danger small', 'data-ai-no-key': '1' }, `This server has no credentials for ${s.provider.label}. Set ${s.provider.credentials_hint} in the server's environment (docs/AI-COPILOT.md) and restart SUDS.`) : null,
+      ' ', h('a', { href: settingHref('ai', 'SUDS_AI_PROVIDER'), 'data-setting-link': 'SUDS_AI_PROVIDER', class: 'small' }, 'Change the provider')),
+    !s.key_configured ? h('p', { class: 'banner danger small', 'data-ai-no-key': '1' }, h('span', {}, `No credentials for ${s.provider.label} yet. `,
+      h('a', { href: settingHref('ai', keyRow), 'data-setting-link': keyRow }, sc ? 'Add them below' : 'Add them under Server configuration'), '.')) : null,
     s.endpoint_problem ? h('p', { class: 'banner danger small' }, s.endpoint_problem) : null));
+
+  // The connection: the provider, its key and how long to wait for a draft, set here (or in the server's environment).
+  if (sc) { const g = sc.groups.find(x => x.id === 'ai'); if (g) box.append(h('div', { class: 'mt' }, groupCard({ ...g, label: 'Connection to the AI provider' }, sc.entries, refresh, { onlyProvider: true }))); }
 
   // The agreement.
   const agreement = h('section', { class: 'card mt', 'data-ai-attestation': a ? 'recorded' : 'none' }, h('div', { class: 'card-head' }, h('h2', {}, 'Agreement with the AI provider')));

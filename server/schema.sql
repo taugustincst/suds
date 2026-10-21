@@ -653,6 +653,17 @@ CREATE TABLE IF NOT EXISTS policy_ack_imports (
   imported_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+-- Server configuration set from Settings › Server configuration (migration 73, server/server-config.js): the values an
+-- office server used to take only from its environment (an AI provider's key, single sign-on, rate limits). A secret
+-- is kept encrypted (value_enc) and never sent to a browser; anything else in value. The environment, when it sets a
+-- name, wins over a row here.
+CREATE TABLE IF NOT EXISTS server_config (
+  name TEXT PRIMARY KEY,
+  value TEXT,
+  value_enc TEXT,
+  updated_by TEXT REFERENCES users(id),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 
 CREATE TABLE IF NOT EXISTS referrals (
   id TEXT PRIMARY KEY,

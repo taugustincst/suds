@@ -2,6 +2,36 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased (built for 1.27.0, not yet released)
+
+On the `feature/settings` branch, for the next feature release (no earlier than 2026-11-14 under the release cadence, 28
+days after 1.26.0, unless the owner records an exception). **Migration 73** (schema version 73): one new table,
+`server_config`.
+
+### Added
+
+- **Server configuration from the browser** (Settings › **Server configuration**; server/server-config.js). What an
+  office server took only from its environment until now is set by an administrator in the browser: the AI copilot's
+  provider and its key (Anthropic, Amazon Bedrock, Google Vertex AI), single sign-on, OneNote import, the metrics token,
+  where to check for updates, audit seals to syslog, the log format, the sign-in and request limits, and the audit and
+  deletion retention. A value set in the environment still wins and is shown as such. A secret is kept encrypted
+  (`server_config.value_enc`), never shown again, logged or audited; changing a secret, or a setting that decides
+  where client text, sign-in or audit evidence goes, asks for the administrator's password again. Changes take effect
+  at once unless the row says a restart is needed. What stays in the environment (the keys that open the database,
+  where it lives, the listening address and certificate, `SUDS_AI_BASE_URL`) is listed on the page with the reason.
+  Audited as `server_config.update`, `server_config.clear` and `server_config.update.failed`.
+- **All settings**: Settings opens on one list of every setting, grouped, each with what it is set to now and a link
+  that opens its tab, scrolls to it, focuses it and marks it; a box narrows the list as you type.
+- **The AI copilot tab carries the provider's connection inline**: the "no credentials" banner links to the key box.
+  With its browser script `settings`, the suite is now 62 scripts.
+
+### Changed
+
+- **Settings › Program** is one column of cards with *On this page* beside it, instead of four cards side by side; its
+  links open the folded section at the setting. *Server security configuration* is now *This server*: each line says
+  how it stands and links to where it is changed. Status lines link to their setting ("No clinical modules are switched
+  on" to the module choices; updates "not set up yet" to where to check).
+
 ## 1.26.1 — 2026-10-20
 
 SHA-256 of suds-v1.26.1.zip: 125375c2b17456015834cc92db1ae7b0c64482a43c06cc553fb6a89b2b1546df
