@@ -127,3 +127,51 @@ test('L2: a sign-off dated the programme\'s tomorrow is refused, whatever the UT
   assert.equal(tomorrow.status, 400, JSON.stringify(tomorrow.data));
   assert.equal((await sup.post('/api/policies/acknowledgements', body(LD.today()))).status, 201, 'the programme\'s today is accepted');
 });
+
+test('L3: a replayed request passes the route\'s checks again: a permission or a client taken away is refused', async () => {
+  const worker = H.makeUser('replay.nav', 'navigator');
+  const c = H.client(); await c.login('replay.nav', RIGHT);
+  const client = (await admin.post('/api/clients', { first_name: 'Replay', last_name: 'Checked' })).data.id;
+  const send = (key) => c.post('/api/tasks', { title: 'Call back', client_id: client, due_at: '2026-11-02' }, { 'Idempotency-Key': key });
+  const first = await send('replay-1');
+  assert.equal(first.status, 201, JSON.stringify(first.data));
+  assert.equal((await send('replay-1')).headers.get('idempotent-replayed'), 'true', 'replayed while still allowed');
+  H.deny(worker, 'tasks:*');
+  assert.equal((await send('replay-1')).status, 403, 'not once the permission is taken away');
+  H.db.run(`DELETE FROM user_permission_overrides WHERE user_id=? AND permission='tasks:*'`, worker.id);
+  assert.equal((await send('replay-2')).status, 201);
+  H.deny(worker, 'clients:all');
+  const gone = await send('replay-2');
+  assert.equal(gone.status, 403, 'nor once the client is out of reach');
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='idempotency.replay.denied' AND user_id=?`, worker.id), 'audited');
+});
+
+test('H1: a burst at a name nobody has meets the same lockout as one at an account, so the answer still says nothing', async () => {
+  H.makeUser('burst.real', 'navigator');
+  const max = config.lockout.maxAttempts;
+  const burst = (name) => Promise.all(Array.from({ length: 3 * max }, (_, i) => login(name, `Wrong-guess-${i}`))).then((rs) => rs.map((r) => r.status).join(','));
+  const [real, nobody] = await Promise.all([burst('burst.real'), burst('burst.nobody')]);
+  assert.equal(nobody, real, 'the same answers, in the same order');
+  assert.ok(real.split(',').filter((s) => s === '423').length > 0, real);
+});
+
+test('M3: an upload is read in a worker thread: the same answer as inline, and the server answers meanwhile', async () => {
+  const { offload } = require('../server/offload');
+  const csv = Buffer.from(['Name,Count', ...Array.from({ length: 400000 }, (_, i) => `Person ${i},${i}`)].join('\n'));
+  const inline = require('../server/spreadsheet').parseFile(csv, 'big.csv');
+  let ticks = 0, worst = 0, last = Date.now();
+  const timer = setInterval(() => { const now = Date.now(); worst = Math.max(worst, now - last); last = now; ticks++; }, 10);
+  const t0 = Date.now();
+  const viaWorker = await offload('spreadsheet', csv, 'big.csv');
+  const took = Date.now() - t0;
+  clearInterval(timer);
+  assert.equal(viaWorker.sheets[0].rows.length, 400000);
+  assert.deepEqual(viaWorker.sheets[0].rows[399999], inline.sheets[0].rows[399999], 'the same rows');
+  assert.ok(ticks > 0 && worst < Math.max(250, took / 2), `the event loop kept turning while it was read (longest pause ${worst} ms of ${took} ms)`);
+  // A file a reader refuses is a refusal, not a crash.
+  await assert.rejects(offload('docx', Buffer.from('not a zip')), /Not a ZIP archive/);
+  // Without worker threads (the browser kernel) or with SUDS_OFFLOAD=inline, the job runs inline.
+  process.env.SUDS_OFFLOAD = 'inline';
+  try { assert.deepEqual(await offload('spreadsheet', Buffer.from('a,b\n1,2'), 'x.csv'), require('../server/spreadsheet').parseFile(Buffer.from('a,b\n1,2'), 'x.csv')); }
+  finally { delete process.env.SUDS_OFFLOAD; }
+});

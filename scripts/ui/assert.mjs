@@ -68,7 +68,18 @@ export async function signInAgain(page, username, password, { timeout = 20000 } 
   if (!(await page.$('.layout')) && (await page.$('.login input[name=username]'))) {
     await page.fill('.login input[name=username]', username); await page.fill('.login input[name=password]', password);
     await page.click('.login button[type=submit]');
-    await page.waitForSelector('.layout', { timeout });
+    // On a timeout, say what the page showed instead (the flake register's open local-mode row, 2026-10-17: a sign-in
+    // after a reload that never reached .layout; what would settle it is what the page was doing), then fail as before.
+    try { await page.waitForSelector('.layout', { timeout }); }
+    catch (e) {
+      const seen = await page.evaluate(() => ({
+        hash: location.hash, boot: (document.querySelector('.boot') || {}).textContent || null,
+        form: !!document.querySelector('.login input[name=username]'), busy: !!document.querySelector('.login button[type=submit][disabled]'),
+        message: ((document.querySelector('.login [role=alert], .login .error, .toast') || {}).textContent || '').slice(0, 200) || null,
+      })).catch((x) => ({ unreadable: String(x.message || x).slice(0, 120) }));
+      e.message += ` — signInAgain: the page after ${timeout} ms: ${JSON.stringify(seen)}`;
+      throw e;
+    }
   }
 }
 

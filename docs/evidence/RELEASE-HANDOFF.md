@@ -19,14 +19,14 @@ on the commit after "Release 1.26.1": "SBOM of the 1.26.1 stamp".
 
 | Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
 | --- | --- | --- | --- |
-| `v1.26.1` | `0ad5d11a257fa51fe07c5502c95b64d9828dd2c2` ("SBOM of the 1.26.1 stamp", after the stamp `7a97479`; main's own CI run 39461033819, every required job green) | 2026-10-20 | `125375c2b17456015834cc92db1ae7b0c64482a43c06cc553fb6a89b2b1546df` |
+| `v1.26.1` | `c375ef60a5274ff8a3976bb167d69a063cf160e2` ("SBOM of the 1.26.1 stamp", after the second stamp `410ce80`; main's own CI run 39842502473, every required job green; the first stamp's `0ad5d11` is never tagged) | 2026-10-22 | `4b5670b37d90db7b6e2ac60965f67808fc57672d1feb5b5cc940126c23c2e979` |
 
 The SHA-256 above was rebuilt twice from the commit, identical, and the same line is in the CHANGELOG's 1.26.1 section on
 `main` before the tag. A zip is a function of its commit (`git archive`); the release job refuses to publish a Release whose zip is not byte
 for byte its own build (`scripts/release-existing.js`). Compare the `.sha256` beside the published zip with a rebuild:
 
 ```bash
-R1261=0ad5d11a257fa51fe07c5502c95b64d9828dd2c2
+R1261=c375ef60a5274ff8a3976bb167d69a063cf160e2
 git archive --format=zip --prefix=suds-v1.26.1/ -o suds-v1.26.1.zip "$R1261" && sha256sum suds-v1.26.1.zip
 ```
 
@@ -34,7 +34,7 @@ git archive --format=zip --prefix=suds-v1.26.1/ -o suds-v1.26.1.zip "$R1261" && 
 
 ```bash
 git fetch origin
-R1261=0ad5d11a257fa51fe07c5502c95b64d9828dd2c2
+R1261=c375ef60a5274ff8a3976bb167d69a063cf160e2
 for c in $R1261; do
   git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
 done

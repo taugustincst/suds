@@ -40,10 +40,11 @@ function reportFile(body) {
 }
 
 /** Read and match a report against this server's staff and policies. */
-function readReport(body) {
+async function readReport(body) {
   const { buf, filename } = reportFile(body);
   let parsed;
-  try { parsed = require('../spreadsheet').parseFile(buf, filename); } catch { throw badRequest('This file could not be read as an Excel workbook or a CSV file'); }
+  // Read in a worker thread with its own memory and time limit (server/offload.js; 1.26.1, M3).
+  try { parsed = await require('../offload').offload('spreadsheet', buf, filename); } catch { throw badRequest('This file could not be read as an Excel workbook or a CSV file'); }
   const sheet = (parsed.sheets || []).find(s => (s.rows || []).length) || (parsed.sheets || [])[0];
   if (!sheet) throw badRequest('The file has no sheet with rows in it');
   const have = new Set(db.all(`SELECT document_id, user_id, revision FROM policy_acknowledgements`).map(a => `${a.document_id}|${a.user_id}|${a.revision}`));
@@ -80,14 +81,14 @@ module.exports = (r) => {
     return { documents: c.documents, staff, outstanding: staff.reduce((n, s) => n + (s.required - s.signed), 0) };
   });
 
-  r.post('/api/policies/report/preview', auth.requireAuth, auth.requirePerm('policies:manage'), (ctx) => {
-    const m = readReport(ctx.body);
+  r.post('/api/policies/report/preview', auth.requireAuth, auth.requirePerm('policies:manage'), async (ctx) => {
+    const m = await readReport(ctx.body);
     audit.log({ user: ctx.user, action: 'policy.report_preview', entity: 'policy_ack_import', ip: ctx.ip, details: { sha256: m.sha256, rows: m.rows.length, counts: m.counts } });
     return { filename: m.filename, sheet: m.sheet, columns: m.columns, counts: m.counts, labels: OUTCOME_LABELS, rows: m.rows.slice(0, PREVIEW_ROWS), truncated: m.rows.length > PREVIEW_ROWS, total: m.rows.length };
   });
 
-  r.post('/api/policies/report/import', auth.requireAuth, auth.requirePerm('policies:manage'), (ctx) => {
-    const m = readReport(ctx.body);
+  r.post('/api/policies/report/import', auth.requireAuth, auth.requirePerm('policies:manage'), async (ctx) => {
+    const m = await readReport(ctx.body);
     const toRecord = m.rows.filter(x => x.outcome === 'record');
     const id = uuid(); const now = db.now();
     const unmatched = m.rows.filter(x => !['record', 'already', 'not_signed'].includes(x.outcome)).length;

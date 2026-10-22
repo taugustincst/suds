@@ -2,13 +2,13 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## 1.26.1 — 2026-10-20
+## 1.26.1 — 2026-10-22
 
-SHA-256 of suds-v1.26.1.zip: 125375c2b17456015834cc92db1ae7b0c64482a43c06cc553fb6a89b2b1546df
+SHA-256 of suds-v1.26.1.zip: 4b5670b37d90db7b6e2ac60965f67808fc57672d1feb5b5cc940126c23c2e979
 
 A security patch of 1.26.0 (docs/RELEASE.md, *Record: 1.26.1*): the fixes of the code evaluation of 1.26.0, released as
 soon as they were ready. No migration, no new or widened permission and no new route (`node scripts/release-policy.js
---version 1.26.1 --previous v1.26.0` passes: 116 lines added outside docs, tests and generated files, of the 1,500 a
+--version 1.26.1 --previous v1.26.0` passes: 330 lines added outside docs, tests and generated files, of the 1,500 a
 patch may add). Upgrading needs nothing beyond replacing the files and restarting.
 
 **Advisory:** SUDS 1.26.0 and earlier are affected by the first three below; the evaluation that found them was the
@@ -24,7 +24,9 @@ Under *Supported versions* 1.25.x would get these fixes as a backport from `main
   just locked. An attempt is now counted as it arrives (and given back if it succeeds), one account's passwords are
   checked one at a time with the lock read at each turn, and a failure never clears a lock. Two-step verification, on
   for every role by default, had limited the exposure to accounts without it. The same holds for the current password
-  given to change it and for a signature's password.
+  given to change it and for a signature's password. Attempts for a name with no account, an access request still
+  waiting or an inactive account are taken one at a time the same way, so a burst of them gets the same answers as one
+  at a real account and does not tell which names exist.
 - **An uploaded Excel or Word file could expand without limit.** A file under 1 MB expanded to 1 GB, holding the
   server for seconds; a larger one could have stopped it for everyone. Anyone with an import permission could send one
   (navigators and clinicians have one by default). Each part of a file may now expand to 64 MB and a whole file to
@@ -32,6 +34,14 @@ Under *Supported versions* 1.25.x would get these fixes as a backport from `main
   pictures are not). A file over the cap is refused with a message saying so.
 - **A malformed cookie left the request unanswered.** A cookie value that is not valid percent-encoding was read
   before the request's error handling; the connection stayed open until it timed out. Such a value is now ignored.
+- **A request sent again with the same idempotency key skipped the route's permission checks.** Within 24 hours the
+  stored answer was replayed to the same person even after a permission or a client was taken from them. The route's
+  checks now run again first, and a replay they refuse is a 403, recorded in the audit log
+  (`idempotency.replay.denied`).
+- **Reading an uploaded spreadsheet or document held the server for everyone while it ran.** Spreadsheet imports,
+  the PowerDMS report, a document's text and a OneNote Word export are now read in a worker thread with a memory limit
+  (512 MB) and a time limit (60 seconds). A file past either is refused with a message saying so, and the server keeps
+  answering meanwhile.
 
 ### Fixed
 
@@ -39,6 +49,14 @@ Under *Supported versions* 1.25.x would get these fixes as a backport from `main
   bad request (400).
 - **A sign-off recorded by hand could be dated tomorrow after 5 pm in California** (1.26.0): the date was compared
   with the UTC date, not the programme's. It is now compared with the programme's.
+- **A record edited on a device and at the office between two syncs kept only one side's edit.** A phone number
+  corrected in the field was lost to an unrelated change made at the office, or the other way round. A device now
+  merges such a record field by field. A field changed on one side keeps that side's value, and only a field changed
+  on both sides goes to the newer edit. The sync screen names that field when the office's edit replaced the device's.
+  A record last synced before 1.26.1 is weighed whole once more, at its next sync, and merged from then on.
+- On SUDS on this device and on a device that syncs, the check that compares secrets refused inputs of different
+  lengths with a value rather than an error, unlike the server's. It now behaves as the server's does.
+- An index on disclosures was declared twice in the schema; the second declaration is removed (no change to a database).
 
 ## 1.26.0 — 2026-10-17
 

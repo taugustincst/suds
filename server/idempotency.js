@@ -49,8 +49,12 @@ function requestHash(ctx) {
 /**
  * Run `exec` (the route's handlers) at most once per (user, Idempotency-Key). Returns the handler result,
  * or the stored one on a repeat; sets ctx.status and ctx.idempotentReplay accordingly.
+ *
+ * `recheck` (1.26.1, L3): the route's own guards (requireAuth, requirePerm…), run again before a stored answer is
+ * given back. The answer used to be returned with nothing checked, so someone whose permission, or reach of the client
+ * the request named, was taken away within the 24 hours still got the first answer (possibly a client's record) back.
  */
-async function run(ctx, exec) {
+async function run(ctx, exec, { recheck = null } = {}) {
   if (!applies(ctx)) return exec();
   const key = String(ctx.headers['idempotency-key']);
   if (!key || key.length > 255 || !/^[\x21-\x7e]+$/.test(key)) throw new HttpError(400, 'Idempotency-Key must be 1-255 printable characters');
@@ -63,6 +67,13 @@ async function run(ctx, exec) {
     if (prior.request_hash !== hash || prior.user_id !== ctx.user.id) {
       audit.log({ user: ctx.user, action: 'idempotency.mismatch', ip: ctx.ip, success: false, details: { path: ctx.path } });
       throw new HttpError(422, 'This request was already sent with the same Idempotency-Key and different content. Reload the form and try again.');
+    }
+    // Still allowed? The route's guards again, and the client the request names still in reach.
+    if (recheck) await recheck();
+    const clientId = ctx.body && typeof ctx.body.client_id === 'string' ? ctx.body.client_id : null;
+    if (clientId && !require('./auth').canAccessClient(ctx.user, clientId)) {
+      audit.log({ user: ctx.user, action: 'idempotency.replay.denied', ip: ctx.ip, success: false, details: { path: ctx.path } });
+      throw new HttpError(403, 'You no longer have access to this client');
     }
     // The stored answer is a read of whatever the first request returned (possibly PHI), so it is audited.
     audit.log({ user: ctx.user, action: 'idempotency.replay', ip: ctx.ip, details: { path: ctx.path, status: prior.status, first_at: prior.created_at } });

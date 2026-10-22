@@ -862,16 +862,27 @@ async function login({ username, password, ctx }) {
     if (pendingWipe) wipeRequired(false);
     throw new HttpError(423, 'Account locked. Try again later or contact an administrator.');
   };
-  // A name with no active account fails, and locks, the way an account does (nameLocked, above).
+  // A name with no active account fails, and locks, the way an account does (nameLocked, above): one guess at a time,
+  // the lock read at each turn, as an account's are (oneAtATime; 1.26.1), or a burst of guesses at a name nobody has
+  // would answer 401 throughout where an account's locks after five, and so say which names exist.
   const name = String(username || '').trim().toLowerCase();
   if ((!user || !user.is_active) && nameLocked(name)) locked(who);
   const failName = (reason) => { recordNameFailure(name); fail(reason); };
   // An unknown username still pays the hashing cost, so response time does not reveal who has an account.
-  if (!user) { await verifyPasswordAsync(password || '', 'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA=='); failName('unknown user'); }
+  if (!user) {
+    await oneAtATime(`name:${name}`, async () => {
+      if (nameLocked(name)) locked(who);
+      await verifyPasswordAsync(password || '', 'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA==');
+      failName('unknown user');
+    });
+  }
   if (!user.is_active && (user.access_status === 'pending' || user.access_status === 'declined') && !pendingWipe) {
     // A self sign-up an administrator has not approved (yet). Only someone who knows the password they
     // chose is told where the request stands; anyone else gets the same answer as for any bad sign-in.
-    if (!(await verifyPasswordAsync(password || '', user.password_hash))) failName('bad password');
+    await oneAtATime(`name:${name}`, async () => {
+      if (nameLocked(name)) locked(who);
+      if (!(await verifyPasswordAsync(password || '', user.password_hash))) failName('bad password');
+    });
     audit.log({ user: who, action: 'auth.login.access_' + user.access_status, ip: ctx.ip, success: false });
     throw new HttpError(403, user.access_status === 'pending'
       ? 'Your request is waiting for an administrator to approve it. You can sign in once it has been approved.'
@@ -881,8 +892,11 @@ async function login({ username, password, ctx }) {
     // With a wipe pending, a correct password on the deactivated account is still proof that the phone is
     // in the hands of the person the account belonged to — enough to consume the wipe. Checked either way, so a
     // deactivated account costs the hashing an unknown name does.
-    if (await verifyPasswordAsync(password || '', user.password_hash) && pendingWipe) wipeRequired(true);
-    failName('inactive');
+    await oneAtATime(`name:${name}`, async () => {
+      if (nameLocked(name)) locked(who);
+      if (await verifyPasswordAsync(password || '', user.password_hash) && pendingWipe) wipeRequired(true);
+      failName('inactive');
+    });
   }
   if (isLocked(user)) locked(user);
   // One password check at a time for the account, the lock read again at its turn (oneAtATime; 1.26.1, H1).
