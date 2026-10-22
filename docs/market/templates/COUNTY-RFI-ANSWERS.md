@@ -182,7 +182,7 @@ through the gate, and its GitHub Release is published (2026-10-12). 1.25.8 is ta
 GitHub Release is published (2026-10-13). 1.25.9 is tagged, has been through the gate, was approved at the `release`
 environment, and its GitHub Release is published and immutable (2026-10-16). 1.26.0 is tagged, has been through the
 gate with the owner's recorded policy exception, was approved at the `release` environment, and its GitHub Release is
-published, immutable and marked Latest (2026-10-17) (docs/evidence/RELEASE-HANDOFF.md). 1.26.1, stamped 2026-10-20,
+published, immutable and marked Latest (2026-10-17) (docs/evidence/RELEASE-HANDOFF.md). 1.26.1, stamped 2026-10-22,
 waits for its tag; until it is pushed it is not published, and there is no tag or published zip to check it against.
 Verify against the commit instead. Each release commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
 release zip, which anyone can rebuild with `git archive` and compare. `scripts/release-site-check.js` checks a
