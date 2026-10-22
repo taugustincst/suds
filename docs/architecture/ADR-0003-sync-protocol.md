@@ -75,6 +75,15 @@ each sync). The office copy wins ties. A device edit that loses is **not silent*
 revocation from a device always applies. On the device, `sync_seen` records what was last exchanged so a row
 the device never touched is never pushed back with a device timestamp (`local/sync.js`).
 
+**Merging on the device (1.26.1).** A device also keeps, in `sync_base`, a keyed fingerprint of each field of each row
+as last exchanged (`crypto.fieldPrint`: 48 bits of an HMAC under the index key, never the value). When an office row arrives for
+a row edited here and not yet sent, the device merges field by field: a field changed only here keeps the device's
+value, one changed only at the office takes the office's, and a field changed at both ends goes to the newer edit
+(the device is told, by column name, when the office's replaced its own; `sync.merged` on the device names the fields it
+kept). A merged row is stamped as edited here and pushed whole, so the office applies it by its usual rule above and
+needs no change. A row with no base (last exchanged before 1.26.1, or after an office restore, which clears the bases
+with `sync_seen`) is weighed whole, as before. Security review of 1.26.0, M2.
+
 **Deletes.** Hard deletes travel as **tombstones** (`tombstones` table, migration 2). Up to 1.23.6 a tombstone
 newer than a device edit won, and an edit newer than the tombstone brought the row back. Since the pen test of 1.23.6
 (M2), a deletion at the office always stands. A pushed row whose tombstone is on file is refused permanently
@@ -90,8 +99,11 @@ lost. Nothing is marked sent until the server acknowledges it — rows, tombston
 
 ## Consequences
 
-- Last-writer-wins at row level: concurrent edits to different fields of one row still lose one side, but
-  visibly (conflict list + audit). Field-level merge was rejected as too complex to verify.
+- Last-writer-wins at row level at the office; the device merges field by field before it pushes (1.26.1), so
+  edits to different fields of one row made at the office and on a device both survive. Two devices that edit
+  different fields of one row between the same two syncs still meet at the office row by row: the later push
+  wins, visibly (`sync.overwrite`, column names). Field-level merge at the office was not taken up: it would need
+  a base per device, and the device-side merge covers the common case (an office edit and one field device).
 - Every new synced table or `_enc` column must be declared in `server/sync-tables.js`, or
   `test/sync.test.js` fails.
 - A rule for a synced table is written once, in `server/rules/<table>.js`, and both doors enforce it; a
@@ -110,6 +122,6 @@ lost. Nothing is marked sent until the server acknowledges it — rows, tombston
 `test/sync.test.js` (permission and caseload on push, conflicts, tombstones, paging, generation, every
 `_enc` column declared), `test/sync-rules.test.js` (every table's push and REST outcomes, case by case) and
 `test/sync-rules-fixes.test.js` (what each 1.14.0 decision stores), `test/sync-scope.test.js` and `test/sync-backfill.test.js` (newly assigned clients
-arrive whole, in pages within the limit; a caseload transfer; a sync cut short resumes), `test/concurrency.test.js`, `test/device-audit.test.js`, `test/devices.test.js`
+arrive whole, in pages within the limit; a caseload transfer; a sync cut short resumes), `test/sync-merge.test.js` (field-by-field merge on the device), `test/concurrency.test.js`, `test/device-audit.test.js`, `test/devices.test.js`
 (revoke / remote wipe), `test/disclosure-gates.test.js` (a device's consent push re-checked); browser scripts
 `scripts/ui/sync-two-way.mjs`, `scripts/ui/multitab.mjs`.

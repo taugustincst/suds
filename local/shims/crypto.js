@@ -26,7 +26,8 @@ export function createDecipheriv(alg, key, iv) {
   return { setAuthTag(t) { tag = toU8(t); }, update(d, e) { parts.push(toU8(d, e)); return Buffer.alloc(0); }, final() { const data = concat(parts); const ct = new Uint8Array(data.length + 16); ct.set(data); ct.set(tag, data.length); try { return Buffer.from(gcm(toU8(key), toU8(iv)).decrypt(ct)); } catch { throw new Error('Unsupported state or unable to authenticate data'); } } };
 }
 export function scryptSync(password, salt, keylen, opts = {}) { return Buffer.from(scrypt(toU8(password), toU8(salt), { N: opts.N || 16384, r: opts.r || 8, p: opts.p || 1, dkLen: keylen, maxmem: 2 ** 31 })); }
-export function timingSafeEqual(a, b) { const x = toU8(a), y = toU8(b); if (x.length !== y.length) return false; let d = 0; for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i]; return d === 0; }
+// As Node's: inputs of different lengths are an error, not a mismatch (1.26.1, L4), so code tested here behaves the same in Node.
+export function timingSafeEqual(a, b) { const x = toU8(a), y = toU8(b); if (x.length !== y.length) { const e = new RangeError('Input buffers must have the same byte length'); e.code = 'ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH'; throw e; } let d = 0; for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i]; return d === 0; }
 export class X509Certificate { constructor() { throw new Error('X509 not available in local mode'); } }
 export function sign() { throw new Error('sign not available in local mode'); }
 export function generateKeyPairSync() { throw new Error('not available in local mode'); }

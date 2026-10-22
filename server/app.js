@@ -180,7 +180,9 @@ function createHandler() {
         } else { ctx.rawBody = raw; ctx.body = {}; }
       }
       // A POST with an Idempotency-Key runs once per (user, key); a retry gets the stored answer (idempotency.js).
-      const result = await idempotency.run(ctx, async () => { let out; for (const h of m.handlers) { out = await h(ctx); } return out; });
+      // The handlers before the last are the route's guards (requireAuth, requirePerm…): a replay runs them again.
+      const result = await idempotency.run(ctx, async () => { let out; for (const h of m.handlers) { out = await h(ctx); } return out; },
+        { recheck: async () => { for (const h of m.handlers.slice(0, -1)) await h(ctx); } });
       if (ctx.idempotentReplay && !res.headersSent) res.setHeader('Idempotent-Replayed', 'true');
       // Compressed when it is large and the client accepts it (http.js sendJsonTo), off the event loop.
       if (!res.headersSent) await sendJsonTo(req, res, result === undefined ? 204 : (ctx.status || 200), result === undefined ? null : result);

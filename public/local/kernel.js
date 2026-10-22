@@ -3821,7 +3821,11 @@ function scryptSync(password, salt, keylen, opts = {}) {
 }
 function timingSafeEqual(a, b) {
   const x = toU8(a), y = toU8(b);
-  if (x.length !== y.length) return false;
+  if (x.length !== y.length) {
+    const e = new RangeError("Input buffers must have the same byte length");
+    e.code = "ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH";
+    throw e;
+  }
   let d = 0;
   for (let i = 0; i < x.length; i++) d |= x[i] ^ y[i];
   return d === 0;
@@ -7701,7 +7705,6 @@ CREATE TABLE IF NOT EXISTS disclosures (
 );
 CREATE INDEX IF NOT EXISTS idx_disclosures_client ON disclosures(client_id);
 CREATE INDEX IF NOT EXISTS idx_disclosures_updated ON disclosures(updated_at);
-CREATE INDEX IF NOT EXISTS idx_disclosures_client ON disclosures(client_id);
 
 -- County form library: templates (blank forms + fillable field definitions) and forms filled out for a client
 CREATE TABLE IF NOT EXISTS form_templates (
@@ -8803,6 +8806,9 @@ var require_crypto = __commonJS({
       if (!purpose || typeof purpose !== "string") throw new Error("subkey: a purpose is required");
       return import_buffer.Buffer.from(crypto3.hkdfSync("sha256", key, import_buffer.Buffer.from("suds-subkey-v1"), import_buffer.Buffer.from(`suds/${purpose}`), 32));
     }
+    function fieldPrint2(label, value, key = config2.indexKey) {
+      return crypto3.createHmac("sha256", key).update(`suds/field-print\0${label}\0${String(value ?? "")}`).digest("hex").slice(0, 12);
+    }
     function blindIndex2(value, key = config2.indexKey) {
       if (value === null || value === void 0) return null;
       const norm = foldText(value);
@@ -8946,6 +8952,7 @@ var require_crypto = __commonJS({
       encrypt: encrypt3,
       decrypt: decrypt3,
       blindIndex: blindIndex2,
+      fieldPrint: fieldPrint2,
       subkey,
       foldText,
       keyFingerprint,
@@ -39907,6 +39914,218 @@ var require_county2 = __commonJS({
   }
 });
 
+// server/doc-text.js
+var require_doc_text = __commonJS({
+  "server/doc-text.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
+    var MAX_TEXT = 200 * 1024;
+    var MAX_SCAN = 8 * 1024 * 1024;
+    var MAX_INFLATE = 4 * MAX_TEXT;
+    function clean2(s) {
+      return String(s || "").replace(/\s+/g, " ").trim().slice(0, MAX_TEXT);
+    }
+    var ESC = { n: "\n", r: "\r", t: "	", b: "\b", f: "\f" };
+    function pdfStrings(src, out2, budget) {
+      let i = 0;
+      const n = src.length;
+      let taken = 0;
+      while (i < n && taken < budget.left) {
+        const c = src.charCodeAt(i);
+        if (c === 40) {
+          let depth = 1;
+          let s = "";
+          i++;
+          while (i < n && depth > 0) {
+            const ch = src[i];
+            if (ch === "\\") {
+              const nx = src[i + 1] || "";
+              if (nx >= "0" && nx <= "7") {
+                let oct = "";
+                let j = i + 1;
+                while (j < n && j < i + 4 && src[j] >= "0" && src[j] <= "7") oct += src[j++];
+                s += String.fromCharCode(parseInt(oct, 8));
+                i = j;
+                continue;
+              }
+              s += ESC[nx] || nx;
+              i += 2;
+              continue;
+            }
+            if (ch === "(") depth++;
+            else if (ch === ")") {
+              depth--;
+              if (!depth) {
+                i++;
+                break;
+              }
+            }
+            s += ch;
+            i++;
+          }
+          if (s) {
+            out2.push(s);
+            taken += s.length;
+          }
+          continue;
+        }
+        if (c === 60 && src[i + 1] !== "<") {
+          let j = i + 1;
+          let hex3 = "";
+          while (j < n && src[j] !== ">") {
+            const h = src[j];
+            if (/[0-9A-Fa-f]/.test(h)) hex3 += h;
+            else if (!/\s/.test(h)) break;
+            j++;
+          }
+          if (src[j] === ">" && hex3.length) {
+            let s = "";
+            for (let k = 0; k + 1 < hex3.length; k += 2) s += String.fromCharCode(parseInt(hex3.slice(k, k + 2), 16));
+            out2.push(s);
+            taken += s.length;
+            i = j + 1;
+            continue;
+          }
+          i++;
+          continue;
+        }
+        i++;
+      }
+      budget.left -= taken;
+    }
+    function pdfText(buf) {
+      const src = buf.toString("latin1");
+      const out2 = [];
+      const budget = { left: MAX_SCAN };
+      let from = 0;
+      let streams = 0;
+      while (budget.left > 0 && streams++ < 3e3) {
+        const s = src.indexOf("stream", from);
+        if (s < 0) break;
+        let start2 = s + 6;
+        if (src[start2] === "\r") start2++;
+        if (src[start2] === "\n") start2++;
+        const end = src.indexOf("endstream", start2);
+        if (end < 0) break;
+        const raw = buf.subarray(start2, end);
+        let text;
+        try {
+          text = zlib.inflateSync(raw, { maxOutputLength: MAX_INFLATE }).toString("latin1");
+        } catch {
+          text = raw.length <= MAX_INFLATE ? raw.toString("latin1") : "";
+        }
+        pdfStrings(text, out2, budget);
+        from = end + 9;
+      }
+      return out2.join(" ");
+    }
+    function zipEntry(buf, wanted) {
+      let central = null;
+      const cdSizes = () => {
+        if (central) return central;
+        central = /* @__PURE__ */ new Map();
+        let c = buf.indexOf(import_buffer.Buffer.from([80, 75, 1, 2]));
+        while (c >= 0 && c + 46 <= buf.length && buf.readUInt32LE(c) === 33639248) {
+          const cn = buf.readUInt16LE(c + 28), cx = buf.readUInt16LE(c + 30), cc = buf.readUInt16LE(c + 32);
+          central.set(buf.toString("utf8", c + 46, c + 46 + cn), buf.readUInt32LE(c + 20));
+          c += 46 + cn + cx + cc;
+        }
+        return central;
+      };
+      let off = 0;
+      let entries2 = 0;
+      while (off + 30 <= buf.length && buf.readUInt32LE(off) === 67324752 && entries2++ < 1e4) {
+        const method = buf.readUInt16LE(off + 8), flags = buf.readUInt16LE(off + 6);
+        let csize = buf.readUInt32LE(off + 18);
+        const nlen = buf.readUInt16LE(off + 26), xlen = buf.readUInt16LE(off + 28);
+        const name = buf.toString("utf8", off + 30, off + 30 + nlen);
+        const dataStart = off + 30 + nlen + xlen;
+        if (flags & 8) {
+          const sz = cdSizes().get(name);
+          if (sz === void 0) return null;
+          csize = sz;
+        }
+        if (name === wanted) {
+          const data = buf.subarray(dataStart, dataStart + csize);
+          try {
+            return method === 8 ? zlib.inflateRawSync(data, { maxOutputLength: MAX_INFLATE }) : method === 0 && data.length <= MAX_INFLATE ? data : null;
+          } catch {
+            return null;
+          }
+        }
+        off = dataStart + csize;
+        if (flags & 8) off += 16;
+      }
+      return null;
+    }
+    function docxText(buf) {
+      const xml = zipEntry(buf, "word/document.xml");
+      if (!xml) return "";
+      return xml.toString("utf8").replace(/<\/w:p>/g, "\n").replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+    }
+    function extractText(buf, type) {
+      try {
+        if (type === "text/plain") return clean2(buf.toString("utf8", 0, MAX_SCAN));
+        if (type === "application/pdf") return clean2(pdfText(buf));
+        if (type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return clean2(docxText(buf));
+      } catch {
+      }
+      return "";
+    }
+    module.exports = { extractText };
+  }
+});
+
+// server/offload.js
+var require_offload = __commonJS({
+  "server/offload.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var WorkerCtor = null;
+    try {
+      WorkerCtor = (init_empty(), __toCommonJS(empty_exports)).Worker;
+    } catch {
+      WorkerCtor = null;
+    }
+    var JOBS = {
+      spreadsheet: () => require_spreadsheet().parseFile,
+      "doc-text": () => require_doc_text().extractText,
+      docx: () => require_text().docxToText
+    };
+    var LIMITS = { maxOldGenerationSizeMb: 512, maxYoungGenerationSizeMb: 64 };
+    var TIMEOUT_MS = 6e4;
+    var TOO_MUCH = "This file is too large or too complex to read here. Split it into smaller files.";
+    function offload(job, ...args) {
+      if (!JOBS[job]) return Promise.reject(new Error(`no such job: ${job}`));
+      if (!WorkerCtor || proc.env.SUDS_OFFLOAD === "inline") {
+        try {
+          return Promise.resolve(JOBS[job]()(...args));
+        } catch (e) {
+          return Promise.reject(e);
+        }
+      }
+      return new Promise((resolve2, reject) => {
+        let settled = false;
+        const w = new WorkerCtor((init_path(), __toCommonJS(path_exports)).join("/", "offload-worker.js"), { workerData: { job, args }, resourceLimits: LIMITS });
+        const end = (fn, v) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          w.terminate().catch(() => {
+          });
+          fn(v);
+        };
+        const timer = setTimeout(() => end(reject, new Error(TOO_MUCH)), TIMEOUT_MS);
+        w.on("message", (m) => m && m.ok ? end(resolve2, m.value) : end(reject, new Error(m && m.message || "The file could not be read")));
+        w.on("error", (e) => end(reject, new Error(e && e.code === "ERR_WORKER_OUT_OF_MEMORY" ? TOO_MUCH : e && e.message || "The file could not be read")));
+        w.on("exit", (code) => end(reject, new Error(code ? TOO_MUCH : "The file could not be read")));
+      });
+    }
+    module.exports = { offload, JOBS: Object.keys(JOBS), TIMEOUT_MS };
+  }
+});
+
 // server/importers/fhir-ehr.js
 var require_fhir_ehr = __commonJS({
   "server/importers/fhir-ehr.js"(exports, module) {
@@ -40110,7 +40329,7 @@ var require_dataimport2 = __commonJS({
         ctx.res.writeHead(200, { "Content-Type": fmt === "csv" ? "text/csv; charset=utf-8" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Content-Disposition": `attachment; filename="suds-${ctx.params.entity}-template.${fmt}"` });
         ctx.res.end(body);
       });
-      r.post("/api/imports/data/preview", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
+      r.post("/api/imports/data/preview", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
         const entity = ctx.query.get("entity");
         const def = DI.ENTITIES[entity];
         if (!def) throw badRequest("Unknown entity");
@@ -40119,7 +40338,7 @@ var require_dataimport2 = __commonJS({
         if (!buf) throw badRequest("Upload a .xlsx or .csv file");
         let parsed;
         try {
-          parsed = S.parseFile(buf, ctx.headers["x-filename"] || "");
+          parsed = await require_offload().offload("spreadsheet", buf, ctx.headers["x-filename"] || "");
         } catch (e) {
           throw badRequest("Could not read the file: " + e.message);
         }
@@ -40289,169 +40508,6 @@ var require_dataimport2 = __commonJS({
   }
 });
 
-// server/doc-text.js
-var require_doc_text = __commonJS({
-  "server/doc-text.js"(exports, module) {
-    "use strict";
-    init_globals_inject();
-    var zlib = (init_zlib(), __toCommonJS(zlib_exports));
-    var MAX_TEXT = 200 * 1024;
-    var MAX_SCAN = 8 * 1024 * 1024;
-    var MAX_INFLATE = 4 * MAX_TEXT;
-    function clean2(s) {
-      return String(s || "").replace(/\s+/g, " ").trim().slice(0, MAX_TEXT);
-    }
-    var ESC = { n: "\n", r: "\r", t: "	", b: "\b", f: "\f" };
-    function pdfStrings(src, out2, budget) {
-      let i = 0;
-      const n = src.length;
-      let taken = 0;
-      while (i < n && taken < budget.left) {
-        const c = src.charCodeAt(i);
-        if (c === 40) {
-          let depth = 1;
-          let s = "";
-          i++;
-          while (i < n && depth > 0) {
-            const ch = src[i];
-            if (ch === "\\") {
-              const nx = src[i + 1] || "";
-              if (nx >= "0" && nx <= "7") {
-                let oct = "";
-                let j = i + 1;
-                while (j < n && j < i + 4 && src[j] >= "0" && src[j] <= "7") oct += src[j++];
-                s += String.fromCharCode(parseInt(oct, 8));
-                i = j;
-                continue;
-              }
-              s += ESC[nx] || nx;
-              i += 2;
-              continue;
-            }
-            if (ch === "(") depth++;
-            else if (ch === ")") {
-              depth--;
-              if (!depth) {
-                i++;
-                break;
-              }
-            }
-            s += ch;
-            i++;
-          }
-          if (s) {
-            out2.push(s);
-            taken += s.length;
-          }
-          continue;
-        }
-        if (c === 60 && src[i + 1] !== "<") {
-          let j = i + 1;
-          let hex3 = "";
-          while (j < n && src[j] !== ">") {
-            const h = src[j];
-            if (/[0-9A-Fa-f]/.test(h)) hex3 += h;
-            else if (!/\s/.test(h)) break;
-            j++;
-          }
-          if (src[j] === ">" && hex3.length) {
-            let s = "";
-            for (let k = 0; k + 1 < hex3.length; k += 2) s += String.fromCharCode(parseInt(hex3.slice(k, k + 2), 16));
-            out2.push(s);
-            taken += s.length;
-            i = j + 1;
-            continue;
-          }
-          i++;
-          continue;
-        }
-        i++;
-      }
-      budget.left -= taken;
-    }
-    function pdfText(buf) {
-      const src = buf.toString("latin1");
-      const out2 = [];
-      const budget = { left: MAX_SCAN };
-      let from = 0;
-      let streams = 0;
-      while (budget.left > 0 && streams++ < 3e3) {
-        const s = src.indexOf("stream", from);
-        if (s < 0) break;
-        let start2 = s + 6;
-        if (src[start2] === "\r") start2++;
-        if (src[start2] === "\n") start2++;
-        const end = src.indexOf("endstream", start2);
-        if (end < 0) break;
-        const raw = buf.subarray(start2, end);
-        let text;
-        try {
-          text = zlib.inflateSync(raw, { maxOutputLength: MAX_INFLATE }).toString("latin1");
-        } catch {
-          text = raw.length <= MAX_INFLATE ? raw.toString("latin1") : "";
-        }
-        pdfStrings(text, out2, budget);
-        from = end + 9;
-      }
-      return out2.join(" ");
-    }
-    function zipEntry(buf, wanted) {
-      let central = null;
-      const cdSizes = () => {
-        if (central) return central;
-        central = /* @__PURE__ */ new Map();
-        let c = buf.indexOf(import_buffer.Buffer.from([80, 75, 1, 2]));
-        while (c >= 0 && c + 46 <= buf.length && buf.readUInt32LE(c) === 33639248) {
-          const cn = buf.readUInt16LE(c + 28), cx = buf.readUInt16LE(c + 30), cc = buf.readUInt16LE(c + 32);
-          central.set(buf.toString("utf8", c + 46, c + 46 + cn), buf.readUInt32LE(c + 20));
-          c += 46 + cn + cx + cc;
-        }
-        return central;
-      };
-      let off = 0;
-      let entries2 = 0;
-      while (off + 30 <= buf.length && buf.readUInt32LE(off) === 67324752 && entries2++ < 1e4) {
-        const method = buf.readUInt16LE(off + 8), flags = buf.readUInt16LE(off + 6);
-        let csize = buf.readUInt32LE(off + 18);
-        const nlen = buf.readUInt16LE(off + 26), xlen = buf.readUInt16LE(off + 28);
-        const name = buf.toString("utf8", off + 30, off + 30 + nlen);
-        const dataStart = off + 30 + nlen + xlen;
-        if (flags & 8) {
-          const sz = cdSizes().get(name);
-          if (sz === void 0) return null;
-          csize = sz;
-        }
-        if (name === wanted) {
-          const data = buf.subarray(dataStart, dataStart + csize);
-          try {
-            return method === 8 ? zlib.inflateRawSync(data, { maxOutputLength: MAX_INFLATE }) : method === 0 && data.length <= MAX_INFLATE ? data : null;
-          } catch {
-            return null;
-          }
-        }
-        off = dataStart + csize;
-        if (flags & 8) off += 16;
-      }
-      return null;
-    }
-    function docxText(buf) {
-      const xml = zipEntry(buf, "word/document.xml");
-      if (!xml) return "";
-      return xml.toString("utf8").replace(/<\/w:p>/g, "\n").replace(/<[^>]*>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'");
-    }
-    function extractText(buf, type) {
-      try {
-        if (type === "text/plain") return clean2(buf.toString("utf8", 0, MAX_SCAN));
-        if (type === "application/pdf") return clean2(pdfText(buf));
-        if (type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return clean2(docxText(buf));
-      } catch {
-      }
-      return "";
-    }
-    module.exports = { extractText };
-  }
-});
-
 // server/routes/documents.js
 var require_documents = __commonJS({
   "server/routes/documents.js"(exports, module) {
@@ -40464,7 +40520,7 @@ var require_documents = __commonJS({
     var { badRequest, notFound, contentDisposition, fileHeaders } = require_http();
     var { validate } = require_validate();
     var { uuid: uuid2 } = require_crypto();
-    var { extractText } = require_doc_text();
+    var textOf = (file) => require_offload().offload("doc-text", file.buf, file.type).then((t) => t || null, () => null);
     var MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
     var FILE_TYPES = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx", "application/msword": "doc", "text/plain": "txt" };
     function sniff(buf) {
@@ -40554,9 +40610,10 @@ var require_documents = __commonJS({
         audit3.log({ user: ctx.user, action: "document.view", entity: "policy_document", entityId: d.id, ip: ctx.ip });
         return { document: out2(d) };
       });
-      r.post("/api/documents", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
+      r.post("/api/documents", auth3.requireAuth, auth3.requirePerm("documents:write"), async (ctx) => {
         const v = withRoles(validate(asStored(ctx.body), shape), ctx.body);
         const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, "File");
+        const searchText = file ? await textOf(file) : null;
         if (!file && !v.powerdms_url) throw badRequest("A file or a PowerDMS link is required");
         rules.assertWrite("policy_documents", v, ctx);
         const id = uuid2();
@@ -40572,7 +40629,7 @@ var require_documents = __commonJS({
           file ? file.type : null,
           file ? file.buf.length : 0,
           file ? file.b64 : null,
-          file ? extractText(file.buf, file.type) || null : null,
+          searchText,
           ctx.user.id,
           v.powerdms_url || null,
           v.revision || null,
@@ -40582,7 +40639,7 @@ var require_documents = __commonJS({
         ctx.status = 201;
         return { id };
       });
-      r.put("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:write"), (ctx) => {
+      r.put("/api/documents/:id", auth3.requireAuth, auth3.requirePerm("documents:write"), async (ctx) => {
         const d = db3.one(`SELECT id, updated_at, is_active, powerdms_url, revision, ack_roles, file_b64 IS NOT NULL has_file FROM policy_documents WHERE id=?`, ctx.params.id);
         if (!d) throw notFound();
         require_crud().assertFresh(ctx, d, "document");
@@ -40599,7 +40656,7 @@ var require_documents = __commonJS({
         if (ctx.body.file_url || ctx.body.file) {
           const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, "File");
           sets.push("file_b64=?", "content_type=?", "bytes=?", "filename=?", "search_text=?");
-          params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `document.${FILE_TYPES[file.type]}`, extractText(file.buf, file.type) || null);
+          params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `document.${FILE_TYPES[file.type]}`, await textOf(file));
         }
         if (!sets.length) return { ok: true, updated_at: d.updated_at };
         const stamp2 = db3.now();
@@ -43124,6 +43181,16 @@ ${text}`) } };
 ${content}`) } };
       }).filter((p) => p.content || p.title);
     }
+    function fromDocxText(text, filename = "") {
+      const pages = splitTextPages(text);
+      return pages.length ? pages : [{ external_id: null, title: filename.replace(/\.[^.]+$/, ""), content: text, captured_at: T.sniffDate(text.slice(0, 300)), metadata: { source: "onenote", filename, hints: T.sniffClientHints(text) } }];
+    }
+    function isDocx(buf, filename = "") {
+      const ext = (filename.split(".").pop() || "").toLowerCase();
+      if (ext === "mht" || ext === "mhtml" || /^(From|MIME-Version|Content-Type):/i.test(buf.toString("latin1", 0, 64))) return false;
+      if (ext === "html" || ext === "htm" || /^\s*<(!doctype|html)/i.test(buf.toString("utf8", 0, 200))) return false;
+      return ext === "docx" || buf[0] === 80 && buf[1] === 75;
+    }
     function parseFile(buf, filename = "") {
       const ext = (filename.split(".").pop() || "").toLowerCase();
       if (ext === "mht" || ext === "mhtml" || /^(From|MIME-Version|Content-Type):/i.test(buf.toString("latin1", 0, 64))) {
@@ -43137,11 +43204,7 @@ ${content}`) } };
         const chunks = html.split(/<div[^>]+page-break-before:\s*always[^>]*>/i);
         return chunks.length > 1 ? chunks.map((c, i) => pageFromHtml(c, { filename: `${filename}#${i + 1}` })).filter((p) => p.content) : [pageFromHtml(html, { filename })];
       }
-      if (ext === "docx" || buf[0] === 80 && buf[1] === 75) {
-        const text2 = T.docxToText(buf);
-        const pages2 = splitTextPages(text2);
-        return pages2.length ? pages2 : [{ external_id: null, title: filename.replace(/\.[^.]+$/, ""), content: text2, captured_at: T.sniffDate(text2.slice(0, 300)), metadata: { source: "onenote", filename, hints: T.sniffClientHints(text2) } }];
-      }
+      if (ext === "docx" || buf[0] === 80 && buf[1] === 75) return fromDocxText(T.docxToText(buf), filename);
       if (ext === "pdf" || buf.toString("latin1", 0, 5) === "%PDF-") throw new Error("PDF export is not supported. In OneNote use File \u2192 Export \u2192 Single File Web Page (.mht) or Word (.docx).");
       const text = buf.toString("utf8");
       const pages = splitTextPages(text);
@@ -43198,7 +43261,7 @@ ${content}`) } };
       }
       return items;
     }
-    module.exports = { parseFile, pageFromHtml, splitTextPages, listNotebooks, listPages, fetchPages, graphToken };
+    module.exports = { parseFile, fromDocxText, isDocx, pageFromHtml, splitTextPages, listNotebooks, listPages, fetchPages, graphToken };
   }
 });
 
@@ -43285,7 +43348,7 @@ var require_imports2 = __commonJS({
       return o;
     }
     module.exports = (r) => {
-      r.post("/api/imports/upload", auth3.requireAuth, auth3.requirePerm("imports:write"), (ctx) => {
+      r.post("/api/imports/upload", auth3.requireAuth, auth3.requirePerm("imports:write"), async (ctx) => {
         let source, filename, buf;
         if (ctx.body && ctx.body.text !== void 0) {
           const v = validate(ctx.body, { source: { type: "string", required: true, enum: ["pocket_ai", "onenote", "generic"] }, filename: { type: "string", maxLen: 200 }, text: { type: "string", required: true, maxLen: 2e7 } });
@@ -43301,11 +43364,12 @@ var require_imports2 = __commonJS({
         if (!buf.length) throw badRequest("Empty upload");
         let items;
         try {
+          const notes = async () => onenote.isDocx(buf, filename) ? onenote.fromDocxText(await require_offload().offload("docx", buf), filename) : onenote.parseFile(buf, filename);
           if (source === "pocket_ai") items = pocket.parse(buf, { filename });
-          else if (source === "onenote") items = onenote.parseFile(buf, filename);
+          else if (source === "onenote") items = await notes();
           else {
             const ext = filename.split(".").pop().toLowerCase();
-            items = ["json"].includes(ext) ? pocket.parse(buf, { filename }) : onenote.parseFile(buf, filename);
+            items = ["json"].includes(ext) ? pocket.parse(buf, { filename }) : await notes();
           }
         } catch (e) {
           throw badRequest("Could not parse file: " + e.message);
@@ -46030,11 +46094,11 @@ var require_policies = __commonJS({
       const filename = typeof body.filename === "string" ? body.filename.slice(0, 200) : "powerdms-report";
       return { buf, filename };
     }
-    function readReport(body) {
+    async function readReport(body) {
       const { buf, filename } = reportFile(body);
       let parsed;
       try {
-        parsed = require_spreadsheet().parseFile(buf, filename);
+        parsed = await require_offload().offload("spreadsheet", buf, filename);
       } catch {
         throw badRequest("This file could not be read as an Excel workbook or a CSV file");
       }
@@ -46078,13 +46142,13 @@ var require_policies = __commonJS({
         audit3.log({ user: ctx.user, action: "policy.compliance_view", entity: "policy_acknowledgement", ip: ctx.ip, details: { documents: c.documents.length, staff: staff.length } });
         return { documents: c.documents, staff, outstanding: staff.reduce((n, s) => n + (s.required - s.signed), 0) };
       });
-      r.post("/api/policies/report/preview", auth3.requireAuth, auth3.requirePerm("policies:manage"), (ctx) => {
-        const m = readReport(ctx.body);
+      r.post("/api/policies/report/preview", auth3.requireAuth, auth3.requirePerm("policies:manage"), async (ctx) => {
+        const m = await readReport(ctx.body);
         audit3.log({ user: ctx.user, action: "policy.report_preview", entity: "policy_ack_import", ip: ctx.ip, details: { sha256: m.sha256, rows: m.rows.length, counts: m.counts } });
         return { filename: m.filename, sheet: m.sheet, columns: m.columns, counts: m.counts, labels: OUTCOME_LABELS, rows: m.rows.slice(0, PREVIEW_ROWS), truncated: m.rows.length > PREVIEW_ROWS, total: m.rows.length };
       });
-      r.post("/api/policies/report/import", auth3.requireAuth, auth3.requirePerm("policies:manage"), (ctx) => {
-        const m = readReport(ctx.body);
+      r.post("/api/policies/report/import", auth3.requireAuth, auth3.requirePerm("policies:manage"), async (ctx) => {
+        const m = await readReport(ctx.body);
         const toRecord = m.rows.filter((x) => x.outcome === "record");
         const id = uuid2();
         const now2 = db3.now();
@@ -52686,7 +52750,7 @@ var require_idempotency = __commonJS({
       return sha2562(`${ctx.method} ${ctx.path}?${ctx.query ? ctx.query.toString() : ""}
 ${body}`);
     }
-    async function run2(ctx, exec) {
+    async function run2(ctx, exec, { recheck = null } = {}) {
       if (!applies(ctx)) return exec();
       const key = String(ctx.headers["idempotency-key"]);
       if (!key || key.length > 255 || !/^[\x21-\x7e]+$/.test(key)) throw new HttpError3(400, "Idempotency-Key must be 1-255 printable characters");
@@ -52704,6 +52768,12 @@ ${body}`);
         if (prior.request_hash !== hash2 || prior.user_id !== ctx.user.id) {
           audit3.log({ user: ctx.user, action: "idempotency.mismatch", ip: ctx.ip, success: false, details: { path: ctx.path } });
           throw new HttpError3(422, "This request was already sent with the same Idempotency-Key and different content. Reload the form and try again.");
+        }
+        if (recheck) await recheck();
+        const clientId = ctx.body && typeof ctx.body.client_id === "string" ? ctx.body.client_id : null;
+        if (clientId && !require_auth2().canAccessClient(ctx.user, clientId)) {
+          audit3.log({ user: ctx.user, action: "idempotency.replay.denied", ip: ctx.ip, success: false, details: { path: ctx.path } });
+          throw new HttpError3(403, "You no longer have access to this client");
         }
         audit3.log({ user: ctx.user, action: "idempotency.replay", ip: ctx.ip, details: { path: ctx.path, status: prior.status, first_at: prior.created_at } });
         ctx.status = prior.status;
@@ -52973,13 +53043,19 @@ var require_app2 = __commonJS({
               ctx.body = {};
             }
           }
-          const result = await idempotency2.run(ctx, async () => {
-            let out2;
-            for (const h of m.handlers) {
-              out2 = await h(ctx);
-            }
-            return out2;
-          });
+          const result = await idempotency2.run(
+            ctx,
+            async () => {
+              let out2;
+              for (const h of m.handlers) {
+                out2 = await h(ctx);
+              }
+              return out2;
+            },
+            { recheck: async () => {
+              for (const h of m.handlers.slice(0, -1)) await h(ctx);
+            } }
+          );
           if (ctx.idempotentReplay && !res.headersSent) res.setHeader("Idempotent-Replayed", "true");
           if (!res.headersSent) await sendJsonTo(req, res, result === void 0 ? 204 : ctx.status || 200, result === void 0 ? null : result);
         } catch (err2) {
@@ -53977,17 +54053,26 @@ var require_auth2 = __commonJS({
         fail(reason);
       };
       if (!user) {
-        await verifyPasswordAsync(password || "", "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA==");
-        failName("unknown user");
+        await oneAtATime(`name:${name}`, async () => {
+          if (nameLocked(name)) locked(who);
+          await verifyPasswordAsync(password || "", "scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA==$AA==");
+          failName("unknown user");
+        });
       }
       if (!user.is_active && (user.access_status === "pending" || user.access_status === "declined") && !pendingWipe) {
-        if (!await verifyPasswordAsync(password || "", user.password_hash)) failName("bad password");
+        await oneAtATime(`name:${name}`, async () => {
+          if (nameLocked(name)) locked(who);
+          if (!await verifyPasswordAsync(password || "", user.password_hash)) failName("bad password");
+        });
         audit3.log({ user: who, action: "auth.login.access_" + user.access_status, ip: ctx.ip, success: false });
         throw new HttpError3(403, user.access_status === "pending" ? "Your request is waiting for an administrator to approve it. You can sign in once it has been approved." : "Your request for an account was not approved. Ask your administrator if you think this is a mistake.", { accessPending: user.access_status === "pending", accessDeclined: user.access_status === "declined" });
       }
       if (!user.is_active) {
-        if (await verifyPasswordAsync(password || "", user.password_hash) && pendingWipe) wipeRequired(true);
-        failName("inactive");
+        await oneAtATime(`name:${name}`, async () => {
+          if (nameLocked(name)) locked(who);
+          if (await verifyPasswordAsync(password || "", user.password_hash) && pendingWipe) wipeRequired(true);
+          failName("inactive");
+        });
       }
       if (isLocked(user)) locked(user);
       await oneAtATime(`account:${user.id}`, async () => {
@@ -56432,6 +56517,7 @@ var DUMMY_HASH = "scrypt$0$0$0$AA==$AA==";
 function ensureTables() {
   import_db.default.get().exec(`CREATE TABLE IF NOT EXISTS sync_seen (table_name TEXT NOT NULL, id TEXT NOT NULL, updated_at TEXT, PRIMARY KEY (table_name, id))`);
   import_db.default.get().exec(`CREATE TABLE IF NOT EXISTS sync_server_tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
+  import_db.default.get().exec(`CREATE TABLE IF NOT EXISTS sync_base (table_name TEXT NOT NULL, id TEXT NOT NULL, prints TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
   loadNotices();
 }
 var NOTICES = "office_notices";
@@ -56468,6 +56554,54 @@ var seen = (t, id, at) => import_db.default.run(`INSERT OR REPLACE INTO sync_see
 var seenAt = (t, id) => import_db.default.one(`SELECT updated_at FROM sync_seen WHERE table_name=? AND id=?`, t, id)?.updated_at ?? void 0;
 var cols = (t) => import_db.default.all(`PRAGMA table_info(${t})`).map((c) => c.name);
 var stamp = (row) => row.updated_at || row.created_at || null;
+var forget = (t, id) => {
+  import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t, id);
+  import_db.default.run(`DELETE FROM sync_base WHERE table_name=? AND id=?`, t, id);
+};
+var forgetAll = () => {
+  import_db.default.run(`DELETE FROM sync_seen`);
+  import_db.default.run(`DELETE FROM sync_base`);
+};
+var NOT_FIELDS = /* @__PURE__ */ new Set(["id", "updated_at", "created_at"]);
+var mergeable = (t) => t.name !== "users" && !t.serverOwned;
+var fieldPrint = (t, k, v) => (0, import_crypto2.fieldPrint)(`${t.name}.${k}`, v);
+function keepBase(t, wire) {
+  if (!mergeable(t) || !wire || typeof wire.id !== "string") return;
+  const prints = {};
+  for (const [k, v] of Object.entries(wire)) if (!NOT_FIELDS.has(k) && !k.endsWith("_idx") && v !== void 0) prints[k] = fieldPrint(t, k, v);
+  import_db.default.run(`INSERT OR REPLACE INTO sync_base(table_name,id,prints) VALUES(?,?,?)`, t.name, wire.id, JSON.stringify(prints));
+}
+function baseOf(t, id) {
+  const r = import_db.default.one(`SELECT prints FROM sync_base WHERE table_name=? AND id=?`, t.name, id);
+  try {
+    return r ? JSON.parse(r.prints) : null;
+  } catch {
+    return null;
+  }
+}
+function mergeFields(t, existing, raw, oursNewer) {
+  const base = baseOf(t, existing.id);
+  if (!base) return null;
+  const ours = exportRow(t, existing);
+  if (!ours) return null;
+  const keep = {};
+  const lost = [];
+  const kept = [];
+  for (const k of Object.keys(raw)) {
+    if (NOT_FIELDS.has(k) || k.endsWith("_idx") || raw[k] === void 0 || ours[k] === void 0 || base[k] === void 0) continue;
+    if (fieldPrint(t, k, ours[k]) === base[k]) continue;
+    const office = fieldPrint(t, k, raw[k]) !== base[k];
+    if (!office || String(ours[k] ?? "") === String(raw[k] ?? "")) {
+      keep[k] = ours[k];
+      continue;
+    }
+    if (oursNewer) {
+      keep[k] = ours[k];
+      kept.push(k);
+    } else lost.push(k);
+  }
+  return { keep, lost, kept };
+}
 var { exportRow, importRow } = import_sync_tables.default;
 function mergeUser(localId, serverId) {
   for (const [t, c] of import_sync_tables.default.user_refs) {
@@ -56594,7 +56728,7 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
       import_db.default.savepoint(
         () => {
           import_db.default.run(`DELETE FROM ${t.name} WHERE id=?`, id);
-          import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, id);
+          forget(t.name, id);
         },
         (err2) => skipped.push({ table: t.name, id, reason: String(err2 && err2.message || "could not be removed").slice(0, 200) })
       );
@@ -56643,7 +56777,7 @@ function removeUntouched(t, extra = "", params = []) {
   for (const id of ids) {
     import_db.default.savepoint(() => {
       import_db.default.run(`DELETE FROM ${t.name} WHERE id=?`, id);
-      import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, id);
+      forget(t.name, id);
       n++;
     }, () => {
     });
@@ -56702,23 +56836,34 @@ function applyRow(t, raw, existingCols, toServer, conflicts) {
     const clash = import_db.default.one(`SELECT id FROM clients WHERE client_code=? AND id<>?`, raw.client_code, raw.id);
     if (clash) import_db.default.run(`UPDATE clients SET client_code=?, updated_at=? WHERE id=?`, raw.client_code + "-D", import_db.default.now(), clash.id);
   }
+  let keep = null;
   if (existing && t.name !== "users" && !t.serverOwned) {
     const known = seenAt(t.name, existing.id);
     const untouched2 = known !== void 0 && known === stamp(existing);
-    if (!untouched2 && toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER)) return false;
     if (!untouched2) {
-      const lost = changedColumns(t, existing, raw, existingCols);
+      const oursNewer = toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER);
+      const merged = mergeFields(t, existing, raw, oursNewer);
+      if (!merged && oursNewer) return false;
+      const lost = merged ? merged.lost : changedColumns(t, existing, raw, existingCols);
       if (lost.length) {
         conflicts.push({ table: t.name, id: raw.id, label: t.name === "clients" ? existing.client_code : null, columns: lost });
         import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.conflict", entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, details: { columns: lost, kept: "office" } });
       }
+      if (merged && Object.keys(merged.keep).length) {
+        keep = merged.keep;
+        import_audit.default.log({ user: { username: import_db.default.getSetting("sync_username", "device") }, action: "sync.merged", entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, details: { columns: Object.keys(keep), over_office: merged.kept.length ? merged.kept : void 0 } });
+      }
     }
   }
-  const o = importRow(t, raw, existingCols);
+  const o = importRow(t, keep ? { ...raw, ...keep } : raw, existingCols);
   const keys = Object.keys(o).filter((k) => k !== "id");
   if (existing) import_db.default.run(`UPDATE ${t.name} SET ${keys.map((k) => `${k}=?`).join(", ")} WHERE id=?`, ...keys.map((k) => o[k]), raw.id);
   else import_db.default.run(`INSERT INTO ${t.name}(id,${keys.join(",")}) VALUES(?,${keys.map(() => "?").join(",")})`, raw.id, ...keys.map((k) => o[k]));
-  seen(t.name, raw.id, stamp(o));
+  if (keep) {
+    if (existingCols.includes("updated_at")) import_db.default.run(`UPDATE ${t.name} SET updated_at=? WHERE id=?`, import_db.default.now(), raw.id);
+    seen(t.name, raw.id, existingCols.includes("updated_at") ? stamp(o) : null);
+  } else seen(t.name, raw.id, stamp(o));
+  keepBase(t, raw);
   if (t.name === "clients" && o.merged_into && (!existing || existing.merged_into !== o.merged_into)) repointMergedClient(raw.id, o.merged_into);
   return true;
 }
@@ -56737,7 +56882,7 @@ function applyTombstone(t, ts, toServer) {
     const untouched2 = known !== void 0 && known === stamp(existing);
     if (untouched2 || toServer(stamp(existing)) < ts.deleted_at) {
       import_db.default.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id);
-      import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, ts.id);
+      forget(t.name, ts.id);
     }
   }
   import_db.default.run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, t.name, ts.id, ts.deleted_at);
@@ -56783,11 +56928,11 @@ function settleRejections(rejections, chunk, conflicts) {
     const t = import_sync_tables.default.tables.find((y) => y.name === x.table);
     if (x.reason === "purged") {
       import_db.default.run(`DELETE FROM ${x.table} WHERE id=?`, x.id);
-      import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, x.table, x.id);
+      forget(x.table, x.id);
     } else if (x.reason === import_sync_tables.default.DELETED_AT_OFFICE) {
       import_db.default.savepoint(() => {
         import_db.default.run(`DELETE FROM ${x.table} WHERE id=?`, x.id);
-        import_db.default.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, x.table, x.id);
+        forget(x.table, x.id);
       }, () => seen(x.table, x.id, stamp(r)));
     } else {
       seen(x.table, x.id, stamp(r));
@@ -56913,7 +57058,7 @@ async function uploadBlobs(server, token2, onProgress) {
   return sent;
 }
 function resetExchangeState() {
-  import_db.default.run(`DELETE FROM sync_seen`);
+  forgetAll();
   import_db.default.run(`DELETE FROM settings WHERE key='sync_cursor' OR key LIKE 'sync_cursor:%' OR key LIKE 'sync_blob:%'`);
   import_db.default.setSetting("sync_pushed", NEVER);
 }
@@ -56936,7 +57081,10 @@ async function pushAll(server, token2, officeUserId, onProgress) {
     for (const w of res.warnings || []) conflicts.push({ table: w.table, id: w.id, label: null, columns: [], reason: w.reason, warning: true });
     for (const [k, v] of Object.entries(res.applied || {})) if (typeof v === "number") pushedCounts[k] = (pushedCounts[k] || 0) + v;
     import_db.default.transaction(() => {
-      for (const [table, rows] of Object.entries(chunks[i])) for (const r of rows) if (!rejectedIds.has(table + ":" + r.id)) seen(table, r.id, stamp(r));
+      for (const [table, rows] of Object.entries(chunks[i])) for (const r of rows) if (!rejectedIds.has(table + ":" + r.id)) {
+        seen(table, r.id, stamp(r));
+        keepBase(import_sync_tables.default.tables.find((t) => t.name === table), r);
+      }
       settleRejections(res.rejected || [], chunks[i], conflicts);
     });
   }
@@ -57048,7 +57196,7 @@ async function run({ server, username, password, code, fieldDevice = false, onPr
       if (known === null) import_db.default.setSetting("office_db_generation", generation);
       if (pulled.full_resync_required) {
         onProgress("This device has been offline a long time; rebuilding from the office copy\u2026");
-        import_db.default.run(`DELETE FROM sync_seen`);
+        forgetAll();
         since = NEVER;
         import_db.default.run(`DELETE FROM settings WHERE key='sync_cursor' OR key LIKE 'sync_cursor:%'`);
         if (pages > 20) throw new import_http.HttpError(409, pulled.reason || "This device needs to be set up again from the office server");
@@ -58878,11 +59026,17 @@ async function handle(method, path, body, headers = {}) {
       ctx.rawBody = import_buffer.Buffer.from(body);
       ctx.body = {};
     } else ctx.body = body || {};
-    const result = await import_idempotency.default.run(ctx, async () => {
-      let out2;
-      for (const h of m.handlers) out2 = await h(ctx);
-      return out2;
-    });
+    const result = await import_idempotency.default.run(
+      ctx,
+      async () => {
+        let out2;
+        for (const h of m.handlers) out2 = await h(ctx);
+        return out2;
+      },
+      { recheck: async () => {
+        for (const h of m.handlers.slice(0, -1)) await h(ctx);
+      } }
+    );
     const setCookie = res.headers["set-cookie"];
     if (setCookie) {
       const mm = /suds_session=([^;]*)/.exec(setCookie);

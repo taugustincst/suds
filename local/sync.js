@@ -12,7 +12,7 @@ import db from '../server/db.js';
 import auth from '../server/auth.js';
 import audit from '../server/audit.js';
 import { HttpError } from '../server/http.js';
-import { encrypt, decrypt, blindIndex, uuid } from '../server/crypto.js';
+import { encrypt, decrypt, blindIndex, fieldPrint as print, uuid } from '../server/crypto.js';
 import SYNC from '../server/sync-tables.js';
 import FIELD from '../server/field-scope.js';
 import SUPPLIES from '../server/supplies.js';
@@ -49,6 +49,9 @@ export function ensureTables() {
   // Tombstones the office sent us. They are recorded in the local tombstones table like any other delete so
   // the cascade works, but they are the office's deletions, not ours, and must never be echoed back.
   db.get().exec(`CREATE TABLE IF NOT EXISTS sync_server_tombstones (table_name TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
+  // Each row's fields as last exchanged, as keyed fingerprints (keepBase below), so an edit here and one at the office
+  // to different fields of the same record are merged rather than one of them lost.
+  db.get().exec(`CREATE TABLE IF NOT EXISTS sync_base (table_name TEXT NOT NULL, id TEXT NOT NULL, prints TEXT NOT NULL, PRIMARY KEY (table_name, id))`);
   loadNotices();
 }
 // The change notices the office named in its pulls (server/routes/sync.js exportInto `notices`), with whose edit each
@@ -83,6 +86,49 @@ const seen = (t, id, at) => db.run(`INSERT OR REPLACE INTO sync_seen(table_name,
 const seenAt = (t, id) => db.one(`SELECT updated_at FROM sync_seen WHERE table_name=? AND id=?`, t, id)?.updated_at ?? undefined;
 const cols = (t) => db.all(`PRAGMA table_info(${t})`).map(c => c.name);
 const stamp = (row) => row.updated_at || row.created_at || null;
+/** This device no longer holds the row as exchanged (it was removed here, or the exchange starts again). */
+const forget = (t, id) => { db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t, id); db.run(`DELETE FROM sync_base WHERE table_name=? AND id=?`, t, id); };
+const forgetAll = () => { db.run(`DELETE FROM sync_seen`); db.run(`DELETE FROM sync_base`); };
+
+// ---- merging a record edited at both ends, field by field (security review of 1.26.0, M2) ----
+// Whole-row last-write-wins lost one side's edit whenever the office and this device each changed a different
+// field of the same record between syncs. To tell which side changed which field, this device keeps what each
+// field was when the row was last exchanged: a keyed fingerprint per column, never the value, so it holds no
+// second copy of anything. A field changed only here keeps this device's value, one changed only at the office
+// takes the office's, and only a field changed at both ends is decided by which edit is newer.
+const NOT_FIELDS = new Set(['id', 'updated_at', 'created_at']);
+const mergeable = (t) => t.name !== 'users' && !t.serverOwned;
+const fieldPrint = (t, k, v) => print(`${t.name}.${k}`, v);
+/** Record `wire` (a row as the office and this device exchange it: plaintext, no blind indexes) as the row's base. */
+function keepBase(t, wire) {
+  if (!mergeable(t) || !wire || typeof wire.id !== 'string') return;
+  const prints = {};
+  for (const [k, v] of Object.entries(wire)) if (!NOT_FIELDS.has(k) && !k.endsWith('_idx') && v !== undefined) prints[k] = fieldPrint(t, k, v);
+  db.run(`INSERT OR REPLACE INTO sync_base(table_name,id,prints) VALUES(?,?,?)`, t.name, wire.id, JSON.stringify(prints));
+}
+function baseOf(t, id) {
+  const r = db.one(`SELECT prints FROM sync_base WHERE table_name=? AND id=?`, t.name, id);
+  try { return r ? JSON.parse(r.prints) : null; } catch { return null; }
+}
+/**
+ * The office row `raw` against this device's unsent edit of `existing`. Null when there is no base to compare with
+ * (a row last exchanged before 1.26.1): the row is then weighed whole, as before. Otherwise `keep` is this device's
+ * value for each field to keep, `lost` the fields the office's newer edit replaced, `kept` those this device's newer
+ * edit kept over the office's.
+ */
+function mergeFields(t, existing, raw, oursNewer) {
+  const base = baseOf(t, existing.id); if (!base) return null;
+  const ours = exportRow(t, existing); if (!ours) return null;
+  const keep = {}; const lost = []; const kept = [];
+  for (const k of Object.keys(raw)) {
+    if (NOT_FIELDS.has(k) || k.endsWith('_idx') || raw[k] === undefined || ours[k] === undefined || base[k] === undefined) continue;
+    if (fieldPrint(t, k, ours[k]) === base[k]) continue; // not changed here
+    const office = fieldPrint(t, k, raw[k]) !== base[k];
+    if (!office || String(ours[k] ?? '') === String(raw[k] ?? '')) { keep[k] = ours[k]; continue; }
+    if (oursNewer) { keep[k] = ours[k]; kept.push(k); } else lost.push(k);
+  }
+  return { keep, lost, kept };
+}
 
 // Row marshalling lives in server/sync-tables.js: the two copies this replaces had already drifted.
 const { exportRow, importRow } = SYNC;
@@ -221,7 +267,7 @@ function applyPull(payload, conflicts = [], skipped = [], officeUserId = null) {
       const row = db.one(`SELECT * FROM ${t.name} WHERE id=?`, id); if (!row) continue;
       if (seenAt(t.name, id) !== stamp(row)) { skipped.push({ table: t.name, id, reason: 'kept on this device: it has changes not yet sent to the office' }); continue; }
       if (anotherMayRead(t, row, officeUserId)) continue;
-      db.savepoint(() => { db.run(`DELETE FROM ${t.name} WHERE id=?`, id); db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, id); },
+      db.savepoint(() => { db.run(`DELETE FROM ${t.name} WHERE id=?`, id); forget(t.name, id); },
         (err) => skipped.push({ table: t.name, id, reason: String(err && err.message || 'could not be removed').slice(0, 200) }));
     }
     if (payload.device_scope === 'field' && payload.field && typeof payload.field.window_start === 'string') pruneField(payload.field.window_start);
@@ -277,7 +323,7 @@ function removeUntouched(t, extra = '', params = []) {
   const ids = db.all(`SELECT x.id FROM ${t.name} x WHERE ${untouched(t.name)} ${extra} ${keep}`, ...params).map(r => r.id);
   let n = 0;
   for (const id of ids) {
-    db.savepoint(() => { db.run(`DELETE FROM ${t.name} WHERE id=?`, id); db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, id); n++; }, () => {});
+    db.savepoint(() => { db.run(`DELETE FROM ${t.name} WHERE id=?`, id); forget(t.name, id); n++; }, () => {});
   }
   return n;
 }
@@ -341,24 +387,34 @@ function applyRow(t, raw, existingCols, toServer, conflicts) {
   if (t.name === 'clients') { const clash = db.one(`SELECT id FROM clients WHERE client_code=? AND id<>?`, raw.client_code, raw.id); if (clash) db.run(`UPDATE clients SET client_code=?, updated_at=? WHERE id=?`, raw.client_code + '-D', db.now(), clash.id); }
   // A server-owned table (supply counts) is the office's alone: whatever this device holds is replaced,
   // never weighed by timestamp — a count edited here would otherwise have stuck until the office touched it.
+  let keep = null;
   if (existing && t.name !== 'users' && !t.serverOwned) {
     const known = seenAt(t.name, existing.id);
     const untouched = known !== undefined && known === stamp(existing);
-    if (!untouched && toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER)) return false; // our edit is newer; it gets pushed
     if (!untouched) {
-      // The office edit is newer, so it replaces an edit made here that was never sent. That is the
-      // rule; being silent about it was not. Column names only -- the values may be PHI.
-      const lost = changedColumns(t, existing, raw, existingCols);
+      const oursNewer = toServer(stamp(existing)) > (raw.updated_at || raw.created_at || NEVER);
+      const merged = mergeFields(t, existing, raw, oursNewer);
+      if (!merged && oursNewer) return false; // our edit is newer; it gets pushed
+      // The office's edit replaces an edit made here that was never sent, in whole (no base) or in the fields both
+      // changed. That is the rule; being silent about it was not. Column names only -- the values may be PHI.
+      const lost = merged ? merged.lost : changedColumns(t, existing, raw, existingCols);
       if (lost.length) {
         conflicts.push({ table: t.name, id: raw.id, label: t.name === 'clients' ? existing.client_code : null, columns: lost });
         audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.conflict', entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, details: { columns: lost, kept: 'office' } });
       }
+      if (merged && Object.keys(merged.keep).length) {
+        keep = merged.keep;
+        audit.log({ user: { username: db.getSetting('sync_username', 'device') }, action: 'sync.merged', entity: t.name, entityId: raw.id, clientId: t.clientCol ? raw[t.clientCol] : null, details: { columns: Object.keys(keep), over_office: merged.kept.length ? merged.kept : undefined } });
+      }
     }
   }
-  const o = importRow(t, raw, existingCols); const keys = Object.keys(o).filter(k => k !== 'id');
+  const o = importRow(t, keep ? { ...raw, ...keep } : raw, existingCols); const keys = Object.keys(o).filter(k => k !== 'id');
   if (existing) db.run(`UPDATE ${t.name} SET ${keys.map(k => `${k}=?`).join(', ')} WHERE id=?`, ...keys.map(k => o[k]), raw.id);
   else db.run(`INSERT INTO ${t.name}(id,${keys.join(',')}) VALUES(?,${keys.map(() => '?').join(',')})`, raw.id, ...keys.map(k => o[k]));
-  seen(t.name, raw.id, stamp(o));
+  // A merged row holds fields the office has not had: it is stamped as edited here, so it goes up next.
+  if (keep) { if (existingCols.includes('updated_at')) db.run(`UPDATE ${t.name} SET updated_at=? WHERE id=?`, db.now(), raw.id); seen(t.name, raw.id, existingCols.includes('updated_at') ? stamp(o) : null); }
+  else seen(t.name, raw.id, stamp(o));
+  keepBase(t, raw);
   // The office merged this client into another. What this device holds against the duplicate — visits,
   // notes, tasks recorded here and not yet sent — moves to the record that was kept, exactly as the office
   // moved its own; the office re-points anything pushed under the old id anyway (server/routes/sync.js
@@ -389,7 +445,7 @@ function applyTombstone(t, ts, toServer) {
     // is a real conflict and gets pushed instead.
     if (untouched || toServer(stamp(existing)) < ts.deleted_at) {
       db.run(`DELETE FROM ${t.name} WHERE id=?`, ts.id);
-      db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, t.name, ts.id);
+      forget(t.name, ts.id);
     }
   }
   db.run(`INSERT OR REPLACE INTO tombstones(table_name,id,deleted_at) VALUES(?,?,?)`, t.name, ts.id, ts.deleted_at);
@@ -456,12 +512,12 @@ export function settleRejections(rejections, chunk, conflicts) {
     const t = SYNC.tables.find(y => y.name === x.table);
     if (x.reason === 'purged') {
       db.run(`DELETE FROM ${x.table} WHERE id=?`, x.id);
-      db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, x.table, x.id);
+      forget(x.table, x.id);
     } else if (x.reason === SYNC.DELETED_AT_OFFICE) {
       // Deleted at the office (server/rules/push.js deletedAtOffice): the copy here goes too. A row something on this
       // device still points at stays, marked as exchanged, so it is not sent again; the office's tombstone removes it
       // on a later pull once what points at it has gone.
-      db.savepoint(() => { db.run(`DELETE FROM ${x.table} WHERE id=?`, x.id); db.run(`DELETE FROM sync_seen WHERE table_name=? AND id=?`, x.table, x.id); }, () => seen(x.table, x.id, stamp(r)));
+      db.savepoint(() => { db.run(`DELETE FROM ${x.table} WHERE id=?`, x.id); forget(x.table, x.id); }, () => seen(x.table, x.id, stamp(r)));
     } else {
       seen(x.table, x.id, stamp(r));
     }
@@ -593,7 +649,7 @@ async function uploadBlobs(server, token, onProgress) {
  * device's own deletions since the beginning are sent again.
  */
 export function resetExchangeState() {
-  db.run(`DELETE FROM sync_seen`);
+  forgetAll();
   db.run(`DELETE FROM settings WHERE key='sync_cursor' OR key LIKE 'sync_cursor:%' OR key LIKE 'sync_blob:%'`);
   db.setSetting('sync_pushed', NEVER);
 }
@@ -617,7 +673,7 @@ async function pushAll(server, token, officeUserId, onProgress) {
     for (const [k, v] of Object.entries(res.applied || {})) if (typeof v === 'number') pushedCounts[k] = (pushedCounts[k] || 0) + v;
     // A row counts as exchanged only if the office did not reject it -- or if it rejected it for good.
     db.transaction(() => {
-      for (const [table, rows] of Object.entries(chunks[i])) for (const r of rows) if (!rejectedIds.has(table + ':' + r.id)) seen(table, r.id, stamp(r));
+      for (const [table, rows] of Object.entries(chunks[i])) for (const r of rows) if (!rejectedIds.has(table + ':' + r.id)) { seen(table, r.id, stamp(r)); keepBase(SYNC.tables.find(t => t.name === table), r); }
       settleRejections(res.rejected || [], chunks[i], conflicts);
     });
   }
@@ -741,7 +797,7 @@ export async function run({ server, username, password, code, fieldDevice = fals
         // This device has been away longer than deletions are kept, so it cannot be brought up to date
         // incrementally without silently keeping rows the office has dropped. Start over from NEVER.
         onProgress('This device has been offline a long time; rebuilding from the office copy…');
-        db.run(`DELETE FROM sync_seen`);
+        forgetAll();
         since = NEVER;
         db.run(`DELETE FROM settings WHERE key='sync_cursor' OR key LIKE 'sync_cursor:%'`);
         if (pages > 20) throw new HttpError(409, pulled.reason || 'This device needs to be set up again from the office server');

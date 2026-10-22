@@ -904,7 +904,6 @@ CREATE TABLE IF NOT EXISTS disclosures (
 );
 CREATE INDEX IF NOT EXISTS idx_disclosures_client ON disclosures(client_id);
 CREATE INDEX IF NOT EXISTS idx_disclosures_updated ON disclosures(updated_at);
-CREATE INDEX IF NOT EXISTS idx_disclosures_client ON disclosures(client_id);
 
 -- County form library: templates (blank forms + fillable field definitions) and forms filled out for a client
 CREATE TABLE IF NOT EXISTS form_templates (

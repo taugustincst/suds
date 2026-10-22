@@ -54,7 +54,7 @@ function itemView(x, { withContent = true } = {}) {
 
 module.exports = (r) => {
   // Upload: JSON {source, filename, text} or raw body with X-Filename (binary files like .mht/.docx)
-  r.post('/api/imports/upload', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => {
+  r.post('/api/imports/upload', auth.requireAuth, auth.requirePerm('imports:write'), async (ctx) => {
     let source, filename, buf;
     if (ctx.body && ctx.body.text !== undefined) {
       const v = validate(ctx.body, { source: { type: 'string', required: true, enum: ['pocket_ai', 'onenote', 'generic'] }, filename: { type: 'string', maxLen: 200 }, text: { type: 'string', required: true, maxLen: 20_000_000 } });
@@ -68,9 +68,11 @@ module.exports = (r) => {
     if (!buf.length) throw badRequest('Empty upload');
     let items;
     try {
+      // A Word file is read in a worker thread with its own memory and time limit (server/offload.js; 1.26.1, M3).
+      const notes = async () => (onenote.isDocx(buf, filename) ? onenote.fromDocxText(await require('../offload').offload('docx', buf), filename) : onenote.parseFile(buf, filename));
       if (source === 'pocket_ai') items = pocket.parse(buf, { filename });
-      else if (source === 'onenote') items = onenote.parseFile(buf, filename);
-      else { const ext = filename.split('.').pop().toLowerCase(); items = ['json'].includes(ext) ? pocket.parse(buf, { filename }) : onenote.parseFile(buf, filename); }
+      else if (source === 'onenote') items = await notes();
+      else { const ext = filename.split('.').pop().toLowerCase(); items = ['json'].includes(ext) ? pocket.parse(buf, { filename }) : await notes(); }
     } catch (e) { throw badRequest('Could not parse file: ' + e.message); }
     const id = stage(ctx, { source: source === 'onenote' ? 'onenote_file' : source, filename, items, importedBy: ctx.user.id });
     // Not the filename: a OneNote export is routinely named after the person it is about, and this table

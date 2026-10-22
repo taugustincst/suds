@@ -1121,7 +1121,9 @@ async function handle(method, path, body, headers = {}) {
     else if (typeof body === 'string') { ctx.rawBody = Buffer.from(body); ctx.body = {}; }
     else ctx.body = body || {};
     // Same as the office server (server/app.js): a retried POST with the same Idempotency-Key runs once.
-    const result = await idempotency.run(ctx, async () => { let out; for (const h of m.handlers) out = await h(ctx); return out; });
+    // A replay runs the route's guards again first, as on the office server (server/idempotency.js recheck).
+    const result = await idempotency.run(ctx, async () => { let out; for (const h of m.handlers) out = await h(ctx); return out; },
+      { recheck: async () => { for (const h of m.handlers.slice(0, -1)) await h(ctx); } });
     // Not saved here: exporting the whole database on every write cost 40-130 ms a request on a large
     // caseload (1.9.1). The shim saves on a short coalescing timer, the page saves on its way out
     // (pagehide / hidden / freeze), and the next document of this tab waits for this one's lock before it

@@ -10,7 +10,9 @@ const C = require('../constants');
 const { badRequest, notFound, contentDisposition, fileHeaders } = require('../http');
 const { validate } = require('../validate');
 const { uuid } = require('../crypto');
-const { extractText } = require('../doc-text');
+// A document's searchable text, read in a worker thread (server/offload.js; 1.26.1, M3). A file whose text cannot be
+// read in time or within the memory limit is still kept; it is only not searchable by its words.
+const textOf = (file) => require('../offload').offload('doc-text', file.buf, file.type).then((t) => t || null, () => null);
 
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
 const FILE_TYPES = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx', 'application/msword': 'doc', 'text/plain': 'txt' };
@@ -81,20 +83,21 @@ module.exports = (r) => {
     audit.log({ user: ctx.user, action: 'document.view', entity: 'policy_document', entityId: d.id, ip: ctx.ip });
     return { document: out(d) };
   });
-  r.post('/api/documents', auth.requireAuth, auth.requirePerm('documents:write'), (ctx) => {
+  r.post('/api/documents', auth.requireAuth, auth.requirePerm('documents:write'), async (ctx) => {
     const v = withRoles(validate(asStored(ctx.body), shape), ctx.body);
     const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, 'File');
+    const searchText = file ? await textOf(file) : null;
     // A document is a file kept here, or the county's PowerDMS document (a link, read and signed there), or both.
     if (!file && !v.powerdms_url) throw badRequest('A file or a PowerDMS link is required');
     rules.assertWrite('policy_documents', v, ctx);
     const id = uuid();
     db.run(`INSERT INTO policy_documents(id,title,category,description,effective_date,expires_at,filename,content_type,bytes,file_b64,search_text,uploaded_by,powerdms_url,revision,ack_roles) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      id, v.title, v.category, v.description || null, v.effective_date || null, v.expires_at || null, file ? (v.filename || `${v.title}.${FILE_TYPES[file.type]}`) : null, file ? file.type : null, file ? file.buf.length : 0, file ? file.b64 : null, file ? extractText(file.buf, file.type) || null : null, ctx.user.id,
+      id, v.title, v.category, v.description || null, v.effective_date || null, v.expires_at || null, file ? (v.filename || `${v.title}.${FILE_TYPES[file.type]}`) : null, file ? file.type : null, file ? file.buf.length : 0, file ? file.b64 : null, searchText, ctx.user.id,
       v.powerdms_url || null, v.revision || null, v.ack_roles || null);
     audit.log({ user: ctx.user, action: 'document.create', entity: 'policy_document', entityId: id, ip: ctx.ip, details: { title: v.title, category: v.category, bytes: file ? file.buf.length : 0, powerdms: !!v.powerdms_url, ack_roles: v.ack_roles || null } });
     ctx.status = 201; return { id };
   });
-  r.put('/api/documents/:id', auth.requireAuth, auth.requirePerm('documents:write'), (ctx) => {
+  r.put('/api/documents/:id', auth.requireAuth, auth.requirePerm('documents:write'), async (ctx) => {
     const d = db.one(`SELECT id, updated_at, is_active, powerdms_url, revision, ack_roles, file_b64 IS NOT NULL has_file FROM policy_documents WHERE id=?`, ctx.params.id); if (!d) throw notFound();
     require('../crud').assertFresh(ctx, d, 'document');
     const v = withRoles(validate(asStored(ctx.body), Object.fromEntries(Object.entries(shape).map(([k, s]) => [k, { ...s, required: false }])), { partial: true }), ctx.body);
@@ -104,7 +107,7 @@ module.exports = (r) => {
     const v2 = validate({ is_active: ctx.body.is_active }, { is_active: { type: 'boolean' } }, { partial: true });
     const sets = Object.keys(v).map(k => `${k}=?`); const params = Object.keys(v).map(k => v[k]);
     for (const k of Object.keys(v2)) { sets.push(`${k}=?`); params.push(v2[k]); }
-    if (ctx.body.file_url || ctx.body.file) { const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, 'File'); sets.push('file_b64=?', 'content_type=?', 'bytes=?', 'filename=?', 'search_text=?'); params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `document.${FILE_TYPES[file.type]}`, extractText(file.buf, file.type) || null); }
+    if (ctx.body.file_url || ctx.body.file) { const file = fromDataUrl(ctx.body.file_url ?? ctx.body.file, MAX_DOCUMENT_BYTES, 'File'); sets.push('file_b64=?', 'content_type=?', 'bytes=?', 'filename=?', 'search_text=?'); params.push(file.b64, file.type, file.buf.length, v.filename || ctx.body.filename || `document.${FILE_TYPES[file.type]}`, await textOf(file)); }
     if (!sets.length) return { ok: true, updated_at: d.updated_at };
     const stamp = db.now();
     db.run(`UPDATE policy_documents SET ${sets.join(', ')}, updated_at=? WHERE id=?`, ...params, stamp, d.id);

@@ -31,6 +31,19 @@ function splitTextPages(text) {
   }).filter(p => p.content || p.title);
 }
 
+/** A Word file's pages from its text (docxToText, run in a worker by the import route: server/offload.js, 1.26.1). */
+function fromDocxText(text, filename = '') {
+  const pages = splitTextPages(text);
+  return pages.length ? pages : [{ external_id: null, title: filename.replace(/\.[^.]+$/, ''), content: text, captured_at: T.sniffDate(text.slice(0, 300)), metadata: { source: 'onenote', filename, hints: T.sniffClientHints(text) } }];
+}
+/** Would parseFile read this upload as a Word file? The same tests in the same order: MHT and HTML first. */
+function isDocx(buf, filename = '') {
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  if (ext === 'mht' || ext === 'mhtml' || /^(From|MIME-Version|Content-Type):/i.test(buf.toString('latin1', 0, 64))) return false;
+  if (ext === 'html' || ext === 'htm' || /^\s*<(!doctype|html)/i.test(buf.toString('utf8', 0, 200))) return false;
+  return ext === 'docx' || (buf[0] === 0x50 && buf[1] === 0x4b);
+}
+
 function parseFile(buf, filename = '') {
   const ext = (filename.split('.').pop() || '').toLowerCase();
   if (ext === 'mht' || ext === 'mhtml' || /^(From|MIME-Version|Content-Type):/i.test(buf.toString('latin1', 0, 64))) {
@@ -45,11 +58,7 @@ function parseFile(buf, filename = '') {
     const chunks = html.split(/<div[^>]+page-break-before:\s*always[^>]*>/i);
     return chunks.length > 1 ? chunks.map((c, i) => pageFromHtml(c, { filename: `${filename}#${i + 1}` })).filter(p => p.content) : [pageFromHtml(html, { filename })];
   }
-  if (ext === 'docx' || (buf[0] === 0x50 && buf[1] === 0x4b)) {
-    const text = T.docxToText(buf);
-    const pages = splitTextPages(text);
-    return pages.length ? pages : [{ external_id: null, title: filename.replace(/\.[^.]+$/, ''), content: text, captured_at: T.sniffDate(text.slice(0, 300)), metadata: { source: 'onenote', filename, hints: T.sniffClientHints(text) } }];
-  }
+  if (ext === 'docx' || (buf[0] === 0x50 && buf[1] === 0x4b)) return fromDocxText(T.docxToText(buf), filename);
   if (ext === 'pdf' || buf.toString('latin1', 0, 5) === '%PDF-') throw new Error('PDF export is not supported. In OneNote use File → Export → Single File Web Page (.mht) or Word (.docx).');
   // txt / md
   const text = buf.toString('utf8');
@@ -101,4 +110,4 @@ async function fetchPages(pageIds, { token, user } = {}) {
   return items;
 }
 
-module.exports = { parseFile, pageFromHtml, splitTextPages, listNotebooks, listPages, fetchPages, graphToken };
+module.exports = { parseFile, fromDocxText, isDocx, pageFromHtml, splitTextPages, listNotebooks, listPages, fetchPages, graphToken };

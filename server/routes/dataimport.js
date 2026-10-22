@@ -82,12 +82,13 @@ module.exports = (r) => {
   // Preview: parse the file, suggest a mapping, validate every row (raw body; entity + optional mapping in query)
   // imports:write (the Import page's own permission) and the entity's write permission: a spreadsheet import is
   // an import (security review of 1.16.0, L3).
-  r.post('/api/imports/data/preview', auth.requireAuth, auth.requirePerm('imports:write'), (ctx) => {
+  r.post('/api/imports/data/preview', auth.requireAuth, auth.requirePerm('imports:write'), async (ctx) => {
     const entity = ctx.query.get('entity'); const def = DI.ENTITIES[entity]; if (!def) throw badRequest('Unknown entity');
     if (!auth.hasPerm(ctx.user, permFor(entity))) throw forbidden();
     const buf = ctx.rawBody && ctx.rawBody.length ? ctx.rawBody : (ctx.body && ctx.body.text ? Buffer.from(ctx.body.text, 'utf8') : null);
     if (!buf) throw badRequest('Upload a .xlsx or .csv file');
-    let parsed; try { parsed = S.parseFile(buf, ctx.headers['x-filename'] || ''); } catch (e) { throw badRequest('Could not read the file: ' + e.message); }
+    // Read in a worker thread with its own memory and time limit (server/offload.js; 1.26.1, M3).
+    let parsed; try { parsed = await require('../offload').offload('spreadsheet', buf, ctx.headers['x-filename'] || ''); } catch (e) { throw badRequest('Could not read the file: ' + e.message); }
     const sheetIdx = Number(ctx.query.get('sheet') || 0); const sheet = parsed.sheets[sheetIdx] || parsed.sheets[0]; if (!sheet) throw badRequest('The file has no sheets');
     let mapping = null; try { mapping = ctx.query.get('mapping') ? JSON.parse(ctx.query.get('mapping')) : null; } catch { mapping = null; }
     return previewSheet(ctx, entity, sheet, mapping, { sheets: parsed.sheets.map(s => ({ name: s.name, rows: s.rows.length })), sheetIdx });

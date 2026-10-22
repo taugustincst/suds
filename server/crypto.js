@@ -61,6 +61,13 @@ function subkey(purpose, key = config.indexKey) {
   return Buffer.from(crypto.hkdfSync('sha256', key, Buffer.from('suds-subkey-v1'), Buffer.from(`suds/${purpose}`), 32));
 }
 
+// A short keyed fingerprint of one field's exact value, under its own label: a device keeps these for each row as
+// last exchanged with the office, to tell which fields changed on which side (local/sync.js keepBase). Not a search
+// index (no folding: a change of case is a change), and never the value itself.
+function fieldPrint(label, value, key = config.indexKey) {
+  return crypto.createHmac('sha256', key).update(`suds/field-print\u0000${label}\u0000${String(value ?? '')}`).digest('hex').slice(0, 12);
+}
+
 // Deterministic blind index for equality/prefix-free search on encrypted fields.
 function blindIndex(value, key = config.indexKey) {
   if (value === null || value === undefined) return null;
@@ -189,5 +196,5 @@ function otpauthUrl(secret, account, issuer = 'SUDS') {
  */
 function keyFingerprint() { return sha256('suds-key-check:' + config.encryptionKey.toString('hex')).slice(0, 32); }
 
-module.exports = { encrypt, decrypt, blindIndex, subkey, foldText, keyFingerprint, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
+module.exports = { encrypt, decrypt, blindIndex, fieldPrint, subkey, foldText, keyFingerprint, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
   generateTotpSecret, totp, totpStep, verifyTotp, otpauthUrl, base32Encode, base32Decode };
