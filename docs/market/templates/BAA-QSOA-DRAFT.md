@@ -65,8 +65,10 @@ Entity:
 - (b) any Security Incident of which it becomes aware `[[; the parties agree that unsuccessful attempts, such as pings,
   port scans and failed sign-ins that do not result in unauthorised access, are hereby reported and need no further
   notice]]`; and
-- (c) any Breach of Unsecured PHI, without unreasonable delay and in no case later than `[[5 business days]]` after
-  discovery (the regulation's outer limit is 60 calendar days, 164.410(b)), with, to the extent possible, the
+- (c) any Breach of Unsecured PHI: a first notice of a suspected Breach within `[[24 hours]]` of discovery, and the
+  full report without unreasonable delay and in no case later than `[[2 business days]]` after discovery (the
+  regulation's outer limit is 60 calendar days, 164.410(b); California counties' own forms ask 24 hours to 2 business
+  days), with, to the extent possible, the
   identification of each Individual affected and the other information Covered Entity needs to notify under 164.404
   (164.410(c)), supplemented as it becomes available.
 
@@ -156,7 +158,8 @@ permits (2.12(d), Subpart E).
 **B5. Breach notification.** The 2024 final rule applies the HIPAA breach-notification requirements (45 CFR Part 164,
 Subpart D) to breaches of records by Part 2 programs (42 CFR 2.16, as amended; *verify the exact paragraph with
 counsel*). The QSO will report any breach of unsecured Part 2 records, and any use or disclosure not provided for by
-this Agreement, to the Part 2 Program as Part A, A4 provides (no later than `[[5 business days]]` after discovery),
+this Agreement, to the Part 2 Program as Part A, A4 provides (a first notice within `[[24 hours]]` and the report no later than `[[2 business days]]` after
+discovery),
 with the information the Part 2 Program needs to notify patients and the Secretary.
 
 **B6. SUD counseling notes.** Records the Part 2 Program designates as SUD counseling notes (as the 2024 final rule
@@ -186,14 +189,14 @@ _Signatures (Part B):_ Part 2 Program `[[name, title, date]]` — AugustInnovati
 | Item | Value |
 | --- | --- |
 | Services | `[[hosted SUDS instance / support access to a customer-hosted server]]` |
-| Data location | `[[US cloud region(s)]]`; backups in `[[US region(s)]]` only |
+| Data location | `[[AWS US region]]`, in the continental United States; backups in `[[US region(s)]]` only; `[[no access from outside the United States without Covered Entity's written approval]]` |
 | Encryption keys held by | `[[Business Associate, with an escrow copy whose every use is logged / Covered Entity]]` |
 | Who at Business Associate can reach the data | `[[roles; named list maintained and given to Covered Entity on request]]` |
 | Subcontractors | `[[cloud provider legal name, under its business associate addendum (infrastructure only); any other — ideally none]]` |
 | AI provider (only if the copilot is turned on) | `[[none / provider legal name; whose agreement (Business Associate's or Covered Entity's); retention and no-training terms as confirmed by counsel; date turned on]]` |
 | Incident contact (Covered Entity) | `[[privacy officer, phone, email]]` |
 | Incident contact (Business Associate) | `[[security lead, phone, email]]` |
-| Breach and incident notice deadline | `[[5]]` business days (A4, B5) |
+| Breach and incident notice deadline | First notice within `[[24]]` hours; the report within `[[2]]` business days (A4, B5) |
 | Requests from Individuals forwarded within | `[[5]]` business days (A6) |
 | Export format at termination | Spreadsheet exports of every record type, an encrypted database backup with its keys delivered separately, and the FHIR export where enabled |
 | Destruction after the export is confirmed | `[[30]]` days, with a written certificate (A10) |

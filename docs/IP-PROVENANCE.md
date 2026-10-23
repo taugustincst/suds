@@ -57,6 +57,7 @@ Those are questions for counsel ([market/templates/COUNSEL-REVIEW-BRIEF.md](mark
 | 2026-10-10 | AugustInnovations LLC is the licensor; SUDS stays on Ubuntu 24.04 in CI; the history rewrite approved in principle | HANDOFF.md; RELEASE.md, *Runner images* |
 | 2026-10-11 | The release cadence that batches patches at most weekly | RELEASE.md, *Release cadence (adopted 2026-10-11)* |
 | 2026-10-12 | The published prices reworked (a 90-day pilot at $14,500; Program $24,500, Multi-Site $49,500 and County-Wide $98,000 a year); vendor hosting offered, one isolated instance per customer, included in the annual plans | `public/procurement.json`; [market/HOSTING.md](market/HOSTING.md) |
+| 2026-10-23 | The 90-day pilot reworked to $4,500 flat, credited in full ("rework the pilot price"; the market evaluation of that day found the old pilot cost more per month than the Program plan), and the hosted service described as single-tenant, not multi-tenant | `public/procurement.json`; [market/BUSINESS-PLAN.md](market/BUSINESS-PLAN.md) |
 
 The ADRs ([architecture/](architecture/README.md)) record each design and why it was chosen. They do not record, design
 by design, which parts the owner proposed and which were an assistant's proposal the owner accepted.

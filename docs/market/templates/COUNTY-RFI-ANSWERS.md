@@ -21,7 +21,7 @@ vendor-hosted CBO. The longer, question-by-question version is
 Either, as each organisation chooses. **Self-hosted:** the county (for the county view) and each CBO or its IT
 partner install and operate it: SUDS Server on a Linux VM with the project's installer, a container, or the county's
 own cloud tenant; the published prices exclude that infrastructure. **Vendor-hosted (offered from October 2026):**
-AugustInnovations LLC operates a multi-tenant fleet in which each customer runs in its own isolated instance, with its
+AugustInnovations LLC operates a single-tenant fleet in which each customer runs in its own isolated instance, with its
 own database and encryption keys (never a shared database), and signs the BAA and Part 2 QSOA; hosting is included in
 the Program, Multi-Site and County-Wide plans. No customer is hosted yet: the fleet tooling is tested against
 stand-ins only and its first real drill tenant has not been run; no uptime commitment is published for hosted plans;
@@ -294,11 +294,30 @@ The published paid plans include email support with a response within 2 business
 a signed agreement, and the SLA is a template with placeholders. The vendor runs a vendor-hosted customer's server
 (offered from October 2026; no customer hosted yet). No 24×7 support, no vendor on-call, and no uptime commitment:
 none for office servers on customer infrastructure, and none published for hosted plans. Prices (USD, effective
-October 2026): a 90-day pilot at $14,500 flat, credited in full toward the first annual plan; Program at $24,500 a
+October 2026): a 90-day pilot at $4,500 flat, credited in full toward the first annual plan; Program at $24,500 a
 year; Multi-Site at $49,500 a year; County-Wide at $98,000 a year
 ([`public/procurement.json`](../../../public/procurement.json)). Evidence: [../../SUPPORT.md](../../SUPPORT.md);
 [SUPPORT-SLA.md](SUPPORT-SLA.md). Contact: *Licensing, AugustInnovations LLC*, `info@suds.systems` (the Security &
 procurement page, from 1.25.9). **[owner to complete]: support hours.**
+
+## Generative AI disclosure
+
+**Q. Was generative AI used to produce the software or any deliverable, and does the product use it?**
+Yes, in two ways, both disclosed here because state solicitations ask (SAM 4986.9) and county reviewers will.
+1. **How SUDS is written.** SUDS is developed with an AI coding assistant working under the owner's direction and the
+   project rules in `CLAUDE.md`. Almost every commit is the assistant's; the count and the method are in
+   [../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #36a. The controls are automated: the full test
+   suite, the browser suite with its WCAG 2.1 AA checks, and the CI jobs pass on every change before a release, and
+   every release carries an SBOM and two checksums ([../../security/SDLC.md](../../security/SDLC.md)). **There is no
+   human code review and no independent code review yet**; an independent penetration test is being procured.
+2. **What the product uses.** An optional AI documentation copilot, on an office server only, off by default. It is
+   turned on only once the programme records a BAA and QSOA with the AI provider. Before anything is sent, the
+   identifiers SUDS knows about the client, and common patterns such as phone numbers, addresses and SSNs, are
+   replaced with placeholders; this is a best effort, not a guarantee that the text holds no identifier. It drafts
+   only (a person reviews and signs), and it never drafts SUD counseling notes
+   ([../../AI-COPILOT.md](../../AI-COPILOT.md)). SUDS on this device never uses it.
+
+Nothing else in SUDS calls an AI model: reports, exports and the county view are computed, not generated.
 
 ## Company
 

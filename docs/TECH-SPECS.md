@@ -75,7 +75,7 @@ The server is one Node.js process with one SQLite database. It scales up, not ou
 | | |
 | --- | --- |
 | HIPAA / 42 CFR Part 2 | Controls mapped in [HIPAA.md](HIPAA.md) and [compliance/PART2.md](compliance/PART2.md) (shared responsibility: SUDS supports compliance, it does not provide it) |
-| CalOMS Tx | Capture, checks and the extract file; code sets verified against the DHCS Data Dictionary v3.0; the upload file layout is confirmed with the county ([compliance/CALOMS.md](compliance/CALOMS.md)) |
+| CalOMS Tx | Capture, checks and the extract file; code sets verified against the DHCS Data Dictionary v3.0; the upload file layout is not yet confirmed, and is confirmed with the county in a pilot. The county or provider submits the file through its own CalOMS channel: SUDS sends nothing to DHCS and has no DHCS certification ([compliance/CALOMS.md](compliance/CALOMS.md)) |
 | Funder reporting | Funder report, NDP-style log, syringe services summary, opioid-settlement report (with the DHCS and county layouts), SABG prevention events ([compliance/HARM-REDUCTION-REPORTING.md](compliance/HARM-REDUCTION-REPORTING.md)) |
 | FHIR R4 | A read API (Patient, EpisodeOfCare, Encounter, Consent, ServiceRequest, Task, Observation, DocumentReference) and Bulk Data `$export`, shared only under a live Part 2 consent; imports from an EHR's FHIR export ([integration/FHIR.md](integration/FHIR.md), [integration/EHR-PART2-LAYER.md](integration/EHR-PART2-LAYER.md)) |
 | REST API | Documented, with API keys for intake ([API.md](API.md)) |

@@ -74,7 +74,7 @@ event record in SUDS and key PPSDS from the summary; it cannot submit from SUDS 
 
 **Hosting, honestly.** A CBO runs SUDS through its **IT partner** (a VM, an office server or a container), or a
 **sponsoring county hosts it**, or, from October 2026, **the vendor hosts it**: AugustInnovations LLC runs a
-multi-tenant fleet in which each customer has its own isolated instance, database and encryption keys, included in
+single-tenant fleet in which each customer has its own isolated instance, database and encryption keys, included in
 the Program, Multi-Site and County-Wide plans (owner decision of 2026-10-12). No customer is hosted yet: the fleet
 tooling has been tested only against stand-ins, its first real drill has not been run, no uptime commitment is
 published, insurance is not bound and the agreements are not yet reviewed by counsel ([HOSTING.md](HOSTING.md)). Say
@@ -289,7 +289,7 @@ support is business-hours ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md))
 Being able to see the code is not a licence to use it. SUDS on this device is free at its official address, real
 records included; the office server may be evaluated free for 90 days with fictional data, and production use of
 it needs a licence agreement ([LICENSE](../../LICENSE)). The prices are published in `public/procurement.json`
-(effective October 2026): a 90-day pilot at $14,500 flat (credited in full toward the first annual plan), Program at
+(effective October 2026): a 90-day pilot at $4,500 flat (credited in full toward the first annual plan), Program at
 $24,500 a year, Multi-Site at $49,500 a year and County-Wide at $98,000 a year. They pay for the people around the
 code: onboarding, the BAA and QSOA, updates, email support and, on the annual plans, hosting on the vendor's fleet;
 they exclude the customer's own infrastructure for a self-hosted office server. Final terms are set in a licence

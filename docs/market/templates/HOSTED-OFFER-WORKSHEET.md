@@ -8,13 +8,13 @@
 > assumptions; this worksheet replaces them with the owner's numbers.
 
 **What is already decided or built.** The operator is AugustInnovations LLC (owner decision of 2026-10-09; see the
-entity question, workplan item 0). SUDS is offered as a **multi-tenant fleet** of isolated instances: the model is
+entity question, workplan item 0). SUDS is offered as a **fleet of single-tenant instances** (each customer its own server): the model is
 **Option A: one SUDS Server per customer** on AWS Lightsail with the fleet tooling in
 [`deploy/fleet/`](../../../deploy/fleet/README.md): its own VM, static IP, database and keys, a LUKS-encrypted data
 disk, an "offsite" disk and an anchor disk, keys escrowed to the owner; never a shared database. The tooling is tested
 against stand-ins only; its first real run is the drill tenant, which awaits the owner's go. The published prices
 (owner decision of 2026-10-12; [`public/procurement.json`](../../../public/procurement.json)) are a 90-day pilot at
-$14,500 flat (credited in full), Program at $24,500 a year, Multi-site at $49,500 a year and County-wide at $98,000 a
+$4,500 flat (credited in full; $14,500 until 2026-10-23), Program at $24,500 a year, Multi-site at $49,500 a year and County-wide at $98,000 a
 year. Hosting on the fleet is included in the annual plans; for a self-hosted office server the same prices exclude
 the customer's infrastructure.
 

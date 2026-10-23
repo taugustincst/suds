@@ -2,6 +2,18 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## Unreleased
+
+### Changed
+
+- **The 90-day pilot is now $4,500 flat** (it was $14,500), still credited in full toward the first annual plan. The old
+  pilot cost more per month than the Program plan it leads to. The other plans are unchanged
+  (`public/procurement.json`, the Security & procurement page).
+- **Vendor hosting is described as single-tenant**, as it always was: each customer has its own server, database and
+  keys. The published pricing used to call it "multi-tenant", which reads as shared infrastructure.
+- The published pricing says that the county or provider submits the CalOMS Tx file, and that SUDS sends nothing to
+  DHCS.
+
 ## 1.26.1 — 2026-10-22
 
 SHA-256 of suds-v1.26.1.zip: 4b5670b37d90db7b6e2ac60965f67808fc57672d1feb5b5cc940126c23c2e979

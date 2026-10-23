@@ -6,7 +6,7 @@ software's licence does not cover that work. This page says who does it in each 
 vendor-hosted service has in place and what it still lacks, and what it costs.
 
 **Current status (owner decision of 2026-10-12): vendor hosting is offered; no customer is hosted yet.**
-AugustInnovations LLC operates it as a multi-tenant fleet: each customer runs in its own isolated instance (its own
+AugustInnovations LLC operates it as a fleet of single-tenant instances: each customer runs in its own isolated instance (its own
 VM, database and encryption keys; never a shared database), provisioned with the fleet tooling in
 [`deploy/fleet/`](../../deploy/fleet/README.md). Hosting on the fleet is included in the published Program ($24,500 a
 year), Multi-Site ($49,500 a year) and County-Wide ($98,000 a year) plans
@@ -26,7 +26,7 @@ no 24×7 on-call.
 
 | | Real today | Not done yet |
 | --- | --- | --- |
-| **The hosted offer** | Offered from October 2026 (owner decision of 2026-10-12): hosting on the multi-tenant fleet is included in the Program, Multi-Site and County-Wide plans ([`public/procurement.json`](../../public/procurement.json)) | No customer is hosted; no uptime commitment is published for hosted plans |
+| **The hosted offer** | Offered from October 2026 (owner decision of 2026-10-12): hosting on a single-tenant fleet (each customer its own server) is included in the Program, Multi-Site and County-Wide plans ([`public/procurement.json`](../../public/procurement.json)) | No customer is hosted; no uptime commitment is published for hosted plans |
 | **Who operates the hosted service** | Decided by the owner on 2026-10-09: **AugustInnovations LLC**, the licensor, operates it and signs each customer's BAA and Part 2 QSOA (no separate operator company, so no further licence is needed) | Bank account, W-9 and county vendor registration in its name: not recorded here |
 | **A production install** | **One: suds.systems**, the vendor's own SUDS Server on an AWS Lightsail VM (Ubuntu 24.04, `us-west-2`), installed from the 1.25.1 release with `deploy/linux/install.sh` on 2026-10-08. It holds **fictional data only**. It was installed without an encrypted data volume (the installer recorded that as an accepted risk); its data volume has been **encrypted (LUKS) since 2026-10-10**. Its compliance check, as reported by its operator (no signed report from the server is stored in this repository yet): **2026-10-08, launch (1.25.1):** 39 pass, 0 fail, 7 warnings, and its first backup and recovery drill passed; that firewall pass was taken while the 1.25.1 installer had dropped the SSH rule it had just added (fixed in 1.25.3). **2026-10-09, after the upgrade to 1.25.3:** 38 pass, **2 fail**, 6 warnings, 1 could not check. The fails: `host.firewall`, because SSH is open to `0.0.0.0/0` and `::/0` (the owner's choice; open), and `app.backups`, because every scheduled offsite copy was empty (the defect fixed in 1.25.4; the server was upgraded to 1.25.4 on 2026-10-10 and to 1.25.6 on 2026-10-11, and its offsite copies were then verified, 14 of 14 by size and SHA-256). Two-step sign-in was on for 0 of 1 accounts. The signed compliance and drill reports from the 1.25.4 upgrade will be stored in [../evidence/](../evidence/README.md) when the operator provides them. It is not a customer, a pilot or a reference site | The upgrade to 1.25.4 and its signed reports; SSH limited to an administration network; two-step sign-in on the administrator accounts |
 | **Cloud provider BAA** | The **AWS Business Associate Addendum** was accepted, in AWS Artifact, for the AWS account that runs suds.systems, effective 2026-10-08. It covers AWS's infrastructure only and is not an agreement with any customer | Confirm that the account is held by AugustInnovations LLC, the operator; confirm with counsel that every AWS service used is HIPAA-eligible |
@@ -37,7 +37,7 @@ no 24×7 on-call.
 
 ## The three hosting models
 
-| | **A. Self-hosted by the programme or its IT partner** | **B. County-hosted** (the county runs it for a CBO or its own programme) | **C. Vendor-hosted** (multi-tenant fleet, one isolated instance per customer) |
+| | **A. Self-hosted by the programme or its IT partner** | **B. County-hosted** (the county runs it for a CBO or its own programme) | **C. Vendor-hosted** (single-tenant fleet, one isolated instance per customer) |
 | --- | --- | --- | --- |
 | Status | Available | Available | **Offered from October 2026; no customer hosted yet** (the fleet's first real drill still to run) |
 | Typical buyer | A CBO with a managed-IT provider, or a staff member who runs servers | A county sponsoring a CBO pilot, or a county programme | A CBO with no IT capacity |

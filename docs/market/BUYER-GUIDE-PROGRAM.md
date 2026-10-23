@@ -219,5 +219,5 @@ actually took ([PILOT-KIT.md](PILOT-KIT.md), section 5).
 1. Read [POSITIONING.md](POSITIONING.md) and share [BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md) with IT.
 2. Run the eligibility check in [PILOT-KIT.md](PILOT-KIT.md).
 3. Estimate value with [templates/ROI-CALCULATOR.md](templates/ROI-CALCULATOR.md).
-4. Agree pilot terms (the published 90-day pilot, $14,500 flat and credited toward the first annual plan:
+4. Agree pilot terms (the published 90-day pilot, $4,500 flat and credited toward the first annual plan:
    [`public/procurement.json`](../../public/procurement.json)) and a purchasing route ([PROCUREMENT.md](PROCUREMENT.md)).
