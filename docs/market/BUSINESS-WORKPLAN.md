@@ -41,9 +41,9 @@ administrators sponsoring harm-reduction programmes, not county EHR replacements
 
 Pricing, decided by the owner on 2026-10-12. The evaluation found the introductory Multi-Site price low against every
 benchmark, room in a County-Wide quote, and a Program price below what the hosted-offer worksheet estimates hosting
-costs. The reworked tiers in `public/procurement.json` answer it: a 90-day pilot at $14,500 flat (credited in full),
-Program at $24,500 a year, Multi-Site at $49,500 a year and County-Wide at $98,000 a year, with hosting on the
-multi-tenant fleet (one isolated instance per customer) included in the annual plans. Self-hosting stays available,
+costs. The reworked tiers in `public/procurement.json` answer it: a 90-day pilot at $4,500 flat since 2026-10-23 ($14,500 before; credited in full),
+Program at $24,500 a year, Multi-Site at $49,500 a year and County-Wide at $98,000 a year, with hosting on a
+single-tenant fleet (one isolated server per customer) included in the annual plans. Self-hosting stays available,
 the prices excluding the customer's infrastructure.
 
 ## Summary
@@ -335,7 +335,7 @@ decisions (item 2).
 ## 8. A hosted offer and its price
 
 - **Why it matters.** "CBO with no IT: No hosted offer, no hosted price." +0.25 once priced, insured and offered.
-- **Decided (owner, 2026-10-12).** Vendor hosting is offered: AugustInnovations LLC operates a multi-tenant fleet in
+- **Decided (owner, 2026-10-12).** Vendor hosting is offered: AugustInnovations LLC operates a single-tenant fleet in
   which each customer runs in its own isolated instance, with its own database and encryption keys (never a shared
   database), and hosting is included in the Program ($24,500 a year), Multi-Site ($49,500) and County-Wide ($98,000)
   plans in `public/procurement.json`. Self-hosting stays available.

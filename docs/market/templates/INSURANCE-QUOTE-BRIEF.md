@@ -23,7 +23,7 @@
 - **Product.** SUDS, proprietary case-management software for California substance-use-disorder (SUD) and
   harm-reduction programmes: outreach, naloxone and supply distribution, consent and disclosure accounting, state
   (CalOMS Tx) and funder reporting. Not an electronic health record; it does not bill or process payments.
-- **Services.** Licences for a self-hosted office server; a 90-day pilot ($14,500 flat), annual plans (Program
+- **Services.** Licences for a self-hosted office server; a 90-day pilot ($4,500 flat), annual plans (Program
   $24,500, Multi-Site $49,500 and County-Wide $98,000 a year) and email support at published prices
   ([`public/procurement.json`](../../../public/procurement.json)); implementation help. A **hosted service** run by the
   licensor, one isolated instance per customer on AWS, is **offered from October 2026** and included in the annual

@@ -27,7 +27,7 @@ test-strip distribution, and SUD navigation, and for the county and settlement f
 
 | Plan | Price | Covers |
 | --- | --- | --- |
-| **90-day pilot** | **$14,500** flat, credited in full toward year one | One programme site; onboarding, the BAA and QSOA, CalOMS code-set validation, file layout confirmed with your county |
+| **90-day pilot** | **$4,500** flat, credited in full toward year one | One programme site; onboarding, the BAA and QSOA, CalOMS code-set validation, file layout confirmed with your county |
 | **Program** | **$24,500** a year | One site, up to 30 staff accounts; hosting, updates, email support |
 | **Multi-Site** | **$49,500** a year | Up to 5 sites and 150 staff accounts; plus onboarding help |
 | **County-Wide** | **$98,000** a year | Unlimited sites and staff within one county; plus training and a named support contact |
@@ -54,7 +54,8 @@ counsel decides which settlement category applies.
 SUDS is new. No customer runs it yet and no customer is hosted yet. The agreements (licence, BAA and QSOA, DPA, SLA)
 are drafts that counsel has not yet reviewed. No independent penetration test has been done yet; the vendor's own tests
 are published and labelled as the vendor's. There is no SOC 2 or other certification. CalOMS Tx code sets are verified
-against the DHCS dictionary; the upload file layout is confirmed with your county during a pilot. The security
+against the DHCS dictionary; the upload file layout is confirmed with your county during a pilot, and your county or
+provider submits the file: SUDS sends nothing to DHCS. The security
 questionnaire answers each of these in detail.
 
 ## Next steps

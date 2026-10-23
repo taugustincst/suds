@@ -41,7 +41,7 @@ agreements are signed. Each programme runs SUDS on its own office server, on its
 on an isolated instance of its own (or, for a very small team, free in a browser on one device). At day 90 you and the
 programmes decide whether to continue, with measures agreed at the start (the pilot plan is attached).
 
-**Cost.** $14,500 per programme for the pilot, credited in full toward the first year; after that $24,500 a year per
+**Cost.** $4,500 per programme for the pilot, credited in full toward the first year; after that $24,500 a year per
 programme (up to 30 staff) or $49,500 for up to five sites. A county-wide arrangement is $98,000 a year. The
 published prices are at sudsdata.com.
 

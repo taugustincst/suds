@@ -101,7 +101,10 @@ tenants): `[ATTACH THE MEMO; ADD ANY CHOICE IT RAISES THAT IS NOT BELOW]`.
 - B1. Is the QSOA language sufficient under 42 CFR 2.11 and 2.12(c)(4) as amended by the 2024 final rule (compliance
   date 16 February 2026), and is one combined document workable?
 - B2. Breach notification: the deadlines and content to commit to under HIPAA, Part 2 (now aligned with the HIPAA
-  breach rule) and California law (Civil Code 1798.82; Health and Safety Code 1280.15 where it applies).
+  breach rule) and California law (Civil Code 1798.82; Health and Safety Code 1280.15 where it applies). The draft now
+  suggests a first notice within 24 hours and the full report within 2 business days, because county forms ask that
+  (Alameda's business associate exhibit: 24 hours; CDPH's sample county BAA: 2 business days; market evaluation of
+  2026-10-23). Can a one-person operator commit to a 24-hour first notice, and what should it contain?
 - B3. CMIA (Civil Code 56 et seq.): anything the BAA must add for California medical information.
 - B4. Subcontractors: the cloud provider under its own business associate addendum; anything the customer must be told
   or must approve.

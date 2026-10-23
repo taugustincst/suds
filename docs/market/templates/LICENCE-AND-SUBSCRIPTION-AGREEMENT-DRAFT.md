@@ -8,7 +8,7 @@
 > the parties and are deleted before signature. A county or public agency will usually require its own contract
 > form: then this text is a list of the terms SUDS needs, to be carried into that form.
 >
-> Fees and multi-tenant hosted-service wording reworked 2026-10-12 at the owner's direction (Pilot $14,500, Program $24,500/yr, Multi-site $49,500/yr, County-wide $98,000/yr, hosting included).
+> Fees and hosted-service wording reworked 2026-10-12 at the owner's direction (Program $24,500/yr, Multi-site $49,500/yr, County-wide $98,000/yr, hosting included). On 2026-10-23, at the owner's direction, the Pilot fee was reworked to $4,500 (less per month than the Program Plan it is credited toward) and the Hosted Service is described as single-tenant: each Customer has its own server.
 >
 > It is written to match what is published today: the licence ([`LICENSE`](../../../LICENSE)), the
 > tiers and support terms on the procurement page ([`public/procurement.json`](../../../public/procurement.json)),
@@ -81,7 +81,7 @@ this device, free, at its official address.
 > are not in place. Tell Customer which of these are still open when it signs. Delete this section from an Office
 > Server Licence.*
 
-3.1 **The service.** The Hosted Service is multi-tenant: Licensor serves many customers from one operated fleet.
+3.1 **The service.** The Hosted Service is single-tenant: Licensor operates a fleet of separate instances, one for each customer, and never serves two customers from one instance, server or database.
 Licensor will provide Customer with an instance of the Software that is Customer's alone: a virtual machine
 of its own, with its own disks, database, encryption keys and web address, in `[[US cloud region(s)]]`, operated by
 Licensor under its cloud provider's business associate addendum. The instance, its database and its keys are not shared with any other customer; there is no shared database.
@@ -111,11 +111,11 @@ Customer's own infrastructure for an Office Server Licence):
 
 | Plan | Price | Scope |
 | --- | --- | --- |
-| **90-day Pilot** | $14,500 flat | A single programme site. Onboarding, the Business Associate Agreement and the Qualified Service Organization Agreement, and CalOMS code-set validation against the DHCS dictionary included; the CalOMS file layout confirmed with Customer's county. Credited in full toward the first annual Plan |
-| **Program** | $24,500 a year | A single site, up to 30 staff accounts. The Business Associate Agreement and the Qualified Service Organization Agreement, hosting on Licensor's multi-tenant fleet, all updates and email support included |
+| **90-day Pilot** | $4,500 flat | A single programme site. Onboarding, the Business Associate Agreement and the Qualified Service Organization Agreement, and CalOMS code-set validation against the DHCS dictionary included; the CalOMS file layout confirmed with Customer's county, which (or Customer) submits the file: Licensor sends nothing to DHCS. Credited in full toward the first annual Plan |
+| **Program** | $24,500 a year | A single site, up to 30 staff accounts. The Business Associate Agreement and the Qualified Service Organization Agreement, hosting on a dedicated server of its own, all updates and email support included |
 | **Multi-site** | $49,500 a year | Up to 5 sites and 150 staff accounts. Everything in Program, plus onboarding assistance |
 | **County-wide** | $98,000 a year | Unlimited sites and staff within one county. Everything in Multi-site, plus onboarding, training and a named support contact |
-| **Hosted Service** | Included in the Program, Multi-site and County-wide Plans | Section 3. SUDS is multi-tenant: each Customer's instance is isolated, with its own database and encryption keys |
+| **Hosted Service** | Included in the Program, Multi-site and County-wide Plans | Section 3. Hosting is single-tenant: each Customer's instance is isolated, on a server of its own, with its own database and encryption keys |
 
 *Drafting note: the Business Associate Agreement the published tiers include is Exhibit B; a Part 2 programme also
 needs Exhibit C. For an Office Server Licence, Licensor needs them only if it will have access to Customer Data
