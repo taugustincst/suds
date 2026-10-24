@@ -38,7 +38,7 @@ Each tag goes on the commit after its "Release X.Y.Z": "SBOM of the X.Y.Z stamp"
 | Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
 | --- | --- | --- | --- |
 | `v1.26.1` | `c375ef60a5274ff8a3976bb167d69a063cf160e2` ("SBOM of the 1.26.1 stamp", after the second stamp `410ce80`; main's own CI run 39842502473, every required job green; the first stamp's `0ad5d11` is never tagged) | 2026-10-22 | `4b5670b37d90db7b6e2ac60965f67808fc57672d1feb5b5cc940126c23c2e979` |
-| `v1.27.0` | `39b677807ec60930615da6b62879be37507b0be2` ("SBOM of the 1.27.0 stamp", after `Release 1.27.0` `855842d`; main's own CI run 40080760434, every required job green) | 2026-10-24 | `4413949623193413d10be25c483971a350e50bd778647c4cdab484617c976500` |
+| `v1.27.0` | `ad50fa88dc6785508d90a0c8fc4040c6f9504635` ("SBOM of the 1.27.0 stamp", after the re-stamp `Release 1.27.0` `de4c4f3f` that includes SUD counseling notes; main's own CI run 40117472749, every required job green; the first stamp `855842d`/`39b67780` is superseded and never tagged) | 2026-10-24 | `0782bd299c14363957d4fc3e0e2605f6c259d82547ba897b5ce60bf09ece8e72` |
 
 Each SHA-256 above was rebuilt twice from its commit, identical, and the same line is in that version's CHANGELOG section
 on `main` before the tag. A zip is a function of its commit (`git archive`); the release job refuses to publish a Release
@@ -47,7 +47,7 @@ zip with a rebuild:
 
 ```bash
 R1261=c375ef60a5274ff8a3976bb167d69a063cf160e2
-R1270=39b677807ec60930615da6b62879be37507b0be2
+R1270=ad50fa88dc6785508d90a0c8fc4040c6f9504635
 git archive --format=zip --prefix=suds-v1.26.1/ -o suds-v1.26.1.zip "$R1261" && sha256sum suds-v1.26.1.zip
 git archive --format=zip --prefix=suds-v1.27.0/ -o suds-v1.27.0.zip "$R1270" && sha256sum suds-v1.27.0.zip
 ```
@@ -57,7 +57,7 @@ git archive --format=zip --prefix=suds-v1.27.0/ -o suds-v1.27.0.zip "$R1270" && 
 ```bash
 git fetch origin
 R1261=c375ef60a5274ff8a3976bb167d69a063cf160e2
-R1270=39b677807ec60930615da6b62879be37507b0be2
+R1270=ad50fa88dc6785508d90a0c8fc4040c6f9504635
 for c in $R1261 $R1270; do
   git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
 done
