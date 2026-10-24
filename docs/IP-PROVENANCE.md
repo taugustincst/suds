@@ -11,7 +11,7 @@ Those are questions for counsel ([market/templates/COUNSEL-REVIEW-BRIEF.md](mark
 ## How the code and documents are produced
 
 - **AI coding assistants, under the owner's direction.** As [security/QUESTIONNAIRE.md](security/QUESTIONNAIRE.md)
-  #36a states: of the 1,257 commits in the history of 1.26.0 up to its stamp, all but the repository's one-line
+  #36a states: of the 1,286 commits in the history of 1.27.0 up to its stamp, all but the repository's one-line
   initial commit were written with an AI coding assistant, or merge a pull request it wrote (the figure of 202 given
   before 1.26.0 was counted in a shallow clone); the work is done under the project rules in [`CLAUDE.md`](../CLAUDE.md) and gated by the tests and CI.
   The assistants commit and push to `main` themselves, on the owner's instructions and with the owner's GitHub
@@ -58,6 +58,8 @@ Those are questions for counsel ([market/templates/COUNSEL-REVIEW-BRIEF.md](mark
 | 2026-10-11 | The release cadence that batches patches at most weekly | RELEASE.md, *Release cadence (adopted 2026-10-11)* |
 | 2026-10-12 | The published prices reworked (a 90-day pilot at $14,500; Program $24,500, Multi-Site $49,500 and County-Wide $98,000 a year); vendor hosting offered, one isolated instance per customer, included in the annual plans | `public/procurement.json`; [market/HOSTING.md](market/HOSTING.md) |
 | 2026-10-23 | The 90-day pilot reworked to $4,500 flat, credited in full ("rework the pilot price"; the market evaluation of that day found the old pilot cost more per month than the Program plan), and the hosted service described as single-tenant, not multi-tenant | `public/procurement.json`; [market/BUSINESS-PLAN.md](market/BUSINESS-PLAN.md) |
+| 2026-10-24 | 1.27.0 released on an owner exception ("I approve the exception"), carrying both server configuration from the browser and the AI assistant (the owner's choice in the development session); the assistant's summaries widened to workers' free text on contacts, referrals and to-dos ("Make them as useful as possible"; "All of it"), never note content | HANDOFF (Folder, 2026-10-24); [RELEASE.md](RELEASE.md), *Record: 1.27.0* |
+| 2026-10-24 | The pilot settled at $9,500 flat, credited in full; single-tenant wording kept; the app's Security & procurement page may carry the fee schedule (a procurement document), marketing websites carry no prices | HANDOFF (Folder, Tj's decisions of 2026-10-24); `public/procurement.json` |
 
 The ADRs ([architecture/](architecture/README.md)) record each design and why it was chosen. They do not record, design
 by design, which parts the owner proposed and which were an assistant's proposal the owner accepted.

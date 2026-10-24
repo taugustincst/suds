@@ -1,7 +1,7 @@
 # Releasing SUDS
 
 ## Production readiness checklist (per release)
-- [ ] CI is green for the exact commit being released: `npm test`, the browser suite (`scripts/ui/run-all.sh`, 61 scripts including the first-run wizard, local mode, sync, device encryption and recovery, the static build, accessibility and the QA-regression script `a11y-round4`), Node 24 and the recovery drill. The release workflow enforces this (see *Release gate* below); the box is here so nobody tags a commit they have not seen pass
+- [ ] CI is green for the exact commit being released: `npm test`, the browser suite (`scripts/ui/run-all.sh`, 63 scripts including the first-run wizard, local mode, sync, device encryption and recovery, the static build, accessibility and the QA-regression script `a11y-round4`), Node 24 and the recovery drill. The release workflow enforces this (see *Release gate* below); the box is here so nobody tags a commit they have not seen pass
 - [ ] `CHANGELOG.md` has a section for the version, `package.json` version matches
 - [ ] Docs updated (`README.md`, `docs/INSTALL.md`, `docs/DEPLOYMENT.md`, `docs/HIPAA.md`), and the documents that name a release moved to this one: the questionnaire's *Checked against*, the evidence index's *Version.*, a new SBOM for every release, patches included, from 1.25.2 (*Stamp checklist: the documents that name a release*, below; `test/doc-currency.test.js`)
 - [ ] No secrets, databases or `data/` contents in the tree (`git status`, `.gitignore`)
@@ -519,7 +519,7 @@ unless the run is given `policy_exception`, so the owner (or the owner's busines
 runs the tag's release with `policy_exception` set to the line above, which the release job prints at the top of the
 notes, and the `release` environment's reviewer approves it. It is two commits, "Release 1.26.0" and "SBOM of the
 1.26.0 stamp", the tag on the second. The full suite and the evening run passed on the stamped tree before the push;
-the browser suite passed 60 of its 61 scripts there, and `local-mode` timed out once at a sign-in after a reload, then
+the browser suite passed all but one of the 61 browser scripts it had then, and `local-mode` timed out once at a sign-in after a reload, then
 passed alone twice (49 of 49), and passed in CI's browser job on the commit to tag (run 39074014149, every required job
 green); it is entered in the flake register. The owner's business assistant tagged it (tagger *Folder*) and pushed the
 tag with the owner's GitHub access on 2026-10-17. The tag's own run (39078308072) stopped at the gate's release policy, as
@@ -557,11 +557,49 @@ files (`node scripts/release-policy.js --version 1.26.1 --previous v1.26.0`), so
 exception, and as a security fix it is released when ready, outside the weekly batching of patches (*Release
 cadence*). It is two commits, "Release 1.26.1" and "SBOM of the 1.26.1 stamp", the tag on the second; the first stamp,
 `7a97479`, and its SBOM commit `0ad5d11` were never tagged, and the tag goes on the SBOM commit after the second. On the
-second stamp the full suite and the evening run (2,224 tests each, 2 skipped) and the browser suite (61 of 61 scripts)
+second stamp the full suite and the evening run (2,224 tests each, 2 skipped) and the browser suite (all 61 of its scripts at the time)
 passed, and CI run 39842502473 on the commit to tag, every required job green. **Backport owed or waived:** under
 *Supported versions* 1.25.x, the previous minor, gets security fixes from `maint/1.25` for 30 days after 1.26.0; the
 fixes apply to it (H1, H2 and M1 are older than 1.26.0), and no 1.25.x patch is published. suds.systems runs 1.26.0
 and no customer is known to run 1.25.x, so whether to publish 1.25.10 is the owner's decision, recorded here when made.
+Its tag is owed ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
+
+**Record: 1.27.0 is a feature release on the owner's exception.** 1.27.0, stamped 2026-10-24, is a feature release
+seven days after 1.26.0 (stamped and released 2026-10-17), inside the 28 days between feature releases, which would
+allow it from 2026-11-14. It carries:
+- server configuration from the browser (`server/server-config.js`): migration 73, the table `server_config`, secrets
+  encrypted, routes under `/api/admin/server-config`;
+- the clearer settings pages (All settings, links to every setting);
+- the AI assistant (`server/ai-assistant.js`, docs/AI-COPILOT.md, *The assistant*): the permission `ai:ask` for
+  clinicians, supervisors and navigators, the route `POST /api/ai/ask`, off until an administrator switches it on under
+  an agreement confirmed to cover it;
+- the pilot price the owner settled ($9,500 flat).
+
+The assistant's summaries carry the short free text workers write on contacts, referrals and to-dos, by the owner's
+decision of the same day, which widened the first plan's structured-only rule. They never carry a note's text, and
+never anything from a SUD counseling note.
+
+On the stamped tree the full suite and the evening run (2,249 tests each, 2 skipped) and the browser suite (63 of 63
+scripts) passed, and CI run 40080760434 on the commit to tag (`39b67780`, "SBOM of the 1.27.0 stamp"), every required job
+green.
+
+**It is not a security fix**, and nothing here calls it one. The owner approved the exception on 2026-10-24 ("I approve
+the exception", relayed by the business assistant in the private hand-off). In the development session the same day the
+owner chose to ship both features in it, rather than the assistant alone. So it is recorded, on a line of its own, as:
+
+Owner exception: released seven days after 1.26.0, inside the 28 days between feature releases, on the owner's decision of 2026-10-24 ("I approve the exception", relayed by the business assistant in the private hand-off, with the release's contents confirmed by the owner in the development session the same day); not a security fix
+
+What that costs, said plainly:
+- the next feature release comes no earlier than 28 days after 1.27.0;
+- once 1.27.0 is released, 1.25.x stops getting security fixes, whatever was left of its 30 days after 1.26.0;
+- 1.26.x becomes the previous minor (*Supported versions*, below).
+
+The release workflow is unchanged: its gate refuses a feature release inside the 28 days unless the run is given
+`policy_exception`, so the owner runs the tag's release with `policy_exception` set to the line above.
+- It is two commits, "Release 1.27.0" and "SBOM of the 1.27.0 stamp", the tag on the second.
+- `v1.26.1`, the security patch stamped before it, is tagged in the same push.
+- The full suite, the evening run and the browser suite ran on the stamped tree before the push.
+
 Its tag is owed ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
 
@@ -569,9 +607,9 @@ Its tag is owed ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
 | Line | Gets | For how long |
 | --- | --- | --- |
-| **The latest minor** (today 1.26.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
-| **The previous minor** (today 1.25.x, until 30 days after 1.26.0's release date: the date of its tag, which is owed; plan as if they run from its stamp, 2026-10-17, to 2026-11-16) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.25` is made from `v1.25.9`'s line when the first backport is needed) | **30 days** after the next minor's release date, then none |
-| Anything older (today 1.24.x and before: once 1.26.0 is released, 1.24.x stops being the previous minor, whatever is left of its 30 days after 1.25.0, which ran to about 2026-11-05; 1.26.0's early release, on the owner's exception, shortens them; 1.23.x stopped when 1.25.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
+| **The latest minor** (today 1.27.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
+| **The previous minor** (today 1.26.x, until 30 days after 1.27.0's release date: the date of its tag, which is owed; plan as if they run from its stamp, 2026-10-24, to 2026-11-23) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.26` is made from `v1.26.1`'s line when the first backport is needed) | **30 days** after the next minor's release date, then none |
+| Anything older (today 1.25.x and before: once 1.27.0 is released, 1.25.x stops being the previous minor, whatever is left of its 30 days after 1.26.0, which ran to about 2026-11-16; 1.27.0's early release, on the owner's exception, shortens them; 1.24.x stopped when 1.26.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's
 CHANGELOG section, naming the affected versions (as 1.15.4 did); programmes with a support agreement are told
@@ -733,6 +771,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.25.9 | none of the release policy's rules (a patch within the patch rules: no migration, permission or route, 9 lines). Tagged when ready, two days after 1.25.8, on the owner's instruction of 2026-10-15: the owner set aside the weekly batching of patches (*Release cadence*) for this one; released through the gate on 2026-10-16, its run approved with the owner's account at the owner's direction (*Record: 1.25.9*) | the vendor's contact on the Security & procurement page, and the records since 1.25.8 (*Record: 1.25.9*, above) | no exception to approve |
 | 1.26.0 | the 28 days between feature releases (a feature release twelve days after 1.25.0; migration 72, the permission `policies:manage`, routes under `/api/policies/`); not a security fix, so no `Security exception:` line — the first `Owner exception:` line, under *Stabilisation* point 2 as the owner revised it on 2026-10-17. Tagged by the owner's business assistant on the owner's instruction; the tag's own run stopped at the gate as designed, and the second run, given `policy_exception`, released it on 2026-10-17, approved with the owner's account at the owner's direction (*Record: 1.26.0*) | PowerDMS policy links and staff sign-offs, on the owner's instruction of 2026-10-17 ("Release now", then the choice to change the control and release) (*Record: 1.26.0*, above) | owner (`policy_exception`, *Record: 1.26.0*, above) |
 | 1.26.1 | none of the release policy's rules (a security patch within the patch rules: no migration, permission or route, 330 lines). Released when ready, as a security fix is (*Release cadence*); its `release.yml` run publishes it once `v1.26.1` is pushed and the run is approved | the fixes of the vendor's own code evaluation of 1.26.0: the sign-in race, the ZIP expansion cap, the malformed cookie, the field-by-field sync merge, uploads parsed off the main thread, the replay re-check and four small faults (*Record: 1.26.1*, above) | no exception to approve |
+| 1.27.0 | the 28 days between feature releases (a feature release seven days after 1.26.0; migration 73, the permission `ai:ask`, routes under `/api/admin/server-config` and `POST /api/ai/ask`); not a security fix, so no `Security exception:` line — the second `Owner exception:` line (*Record: 1.27.0*). Its `release.yml` run publishes it only when the owner runs it with `policy_exception`, after `v1.26.1` in the same push | server configuration from the browser, the clearer settings pages and the AI assistant (*Record: 1.27.0*, above) | the owner's `policy_exception` on the tag's release run |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as
@@ -1213,7 +1252,7 @@ QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` r
 | CI job | What it proves |
 | --- | --- |
 | `test` | `npm test`, the committed kernel and generated schema match their sources, the package builds, browser modules parse |
-| `browser` | the whole browser suite, `scripts/ui/run-all.sh` — 61 scripts, including `accessibility` (fails on any WCAG 2.1 AA finding) and the QA-regression script `a11y-round4` |
+| `browser` | the whole browser suite, `scripts/ui/run-all.sh` — 63 scripts, including `accessibility` (fails on any WCAG 2.1 AA finding) and the QA-regression script `a11y-round4` |
 | `node24` | `npm test` on the next Node LTS line |
 | `thorough` | the performance checks (`test/thorough/`) and timing budgets, at full size |
 | `thorough-sdc` | the statistical-disclosure-control attacker sweeps at full size (`scripts/test-thorough.js` `SDC_SWEEPS`) |

@@ -2,13 +2,65 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.27.0 — 2026-10-24
+
+SHA-256 of suds-v1.27.0.zip: 4413949623193413d10be25c483971a350e50bd778647c4cdab484617c976500
+
+A feature release (docs/RELEASE.md, *Record: 1.27.0*): server configuration from the browser, the AI assistant, and the
+pilot price the owner settled. **Migration 73** (schema version 73): one new table, `server_config`, applied
+automatically at start-up; take a backup first, as before any upgrade. One new permission, *Use the AI assistant*
+(`ai:ask`), held by clinicians, supervisors and navigators, and new routes: `POST /api/ai/ask` and Settings › Server
+configuration's under `/api/admin/server-config`. The assistant is off until an administrator switches it on.
+
+Owner exception: released seven days after 1.26.0, inside the 28 days between feature releases, on the owner's decision of 2026-10-24 ("I approve the exception", relayed by the business assistant in the private hand-off, with the release's contents confirmed by the owner in the development session the same day); not a security fix
+
+It is the second release on a recorded owner exception (the first was 1.26.0), and the release workflow still refuses
+it until the owner runs it with `policy_exception`. 1.26.1, the security patch stamped before it, is tagged in the same
+push.
+
+### Added
+
+- **Server configuration from the browser** (Settings › **Server configuration**; server/server-config.js). What an
+  office server took only from its environment until now is set by an administrator in the browser: the AI copilot's
+  provider and its key (Anthropic, Amazon Bedrock, Google Vertex AI), single sign-on, OneNote import, the metrics token,
+  where to check for updates, audit seals to syslog, the log format, the sign-in and request limits, and the audit and
+  deletion retention. A value set in the environment still wins and is shown as such. A secret is kept encrypted
+  (`server_config.value_enc`), never shown again, logged or audited; changing a secret, or a setting that decides
+  where client text, sign-in or audit evidence goes, asks for the administrator's password again. Changes take effect
+  at once unless the row says a restart is needed. What stays in the environment (the keys that open the database,
+  where it lives, the listening address and certificate, `SUDS_AI_BASE_URL`) is listed on the page with the reason.
+  Audited as `server_config.update`, `server_config.clear` and `server_config.update.failed`.
+- **All settings**: Settings opens on one list of every setting, grouped, each with what it is set to now and a link
+  that opens its tab, scrolls to it, focuses it and marks it; a box narrows the list as you type.
+- **The AI copilot tab carries the provider's connection inline**: the "no credentials" banner links to the key box.
+- **An AI assistant**, off unless switched on: one conversation, built for a phone, for questions about a client
+  before a visit, your own day, or programme information (supplies on hand by site, the referral directory).
+  - It answers from a summary SUDS prepares from records the person may already see: dates, statuses, counts, care
+    plan entries and the short free text workers write on contacts, referrals and to-dos (the owner's decision of
+    2026-10-24), all masked the same way. It never sends a note's text, and never anything from a SUD counseling note.
+  - Every answer names the parts of the summary it used, as links into the record, under "AI answer — check it
+    against the record before you act". An answer citing something it was not given is refused.
+  - It runs on the AI copilot's agreement, provider, identifier replacement, monthly limit and audit. It needs
+    the copilot on, its own switch, and the agreement confirmed to cover assistant use (a fourth statement,
+    recorded again under Settings › AI copilot).
+  - It never changes a record. **Draft a note from this** opens a new note with the worker's recap in the
+    copilot's box, where the copilot's own review and AI-assisted marking apply.
+  - New permission *Use the AI assistant* (`ai:ask`), held by clinicians, supervisors and navigators by default.
+    New route `POST /api/ai/ask`, audited as `ai.ask` with metadata only.
+  - The assistant itself needs no migration (docs/AI-COPILOT.md, *The assistant*). Tested by `test/ai-assistant.test.js`, `test/ai-context.test.js` and
+    a new browser script, `ai-assistant.mjs`.
+- With the browser scripts `settings` and `ai-assistant`, the suite is now 63 scripts.
 
 ### Changed
 
-- **The 90-day pilot is now $4,500 flat** (it was $14,500), still credited in full toward the first annual plan. The old
-  pilot cost more per month than the Program plan it leads to. The other plans are unchanged
-  (`public/procurement.json`, the Security & procurement page).
+- **Settings › Program** is one column of cards with *On this page* beside it, instead of four cards side by side; its
+  links open the folded section at the setting. *Server security configuration* is now *This server*: each line says
+  how it stands and links to where it is changed. Status lines link to their setting ("No clinical modules are switched
+  on" to the module choices; updates "not set up yet" to where to check).
+- **The 90-day pilot is now $9,500 flat** (it was $14,500), still credited in full toward the first annual plan (the
+  owner's decision of 2026-10-24). That is under the $10,000 federal micro-purchase threshold and inside county
+  informal purchase limits. The other plans are unchanged. The fee schedule appears in the app's Security &
+  procurement page and in proposals; marketing websites carry no prices.
 - **Vendor hosting is described as single-tenant**, as it always was: each customer has its own server, database and
   keys. The published pricing used to call it "multi-tenant", which reads as shared infrastructure.
 - The published pricing says that the county or provider submits the CalOMS Tx file, and that SUDS sends nothing to

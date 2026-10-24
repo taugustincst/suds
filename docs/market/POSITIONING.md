@@ -289,7 +289,7 @@ support is business-hours ([templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md))
 Being able to see the code is not a licence to use it. SUDS on this device is free at its official address, real
 records included; the office server may be evaluated free for 90 days with fictional data, and production use of
 it needs a licence agreement ([LICENSE](../../LICENSE)). The prices are published in `public/procurement.json`
-(effective October 2026): a 90-day pilot at $4,500 flat (credited in full toward the first annual plan), Program at
+(effective October 2026): a 90-day pilot at $9,500 flat (credited in full toward the first annual plan), Program at
 $24,500 a year, Multi-Site at $49,500 a year and County-Wide at $98,000 a year. They pay for the people around the
 code: onboarding, the BAA and QSOA, updates, email support and, on the annual plans, hosting on the vendor's fleet;
 they exclude the customer's own infrastructure for a self-hosted office server. Final terms are set in a licence

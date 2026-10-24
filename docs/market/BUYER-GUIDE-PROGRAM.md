@@ -71,7 +71,11 @@ the CalOMS Tx code sets are corrected against the DHCS data dictionary (so a tre
 dictionary's values), every resource-directory card shows a picture, and the call and text forms are plainer. 1.26.0
 adds **Policy sign-offs** for a programme whose county keeps its policies in PowerDMS: each person sees the policies
 they must sign and whether they have, and a supervisor imports PowerDMS's signature report to keep it current
-([../integration/POWERDMS.md](../integration/POWERDMS.md)).
+([../integration/POWERDMS.md](../integration/POWERDMS.md)). 1.27.0 adds an **AI assistant**, off unless your administrator
+switches it on under the AI copilot's agreement: a worker asks about a client before a visit, their own day, or
+programme information (supplies by site, the referral directory), and every answer names the parts of the record it
+used, to check before acting. It never changes a record and never reads a note's text
+([../AI-COPILOT.md](../AI-COPILOT.md), *The assistant*).
 A referral network partner organisations join (beyond the
 1.17.0 one-time secure links) is planned and not scheduled ([STRATEGY.md](STRATEGY.md)). Choose SUDS for what it does
 today.
@@ -219,5 +223,5 @@ actually took ([PILOT-KIT.md](PILOT-KIT.md), section 5).
 1. Read [POSITIONING.md](POSITIONING.md) and share [BUYER-GUIDE-IT.md](BUYER-GUIDE-IT.md) with IT.
 2. Run the eligibility check in [PILOT-KIT.md](PILOT-KIT.md).
 3. Estimate value with [templates/ROI-CALCULATOR.md](templates/ROI-CALCULATOR.md).
-4. Agree pilot terms (the published 90-day pilot, $4,500 flat and credited toward the first annual plan:
+4. Agree pilot terms (the published 90-day pilot, $9,500 flat and credited toward the first annual plan:
    [`public/procurement.json`](../../public/procurement.json)) and a purchasing route ([PROCUREMENT.md](PROCUREMENT.md)).

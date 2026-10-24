@@ -17,7 +17,7 @@ purchase order, instead of a formal RFP. Thresholds vary widely by county and by
 services, IT, professional services), and IT or software purchases often need IT approval regardless of amount.
 
 - **Fits:** a pilot ([PILOT-KIT.md](PILOT-KIT.md)), and a small programme's implementation plus a year of
-  support (at the published tiers, reworked 2026-10-12, a $4,500 90-day pilot (reworked 2026-10-23) credited toward Program at $24,500 a year,
+  support (at the published tiers, reworked 2026-10-12, a $9,500 90-day pilot (settled 2026-10-24) credited toward Program at $24,500 a year,
   [`public/procurement.json`](../../public/procurement.json)).
 - **Watch for:** splitting a purchase to stay under a threshold is prohibited; multi-year terms count in full;
   software may still require an IT security review and a BAA whatever the amount.
@@ -142,7 +142,7 @@ does not hold.
    Licence: SUDS Proprietary Licence (LICENSE); production licence agreement [owner to complete]; source visible; full data export on exit.
 
 10. PRICING
-    Published in public/procurement.json (USD, effective October 2026): 90-day pilot $4,500 flat
+    Published in public/procurement.json (USD, effective October 2026): 90-day pilot $9,500 flat
     (credited in full toward the first annual plan); Program $24,500 a year; Multi-Site $49,500 a
     year; County-Wide $98,000 a year. Hosting on the vendor's fleet is included in the annual plans;
     prices exclude customer infrastructure for a self-hosted office server.

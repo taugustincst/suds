@@ -28,9 +28,24 @@ hosted yet).
 | **Try it free** | SUDS on this device: https://taugustincst.github.io/suds/ |
 | **Contact** | Licensing, AugustInnovations LLC, info@suds.systems; security reports: [SECURITY.md](SECURITY.md) |
 
-## What's new in 1.26.0
+## What's new in 1.27.0
 
-* **PowerDMS policy sign-offs:** a policy in Policies & contracts can be the county's PowerDMS document, with the
+* **The AI assistant** (off until switched on): staff ask about a client before a visit, about their own day, or about
+  program information, and get an answer from a summary of the record that names the parts it used, each a link into
+  the record ([docs/AI-COPILOT.md](docs/AI-COPILOT.md), *The assistant*). It runs on the AI copilot's agreement,
+  provider, identifier replacement and monthly limit, and never changes a record.
+* **Server configuration from the browser**: the AI provider and its key, single sign-on and the other settings an
+  office server took only from its environment, set under Settings › Server configuration; and **All settings**, one
+  list of every setting with a link to each. Migration 73 runs at start-up.
+* Released seven days after 1.26.0 on a recorded owner exception to the 28 days between feature releases
+  ([docs/RELEASE.md](docs/RELEASE.md), *Record: 1.27.0*).
+
+## What was new in 1.26 (1.26.0 and 1.26.1)
+
+* **1.26.1:** a security patch: the sign-in race, the ZIP expansion cap, the malformed cookie and the rest of the code
+  evaluation of 1.26.0, with field-by-field sync merging on devices ([CHANGELOG.md](CHANGELOG.md)).
+
+* **1.26.0 — PowerDMS policy sign-offs:** a policy in Policies & contracts can be the county's PowerDMS document, with the
   revision staff must sign and who signs it; **Policy sign-offs** shows each person what they owe, and supervisors import
   PowerDMS's signature report to record who signed (office server; no client data; no live PowerDMS connection)
   ([docs/integration/POWERDMS.md](docs/integration/POWERDMS.md)). Migration 72 runs at start-up.

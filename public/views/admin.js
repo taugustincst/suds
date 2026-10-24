@@ -4,6 +4,9 @@ import { listsTab } from './lists.js';
 import { securityTab, drillCard } from './security.js';
 import { instrumentsCard } from './clinical.js';
 import { aiSettingsTab } from './ai.js';
+import { serverConfigTab } from './server-config.js';
+import { settingsOverview } from './settings-overview.js';
+import { revealSetting, settingHref } from './settings-nav.js';
 
 /**
  * The key backup opens every backup of this database, so the server asks the administrator to prove it is
@@ -365,7 +368,7 @@ export async function sampleDataCard(onChange) {
     busy.textContent = 'Removing…';
     const r = await del(path); toast(`Removed ${r.removed} sample records`, 'ok'); state.funds = null; await loadRefData(); onChange && onChange();
   };
-  return h('div', { class: 'card', 'data-sample': st.loaded ? 'loaded' : 'empty' }, h('h2', {}, 'Sample data'),
+  return h('div', { class: 'card', 'data-sample': st.loaded ? 'loaded' : 'empty', 'data-setting': 'sample-data' }, h('h2', {}, 'Sample data'),
     st.loaded ? [h('p', { class: 'small' }, badge('Sample data loaded', 'info'), ' ', `${st.counts.clients} fictional clients and ${st.total} records added ${fmt.dt(st.loaded_at)}. Client codes start with DEMO-.`),
       h('p', { class: 'small muted' }, state.local ? 'Sample data is removed automatically before this device syncs with the office, so it never mixes with real records.' : 'Remove it before entering real clients.'),
       h('div', { class: 'btn-row' }, h('button', { class: 'btn danger', onClick: remove }, 'Remove sample data'), busy)]
@@ -397,6 +400,22 @@ function timezoneField(s) {
 // The programme profile and its modules (server/programme.js): what kind of programme this is, and which
 // clinical modules it uses. Presentation, not permissions: a module switched off leaves the menus, client
 // tabs and Home, and stops new records in it; records already made can still be read.
+// What this office server runs with (it was "Server security configuration", which said only "set via environment
+// variables"): each line says how it stands and links to where it is changed (1.27.0).
+function serverSummaryCard(s) {
+  const e = s.env || {};
+  const go = (tab, target, text) => h('a', { href: settingHref(tab, target), 'data-setting-link': target || tab }, text);
+  return h('div', { class: 'card', 'data-setting': 'server-summary' }, h('h2', {}, 'This server'),
+    kv([
+      ['HTTPS', h('span', {}, e.tls ? badge(e.tls_mode === 'selfsigned' ? 'Self-signed certificate' : 'On', 'ok') : badge('Off', 'danger'), ' ', go('network', null, e.tls ? 'Network & devices' : 'Turn it on'))],
+      ['Encryption keys', h('span', {}, e.key_source === 'file' ? 'Kept beside the database (keys.json). ' : e.key_source === 'devfile' ? 'Development key files. ' : 'In the server\'s environment. ', e.key_source === 'file' ? go('system', null, 'Download the key backup') : null)],
+      ['Addresses', (e.listener?.urls || []).join(', ') || '—'],
+      ['Single sign-on', h('span', {}, e.oidc_configured ? badge(`On — "${e.oidc_label}"`, 'ok') : badge('Not set up', 'warn'), ' ', go('server', 'group-sso', e.oidc_configured ? 'Change' : 'Set it up'))],
+      ['OneNote import', h('span', {}, e.ms_graph_configured ? badge('Set up', 'ok') : badge('Not set up', 'warn'), ' ', go('server', 'group-onenote', e.ms_graph_configured ? 'Change' : 'Set it up'))],
+      ['Environment', e.env],
+    ]),
+    h('p', { class: 'small' }, go('server', null, 'All server configuration'), ': the AI provider and its key, monitoring, limits and retention.'));
+}
 function programmeCard(s, refresh) {
   const p = s.programme;
   const profileLabel = (v) => (p.profiles.find(x => x.value === v) || {}).label || v;
@@ -417,9 +436,10 @@ function programmeCard(s, refresh) {
   f.inputs.programme_profile.addEventListener('change', () => { if (profHelp) profHelp.textContent = (p.profiles.find(x => x.value === f.inputs.programme_profile.value) || {}).help || ''; });
   const onNow = p.module_list.filter(m => m.clinical !== false && p.modules[m.key]).map(m => m.label);
   const othersOn = p.module_list.filter(m => m.clinical === false && p.modules[m.key]).map(m => m.label);
-  return h('div', { class: 'card', 'data-programme-profile': p.profile }, h('h2', {}, 'Program profile & modules'),
+  return h('div', { class: 'card', 'data-programme-profile': p.profile, 'data-setting': 'programme-card' }, h('h2', {}, 'Program profile & modules'),
     h('p', { class: 'small muted' }, 'Decides what the menus, client records and Home lead with. Permissions do not change: a module switched off hides it and stops new records in it; anything already recorded can still be read.'),
-    h('p', { class: 'small', 'data-modules-on': onNow.length }, onNow.length ? `Switched on: ${onNow.join(', ')}.` : 'No clinical modules are switched on.'),
+    h('p', { class: 'small', 'data-modules-on': onNow.length }, onNow.length ? `Switched on: ${onNow.join(', ')}. ` : 'No clinical modules are switched on. ',
+      p.module_list.length ? h('a', { href: settingHref('settings', `module_${p.module_list[0].key}`), 'data-setting-link': 'modules' }, 'Choose the modules') : null),
     h('p', { class: 'small', 'data-other-modules-on': othersOn.join(',') }, othersOn.length ? `Also on: ${othersOn.join(', ')}.` : 'SUPRT-A and publication releases are both off.'),
     f);
 }
@@ -531,7 +551,7 @@ async function allowlistCard(refresh) {
         { label: 'Other second factor', render: x => x.other_factor ? badge('Authenticator app', 'ok') : x.only_factor ? flag('None: this is their only one', true, 'they will need a password and authenticator-app code, or a new accepted passkey', 'danger') : flag('Another passkey', true, 'a passkey the list keeps', 'warn') }], a.accounts) : null].filter(Boolean));
   }
   if (s.enabled && s.affected && s.affected.passkey_count) showPreview({ models: s.models, affected: s.affected }, [], { current: true });
-  return h('div', { class: 'card', 'data-allowlist-card': '1' }, h('h2', {}, 'Authenticator allow-list (passkeys)'),
+  return h('div', { class: 'card', 'data-allowlist-card': '1', 'data-setting': 'passkey-allowlist' }, h('h2', {}, 'Authenticator allow-list (passkeys)'),
     h('p', { class: 'small' }, 'Off by default. When it is on, a passkey can be added only on an authenticator model listed here, and the authenticator must prove its model (attestation), checked against the FIDO Metadata Service. Passkeys it refuses — every one added before it was turned on — keep working for the grace period you set below, then stop.'),
     h('p', { class: 'small', 'data-allowlist-synced': '1' }, h('b', {}, 'Synced passkeys cannot be added while the list is on. '), 'Passkeys kept in iCloud Keychain, Google Password Manager or another password manager do not prove their model, so SUDS refuses them; staff who use one need a listed security key or device instead.'),
     kv([['Status', s.enabled ? badge('On', 'ok') : badge('Off')],
@@ -560,7 +580,8 @@ route('admin', async (r) => {
     if (r.id === 'allowlist') { history.replaceState(history.state, '', `${location.pathname}${location.search}#/admin?tab=settings`); if (ssoBack === 'ok') toast('Confirmed with single sign-on. Save the allow-list, or load the metadata file, again within a few minutes.', 'ok'); else (await import('./notes.js')).ssoReauthNotice(r.query); }
     else if (ssoBack === 'ok') setTimeout(() => downloadKeyBackup(), 0); else (await import('./notes.js')).ssoReauthNotice(r.query);
   }
-  const tab = ssoBack ? (r.id === 'allowlist' ? 'settings' : 'system') : r.query.get('tab') || 'users';
+  // An administrator on an office server starts on All settings (1.27.0); anyone else on their first tab.
+  const tab = ssoBack ? (r.id === 'allowlist' ? 'settings' : 'system') : r.query.get('tab') || (can('users:manage') && !state.local ? 'all' : 'users');
   const refresh = () => nav(`admin?tab=${tab}&_=${Date.now()}`);
   const body = h('div', {});
   const T = {
@@ -670,18 +691,21 @@ route('admin', async (r) => {
         ]),
       ], { values: s, submitText: 'Save settings', onSubmit: async (d) => { const r = await put('/api/admin/settings', d); if (r && r.warnings && r.warnings.length) toast(`Settings saved. ${r.warnings.join(' ')}`, 'warn'); else toast('Settings saved', 'ok'); },
         extra: state.local ? null : h('p', { class: 'small', 'data-backup-link': '1' }, 'To back up now, download a backup or restore one, open ', h('a', { href: '#/admin?tab=system' }, 'System & backups'), '.') });
-      // A link to one setting (Home's "Finish setting up", 1.24.0: field=…): its section is open; the field is scrolled
-      // to and focused once the page is drawn (after the router has put focus on the heading).
-      const want = r.query.get('field');
-      // Polled: the rest of the tab (the cards below) is still loading when this runs, and the router focuses the
-      // heading in the same turn it attaches the page, so the first look that finds the field attached comes after it.
-      const el = want ? f.querySelector(`[name="${CSS.escape(want)}"]`) : null;
-      if (el) { let tries = 0; const place = () => { if (!el.isConnected) { if (++tries < 100) setTimeout(place, 50); return; } const d = el.closest('details'); if (d) d.open = true; el.scrollIntoView({ block: 'center' }); try { el.focus({ preventScroll: true }); } catch { /* ignore */ } }; setTimeout(place, 0); }
-      return h('div', { class: 'grid cols-2' }, s.programme ? programmeCard(s, refresh) : null, h('div', { class: 'card' }, h('h2', {}, 'Program settings'), f), state.local ? deviceSettingsCard() : null,
-        state.local ? null : await allowlistCard(refresh), await instrumentsCard(refresh), await sampleDataCard(refresh),
-        h('div', { class: 'card' }, h('h2', {}, 'Server security configuration'), h('p', { class: 'small muted' }, 'Set via environment variables (see .env.example and docs/DEPLOYMENT.md).'),
-          kv([['Environment', s.env.env], ['HTTPS', s.env.tls ? badge(s.env.tls_mode === 'selfsigned' ? 'Self-signed certificate' : 'Enabled', 'ok') : badge('Off — enable under Network', 'danger')], ['Encryption keys', s.env.key_source === 'file' ? 'data/keys.json (back it up under System)' : s.env.key_source === 'devfile' ? 'Development key files in data/' : 'Environment variables'], ['Addresses', (s.env.listener?.urls || []).join(', ')], ['OneNote (Graph) sync', s.env.ms_graph_configured ? badge('Configured', 'ok') : badge('Not configured', 'warn')],
-            ['Single sign-on (OIDC)', s.env.oidc_configured ? badge(`Configured — "${s.env.oidc_label}"`, 'ok') : badge('Not configured — set OIDC_ISSUER etc. (see docs/DEPLOYMENT.md)', 'warn')]])));
+      // One column of cards, with "On this page" beside it (1.27.0: four cards side by side were too busy to read).
+      // A link there, or anywhere else (settings-nav.js, ?field=…), opens the section and marks the setting.
+      const parts = [
+        s.programme ? ['Program profile & modules', 'programme-card'] : null, ['Your program', 'org_name'], ['Security policy', 'session_idle_minutes'],
+        state.local ? null : ['Single sign-on & provisioning', 'sso_required'], ['Minimal personal information', 'participant_code_default'], ['Record retention', 'client_retention_years'],
+        ['Reporting', 'default_fund_id'], state.local ? null : ['Scheduled backups & recovery', 'backup_schedule_hours'], state.local ? null : ['Security & procurement page', 'procurement_legal_entity'],
+        state.local ? null : ['Authenticator allow-list', 'passkey-allowlist'], ['Screening instruments', 'screening-instruments'], ['Sample data', 'sample-data'], state.local ? null : ['This server', 'server-summary'],
+      ].filter(Boolean);
+      return h('div', { class: 'settings-layout' },
+        h('nav', { class: 'card on-this-page', 'aria-label': 'Program settings sections' }, h('h2', {}, 'On this page'),
+          h('ul', {}, ...parts.map(([label, target]) => h('li', {}, h('a', { href: settingHref('settings', target) }, label))))),
+        h('div', { class: 'settings-stack' },
+          s.programme ? programmeCard(s, refresh) : null, h('div', { class: 'card' }, h('h2', {}, 'Program settings'), f), state.local ? deviceSettingsCard() : null,
+          state.local ? null : await allowlistCard(refresh), await instrumentsCard(refresh), await sampleDataCard(refresh),
+          state.local ? null : serverSummaryCard(s)));
     },
     async audit() {
       const q = new URLSearchParams(); for (const k of ['action', 'user_id', 'client_id', 'from', 'to', 'failures']) if (r.query.get(k)) q.set(k, r.query.get(k)); q.set('limit', '200');
@@ -734,7 +758,7 @@ route('admin', async (r) => {
         updateStatus.textContent = 'Checking…';
         try {
           const r = await get('/api/admin/update/check');
-          if (!r.configured) { updateStatus.textContent = 'Not configured — set UPDATE_FEED_URL to enable (see docs/DEPLOYMENT.md).'; return; }
+          if (!r.configured) { clear(updateStatus).append('Not set up yet: ', h('a', { href: settingHref('server', 'UPDATE_FEED_URL'), 'data-setting-link': 'UPDATE_FEED_URL' }, 'choose where to check for updates'), '.'); return; }
           updateStatus.replaceChildren(r.available
             ? h('span', {}, badge(`Update available: ${r.latest}`, 'info'), ' ', h('a', { href: r.url, target: '_blank', rel: 'noopener' }, 'View release'), ' — run ', h('code', {}, 'node scripts/update.js --apply'), ' to install it.')
             : badge(`Up to date (${r.current})`, 'ok'));
@@ -844,8 +868,14 @@ route('admin', async (r) => {
   // The AI documentation copilot (docs/AI-COPILOT.md): an office-server module, off until its agreement is recorded.
   if (full && !state.local && can('settings:manage')) { T.ai = () => aiSettingsTab(refresh); const at = tabs.findIndex(([k]) => k === 'security'); tabs.splice(at < 0 ? tabs.length : at, 0, ['ai', 'AI copilot']); }
   if (full && !state.local && can('apikeys:manage') && moduleOn('fhir')) { T.fhir = () => fhirClientsTab(refresh); const at = tabs.findIndex(([k]) => k === 'apikeys'); tabs.splice(at < 0 ? tabs.length : at + 1, 0, ['fhir', 'FHIR clients']); }
+  // Server configuration (1.27.0, views/server-config.js): what the server took only from its environment until then.
+  if (full && !state.local && can('settings:manage')) { T.server = () => serverConfigTab(refresh); const at = tabs.findIndex(([k]) => k === 'system'); tabs.splice(at < 0 ? tabs.length : at + 1, 0, ['server', 'Server configuration']); }
+  // All settings first (1.27.0, views/settings-overview.js): every setting in one list, each a link to it.
+  if (full && !state.local) { T.all = () => settingsOverview(); tabs.unshift(['all', 'All settings']); }
   const allowed = tabs.some(([k]) => k === tab) ? tab : tabs[0][0];
   body.append(await (T[allowed] || T[tabs[0][0]])());
+  // A link to one setting (?field=…, settings-nav.js): its section opened, scrolled to, focused and marked.
+  revealSetting(body, r.query.get('field'));
   return h('div', {}, pageHead(full ? 'Settings' : 'Supervision tools'), state.local ? h('div', { class: 'banner small' }, window.SUDS_STATIC_HOST ? 'This is SUDS on this device. Backups, and who may sign up here, are on the This device page.' : 'This is the copy of SUDS on this device. Network, API keys and backups are managed on the office SUDS; use Sync to exchange data.') : null, pageTabs(tabs, allowed, (k) => nav(`admin?tab=${k}`), { label: full ? 'Settings sections' : 'Supervision tools sections', wrap: true }), body);
 });
 

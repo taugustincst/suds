@@ -34,7 +34,7 @@ try { if (fs.existsSync(keysJsonPath)) fileKeys = JSON.parse(fs.readFileSync(key
 // (LoadCredential=, then <NAME>_FILE=%d/<name>; deploy/linux/suds.service) hand a secret to a process
 // without putting it in an environment a `ps e`, a core dump or a child process could read. The value is
 // read here, trimmed, and kept in this module: never copied into process.env. <NAME> itself, when set, wins.
-const SECRET_FILE_VARS = ['SUDS_ENCRYPTION_KEY', 'SUDS_INDEX_KEY', 'SUDS_BACKUP_KEY', 'SUDS_SIGNING_KEY', 'METRICS_TOKEN', 'OIDC_CLIENT_SECRET', 'MS_CLIENT_SECRET', 'ANTHROPIC_API_KEY'];
+const SECRET_FILE_VARS = ['SUDS_ENCRYPTION_KEY', 'SUDS_INDEX_KEY', 'SUDS_BACKUP_KEY', 'SUDS_SIGNING_KEY', 'METRICS_TOKEN', 'OIDC_CLIENT_SECRET', 'MS_CLIENT_SECRET', 'ANTHROPIC_API_KEY', 'AWS_SECRET_ACCESS_KEY'];
 const secretFromFileCache = new Map();
 function envSecret(name) {
   const direct = process.env[name];
@@ -131,6 +131,13 @@ function parseLocalMode(v) { return ['1', 'true', 'yes', 'on'].includes(String(v
 // (Security status shows it as a problem until the setting is fixed).
 const AUDIT_RETENTION_MIN_DAYS = 2190;
 const AUDIT_RETENTION_DEFAULT_DAYS = 2555;
+// The days for a configured value (the environment's, or since 1.27.0 one set in Settings › Server configuration).
+function auditRetentionFrom(raw) {
+  if (raw === undefined || raw === '') return { days: AUDIT_RETENTION_DEFAULT_DAYS, configured: null };
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return { days: AUDIT_RETENTION_DEFAULT_DAYS, configured: null };
+  return { days: Math.max(n, AUDIT_RETENTION_MIN_DAYS), configured: n };
+}
 const auditRetention = (() => {
   const raw = process.env.AUDIT_RETENTION_DAYS;
   if (raw === undefined || raw === '') return { days: AUDIT_RETENTION_DEFAULT_DAYS, configured: null };
@@ -231,7 +238,8 @@ const config = {
   updateFeedUrl: process.env.UPDATE_FEED_URL || '',
   // The AI documentation copilot (docs/AI-COPILOT.md). Off unless an administrator records the programme's
   // BAA/QSOA with the provider and switches it on (server/ai-copilot.js); even then it needs the provider's API
-  // key here, in the server's environment, never in the database or the browser. Read at each call, so a
+  // key: from the environment, or (1.27.0) set in Settings › Server configuration, kept encrypted and never sent back
+  // to a browser (apiKey is redefined with the other live settings below). Read at each call, so a
   // changed key needs no restart. SUDS_AI_BASE_URL points at another endpoint speaking the same Messages API
   // (a test double, or a county's own gateway to the provider); it must be https unless it is this machine.
   ai: {
@@ -329,7 +337,52 @@ const config = {
 // After the other keys (loadSigningKey appends to the keys.json they may just have created).
 config.signingKey = env === 'test' ? crypto.createHash('sha256').update('test-signing-key').digest() : loadSigningKey();
 config.signingKeySource = env === 'test' ? 'test' : signingSourceHolder.value;
-config.oidc.enabled = !!(config.oidc.issuer && config.oidc.clientId && config.oidc.clientSecret && config.oidc.redirectUri);
+
+// ---- Settings an administrator may set in the browser (1.27.0, server/server-config.js) ----
+// setting(name): the environment (a secret also from <NAME>_FILE or a systemd credential), else the value set in
+// Settings › Server configuration, else undefined. The fields below read it at each use, so a change made there takes
+// effect without a restart. Each also keeps a setter: what a test (or the setup wizard) assigns wins from then on.
+const envValue = (name) => (SECRET_FILE_VARS.includes(name) ? envSecret(name) : process.env[name]);
+const envHas = (name) => { const v = envValue(name); return v !== undefined && v !== ''; };
+function setting(name) {
+  if (envHas(name)) return envValue(name);
+  return require('./server-config').storedValue(name);
+}
+function live(obj, key, compute) {
+  let override, overridden = false;
+  Object.defineProperty(obj, key, { enumerable: true, configurable: true, get: () => (overridden ? override : compute()), set: (v) => { override = v; overridden = true; } });
+}
+const num = (v, dflt) => { const n = Number(v); return v !== undefined && v !== '' && Number.isFinite(n) ? n : dflt; };
+const flag = (v) => v === '1' || v === 'true';
+live(config, 'loginRateLimit', () => num(setting('LOGIN_RATE_LIMIT'), env === 'test' ? 100000 : 20));
+live(config, 'loginIpRateLimit', () => { const v = Number(setting('LOGIN_IP_RATE_LIMIT')); return Number.isFinite(v) && v > 0 ? v : Math.max(200, config.loginRateLimit * 10); });
+live(config, 'apiRateLimit', () => { const v = num(setting('API_RATE_LIMIT'), 600); return v > 0 ? v : 600; });
+live(config, 'signupRateLimit', () => num(setting('SIGNUP_RATE_LIMIT'), 5));
+live(config.msGraph, 'tenantId', () => setting('MS_TENANT_ID') || '');
+live(config.msGraph, 'clientId', () => setting('MS_CLIENT_ID') || '');
+live(config.msGraph, 'clientSecret', () => setting('MS_CLIENT_SECRET') || '');
+live(config.msGraph, 'user', () => setting('MS_ONENOTE_USER') || '');
+live(config.oidc, 'issuer', () => (setting('OIDC_ISSUER') || '').replace(/\/$/, ''));
+live(config.oidc, 'clientId', () => setting('OIDC_CLIENT_ID') || '');
+live(config.oidc, 'clientSecret', () => setting('OIDC_CLIENT_SECRET') || '');
+live(config.oidc, 'redirectUri', () => setting('OIDC_REDIRECT_URI') || '');
+live(config.oidc, 'label', () => setting('OIDC_LABEL') || 'Sign in with county SSO');
+live(config.oidc, 'enabled', () => !!(config.oidc.issuer && config.oidc.clientId && config.oidc.clientSecret && config.oidc.redirectUri));
+live(config, 'updateFeedUrl', () => setting('UPDATE_FEED_URL') || '');
+live(config, 'metricsToken', () => setting('METRICS_TOKEN') || '');
+live(config, 'logFormat', () => (setting('LOG_FORMAT') === 'json' ? 'json' : 'text'));
+live(config, 'auditRetentionDaysConfigured', () => auditRetentionFrom(setting('AUDIT_RETENTION_DAYS')).configured);
+live(config, 'auditRetentionDays', () => auditRetentionFrom(setting('AUDIT_RETENTION_DAYS')).days);
+live(config, 'tombstoneRetentionDays', () => num(setting('TOMBSTONE_RETENTION_DAYS'), 180));
+live(config, 'publicAppInfo', () => flag(setting('PUBLIC_APP_INFO')));
+live(config, 'allowStaticSync', () => flag(setting('ALLOW_STATIC_SYNC')));
+live(config, 'auditAnchorHours', () => num(setting('AUDIT_ANCHOR_HOURS'), 1));
+live(config, 'auditSyslog', () => setting('AUDIT_SYSLOG') || '');
+live(config.ai, 'apiKey', () => setting('ANTHROPIC_API_KEY') || '');
+live(config.ai, 'timeoutMs', () => { const v = Number(setting('SUDS_AI_TIMEOUT_MS') || 180000); return Number.isFinite(v) && v >= 1000 ? v : 180000; });
+config.setting = setting;
+config.envHas = envHas;
+config.envValue = envValue;
 config.keySource = keySourceHolder.value;
 config.localModeFromEnv = !!process.env.LOCAL_MODE_ENABLED;
 config.parseLocalMode = parseLocalMode;

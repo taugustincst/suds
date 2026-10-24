@@ -1,12 +1,12 @@
 // SUDS service worker: caches the application shell only. API responses (PHI) are NEVER cached.
-const VERSION = 'suds-shell-1.26.1';
+const VERSION = 'suds-shell-1.27.0';
 // The local-mode kernel and its WebAssembly are cached too, so a device set up for local mode boots with
 // no connection at all (they are only ever *downloaded* when local mode is used; index.html never loads
 // them). The versioned URL is what app.js requests, so the cache key matches without a second download.
 const KERNEL_VERSION = VERSION.replace(/^suds-shell-/, '');
 const SHELL = ['./', 'index.html', 'styles.css', 'main.js', 'app.js', 'nav.js', 'qr.js', 'passkey.js', 'get-app.html', 'get-app.js', 'accessibility.html', 'accessibility.js', 'procurement.html', 'procurement.js', 'county-periods.js', 'outreach-queue.js', 'favicon.svg', 'manifest.webmanifest', 'manifest-local.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   `local/kernel.js?v=${KERNEL_VERSION}`, `local/sql-wasm.wasm?v=${KERNEL_VERSION}`, `local/audit-worker.js?v=${KERNEL_VERSION}`,
-  ...['login', 'dashboard', 'clients', 'client', 'interventions', 'calls', 'time', 'resources', 'referrals', 'incoming', 'tasks', 'budget', 'notes', 'imports', 'reports', 'admin', 'profile', 'setup', 'forms', 'documents', 'dataimport', 'local', 'supervision', 'episodes', 'overdose', 'funder', 'supplies', 'lists', 'caloms', 'clinical', 'security', 'compliance', 'part2', 'suprt', 'history', 'prevention', 'ai', 'outreach', 'settlement', 'county', 'countyconnect'].map(v => `views/${v}.js`)];
+  ...['login', 'dashboard', 'assistant', 'clients', 'client', 'interventions', 'calls', 'time', 'resources', 'referrals', 'incoming', 'tasks', 'budget', 'notes', 'imports', 'reports', 'admin', 'profile', 'setup', 'forms', 'documents', 'dataimport', 'local', 'supervision', 'episodes', 'overdose', 'funder', 'supplies', 'lists', 'caloms', 'clinical', 'security', 'compliance', 'part2', 'suprt', 'history', 'prevention', 'ai', 'outreach', 'settlement', 'county', 'countyconnect', 'server-config', 'settings-overview', 'settings-nav'].map(v => `views/${v}.js`)];
 // Each shell file is fetched on its own: addAll() fails the whole install if one file is missing (a server
 // with local mode switched off answers 404 for local/*), which used to leave nothing cached at all.
 // `cache: 'reload'` fills the shell from the network, never from the browser's HTTP cache: a static host

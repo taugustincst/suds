@@ -27,18 +27,18 @@ const PER_USER_PER_MINUTE = 12;
  * going to the provider. A §164.522 / §2.26 restriction the programme granted may cover this use (a business
  * associate's work needs no consent, but a restriction can still forbid it), and SUDS cannot read a restriction's
  * terms, so the copilot is not used for that client at all (security review of 1.17.0, L6; docs/AI-COPILOT.md).
- * Refused before anything is sent, and audited as a draft that did not happen.
+ * Refused before anything is sent, and audited as a draft (or, for the assistant, an ask: `action`) that did not happen.
  */
-function clientFor(ctx, clientId, feature) {
+function clientFor(ctx, clientId, feature, action = 'ai.draft') {
   if (!db.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, clientId)) throw notFound('Client not found');
   auth.assertClientAccess(ctx, clientId);
   if (require('../disclosure').agreedRestrictions(clientId)) {
-    audit.log({ user: ctx.user, action: 'ai.draft', entity: 'client', entityId: clientId, clientId, ip: ctx.ip, success: false, details: { feature, outcome: 'restriction' } });
+    audit.log({ user: ctx.user, action, entity: 'client', entityId: clientId, clientId, ip: ctx.ip, success: false, details: { feature, outcome: 'restriction' } });
     throw new HttpError(409, 'This client has an agreed restriction on how their information is used or shared (see their Requests tab), so the AI copilot is not used for their records. Write this yourself.', { ai_error: 'restriction' });
   }
 }
 function perUserLimit(ctx) {
-  if (!require('../app').rateLimit(`ai:${ctx.user.id}`, PER_USER_PER_MINUTE, 60_000)) throw new HttpError(429, 'Too many AI drafts in a minute. Read the last one first, then try again.');
+  if (!require('../app').rateLimit(`ai:${ctx.user.id}`, PER_USER_PER_MINUTE, 60_000)) throw new HttpError(429, 'Too many AI requests in a minute (drafts and questions together). Read the last answer first, then try again.');
 }
 
 /**
@@ -70,7 +70,7 @@ module.exports = (r) => {
   // shows the button, or the reason); the numbers are the programme's, not anyone's PHI.
   r.get('/api/ai/status', auth.requireAuth, (ctx) => {
     const st = AI.status();
-    return { ...st, can_draft: auth.hasPerm(ctx.user, 'ai:draft'), office: true };
+    return { ...st, can_draft: auth.hasPerm(ctx.user, 'ai:draft'), can_ask: auth.hasPerm(ctx.user, 'ai:ask'), office: true };
   });
 
   // ---- Settings → AI copilot (administrators)
@@ -83,7 +83,7 @@ module.exports = (r) => {
   // monthly spending limit in dollars (server/ai-cost.js): non-negative numbers, or null / blank to clear.
   r.put('/api/ai/settings', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
     const price = { type: 'number', min: 0, max: COST.MAX_PRICE };
-    const v = validate(ctx.body, { enabled: { type: 'boolean' }, model: { type: 'string', maxLen: 100 }, monthly_cap: { type: 'number', integer: true, min: 0, max: 100000 },
+    const v = validate(ctx.body, { enabled: { type: 'boolean' }, assistant_enabled: { type: 'boolean' }, model: { type: 'string', maxLen: 100 }, monthly_cap: { type: 'number', integer: true, min: 0, max: 100000 },
       price_input: price, price_output: price, monthly_cost_cap: { type: 'number', min: 0, max: COST.MAX_COST_CAP } }, { partial: true });
     if (v.model !== undefined && v.model !== null && v.model !== '' && !AP.modelOk(v.model)) throw badRequest('Validation failed', { fields: { model: `must be ${AP.current() ? AP.current().modelHint : 'a model id'} (the provider is ${AP.label()})` } });
     const was = AI.settings();
@@ -91,19 +91,25 @@ module.exports = (r) => {
     if (next.monthly_cost_cap !== null && !COST.priced(next)) throw badRequest('A monthly spending limit needs both prices, to estimate the cost', { fields: { monthly_cost_cap: 'enter the prices per million input and output tokens first' } });
     if (v.enabled === 1 && !was.enabled) {
       if (!was.attestation) throw badRequest('Record the programme\'s agreement (BAA / QSOA) with the AI provider before switching the copilot on', { fields: { enabled: 'needs the agreement recorded first' } });
-      if (!AI.keyConfigured()) throw badRequest(AP.id() === 'anthropic' ? 'This server has no AI provider key (ANTHROPIC_API_KEY in its environment). Set it and restart SUDS, then switch the copilot on.'
-        : `This server has no credentials for ${AP.label()} (${AP.describe().credentials_hint} in its environment). Set them and restart SUDS, then switch the copilot on.`, { fields: { enabled: 'no provider key on the server' } });
+      if (!AI.keyConfigured()) throw badRequest(`This server has no credentials for ${AP.label()} yet. Add them under Connection to the AI provider on this page (or in the server's environment), then switch the copilot on.`, { fields: { enabled: 'no provider credentials yet' } });
       if (AI.attestedProvider(was.attestation) !== AP.id()) throw badRequest(`The agreement recorded is with ${AP.label(AI.attestedProvider(was.attestation))}, but this server sends drafts to ${AP.label()}. Withdraw it and record the agreement with ${AP.label()} first.`, { fields: { enabled: 'the agreement is with another provider' } });
+    }
+    // The assistant sends summaries of records, not only text the author gives: switched on only once the agreement
+    // recorded says it covers that use (covers_assistant, the attestation below).
+    if (v.assistant_enabled === 1 && !was.assistant_enabled) {
+      if (!was.attestation) throw badRequest('Record the programme\'s agreement (BAA / QSOA) with the AI provider before switching the assistant on', { fields: { assistant_enabled: 'needs the agreement recorded first' } });
+      if (was.attestation.covers_assistant !== true) throw badRequest('Confirm that the agreement with the AI provider covers assistant use (questions and record summaries) before switching the assistant on: record the agreement again with that statement ticked.', { fields: { assistant_enabled: 'the agreement is not confirmed to cover assistant use' } });
     }
     const changed = [];
     db.transaction(() => {
       if (v.enabled !== undefined) { db.setSetting('ai_enabled', v.enabled ? '1' : '0'); changed.push('enabled'); }
+      if (v.assistant_enabled !== undefined) { db.setSetting('ai_assistant_enabled', v.assistant_enabled ? '1' : '0'); changed.push('assistant_enabled'); }
       if (v.model !== undefined) { if (v.model) db.setSetting('ai_model', v.model); else db.run(`DELETE FROM settings WHERE key='ai_model'`); changed.push('model'); }
       if (v.monthly_cap !== undefined && v.monthly_cap !== null) { db.setSetting('ai_monthly_cap', String(v.monthly_cap)); changed.push('monthly_cap'); }
       changed.push(...COST.save(v));
     });
     const now = AI.settings();
-    audit.log({ user: ctx.user, action: 'ai.settings.update', ip: ctx.ip, details: { changed, enabled: now.enabled, model: now.model, monthly_cap: now.monthly_cap,
+    audit.log({ user: ctx.user, action: 'ai.settings.update', ip: ctx.ip, details: { changed, enabled: now.enabled, assistant_enabled: now.assistant_enabled, model: now.model, monthly_cap: now.monthly_cap,
       price_input: now.price_input, price_output: now.price_output, monthly_cost_cap: now.monthly_cost_cap } });
     return { ok: true, ...now };
   });
@@ -115,6 +121,9 @@ module.exports = (r) => {
       provider: { type: 'string', required: true, maxLen: 200 }, signed_by: { type: 'string', required: true, maxLen: 200 },
       agreement_date: { type: 'date', required: true }, reference: { type: 'string', required: true, maxLen: 300 },
       baa: { type: 'boolean' }, qsoa: { type: 'boolean' }, counsel_reviewed: { type: 'boolean' },
+      // A fourth statement, needed only for the assistant (not for drafts): the agreement covers conversational
+      // assistant use (questions and record-derived summaries), not only documentation drafts.
+      covers_assistant: { type: 'boolean' },
     });
     const missing = {};
     if (!v.baa) missing.baa = 'Confirm that a HIPAA business associate agreement with this provider is in place.';
@@ -126,18 +135,49 @@ module.exports = (r) => {
     // drafts are refused while the server is set up for another (ai-copilot.js status(), provider_changed).
     if (!AP.current()) throw badRequest(`This server's AI provider is not one SUDS knows (${AP.configProblem()}).`);
     const a = { provider: v.provider, configured_provider: AP.id(), signed_by: v.signed_by, agreement_date: v.agreement_date, reference: v.reference, baa: true, qsoa: true, counsel_reviewed: true,
-      recorded_by: ctx.user.id, recorded_by_name: ctx.user.display_name || ctx.user.username, recorded_at: db.now() };
+      covers_assistant: !!v.covers_assistant, recorded_by: ctx.user.id, recorded_by_name: ctx.user.display_name || ctx.user.username, recorded_at: db.now() };
     db.setSetting('ai_attestation', JSON.stringify(a));
-    audit.log({ user: ctx.user, action: 'ai.attestation.record', ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true } });
+    // An agreement recorded again without the assistant statement takes the assistant off with it.
+    if (!a.covers_assistant) db.setSetting('ai_assistant_enabled', '0');
+    audit.log({ user: ctx.user, action: 'ai.attestation.record', ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true, covers_assistant: a.covers_assistant } });
     ctx.status = 201; return { ok: true, attestation: a };
   });
   // Withdrawing it (the agreement ended, or was never right) switches the copilot off at once.
   r.delete('/api/ai/attestation', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
     const was = AI.attestation();
     db.run(`DELETE FROM settings WHERE key='ai_attestation'`);
-    db.setSetting('ai_enabled', '0');
+    db.setSetting('ai_enabled', '0'); db.setSetting('ai_assistant_enabled', '0');
     audit.log({ user: ctx.user, action: 'ai.attestation.withdraw', ip: ctx.ip, details: { had: !!was, provider: was ? was.provider : undefined, reference: was ? was.reference : undefined } });
     return { ok: true };
+  });
+
+  // ---- The assistant (server/ai-assistant.js): one question about one client in reach, the asker's own day, or
+  // programme facts, answered from a summary of records they may see. Nothing is written but the usage row and the
+  // audit entry, which carries metadata only: never the question, the summary or the answer.
+  r.post('/api/ai/ask', auth.requireAuth, auth.requirePerm('ai:ask'), async (ctx) => {
+    const ASK = require('../ai-assistant');
+    const v = validate(ctx.body, { scope: { type: 'string', required: true, enum: ASK.SCOPES }, client_id: { type: 'string' }, question: { ...text, required: true } });
+    const raw = ctx.body && ctx.body.turns;
+    if (raw !== undefined && !Array.isArray(raw)) throw badRequest('Validation failed', { fields: { turns: 'must be a list of { role, text }' } });
+    const turns = (raw || []).slice(-50).filter(t => t && typeof t === 'object').map(t => ({ role: t.role === 'assistant' ? 'assistant' : 'user', text: typeof t.text === 'string' ? t.text : '' }));
+    if (v.scope === 'client' && !v.client_id) throw badRequest('Choose the client to ask about', { fields: { client_id: 'required for a question about a client' } });
+    const clientId = v.scope === 'client' ? v.client_id : null;
+    if (clientId) clientFor(ctx, clientId, 'assistant', 'ai.ask');
+    perUserLimit(ctx);
+    const where = clientId ? { entity: 'client', entityId: clientId, clientId } : { entity: 'programme' };
+    try {
+      const out = await ASK.ask({ user: ctx.user, ip: ctx.ip, scope: v.scope, clientId, question: v.question, turns });
+      audit.log({ user: ctx.user, action: 'ai.ask', ...where, ip: ctx.ip, details: { scope: v.scope, outcome: 'ok', model: out.model, input_tokens: out.tokens.input_tokens, output_tokens: out.tokens.output_tokens,
+        identifiers_by_kind: out.counts, chars_sent: out.sent_chars, sections_cited: out.citations.map(c => c.section), ...(v.scope === 'day' ? { client_ids: out.client_ids.slice(0, 50) } : {}) } });
+      return { answer: out.answer, citations: out.citations, missing: out.missing, model: out.model, notice: 'AI answer — check it against the record before you act', identifiers_replaced: out.counts };
+    } catch (e) {
+      if (!(e instanceof AI.AiError)) throw e;
+      audit.log({ user: ctx.user, action: 'ai.ask', ...where, ip: ctx.ip, success: false,
+        details: { scope: v.scope, outcome: e.kind, model: e.model || AI.settings().model, input_tokens: e.extra.tokens ? e.extra.tokens.input_tokens : 0, output_tokens: e.extra.tokens ? e.extra.tokens.output_tokens : 0 } });
+      if (!['off', 'cap', 'scope', 'restriction'].includes(e.kind)) console.warn(`[suds] AI assistant: ask failed (${e.kind})`);
+      // The copilot's words for the shared failures, about a conversation rather than a form.
+      throw new HttpError(e.status, e.message.replace('Your form is unchanged', 'Your conversation is unchanged'), { ai_error: e.kind, ...(e.extra.retry_after ? { retry_after: e.extra.retry_after } : {}), ...(e.extra.ai_unavailable ? { ai_unavailable: e.extra.ai_unavailable } : {}) });
+    }
   });
 
   // ---- Drafts. Each needs ai:draft and the permission to write what it drafts, and the client in reach.

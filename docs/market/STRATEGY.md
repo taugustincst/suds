@@ -1,13 +1,15 @@
 # SUDS go-to-market strategy
 
 **Status: the owner's strategy, written down and assessed, 29 September 2026; its *Built vs planned* table is current to
-1.26.0.** It replaces nothing in the rest of this pack until a row below says it is done. Everything described as
+1.27.0.** It replaces nothing in the rest of this pack until a row below says it is done. Everything described as
 *planned* is not in a released version of SUDS. It was first written at 1.17.0, whose features are **released in
 1.17.0**. Under *Stabilisation* ([docs/RELEASE.md](../RELEASE.md)) 1.24.0 came early, under its one security exception (the
 fixes of an owner-authorised white-box penetration test of 1.23.6); 1.25.0 came early too, on the owner's explicit
 instruction to lift the freeze ("Fix everything now, freeze lifts to 1.25.0") — not a security exception; and 1.26.0
 (PowerDMS policy sign-offs) came twelve days after 1.25.0 under the first recorded owner exception, a rule the owner
-added on 2026-10-17 (*Stabilisation*, point 2). The next feature release comes no earlier than 28 days after 1.26.0, and
+added on 2026-10-17 (*Stabilisation*, point 2); 1.27.0 (server configuration from the browser and the AI assistant)
+came seven days after 1.26.0 under the second recorded owner exception. The next feature release comes no earlier than
+28 days after 1.27.0, and
 only through the release gate; `test/release-wording.test.js` keeps these lines honest at each stamp.
 
 The strategy has three parts:
@@ -273,7 +275,7 @@ The software's marginal cost is near zero. The cost of serving a programme is no
 hosting (offered from October 2026) and assurance ([HOSTING.md](HOSTING.md), *Unit-cost model*), plus model calls for the
 copilot. SUDS is proprietary from 1.24.1 (owner decision of 2026-10-03; [LICENSE](../../LICENSE)), so a price can buy a
 licence to the code as well as a service. The archived [pricing options](../archive/PRICING-OPTIONS.md) set out the models that were weighed.
-The owner has decided: the tiers in [`public/procurement.json`](../../public/procurement.json) are the published prices, shown on the procurement page, reworked on 2026-10-12 to Program at $24,500 a year, Multi-site at $49,500 a year and County-wide at $98,000 a year, with single-tenant hosting (one isolated server per customer) included in the annual plans, and a 90-day pilot reworked on 2026-10-23 from $14,500 to $4,500 flat, credited in full (owner's instruction of that day; the market evaluation of 2026-10-23 found the old pilot cost more per month than the Program plan it leads to); they replace the introductory tiers first published in October 2026. [templates/PRICING.md](../archive/PRICING-HYPOTHESIS.md) is the superseded hypothesis, kept as a record.
+The owner has decided: the tiers in [`public/procurement.json`](../../public/procurement.json) are the published prices, shown on the procurement page, reworked on 2026-10-12 to Program at $24,500 a year, Multi-site at $49,500 a year and County-wide at $98,000 a year, with single-tenant hosting (one isolated server per customer) included in the annual plans, and a 90-day pilot at $9,500 flat, credited in full (reworked from $14,500 to $4,500 on 2026-10-23, then settled by the owner at $9,500 on 2026-10-24: under the $10,000 federal micro-purchase threshold and inside county informal purchase limits); they replace the introductory tiers first published in October 2026. [templates/PRICING.md](../archive/PRICING-HYPOTHESIS.md) is the superseded hypothesis, kept as a record.
 
 ## Moat: what public code cannot copy
 
@@ -340,7 +342,7 @@ until counsel and one pilot have looked at it.
 
 ## Built vs planned, exactly
 
-| Capability | State on 17 October 2026 (1.26.0) |
+| Capability | State on 24 October 2026 (1.27.0) |
 | --- | --- |
 | Outreach, anonymous contacts, supplies, funder reporting, settlement report and DHCS/county layouts | **Built** (layouts not checked against current official templates) |
 | Local mode (offline copy, office sync) | **Built**, off by default; the wizard recommends it for harm reduction |
@@ -349,6 +351,7 @@ until counsel and one pilot have looked at it.
 | Referrals with consent check and loop closure, inside one programme | **Built** |
 | Note import review queue (Pocket AI, OneNote) | **Built** |
 | AI documentation copilot | **Released in 1.17.0** ([docs/AI-COPILOT.md](../AI-COPILOT.md)); off by default |
+| AI assistant (questions about a client, your day or programme information, answered from a cited summary of the record) | **Released in 1.27.0** ([docs/AI-COPILOT.md](../AI-COPILOT.md), *The assistant*); off by default, on the copilot's agreement; never changes a record |
 | Least-privilege default; client revision history | **Released in 1.17.0** |
 | SABG primary-prevention events and their summary; anonymous SSP participant code | **Released in 1.17.0**; no PPSDS file (the mapping awaits the DHCS data dictionary) |
 | Funder-facing outcome view across CBOs | **Released in 1.18.0**: the county view from signed, exact submissions, internal only ([docs/COUNTY-VIEW.md](../COUNTY-VIEW.md)), sent as a file or over the optional county connection, with a read API for the county's systems; from 1.21.0 each file carries its funds' award amounts (spending against the award) and the programme is reminded when its county file is due |

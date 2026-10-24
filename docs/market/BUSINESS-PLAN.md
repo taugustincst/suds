@@ -58,7 +58,7 @@ programmes; (5) other states, after California references.
 | Plan | Price | Covers |
 | --- | --- | --- |
 | SUDS on this device | Free | Real use at the official address; records stay on the device |
-| 90-day pilot | $4,500 flat, credited in full | One site; onboarding, BAA and QSOA, CalOMS validation |
+| 90-day pilot | $9,500 flat, credited in full | One site; onboarding, BAA and QSOA, CalOMS validation |
 | Program | $24,500 a year | One site, 30 staff; hosting, updates, email support |
 | Multi-Site | $49,500 a year | 5 sites, 150 staff; onboarding help |
 | County-Wide | $98,000 a year | Unlimited within one county; training, a named contact |
@@ -84,7 +84,9 @@ pilot running by April 2027 can contribute to the 2027 report.
 ## 6. Product roadmap
 
 The release rules hold: patches at most weekly (security fixes when ready), feature releases at least 28 days apart
-([../RELEASE.md](../RELEASE.md)). The next feature release, 1.26.0, is built from evidence, not ideas: the independent
+([../RELEASE.md](../RELEASE.md)). 1.26.0 (PowerDMS policy sign-offs) and 1.27.0 (server configuration from the
+browser, the AI assistant) came early, each on a recorded owner exception. The next feature release, no earlier than 28
+days after 1.27.0, is built from evidence, not ideas: the independent
 test's findings, what the drill and counsel's review require, the first county conversations, code signing, and the
 PPSDS file once DHCS publishes its dictionary. Pilot-driven releases follow in 2027. Not before a buyer asks: the
 referral network, benchmarking, a live EHR connection. Also planned: a secure-development statement that deals openly
@@ -103,11 +105,11 @@ with AI-written code, and static analysis in CI.
 | **Total** | **about $11,000–36,000** | **about $2,500–7,000** |
 
 These are planning ranges from general market knowledge. Replace them with quotes before committing. The pilot is
-priced to be easy to buy, not to fund this work (reworked to $4,500 on 2026-10-23): the first annual plan it converts to
+priced to be easy to buy, not to fund this work (settled by the owner at $9,500 on 2026-10-24): the first annual plan it converts to
 covers roughly the lower half of the up-front spend.
 
-**Revenue outlook** (*estimate*, an inference rather than a forecast): $5,000–55,000 to the end of 2027 (1–3 pilots at
-$4,500, 0–2 converting to a Program plan with the pilot credited); $50,000–150,000 a year in 2028 with references; $100,000–300,000 a year in 2029 only with a second
+**Revenue outlook** (*estimate*, an inference rather than a forecast): $10,000–60,000 to the end of 2027 (1–3 pilots at
+$9,500, 0–2 converting to a Program plan with the pilot credited); $50,000–150,000 a year in 2028 with references; $100,000–300,000 a year in 2029 only with a second
 person. At these prices small CBOs rarely buy directly, so county sponsorship is the route.
 
 ## 8. Risks

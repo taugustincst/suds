@@ -128,7 +128,7 @@ test('settings: administrators only; switching on needs the attestation, whose e
   try {
     assert.equal((await admin.post('/api/ai/attestation', { provider: 'Anthropic', signed_by: 'Director', agreement_date: '2026-01-15', reference: 'BAA-1', baa: true, qsoa: true, counsel_reviewed: true })).status, 201);
     const nokey = await admin.put('/api/ai/settings', { enabled: true });
-    assert.equal(nokey.status, 400); assert.match(nokey.data.error, /ANTHROPIC_API_KEY/);
+    assert.equal(nokey.status, 400); assert.match(nokey.data.error, /no credentials for Anthropic.*Connection to the AI provider/);
   } finally { process.env.ANTHROPIC_API_KEY = key; }
   await attestAndEnable();
   const rec = lastAudit('ai.attestation.record');

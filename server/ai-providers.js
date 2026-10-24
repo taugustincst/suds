@@ -49,7 +49,9 @@ const GOOGLE_TOKEN_URI = 'https://oauth2.googleapis.com/token';
 
 // ---------------------------------------------------------------- which provider, and is it set up
 /** The provider named by SUDS_AI_PROVIDER (default anthropic), lower-cased; may be one SUDS does not know. */
-const id = () => (process.env.SUDS_AI_PROVIDER || 'anthropic').trim().toLowerCase() || 'anthropic';
+// Each read through config.setting: the environment, else what an administrator set in Settings › Server configuration (1.27.0).
+const setting = (name) => config.setting(name);
+const id = () => (setting('SUDS_AI_PROVIDER') || 'anthropic').trim().toLowerCase() || 'anthropic';
 const current = () => PROVIDERS[id()] || null;
 const label = (p = id()) => (PROVIDERS[p] ? PROVIDERS[p].label : p);
 const defaultModel = () => (current() || PROVIDERS.anthropic).defaultModel;
@@ -57,26 +59,28 @@ const modelOk = (model) => { const p = current(); return !!p && p.model.test(Str
 /** Whether `model` is the copilot's default model, however the provider writes it (anthropic.… on Bedrock). */
 const isDefaultModel = (model) => String(model || '').replace(/^(?:[a-z]{2,6}\.)?anthropic\./, '') === DEFAULT_MODEL;
 
-const awsRegion = () => (process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || '').trim();
-const vertexRegion = () => (process.env.SUDS_AI_VERTEX_REGION || '').trim();
+const awsRegion = () => (setting('AWS_REGION') || process.env.AWS_DEFAULT_REGION || '').trim();
+const vertexRegion = () => (setting('SUDS_AI_VERTEX_REGION') || '').trim();
 
-/** The service account key file, parsed, or null. Its contents are never logged, even in an error. */
+/** The service account key, parsed, or null: the file GOOGLE_APPLICATION_CREDENTIALS names, else the key pasted into
+ * Settings › Server configuration (SUDS_AI_VERTEX_CREDENTIALS, kept encrypted). Never logged, even in an error. */
 function serviceAccount() {
   const file = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (!file) return null;
+  const pasted = file ? null : setting('SUDS_AI_VERTEX_CREDENTIALS');
+  if (!file && !pasted) return null;
   try {
-    const k = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const k = JSON.parse(file ? fs.readFileSync(file, 'utf8') : pasted);
     if (!k || typeof k !== 'object' || typeof k.client_email !== 'string' || typeof k.private_key !== 'string' || !k.client_email || !k.private_key) return null;
     return k;
   } catch { return null; }
 }
-const vertexProject = () => (process.env.SUDS_AI_VERTEX_PROJECT || (serviceAccount() || {}).project_id || '').trim();
+const vertexProject = () => (setting('SUDS_AI_VERTEX_PROJECT') || (serviceAccount() || {}).project_id || '').trim();
 
 /** Whether this provider's credentials are in the server's environment (not whether they work). */
 function credentialsConfigured() {
   switch (id()) {
     case 'anthropic': return !!config.ai.apiKey;
-    case 'bedrock': return !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY);
+    case 'bedrock': return !!(setting('AWS_ACCESS_KEY_ID') && setting('AWS_SECRET_ACCESS_KEY'));
     case 'vertex': return !!serviceAccount();
     default: return false;
   }
@@ -162,7 +166,8 @@ async function request({ body, headers, model, signal }) {
   if (provider === 'bedrock') {
     const url = `${base}/model/${seg(model)}/invoke`;
     const { headers: signed } = sigv4({ method: 'POST', url, headers: a.headers, body: payload, region: awsRegion(), service: 'bedrock',
-      credentials: { accessKeyId: process.env.AWS_ACCESS_KEY_ID, secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY, sessionToken: process.env.AWS_SESSION_TOKEN || null } });
+      // A session token goes only with keys from the environment (a role's temporary keys); keys set in the browser are a user's.
+      credentials: { accessKeyId: setting('AWS_ACCESS_KEY_ID'), secretAccessKey: setting('AWS_SECRET_ACCESS_KEY'), sessionToken: config.envHas('AWS_ACCESS_KEY_ID') ? process.env.AWS_SESSION_TOKEN || null : null } });
     const res = await fetch(url, { method: 'POST', headers: signed, body: payload, signal, redirect: 'error' });
     return res.ok ? bedrockAnswer(res, model) : res;
   }
