@@ -14,7 +14,7 @@ entity question, workplan item 0). SUDS is offered as a **fleet of single-tenant
 disk, an "offsite" disk and an anchor disk, keys escrowed to the owner; never a shared database. The tooling is tested
 against stand-ins only; its first real run is the drill tenant, which awaits the owner's go. The published prices
 (owner decision of 2026-10-12; [`public/procurement.json`](../../../public/procurement.json)) are a 90-day pilot at
-$4,500 flat (credited in full; $14,500 until 2026-10-23), Program at $24,500 a year, Multi-site at $49,500 a year and County-wide at $98,000 a
+$9,500 flat (credited in full; settled by the owner on 2026-10-24), Program at $24,500 a year, Multi-site at $49,500 a year and County-wide at $98,000 a
 year. Hosting on the fleet is included in the annual plans; for a self-hosted office server the same prices exclude
 the customer's infrastructure.
 

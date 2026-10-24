@@ -8,7 +8,7 @@
 > the parties and are deleted before signature. A county or public agency will usually require its own contract
 > form: then this text is a list of the terms SUDS needs, to be carried into that form.
 >
-> Fees and hosted-service wording reworked 2026-10-12 at the owner's direction (Program $24,500/yr, Multi-site $49,500/yr, County-wide $98,000/yr, hosting included). On 2026-10-23, at the owner's direction, the Pilot fee was reworked to $4,500 (less per month than the Program Plan it is credited toward) and the Hosted Service is described as single-tenant: each Customer has its own server.
+> Fees and hosted-service wording reworked 2026-10-12 at the owner's direction (Program $24,500/yr, Multi-site $49,500/yr, County-wide $98,000/yr, hosting included). On 2026-10-23, at the owner's direction, the Pilot fee was reworked to $4,500, and on 2026-10-24 settled by the owner at $9,500 (credited in full toward the first annual Plan) and the Hosted Service is described as single-tenant: each Customer has its own server.
 >
 > It is written to match what is published today: the licence ([`LICENSE`](../../../LICENSE)), the
 > tiers and support terms on the procurement page ([`public/procurement.json`](../../../public/procurement.json)),
@@ -111,7 +111,7 @@ Customer's own infrastructure for an Office Server Licence):
 
 | Plan | Price | Scope |
 | --- | --- | --- |
-| **90-day Pilot** | $4,500 flat | A single programme site. Onboarding, the Business Associate Agreement and the Qualified Service Organization Agreement, and CalOMS code-set validation against the DHCS dictionary included; the CalOMS file layout confirmed with Customer's county, which (or Customer) submits the file: Licensor sends nothing to DHCS. Credited in full toward the first annual Plan |
+| **90-day Pilot** | $9,500 flat | A single programme site. Onboarding, the Business Associate Agreement and the Qualified Service Organization Agreement, and CalOMS code-set validation against the DHCS dictionary included; the CalOMS file layout confirmed with Customer's county, which (or Customer) submits the file: Licensor sends nothing to DHCS. Credited in full toward the first annual Plan |
 | **Program** | $24,500 a year | A single site, up to 30 staff accounts. The Business Associate Agreement and the Qualified Service Organization Agreement, hosting on a dedicated server of its own, all updates and email support included |
 | **Multi-site** | $49,500 a year | Up to 5 sites and 150 staff accounts. Everything in Program, plus onboarding assistance |
 | **County-wide** | $98,000 a year | Unlimited sites and staff within one county. Everything in Multi-site, plus onboarding, training and a named support contact |

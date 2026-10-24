@@ -6,9 +6,10 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ### Changed
 
-- **The 90-day pilot is now $4,500 flat** (it was $14,500), still credited in full toward the first annual plan. The old
-  pilot cost more per month than the Program plan it leads to. The other plans are unchanged
-  (`public/procurement.json`, the Security & procurement page).
+- **The 90-day pilot is now $9,500 flat** (it was $14,500), still credited in full toward the first annual plan (the
+  owner's decision of 2026-10-24). That is under the $10,000 federal micro-purchase threshold and inside county
+  informal purchase limits. The other plans are unchanged. The fee schedule appears in the app's Security &
+  procurement page and in proposals; marketing websites carry no prices.
 - **Vendor hosting is described as single-tenant**, as it always was: each customer has its own server, database and
   keys. The published pricing used to call it "multi-tenant", which reads as shared infrastructure.
 - The published pricing says that the county or provider submits the CalOMS Tx file, and that SUDS sends nothing to

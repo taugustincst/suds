@@ -41,7 +41,7 @@ administrators sponsoring harm-reduction programmes, not county EHR replacements
 
 Pricing, decided by the owner on 2026-10-12. The evaluation found the introductory Multi-Site price low against every
 benchmark, room in a County-Wide quote, and a Program price below what the hosted-offer worksheet estimates hosting
-costs. The reworked tiers in `public/procurement.json` answer it: a 90-day pilot at $4,500 flat since 2026-10-23 ($14,500 before; credited in full),
+costs. The reworked tiers in `public/procurement.json` answer it: a 90-day pilot at $9,500 flat since 2026-10-24 (settled by the owner; credited in full),
 Program at $24,500 a year, Multi-Site at $49,500 a year and County-Wide at $98,000 a year, with hosting on a
 single-tenant fleet (one isolated server per customer) included in the annual plans. Self-hosting stays available,
 the prices excluding the customer's infrastructure.

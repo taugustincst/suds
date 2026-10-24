@@ -169,7 +169,7 @@ Agree the targets before starting; record the baseline with the current process 
 | Licence agreement, BAA / Part 2 QSOA and DPA | [templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md](templates/LICENCE-AND-SUBSCRIPTION-AGREEMENT-DRAFT.md), [templates/BAA-QSOA-DRAFT.md](templates/BAA-QSOA-DRAFT.md), [templates/DPA-DRAFT.md](templates/DPA-DRAFT.md) | Drafts; not reviewed by counsel. Needed where the vendor can reach a CBO's PHI; the county server holds none |
 | Support terms | [templates/SUPPORT-SLA.md](templates/SUPPORT-SLA.md), [../SUPPORT.md](../SUPPORT.md) | Template |
 | Pilot plan per CBO | [PILOT-KIT.md](PILOT-KIT.md) | Written |
-| Pricing | [`public/procurement.json`](../../public/procurement.json): a 90-day pilot at $4,500 flat per site, Program at $24,500 a year, Multi-Site at $49,500 a year, County-Wide at $98,000 a year (unlimited sites and staff within one county) | Published (effective October 2026) |
+| Pricing | [`public/procurement.json`](../../public/procurement.json): a 90-day pilot at $9,500 flat per site, Program at $24,500 a year, Multi-Site at $49,500 a year, County-Wide at $98,000 a year (unlimited sites and staff within one county) | Published (effective October 2026) |
 
 ## The evidence packet
 

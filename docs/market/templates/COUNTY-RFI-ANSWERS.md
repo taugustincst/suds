@@ -294,7 +294,7 @@ The published paid plans include email support with a response within 2 business
 a signed agreement, and the SLA is a template with placeholders. The vendor runs a vendor-hosted customer's server
 (offered from October 2026; no customer hosted yet). No 24×7 support, no vendor on-call, and no uptime commitment:
 none for office servers on customer infrastructure, and none published for hosted plans. Prices (USD, effective
-October 2026): a 90-day pilot at $4,500 flat, credited in full toward the first annual plan; Program at $24,500 a
+October 2026): a 90-day pilot at $9,500 flat, credited in full toward the first annual plan; Program at $24,500 a
 year; Multi-Site at $49,500 a year; County-Wide at $98,000 a year
 ([`public/procurement.json`](../../../public/procurement.json)). Evidence: [../../SUPPORT.md](../../SUPPORT.md);
 [SUPPORT-SLA.md](SUPPORT-SLA.md). Contact: *Licensing, AugustInnovations LLC*, `info@suds.systems` (the Security &

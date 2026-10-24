@@ -56,9 +56,8 @@ test('only an administrator may publish them, and each value is checked', async 
 test('the static build ships public/procurement.json with the licensor\'s legal entity, the published pricing, and one repository URL', () => {
   const j = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'public', 'procurement.json'), 'utf8'));
   assert.equal(j.legal_entity, 'AugustInnovations LLC', 'the licensor (LICENSE, owner decision of 2026-10-03)');
-  // The tiers the owner set on 2026-10-12 (hosting included), with the pilot reworked on 2026-10-23 to cost less per
-  // month than the Program plan it is credited toward.
-  assert.match(j.pricing, /90-DAY PILOT — \$4,500 flat/, 'the pilot tier is published');
+  // The tiers the owner set on 2026-10-12 (hosting included), with the pilot the owner settled on 2026-10-24.
+  assert.match(j.pricing, /90-DAY PILOT — \$9,500 flat/, 'the pilot tier is published');
   assert.match(j.pricing, /PROGRAM — \$24,500 \/ year/, 'the program tier is published');
   assert.match(j.pricing, /MULTI-SITE — \$49,500 \/ year/, 'the multi-site tier is published');
   assert.match(j.pricing, /COUNTY-WIDE — \$98,000 \/ year/, 'the county-wide tier is published');
