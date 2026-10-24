@@ -585,10 +585,13 @@ attestation statement (the agreement, as counsel reviewed it, covers SUD counsel
 documentation copilot draft one and the assistant summarise the counseling notes a person may already read — both
 through the same masked path, never raw identifiable note text to the provider; without that statement nothing
 changes. The §4.4 attestation wording rides with the counsel package, flagged for 42 CFR Part 2. The first 1.27.0
-stamp (`855842dd`/`39b67780`) is superseded and never tagged; the tag goes on the re-stamp's SBOM commit.
+stamp (`855842dd`/`39b67780`) is superseded and never tagged; the tag went on the re-stamp's SBOM commit `ad50fa88`.
 
 On the re-stamped tree the full suite and the evening run (2,252 tests each, 2 skipped) and the browser suite (63 of 63
-scripts) passed, and CI on the commit to tag was green in every required job (filled in the tag hand-off).
+scripts) passed, and exact-commit CI 40117472749 on `ad50fa88` was green in every required job. `v1.27.0` was tagged
+there and released 2026-10-24 (immutable, Latest; run 40123140215 with the recorded `policy_exception`), the published
+`suds-v1.27.0.zip` SHA-256 `0782bd29…8e72` matching its record; suds.systems was upgraded to 1.27.0 the same day
+(see evidence/RELEASE-HANDOFF.md, *Completed: v1.26.1 and v1.27.0*).
 
 **It is not a security fix**, and nothing here calls it one. The owner approved the exception on 2026-10-24 ("I approve
 the exception", relayed by the business assistant in the private hand-off). In the development session the same day the
@@ -615,7 +618,7 @@ Its tag is owed ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 | Line | Gets | For how long |
 | --- | --- | --- |
 | **The latest minor** (today 1.27.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
-| **The previous minor** (today 1.26.x, until 30 days after 1.27.0's release date: the date of its tag, which is owed; plan as if they run from its stamp, 2026-10-24, to 2026-11-23) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.26` is made from `v1.26.1`'s line when the first backport is needed) | **30 days** after the next minor's release date, then none |
+| **The previous minor** (today 1.26.x, until 30 days after 1.27.0's release date: the date of its tag `v1.27.0`, 2026-10-24, so to 2026-11-23) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.26` is made from `v1.26.1`'s line when the first backport is needed) | **30 days** after the next minor's release date, then none |
 | Anything older (today 1.25.x and before: once 1.27.0 is released, 1.25.x stops being the previous minor, whatever is left of its 30 days after 1.26.0, which ran to about 2026-11-16; 1.27.0's early release, on the owner's exception, shortens them; 1.24.x stopped when 1.26.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's
