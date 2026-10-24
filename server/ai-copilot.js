@@ -60,6 +60,14 @@ const keyConfigured = () => providers.credentialsConfigured();
 const endpointProblem = () => providers.configProblem(settings().model);
 /** The provider the recorded agreement is with (one recorded before 1.17.1 was with Anthropic, the only one then). */
 const attestedProvider = (a) => (a && typeof a.configured_provider === 'string' ? a.configured_provider : 'anthropic');
+/**
+ * Whether the recorded agreement is confirmed to cover SUD counseling notes (42 CFR §2.11): the fifth attestation
+ * statement (covers_counseling), which the administrator records only after counsel has reviewed this use. Off
+ * unless explicitly recorded. It gates both drafting a counseling note with the copilot and the assistant reading
+ * counseling-note content into a pack; without it, a counseling note is treated exactly as before (never drafted,
+ * never summarised). Reversed from the old blanket exclusion by the owner's decision of 2026-10-24.
+ */
+const counselingCovered = () => { const a = attestation(); return !!(a && a.covers_counseling === true); };
 
 function monthStart(now = new Date()) { return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString(); }
 // The outcomes that count as a draft against the monthly cap: the provider answered and did the work (a draft,
@@ -106,6 +114,7 @@ function status() {
   else if (reserved >= s.monthly_cap) no('cap', `This program has used its ${s.monthly_cap} AI draft${s.monthly_cap === 1 ? '' : 's'} for this month. Write the documentation yourself; the limit resets on the 1st of each month.`);
   else if (cost.capReached(u)) no('cap', 'This program has reached its AI spending limit for this month. Write the documentation yourself; the limit resets on the 1st of each month.');
   return { available: !reason, reason, code, enabled: s.enabled, attested: !!s.attestation, key_configured: keyConfigured(), provider: providers.id(), model: s.model, monthly_cap: s.monthly_cap, used_this_month: used,
+    counseling_covered: !!(s.attestation && s.attestation.covers_counseling === true),
     assistant: assistantStatus({ available: !reason, reason, code }, s) };
 }
 /**
@@ -463,5 +472,5 @@ async function sendDraft({ user, clientId, feature, pieces, build, ids: given = 
   }
 }
 
-module.exports = { DEFAULT_MODEL, MODEL_ID, attestedProvider, DEFAULT_CAP, MAX_TEXT, MAX_TOKENS, COUNTED, retryWait, settings, attestation, status, pending, usage, monthStart, keyConfigured, endpointProblem,
+module.exports = { DEFAULT_MODEL, MODEL_ID, attestedProvider, counselingCovered, DEFAULT_CAP, MAX_TEXT, MAX_TOKENS, COUNTED, retryWait, settings, attestation, status, pending, usage, monthStart, keyConfigured, endpointProblem,
   identifiersFor, deidentify, reidentify, buildRequest, send, draft, AiError, PATTERNS };

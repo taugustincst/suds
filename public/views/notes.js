@@ -1,6 +1,6 @@
 import { h, route, get, pagedList, filterBar, post, put, del, state, form, modal, toast, table, badge, statusKind, fmt, can, pageHead, confirmDialog, nav, kv, prefs, listEntries } from '../app.js';
 import { problemPicker } from './clinical.js';
-import { noteCopilot, aiDraftBanner, putDraft } from './ai.js';
+import { noteCopilot, aiDraftBanner, putDraft, aiStatus } from './ai.js';
 import { passkeysPossible, fingerprintFor, fingerprintButton, strongSetupNotice } from '../passkey.js';
 
 export const SECTIONS = { SOAP: [['S', 'Subjective'], ['O', 'Objective'], ['A', 'Assessment'], ['P', 'Plan']], DAP: [['D', 'Data'], ['A', 'Assessment'], ['P', 'Plan']], BIRP: [['B', 'Behavior'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']], GIRP: [['G', 'Goal'], ['I', 'Intervention'], ['R', 'Response'], ['P', 'Plan']],
@@ -184,14 +184,19 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   const counselBox = f.inputs.counseling_note;
   const counselHelp = counselBox && h('p', { class: 'small muted', 'data-counseling-ai-note': '1', hidden: true }, 'This note has text drafted by the AI copilot, so it cannot be a SUD counseling note. Write a counseling note yourself, in a new note.');
   if (counselHelp) counselBox.closest('[data-field]').append(counselHelp);
+  // The copilot and a SUD counseling note (§2.11) may be combined only once the agreement is recorded as covering
+  // counseling notes (the owner's decision of 2026-10-24); until then ticking the box hides the copilot and a note
+  // that already has copilot text cannot be ticked as one. Default off; the status fetch flips it if covered.
+  let counselingCovered = false;
   const syncCounseling = () => {
     if (!counselBox) return;
-    if (copilot) copilot.hidden = counselBox.checked;
-    counselBox.disabled = aiAssisted && !counselBox.checked;
+    if (copilot) copilot.hidden = counselBox.checked && !counselingCovered;
+    counselBox.disabled = aiAssisted && !counselBox.checked && !counselingCovered;
     counselHelp.hidden = !counselBox.disabled;
   };
   if (counselBox) counselBox.addEventListener('change', syncCounseling);
   syncCounseling();
+  if (counselBox) aiStatus().then((st) => { counselingCovered = !!(st && st.counseling_covered); syncCounseling(); });
   const m = modal(isNew ? 'New note' : 'Edit draft note', f, { wide: true });
   const origClose = m.close; m.close = () => { clearTimeout(asTimer); if (noteId && onDone) onDone(); origClose(); };
 }

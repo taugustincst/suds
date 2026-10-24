@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:571c40f0-4f62-5d71-8cbc-d406843644bb",
+  "serialNumber": "urn:uuid:d20d3c01-9bfe-56cc-9cc4-22025ceb23ca",
   "version": 1,
   "metadata": {
     "timestamp": "2026-10-24T00:00:00Z",
@@ -43,11 +43,11 @@
     "properties": [
       {
         "name": "suds:source",
-        "value": "git commit 855842ddb535656cbc78dabcd0e0f8d38db45755"
+        "value": "git commit de4c4f3f8090aa94d6d04b7a629bb10c73e4a3c5"
       },
       {
         "name": "suds:source-commit",
-        "value": "855842ddb535656cbc78dabcd0e0f8d38db45755"
+        "value": "de4c4f3f8090aa94d6d04b7a629bb10c73e4a3c5"
       },
       {
         "name": "suds:timestamp-is",
@@ -262,7 +262,7 @@
         },
         {
           "name": "suds:tree-sha256",
-          "value": "a8bc43aa152773f1430f7f394a4389498fdfe47c51ca0f58a87410b6320d90da"
+          "value": "2cedf7520e20904fab97f4afa6ba85110fc9d08a06183ad6c7221d877af78c23"
         },
         {
           "name": "suds:tree-method",
@@ -296,7 +296,7 @@
         },
         {
           "name": "suds:tree-sha256",
-          "value": "24e69f8f80ff61a8358c8d94ff66b26f7910ee96d143e30bdf74f8bd874eeb3d"
+          "value": "aa682069621f0c920709c9d102fc90171fbe36a8b20a693bd10a0d3ce254ec1e"
         },
         {
           "name": "suds:tree-method",
@@ -348,11 +348,11 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "38450f6067622b321eeb68dd734f9fb77920e615bb063d348c1ec8e03889dbcd"
+          "content": "1309cbbd10a0d5bab7deac129cff729e4861c88da279a6a80885b5a40230775f"
         },
         {
           "alg": "SHA-512",
-          "content": "48a65a862e08217437d61c6578f7cc710846ee53069602e808e75a54809fd9df0897257bced7efad94c679b4943b989afdaddd31596438b5532f9ef1cb4101ce"
+          "content": "7a67d1336e9f03c93ee35cb693743cbe1b912edd981ae04ef3f580e35af4dd8c49d59f36f7111d1c760a355e76e0d362ed30329b82a47e1664d0fc5b407c68de"
         }
       ],
       "properties": [
@@ -362,7 +362,7 @@
         },
         {
           "name": "suds:bytes",
-          "value": "3424812"
+          "value": "3426951"
         }
       ]
     },
@@ -376,11 +376,11 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "e5a98316a497a8f3f15029d3d6a28b68b712ad6dffec5a84ecb0f154e4fcb347"
+          "content": "9c83a580b76584c134caf80c88ae99b8f54970fcc201ed93fb7e4ca9a9cca113"
         },
         {
           "alg": "SHA-512",
-          "content": "8f3376dc6584110af0558b240af143e5b8f0e6310c732d060cd2f706b4ab785245d90710c2308af6bcec1bfa3aec6ef9ae9f3eeafe8e5c7e1f6019c8d3381da8"
+          "content": "556a56773b69b3c2bb92113997ead2b7dc9a8bb0b5727ddd1eb036fe9db0ef2630fde43fd207be7bc385a93068a2b725bf131e846e07091b6fb0fc344a82ab7b"
         }
       ],
       "properties": [
@@ -390,7 +390,7 @@
         },
         {
           "name": "suds:bytes",
-          "value": "845898"
+          "value": "846486"
         },
         {
           "name": "suds:compressed-copy-of",
@@ -408,11 +408,11 @@
       "hashes": [
         {
           "alg": "SHA-256",
-          "content": "b46703093e2d35a2e1ce8c9979299e36dfdc2cf61da20c1889ad2a978bd6ccac"
+          "content": "d12fb9b09fdd6b1c62ab3a405569ac01ffc0e78ff758d90ba23c14236f963676"
         },
         {
           "alg": "SHA-512",
-          "content": "103e2408815d9b94b5d48d36976b733d9f993342b8a087d4aeb043321f4d4b828f1e236cb9d07bacc37313d1314cba5de672841f7b73d24ca02598142531e254"
+          "content": "f727d6fd61f53e3712e965606afe253c68ea7d12030fe7de17e0c3a37211154a6740596be8440d3273ad97c4eaafcb42239b6446177792412dd313a94d961287"
         }
       ],
       "properties": [
@@ -422,7 +422,7 @@
         },
         {
           "name": "suds:bytes",
-          "value": "627902"
+          "value": "628364"
         },
         {
           "name": "suds:compressed-copy-of",

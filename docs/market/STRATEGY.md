@@ -105,7 +105,9 @@ draft is audited without its text, under a monthly cap and a per-person limit.
     never sees PHI". Say this in every buyer document.
   - **Part 2.** Sending a Part 2 record to an AI provider is a disclosure unless the provider is a qualified
     service organisation under a QSOA (42 CFR §2.11, §2.12(c)(4)). SUD counseling notes (§2.11) are excluded
-    from the copilot (released in 1.17.0: the draft route refuses one) unless counsel says otherwise.
+    from the copilot and the assistant until an administrator records that the agreement, as counsel reviewed it,
+    covers counseling notes (1.27.0, the fifth attestation statement; the owner's decision of 2026-10-24). Until
+    then the draft route refuses one and no summary holds one, as from 1.17.0.
   - **Accuracy and liability.** A drafted note that is signed unread is the signer's note. The design answers
     this (drafts only, human signs); the pilot must measure how often drafts are changed, and training must say
     that the signer owns the content.
@@ -385,7 +387,7 @@ until counsel and one pilot have looked at it.
 
 | Risk | Why it matters | Mitigation |
 | --- | --- | --- |
-| **Part 2 and HIPAA for the AI copilot** | First outbound flow of client text; free text is not reliably de-identified by removing known identifiers; the provider must be a business associate and a QSO | Off by default; BAA/QSOA gate; SUD counseling notes excluded (the draft route refuses one) unless counsel says otherwise; clients with an agreed restriction excluded; honest wording ("identifiers SUDS holds are removed"); outbound calls audited without content; counsel review before any pilot uses it |
+| **Part 2 and HIPAA for the AI copilot** | First outbound flow of client text; free text is not reliably de-identified by removing known identifiers; the provider must be a business associate and a QSO | Off by default; BAA/QSOA gate; SUD counseling notes used only when the agreement is recorded as covering them (the fifth attestation statement, counsel-reviewed; 1.27.0), else excluded; clients with an agreed restriction excluded; honest wording ("identifiers SUDS holds are removed"); outbound calls audited without content; counsel review before any pilot uses it |
 | **Part 2 and HIPAA for data pooling** | Pooling across organisations is itself a disclosure unless the data are de-identified to §164.514 or a Part 2 provision (§2.52 research, §2.53 audit and evaluation, §2.54 public health, de-identified) applies; small cells across CBOs can be differenced | County as steward; aggregate-only first; expert determination before any public benchmark ([DATA-NETWORK.md](DATA-NETWORK.md)) |
 | **Single maintainer** | Every wedge, every engagement and every security fix goes through one person; most commits are AI-assisted and there is no independent reviewer | A second reviewer for sync, disclosure and audit; a second person for delivery; say "one person" to buyers, as the pack already does |
 | **Public code** | The source stays visible (and 1.24.0 and earlier stay MIT); a larger vendor may copy features | Licence the code and price services; the moat is contracts, network, data and delivery; public code stays a trust asset |

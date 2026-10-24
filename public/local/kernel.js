@@ -16496,9 +16496,16 @@ var require_notes = __commonJS({
             }
           }
         }
+        let counselingCovered = false;
+        try {
+          const at = JSON.parse(db3.getSetting("ai_attestation", "") || "null");
+          counselingCovered = !!(at && at.covers_counseling === true);
+        } catch {
+          counselingCovered = false;
+        }
         const counseling = Number(row.counseling_note ?? e.counseling_note) === 1;
         const ai = Number(row.ai_assisted) === 1 || Number(e.ai_assisted) === 1;
-        if (counseling && ai && (!c.existing || ["counseling_note", "ai_assisted"].some((k) => row[k] !== void 0 && row[k] !== null && Number(row[k]) !== Number(e[k] || 0)))) {
+        if (!counselingCovered && counseling && ai && (!c.existing || ["counseling_note", "ai_assisted"].some((k) => row[k] !== void 0 && row[k] !== null && Number(row[k]) !== Number(e[k] || 0)))) {
           if (fromDraft && Number(e.ai_assisted) !== 1) out2.push(refuse("has a value the office does not accept (a SUD counseling note cannot include text drafted by the AI copilot: a copilot draft for this client is not in a note yet)", { message: `You asked the AI copilot for a note draft for this client in the last ${AI_DRAFT_MINUTES / 60} hours that has not been saved in a note, so this note is treated as including it, and a SUD counseling note cannot include text drafted by the AI copilot. Save the drafted note first, or write the counseling note later.`, fields: { counseling_note: "a copilot draft for this client is not in a note yet" } }));
           else out2.push(refuse("has a value the office does not accept (a SUD counseling note cannot include text drafted by the AI copilot)", { message: "A SUD counseling note cannot include text drafted by the AI copilot", fields: { counseling_note: "this note has AI-drafted text; a SUD counseling note is written without the copilot" } }));
         }
@@ -27032,11 +27039,10 @@ ${text}
       };
     }
     var ASSISTANT_SECTIONS = {
-      client: ["client.header", "client.careplan", "client.contacts", "client.supplies", "client.referrals", "client.upcoming"],
+      client: ["client.header", "client.careplan", "client.contacts", "client.supplies", "client.referrals", "client.notes", "client.upcoming"],
       day: ["day.schedule", "day.overdue", "day.unsigned"],
       programme: ["programme.supplies", "programme.sites", "programme.referrals"]
     };
-    var COUNSELING_REFUSAL = "I can't draft a SUD counseling note. SUDS doesn't use the AI copilot for counseling notes \u2014 write that one yourself.";
     var ASSISTANT_RULES = `You are now answering a staff member's question, not writing a draft: rules 2, 4 and 8 above are replaced by the rules below; the others still apply, rule 6 to the context pack and the conversation as well as the question.
 
 Rules for every answer:
@@ -27044,7 +27050,7 @@ A1. Answer only from the context pack and the conversation. The context pack is 
 A2. For every fact you give, cite the section of the context pack it comes from in "citations": the id in square brackets after the section's heading (for example client.contacts). Cite only sections that are in the pack. Do not write section ids in the answer text.
 A3. If the pack does not contain what the question needs, say so plainly in the answer, and name what is missing in "missing", a few words each. A short honest answer is better than a complete-looking guess.
 A4. Answer about this conversation's subject only. If the question names or describes anyone else (another client, a family member, a colleague), say this summary does not cover them; never identify, describe or guess about them.
-A5. Never draft a SUD counseling note. If asked to, answer exactly: "${COUNSELING_REFUSAL}" and nothing else.
+A5. You answer questions; you do not write notes here. If asked to write or draft a note (of any kind), say briefly that the worker can turn your answer into a note with "Draft a note from this", which opens the documentation copilot, and do not produce the note text yourself.
 A6. Keep it short enough to read on a phone in the field: a few sentences or a short list, plain words, no headings, no greeting.
 A7. Do not give medical, legal or dosing advice. If the pack or the conversation shows a safety concern (overdose, a risk of harm), say so and that a clinician should follow it up; do not resolve it yourself.
 A8. Keep every placeholder exactly as written, brackets included: the identifier placeholders of rule 5, and client references such as [C1] or [C2], which stand for clients SUDS names after you answer.`;
@@ -27074,7 +27080,7 @@ ${ASSISTANT_RULES}
 Scope: ${ASSISTANT_SCOPES[scope]}`, schema };
     }
     var PLACEHOLDERS = ["CLIENT_FULL_NAME", "CLIENT_FIRST_NAME", "CLIENT_LAST_NAME", "CLIENT_PREFERRED_NAME", "COUNSELOR", "CONTACT_NAME", "PHONE", "EMAIL", "ADDRESS", "DOB", "CLIENT_CODE", "ID", "SSN", "NUMBER", "URL", "ZIP", "CITY"];
-    module.exports = { RULES, ASSISTANT_RULES, ASSISTANT_SCHEMA, ASSISTANT_SECTIONS, COUNSELING_REFUSAL, assistantPrompt, NOTE_SECTIONS, NOTE_FORMATS, RATING_CHOICES, CALOMS_SKIP, PLACEHOLDERS, notePrompt, asamPrompt, careplanPrompt, calomsPrompt, calomsFields };
+    module.exports = { RULES, ASSISTANT_RULES, ASSISTANT_SCHEMA, ASSISTANT_SECTIONS, assistantPrompt, NOTE_SECTIONS, NOTE_FORMATS, RATING_CHOICES, CALOMS_SKIP, PLACEHOLDERS, notePrompt, asamPrompt, careplanPrompt, calomsPrompt, calomsFields };
   }
 });
 
@@ -27445,6 +27451,10 @@ var require_ai_copilot = __commonJS({
     var keyConfigured = () => providers.credentialsConfigured();
     var endpointProblem = () => providers.configProblem(settings().model);
     var attestedProvider = (a) => a && typeof a.configured_provider === "string" ? a.configured_provider : "anthropic";
+    var counselingCovered = () => {
+      const a = attestation();
+      return !!(a && a.covers_counseling === true);
+    };
     function monthStart(now2 = /* @__PURE__ */ new Date()) {
       return new Date(Date.UTC(now2.getUTCFullYear(), now2.getUTCMonth(), 1)).toISOString();
     }
@@ -27501,6 +27511,7 @@ var require_ai_copilot = __commonJS({
         model: s.model,
         monthly_cap: s.monthly_cap,
         used_this_month: used,
+        counseling_covered: !!(s.attestation && s.attestation.covers_counseling === true),
         assistant: assistantStatus({ available: !reason, reason, code }, s)
       };
     }
@@ -27985,6 +27996,7 @@ var require_ai_copilot = __commonJS({
       DEFAULT_MODEL,
       MODEL_ID,
       attestedProvider,
+      counselingCovered,
       DEFAULT_CAP,
       MAX_TEXT,
       MAX_TOKENS,
@@ -28023,6 +28035,7 @@ var require_ai_context = __commonJS({
     var { notFound } = require_http();
     var CAP = 50;
     var CONTACTS = 10;
+    var NOTES = 5;
     var SUPPLY_DAYS = 90;
     var CLOSED_REFERRAL = ["completed", "closed", "declined_by_client", "declined_by_provider"];
     var OPEN_TASK = `status IN ('open','in_progress')`;
@@ -28132,6 +28145,18 @@ ${body.join("\n")}`);
         ].filter(Boolean).join("; ")));
         b.add("client.referrals", "Open referrals", k.rows, { more: k.more, empty: "No open referrals." });
       }
+      if (require_ai_copilot().counselingCovered() && (may("notes:clinical:read") || may("notes:clinical:write"))) {
+        const f = require_notes().counselingFilter(u, "n");
+        const rows = db3.all(`SELECT occurred_at, status, title_enc, content_enc FROM notes n
+      WHERE n.client_id=? AND n.kind='clinical' AND n.counseling_note=1 AND n.deleted_at IS NULL AND ${f.sql}
+      ORDER BY n.occurred_at DESC LIMIT ?`, clientId, ...f.params, NOTES);
+        const k = capped2(rows.map((r) => {
+          const t = one(plain(r.title_enc), 120);
+          const body = one(plain(r.content_enc), 600);
+          return body ? `${day(r.occurred_at)} (${r.status}${t ? `, ${t}` : ""}): ${body}` : "";
+        }).filter(Boolean));
+        b.add("client.notes", "SUD counseling notes (42 CFR Part 2)", k.rows, { more: k.more, empty: "No SUD counseling notes you can read." });
+      }
       const upcoming = [];
       if (may("tasks:read")) {
         for (const t of db3.all(`SELECT due_at, priority, status, assigned_to, referral_id, intervention_id, call_id, is_milestone, ${TASK_TEXT} FROM tasks WHERE client_id=? AND ${OPEN_TASK} AND due_at IS NOT NULL ORDER BY due_at`, clientId)) {
@@ -28181,7 +28206,7 @@ ${body.join("\n")}`);
         const o = capped2(overdue.map((t) => `${day(t.due_at)}: ${todoKind(t)} for ${ref(t.client_id)}${t.priority !== "normal" ? ` (${t.priority})` : ""}`));
         b.add("day.overdue", "Overdue to-dos", o.rows, { more: o.more, empty: "Nothing overdue." });
       }
-      const n = db3.one(`SELECT COUNT(*) n, MIN(occurred_at) oldest FROM notes WHERE author_id=? AND status='draft' AND deleted_at IS NULL AND counseling_note=0`, u.id);
+      const n = db3.one(`SELECT COUNT(*) n, MIN(occurred_at) oldest FROM notes WHERE author_id=? AND status='draft' AND deleted_at IS NULL`, u.id);
       b.add("day.unsigned", "Your unsigned notes", n.n ? [`${n.n} unsigned note${n.n === 1 ? "" : "s"}; the oldest is from ${day(n.oldest)}`] : [], { empty: "None." });
       return { ...b.done(), refs: new Map([...refs].map(([id, r]) => [r, id])) };
     }
@@ -28490,7 +28515,11 @@ var require_ai = __commonJS({
           counsel_reviewed: { type: "boolean" },
           // A fourth statement, needed only for the assistant (not for drafts): the agreement covers conversational
           // assistant use (questions and record-derived summaries), not only documentation drafts.
-          covers_assistant: { type: "boolean" }
+          covers_assistant: { type: "boolean" },
+          // A fifth statement (the owner's decision of 2026-10-24): the agreement, as counsel has reviewed it, covers SUD
+          // counseling notes (42 CFR §2.11). Without it a counseling note is never drafted and never summarised, exactly
+          // as before. With it, counseling-note content may flow through the same masked path as everything else.
+          covers_counseling: { type: "boolean" }
         });
         const missing = {};
         if (!v.baa) missing.baa = "Confirm that a HIPAA business associate agreement with this provider is in place.";
@@ -28509,13 +28538,14 @@ var require_ai = __commonJS({
           qsoa: true,
           counsel_reviewed: true,
           covers_assistant: !!v.covers_assistant,
+          covers_counseling: !!v.covers_counseling,
           recorded_by: ctx.user.id,
           recorded_by_name: ctx.user.display_name || ctx.user.username,
           recorded_at: db3.now()
         };
         db3.setSetting("ai_attestation", JSON.stringify(a));
         if (!a.covers_assistant) db3.setSetting("ai_assistant_enabled", "0");
-        audit3.log({ user: ctx.user, action: "ai.attestation.record", ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true, covers_assistant: a.covers_assistant } });
+        audit3.log({ user: ctx.user, action: "ai.attestation.record", ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true, covers_assistant: a.covers_assistant, covers_counseling: a.covers_counseling } });
         ctx.status = 201;
         return { ok: true, attestation: a };
       });
@@ -28576,15 +28606,16 @@ var require_ai = __commonJS({
           counseling_note: { type: "boolean" }
         });
         if (!auth3.hasPerm(ctx.user, `notes:${v.kind}:write`)) throw forbidden(`You cannot author ${v.kind} notes`);
-        const COUNSELING = 'The AI copilot is not used for SUD counseling notes (\xA72.11). Write this note yourself, or untick "SUD counseling note" if it is not one.';
-        if (v.counseling_note) throw badRequest(COUNSELING, { ai_error: "counseling_note" });
+        const COUNSELING = 'The agreement with the AI provider has not been recorded as covering SUD counseling notes (\xA72.11). An administrator records that under Settings \u2192 AI copilot (counsel-reviewed), or write this note yourself, or untick "SUD counseling note" if it is not one.';
+        const counselingOk = AI.counselingCovered();
+        if (v.counseling_note && !counselingOk) throw badRequest(COUNSELING, { ai_error: "counseling_note" });
         clientFor(ctx, v.client_id, "note");
         if (v.note_id) {
           const n = db3.one(`SELECT client_id, author_id, status, kind, counseling_note FROM notes WHERE id=? AND deleted_at IS NULL`, v.note_id);
           if (!n || n.client_id !== v.client_id) throw notFound("Note not found");
           if (n.author_id !== ctx.user.id) throw forbidden("The AI copilot drafts only in your own note");
           if (n.status !== "draft") throw badRequest("A signed note cannot be redrafted; add an addendum instead");
-          if (Number(n.counseling_note)) throw badRequest(COUNSELING, { ai_error: "counseling_note" });
+          if (Number(n.counseling_note) && !counselingOk) throw badRequest(COUNSELING, { ai_error: "counseling_note" });
         }
         const format = v.format || "narrative";
         const out2 = await run2(ctx, {

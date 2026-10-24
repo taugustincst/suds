@@ -576,12 +576,19 @@ allow it from 2026-11-14. It carries:
 - the pilot price the owner settled ($9,500 flat).
 
 The assistant's summaries carry the short free text workers write on contacts, referrals and to-dos, by the owner's
-decision of the same day, which widened the first plan's structured-only rule. They never carry a note's text, and
-never anything from a SUD counseling note.
+decision of the same day, which widened the first plan's structured-only rule. They do not carry a progress or
+administrative note's body.
 
-On the stamped tree the full suite and the evening run (2,249 tests each, 2 skipped) and the browser suite (63 of 63
-scripts) passed, and CI run 40080760434 on the commit to tag (`39b67780`, "SBOM of the 1.27.0 stamp"), every required job
-green.
+**Re-stamped 2026-10-24 to include SUD counseling notes.** On the owner's further decision the same day (confirmed in
+the development session), 1.27.0 was re-opened before its tag to reverse the counseling-note exclusion: a fifth
+attestation statement (the agreement, as counsel reviewed it, covers SUD counseling notes, §2.11) now lets the
+documentation copilot draft one and the assistant summarise the counseling notes a person may already read — both
+through the same masked path, never raw identifiable note text to the provider; without that statement nothing
+changes. The §4.4 attestation wording rides with the counsel package, flagged for 42 CFR Part 2. The first 1.27.0
+stamp (`855842dd`/`39b67780`) is superseded and never tagged; the tag goes on the re-stamp's SBOM commit.
+
+On the re-stamped tree the full suite and the evening run (2,252 tests each, 2 skipped) and the browser suite (63 of 63
+scripts) passed, and CI on the commit to tag was green in every required job (filled in the tag hand-off).
 
 **It is not a security fix**, and nothing here calls it one. The owner approved the exception on 2026-10-24 ("I approve
 the exception", relayed by the business assistant in the private hand-off). In the development session the same day the
