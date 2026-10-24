@@ -4,6 +4,23 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## Unreleased
 
+### Added (for the next feature release, 1.27.0)
+
+- **An AI assistant**, off unless switched on: one conversation, built for a phone, for questions about a client
+  before a visit, your own day, or programme information (supplies on hand by site, the referral directory).
+  - It answers from a summary SUDS prepares from records the person may already see: dates, statuses, counts and
+    care plan entries, never note text, and never anything from a SUD counseling note.
+  - Every answer names the parts of the summary it used, as links into the record, under "AI answer — check it
+    against the record before you act". An answer citing something it was not given is refused.
+  - It runs on the AI copilot's agreement, provider, identifier replacement, monthly limit and audit. It needs
+    the copilot on, its own switch, and the agreement confirmed to cover assistant use (a fourth statement,
+    recorded again under Settings › AI copilot).
+  - It never changes a record. **Draft a note from this** opens a new note with the worker's recap in the
+    copilot's box, where the copilot's own review and AI-assisted marking apply.
+  - New permission *Use the AI assistant* (`ai:ask`), held by clinicians, supervisors and navigators by default.
+    New route `POST /api/ai/ask`, audited as `ai.ask` with metadata only.
+  - No migration (docs/AI-COPILOT.md, *The assistant*).
+
 ### Changed
 
 - **The 90-day pilot is now $4,500 flat** (it was $14,500), still credited in full toward the first annual plan. The old

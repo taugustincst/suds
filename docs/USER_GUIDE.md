@@ -237,6 +237,25 @@ the CalOMS questions of an episode, and as **Suggest with AI** on a client's car
 * If the copilot is slow, busy or unavailable, your form is unchanged: write it yourself as usual. It is never
   available in SUDS on this device.
 
+## AI assistant (if your programme has switched it on)
+
+Some programmes also turn on the **Assistant** (in the menu; under More on a phone). Ask it about **a client** before
+a visit, about **your day**, or about **program information** such as naloxone stock by site or who takes a walk-in
+referral (`docs/AI-COPILOT.md`, *The assistant*).
+
+* Choose what to ask about, and for a client, choose the client. Tap a suggested question or type your own.
+* It answers from a summary SUDS makes from the record: dates, statuses, counts and care plan entries, never note
+  text. Every answer says **AI answer — check it against the record before you act**, and lists the parts of the
+  record it used. Tap one to open that part and check.
+* If the summary does not have the answer, it says so. It does not know what is only in notes.
+* Ask about **this** client only, and never type another client's information. SUDS replaces this client's name
+  and other identifiers it holds before sending, but other names you type are sent as written.
+* **Draft a note from this**: after you type a short recap of a visit, this opens a new note for the client with
+  your recap in the AI copilot's box. Nothing is drafted or saved until you press **Draft with AI**, review it and
+  save.
+* Nothing you ask is saved. Changing the client or what you ask about starts a new conversation. If the assistant
+  is busy or unavailable, your conversation is unchanged: try again, or look in the record.
+
 ## Consents (42 CFR Part 2)
 Your program is a **42 CFR Part 2** program: the client header says so, and the rules below are enforced — SUDS refuses what the rule does not allow and tells you why.
 
