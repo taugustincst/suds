@@ -8,8 +8,9 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 - **An AI assistant**, off unless switched on: one conversation, built for a phone, for questions about a client
   before a visit, your own day, or programme information (supplies on hand by site, the referral directory).
-  - It answers from a summary SUDS prepares from records the person may already see: dates, statuses, counts and
-    care plan entries, never note text, and never anything from a SUD counseling note.
+  - It answers from a summary SUDS prepares from records the person may already see: dates, statuses, counts, care
+    plan entries and the short free text workers write on contacts, referrals and to-dos (the owner's decision of
+    2026-10-24), all masked the same way. It never sends a note's text, and never anything from a SUD counseling note.
   - Every answer names the parts of the summary it used, as links into the record, under "AI answer — check it
     against the record before you act". An answer citing something it was not given is refused.
   - It runs on the AI copilot's agreement, provider, identifier replacement, monthly limit and audit. It needs

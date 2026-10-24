@@ -161,7 +161,8 @@ try {
     await nav.api('POST', '/api/tasks', { client_id: clientId, title: 'Follow up about the ID card', due_at: '2026-01-02', assigned_to: (await nav.api('GET', '/api/me')).data.id });
     await page.click('[data-assistant-starter="What is overdue?"]');
     await until(async () => (await answers(page)) === 1, { timeout: 20000 });
-    ok(!/Juniper|Assistantcase|ID card/.test(calls.at(-1).raw) && !calls.at(-1).raw.includes(code), 'no name, code or to-do title was sent');
+    ok(!/Juniper|Assistantcase/.test(calls.at(-1).raw) && !calls.at(-1).raw.includes(code), 'no name or code was sent');
+    ok(/Follow up about the ID card/.test(calls.at(-1).raw), 'the to-do\'s title was (the owner\'s decision of 2026-10-24)');
     // [C1] is whichever client heads the overdue list (the seeded caseload has older ones): named here, never sent.
     const dayText = await page.textContent('#assistant-turns');
     ok(/\S+ \([A-Z0-9][\w-]*\) has a to-do that is overdue/.test(dayText) && !dayText.includes('[C1]'), 'the answer names the client by first name and code', dayText);

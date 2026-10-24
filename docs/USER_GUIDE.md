@@ -244,8 +244,8 @@ a visit, about **your day**, or about **program information** such as naloxone s
 referral (`docs/AI-COPILOT.md`, *The assistant*).
 
 * Choose what to ask about, and for a client, choose the client. Tap a suggested question or type your own.
-* It answers from a summary SUDS makes from the record: dates, statuses, counts and care plan entries, never note
-  text. Every answer says **AI answer — check it against the record before you act**, and lists the parts of the
+* It answers from a summary SUDS makes from the record: dates, statuses, counts, care plan entries and what workers
+  wrote on contacts, referrals and to-dos, but never a note's text. Every answer says **AI answer — check it against the record before you act**, and lists the parts of the
   record it used. Tap one to open that part and check.
 * If the summary does not have the answer, it says so. It does not know what is only in notes.
 * Ask about **this** client only, and never type another client's information. SUDS replaces this client's name

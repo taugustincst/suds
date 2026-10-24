@@ -124,8 +124,8 @@ async function seedClients() {
   assert.equal(c.status, 201, JSON.stringify(c.data));
   maria = c.data.id; mariaCode = H.db.one(`SELECT client_code FROM clients WHERE id=?`, maria).client_code;
   const navId = H.db.one(`SELECT id FROM users WHERE username='asnav'`).id;
-  H.db.run(`INSERT INTO interventions(id,client_id,user_id,type,occurred_at,duration_minutes,summary_enc) VALUES(?,?,?,?,?,?,?)`, require('node:crypto').randomUUID(), maria, navId, 'case_management', '2026-10-20T18:00:00.000Z', 30, require('../server/crypto').encrypt('SUMMARY-NEVER-SENT'));
-  H.db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,status) VALUES(?,?,?,?,?,?, 'open')`, require('node:crypto').randomUUID(), maria, navId, navId, require('../server/crypto').encrypt('TITLE-NEVER-SENT'), '2026-10-01');
+  H.db.run(`INSERT INTO interventions(id,client_id,user_id,type,occurred_at,duration_minutes,summary_enc) VALUES(?,?,?,?,?,?,?)`, require('node:crypto').randomUUID(), maria, navId, 'case_management', '2026-10-20T18:00:00.000Z', 30, require('../server/crypto').encrypt('SUMMARY-SENT Maria Lopez called from 555-201-3344 about her ID'));
+  H.db.run(`INSERT INTO tasks(id,client_id,assigned_to,created_by,title_enc,due_at,status) VALUES(?,?,?,?,?,?, 'open')`, require('node:crypto').randomUUID(), maria, navId, navId, require('../server/crypto').encrypt('TITLE-SENT Call Mari back'), '2026-10-01');
   restricted = (await nav.post('/api/clients', { first_name: 'Rhea', last_name: 'Restricted', confirm_duplicate: true })).data.id;
   const adminId = H.db.one(`SELECT id FROM users WHERE username='admin'`).id;
   H.db.run(`INSERT INTO patient_requests(id,client_id,kind,received_at,due_at,status,created_by) VALUES(?,?,?,?,?,?,?)`, require('node:crypto').randomUUID(), restricted, 'restriction', '2026-09-01', '2026-10-01', 'fulfilled', adminId);
@@ -168,7 +168,10 @@ test('a client brief: identifiers replaced before sending, names put back in the
   assert.equal(r.data.notice, 'AI answer — check it against the record before you act');
   assert.equal(calls.length - c0, 1);
   const sent = calls.at(-1).raw;
-  for (const s of ['Maria', 'Lopez', 'Mari ', '555-201-3344', '916) 555-0199', mariaCode, 'SUMMARY-NEVER-SENT', 'TITLE-NEVER-SENT']) assert.ok(!sent.includes(s), `${s} is not sent`);
+  for (const s of ['Maria', 'Lopez', 'Mari ', 'Mari\\', '555-201-3344', '916) 555-0199', mariaCode]) assert.ok(!sent.includes(s), `${s} is not sent`);
+  // The free text workers wrote (owner's decision of 2026-10-24) is sent, with this client's identifiers replaced in it.
+  assert.ok(sent.includes('SUMMARY-SENT [CLIENT_FULL_NAME] called from [PHONE] about her ID'), 'a contact summary, masked');
+  assert.ok(sent.includes('TITLE-SENT Call [CLIENT_PREFERRED_NAME] back'), 'a to-do title, masked');
   assert.match(sent, /\[CLIENT_FULL_NAME\]/); assert.match(sent, /\[PHONE\]/);
   assert.match(sent, /<context_pack scope=\\"client\\">/);
   assert.match(sent, /\[client\.contacts\]/, 'sections carry their ids');

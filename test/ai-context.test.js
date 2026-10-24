@@ -1,5 +1,6 @@
 'use strict';
-// The AI assistant's context packs (server/ai-context.js): structured fields only, never narrative text, never a
+// The AI assistant's context packs (server/ai-context.js): the fields and the short free text workers write on records
+// (owner's decision of 2026-10-24), never a note's content, never a
 // SUD counseling note; scoped to what the person may see; every list capped and saying so.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
@@ -60,7 +61,7 @@ after(async () => { await H.stop(); });
 
 const everyPack = () => [X.clientBrief(clinCtx, client.id).text, X.clientBrief(navCtx, client.id).text, X.myDay(clinCtx).text, X.myDay(navCtx).text, X.programmeReference(navCtx).text];
 
-test('a client brief holds structured fields under cited sections, and no narrative text', () => {
+test('a client brief holds the fields and the workers\' free text under cited sections, and never a note\'s content', () => {
   const { text, sections } = X.clientBrief(navCtx, client.id);
   assert.deepEqual(sections.map(s => s.id), ['client.header', 'client.careplan', 'client.contacts', 'client.supplies', 'client.referrals', 'client.upcoming']);
   for (const s of sections) assert.ok(text.includes(`[${s.id}]`), `${s.id} is headed with its id`);
@@ -70,7 +71,12 @@ test('a client brief holds structured fields under cited sections, and no narrat
   assert.match(text, /Creekside Wound Care \(Valley Health\): Scheduled/);
   assert.match(text, /Naloxone kit|naloxone kits: 2/);
   assert.match(text, /…and 2 more not shown/, 'the 10 most recent contacts, and how many more');
-  for (const narrative of [SUMMARY, TASK_TITLE, REFERRAL_NOTE, PROGRESS_BODY, COUNSELING_BODY]) assert.ok(!text.includes(narrative.split(' ')[0]), `no ${narrative.split(' ')[0]}`);
+  // The free text workers write on contacts, referrals and to-dos is there, for deidentify to clean before sending.
+  assert.match(text, /summary: VISIT-SUMMARY found her at the creek camp, shaken/);
+  assert.match(text, /outcome: REFERRAL-NOTES .*; barrier: REFERRAL-NOTES|notes: REFERRAL-NOTES/);
+  assert.match(text, /to-do "TASK-TITLE Call about detox bed for her"/);
+  // A note's content never is: not a progress note, and never a SUD counseling note.
+  for (const body of [PROGRESS_BODY, COUNSELING_BODY]) assert.ok(!text.includes(body.split(' ')[0]), `no ${body.split(' ')[0]}`);
 });
 
 test('no SUD counseling note, nor any note text, reaches any pack; the unsigned count leaves counseling notes out', () => {
@@ -107,7 +113,7 @@ test('the day pack caps its lists at 50 and says how many more, and names no cli
   assert.match(text, /appointment for \[C\d+\] at Creekside Wound Care/, 'today\'s referral appointment');
   assert.ok(!/Maria|Lopez|Mari\b|Other|Person/.test(text), 'no names');
   assert.ok(!text.includes(client.code), 'no client codes');
-  assert.ok(!text.includes('TASK-TITLE'), 'never a to-do title');
+  assert.match(text, /to-do "TASK-TITLE Call about detox bed for her \d+" for \[C\d+\]/, 'each to-do with its title');
   assert.deepEqual([...refs.values()].sort(), [client.id, other].sort(), 'each reference maps to its client for the engine');
   // Only the person's own work: the clinician has none of these to-dos.
   assert.match(X.myDay(clinCtx).text, /Nothing overdue/);

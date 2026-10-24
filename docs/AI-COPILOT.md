@@ -337,17 +337,19 @@ audit and failure handling as the copilot. It answers; it never saves, signs, su
 
 | Scope | Ask about | What the summary holds (`server/ai-context.js`) |
 | --- | --- | --- |
-| A client | One client in the person's reach: "Brief me before a visit" | Name (replaced before sending), pronouns, language, status, risk, housing, medication for addiction treatment, naloxone and overdose dates, contact preferences; the active care plan's problems, goals and open steps; the 10 most recent contacts (date, type, modality, place, outcome, supply counts, follow-up date); supplies given in the last 90 days; open referrals (the directory entry, status and dates); what is coming up (to-dos by kind, referral appointments) |
-| My day | The person's own work: "What is overdue?" | Their to-dos due that day and that day's appointments for their referrals; their overdue to-dos (urgent and high first, then oldest); how many of their own notes are unsigned, and the oldest date. Clients appear only as references ([C1], [C2]…), never by name or code; SUDS names them (first name and code) after the answer returns |
-| Program information | "Naloxone stock by site", "Who takes walk-in wound care?" | Supplies on hand by site, the sites, and the referral directory (organisations, services, phone, hours, eligibility). No client information at all |
+| A client | One client in the person's reach: "Brief me before a visit" | Name (replaced before sending), pronouns, language, status, risk, housing, medication for addiction treatment, naloxone and overdose dates, contact preferences; the active care plan's problems, goals and open steps; the 10 most recent contacts (date, type, modality, place, outcome, supply counts, follow-up date, and the worker's summary); supplies given in the last 90 days; open referrals (the directory entry, status, dates, and the outcome, barrier and notes written on it); what is coming up (to-dos with their titles and details, referral appointments) |
+| My day | The person's own work: "What is overdue?" | Their to-dos (with titles and details) due that day and that day's appointments for their referrals; their overdue to-dos (urgent and high first, then oldest); how many of their own notes are unsigned, and the oldest date. Clients appear only as references ([C1], [C2]…), never by name or code; SUDS names them (first name and code) after the answer returns |
+| Program information | "Naloxone stock by site", "Who takes walk-in wound care?" | Supplies on hand by site, the sites, and the referral directory (organisations, services, phone, hours, eligibility, intake and capacity notes). No client information at all |
 
-**Structured fields only (this version).** A summary never holds narrative text:
-- not a note's content, a contact's summary, or a referral's outcome, barrier or notes;
-- not a to-do's title or details;
-- and never anything from a SUD counseling note. The only notes query counts the person's own unsigned drafts,
-  and counseling notes are left out of that count.
+**Fields and workers' free text, never notes.** The first version sent structured fields only. On 2026-10-24 the
+owner widened it, to make answers as useful as possible. A summary now also holds the short free text workers write
+on records: a contact's summary, a referral's outcome, barrier and notes, and a to-do's title and details. Each
+field is cut to a few hundred characters, and all of it is masked the same way as the rest.
+- A summary never holds a note's content: progress, clinical or administrative.
+- It never holds anything from a SUD counseling note. The only notes query counts the person's own unsigned
+  drafts, and counseling notes are left out of that count.
 
-Sending narrative text would need a decision by the owner and counsel; it is not done. A section of the summary is
+A section of the summary is
 included only when the person holds the permission that reads it. Every list is capped at 50 entries, with a line
 saying how many more were left out.
 
@@ -439,7 +441,7 @@ Code: `server/ai-context.js` (summaries), `server/ai-assistant.js` (one question
 * Masking names SUDS does not hold (other people in the text) and other date forms near the date of birth.
 * Drafting from an audio recording (only text is accepted); voice questions to the assistant (designed, *The
   assistant*, not built).
-* Narrative text in the assistant's summaries (notes, contact summaries, to-do titles): an owner and counsel decision.
+* Note content in the assistant's summaries (progress and administrative notes; SUD counseling notes are excluded for good).
 * A morning brief from the day summary.
 * A per-programme model allow-list or per-person caps.
 * Other ways of getting cloud credentials (1.17.1 reads them from the environment and a key file only): the AWS

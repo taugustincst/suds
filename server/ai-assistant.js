@@ -3,7 +3,8 @@
 // the field. It is the copilot's machinery in another shape, not a second AI system: every ask goes through
 // AI.draft() (server/ai-copilot.js), so it is gated, reserved against the monthly cap, de-identified, sent, recorded
 // in ai_usage and re-identified exactly as a draft is. What it adds:
-//   * the pack (server/ai-context.js): structured fields from records the person may see, for one scope (one client
+//   * the pack (server/ai-context.js): fields and workers' short free text from records the person may see (never a
+//     note's text), for one scope (one client
 //     in their reach, their own day, or programme facts), access asserted while it is built;
 //   * the conversation, kept by the browser and sent with each ask: at most MAX_TURNS turns, each cut to TURN_MAX
 //     characters, all of them to TURNS_MAX, the oldest dropped first and the pack told so;

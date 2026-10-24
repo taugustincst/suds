@@ -2,12 +2,13 @@
 // Context packs for the AI assistant (server/ai-assistant.js; docs/AI-COPILOT.md, "The assistant"): what the
 // assistant may know when it answers one question, built here from the records the person asking may already see.
 //
-// A pack is structured fields only (version 1, an owner decision of 2026-10-24): dates, kinds, statuses, counts,
-// the care plan's own problem, goal and step entries, supply levels, the referral directory. No narrative text is
-// ever read for a pack: not a note's content, not a contact's summary, not a referral's outcome or barrier text,
-// not a to-do's title or details (free text a worker typed, which can name anyone). SUD counseling notes (42 CFR
-// §2.11) are not read at all: the only notes query here counts the person's own unsigned drafts, counseling notes
-// left out of the count itself.
+// A pack holds what makes the answer useful (the owner's decision of 2026-10-24, widening the structured-only first
+// version): dates, kinds, statuses, counts, the care plan's own entries, supply levels, the referral directory, and
+// the short free text workers write on those records: a contact's summary, a referral's outcome, barrier and notes,
+// a to-do's title and details. All of it goes through the copilot's identifier replacement before anything is sent,
+// like every piece of a draft. A note's content is never read for a pack, and SUD counseling notes (42 CFR §2.11)
+// are not read at all: the only notes query here counts the person's own unsigned drafts, counseling notes left out
+// of the count itself.
 //
 // Each pack is { text, sections: [{ id, label }] }: plain text under one heading per section, each heading carrying
 // its id ("## Contacts and visits [client.contacts]") so the answer can cite it. A section is in the pack only when
@@ -53,14 +54,13 @@ function builder() {
 /** The first CAP rows of `rows` and how many were left out. */
 const capped = (rows, cap = CAP) => ({ rows: rows.slice(0, cap), more: Math.max(0, rows.length - cap) });
 
-/** What a to-do is, from what it is linked to (its title is free text and is never read). */
+/** What a to-do is: what it is linked to, then its title and details as the worker wrote them. */
 function todoKind(t) {
-  if (t.referral_id) return 'referral follow-up';
-  if (t.intervention_id) return 'visit follow-up';
-  if (t.call_id) return 'call follow-up';
-  if (t.is_milestone) return 'milestone';
-  return 'to-do';
+  const kind = t.referral_id ? 'referral follow-up' : t.intervention_id ? 'visit follow-up' : t.call_id ? 'call follow-up' : t.is_milestone ? 'milestone' : 'to-do';
+  const title = one(plain(t.title_enc), 200); const more = one(plain(t.description_enc), 300);
+  return `${kind}${title ? ` "${title}"` : ''}${more ? ` (details: ${more})` : ''}`;
 }
+const TASK_TEXT = 'title_enc, description_enc';
 
 // ---------------------------------------------------------------- client brief
 /**
@@ -107,8 +107,8 @@ function clientBrief(ctx, clientId) {
 
   if (may('interventions:read')) {
     const n = db.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, clientId).n;
-    // Never summary_enc: what happened, in the worker's words, is narrative.
-    const rows = db.all(`SELECT occurred_at, type, location, modality, duration_minutes, outcome, naloxone_kits, fentanyl_strips, follow_up_due
+    // What happened, in the worker's words, beside the fields (cut to 500 characters a contact).
+    const rows = db.all(`SELECT occurred_at, type, location, modality, duration_minutes, outcome, naloxone_kits, fentanyl_strips, follow_up_due, summary_enc
       FROM interventions WHERE client_id=? ORDER BY occurred_at DESC LIMIT ?`, clientId, CONTACTS);
     b.add('client.contacts', `Contacts and visits (the ${CONTACTS} most recent)`, rows.map(v => [
       `${day(v.occurred_at)}: ${label('INTERVENTION_TYPES', v.type)}`,
@@ -117,6 +117,7 @@ function clientBrief(ctx, clientId) {
       Number(v.naloxone_kits) ? `naloxone kits: ${v.naloxone_kits}` : '',
       Number(v.fentanyl_strips) ? `test strips: ${v.fentanyl_strips}` : '',
       v.follow_up_due ? `follow-up due ${day(v.follow_up_due)}` : '',
+      v.summary_enc && one(plain(v.summary_enc), 500) ? `summary: ${one(plain(v.summary_enc), 500)}` : '',
     ].filter(Boolean).join('; ')), { more: Math.max(0, n - rows.length), empty: 'No contacts recorded.' });
 
     const since = LD.addDays(today, -SUPPLY_DAYS);
@@ -127,22 +128,23 @@ function clientBrief(ctx, clientId) {
   }
 
   if (may('referrals:read')) {
-    // The directory entry's name, never the referral's outcome, barrier or notes text.
-    const rows = db.all(`SELECT r.referred_at, r.status, r.urgency, r.appointment_at, r.follow_up_due, r.warm_handoff, x.name, x.organization, x.category
+    // The directory entry, the referral's dates and status, and what workers wrote on it: outcome, barrier, notes.
+    const rows = db.all(`SELECT r.referred_at, r.status, r.urgency, r.appointment_at, r.follow_up_due, r.warm_handoff, r.outcome_enc, r.barrier_enc, r.notes_enc, x.name, x.organization, x.category
       FROM referrals r JOIN resources x ON x.id=r.resource_id WHERE r.client_id=? AND r.status NOT IN (${CLOSED_REFERRAL.map(() => '?').join(',')}) ORDER BY r.referred_at DESC`, clientId, ...CLOSED_REFERRAL);
     const k = capped(rows.map(r => [
       `${one(r.organization ? `${r.name} (${r.organization})` : r.name, 160)}: ${label('REFERRAL_STATUSES', r.status)}`,
       `referred ${day(r.referred_at)}`, r.urgency && r.urgency !== 'routine' ? `${r.urgency}` : '',
       r.appointment_at ? `appointment ${day(r.appointment_at)}` : '', r.follow_up_due ? `follow-up due ${day(r.follow_up_due)}` : '', Number(r.warm_handoff) ? 'warm hand-off' : '',
+      ...[['outcome', r.outcome_enc], ['barrier', r.barrier_enc], ['notes', r.notes_enc]].map(([k, v]) => { const t = one(plain(v), 300); return t ? `${k}: ${t}` : ''; }),
     ].filter(Boolean).join('; ')));
     b.add('client.referrals', 'Open referrals', k.rows, { more: k.more, empty: 'No open referrals.' });
   }
 
-  // What is coming up: open to-dos for this client that the person may see (what each is, never its title), and
+  // What is coming up: open to-dos for this client that the person may see (what each is, with its title), and
   // referral appointments from today on.
   const upcoming = [];
   if (may('tasks:read')) {
-    for (const t of db.all(`SELECT due_at, priority, status, assigned_to, referral_id, intervention_id, call_id, is_milestone FROM tasks WHERE client_id=? AND ${OPEN_TASK} AND due_at IS NOT NULL ORDER BY due_at`, clientId)) {
+    for (const t of db.all(`SELECT due_at, priority, status, assigned_to, referral_id, intervention_id, call_id, is_milestone, ${TASK_TEXT} FROM tasks WHERE client_id=? AND ${OPEN_TASK} AND due_at IS NOT NULL ORDER BY due_at`, clientId)) {
       upcoming.push({ at: day(t.due_at), line: `${day(t.due_at)}: ${todoKind(t)}${t.priority !== 'normal' ? ` (${t.priority})` : ''}${day(t.due_at) < today ? ', overdue' : ''}${t.assigned_to === u.id ? ', yours' : ''}` });
     }
   }
@@ -163,7 +165,8 @@ function clientBrief(ctx, clientId) {
  * The person's own day: their to-dos due on `dateISO` and referral appointments that day for referrals they made,
  * their overdue to-dos, and how many of their own notes are unsigned. Only their own work, and only clients they
  * reach. Clients are named in the pack by a reference ([C1], [C2]…), never by name or code: `refs` maps each to
- * its client id, for the engine to mask and to name them in the answer (server/ai-assistant.js).
+ * its client id, for the engine to mask (a to-do's title can name its client) and to name them in the answer
+ * (server/ai-assistant.js).
  */
 function myDay(ctx, dateISO = LD.today()) {
   const u = ctx.user;
@@ -180,7 +183,7 @@ function myDay(ctx, dateISO = LD.today()) {
   const reach = `(t.client_id IS NULL OR (${cf.sql} AND EXISTS (SELECT 1 FROM clients c WHERE c.id=t.client_id AND c.deleted_at IS NULL)))`;
 
   if (may('tasks:read')) {
-    const todos = db.all(`SELECT t.client_id, t.due_at, t.priority, t.status, t.referral_id, t.intervention_id, t.call_id, t.is_milestone FROM tasks t
+    const todos = db.all(`SELECT t.client_id, t.due_at, t.priority, t.status, t.referral_id, t.intervention_id, t.call_id, t.is_milestone, t.title_enc, t.description_enc FROM tasks t
       WHERE t.assigned_to=? AND t.${OPEN_TASK} AND t.due_at IS NOT NULL AND ${reach} ORDER BY t.due_at`, u.id, ...cf.params);
     const dueToday = todos.filter(t => day(t.due_at) === date);
     // Urgent and high first, then the oldest: what the cap keeps is what matters most.
@@ -232,7 +235,7 @@ function programmeReference(ctx, { question = '' } = {}) {
     b.add('programme.sites', 'Sites', s.rows, { more: s.more, empty: 'No sites recorded.' });
   }
   if (may('resources:read')) {
-    const all = db.all(`SELECT name, organization, category, services, service_tags, phone, hours, eligibility, languages, city, accepts_medicaid, accepts_uninsured FROM resources WHERE is_active=1 ORDER BY name`);
+    const all = db.all(`SELECT name, organization, category, services, service_tags, phone, hours, eligibility, languages, city, accepts_medicaid, accepts_uninsured, intake_process, capacity_notes FROM resources WHERE is_active=1 ORDER BY name`);
     const words = new Set(String(question || '').toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []);
     const score = (r) => { if (!words.size) return 0; const hay = `${r.name} ${r.organization || ''} ${r.category} ${r.services || ''} ${r.service_tags || ''}`.toLowerCase(); let n = 0; for (const w of words) if (hay.includes(w)) n++; return n; };
     const ranked = all.map(r => ({ r, s: score(r) })).sort((a, z) => z.s - a.s).map(x => x.r);
@@ -241,6 +244,7 @@ function programmeReference(ctx, { question = '' } = {}) {
       r.services ? `services: ${one(r.services, 300)}` : '', r.phone ? `phone ${one(r.phone, 40)}` : '', r.hours ? `hours: ${one(r.hours, 120)}` : '',
       r.eligibility ? `eligibility: ${one(r.eligibility, 200)}` : '', r.languages ? `languages: ${one(r.languages, 80)}` : '', r.city ? one(r.city, 60) : '',
       Number(r.accepts_medicaid) ? 'accepts Medi-Cal' : '', Number(r.accepts_uninsured) ? 'accepts uninsured' : '',
+      r.intake_process ? `intake: ${one(r.intake_process, 200)}` : '', r.capacity_notes ? `capacity: ${one(r.capacity_notes, 200)}` : '',
     ].filter(Boolean).join('; ')));
     b.add('programme.referrals', 'Referral directory', k.rows, { more: k.more, empty: 'The directory is empty.' });
   }

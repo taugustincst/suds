@@ -28037,12 +28037,12 @@ ${body.join("\n")}`);
     }
     var capped2 = (rows, cap = CAP) => ({ rows: rows.slice(0, cap), more: Math.max(0, rows.length - cap) });
     function todoKind(t) {
-      if (t.referral_id) return "referral follow-up";
-      if (t.intervention_id) return "visit follow-up";
-      if (t.call_id) return "call follow-up";
-      if (t.is_milestone) return "milestone";
-      return "to-do";
+      const kind = t.referral_id ? "referral follow-up" : t.intervention_id ? "visit follow-up" : t.call_id ? "call follow-up" : t.is_milestone ? "milestone" : "to-do";
+      const title = one(plain(t.title_enc), 200);
+      const more = one(plain(t.description_enc), 300);
+      return `${kind}${title ? ` "${title}"` : ""}${more ? ` (details: ${more})` : ""}`;
     }
+    var TASK_TEXT = "title_enc, description_enc";
     function clientBrief(ctx, clientId) {
       const row = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, clientId);
       if (!row) throw notFound("Client not found");
@@ -28079,7 +28079,7 @@ ${body.join("\n")}`);
       }
       if (may("interventions:read")) {
         const n = db3.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, clientId).n;
-        const rows = db3.all(`SELECT occurred_at, type, location, modality, duration_minutes, outcome, naloxone_kits, fentanyl_strips, follow_up_due
+        const rows = db3.all(`SELECT occurred_at, type, location, modality, duration_minutes, outcome, naloxone_kits, fentanyl_strips, follow_up_due, summary_enc
       FROM interventions WHERE client_id=? ORDER BY occurred_at DESC LIMIT ?`, clientId, CONTACTS);
         b.add("client.contacts", `Contacts and visits (the ${CONTACTS} most recent)`, rows.map((v) => [
           `${day(v.occurred_at)}: ${label("INTERVENTION_TYPES", v.type)}`,
@@ -28087,7 +28087,8 @@ ${body.join("\n")}`);
           v.outcome ? `outcome: ${label("OUTCOMES", v.outcome)}` : "",
           Number(v.naloxone_kits) ? `naloxone kits: ${v.naloxone_kits}` : "",
           Number(v.fentanyl_strips) ? `test strips: ${v.fentanyl_strips}` : "",
-          v.follow_up_due ? `follow-up due ${day(v.follow_up_due)}` : ""
+          v.follow_up_due ? `follow-up due ${day(v.follow_up_due)}` : "",
+          v.summary_enc && one(plain(v.summary_enc), 500) ? `summary: ${one(plain(v.summary_enc), 500)}` : ""
         ].filter(Boolean).join("; ")), { more: Math.max(0, n - rows.length), empty: "No contacts recorded." });
         const since = LD.addDays(today, -SUPPLY_DAYS);
         const given = db3.all(`SELECT s.name, s.unit, SUM(x.quantity) qty FROM intervention_supplies x JOIN interventions i ON i.id=x.intervention_id JOIN supply_items s ON s.id=x.item_id
@@ -28096,7 +28097,7 @@ ${body.join("\n")}`);
         b.add("client.supplies", `Supplies given (last ${SUPPLY_DAYS} days)`, k.rows, { more: k.more, empty: `None in the last ${SUPPLY_DAYS} days.` });
       }
       if (may("referrals:read")) {
-        const rows = db3.all(`SELECT r.referred_at, r.status, r.urgency, r.appointment_at, r.follow_up_due, r.warm_handoff, x.name, x.organization, x.category
+        const rows = db3.all(`SELECT r.referred_at, r.status, r.urgency, r.appointment_at, r.follow_up_due, r.warm_handoff, r.outcome_enc, r.barrier_enc, r.notes_enc, x.name, x.organization, x.category
       FROM referrals r JOIN resources x ON x.id=r.resource_id WHERE r.client_id=? AND r.status NOT IN (${CLOSED_REFERRAL.map(() => "?").join(",")}) ORDER BY r.referred_at DESC`, clientId, ...CLOSED_REFERRAL);
         const k = capped2(rows.map((r) => [
           `${one(r.organization ? `${r.name} (${r.organization})` : r.name, 160)}: ${label("REFERRAL_STATUSES", r.status)}`,
@@ -28104,13 +28105,17 @@ ${body.join("\n")}`);
           r.urgency && r.urgency !== "routine" ? `${r.urgency}` : "",
           r.appointment_at ? `appointment ${day(r.appointment_at)}` : "",
           r.follow_up_due ? `follow-up due ${day(r.follow_up_due)}` : "",
-          Number(r.warm_handoff) ? "warm hand-off" : ""
+          Number(r.warm_handoff) ? "warm hand-off" : "",
+          ...[["outcome", r.outcome_enc], ["barrier", r.barrier_enc], ["notes", r.notes_enc]].map(([k2, v]) => {
+            const t = one(plain(v), 300);
+            return t ? `${k2}: ${t}` : "";
+          })
         ].filter(Boolean).join("; ")));
         b.add("client.referrals", "Open referrals", k.rows, { more: k.more, empty: "No open referrals." });
       }
       const upcoming = [];
       if (may("tasks:read")) {
-        for (const t of db3.all(`SELECT due_at, priority, status, assigned_to, referral_id, intervention_id, call_id, is_milestone FROM tasks WHERE client_id=? AND ${OPEN_TASK} AND due_at IS NOT NULL ORDER BY due_at`, clientId)) {
+        for (const t of db3.all(`SELECT due_at, priority, status, assigned_to, referral_id, intervention_id, call_id, is_milestone, ${TASK_TEXT} FROM tasks WHERE client_id=? AND ${OPEN_TASK} AND due_at IS NOT NULL ORDER BY due_at`, clientId)) {
           upcoming.push({ at: day(t.due_at), line: `${day(t.due_at)}: ${todoKind(t)}${t.priority !== "normal" ? ` (${t.priority})` : ""}${day(t.due_at) < today ? ", overdue" : ""}${t.assigned_to === u.id ? ", yours" : ""}` });
         }
       }
@@ -28139,7 +28144,7 @@ ${body.join("\n")}`);
       const cf = auth3.caseloadFilter(u, "t.client_id");
       const reach = `(t.client_id IS NULL OR (${cf.sql} AND EXISTS (SELECT 1 FROM clients c WHERE c.id=t.client_id AND c.deleted_at IS NULL)))`;
       if (may("tasks:read")) {
-        const todos = db3.all(`SELECT t.client_id, t.due_at, t.priority, t.status, t.referral_id, t.intervention_id, t.call_id, t.is_milestone FROM tasks t
+        const todos = db3.all(`SELECT t.client_id, t.due_at, t.priority, t.status, t.referral_id, t.intervention_id, t.call_id, t.is_milestone, t.title_enc, t.description_enc FROM tasks t
       WHERE t.assigned_to=? AND t.${OPEN_TASK} AND t.due_at IS NOT NULL AND ${reach} ORDER BY t.due_at`, u.id, ...cf.params);
         const dueToday = todos.filter((t) => day(t.due_at) === date);
         const RANK = { urgent: 0, high: 1, normal: 2, low: 3 };
@@ -28181,7 +28186,7 @@ ${body.join("\n")}`);
         b.add("programme.sites", "Sites", s.rows, { more: s.more, empty: "No sites recorded." });
       }
       if (may("resources:read")) {
-        const all = db3.all(`SELECT name, organization, category, services, service_tags, phone, hours, eligibility, languages, city, accepts_medicaid, accepts_uninsured FROM resources WHERE is_active=1 ORDER BY name`);
+        const all = db3.all(`SELECT name, organization, category, services, service_tags, phone, hours, eligibility, languages, city, accepts_medicaid, accepts_uninsured, intake_process, capacity_notes FROM resources WHERE is_active=1 ORDER BY name`);
         const words = new Set(String(question || "").toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []);
         const score = (r) => {
           if (!words.size) return 0;
@@ -28200,7 +28205,9 @@ ${body.join("\n")}`);
           r.languages ? `languages: ${one(r.languages, 80)}` : "",
           r.city ? one(r.city, 60) : "",
           Number(r.accepts_medicaid) ? "accepts Medi-Cal" : "",
-          Number(r.accepts_uninsured) ? "accepts uninsured" : ""
+          Number(r.accepts_uninsured) ? "accepts uninsured" : "",
+          r.intake_process ? `intake: ${one(r.intake_process, 200)}` : "",
+          r.capacity_notes ? `capacity: ${one(r.capacity_notes, 200)}` : ""
         ].filter(Boolean).join("; ")));
         b.add("programme.referrals", "Referral directory", k.rows, { more: k.more, empty: "The directory is empty." });
       }

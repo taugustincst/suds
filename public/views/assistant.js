@@ -30,7 +30,7 @@ function sectionHref(section, clientId) {
   if (tab && clientId) return `#/client/${encodeURIComponent(clientId)}/${tab}`;
   return { 'day.schedule': '#/tasks', 'day.overdue': '#/tasks', 'day.unsigned': '#/notes', 'programme.supplies': '#/supplies', 'programme.sites': '#/supplies', 'programme.referrals': '#/resources' }[section] || null;
 }
-const whatIsSent = 'SUDS sends the AI provider a summary it prepares from records you can already see (dates, statuses, counts, care plan entries; never note text, and never a SUD counseling note) with your question and the conversation so far, after replacing the client\'s name, date of birth, phone, email, address, Medi-Cal number and client code with placeholders, and masking anything that looks like a phone number, email or ID number. Other names you type can still identify someone: never type another client\'s information. Nothing here is saved.';
+const whatIsSent = 'SUDS sends the AI provider a summary it prepares from records you can already see (dates, statuses, counts, care plan entries, and what workers wrote on contacts, referrals and to-dos; never a note\'s text, and never a SUD counseling note) with your question and the conversation so far, after replacing the client\'s name, date of birth, phone, email, address, Medi-Cal number and client code with placeholders, and masking anything that looks like a phone number, email or ID number. Other names you type can still identify someone: never type another client\'s information. Nothing here is saved.';
 
 route('assistant', async (r) => {
   const root = h('div', { class: 'assistant-page', 'data-assistant': '1' });
