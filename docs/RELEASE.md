@@ -1,7 +1,7 @@
 # Releasing SUDS
 
 ## Production readiness checklist (per release)
-- [ ] CI is green for the exact commit being released: `npm test`, the browser suite (`scripts/ui/run-all.sh`, 61 scripts including the first-run wizard, local mode, sync, device encryption and recovery, the static build, accessibility and the QA-regression script `a11y-round4`), Node 24 and the recovery drill. The release workflow enforces this (see *Release gate* below); the box is here so nobody tags a commit they have not seen pass
+- [ ] CI is green for the exact commit being released: `npm test`, the browser suite (`scripts/ui/run-all.sh`, 62 scripts including the first-run wizard, local mode, sync, device encryption and recovery, the static build, accessibility and the QA-regression script `a11y-round4`), Node 24 and the recovery drill. The release workflow enforces this (see *Release gate* below); the box is here so nobody tags a commit they have not seen pass
 - [ ] `CHANGELOG.md` has a section for the version, `package.json` version matches
 - [ ] Docs updated (`README.md`, `docs/INSTALL.md`, `docs/DEPLOYMENT.md`, `docs/HIPAA.md`), and the documents that name a release moved to this one: the questionnaire's *Checked against*, the evidence index's *Version.*, a new SBOM for every release, patches included, from 1.25.2 (*Stamp checklist: the documents that name a release*, below; `test/doc-currency.test.js`)
 - [ ] No secrets, databases or `data/` contents in the tree (`git status`, `.gitignore`)
@@ -519,7 +519,7 @@ unless the run is given `policy_exception`, so the owner (or the owner's busines
 runs the tag's release with `policy_exception` set to the line above, which the release job prints at the top of the
 notes, and the `release` environment's reviewer approves it. It is two commits, "Release 1.26.0" and "SBOM of the
 1.26.0 stamp", the tag on the second. The full suite and the evening run passed on the stamped tree before the push;
-the browser suite passed 60 of its 61 scripts there, and `local-mode` timed out once at a sign-in after a reload, then
+the browser suite passed all but one of the 61 browser scripts it had then, and `local-mode` timed out once at a sign-in after a reload, then
 passed alone twice (49 of 49), and passed in CI's browser job on the commit to tag (run 39074014149, every required job
 green); it is entered in the flake register. The owner's business assistant tagged it (tagger *Folder*) and pushed the
 tag with the owner's GitHub access on 2026-10-17. The tag's own run (39078308072) stopped at the gate's release policy, as
@@ -557,7 +557,7 @@ files (`node scripts/release-policy.js --version 1.26.1 --previous v1.26.0`), so
 exception, and as a security fix it is released when ready, outside the weekly batching of patches (*Release
 cadence*). It is two commits, "Release 1.26.1" and "SBOM of the 1.26.1 stamp", the tag on the second; the first stamp,
 `7a97479`, and its SBOM commit `0ad5d11` were never tagged, and the tag goes on the SBOM commit after the second. On the
-second stamp the full suite and the evening run (2,224 tests each, 2 skipped) and the browser suite (61 of 61 scripts)
+second stamp the full suite and the evening run (2,224 tests each, 2 skipped) and the browser suite (all 61 of its scripts at the time)
 passed, and CI run 39842502473 on the commit to tag, every required job green. **Backport owed or waived:** under
 *Supported versions* 1.25.x, the previous minor, gets security fixes from `maint/1.25` for 30 days after 1.26.0; the
 fixes apply to it (H1, H2 and M1 are older than 1.26.0), and no 1.25.x patch is published. suds.systems runs 1.26.0
@@ -1213,7 +1213,7 @@ QA catches bugs; the gate stops them shipping. The `gate` job in `release.yml` r
 | CI job | What it proves |
 | --- | --- |
 | `test` | `npm test`, the committed kernel and generated schema match their sources, the package builds, browser modules parse |
-| `browser` | the whole browser suite, `scripts/ui/run-all.sh` — 61 scripts, including `accessibility` (fails on any WCAG 2.1 AA finding) and the QA-regression script `a11y-round4` |
+| `browser` | the whole browser suite, `scripts/ui/run-all.sh` — 62 scripts, including `accessibility` (fails on any WCAG 2.1 AA finding) and the QA-regression script `a11y-round4` |
 | `node24` | `npm test` on the next Node LTS line |
 | `thorough` | the performance checks (`test/thorough/`) and timing budgets, at full size |
 | `thorough-sdc` | the statistical-disclosure-control attacker sweeps at full size (`scripts/test-thorough.js` `SDC_SWEEPS`) |

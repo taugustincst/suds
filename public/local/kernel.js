@@ -30161,9 +30161,15 @@ var require_auth = __commonJS({
             county_programmes: db3.one(`SELECT COUNT(*) n FROM county_programmes`).n,
             // Whether the AI assistant is offered (server/ai-assistant.js): on, or only paused by the monthly limit. Off,
             // or not set up, the menu shows nothing of it, as the copilot shows nothing while it is off.
+            // A device never has it, and nothing about it may stop the session loading.
             ai_assistant: (() => {
-              const a = require_ai_copilot().status().assistant;
-              return a.available || a.code === "cap";
+              if (require_config().local) return false;
+              try {
+                const a = require_ai_copilot().status().assistant;
+                return a.available || a.code === "cap";
+              } catch {
+                return false;
+              }
             })()
           }
         };

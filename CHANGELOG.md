@@ -19,7 +19,8 @@ All notable changes to SUDS are documented here. The project follows semantic ve
     copilot's box, where the copilot's own review and AI-assisted marking apply.
   - New permission *Use the AI assistant* (`ai:ask`), held by clinicians, supervisors and navigators by default.
     New route `POST /api/ai/ask`, audited as `ai.ask` with metadata only.
-  - No migration (docs/AI-COPILOT.md, *The assistant*).
+  - No migration (docs/AI-COPILOT.md, *The assistant*). Tested by `test/ai-assistant.test.js`, `test/ai-context.test.js` and
+    a new browser script, `ai-assistant.mjs`: the suite is now 62 scripts.
 
 ### Changed
 
