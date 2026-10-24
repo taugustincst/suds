@@ -19,7 +19,23 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 - **All settings**: Settings opens on one list of every setting, grouped, each with what it is set to now and a link
   that opens its tab, scrolls to it, focuses it and marks it; a box narrows the list as you type.
 - **The AI copilot tab carries the provider's connection inline**: the "no credentials" banner links to the key box.
-  With its browser script `settings`, the suite is now 62 scripts.
+- **An AI assistant**, off unless switched on: one conversation, built for a phone, for questions about a client
+  before a visit, your own day, or programme information (supplies on hand by site, the referral directory).
+  - It answers from a summary SUDS prepares from records the person may already see: dates, statuses, counts, care
+    plan entries and the short free text workers write on contacts, referrals and to-dos (the owner's decision of
+    2026-10-24), all masked the same way. It never sends a note's text, and never anything from a SUD counseling note.
+  - Every answer names the parts of the summary it used, as links into the record, under "AI answer — check it
+    against the record before you act". An answer citing something it was not given is refused.
+  - It runs on the AI copilot's agreement, provider, identifier replacement, monthly limit and audit. It needs
+    the copilot on, its own switch, and the agreement confirmed to cover assistant use (a fourth statement,
+    recorded again under Settings › AI copilot).
+  - It never changes a record. **Draft a note from this** opens a new note with the worker's recap in the
+    copilot's box, where the copilot's own review and AI-assisted marking apply.
+  - New permission *Use the AI assistant* (`ai:ask`), held by clinicians, supervisors and navigators by default.
+    New route `POST /api/ai/ask`, audited as `ai.ask` with metadata only.
+  - The assistant itself needs no migration (docs/AI-COPILOT.md, *The assistant*). Tested by `test/ai-assistant.test.js`, `test/ai-context.test.js` and
+    a new browser script, `ai-assistant.mjs`.
+- With the browser scripts `settings` and `ai-assistant`, the suite is now 63 scripts.
 
 ### Changed
 

@@ -46,6 +46,9 @@ export const NAV = [
   // Street outreach (1.17.0): the one-screen, phone-first logger for anonymous field contacts; also on + Log, and a
   // worker's start page if they choose (My profile, or the box on the screen).
   { name: 'outreach', hideIn: ['part2_layer'], label: 'Street outreach', ico: '🚶', perm: 'interventions:write', front: 'main', help: 'Log a field contact in a few taps: what kind, what you handed out, and roughly where. Anonymous, works with no connection on a device, and the supplies come off the stock.' },
+  // The AI assistant (docs/AI-COPILOT.md, "The assistant"): office server only, and only while the programme has it on
+  // (the session's programme.ai_assistant), like the copilot, which shows nothing while it is off.
+  { name: 'assistant', label: 'Assistant', ico: '✦', perm: 'ai:ask', front: 'more', show: (c) => !c.local && !!(c.programme && c.programme.ai_assistant), help: 'Ask about a client before a visit, about your day, or about program information (supplies, the referral directory). Answers come from a summary of the record and say which parts they used; check them against the record before you act. It never changes a record.' },
   { name: 'overdose', hideIn: ['part2_layer'], front: { clinician: 'more' }, label: 'Overdose & reversals', ico: '⛑', perm: 'overdose:read', help: 'Overdoses and naloxone reversals, including ones involving people who are not clients. These are the counts funders ask for.' },
   // Group and community prevention events (1.17.0): a front-line worker finds it under More. Whoever reads reports
   // but not visits (finance, read-only) gets its activity summary alone.

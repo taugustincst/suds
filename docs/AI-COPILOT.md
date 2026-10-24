@@ -5,6 +5,10 @@ assessment dimensions, care plan suggestions and CalOMS answers. A person always
 decides. The copilot never saves, signs or submits anything, and a signed note records that it was
 AI-assisted.
 
+The same module has an **AI assistant** (off unless switched on separately): staff ask questions about one client
+in their reach, their own day, or programme facts, and it answers from a summary SUDS prepares from the record
+(*The assistant*, below). It never changes a record.
+
 It is **off** on every installation until an administrator records that the programme has the required
 agreement with the AI provider and switches it on. It runs **only on an office server**: SUDS on this device
 (the GitHub Pages build) and the local-mode copy never send anything to an AI provider, and say so where the
@@ -325,8 +329,111 @@ parsing prose.
   limit (429), an overloaded or failing provider (529, 500, 502, 503, 504) or a failed connection, once, after
   the provider's `retry-after` when it is at most 10 s (else about a second), and only if the wait leaves time for
   the answer; never after a timeout. Otherwise the person tries again or writes it themselves. One person may ask
-  for 12 drafts a minute.
+  for 12 drafts and assistant questions a minute, together.
 * Schema: migration 53 (`notes.ai_assisted`, `ai_usage`).
+
+## The assistant
+
+The assistant is the copilot's machinery in another shape: a conversation, built for a phone, for staff in the
+field. It is not a second AI system. It uses the same provider, agreement, identifier replacement, monthly limit,
+audit and failure handling as the copilot. It answers; it never saves, signs, submits or edits anything.
+
+**Three scopes.** Each conversation is about one of these, and about one client at a time:
+
+| Scope | Ask about | What the summary holds (`server/ai-context.js`) |
+| --- | --- | --- |
+| A client | One client in the person's reach: "Brief me before a visit" | Name (replaced before sending), pronouns, language, status, risk, housing, medication for addiction treatment, naloxone and overdose dates, contact preferences; the active care plan's problems, goals and open steps; the 10 most recent contacts (date, type, modality, place, outcome, supply counts, follow-up date, and the worker's summary); supplies given in the last 90 days; open referrals (the directory entry, status, dates, and the outcome, barrier and notes written on it); what is coming up (to-dos with their titles and details, referral appointments) |
+| My day | The person's own work: "What is overdue?" | Their to-dos (with titles and details) due that day and that day's appointments for their referrals; their overdue to-dos (urgent and high first, then oldest); how many of their own notes are unsigned, and the oldest date. Clients appear only as references ([C1], [C2]…), never by name or code; SUDS names them (first name and code) after the answer returns |
+| Program information | "Naloxone stock by site", "Who takes walk-in wound care?" | Supplies on hand by site, the sites, and the referral directory (organisations, services, phone, hours, eligibility, intake and capacity notes). No client information at all |
+
+**Fields and workers' free text, never notes.** The first version sent structured fields only. On 2026-10-24 the
+owner widened it, to make answers as useful as possible. A summary now also holds the short free text workers write
+on records: a contact's summary, a referral's outcome, barrier and notes, and a to-do's title and details. Each
+field is cut to a few hundred characters, and all of it is masked the same way as the rest.
+- A summary never holds a note's content: progress, clinical or administrative.
+- It never holds anything from a SUD counseling note. The only notes query counts the person's own unsigned
+  drafts, and counseling notes are left out of that count.
+
+A section of the summary is
+included only when the person holds the permission that reads it. Every list is capped at 50 entries, with a line
+saying how many more were left out.
+
+**Masking.** The summary and the conversation pass through the copilot's own identifier replacement (`deidentify`),
+and names come back through its `reidentify`. There is no second masking path.
+- A client summary uses that client's identifiers and the person's own name.
+- A day summary uses every listed client's identifiers, so a name typed into a question is still replaced; no
+  name is put back in its place.
+- Program information uses the copilot's general patterns (phone, email, SSN, long numbers, addresses, dates of
+  birth).
+- As with the copilot, other names typed into a question are sent as written. The page says never to type
+  another client's information.
+- **The summaries are still protected health information and Part 2 information**, sent to the provider under the
+  BAA and QSOA. Replacing identifiers lowers the risk; it is not de-identification.
+
+**Answers cite the summary.** Each answer names the sections of the summary it used. SUDS refuses an answer that cites a
+section that was not sent: it is recorded as `unreadable` and never shown (a 502). The page shows every answer under
+**AI answer — check it against the record before you act**, with each cited section as a link to that part of the
+record. A wrong fact under a real section is not caught by the server: that is what the links and the banner are
+for. The model is told to answer only from the summary and the conversation, to say what is missing, and not to
+answer about anyone the conversation is not about. Asked to draft a SUD counseling note, it gives the standing
+refusal: "I can't draft a SUD counseling note. SUDS doesn't use the AI copilot for counseling notes — write that
+one yourself." (`server/ai-prompts.js`, pinned in `test/ai-assistant.test.js`).
+
+**The conversation.**
+- The browser keeps it, up to 20 turns, and only in the page: nothing is saved, in the browser or on the server,
+  and nothing goes in the address bar.
+- Each question sends at most the last 12 turns, each cut to 4,000 characters and 30,000 in all, with a line
+  saying how many earlier turns were left out.
+- Changing the scope or the client starts a new conversation.
+- **Draft a note from this** (client conversations, for someone who uses the copilot) opens a new note for that
+  client with the worker's last message in the copilot's box. The copilot's own Draft button, review and
+  *AI-assisted* marking take it from there; the assistant adds no way of writing a note.
+
+**Switching it on.**
+- It needs the copilot on.
+- It needs the agreement recorded with a fourth statement: *the agreement covers conversational assistant use
+  (staff questions and summaries SUDS prepares from records), not only documentation drafts* (`covers_assistant`,
+  stored and audited with the agreement).
+- It needs its own switch under Settings › AI copilot, which is off by default.
+- An agreement recorded before the assistant existed covers drafts only. **Confirm it covers the AI assistant**
+  records it again with all four statements.
+- If counsel advises that the assistant needs an agreement of its own, the fourth statement becomes a second
+  agreement record instead; the settings page is written so that is a change of wording.
+- The permission is `ai:ask` (*Use the AI assistant*), held by clinicians, supervisors and navigators by default,
+  and grantable only to a role that documents client work.
+- The menu shows **Assistant** (under More for navigators and clinicians) only on an office server while the assistant is on, or paused by the
+  monthly limit.
+
+**What is recorded.**
+- Each question is one provider call, one `ai_usage` row (`feature` = `assistant`, counted against the monthly
+  limit with drafts and shown as *Assistant questions* on the This month card) and one audit entry, `ai.ask`.
+- The `ai.ask` entry records the scope, the client (for a client summary), the ids of the clients a day summary
+  read, the model, the outcome, token counts, identifiers replaced by kind, characters sent and the sections cited.
+  It never holds the question, the summary or the answer.
+
+**Failures.** The copilot's own, word for word, about a conversation instead of a form:
+
+| Status | When |
+| --- | --- |
+| 409 | Off, no agreement, the assistant switched off, or the agreement not confirmed for it (`ai_unavailable`: `assistant_off`, `agreement_scope`); or a client with an agreed restriction (`restriction`, refused before anything is built and audited) |
+| 403 / 404 | No `ai:ask`, or the client is off the caseload or missing |
+| 429 | The monthly limit, or 12 a minute |
+| 502 | Unreadable, a refused key or request |
+| 503 | The provider unavailable or rate-limited |
+| 504 | A timeout |
+| 422 | The provider declined |
+
+A failed question adds nothing to the conversation and leaves the question in the box.
+
+**Voice (next).** A microphone button using the browser's own speech recognition is designed and not built.
+- SUDS would receive text only, never audio.
+- Browser speech recognition may itself send audio to the browser vendor's service, so it will sit behind an
+  administrator's switch that is off by default and recorded as reviewed by counsel.
+- Keyboard dictation on the person's own device works today, as it does in any text box.
+
+Code: `server/ai-context.js` (summaries), `server/ai-assistant.js` (one question), `POST /api/ai/ask`
+(`server/routes/ai.js`), `public/views/assistant.js`; tests `test/ai-context.test.js`, `test/ai-assistant.test.js`,
+`scripts/ui/ai-assistant.mjs`.
 
 ## Deferred / not done
 
@@ -337,7 +444,10 @@ parsing prose.
   the server; that memory is held in the server process for 120 minutes, so a restart in between forgets it
   (a server-issued draft id stored with the note would not).
 * Masking names SUDS does not hold (other people in the text) and other date forms near the date of birth.
-* Drafting from an audio recording (only text is accepted).
+* Drafting from an audio recording (only text is accepted); voice questions to the assistant (designed, *The
+  assistant*, not built).
+* Note content in the assistant's summaries (progress and administrative notes; SUD counseling notes are excluded for good).
+* A morning brief from the day summary.
 * A per-programme model allow-list or per-person caps.
 * Other ways of getting cloud credentials (1.17.1 reads them from the environment and a key file only): the AWS
   configuration files, an EC2 instance profile / ECS task role / SSO, and Google workload identity or the

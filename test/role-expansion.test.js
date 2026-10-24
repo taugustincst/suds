@@ -70,11 +70,11 @@ test('the role matrix: exactly the four grants, and nothing else moved', () => {
   for (const r of ['admin', 'supervisor']) assert.ok(P[r].includes('records:manage-others'), `${r} holds records:manage-others`);
   for (const r of ['navigator', 'clinician', 'finance', 'readonly']) assert.ok(!P[r].includes('records:manage-others'), `${r} does not`);
   // ai:draft (1.17.0, the AI documentation copilot) is a new power, not a widening of an old one: left out here
-  // and pinned to its roles in test/ai-copilot.test.js. county:view and county:manage (the county view) likewise,
+  // and pinned to its roles in test/ai-copilot.test.js; ai:ask (the assistant) likewise, in test/ai-assistant.test.js. county:view and county:manage (the county view) likewise,
   // pinned in test/county.test.js.
   // intake:read and intake:write (1.24.0, the incoming-referrals queue) likewise, pinned in test/incoming-referrals.test.js.
   // policies:manage (built for 1.26.0, not yet released: PowerDMS sign-offs) likewise, pinned in test/policies.test.js.
-  const NEW = ['records:manage-others', 'ai:draft', 'county:view', 'county:manage', 'intake:read', 'intake:write', 'policies:manage'];
+  const NEW = ['records:manage-others', 'ai:draft', 'ai:ask', 'county:view', 'county:manage', 'intake:read', 'intake:write', 'policies:manage'];
   const before = Object.fromEntries(Object.entries(P).map(([r, l]) => [r, l.filter(p => !(auth.WIDENED_1_16[r] || []).includes(p) && !NEW.includes(p))]));
   assert.equal(require('node:crypto').createHash('sha256').update(JSON.stringify(before)).digest('hex'), 'b3d0a221beace6b231f76250d399b836bdd4d8f3e92899f67dfda9396c292eb4', 'the rest of the matrix is 1.15.3\'s');
 });

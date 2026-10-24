@@ -44,6 +44,8 @@ function settings() {
   const cap = Number(db.getSetting('ai_monthly_cap', String(DEFAULT_CAP)));
   return {
     enabled: db.getSetting('ai_enabled', '0') === '1',
+    // The assistant (server/ai-assistant.js): off unless switched on, even with the copilot on.
+    assistant_enabled: db.getSetting('ai_assistant_enabled', '0') === '1',
     model: db.getSetting('ai_model', null) || providers.defaultModel(),
     default_model: providers.defaultModel(),
     monthly_cap: Number.isInteger(cap) && cap >= 0 ? cap : DEFAULT_CAP,
@@ -103,7 +105,19 @@ function status() {
   else if (!s.monthly_cap) no('cap', 'The AI copilot is paused for this program. Write the documentation yourself as usual.');
   else if (reserved >= s.monthly_cap) no('cap', `This program has used its ${s.monthly_cap} AI draft${s.monthly_cap === 1 ? '' : 's'} for this month. Write the documentation yourself; the limit resets on the 1st of each month.`);
   else if (cost.capReached(u)) no('cap', 'This program has reached its AI spending limit for this month. Write the documentation yourself; the limit resets on the 1st of each month.');
-  return { available: !reason, reason, code, enabled: s.enabled, attested: !!s.attestation, key_configured: keyConfigured(), provider: providers.id(), model: s.model, monthly_cap: s.monthly_cap, used_this_month: used };
+  return { available: !reason, reason, code, enabled: s.enabled, attested: !!s.attestation, key_configured: keyConfigured(), provider: providers.id(), model: s.model, monthly_cap: s.monthly_cap, used_this_month: used,
+    assistant: assistantStatus({ available: !reason, reason, code }, s) };
+}
+/**
+ * Whether the assistant can be asked now: everything the copilot needs (the same codes and words, a monthly limit
+ * included), then its own switch, then the agreement recorded as covering assistant use (covers_assistant), in
+ * that order. An agreement recorded before the assistant existed covers drafts only.
+ */
+function assistantStatus(copilot, s) {
+  if (!copilot.available) return { available: false, code: copilot.code, reason: copilot.reason };
+  if (!s.assistant_enabled) return { available: false, code: 'assistant_off', reason: 'The AI assistant is switched off for this program (Settings → AI copilot).' };
+  if (!(s.attestation && s.attestation.covers_assistant === true)) return { available: false, code: 'agreement_scope', reason: 'The AI assistant is off: the agreement recorded with the AI provider has not been confirmed to cover assistant use (questions and record summaries), only documentation drafts. An administrator records that under Settings → AI copilot.' };
+  return { available: true, code: null, reason: null };
 }
 
 // ---------------------------------------------------------------- de-identification
@@ -317,7 +331,7 @@ const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 function buildRequest(prompt, model) {
   const body = {
     model,
-    max_tokens: MAX_TOKENS,
+    max_tokens: prompt.max_tokens || MAX_TOKENS,
     // The rules and task are the same for every call of a feature, so they are cached; the session text is not.
     system: [{ type: 'text', text: prompt.system, cache_control: { type: 'ephemeral' } }],
     messages: [{ role: 'user', content: prompt.user }],
@@ -410,18 +424,23 @@ function recordUsage({ user, feature, model, outcome, tokens = {}, ms }) {
  * One draft: check the copilot is available, de-identify, send, put the names back. `build(clean)` makes the
  * prompt from the de-identified pieces. Returns { data, tokens, model, counts }; throws AiError. The caller
  * audits (it knows the client and the feature's details).
+ * The assistant (server/ai-assistant.js) asks through here too, so an ask is gated, reserved against the cap,
+ * de-identified, sent and recorded exactly as a draft is: `assistant` gates on the assistant's status instead;
+ * `ids` replaces the one client's identifiers (a day pack spans several clients); `check(data)` refuses an answer
+ * before its outcome is recorded (a citation to a section that was not sent).
  */
-async function draft({ user, clientId, feature, pieces, build }) {
+async function draft({ user, clientId, feature, pieces, build, assistant = false, ids = null, check = null }) {
   const st = status();
-  if (!st.available) throw new AiError(st.code === 'cap' ? 'cap' : 'off', st.code === 'cap' ? 429 : 409, st.reason, { ai_unavailable: st.code });
+  const gate = assistant ? st.assistant : st;
+  if (!gate.available) throw new AiError(gate.code === 'cap' ? 'cap' : 'off', gate.code === 'cap' ? 429 : 409, gate.reason, { ai_unavailable: gate.code });
   // Reserved in the same turn of the event loop as the check above, before anything is awaited; released in the
   // finally below, after the outcome is in ai_usage.
   inFlight++;
-  try { return await sendDraft({ user, clientId, feature, pieces, build }); } finally { inFlight--; }
+  try { return await sendDraft({ user, clientId, feature, pieces, build, ids, check }); } finally { inFlight--; }
 }
-async function sendDraft({ user, clientId, feature, pieces, build }) {
+async function sendDraft({ user, clientId, feature, pieces, build, ids: given = null, check = null }) {
   const author = db.one(`SELECT display_name FROM users WHERE id=?`, user.id);
-  const ids = identifiersFor(clientId, author);
+  const ids = given || identifiersFor(clientId, author);
   const counts = {};
   const clean = {};
   for (const [k, v] of Object.entries(pieces)) {
@@ -433,6 +452,7 @@ async function sendDraft({ user, clientId, feature, pieces, build }) {
   const t0 = Date.now();
   try {
     const r = await send(prompt, model);
+    if (check) { try { check(r.data); } catch (e) { if (e instanceof AiError) e.extra = { ...e.extra, tokens: r.tokens }; throw e; } }
     recordUsage({ user, feature, model, outcome: 'ok', tokens: r.tokens, ms: Date.now() - t0 });
     return { data: reidentify(r.data, ids), tokens: r.tokens, model: r.model, counts, sent_chars: prompt.user.length };
   } catch (e) {
