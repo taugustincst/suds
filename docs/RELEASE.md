@@ -579,6 +579,10 @@ The assistant's summaries carry the short free text workers write on contacts, r
 decision of the same day, which widened the first plan's structured-only rule. They never carry a note's text, and
 never anything from a SUD counseling note.
 
+On the stamped tree the full suite and the evening run (2,249 tests each, 2 skipped) and the browser suite (63 of 63
+scripts) passed, and CI run 40080760434 on the commit to tag (`39b67780`, "SBOM of the 1.27.0 stamp"), every required job
+green.
+
 **It is not a security fix**, and nothing here calls it one. The owner approved the exception on 2026-10-24 ("I approve
 the exception", relayed by the business assistant in the private hand-off). In the development session the same day the
 owner chose to ship both features in it, rather than the assistant alone. So it is recorded, on a line of its own, as:

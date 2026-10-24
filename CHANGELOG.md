@@ -4,6 +4,8 @@ All notable changes to SUDS are documented here. The project follows semantic ve
 
 ## 1.27.0 — 2026-10-24
 
+SHA-256 of suds-v1.27.0.zip: 4413949623193413d10be25c483971a350e50bd778647c4cdab484617c976500
+
 A feature release (docs/RELEASE.md, *Record: 1.27.0*): server configuration from the browser, the AI assistant, and the
 pilot price the owner settled. **Migration 73** (schema version 73): one new table, `server_config`, applied
 automatically at start-up; take a backup first, as before any upgrade. One new permission, *Use the AI assistant*
