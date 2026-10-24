@@ -108,11 +108,24 @@ route('assistant', async (r) => {
         ...x.citations.map(c => { const href = sectionHref(c.section, t.clientId); return href ? h('a', { class: 'chip', href, 'data-ai-cite': c.section }, c.label) : h('span', { class: 'chip', 'data-ai-cite': c.section }, c.label); })) : null);
   }
   function drawTurns() {
+    const lastUser = [...turns].reverse().find(t => t.role === 'user');
     turnsBox.replaceChildren(...turns.map(t => h('li', { class: `assistant-turn ${t.role === 'user' ? 'you' : 'ai'}` },
       h('p', { class: 'small muted assistant-who' }, t.role === 'user' ? 'You' : 'Assistant'),
-      t.role === 'user' ? h('p', { class: 'assistant-text' }, t.text) : answerBlock(t))));
+      t.role === 'user' ? h('p', { class: 'assistant-text' }, t.text) : answerBlock(t),
+      t === lastUser ? draftAction(t) : null)));
     turnsBox.hidden = !turns.length;
   }
+  // "Draft a note from this": the worker's own words (their recap) into the copilot's box on a new note for this
+  // client. Only for a client conversation, and only for someone who uses the copilot while it is on.
+  function draftAction(t) {
+    if (scope !== 'client' || !t.clientId || !can('ai:draft') || !(st && st.available)) return null;
+    if (!can('notes:admin:write') && !can('notes:clinical:write')) return null;
+    return h('div', { class: 'btn-row', style: { justifyContent: 'flex-start', marginTop: '.3rem' } }, h('button', { type: 'button', class: 'btn sm', id: 'assistant-draft-note', onClick: async () => {
+      const { openNoteForm } = await import('./notes.js');
+      openNoteForm(null, { clientId: t.clientId, clientDisplay: clientName || undefined, prefill: { ai_source: t.text } });
+    } }, 'Draft a note from this'));
+  }
+
   async function ask(text) {
     if (busy) return;
     const q = String(text || '').trim();

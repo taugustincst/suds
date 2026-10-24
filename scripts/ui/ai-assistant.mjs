@@ -165,8 +165,32 @@ try {
     // [C1] is whichever client heads the overdue list (the seeded caseload has older ones): named here, never sent.
     const dayText = await page.textContent('#assistant-turns');
     ok(/\S+ \([A-Z0-9][\w-]*\) has a to-do that is overdue/.test(dayText) && !dayText.includes('[C1]'), 'the answer names the client by first name and code', dayText);
+    ok(!(await page.$('#assistant-draft-note')), 'no "Draft a note from this" outside a client conversation');
   }
   await nav.ctx.close();
+  // ------------------------------------------------------------------------------------------------ 5
+  const clin = await session('kpatel', PW);
+  {
+    const { page, api, go } = clin;
+    await go('assistant');
+    await page.waitForSelector('#assistant-composer', { timeout: 10000 });
+    await chooseClient(page, code);
+    const recap = 'Recap: met at the clinic, talked about the housing application and the ID card.';
+    await page.fill('#assistant-question', recap);
+    await page.click('#assistant-send');
+    await until(async () => (await answers(page)) === 1, { timeout: 20000 });
+    const notes0 = (await api('GET', `/api/notes?client_id=${clientId}`)).data;
+    ok(await page.$('#assistant-draft-note'), '"Draft a note from this" appears for a copilot user');
+    const n0 = calls.length;
+    await page.click('#assistant-draft-note');
+    await page.waitForSelector('.modal [data-ai-source="note"]', { timeout: 10000 });
+    eq(await page.inputValue('.modal [data-ai-source="note"]'), recap, 'the recap is in the copilot\'s box on the new note');
+    ok(await page.$eval('.modal [data-ai-panel="note"]', e => e.open), 'with the copilot panel open');
+    eq(calls.length, n0, 'nothing is drafted until the clinician presses Draft');
+    eq(JSON.stringify((await api('GET', `/api/notes?client_id=${clientId}`)).data), JSON.stringify(notes0), 'and nothing is saved');
+    await axe(page, 'New note with the recap handed over');
+  }
+  await clin.ctx.close();
   await admin.ctx.close();
 } catch (e) {
   fail(`ai-assistant script error: ${e && e.stack || e}`);

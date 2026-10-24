@@ -56,7 +56,7 @@ export function focusOn(el) {
  * puts a question inside the panel (never a dialog over the form's dialog) and resolves with the choice made.
  * The panel's own typing is kept from the form around it (no autosave of the note for a keystroke here).
  */
-export function aiPanel({ key, title = 'Draft with the AI copilot', label, help, intro, purpose, button = 'Draft with AI', draft, open = false }) {
+export function aiPanel({ key, title = 'Draft with the AI copilot', label, help, intro, purpose, button = 'Draft with AI', draft, open = false, value = '' }) {
   const id = `ai-${key}-${Math.random().toString(36).slice(2, 7)}`;
   const body = h('div', { class: 'ai-panel-body' }, h('p', { class: 'small muted' }, 'Checking whether the AI copilot is available…'));
   // Hidden until the status says the copilot is offered here at all.
@@ -71,7 +71,10 @@ export function aiPanel({ key, title = 'Draft with the AI copilot', label, help,
       body.replaceChildren(h('p', { class: 'small', 'data-ai-unavailable': st.code || '1' }, st.reason || 'The AI copilot is not available.', ' You can fill in the form yourself as usual.'));
       return;
     }
-    const ta = h('textarea', { id, rows: 6, maxLength: 30000, 'aria-describedby': `${id}-help` });
+    const ta = h('textarea', { id, rows: 6, maxLength: 30000, 'aria-describedby': `${id}-help`, 'data-ai-source': key });
+    // Text handed in by the AI assistant's "Draft a note from this" (views/assistant.js): the worker's own recap,
+    // waiting in the box for them to read and press Draft. Nothing is drafted until they do.
+    if (value) ta.value = value;
     const status = h('div', { class: 'small', role: 'status', 'aria-live': 'polite', 'data-ai-status': '1' });
     const err = h('div', { class: 'err', role: 'alert', 'data-ai-error': '1' });
     const choiceBox = h('div', { class: 'banner info small', 'data-ai-choice-box': '1', hidden: true });
@@ -173,7 +176,7 @@ export function aiDraftBanner({ gaps = [], counts, notice = AI_NOTICE, text = 'R
  */
 export function noteCopilot(ctx) {
   if (!mayUseAi()) return null;
-  return aiPanel({ key: 'note', label: 'Your session notes or transcript', help: 'For this session and this client only. The draft goes into the note\'s sections below for you to review. What you have already written there is kept unless you choose to replace it.',
+  return aiPanel({ key: 'note', value: ctx.source || '', open: !!ctx.source, label: 'Your session notes or transcript', help: 'For this session and this client only. The draft goes into the note\'s sections below for you to review. What you have already written there is kept unless you choose to replace it.',
     draft: async (text, { ask }) => {
       const c = ctx.read();
       if (!c.client_id) throw new Error('Choose the client first.');

@@ -150,6 +150,9 @@ export function openNoteForm(values, { clientId, clientDisplay, kind, onDone, pr
   const showAiBanner = (b) => { if (aiBanner) aiBanner.remove(); aiBanner = b; if (b) structuredBox.before(b); };
   if (aiAssisted) showAiBanner(aiDraftBanner({}));
   const copilot = noteCopilot({
+    // A recap the AI assistant handed over (views/assistant.js "Draft a note from this"): in the copilot's box, not
+    // in the note. The worker presses Draft, and the copilot's own flow (and its AI-assisted marking) takes over.
+    source: prefill?.ai_source || '',
     read: () => ({ client_id: f.inputs.client_id?.value || null, kind: f.inputs.kind.value, format: fmtSel.value, note_id: noteId, counseling_note: !!f.inputs.counseling_note?.checked }),
     apply: async (r, ask) => {
       if (r.structured && fmtSel.value !== r.format) { fmtSel.value = r.format; renderStructured(); }
