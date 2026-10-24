@@ -103,8 +103,8 @@ gh workflow run release.yml --ref v1.27.0 -f confirm=release -f policy_exception
 
 | Tag | Its gate (main's scripts) | Latest? Web app? | What the owner does |
 | --- | --- | --- | --- |
-| `v1.26.1` | **Passes**: a patch of `v1.26.0` with no migration, permission or route, within the size limit (*Record: 1.26.1*); green CI on the exact commit | Not Latest (an older tag than `v1.27.0`); it attaches its zips and `sbom-1.26.1.cdx.json` | Approve the release job |
-| `v1.27.0` | **Passes only with `policy_exception`**: a feature release inside the 28 days after `v1.26.0` (*Record: 1.27.0*); green CI on the exact commit, every required job run (none skipped) | **Latest**, and it starts a `Web app` run; it attaches its zips and `sbom-1.27.0.cdx.json`, writes both zips' SHA-256 into the notes; the Windows zip unsigned while the certificate secrets are not set | Approve the release job, then its `Web app` run, which publishes 1.27.0 to GitHub Pages |
+| `v1.26.1` | **Passes**: a patch of `v1.26.0` with no migration, permission or route, within the size limit (*Record: 1.26.1*); green CI on the exact commit | Not Latest (an older tag than `v1.27.0`); it attaches its zips and `sbom-1.26.1` | Approve the release job |
+| `v1.27.0` | **Passes only with `policy_exception`**: a feature release inside the 28 days after `v1.26.0` (*Record: 1.27.0*); green CI on the exact commit, every required job run (none skipped) | **Latest**, and it starts a `Web app` run; it attaches its zips and `sbom-1.27.0`, writes both zips' SHA-256 into the notes; the Windows zip unsigned while the certificate secrets are not set | Approve the release job, then its `Web app` run, which publishes 1.27.0 to GitHub Pages |
 
 ## v1.26.0: released
 
