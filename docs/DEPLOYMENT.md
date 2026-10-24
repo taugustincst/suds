@@ -27,7 +27,7 @@ the server outbound HTTPS (port 443) to the providers' websites if you want it; 
 "the computer running SUDS could not reach the internet" and every program keeps its generated card.
 
 The optional **AI documentation copilot** (off by default; `docs/AI-COPILOT.md`) calls the AI provider's API
-(`https://api.anthropic.com`, or `SUDS_AI_BASE_URL`) with `ANTHROPIC_API_KEY` from the service's environment
+(`https://api.anthropic.com`, or `SUDS_AI_BASE_URL`) with `ANTHROPIC_API_KEY` from the service's environment, or set by an administrator in Settings › Server configuration (built for 1.27.0, not yet released; the environment wins)
 (or, with `SUDS_AI_PROVIDER=bedrock` / `vertex`, Amazon Bedrock or Google Vertex AI with their credentials:
 `docs/AI-COPILOT.md`, *Providers*), only after an administrator records the programme's BAA/QSOA with the provider and switches it on. Allow
 outbound HTTPS to that host if you use it.
@@ -106,6 +106,15 @@ This covers *one program's* worth of staff — dozens, not hundreds. If a deploy
 ## 1. Configuration
 
 Copy `.env.example` to `.env` and set:
+
+**Or set much of it in the browser** (built for 1.27.0, not yet released). Settings › **Server configuration** sets, as
+an administrator, what follows without a shell on the machine: the AI copilot's provider and its key, single sign-on
+(`OIDC_*`), OneNote (`MS_*`), `METRICS_TOKEN`, `UPDATE_FEED_URL`, `AUDIT_SYSLOG`, `AUDIT_ANCHOR_HOURS`, `LOG_FORMAT`,
+the rate limits, `PUBLIC_APP_INFO`, `ALLOW_STATIC_SYNC` and the audit and deletion retention (server/server-config.js
+lists them). A value set in the environment still wins and is shown there as such; secrets set in the browser are kept
+encrypted in the database (`server_config`), never shown again, and changing one asks for the administrator's password
+again. What stays in the environment, and why, is listed on the same page: the keys that open the database, where it
+lives, the listening address and certificate, `SUDS_AI_BASE_URL`, the audit-seal and compliance directories, the proxy.
 
 | Variable | Required | Notes |
 | --- | --- | --- |

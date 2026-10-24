@@ -718,3 +718,23 @@ details.more-menu[open] { flex-basis: 100%; } details.more-menu > a { margin-top
 .fp-icon { vertical-align: -4px; }
 .or-use { margin: .25rem 0 .5rem; }
 [data-fingerprint-status]:empty { display: none; }
+
+/* Settings (1.27.0): one column of cards with "On this page" beside it; each setting a row that a link can reach. */
+.settings-layout { display: grid; grid-template-columns: minmax(180px, 230px) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.settings-layout > .on-this-page { position: sticky; top: 1rem; }
+.settings-stack { display: flex; flex-direction: column; gap: 1rem; max-width: 60rem; min-width: 0; }
+.on-this-page h2 { font-size: .95rem; margin-bottom: .4rem; }
+.on-this-page ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .15rem; }
+.on-this-page a { display: block; padding: .3rem .4rem; border-radius: 6px; }
+.on-this-page a:hover { background: var(--primary-soft); }
+@media (max-width: 900px) { .settings-layout { grid-template-columns: 1fr; } .settings-layout > .on-this-page { position: static; } }
+.setting-row { padding: .75rem 0; border-top: 1px solid var(--border); }
+.setting-row:first-of-type { border-top: 0; }
+.setting-head { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.setting-head label { font-weight: 600; }
+.setting-control { display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-start; margin-top: .35rem; }
+.setting-control input, .setting-control select, .setting-control textarea { flex: 1 1 18rem; max-width: 32rem; }
+.setting-flash { outline: 3px solid var(--primary); outline-offset: 4px; border-radius: 6px; transition: outline-color 1.5s; }
+.settings-index { list-style: none; margin: 0; padding: 0; }
+.settings-index li { padding: .35rem 0; border-top: 1px solid var(--border); }
+.settings-index li:first-child { border-top: 0; }

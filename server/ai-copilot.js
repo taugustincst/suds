@@ -6,8 +6,9 @@
 // Sending session content to an AI provider is a use of PHI by a business associate and, for Part 2 records,
 // a qualified service organisation. So:
 //   * it is off until an administrator records that a BAA / QSOA with the provider is in place (who signed it,
-//     when, its reference; counsel reviewed) and switches it on (settings ai_*), and the provider's API key is
-//     in the server's environment (config.ai), never in the database or the browser;
+//     when, its reference; counsel reviewed) and switches it on (settings ai_*), and the provider has its key:
+//     in the server's environment, or set in Settings › Server configuration and kept encrypted (config.setting,
+//     server/server-config.js, 1.27.0), never sent back to a browser;
 //   * it runs only on the office server: a device (SUDS on this device, local mode) has no copilot
 //     (server/app.js leaves routes/ai.js out of the local kernel);
 //   * before anything is sent, the identifiers SUDS holds for that client (names, date of birth, phones, email,

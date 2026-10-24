@@ -7454,6 +7454,17 @@ CREATE TABLE IF NOT EXISTS policy_ack_imports (
   imported_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
+-- Server configuration set from Settings \u203A Server configuration (migration 73, server/server-config.js): the values an
+-- office server used to take only from its environment (an AI provider's key, single sign-on, rate limits). A secret
+-- is kept encrypted (value_enc) and never sent to a browser; anything else in value. The environment, when it sets a
+-- name, wins over a row here.
+CREATE TABLE IF NOT EXISTS server_config (
+  name TEXT PRIMARY KEY,
+  value TEXT,
+  value_enc TEXT,
+  updated_by TEXT REFERENCES users(id),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 
 CREATE TABLE IF NOT EXISTS referrals (
   id TEXT PRIMARY KEY,
@@ -14585,7 +14596,10 @@ var require_sync_tables = __commonJS({
         // revision of a policy, imported from PowerDMS or recorded by hand, and each import. Staff compliance is the
         // office's record; a device has its own accounts and asks nobody to sign anything.
         "policy_acknowledgements",
-        "policy_ack_imports"
+        "policy_ack_imports",
+        // server_config (migration 73, server/server-config.js): this office server's own configuration, its secrets among
+        // it (an AI provider's key). Never on a device.
+        "server_config"
       ],
       // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
       // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
@@ -14619,6 +14633,7 @@ var require_sync_tables = __commonJS({
         incoming_referral_attempts: ["notes_enc"],
         policy_acknowledgements: [],
         policy_ack_imports: [],
+        server_config: ["value_enc"],
         idempotency_keys: ["response_enc"]
       },
       // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
@@ -14731,7 +14746,8 @@ var require_sync_tables = __commonJS({
         ["incoming_referral_attempts", "user_id"],
         ["policy_acknowledgements", "user_id"],
         ["policy_acknowledgements", "recorded_by"],
-        ["policy_ack_imports", "imported_by"]
+        ["policy_ack_imports", "imported_by"],
+        ["server_config", "updated_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -27054,7 +27070,8 @@ var require_ai_providers = __commonJS({
     var VERTEX_VERSION = "vertex-2023-10-16";
     var VERTEX_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
     var GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token";
-    var id = () => (proc.env.SUDS_AI_PROVIDER || "anthropic").trim().toLowerCase() || "anthropic";
+    var setting = (name) => config2.setting(name);
+    var id = () => (setting("SUDS_AI_PROVIDER") || "anthropic").trim().toLowerCase() || "anthropic";
     var current2 = () => PROVIDERS[id()] || null;
     var label = (p = id()) => PROVIDERS[p] ? PROVIDERS[p].label : p;
     var defaultModel = () => (current2() || PROVIDERS.anthropic).defaultModel;
@@ -27063,26 +27080,27 @@ var require_ai_providers = __commonJS({
       return !!p && p.model.test(String(model || ""));
     };
     var isDefaultModel = (model) => String(model || "").replace(/^(?:[a-z]{2,6}\.)?anthropic\./, "") === DEFAULT_MODEL;
-    var awsRegion = () => (proc.env.AWS_REGION || proc.env.AWS_DEFAULT_REGION || "").trim();
-    var vertexRegion = () => (proc.env.SUDS_AI_VERTEX_REGION || "").trim();
+    var awsRegion = () => (setting("AWS_REGION") || proc.env.AWS_DEFAULT_REGION || "").trim();
+    var vertexRegion = () => (setting("SUDS_AI_VERTEX_REGION") || "").trim();
     function serviceAccount() {
       const file = proc.env.GOOGLE_APPLICATION_CREDENTIALS;
-      if (!file) return null;
+      const pasted = file ? null : setting("SUDS_AI_VERTEX_CREDENTIALS");
+      if (!file && !pasted) return null;
       try {
-        const k = JSON.parse(fs.readFileSync(file, "utf8"));
+        const k = JSON.parse(file ? fs.readFileSync(file, "utf8") : pasted);
         if (!k || typeof k !== "object" || typeof k.client_email !== "string" || typeof k.private_key !== "string" || !k.client_email || !k.private_key) return null;
         return k;
       } catch {
         return null;
       }
     }
-    var vertexProject = () => (proc.env.SUDS_AI_VERTEX_PROJECT || (serviceAccount() || {}).project_id || "").trim();
+    var vertexProject = () => (setting("SUDS_AI_VERTEX_PROJECT") || (serviceAccount() || {}).project_id || "").trim();
     function credentialsConfigured() {
       switch (id()) {
         case "anthropic":
           return !!config2.ai.apiKey;
         case "bedrock":
-          return !!(proc.env.AWS_ACCESS_KEY_ID && proc.env.AWS_SECRET_ACCESS_KEY);
+          return !!(setting("AWS_ACCESS_KEY_ID") && setting("AWS_SECRET_ACCESS_KEY"));
         case "vertex":
           return !!serviceAccount();
         default:
@@ -27168,7 +27186,8 @@ var require_ai_providers = __commonJS({
           body: payload,
           region: awsRegion(),
           service: "bedrock",
-          credentials: { accessKeyId: proc.env.AWS_ACCESS_KEY_ID, secretAccessKey: proc.env.AWS_SECRET_ACCESS_KEY, sessionToken: proc.env.AWS_SESSION_TOKEN || null }
+          // A session token goes only with keys from the environment (a role's temporary keys); keys set in the browser are a user's.
+          credentials: { accessKeyId: setting("AWS_ACCESS_KEY_ID"), secretAccessKey: setting("AWS_SECRET_ACCESS_KEY"), sessionToken: config2.envHas("AWS_ACCESS_KEY_ID") ? proc.env.AWS_SESSION_TOKEN || null : null }
         });
         const res = await fetch(url, { method: "POST", headers: signed, body: payload, signal, redirect: "error" });
         return res.ok ? bedrockAnswer(res, model) : res;
@@ -28013,7 +28032,7 @@ var require_ai = __commonJS({
         if (next.monthly_cost_cap !== null && !COST.priced(next)) throw badRequest("A monthly spending limit needs both prices, to estimate the cost", { fields: { monthly_cost_cap: "enter the prices per million input and output tokens first" } });
         if (v.enabled === 1 && !was.enabled) {
           if (!was.attestation) throw badRequest("Record the programme's agreement (BAA / QSOA) with the AI provider before switching the copilot on", { fields: { enabled: "needs the agreement recorded first" } });
-          if (!AI.keyConfigured()) throw badRequest(AP.id() === "anthropic" ? "This server has no AI provider key (ANTHROPIC_API_KEY in its environment). Set it and restart SUDS, then switch the copilot on." : `This server has no credentials for ${AP.label()} (${AP.describe().credentials_hint} in its environment). Set them and restart SUDS, then switch the copilot on.`, { fields: { enabled: "no provider key on the server" } });
+          if (!AI.keyConfigured()) throw badRequest(`This server has no credentials for ${AP.label()} yet. Add them under Connection to the AI provider on this page (or in the server's environment), then switch the copilot on.`, { fields: { enabled: "no provider credentials yet" } });
           if (AI.attestedProvider(was.attestation) !== AP.id()) throw badRequest(`The agreement recorded is with ${AP.label(AI.attestedProvider(was.attestation))}, but this server sends drafts to ${AP.label()}. Withdraw it and record the agreement with ${AP.label()} first.`, { fields: { enabled: "the agreement is with another provider" } });
         }
         const changed = [];
@@ -50902,6 +50921,283 @@ var require_security = __commonJS({
   }
 });
 
+// server/server-config.js
+var require_server_config = __commonJS({
+  "server/server-config.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var { encrypt: encrypt3, decrypt: decrypt3 } = require_crypto();
+    var GROUPS = [
+      { id: "ai", label: "AI copilot provider", help: "Where the AI documentation copilot sends a worker's text, and the credentials it uses. The copilot stays off until its agreement is recorded on the AI copilot tab." },
+      { id: "sso", label: "Single sign-on (OIDC)", help: "The county's identity provider (Entra ID, Okta, Keycloak\u2026). Sign-on is on when the issuer, client ID, client secret and redirect address are all set; accounts are linked to it one by one under Users & permissions." },
+      { id: "onenote", label: "OneNote import (Microsoft Graph)", help: "An app registration in the county's Microsoft 365 tenant, for importing notes from a OneNote notebook." },
+      { id: "monitoring", label: "Monitoring, logs and updates", help: "What this server tells the county's monitoring, and where it looks for new releases." },
+      { id: "access", label: "Sign-in and request limits", help: "How many attempts and requests one address may make. Raise a limit for a day of bulk work from many desks behind one office address." },
+      { id: "retention", label: "Retention", help: "How long the audit log and deletion records are kept." }
+    ];
+    var ENTRIES = [
+      { name: "SUDS_AI_PROVIDER", group: "ai", label: "AI provider", type: "enum", default: "anthropic", options: [["anthropic", "Anthropic (Claude API)"], ["bedrock", "Amazon Bedrock"], ["vertex", "Google Cloud Vertex AI"]], help: "The service the copilot's requests go to. The agreement recorded on the AI copilot tab must be with this provider." },
+      { name: "ANTHROPIC_API_KEY", group: "ai", label: "Anthropic API key", type: "secret", sensitive: true, provider: "anthropic", placeholder: "sk-ant-\u2026", help: "From console.anthropic.com \u203A API keys. Used only for the copilot's requests." },
+      { name: "AWS_ACCESS_KEY_ID", group: "ai", label: "AWS access key ID", type: "text", sensitive: true, provider: "bedrock", maxLen: 128, help: "An IAM user or role allowed to call bedrock:InvokeModel, and nothing else." },
+      { name: "AWS_SECRET_ACCESS_KEY", group: "ai", label: "AWS secret access key", type: "secret", sensitive: true, provider: "bedrock" },
+      { name: "AWS_REGION", group: "ai", label: "AWS region", type: "text", provider: "bedrock", maxLen: 40, placeholder: "us-west-2", pattern: /^[a-z]{2}(-gov)?-[a-z]+-\d$/, patternHelp: "a region such as us-west-2" },
+      { name: "SUDS_AI_VERTEX_CREDENTIALS", group: "ai", label: "Google service account key (JSON)", type: "secret", json: true, sensitive: true, provider: "vertex", help: "The whole key file a Google Cloud service account gives you, pasted in. In the environment it is a file path instead (GOOGLE_APPLICATION_CREDENTIALS), which wins when set." },
+      { name: "SUDS_AI_VERTEX_PROJECT", group: "ai", label: "Google Cloud project", type: "text", provider: "vertex", maxLen: 100, help: "Taken from the service account key when blank." },
+      { name: "SUDS_AI_VERTEX_REGION", group: "ai", label: "Vertex AI region", type: "text", provider: "vertex", maxLen: 40, placeholder: "us-east5" },
+      { name: "SUDS_AI_TIMEOUT_MS", group: "ai", label: "Longest wait for a draft (seconds)", type: "number", scale: 1e3, min: 10, max: 600, default: 180, help: "A long transcript can take minutes. The draft is refused, and nothing is kept, if it takes longer." },
+      { name: "OIDC_ISSUER", group: "sso", label: "Issuer address", type: "url", sensitive: true, placeholder: "https://login.microsoftonline.com/<tenant>/v2.0" },
+      { name: "OIDC_CLIENT_ID", group: "sso", label: "Client ID", type: "text", sensitive: true, maxLen: 200 },
+      { name: "OIDC_CLIENT_SECRET", group: "sso", label: "Client secret", type: "secret", sensitive: true },
+      { name: "OIDC_REDIRECT_URI", group: "sso", label: "Redirect address", type: "url", sensitive: true, placeholder: "https://suds.county.gov/api/auth/oidc/callback", help: "This server's address followed by /api/auth/oidc/callback, registered with the identity provider exactly as written here." },
+      { name: "OIDC_LABEL", group: "sso", label: "Sign-in button text", type: "text", maxLen: 60, default: "Sign in with county SSO" },
+      { name: "MS_TENANT_ID", group: "onenote", label: "Tenant ID", type: "text", maxLen: 100 },
+      { name: "MS_CLIENT_ID", group: "onenote", label: "Client ID", type: "text", maxLen: 100 },
+      { name: "MS_CLIENT_SECRET", group: "onenote", label: "Client secret", type: "secret", sensitive: true },
+      { name: "MS_ONENOTE_USER", group: "onenote", label: "Mailbox whose notebooks are read", type: "text", maxLen: 200, placeholder: "notes@county.gov" },
+      { name: "METRICS_TOKEN", group: "monitoring", label: "Metrics token", type: "secret", sensitive: true, help: "Turns on GET /api/metrics for a Prometheus or Grafana scraper, which sends it as a bearer token. Row counts and session activity, never client data. Blank: metrics are off." },
+      { name: "AUDIT_SYSLOG", group: "monitoring", label: "Audit anchors to syslog", type: "text", sensitive: true, maxLen: 300, placeholder: "udp://siem.county.gov:514", pattern: /^udp:\/\/[^\s/:]+(:\d{1,5})?$/, patternHelp: "udp://host:port", help: "Each seal of the audit log (no client data) is also sent to this collector, so a rewrite of the log here is visible there." },
+      { name: "AUDIT_ANCHOR_HOURS", group: "monitoring", label: "Seal the audit log every (hours)", type: "number", min: 1, max: 24, default: 1, restart: true },
+      { name: "UPDATE_FEED_URL", group: "monitoring", label: "Where to check for updates", type: "url", placeholder: "https://api.github.com/repos/<owner>/<repo>/releases/latest", help: "Nothing is checked until an administrator chooses Check for updates on System & backups. Blank: no checking." },
+      { name: "LOG_FORMAT", group: "monitoring", label: "Log format", type: "enum", default: "text", options: [["text", "Plain text"], ["json", "JSON lines, for a log collector"]], restart: true },
+      { name: "LOGIN_RATE_LIMIT", group: "access", label: "Failed sign-ins per name, per address, per 15 minutes", type: "number", min: 3, max: 1e3, default: 20 },
+      { name: "LOGIN_IP_RATE_LIMIT", group: "access", label: "Failed sign-ins per address, any name, per 15 minutes", type: "number", min: 10, max: 1e5, default: 200 },
+      { name: "API_RATE_LIMIT", group: "access", label: "Requests per address per minute", type: "number", min: 60, max: 1e5, default: 600 },
+      { name: "SIGNUP_RATE_LIMIT", group: "access", label: "Account requests per address per hour", type: "number", min: 1, max: 1e3, default: 5 },
+      { name: "PUBLIC_APP_INFO", group: "access", label: "Show this server's addresses on the /app page to anyone", type: "bool", default: false, sensitive: true, help: "Off: only a signed-in browser sees the listener's addresses and certificate fingerprint." },
+      { name: "ALLOW_STATIC_SYNC", group: "access", label: "Let copies of the web app served elsewhere sync with this server", type: "bool", default: false, sensitive: true, help: "Off: only the web app this server serves may sync with it. A copy on a host nobody in the county controls is not somewhere client records should be typed in." },
+      { name: "AUDIT_RETENTION_DAYS", group: "retention", label: "Keep audit entries for (days)", type: "number", min: 2190, max: 36500, default: 2555, sensitive: true, help: "Never less than six years (HIPAA documentation retention); seven by default." },
+      { name: "TOMBSTONE_RETENTION_DAYS", group: "retention", label: "Remember deletions for devices for (days)", type: "number", min: 30, max: 3650, default: 180, help: "A device away longer than this is sent for a full resync." }
+    ];
+    var BY_NAME = new Map(ENTRIES.map((e) => [e.name, e]));
+    var ENV_ONLY = [
+      { names: ["SUDS_ENCRYPTION_KEY", "SUDS_INDEX_KEY", "SUDS_BACKUP_KEY", "SUDS_SIGNING_KEY"], label: "Encryption, index, backup and signing keys", reason: "They open the database and its backups, so they cannot be kept inside it. They are set at install (keys.json or the environment); System & backups downloads their backup." },
+      { names: ["SUDS_DATA_DIR", "SUDS_DB_PATH"], label: "Where the database lives", reason: "Read before the database is opened." },
+      { names: ["PORT", "HOST", "TLS_CERT_PATH", "TLS_KEY_PATH", "TRUST_PROXY"], label: "Listening address and HTTPS certificate", reason: "Set on Network & devices (saved beside the database, applied at restart), or in the environment." },
+      { names: ["SUDS_AI_BASE_URL", "GOOGLE_APPLICATION_CREDENTIALS"], label: "Another endpoint for the AI provider; a key file path", reason: "Where client text is sent stays with whoever runs the machine: a signed-in account alone cannot point the copilot elsewhere." },
+      { names: ["AUDIT_ANCHOR_DIR", "SUDS_COMPLIANCE_DIR", "SUDS_COMPLIANCE_PUBLIC_KEY_FILE"], label: "Audit seals and compliance reports", reason: "Kept outside the reach of the SUDS service on purpose, so the service cannot rewrite the evidence about itself." },
+      { names: ["HTTPS_PROXY", "NODE_USE_ENV_PROXY"], label: "Outbound proxy", reason: "Read by Node.js when the server starts." },
+      { names: ["SUDS_ENV"], label: "Environment (production or development)", reason: "Decides how the server starts." }
+    ];
+    var cache = null;
+    var cacheFor = null;
+    function rows() {
+      const handle2 = db3.get();
+      if (cache && cacheFor === handle2) return cache;
+      cacheFor = handle2;
+      const m = /* @__PURE__ */ new Map();
+      for (const r of db3.all(`SELECT name, value, value_enc, updated_by, updated_at FROM server_config`)) {
+        let value = r.value;
+        if (r.value_enc) {
+          try {
+            value = decrypt3(r.value_enc);
+          } catch {
+            value = null;
+          }
+        }
+        m.set(r.name, { value, updated_by: r.updated_by, updated_at: r.updated_at });
+      }
+      cache = m;
+      return m;
+    }
+    function storedValue(name) {
+      if (!BY_NAME.has(name)) return void 0;
+      if (!db3.isOpen()) return void 0;
+      try {
+        const r = rows().get(name);
+        return r && r.value !== null && r.value !== "" ? r.value : void 0;
+      } catch {
+        return void 0;
+      }
+    }
+    var envSet = (name) => {
+      const config2 = require_config();
+      return config2.envHas(name);
+    };
+    function list() {
+      const set2 = rows();
+      const users = new Map(db3.all(`SELECT id, display_name FROM users`).map((u) => [u.id, u.display_name]));
+      return {
+        groups: GROUPS,
+        entries: ENTRIES.map((e) => {
+          const fromEnv = envSet(e.name);
+          const row = set2.get(e.name);
+          const here = !!(row && row.value !== null && row.value !== "");
+          const out2 = {
+            name: e.name,
+            group: e.group,
+            label: e.label,
+            type: e.type,
+            help: e.help || null,
+            options: e.options ? e.options.map(([value, label]) => ({ value, label })) : null,
+            min: e.min ?? null,
+            max: e.max ?? null,
+            placeholder: e.placeholder || null,
+            restart: !!e.restart,
+            sensitive: !!e.sensitive,
+            provider: e.provider || null,
+            default: e.default ?? null,
+            source: fromEnv ? "environment" : here ? "here" : "default",
+            updated_at: here ? row.updated_at : null,
+            updated_by: here ? users.get(row.updated_by) || null : null
+          };
+          if (e.type === "secret" || fromEnv && e.sensitive) out2.set = fromEnv || here;
+          if (e.type !== "secret") {
+            const config2 = require_config();
+            const v = fromEnv ? e.sensitive ? null : config2.envValue(e.name) : here ? row.value : null;
+            out2.value = v === null || v === void 0 ? null : shown(e, v);
+          }
+          return out2;
+        }),
+        env_only: ENV_ONLY.map((x) => ({ label: x.label, reason: x.reason, names: x.names.map((n) => ({ name: n, set: envSet(n) })) }))
+      };
+    }
+    var shown = (e, v) => e.type === "number" ? Number(v) / (e.scale || 1) : e.type === "bool" ? v === "1" || v === "true" : v;
+    var problem = (msg) => Object.assign(new Error(msg), { status: 400 });
+    function normalise(e, raw) {
+      if (e.type === "bool") {
+        if (typeof raw !== "boolean") throw problem(`${e.label}: choose on or off`);
+        return raw ? "1" : "0";
+      }
+      if (e.type === "number") {
+        const n = Number(raw);
+        if (!Number.isInteger(n) || n < e.min || n > e.max) throw problem(`${e.label} must be a whole number from ${e.min} to ${e.max}`);
+        return String(n * (e.scale || 1));
+      }
+      if (typeof raw !== "string") throw problem(`${e.label} must be text`);
+      const v = raw.trim();
+      if (!v) throw problem(`${e.label} is empty: to go back to the default, remove it instead`);
+      if (e.type === "enum") {
+        if (!e.options.some(([o]) => o === v)) throw problem(`${e.label} must be one of ${e.options.map(([o]) => o).join(", ")}`);
+        return v;
+      }
+      if (e.type === "url") {
+        let u;
+        try {
+          u = new URL(v);
+        } catch {
+          throw problem(`${e.label} must be a web address (https://\u2026)`);
+        }
+        const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(u.hostname);
+        if (u.protocol !== "https:" && !(u.protocol === "http:" && local && !require_config().isProd)) throw problem(`${e.label} must start with https://`);
+        if (u.username || u.password) throw problem(`${e.label} must not contain a user name or password`);
+        if (v.length > 500) throw problem(`${e.label} is too long`);
+        return v.replace(/\/+$/, "");
+      }
+      if (e.type === "secret") {
+        if (v.length > (e.json ? 2e4 : 4e3)) throw problem(`${e.label} is too long`);
+        if (/\s/.test(v) && !e.json) throw problem(`${e.label} must not contain spaces or line breaks`);
+        if (e.json) {
+          let j;
+          try {
+            j = JSON.parse(v);
+          } catch {
+            throw problem(`${e.label} must be the key file's JSON`);
+          }
+          if (!j || !j.client_email || !j.private_key) throw problem(`${e.label} has no client_email or private_key: paste the whole key file`);
+        }
+        return v;
+      }
+      if (v.length > (e.maxLen || 200)) throw problem(`${e.label} is too long`);
+      if (e.pattern && !e.pattern.test(v)) throw problem(`${e.label} must be ${e.patternHelp}`);
+      return v;
+    }
+    function check(name, raw) {
+      const e = BY_NAME.get(name);
+      if (!e) throw Object.assign(new Error("No such setting"), { status: 404 });
+      if (envSet(name)) throw Object.assign(new Error(`${e.label} is set in the server's environment (${name}), which wins: change it there, or remove it there to set it here`), { status: 409 });
+      normalise(e, raw);
+      return e;
+    }
+    function set(name, raw, user) {
+      const e = check(name, raw);
+      const v = normalise(e, raw);
+      const secret = e.type === "secret";
+      db3.run(
+        `INSERT INTO server_config(name, value, value_enc, updated_by, updated_at) VALUES(?,?,?,?,?)
+          ON CONFLICT(name) DO UPDATE SET value=excluded.value, value_enc=excluded.value_enc, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
+        name,
+        secret ? null : v,
+        secret ? encrypt3(v) : null,
+        user.id,
+        db3.now()
+      );
+      cache = null;
+      return secret ? { name } : { name, value: shown(e, v) };
+    }
+    function clear(name) {
+      if (!BY_NAME.has(name)) throw Object.assign(new Error("No such setting"), { status: 404 });
+      const had = !!db3.one(`SELECT 1 FROM server_config WHERE name=?`, name);
+      db3.run(`DELETE FROM server_config WHERE name=?`, name);
+      cache = null;
+      return had;
+    }
+    function forget2() {
+      cache = null;
+    }
+    module.exports = { GROUPS, ENTRIES, ENV_ONLY, entry: (n) => BY_NAME.get(n) || null, storedValue, list, check, set, clear, forget: forget2 };
+  }
+});
+
+// server/routes/server-config.js
+var require_server_config2 = __commonJS({
+  "server/routes/server-config.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var auth3 = require_auth2();
+    var audit3 = require_audit();
+    var { HttpError: HttpError3 } = require_http();
+    var SC = require_server_config();
+    module.exports = (r) => {
+      const thrown = (e) => {
+        if (e && e.status && !(e instanceof HttpError3)) throw new HttpError3(e.status, e.message);
+        throw e;
+      };
+      const entryOf = (ctx) => {
+        const e = SC.entry(ctx.params.name);
+        if (!e) throw new HttpError3(404, "No such setting");
+        return e;
+      };
+      const confirm = async (ctx, e, verb) => {
+        if (!e.sensitive) return null;
+        return auth3.verifySigner(ctx, ctx.body || {}, { action: "server_config.update.failed", purpose: `${verb} ${e.label}`, fresh: true });
+      };
+      r.get("/api/admin/server-config", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => SC.list());
+      r.put("/api/admin/server-config/:name", auth3.requireAuth, auth3.requirePerm("settings:manage"), async (ctx) => {
+        const e = entryOf(ctx);
+        const body = ctx.body || {};
+        if (!("value" in body)) throw new HttpError3(400, "A value is required");
+        try {
+          SC.check(e.name, body.value);
+        } catch (err2) {
+          thrown(err2);
+        }
+        const method = await confirm(ctx, e, "change");
+        let out2;
+        try {
+          out2 = SC.set(e.name, body.value, ctx.user);
+        } catch (err2) {
+          thrown(err2);
+        }
+        audit3.log({ user: ctx.user, action: "server_config.update", entity: "server_config", entityId: e.name, ip: ctx.ip, details: { name: e.name, ...e.type === "secret" ? { secret: true } : { value: out2.value }, ...method ? { method } : {} } });
+        return { ok: true, ...out2, restart: !!e.restart };
+      });
+      r.delete("/api/admin/server-config/:name", auth3.requireAuth, auth3.requirePerm("settings:manage"), async (ctx) => {
+        const e = entryOf(ctx);
+        const method = await confirm(ctx, e, "remove");
+        let had;
+        try {
+          had = SC.clear(e.name);
+        } catch (err2) {
+          thrown(err2);
+        }
+        if (had) audit3.log({ user: ctx.user, action: "server_config.clear", entity: "server_config", entityId: e.name, ip: ctx.ip, details: { name: e.name, ...method ? { method } : {} } });
+        return { ok: true, removed: had, restart: !!e.restart };
+      });
+    };
+  }
+});
+
 // server/routes/setup.js
 var require_setup = __commonJS({
   "server/routes/setup.js"(exports, module) {
@@ -52713,6 +53009,7 @@ var init_ = __esm({
       "./routes/resources.js": () => require_resources3(),
       "./routes/scim.js": () => require_scim2(),
       "./routes/security.js": () => require_security(),
+      "./routes/server-config.js": () => require_server_config2(),
       "./routes/setup.js": () => require_setup(),
       "./routes/supervision.js": () => require_supervision(),
       "./routes/supplies.js": () => require_supplies2(),
@@ -52914,9 +53211,10 @@ var require_app2 = __commonJS({
       "county",
       "county-connect",
       "passkeys",
-      "policies"
+      "policies",
+      "server-config"
     ];
-    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors", "fhir", "security", "scim", "ai", "referral-links", "county", "county-connect", "passkeys", "policies"].includes(m));
+    var LOCAL_ROUTE_MODULES2 = ROUTE_MODULES.filter((m) => !["setup", "app", "sync", "intake", "oidc", "client-errors", "fhir", "security", "scim", "ai", "referral-links", "county", "county-connect", "passkeys", "policies", "server-config"].includes(m));
     var LOCAL_DISABLED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SUDS \u2014 local mode is off</title>
 <style>body{font-family:system-ui,sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem;color:#222;line-height:1.5}h1{font-size:1.4rem}a{color:#0b5}</style></head>
 <body><h1>Local mode is turned off on this server</h1>
@@ -55981,6 +56279,11 @@ var require_db = __commonJS({
         addColumn(d, "policy_documents", "revision", "TEXT");
         addColumn(d, "policy_documents", "ack_roles", "TEXT");
         createTablesFromSchema(d, safeSchema(), ["policy_ack_imports", "policy_acknowledgements"], 72);
+      },
+      // 73: server configuration from the front end (server/server-config.js): the settings an office server took only
+      // from its environment until 1.27.0, set by an administrator in Settings › Server configuration; secrets encrypted.
+      (d) => {
+        createTablesFromSchema(d, safeSchema(), ["server_config"], 73);
       }
     ];
     var PERF_INDEXES_47 = [
