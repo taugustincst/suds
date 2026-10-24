@@ -105,7 +105,10 @@ module.exports = (r) => {
         // How many programmes this server has registered for the county view (server/county.js), active or not:
         // the County view entry shows for county:view once there is one (an inactive programme's files are still
         // there to see), and to county:manage always.
-        county_programmes: db.one(`SELECT COUNT(*) n FROM county_programmes`).n } };
+        county_programmes: db.one(`SELECT COUNT(*) n FROM county_programmes`).n,
+        // Whether the AI assistant is offered (server/ai-assistant.js): on, or only paused by the monthly limit. Off,
+        // or not set up, the menu shows nothing of it, as the copilot shows nothing while it is off.
+        ai_assistant: (() => { const a = require('../ai-copilot').status().assistant; return a.available || a.code === 'cap'; })() } };
   });
 
   // Whether signing a note now needs the password (or authenticator code) again, or only a confirmation:

@@ -380,6 +380,21 @@ export function calomsCopilot({ clientId, form: f, type }) {
 
 // ---------------------------------------------------------------- Settings → AI copilot
 /** The administrator's tab: what the copilot does and sends, the agreement, the switch, model, cap and usage. */
+/** The agreement's fields: the four statements, the fourth (assistant use) needed only for the AI assistant. */
+function attestationFields(s, a, assistant) {
+  return [
+    { name: 'provider', label: 'AI provider', required: true, value: a ? a.provider : s.provider.label, help: `The company the agreement is with (this server is set up for ${s.provider.label}).` },
+    { name: 'signed_by', label: 'Signed for the program by (name and title)', required: true, value: a ? a.signed_by : undefined },
+    { name: 'agreement_date', label: 'Date the agreement was signed', type: 'date', required: true, value: a ? a.agreement_date : undefined },
+    { name: 'reference', label: 'Agreement reference (contract or document number)', required: true, value: a ? a.reference : undefined },
+    { name: 'baa', label: 'A HIPAA business associate agreement with this provider is in place and covers this use', type: 'checkbox', span: true },
+    { name: 'qsoa', label: 'It includes qualified service organization terms under 42 CFR Part 2 (§2.11), binding the provider to Part 2', type: 'checkbox', span: true },
+    { name: 'counsel_reviewed', label: 'Our counsel has reviewed this use of client records', type: 'checkbox', span: true },
+    { name: 'covers_assistant', label: 'The agreement covers conversational assistant use (staff questions and summaries SUDS prepares from records), not only documentation drafts', type: 'checkbox', span: true, value: assistant || undefined,
+      help: 'Needed only for the AI assistant. Leave it unticked if your agreement or counsel\'s review covers documentation drafts only.' },
+  ];
+}
+
 export async function aiSettingsTab(refresh) {
   const s = await get('/api/ai/settings');
   const a = s.attestation;
@@ -393,7 +408,8 @@ export async function aiSettingsTab(refresh) {
       h('li', {}, 'Only the text a worker types or pastes into the copilot for one client (and, for care plan suggestions, the one assessment they choose) is sent, to the AI provider only, over HTTPS from this server. Nothing is sent from browsers, and nothing from SUDS on a device.'),
       h('li', {}, 'Before sending, SUDS replaces that client\'s names, date of birth, phone numbers, email, address, city and ZIP, Medi-Cal number, emergency contact, client code and the worker\'s own name with placeholders, and masks anything that looks like a phone number, email address, SSN, URL, street address or long ID number. Names are put back into the draft here, after it returns.'),
       h('li', {}, 'This is not de-identification under HIPAA\'s Safe Harbor or expert-determination standards: free text can still identify someone (other people\'s names, places, events, dates). That is why a business associate agreement and Part 2 qualified service organization terms with the provider are required first.'),
-      h('li', {}, 'Every call is in the audit log (who, which client, which feature, the model and token counts; never the text), and counted against the monthly cap below. Prompts and drafts are not logged or stored by SUDS; what the provider keeps is governed by your agreement with it.')),
+      h('li', {}, 'Every call is in the audit log (who, which client, which feature, the model and token counts; never the text), and counted against the monthly cap below. Prompts and drafts are not logged or stored by SUDS; what the provider keeps is governed by your agreement with it.'),
+      h('li', { 'data-ai-assistant-sent': '1' }, 'The AI assistant (off unless switched on below) also sends a summary SUDS prepares from records the worker may already see: for one client, their care plan entries, recent contact dates and types, open referrals, supplies given and what is coming up; or the worker\'s own to-dos; or supply levels and the referral directory. Never note text, and never a SUD counseling note. The same identifiers are replaced first, and every question is audited (never its text).')),
     h('p', { class: 'banner warn small', 'data-ai-counsel': '1' }, 'Have your counsel review this use before switching it on: it is a use of client records by a business associate under HIPAA and a qualified service organization under 42 CFR Part 2. SUDS records what you attest; it does not make the arrangement compliant, and it makes no claim about the accuracy of what the AI drafts.'),
     h('p', { 'data-ai-provider': s.provider.id }, h('strong', {}, 'AI provider: '), s.provider.label,
       s.provider.region ? ` (region ${s.provider.region}${s.provider.project ? `, project ${s.provider.project}` : ''})` : '',
@@ -408,23 +424,20 @@ export async function aiSettingsTab(refresh) {
     agreement.append(...[otherProvider ? h('p', { class: 'banner danger small', 'data-ai-provider-changed': '1' }, `This agreement was recorded while the server sent drafts to another provider, but it now sends them to ${s.provider.label}. The copilot is off until the agreement with ${s.provider.label} is recorded: withdraw this one, then record it.`) : null].filter(Boolean),
       h('dl', { class: 'kv' },
       h('dt', {}, 'Provider'), h('dd', {}, a.provider), h('dt', {}, 'Signed for the program by'), h('dd', {}, a.signed_by), h('dt', {}, 'Date signed'), h('dd', {}, fmt.date(a.agreement_date)),
-      h('dt', {}, 'Reference'), h('dd', {}, a.reference), h('dt', {}, 'Covers'), h('dd', {}, 'HIPAA business associate agreement, with 42 CFR Part 2 qualified service organization terms; reviewed by counsel'),
+      h('dt', {}, 'Reference'), h('dd', {}, a.reference), h('dt', {}, 'Covers'), h('dd', { 'data-ai-covers-assistant': a.covers_assistant ? '1' : '0' }, `HIPAA business associate agreement, with 42 CFR Part 2 qualified service organization terms; reviewed by counsel${a.covers_assistant ? '; covers conversational assistant use (questions and record summaries)' : '; documentation drafts only (not confirmed for the AI assistant)'}`),
       h('dt', {}, 'Recorded'), h('dd', {}, `${fmt.dt(a.recorded_at)} by ${a.recorded_by_name || 'an administrator'}`)),
-    h('div', { class: 'btn-row' }, h('button', { type: 'button', class: 'btn danger', 'data-ai-withdraw': '1', onClick: async () => {
+    h('div', { class: 'btn-row' }, a.covers_assistant ? null : h('button', { type: 'button', class: 'btn', 'data-ai-confirm-assistant': '1', onClick: () => {
+      // The same agreement, recorded again with the fourth statement: every statement is confirmed again with it.
+      const m = modal('Confirm the agreement covers the AI assistant', form(attestationFields(s, a, true), { submitText: 'Record the agreement', onCancel: () => m.close(),
+        onSubmit: async (d) => { await post('/api/ai/attestation', d); m.close(); toast('Agreement recorded', 'ok'); refresh(); } }));
+    } }, 'Confirm it covers the AI assistant'),
+    h('button', { type: 'button', class: 'btn danger', 'data-ai-withdraw': '1', onClick: async () => {
       if (!(await confirmDialog('Withdraw the agreement?', 'The AI copilot is switched off at once and cannot be switched on again until an agreement is recorded.', { danger: true, okText: 'Withdraw' }))) return;
       await del('/api/ai/attestation'); toast('Agreement withdrawn; the AI copilot is off', 'ok'); refresh();
     } }, 'Withdraw the agreement')));
   } else {
     agreement.append(h('p', { class: 'small' }, `Record the agreement before the copilot can be switched on. This server sends drafts to ${s.provider.label}: the agreement must be with that provider. Each statement below must be true.`),
-      form([
-        { name: 'provider', label: 'AI provider', required: true, value: s.provider.label, help: `The company the agreement is with (this server is set up for ${s.provider.label}).` },
-        { name: 'signed_by', label: 'Signed for the program by (name and title)', required: true },
-        { name: 'agreement_date', label: 'Date the agreement was signed', type: 'date', required: true },
-        { name: 'reference', label: 'Agreement reference (contract or document number)', required: true },
-        { name: 'baa', label: 'A HIPAA business associate agreement with this provider is in place and covers this use', type: 'checkbox', span: true },
-        { name: 'qsoa', label: 'It includes qualified service organization terms under 42 CFR Part 2 (§2.11), binding the provider to Part 2', type: 'checkbox', span: true },
-        { name: 'counsel_reviewed', label: 'Our counsel has reviewed this use of client records', type: 'checkbox', span: true },
-      ], { submitText: 'Record the agreement', onSubmit: async (d) => { await post('/api/ai/attestation', d); toast('Agreement recorded', 'ok'); refresh(); } }));
+      form(attestationFields(s, null, false), { submitText: 'Record the agreement', onSubmit: async (d) => { await post('/api/ai/attestation', d); toast('Agreement recorded', 'ok'); refresh(); } }));
   }
   box.append(agreement);
 
@@ -432,6 +445,7 @@ export async function aiSettingsTab(refresh) {
   box.append(h('section', { class: 'card mt', 'data-ai-switch': '1' }, h('div', { class: 'card-head' }, h('h2', {}, 'Copilot settings')),
     form([
       { name: 'enabled', label: 'Switch the AI copilot on for this program', type: 'checkbox', value: s.enabled, span: true, help: a ? 'Staff with the "Use the AI documentation copilot" permission (clinicians, supervisors and navigators by default) see it in the note, assessment, care plan and CalOMS forms. While it is off they see nothing of it.' : 'Record the agreement above first. Until the copilot is on, staff see nothing of it.' },
+      { name: 'assistant_enabled', label: 'Switch the AI assistant on for this program', type: 'checkbox', value: s.assistant_enabled, span: true, help: a && a.covers_assistant ? 'Staff with the "Use the AI assistant" permission (clinicians, supervisors and navigators by default) get an Assistant page: questions about a client in their reach, their own day, or program information, answered from a summary of the record. Off unless switched on, even with the copilot on.' : 'Needs the agreement confirmed to cover assistant use first (Confirm it covers the AI assistant, above), and the copilot on.' },
       { name: 'model', label: 'Model', value: s.model === s.default_model ? '' : s.model, placeholder: s.default_model, help: `Blank for the default (${s.default_model}). Another model id from ${s.provider.label} can be entered (${s.provider.model_hint || 'a model id'}), for example a cheaper one; test a few drafts after changing it. See docs/AI-COPILOT.md.` },
       { name: 'monthly_cap', label: 'Most drafts per calendar month (the whole program)', type: 'number', min: 0, step: 1, value: s.monthly_cap, help: 'Once it is reached, staff write documentation themselves until the limit resets on the 1st of each month. 0 pauses the copilot.' },
       { type: 'section', label: 'Cost estimate' },
@@ -439,7 +453,7 @@ export async function aiSettingsTab(refresh) {
       { name: 'price_output', label: 'Price per million output tokens (US dollars)', type: 'number', min: 0, step: '0.01', value: s.price_output, help: 'Output tokens usually cost several times as much as input tokens.' },
       { name: 'monthly_cost_cap', label: 'Most estimated spending per calendar month (US dollars)', type: 'number', min: 0, step: '0.01', value: s.monthly_cost_cap, help: 'Optional, and needs both prices. Once this month\'s estimate reaches it, staff write documentation themselves until the 1st. Blank for no dollar limit.' },
     ], { submitText: 'Save copilot settings', onSubmit: async (d) => {
-      await put('/api/ai/settings', { enabled: !!d.enabled, model: d.model || '', monthly_cap: d.monthly_cap ?? s.monthly_cap, price_input: d.price_input, price_output: d.price_output, monthly_cost_cap: d.monthly_cost_cap });
+      await put('/api/ai/settings', { enabled: !!d.enabled, assistant_enabled: !!d.assistant_enabled, model: d.model || '', monthly_cap: d.monthly_cap ?? s.monthly_cap, price_input: d.price_input, price_output: d.price_output, monthly_cost_cap: d.monthly_cost_cap });
       toast('Saved', 'ok'); refresh();
     } })));
 
@@ -451,7 +465,7 @@ export async function aiSettingsTab(refresh) {
       ? h('p', { 'data-ai-cost': '1' }, h('strong', {}, `Estimated cost: ${money(u.estimated_cost)}`), s.monthly_cost_cap != null ? ` of a ${money(s.monthly_cost_cap)} limit` : '',
         h('span', { class: 'small' }, ` — at ${money(s.price_input)} and ${money(s.price_output)} per million input and output tokens. An estimate, not a bill: your provider's invoice is what counts.`))
       : h('p', { class: 'small', 'data-ai-cost': 'none' }, 'Enter the prices per million tokens under Copilot settings to see an estimated cost.'),
-    u.by_feature.length ? h('p', { class: 'small' }, u.by_feature.map(x => `${({ note: 'Notes', asam: 'Assessments', careplan: 'Care plans', caloms: 'CalOMS' })[x.feature] || x.feature}: ${x.calls}`).join(' · ')) : null,
+    u.by_feature.length ? h('p', { class: 'small' }, u.by_feature.map(x => `${({ note: 'Notes', asam: 'Assessments', careplan: 'Care plans', caloms: 'CalOMS', assistant: 'Assistant questions' })[x.feature] || x.feature}: ${x.calls}`).join(' · ')) : null,
     h('p', { class: 'small' }, h('a', { href: '#/admin?tab=audit&action=ai.' }, 'Copilot entries in the audit log'))));
   return box;
 }

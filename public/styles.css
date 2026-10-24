@@ -718,3 +718,16 @@ details.more-menu[open] { flex-basis: 100%; } details.more-menu > a { margin-top
 .fp-icon { vertical-align: -4px; }
 .or-use { margin: .25rem 0 .5rem; }
 [data-fingerprint-status]:empty { display: none; }
+
+/* The AI assistant (views/assistant.js): a conversation that reads on a phone. */
+.assistant-scopes { border: 0; padding: 0; margin: 0 0 .6rem; display: grid; gap: .35rem; }
+.assistant-scopes legend { font-weight: 600; margin-bottom: .3rem; }
+.assistant-scope { display: flex; gap: .5rem; align-items: flex-start; }
+.assistant-turns { list-style: none; padding: 0; margin: 0 0 .8rem; display: grid; gap: .6rem; }
+.assistant-turn { border: 1px solid var(--border); border-radius: 8px; padding: .5rem .7rem; }
+.assistant-turn.you { background: var(--primary-soft); }
+.assistant-who { margin: 0 0 .2rem; }
+.assistant-text { white-space: pre-wrap; margin: 0 0 .4rem; overflow-wrap: anywhere; }
+.assistant-cites { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
+.ai-answer-banner { margin-bottom: .4rem; }
+@media (pointer: coarse) { .assistant-scope { min-height: 44px; align-items: center; } }

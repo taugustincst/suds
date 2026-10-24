@@ -15,7 +15,7 @@ const views = {
   imports: ['imports'], reports: ['reports'], admin: ['admin'], profile: ['profile'], setup: ['setup'], local: ['sync', 'recovery-code'],
   forms: ['forms'], documents: ['documents', 'signoffs'], supervision: ['supervision'], episodes: ['waitlist'],
   overdose: ['overdose'], prevention: ['prevention'], funder: ['funder'], caloms: ['caloms'], supplies: ['supplies', 'ssp'], compliance: ['compliance'], suprt: ['suprt'],
-  outreach: ['outreach', 'field-phone'], settlement: ['settlement'], county: ['county'], countyconnect: ['county-connect'],
+  outreach: ['outreach', 'field-phone'], assistant: ['assistant'], settlement: ['settlement'], county: ['county'], countyconnect: ['county-connect'],
 };
 for (const [file, names] of Object.entries(views)) lazyRoute(names, () => import(`./views/${file}.js`));
 // What the slower pages say while they work, from the first opening (before their module has arrived; the
