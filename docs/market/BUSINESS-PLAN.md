@@ -84,7 +84,9 @@ pilot running by April 2027 can contribute to the 2027 report.
 ## 6. Product roadmap
 
 The release rules hold: patches at most weekly (security fixes when ready), feature releases at least 28 days apart
-([../RELEASE.md](../RELEASE.md)). The next feature release, 1.26.0, is built from evidence, not ideas: the independent
+([../RELEASE.md](../RELEASE.md)). 1.26.0 (PowerDMS policy sign-offs) and 1.27.0 (server configuration from the
+browser, the AI assistant) came early, each on a recorded owner exception. The next feature release, no earlier than 28
+days after 1.27.0, is built from evidence, not ideas: the independent
 test's findings, what the drill and counsel's review require, the first county conversations, code signing, and the
 PPSDS file once DHCS publishes its dictionary. Pilot-driven releases follow in 2027. Not before a buyer asks: the
 referral network, benchmarking, a live EHR connection. Also planned: a secure-development statement that deals openly

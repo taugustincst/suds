@@ -51,8 +51,7 @@ administrator, under Settings → Users & permissions. And the client must be on
    and your counsel's review. Also settle with the provider how long it keeps request content (its data
    retention terms) — that is governed by your agreement, not by SUDS.
 2. **Choose the provider and give the server its credentials.** Anthropic's own API (the default), Amazon
-   Bedrock or Google Cloud Vertex AI (*Providers*, below). Either in the browser (built for 1.27.0, not yet
-   released): Settings → **AI copilot** → *Connection to the AI provider* (or Settings → **Server
+   Bedrock or Google Cloud Vertex AI (*Providers*, below). Either in the browser (released in 1.27.0): Settings → **AI copilot** → *Connection to the AI provider* (or Settings → **Server
    configuration**) — choose the provider and paste its key; the change asks for your password again and takes
    effect at once, with no restart. Or in the office server's environment, as before (`SUDS_AI_PROVIDER` and the
    provider's credentials, as `OIDC_CLIENT_SECRET` and the other secrets are: `docs/DEPLOYMENT.md`), which wins

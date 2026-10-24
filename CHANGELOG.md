@@ -2,7 +2,19 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
-## Unreleased
+## 1.27.0 — 2026-10-24
+
+A feature release (docs/RELEASE.md, *Record: 1.27.0*): server configuration from the browser, the AI assistant, and the
+pilot price the owner settled. **Migration 73** (schema version 73): one new table, `server_config`, applied
+automatically at start-up; take a backup first, as before any upgrade. One new permission, *Use the AI assistant*
+(`ai:ask`), held by clinicians, supervisors and navigators, and new routes: `POST /api/ai/ask` and Settings › Server
+configuration's under `/api/admin/server-config`. The assistant is off until an administrator switches it on.
+
+Owner exception: released seven days after 1.26.0, inside the 28 days between feature releases, on the owner's decision of 2026-10-24 ("I approve the exception", relayed by the business assistant in the private hand-off, with the release's contents confirmed by the owner in the development session the same day); not a security fix
+
+It is the second release on a recorded owner exception (the first was 1.26.0), and the release workflow still refuses
+it until the owner runs it with `policy_exception`. 1.26.1, the security patch stamped before it, is tagged in the same
+push.
 
 ### Added
 

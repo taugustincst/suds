@@ -2,7 +2,7 @@
 
 **For** community-based organisations and county programmes doing street outreach, harm reduction, naloxone and
 test-strip distribution, and SUD navigation, and for the county and settlement funders who pay for that work.
-**From** AugustInnovations LLC, California. **Version 1.26.0** (October 2026).
+**From** AugustInnovations LLC, California. **Version 1.27.0** (October 2026).
 
 ## What it does
 

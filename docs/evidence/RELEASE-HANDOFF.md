@@ -1,33 +1,55 @@
-# Release hand-off: v1.26.1 to tag, then the record
+# Release hand-off: tags v1.26.1 to v1.27.0, then the record
 
-> **The one owner action: run step 1, then step 2's tag command and its push.** It publishes 1.26.1, a **security
-> patch** (*Record: 1.26.1*): the tag starts `release.yml` (gate, verify, release), the release marks `v1.26.1` Latest,
-> and its `Web app` run republishes GitHub Pages. The release job waits for the `release` environment's reviewer, and
-> so does its `Web app` run ([../security/OPERATIVE-CONTROLS.md](../security/OPERATIVE-CONTROLS.md),
-> `release-reviewer`). No `policy_exception` is needed: a patch within the patch rules passes the gate. **Tag it as soon
-> as this row is filled**: it is a security fix. A session's tag push is refused by the session's own git proxy.
-> Whoever pushes the tag and approves the runs, the *Completed* entry records who did.
+> **The owner actions:**
+> 1. Run step 1.
+> 2. Push both tags in one push (step 2).
+> 3. Run 1.27.0's release with its policy exception (step 3).
 >
-> The zip's checksum line goes into the CHANGELOG's 1.26.1 section in the commit that fills the row below, before the
-> tag. After the release, the records commit checks the published `.sha256` against it and adds the Windows zip's line.
-> suds.systems runs 1.26.0 and is exposed to what 1.26.1 fixes until it is upgraded: the owner directs that upgrade.
+> **What each tag needs:**
+> - **v1.26.1** is a **security patch** (*Record: 1.26.1*). Its tag's run passes its gate.
+> - **v1.27.0** is a feature release seven days after 1.26.0, on the owner's recorded exception, and not a security fix
+>   (*Record: 1.27.0*). **Its tag's own run fails its gate**, because a tag push cannot give it `policy_exception`.
+>   After the push, run the workflow again on `v1.27.0` with `policy_exception` set (step 3); the release job prints
+>   it at the top of the release notes.
+>
+> **Approvals and Latest:**
+> - Approve each release job in the `release` environment, then the `Web app` run of `v1.27.0`, the newest, which
+>   is marked Latest ([../security/OPERATIVE-CONTROLS.md](../security/OPERATIVE-CONTROLS.md), `release-reviewer`).
+> - **Tj approving in person is better** than the business assistant approving with the owner's account.
+> - A session's tag push is refused by the session's own git proxy.
+> - Whoever pushes the tags and approves the runs, the *Completed* entry records who did.
+>
+> **Checksums and the server:**
+> - Each zip's checksum line goes into its CHANGELOG section in the commit that fills its row below, before the tag.
+>   After the releases, the records commit checks the published `.sha256` files against them and adds the Windows
+>   zips' lines.
+> - suds.systems runs 1.26.0 and is exposed to what 1.26.1 fixes until it is upgraded; the owner directs that upgrade
+>   (1.27.0 runs migration 73 at start-up).
 
-1.26.1 is a patch of 1.26.0 (*Record: 1.26.1*). No migration, no new or widened permission and no new route. Its tag goes
-on the commit after "Release 1.26.1": "SBOM of the 1.26.1 stamp".
+1.26.1 is a patch of 1.26.0 (*Record: 1.26.1*): no migration, no new or widened permission and no new route.
 
-## The one release
+1.27.0 is a feature release (*Record: 1.27.0*): migration 73, the permission `ai:ask`, routes under
+`/api/admin/server-config` and `POST /api/ai/ask`.
+
+Each tag goes on the commit after its "Release X.Y.Z": "SBOM of the X.Y.Z stamp".
+
+## The two releases
 
 | Tag | Commit | CHANGELOG date | `suds-vX.Y.Z.zip` SHA-256 (rebuilt from the commit, as `release.yml` builds it) |
 | --- | --- | --- | --- |
 | `v1.26.1` | `c375ef60a5274ff8a3976bb167d69a063cf160e2` ("SBOM of the 1.26.1 stamp", after the second stamp `410ce80`; main's own CI run 39842502473, every required job green; the first stamp's `0ad5d11` is never tagged) | 2026-10-22 | `4b5670b37d90db7b6e2ac60965f67808fc57672d1feb5b5cc940126c23c2e979` |
+| `v1.27.0` | the commit after `Release 1.27.0` ("SBOM of the 1.27.0 stamp": `git log -1 --format=%H --grep='^SBOM of the 1.27.0 stamp$' origin/main`) | 2026-10-24 | `<filled after the SBOM commit>`; rebuild it with the command below |
 
-The SHA-256 above was rebuilt twice from the commit, identical, and the same line is in the CHANGELOG's 1.26.1 section on
-`main` before the tag. A zip is a function of its commit (`git archive`); the release job refuses to publish a Release whose zip is not byte
-for byte its own build (`scripts/release-existing.js`). Compare the `.sha256` beside the published zip with a rebuild:
+The 1.26.1 SHA-256 was rebuilt twice from its commit, identical, and the same line is in the CHANGELOG's 1.26.1 section
+on `main` before the tag. A zip is a function of its commit (`git archive`); the release job refuses to publish a Release
+whose zip is not byte for byte its own build (`scripts/release-existing.js`). Compare each `.sha256` beside a published
+zip with a rebuild:
 
 ```bash
 R1261=c375ef60a5274ff8a3976bb167d69a063cf160e2
+R1270=$(git log -1 --format=%H --grep='^SBOM of the 1.27.0 stamp$' origin/main)
 git archive --format=zip --prefix=suds-v1.26.1/ -o suds-v1.26.1.zip "$R1261" && sha256sum suds-v1.26.1.zip
+git archive --format=zip --prefix=suds-v1.27.0/ -o suds-v1.27.0.zip "$R1270" && sha256sum suds-v1.27.0.zip
 ```
 
 ## 1. Check (from any clone)
@@ -35,30 +57,54 @@ git archive --format=zip --prefix=suds-v1.26.1/ -o suds-v1.26.1.zip "$R1261" && 
 ```bash
 git fetch origin
 R1261=c375ef60a5274ff8a3976bb167d69a063cf160e2
-for c in $R1261; do
+R1270=$(git log -1 --format=%H --grep='^SBOM of the 1.27.0 stamp$' origin/main)
+for c in $R1261 $R1270; do
   git merge-base --is-ancestor $c origin/main && echo "$c on main" || echo "$c is NOT on main"
 done
-git show -s --format='%h %s' $R1261   # "SBOM of the 1.26.1 stamp"
-git show origin/main:package.json | grep '"version"'                            # 1.26.1
-gh run list --workflow ci.yml --branch main --commit $R1261 --event push --limit 1   # completed, success (main's own run)
-git ls-remote --tags origin | grep 'v1.26.1'   # not there yet: the tag is what this hand-off is for
+git show -s --format='%h %s' $R1270   # "SBOM of the 1.27.0 stamp"
+git show origin/main:package.json | grep '"version"'                            # 1.27.0
+gh run list --workflow ci.yml --branch main --commit $R1270 --event push --limit 1   # completed, success (main's own run)
+git ls-remote --tags origin | grep -E 'v1\.26\.1|v1\.27\.0'   # not there yet: the tags are what this hand-off is for
 ```
 
-## 2. Tag, and push
+## 2. Tag, and push both in one push
 
 ```bash
 git tag -a v1.26.1 "$R1261" -m "SUDS 1.26.1"
-git push origin v1.26.1
+git tag -a v1.27.0 "$R1270" -m "SUDS 1.27.0"
+git push origin v1.26.1 v1.27.0
 ```
 
-(With a published signing key, `git tag -s` instead: docs/RELEASE.md, *Signing a release tag*.)
+**Never push `v1.26.1` alone after `v1.27.0`:** an older tag pushed on its own would be marked Latest. In one push with
+`v1.27.0`, the newest is Latest. (With a published signing key, `git tag -s` instead: docs/RELEASE.md, *Signing a
+release tag*.)
 
-## 3. What the tag's run does
+## 3. Run 1.27.0's release with its policy exception
+
+The push starts a `release.yml` run for each tag:
+- `v1.26.1`'s gate passes.
+- `v1.27.0`'s fails at *Release policy* (a feature release seven days after `v1.26.0`). That red run is expected and
+  publishes nothing.
+
+Then, in Actions → *Release* → *Run workflow*:
+1. Choose the tag `v1.27.0` under *Use workflow from*.
+2. Type `release` in *confirm*.
+3. Set *policy_exception* to the recorded line:
+
+```text
+released seven days after 1.26.0, inside the 28 days between feature releases, on the owner's decision of 2026-10-24 ("I approve the exception", relayed by the business assistant in the private hand-off, with the release's contents confirmed by the owner in the development session the same day); not a security fix
+```
+
+or from a terminal:
+
+```bash
+gh workflow run release.yml --ref v1.27.0 -f confirm=release -f policy_exception="released seven days after 1.26.0, inside the 28 days between feature releases, on the owner's decision of 2026-10-24 (\"I approve the exception\", relayed by the business assistant in the private hand-off, with the release's contents confirmed by the owner in the development session the same day); not a security fix"
+```
 
 | Tag | Its gate (main's scripts) | Latest? Web app? | What the owner does |
 | --- | --- | --- | --- |
-| `v1.26.1` | **Passes**: a patch of `v1.26.0` with no migration, permission or route, within the size limit (*Record: 1.26.1*); green CI on the exact commit, every required job run (none skipped) | **Latest**, and it starts a `Web app` run; it attaches its zips and `sbom-1.26.1.cdx.json`, and writes both zips' SHA-256 into the Release notes; the Windows zip unsigned while the certificate secrets are not set | Approve the release job in Actions (the `release` environment's reviewer), then its `Web app` run, which publishes 1.26.1 to GitHub Pages |
-
+| `v1.26.1` | **Passes**: a patch of `v1.26.0` with no migration, permission or route, within the size limit (*Record: 1.26.1*); green CI on the exact commit | Not Latest (an older tag than `v1.27.0`); it attaches its zips and `sbom-1.26.1.cdx.json` | Approve the release job |
+| `v1.27.0` | **Passes only with `policy_exception`**: a feature release inside the 28 days after `v1.26.0` (*Record: 1.27.0*); green CI on the exact commit, every required job run (none skipped) | **Latest**, and it starts a `Web app` run; it attaches its zips and `sbom-1.27.0.cdx.json`, writes both zips' SHA-256 into the notes; the Windows zip unsigned while the certificate secrets are not set | Approve the release job, then its `Web app` run, which publishes 1.27.0 to GitHub Pages |
 
 ## v1.26.0: released
 

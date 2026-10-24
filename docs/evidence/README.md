@@ -13,10 +13,13 @@ signed tags, the flake register's entries) and whether each is in force today.
 
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
-**Version.** It describes 1.26.1: the commit "Release 1.26.1", a security patch of 1.26.0 (the sign-in race, the ZIP
-expansion cap, the malformed cookie and the rest found by the vendor's own code evaluation of 1.26.0), no policy exception and an
-SBOM of its own, `sbom-1.26.1` ([../RELEASE.md](../RELEASE.md), *Record: 1.26.1*; its tag is owed,
-[RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.26.0, a feature release with PowerDMS policy sign-offs
+**Version.** It describes 1.27.0: the commit "Release 1.27.0", a feature release with server configuration from the
+browser and the AI assistant (migration 73, the permission `ai:ask`), seven days after 1.26.0 on a recorded **owner
+exception** to the 28 days between feature releases (not a security fix), with an SBOM of its own, `sbom-1.27.0`
+([../RELEASE.md](../RELEASE.md), *Record: 1.27.0*; its tag is owed, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.26.1, a
+security patch of 1.26.0 (the sign-in race, the ZIP expansion cap, the malformed cookie and the rest found by the
+vendor's own code evaluation of 1.26.0), no policy exception, has `sbom-1.26.1` (*Record: 1.26.1*; its tag is owed, in
+the same push). 1.26.0, a feature release with PowerDMS policy sign-offs
 (migration 72, the permission `policies:manage`), released twelve days after 1.25.0 on a recorded **owner exception**
 to the 28 days between feature releases (not a security fix), with an SBOM of its own, `sbom-1.26.0`
 ([../RELEASE.md](../RELEASE.md), *Record: 1.26.0*; tagged and released on 2026-10-17, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.25.9,
