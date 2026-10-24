@@ -182,13 +182,14 @@ through the gate, and its GitHub Release is published (2026-10-12). 1.25.8 is ta
 GitHub Release is published (2026-10-13). 1.25.9 is tagged, has been through the gate, was approved at the `release`
 environment, and its GitHub Release is published and immutable (2026-10-16). 1.26.0 is tagged, has been through the
 gate with the owner's recorded policy exception, was approved at the `release` environment, and its GitHub Release is
-published, immutable and marked Latest (2026-10-17) (docs/evidence/RELEASE-HANDOFF.md). 1.26.1, stamped 2026-10-22,
-and 1.27.0, stamped 2026-10-24, wait for their tags; until they are pushed they are not published, and there is no tag or published zip to check it against.
-Verify against the commit instead. Each release commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
+published, immutable and marked Latest (2026-10-17) (docs/evidence/RELEASE-HANDOFF.md). 1.26.1 (`c375ef60`, security patch) and
+1.27.0 (`ad50fa88`, feature release on the recorded exception, Latest) were tagged and released on 2026-10-24, each
+published and immutable, the published zip's SHA-256 matching its record; suds.systems was upgraded to 1.27.0 the
+same day. Verify against the commit as well. Each release commit is listed in [../../evidence/RELEASE-HANDOFF.md](../../evidence/RELEASE-HANDOFF.md) with the SHA-256 of the
 release zip, which anyone can rebuild with `git archive` and compare. `scripts/release-site-check.js` checks a
 published web app byte for byte against the commit's build. The steps are in
 [../../security/QUESTIONNAIRE.md](../../security/QUESTIONNAIRE.md) #39. Release tags and artefacts are not yet signed;
-signed tags are planned once the owner has a published key ([../../RELEASE.md](../../RELEASE.md), *Signing a release tag*). The 1.26.1 and 1.27.0 tags are owed;
+signed tags are planned once the owner has a published key ([../../RELEASE.md](../../RELEASE.md), *Signing a release tag*). The 1.26.1 and 1.27.0 tags are pushed and their Releases published (2026-10-24);
 the release reviewer and immutable releases are on since 2026-10-13 (first applied to 1.25.9). **[owner to complete]: the
 remaining release protections: required review and checks on `main`, the `v*` tag and `gh-pages` rules
 (RELEASE.md, *Owner: repository settings*), and a tag-signing key.**
