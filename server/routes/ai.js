@@ -38,7 +38,7 @@ function clientFor(ctx, clientId, feature, action = 'ai.draft') {
   }
 }
 function perUserLimit(ctx) {
-  if (!require('../app').rateLimit(`ai:${ctx.user.id}`, PER_USER_PER_MINUTE, 60_000)) throw new HttpError(429, 'Too many AI drafts in a minute. Read the last one first, then try again.');
+  if (!require('../app').rateLimit(`ai:${ctx.user.id}`, PER_USER_PER_MINUTE, 60_000)) throw new HttpError(429, 'Too many AI requests in a minute (drafts and questions together). Read the last answer first, then try again.');
 }
 
 /**
@@ -150,6 +150,35 @@ module.exports = (r) => {
     db.setSetting('ai_enabled', '0'); db.setSetting('ai_assistant_enabled', '0');
     audit.log({ user: ctx.user, action: 'ai.attestation.withdraw', ip: ctx.ip, details: { had: !!was, provider: was ? was.provider : undefined, reference: was ? was.reference : undefined } });
     return { ok: true };
+  });
+
+  // ---- The assistant (server/ai-assistant.js): one question about one client in reach, the asker's own day, or
+  // programme facts, answered from a summary of records they may see. Nothing is written but the usage row and the
+  // audit entry, which carries metadata only: never the question, the summary or the answer.
+  r.post('/api/ai/ask', auth.requireAuth, auth.requirePerm('ai:ask'), async (ctx) => {
+    const ASK = require('../ai-assistant');
+    const v = validate(ctx.body, { scope: { type: 'string', required: true, enum: ASK.SCOPES }, client_id: { type: 'string' }, question: { ...text, required: true } });
+    const raw = ctx.body && ctx.body.turns;
+    if (raw !== undefined && !Array.isArray(raw)) throw badRequest('Validation failed', { fields: { turns: 'must be a list of { role, text }' } });
+    const turns = (raw || []).slice(-50).filter(t => t && typeof t === 'object').map(t => ({ role: t.role === 'assistant' ? 'assistant' : 'user', text: typeof t.text === 'string' ? t.text : '' }));
+    if (v.scope === 'client' && !v.client_id) throw badRequest('Choose the client to ask about', { fields: { client_id: 'required for a question about a client' } });
+    const clientId = v.scope === 'client' ? v.client_id : null;
+    if (clientId) clientFor(ctx, clientId, 'assistant', 'ai.ask');
+    perUserLimit(ctx);
+    const where = clientId ? { entity: 'client', entityId: clientId, clientId } : { entity: 'programme' };
+    try {
+      const out = await ASK.ask({ user: ctx.user, ip: ctx.ip, scope: v.scope, clientId, question: v.question, turns });
+      audit.log({ user: ctx.user, action: 'ai.ask', ...where, ip: ctx.ip, details: { scope: v.scope, outcome: 'ok', model: out.model, input_tokens: out.tokens.input_tokens, output_tokens: out.tokens.output_tokens,
+        identifiers_by_kind: out.counts, chars_sent: out.sent_chars, sections_cited: out.citations.map(c => c.section), ...(v.scope === 'day' ? { client_ids: out.client_ids.slice(0, 50) } : {}) } });
+      return { answer: out.answer, citations: out.citations, missing: out.missing, model: out.model, notice: 'AI answer — check it against the record before you act', identifiers_replaced: out.counts };
+    } catch (e) {
+      if (!(e instanceof AI.AiError)) throw e;
+      audit.log({ user: ctx.user, action: 'ai.ask', ...where, ip: ctx.ip, success: false,
+        details: { scope: v.scope, outcome: e.kind, model: e.model || AI.settings().model, input_tokens: e.extra.tokens ? e.extra.tokens.input_tokens : 0, output_tokens: e.extra.tokens ? e.extra.tokens.output_tokens : 0 } });
+      if (!['off', 'cap', 'scope', 'restriction'].includes(e.kind)) console.warn(`[suds] AI assistant: ask failed (${e.kind})`);
+      // The copilot's words for the shared failures, about a conversation rather than a form.
+      throw new HttpError(e.status, e.message.replace('Your form is unchanged', 'Your conversation is unchanged'), { ai_error: e.kind, ...(e.extra.retry_after ? { retry_after: e.extra.retry_after } : {}), ...(e.extra.ai_unavailable ? { ai_unavailable: e.extra.ai_unavailable } : {}) });
+    }
   });
 
   // ---- Drafts. Each needs ai:draft and the permission to write what it drafts, and the client in reach.

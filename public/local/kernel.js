@@ -27015,8 +27015,50 @@ ${text}
         schema: calomsSchema(type)
       };
     }
+    var ASSISTANT_SECTIONS = {
+      client: ["client.header", "client.careplan", "client.contacts", "client.supplies", "client.referrals", "client.upcoming"],
+      day: ["day.schedule", "day.overdue", "day.unsigned"],
+      programme: ["programme.supplies", "programme.sites", "programme.referrals"]
+    };
+    var COUNSELING_REFUSAL = "I can't draft a SUD counseling note. SUDS doesn't use the AI copilot for counseling notes \u2014 write that one yourself.";
+    var ASSISTANT_RULES = `You are now answering a staff member's question, not writing a draft: rules 2, 4 and 8 above are replaced by the rules below; the others still apply, rule 6 to the context pack and the conversation as well as the question.
+
+Rules for every answer:
+A1. Answer only from the context pack and the conversation. The context pack is a summary SUDS prepared from the record; it is everything you know. Never add, assume or estimate a fact (a date, a count, a status, a name, a service) that is not in it.
+A2. For every fact you give, cite the section of the context pack it comes from in "citations": the id in square brackets after the section's heading (for example client.contacts). Cite only sections that are in the pack. Do not write section ids in the answer text.
+A3. If the pack does not contain what the question needs, say so plainly in the answer, and name what is missing in "missing", a few words each. A short honest answer is better than a complete-looking guess.
+A4. Answer about this conversation's subject only. If the question names or describes anyone else (another client, a family member, a colleague), say this summary does not cover them; never identify, describe or guess about them.
+A5. Never draft a SUD counseling note. If asked to, answer exactly: "${COUNSELING_REFUSAL}" and nothing else.
+A6. Keep it short enough to read on a phone in the field: a few sentences or a short list, plain words, no headings, no greeting.
+A7. Do not give medical, legal or dosing advice. If the pack or the conversation shows a safety concern (overdose, a risk of harm), say so and that a clinician should follow it up; do not resolve it yourself.
+A8. Keep every placeholder exactly as written, brackets included: the identifier placeholders of rule 5, and client references such as [C1] or [C2], which stand for clients SUDS names after you answer.`;
+    var ASSISTANT_SCOPES = {
+      client: "The context pack summarises one client's record: who they are, their active care plan, their recent contacts, supplies given, open referrals and what is coming up. The conversation is about this client only.",
+      day: "The context pack is the staff member's own day: what is due, what is overdue and their unsigned notes. Clients appear only as references such as [C1]; refer to them by those references, never guess who they are, and never use a name for them.",
+      programme: "The context pack holds programme information only: supplies on hand by site, the sites, and the referral directory (organisations and their services). It holds no information about any client; answer nothing about a person."
+    };
+    var ASSISTANT_SCHEMA = {
+      type: "object",
+      properties: {
+        answer: str("The answer, in plain words, for the staff member to read."),
+        citations: { type: "array", items: obj({ section: str("The id of one context pack section this answer uses, e.g. client.contacts.") }), description: "One per pack section the answer relies on." },
+        missing: { type: "array", items: { type: "string" }, description: "What the pack does not contain that the question needed." }
+      },
+      required: ["answer", "citations"],
+      additionalProperties: false
+    };
+    function assistantPrompt(scope) {
+      if (!ASSISTANT_SCOPES[scope]) throw new Error(`Unknown assistant scope ${scope}`);
+      const schema = JSON.parse(JSON.stringify(ASSISTANT_SCHEMA));
+      schema.properties.citations.items.properties.section.enum = ASSISTANT_SECTIONS[scope];
+      return { system: `${RULES}
+
+${ASSISTANT_RULES}
+
+Scope: ${ASSISTANT_SCOPES[scope]}`, schema };
+    }
     var PLACEHOLDERS = ["CLIENT_FULL_NAME", "CLIENT_FIRST_NAME", "CLIENT_LAST_NAME", "CLIENT_PREFERRED_NAME", "COUNSELOR", "CONTACT_NAME", "PHONE", "EMAIL", "ADDRESS", "DOB", "CLIENT_CODE", "ID", "SSN", "NUMBER", "URL", "ZIP", "CITY"];
-    module.exports = { RULES, NOTE_SECTIONS, NOTE_FORMATS, RATING_CHOICES, CALOMS_SKIP, PLACEHOLDERS, notePrompt, asamPrompt, careplanPrompt, calomsPrompt, calomsFields };
+    module.exports = { RULES, ASSISTANT_RULES, ASSISTANT_SCHEMA, ASSISTANT_SECTIONS, COUNSELING_REFUSAL, assistantPrompt, NOTE_SECTIONS, NOTE_FORMATS, RATING_CHOICES, CALOMS_SKIP, PLACEHOLDERS, notePrompt, asamPrompt, careplanPrompt, calomsPrompt, calomsFields };
   }
 });
 
@@ -27949,6 +27991,330 @@ var require_ai_copilot = __commonJS({
   }
 });
 
+// server/ai-context.js
+var require_ai_context = __commonJS({
+  "server/ai-context.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var auth3 = require_auth2();
+    var O = require_options();
+    var LD = require_local_date();
+    var { decrypt: decrypt3 } = require_crypto();
+    var { notFound } = require_http();
+    var CAP = 50;
+    var CONTACTS = 10;
+    var SUPPLY_DAYS = 90;
+    var CLOSED_REFERRAL = ["completed", "closed", "declined_by_client", "declined_by_provider"];
+    var OPEN_TASK = `status IN ('open','in_progress')`;
+    var plain = (v) => {
+      if (!v) return "";
+      try {
+        return decrypt3(v);
+      } catch {
+        return "";
+      }
+    };
+    var day = (v) => LD.dayOf(v) || "";
+    var label = (list, code) => code ? String(O.labelOf(list, code)) : "";
+    var yes = (v) => Number(v) ? "yes" : "no";
+    var one = (v, max2 = 300) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max2);
+    function builder() {
+      const sections = [];
+      const parts = [];
+      return {
+        add(id, title, lines, { more = 0, empty = "None recorded." } = {}) {
+          sections.push({ id, label: title });
+          const body = lines.length ? lines.map((l) => `- ${l}`) : [empty];
+          if (more > 0) body.push(`\u2026and ${more} more not shown`);
+          parts.push(`## ${title} [${id}]
+${body.join("\n")}`);
+        },
+        done() {
+          return { text: parts.join("\n\n"), sections };
+        }
+      };
+    }
+    var capped2 = (rows, cap = CAP) => ({ rows: rows.slice(0, cap), more: Math.max(0, rows.length - cap) });
+    function todoKind(t) {
+      if (t.referral_id) return "referral follow-up";
+      if (t.intervention_id) return "visit follow-up";
+      if (t.call_id) return "call follow-up";
+      if (t.is_milestone) return "milestone";
+      return "to-do";
+    }
+    function clientBrief(ctx, clientId) {
+      const row = db3.one(`SELECT * FROM clients WHERE id=? AND deleted_at IS NULL`, clientId);
+      if (!row) throw notFound("Client not found");
+      auth3.assertClientAccess(ctx, clientId);
+      const u = ctx.user;
+      const may = (p) => auth3.hasPerm(u, p);
+      const c = require_clients_model().decryptRow(row);
+      const b = builder();
+      const today = LD.today();
+      const name = [c.first_name, c.last_name].filter(Boolean).join(" ");
+      b.add("client.header", "Client", [
+        name ? `Name: ${name}${c.preferred_name ? ` (goes by ${c.preferred_name})` : ""}` : "Name: not recorded (known by participant code)",
+        c.pronouns ? `Pronouns: ${one(c.pronouns, 40)}` : null,
+        c.preferred_language ? `Preferred language: ${one(c.preferred_language, 40)}` : null,
+        `Status: ${row.status}${row.intake_date ? `; intake ${day(row.intake_date)}` : ""}${row.discharge_date ? `; discharged ${day(row.discharge_date)}` : ""}`,
+        row.risk_level ? `Risk level: ${row.risk_level}` : null,
+        row.housing_status ? `Housing: ${label("HOUSING_STATUS", row.housing_status) || row.housing_status}` : null,
+        row.mat_status ? `Medication for addiction treatment: ${row.mat_status}` : null,
+        `Naloxone given before: ${yes(row.naloxone_provided)}${row.naloxone_last_date ? ` (last ${day(row.naloxone_last_date)})` : ""}`,
+        Number(row.overdose_history) ? `Overdose history: yes${row.last_overdose_date ? ` (last ${day(row.last_overdose_date)})` : ""}` : "Overdose history: none recorded",
+        `OK to text: ${yes(row.ok_to_text)}; OK to leave voicemail: ${yes(row.ok_to_voicemail)}`
+      ].filter(Boolean));
+      if (may("careplan:read")) {
+        const problems = db3.all(`SELECT id, problem_enc, onset_date FROM problems WHERE client_id=? AND status='active' ORDER BY created_at`, clientId);
+        const goals = db3.all(`SELECT id, problem_id, goal_enc, status, target_date, review_date FROM care_plan_goals WHERE client_id=? AND status='active' ORDER BY created_at`, clientId);
+        const steps = db3.all(`SELECT goal_id, step_enc, owner_role, target_date FROM care_plan_steps WHERE client_id=? AND status='open' ORDER BY target_date IS NULL, target_date`, clientId);
+        const lines = [
+          ...problems.map((p) => `Problem: ${one(plain(p.problem_enc))}${p.onset_date ? ` (since ${day(p.onset_date)})` : ""}`),
+          ...goals.map((g) => `Goal: ${one(plain(g.goal_enc))}${g.target_date ? `; target ${day(g.target_date)}` : ""}${g.review_date ? `; review ${day(g.review_date)}` : ""}`),
+          ...steps.map((s) => `Open step: ${one(plain(s.step_enc))} (${s.owner_role.replace(/_/g, " ")}${s.target_date ? `, by ${day(s.target_date)}` : ""})`)
+        ];
+        const k = capped2(lines);
+        b.add("client.careplan", "Active care plan", k.rows, { more: k.more, empty: "No active care plan entries." });
+      }
+      if (may("interventions:read")) {
+        const n = db3.one(`SELECT COUNT(*) n FROM interventions WHERE client_id=?`, clientId).n;
+        const rows = db3.all(`SELECT occurred_at, type, location, modality, duration_minutes, outcome, naloxone_kits, fentanyl_strips, follow_up_due
+      FROM interventions WHERE client_id=? ORDER BY occurred_at DESC LIMIT ?`, clientId, CONTACTS);
+        b.add("client.contacts", `Contacts and visits (the ${CONTACTS} most recent)`, rows.map((v) => [
+          `${day(v.occurred_at)}: ${label("INTERVENTION_TYPES", v.type)}`,
+          [v.modality ? label("MODALITIES", v.modality) : "", v.location ? label("LOCATIONS", v.location) : "", v.duration_minutes ? `${v.duration_minutes} min` : ""].filter(Boolean).join(", "),
+          v.outcome ? `outcome: ${label("OUTCOMES", v.outcome)}` : "",
+          Number(v.naloxone_kits) ? `naloxone kits: ${v.naloxone_kits}` : "",
+          Number(v.fentanyl_strips) ? `test strips: ${v.fentanyl_strips}` : "",
+          v.follow_up_due ? `follow-up due ${day(v.follow_up_due)}` : ""
+        ].filter(Boolean).join("; ")), { more: Math.max(0, n - rows.length), empty: "No contacts recorded." });
+        const since = LD.addDays(today, -SUPPLY_DAYS);
+        const given = db3.all(`SELECT s.name, s.unit, SUM(x.quantity) qty FROM intervention_supplies x JOIN interventions i ON i.id=x.intervention_id JOIN supply_items s ON s.id=x.item_id
+      WHERE i.client_id=? AND substr(i.occurred_at,1,10) >= ? GROUP BY s.id ORDER BY s.sort_order, s.name`, clientId, since);
+        const k = capped2(given.map((g) => `${one(g.name, 100)}: ${g.qty}${g.unit && g.unit !== "each" ? ` ${g.unit}` : ""}`));
+        b.add("client.supplies", `Supplies given (last ${SUPPLY_DAYS} days)`, k.rows, { more: k.more, empty: `None in the last ${SUPPLY_DAYS} days.` });
+      }
+      if (may("referrals:read")) {
+        const rows = db3.all(`SELECT r.referred_at, r.status, r.urgency, r.appointment_at, r.follow_up_due, r.warm_handoff, x.name, x.organization, x.category
+      FROM referrals r JOIN resources x ON x.id=r.resource_id WHERE r.client_id=? AND r.status NOT IN (${CLOSED_REFERRAL.map(() => "?").join(",")}) ORDER BY r.referred_at DESC`, clientId, ...CLOSED_REFERRAL);
+        const k = capped2(rows.map((r) => [
+          `${one(r.organization ? `${r.name} (${r.organization})` : r.name, 160)}: ${label("REFERRAL_STATUSES", r.status)}`,
+          `referred ${day(r.referred_at)}`,
+          r.urgency && r.urgency !== "routine" ? `${r.urgency}` : "",
+          r.appointment_at ? `appointment ${day(r.appointment_at)}` : "",
+          r.follow_up_due ? `follow-up due ${day(r.follow_up_due)}` : "",
+          Number(r.warm_handoff) ? "warm hand-off" : ""
+        ].filter(Boolean).join("; ")));
+        b.add("client.referrals", "Open referrals", k.rows, { more: k.more, empty: "No open referrals." });
+      }
+      const upcoming = [];
+      if (may("tasks:read")) {
+        for (const t of db3.all(`SELECT due_at, priority, status, assigned_to, referral_id, intervention_id, call_id, is_milestone FROM tasks WHERE client_id=? AND ${OPEN_TASK} AND due_at IS NOT NULL ORDER BY due_at`, clientId)) {
+          upcoming.push({ at: day(t.due_at), line: `${day(t.due_at)}: ${todoKind(t)}${t.priority !== "normal" ? ` (${t.priority})` : ""}${day(t.due_at) < today ? ", overdue" : ""}${t.assigned_to === u.id ? ", yours" : ""}` });
+        }
+      }
+      if (may("referrals:read")) {
+        for (const r of db3.all(`SELECT r.appointment_at, x.name FROM referrals r JOIN resources x ON x.id=r.resource_id WHERE r.client_id=? AND r.appointment_at IS NOT NULL AND substr(r.appointment_at,1,10) >= ? AND r.status NOT IN (${CLOSED_REFERRAL.map(() => "?").join(",")})`, clientId, today, ...CLOSED_REFERRAL)) {
+          upcoming.push({ at: day(r.appointment_at), line: `${day(r.appointment_at)}: appointment at ${one(r.name, 120)}` });
+        }
+      }
+      if (may("tasks:read") || may("referrals:read")) {
+        const k = capped2(upcoming.sort((a, z) => a.at.localeCompare(z.at)).map((x) => x.line));
+        b.add("client.upcoming", "Coming up", k.rows, { more: k.more, empty: "Nothing scheduled." });
+      }
+      return b.done();
+    }
+    function myDay(ctx, dateISO = LD.today()) {
+      const u = ctx.user;
+      const may = (p) => auth3.hasPerm(u, p);
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(String(dateISO || "")) ? dateISO : LD.today();
+      const b = builder();
+      const refs = /* @__PURE__ */ new Map();
+      const ref = (clientId) => {
+        if (!clientId) return "no client";
+        if (!refs.has(clientId)) refs.set(clientId, `C${refs.size + 1}`);
+        return `[${refs.get(clientId)}]`;
+      };
+      const cf = auth3.caseloadFilter(u, "t.client_id");
+      const reach = `(t.client_id IS NULL OR (${cf.sql} AND EXISTS (SELECT 1 FROM clients c WHERE c.id=t.client_id AND c.deleted_at IS NULL)))`;
+      if (may("tasks:read")) {
+        const todos = db3.all(`SELECT t.client_id, t.due_at, t.priority, t.status, t.referral_id, t.intervention_id, t.call_id, t.is_milestone FROM tasks t
+      WHERE t.assigned_to=? AND t.${OPEN_TASK} AND t.due_at IS NOT NULL AND ${reach} ORDER BY t.due_at`, u.id, ...cf.params);
+        const dueToday = todos.filter((t) => day(t.due_at) === date);
+        const RANK = { urgent: 0, high: 1, normal: 2, low: 3 };
+        const overdue = todos.filter((t) => day(t.due_at) < date).sort((a, z) => (RANK[a.priority] ?? 2) - (RANK[z.priority] ?? 2) || String(a.due_at).localeCompare(String(z.due_at)));
+        const sched = dueToday.map((t) => `${String(t.due_at).length > 10 ? `${String(LD.formatter("en-US", { timeZone: LD.orgTimezone(), hour: "numeric", minute: "2-digit" }).format(new Date(t.due_at)))} ` : ""}${todoKind(t)} for ${ref(t.client_id)}${t.priority !== "normal" ? ` (${t.priority})` : ""}`);
+        if (may("referrals:read")) {
+          const rf = auth3.caseloadFilter(u, "r.client_id");
+          for (const r of db3.all(`SELECT r.client_id, r.appointment_at, x.name FROM referrals r JOIN resources x ON x.id=r.resource_id JOIN clients c ON c.id=r.client_id
+        WHERE r.user_id=? AND r.appointment_at IS NOT NULL AND c.deleted_at IS NULL AND ${rf.sql} AND r.status NOT IN (${CLOSED_REFERRAL.map(() => "?").join(",")})`, u.id, ...rf.params, ...CLOSED_REFERRAL)) {
+            if (day(r.appointment_at) === date) sched.push(`appointment for ${ref(r.client_id)} at ${one(r.name, 120)}`);
+          }
+        }
+        const s = capped2(sched);
+        b.add("day.schedule", `Due on ${date}`, s.rows, { more: s.more, empty: "Nothing due that day." });
+        const o = capped2(overdue.map((t) => `${day(t.due_at)}: ${todoKind(t)} for ${ref(t.client_id)}${t.priority !== "normal" ? ` (${t.priority})` : ""}`));
+        b.add("day.overdue", "Overdue to-dos", o.rows, { more: o.more, empty: "Nothing overdue." });
+      }
+      const n = db3.one(`SELECT COUNT(*) n, MIN(occurred_at) oldest FROM notes WHERE author_id=? AND status='draft' AND deleted_at IS NULL AND counseling_note=0`, u.id);
+      b.add("day.unsigned", "Your unsigned notes", n.n ? [`${n.n} unsigned note${n.n === 1 ? "" : "s"}; the oldest is from ${day(n.oldest)}`] : [], { empty: "None." });
+      return { ...b.done(), refs: new Map([...refs].map(([id, r]) => [r, id])) };
+    }
+    function programmeReference(ctx, { question = "" } = {}) {
+      const u = ctx.user;
+      const may = (p) => auth3.hasPerm(u, p);
+      const b = builder();
+      if (may("supplies:read")) {
+        const S = require_supplies();
+        const st = S.stock();
+        const items = new Map(db3.all(`SELECT id, name, unit, low_stock FROM supply_items WHERE is_active=1`).map((i) => [i.id, i]));
+        const sites = new Map(db3.all(`SELECT id, name FROM supply_sites`).map((x) => [x.id, x]));
+        const rows = st.bySite.filter((x) => items.has(x.item_id) && sites.has(x.site_id)).map((x) => {
+          const i = items.get(x.item_id);
+          return { site: sites.get(x.site_id).name, line: `${one(sites.get(x.site_id).name, 80)}: ${one(i.name, 100)} ${x.quantity}${i.unit && i.unit !== "each" ? ` ${i.unit}` : ""} on hand${i.low_stock != null && x.quantity <= i.low_stock ? " (low)" : ""}` };
+        }).sort((a, z) => a.site.localeCompare(z.site) || a.line.localeCompare(z.line));
+        const k = capped2(rows.map((r) => r.line));
+        b.add("programme.supplies", "Supplies on hand by site", k.rows, { more: k.more, empty: "No stock recorded." });
+        const live = db3.all(`SELECT name, kind FROM supply_sites WHERE is_active=1 ORDER BY sort_order, name`);
+        const s = capped2(live.map((x) => `${one(x.name, 80)} (${String(x.kind).replace(/_/g, " ")})`));
+        b.add("programme.sites", "Sites", s.rows, { more: s.more, empty: "No sites recorded." });
+      }
+      if (may("resources:read")) {
+        const all = db3.all(`SELECT name, organization, category, services, service_tags, phone, hours, eligibility, languages, city, accepts_medicaid, accepts_uninsured FROM resources WHERE is_active=1 ORDER BY name`);
+        const words = new Set(String(question || "").toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []);
+        const score = (r) => {
+          if (!words.size) return 0;
+          const hay = `${r.name} ${r.organization || ""} ${r.category} ${r.services || ""} ${r.service_tags || ""}`.toLowerCase();
+          let n = 0;
+          for (const w of words) if (hay.includes(w)) n++;
+          return n;
+        };
+        const ranked = all.map((r) => ({ r, s: score(r) })).sort((a, z) => z.s - a.s).map((x) => x.r);
+        const k = capped2(ranked.map((r) => [
+          `${one(r.organization && r.organization !== r.name ? `${r.name} (${r.organization})` : r.name, 160)}: ${label("RESOURCE_CATEGORIES", r.category) || r.category}`,
+          r.services ? `services: ${one(r.services, 300)}` : "",
+          r.phone ? `phone ${one(r.phone, 40)}` : "",
+          r.hours ? `hours: ${one(r.hours, 120)}` : "",
+          r.eligibility ? `eligibility: ${one(r.eligibility, 200)}` : "",
+          r.languages ? `languages: ${one(r.languages, 80)}` : "",
+          r.city ? one(r.city, 60) : "",
+          Number(r.accepts_medicaid) ? "accepts Medi-Cal" : "",
+          Number(r.accepts_uninsured) ? "accepts uninsured" : ""
+        ].filter(Boolean).join("; ")));
+        b.add("programme.referrals", "Referral directory", k.rows, { more: k.more, empty: "The directory is empty." });
+      }
+      return b.done();
+    }
+    module.exports = { CAP, CONTACTS, SUPPLY_DAYS, clientBrief, myDay, programmeReference };
+  }
+});
+
+// server/ai-assistant.js
+var require_ai_assistant = __commonJS({
+  "server/ai-assistant.js"(exports, module) {
+    "use strict";
+    init_globals_inject();
+    var db3 = require_db();
+    var AI = require_ai_copilot();
+    var P2 = require_ai_prompts();
+    var X = require_ai_context();
+    var SCOPES = ["client", "day", "programme"];
+    var MAX_TURNS = 12;
+    var TURN_MAX = 4e3;
+    var TURNS_MAX = AI.MAX_TEXT;
+    var MAX_TOKENS = 4e3;
+    function trimTurns(turns) {
+      const all = (Array.isArray(turns) ? turns : []).filter((t) => t && ["user", "assistant"].includes(t.role) && typeof t.text === "string" && t.text.trim()).map((t) => ({ role: t.role, text: t.text.trim().slice(0, TURN_MAX) }));
+      let kept = all.slice(-MAX_TURNS);
+      while (kept.length && kept.reduce((n, t) => n + t.text.length, 0) > TURNS_MAX) kept = kept.slice(1);
+      return { kept, omitted: all.length - kept.length };
+    }
+    function displayName(clientId) {
+      const row = db3.one(`SELECT * FROM clients WHERE id=?`, clientId);
+      if (!row) return "a client";
+      const c = require_clients_model().decryptRow(row);
+      const first = (c.preferred_name || c.first_name || "").trim();
+      return first ? `${first} (${row.client_code})` : row.client_code;
+    }
+    async function ask({ user, ip = null, scope, clientId = null, question, turns = [], date = null }) {
+      if (!SCOPES.includes(scope)) throw new AI.AiError("scope", 400, "Choose what to ask about: a client, your day, or programme information.");
+      const st = AI.status().assistant;
+      if (!st.available) throw new AI.AiError(st.code === "cap" ? "cap" : "off", st.code === "cap" ? 429 : 409, st.reason, { ai_unavailable: st.code });
+      if (scope === "client") {
+        if (!clientId) throw new AI.AiError("scope", 400, "Choose the client to ask about.");
+        if (require_disclosure().agreedRestrictions(clientId)) throw new AI.AiError("restriction", 409, "This client has an agreed restriction on how their information is used or shared (see their Requests tab), so the AI assistant is not used for their records.");
+      }
+      const ctx = { user, ip };
+      const pack = scope === "client" ? X.clientBrief(ctx, clientId) : scope === "day" ? X.myDay(ctx, date || void 0) : X.programmeReference(ctx, { question });
+      const author = db3.one(`SELECT display_name FROM users WHERE id=?`, user.id);
+      let ids = null;
+      const refs = pack.refs || /* @__PURE__ */ new Map();
+      if (scope === "day") {
+        ids = [];
+        for (const id of refs.values()) for (const x of AI.identifiersFor(id, author)) ids.push({ ...x, reinsert: null });
+        ids.sort((a, b) => b.len - a.len);
+      } else if (scope === "programme") ids = [];
+      const names = new Map([...refs].map(([r2, id]) => [r2, displayName(id)]));
+      const { kept, omitted } = trimTurns(turns);
+      const back = (text) => {
+        let t = text;
+        for (const [r2, n] of names) t = t.split(n).join(`[${r2}]`);
+        return t;
+      };
+      const conversation = kept.map((t) => `${t.role === "user" ? "Staff member" : "Assistant"}: ${back(t.text)}`).join("\n");
+      const sections = new Set(pack.sections.map((s) => s.id));
+      const check = (data) => {
+        const ok = data && typeof data.answer === "string" && data.answer.trim() && Array.isArray(data.citations) && data.citations.every((c) => c && typeof c.section === "string" && sections.has(c.section));
+        if (!ok) throw new AI.AiError("unreadable", 502, "The AI assistant's answer could not be checked against the record summary it was given, so it is not shown. Ask again, or look in the record.");
+      };
+      const r = await AI.draft({
+        user,
+        clientId: scope === "client" ? clientId : null,
+        feature: "assistant",
+        assistant: true,
+        ids,
+        check,
+        pieces: { pack: pack.text, conversation, question: String(question || "") },
+        build: (c) => {
+          const p = P2.assistantPrompt(scope);
+          const user2 = [
+            `Context pack (prepared by SUDS from the record; identifiers replaced):
+<context_pack scope="${scope}">
+${c.pack}
+</context_pack>`,
+            c.conversation || omitted ? `The conversation so far:
+<conversation>
+${omitted ? `(${omitted} earlier turn${omitted === 1 ? "" : "s"} omitted)
+` : ""}${c.conversation}
+</conversation>` : null,
+            `The staff member's question:
+<question>
+${c.question}
+</question>`
+          ].filter(Boolean).join("\n\n");
+          return { system: p.system, user: user2, schema: p.schema, max_tokens: MAX_TOKENS };
+        }
+      });
+      const d = r.data;
+      const name = (s) => String(s).replace(/\[(C\d+)\]/g, (m, ref) => names.get(ref) || m);
+      const seen2 = /* @__PURE__ */ new Set();
+      const citations = d.citations.filter((c) => !seen2.has(c.section) && seen2.add(c.section)).map((c) => ({ section: c.section, label: pack.sections.find((s) => s.id === c.section).label }));
+      return {
+        answer: name(d.answer).slice(0, 8e3),
+        citations,
+        missing: (Array.isArray(d.missing) ? d.missing : []).filter((m) => typeof m === "string" && m.trim()).slice(0, 10).map((m) => name(m).slice(0, 300)),
+        model: r.model,
+        tokens: r.tokens,
+        counts: r.counts,
+        sent_chars: r.sent_chars,
+        client_ids: [...refs.values()]
+      };
+    }
+    module.exports = { SCOPES, MAX_TURNS, TURN_MAX, TURNS_MAX, MAX_TOKENS, ask, trimTurns };
+  }
+});
+
 // server/routes/ai.js
 var require_ai = __commonJS({
   "server/routes/ai.js"(exports, module) {
@@ -27976,7 +28342,7 @@ var require_ai = __commonJS({
       }
     }
     function perUserLimit(ctx) {
-      if (!require_app2().rateLimit(`ai:${ctx.user.id}`, PER_USER_PER_MINUTE, 6e4)) throw new HttpError3(429, "Too many AI drafts in a minute. Read the last one first, then try again.");
+      if (!require_app2().rateLimit(`ai:${ctx.user.id}`, PER_USER_PER_MINUTE, 6e4)) throw new HttpError3(429, "Too many AI requests in a minute (drafts and questions together). Read the last answer first, then try again.");
     }
     async function run2(ctx, { clientId, feature, pieces, build, details = {} }) {
       perUserLimit(ctx);
@@ -28134,6 +28500,45 @@ var require_ai = __commonJS({
         db3.setSetting("ai_assistant_enabled", "0");
         audit3.log({ user: ctx.user, action: "ai.attestation.withdraw", ip: ctx.ip, details: { had: !!was, provider: was ? was.provider : void 0, reference: was ? was.reference : void 0 } });
         return { ok: true };
+      });
+      r.post("/api/ai/ask", auth3.requireAuth, auth3.requirePerm("ai:ask"), async (ctx) => {
+        const ASK = require_ai_assistant();
+        const v = validate(ctx.body, { scope: { type: "string", required: true, enum: ASK.SCOPES }, client_id: { type: "string" }, question: { ...text, required: true } });
+        const raw = ctx.body && ctx.body.turns;
+        if (raw !== void 0 && !Array.isArray(raw)) throw badRequest("Validation failed", { fields: { turns: "must be a list of { role, text }" } });
+        const turns = (raw || []).slice(-50).filter((t) => t && typeof t === "object").map((t) => ({ role: t.role === "assistant" ? "assistant" : "user", text: typeof t.text === "string" ? t.text : "" }));
+        if (v.scope === "client" && !v.client_id) throw badRequest("Choose the client to ask about", { fields: { client_id: "required for a question about a client" } });
+        const clientId = v.scope === "client" ? v.client_id : null;
+        if (clientId) clientFor(ctx, clientId, "assistant", "ai.ask");
+        perUserLimit(ctx);
+        const where = clientId ? { entity: "client", entityId: clientId, clientId } : { entity: "programme" };
+        try {
+          const out2 = await ASK.ask({ user: ctx.user, ip: ctx.ip, scope: v.scope, clientId, question: v.question, turns });
+          audit3.log({ user: ctx.user, action: "ai.ask", ...where, ip: ctx.ip, details: {
+            scope: v.scope,
+            outcome: "ok",
+            model: out2.model,
+            input_tokens: out2.tokens.input_tokens,
+            output_tokens: out2.tokens.output_tokens,
+            identifiers_by_kind: out2.counts,
+            chars_sent: out2.sent_chars,
+            sections_cited: out2.citations.map((c) => c.section),
+            ...v.scope === "day" ? { client_ids: out2.client_ids.slice(0, 50) } : {}
+          } });
+          return { answer: out2.answer, citations: out2.citations, missing: out2.missing, model: out2.model, notice: "AI answer \u2014 check it against the record before you act", identifiers_replaced: out2.counts };
+        } catch (e) {
+          if (!(e instanceof AI.AiError)) throw e;
+          audit3.log({
+            user: ctx.user,
+            action: "ai.ask",
+            ...where,
+            ip: ctx.ip,
+            success: false,
+            details: { scope: v.scope, outcome: e.kind, model: e.model || AI.settings().model, input_tokens: e.extra.tokens ? e.extra.tokens.input_tokens : 0, output_tokens: e.extra.tokens ? e.extra.tokens.output_tokens : 0 }
+          });
+          if (!["off", "cap", "scope", "restriction"].includes(e.kind)) console.warn(`[suds] AI assistant: ask failed (${e.kind})`);
+          throw new HttpError3(e.status, e.message.replace("Your form is unchanged", "Your conversation is unchanged"), { ai_error: e.kind, ...e.extra.retry_after ? { retry_after: e.extra.retry_after } : {}, ...e.extra.ai_unavailable ? { ai_unavailable: e.extra.ai_unavailable } : {} });
+        }
       });
       r.post("/api/ai/draft/note", auth3.requireAuth, auth3.requirePerm("ai:draft"), async (ctx) => {
         const v = validate(ctx.body, {
