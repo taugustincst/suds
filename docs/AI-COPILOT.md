@@ -61,7 +61,9 @@ administrator, under Settings → Users & permissions. And the client must be on
    policy keeps secrets out of the database, set them in the environment instead.
 3. **Record the agreement.** Settings → **AI copilot** → *Agreement with the AI provider*: the provider, who
    signed for the programme, the date, the agreement's reference, and three confirmations (a BAA covering
-   this use; it includes Part 2 QSOA terms; counsel has reviewed this use). All three are required. The
+   this use; it includes Part 2 QSOA terms; counsel has reviewed this use). All three are required. A fourth
+   statement records that the agreement covers conversational **assistant** use, and a fifth that it covers
+   **SUD counseling notes** (§2.11), each unlocking that use only when ticked (the owner's decision of 2026-10-24). The
    record is audited (`ai.attestation.record`: provider, signer, date, reference, and the provider the server
    was set up for). The screen says which provider this server sends drafts to, so the agreement recorded is
    with that provider. **The agreement is tied to that provider** (since 1.17.1): if the server is later set up
@@ -184,16 +186,23 @@ suggestions, the one six-dimension assessment of that client they choose (its ra
 summary) and the wording of the client's active problems (so the suggestions do not repeat them); plus the
 fixed instructions for the feature (below). Nothing is sent from a browser: the server makes the call.
 
-**Never sent:** another client's data; any other note (not the author's earlier notes, not a colleague's, not
-a counseling note of anyone's — the copilot drafts only in the author's own note, and a signed note cannot be
-redrafted); the client record itself; the API key to the browser.
+**Never sent:** another client's data; any other note (not the author's earlier notes, not a colleague's — the
+copilot drafts only in the author's own note, and a signed note cannot be redrafted); the client record itself;
+the API key to the browser.
+
+**SUD counseling notes (42 CFR §2.11): gated on the fifth attestation statement.** By the owner's decision of
+2026-10-24 (reversing the earlier blanket exclusion), a counseling note may be drafted with the copilot, and
+the assistant may summarise one, but **only once an administrator has recorded that the agreement, as counsel
+reviewed it, covers counseling notes** (Settings → AI copilot, the fifth statement; `AI.counselingCovered()`).
+Until then nothing changes: the draft route refuses a note flagged as a counseling note or one written with
+*SUD counseling note* ticked, the note form hides the copilot while the box is ticked, and a note that already
+has copilot text cannot be flagged as one (`server/rules/notes.js`, over the web and by sync). When it is
+covered, counseling-note content flows through the **same** masked path as everything else — client
+access/restriction refusal first, `deidentify` before any provider call, server-side `reidentify`, the caps and
+the `ai.ask`/`ai.draft` audit — never raw identifiable note text to the provider.
 
 **Not used at all for:**
 
-* **SUD counseling notes (42 CFR §2.11).** Until counsel says otherwise, the copilot does not draft one: the draft
-  route refuses a note flagged as a counseling note, or one being written with *SUD counseling note* ticked, and
-  the note form hides the copilot while the box is ticked. The other way round, a note that already has copilot
-  text cannot be flagged as a counseling note (`server/rules/notes.js`, over the web and by sync).
 * **A client with an agreed restriction** (a §164.522 / §2.26 request the programme granted, on the client's
   Requests tab). A business associate's work needs no consent, but a restriction the programme agreed to may
   cover it, and SUDS cannot read a restriction's terms; so every draft for that client is refused before anything
@@ -264,8 +273,8 @@ client's information. The legal basis for sending the rest is the BAA/QSOA, not 
   copilot was used** (with the note's id when the draft was asked for in a saved note). A draft asked for in a
   note not saved yet is remembered by the office (in memory, for 120 minutes) for its author and client: the next
   note that author writes text into for that client, over REST or sync, is marked AI-assisted by the server
-  whatever the browser sends, and a SUD counseling note is refused while one is waiting (since 1.17.1;
-  `server/rules/notes.js`). (Assessments and care
+  whatever the browser sends, and (unless the agreement covers counseling notes) a SUD counseling note is refused
+  while one is waiting (since 1.17.1; `server/rules/notes.js`). (Assessments and care
   plan entries made from suggestions are not flagged in the record; the `ai.draft` audit entry shows the copilot
   was used for that client.)
 * **Settings changes** (`ai.settings.update`: enabled, model, cap) and the agreement (`ai.attestation.record`,
@@ -349,9 +358,13 @@ audit and failure handling as the copilot. It answers; it never saves, signs, su
 owner widened it, to make answers as useful as possible. A summary now also holds the short free text workers write
 on records: a contact's summary, a referral's outcome, barrier and notes, and a to-do's title and details. Each
 field is cut to a few hundred characters, and all of it is masked the same way as the rest.
-- A summary never holds a note's content: progress, clinical or administrative.
-- It never holds anything from a SUD counseling note. The only notes query counts the person's own unsigned
-  drafts, and counseling notes are left out of that count.
+- A summary never holds a progress, clinical or administrative note's body (not in v1).
+- **SUD counseling notes:** a client summary holds the counseling notes the person may already read (author,
+  co-signer, or a clinician/supervisor; `rules/notes.js` `counselingFilter`), their words capped and masked —
+  but only when the agreement is recorded as covering counseling notes (`AI.counselingCovered()`, the fifth
+  statement; the owner's decision of 2026-10-24). Without it a counseling note is read for no summary at all,
+  as before. The day summary's unsigned-note line is a count of the person's own drafts (never content), and
+  now counts their counseling drafts too.
 
 A section of the summary is
 included only when the person holds the permission that reads it. Every list is capped at 50 entries, with a line
@@ -374,9 +387,9 @@ section that was not sent: it is recorded as `unreadable` and never shown (a 502
 **AI answer — check it against the record before you act**, with each cited section as a link to that part of the
 record. A wrong fact under a real section is not caught by the server: that is what the links and the banner are
 for. The model is told to answer only from the summary and the conversation, to say what is missing, and not to
-answer about anyone the conversation is not about. Asked to draft a SUD counseling note, it gives the standing
-refusal: "I can't draft a SUD counseling note. SUDS doesn't use the AI copilot for counseling notes — write that
-one yourself." (`server/ai-prompts.js`, pinned in `test/ai-assistant.test.js`).
+answer about anyone the conversation is not about. The assistant answers questions; it does not write notes
+itself: asked to draft or write a note, it tells the worker to use *Draft a note from this*, which opens the
+documentation copilot (`server/ai-prompts.js`, pinned in `test/ai-assistant.test.js`).
 
 **The conversation.**
 - The browser keeps it, up to 20 turns, and only in the page: nothing is saved, in the browser or on the server,
@@ -445,7 +458,7 @@ Code: `server/ai-context.js` (summaries), `server/ai-assistant.js` (one question
 * Masking names SUDS does not hold (other people in the text) and other date forms near the date of birth.
 * Drafting from an audio recording (only text is accepted); voice questions to the assistant (designed, *The
   assistant*, not built).
-* Note content in the assistant's summaries (progress and administrative notes; SUD counseling notes are excluded for good).
+* Progress and administrative note bodies in the assistant's summaries (not in v1; SUD counseling notes are included when the agreement covers them, above).
 * A morning brief from the day summary.
 * A per-programme model allow-list or per-person caps.
 * Other ways of getting cloud credentials (1.17.1 reads them from the environment and a key file only): the AWS

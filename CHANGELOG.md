@@ -37,12 +37,21 @@ push.
   before a visit, your own day, or programme information (supplies on hand by site, the referral directory).
   - It answers from a summary SUDS prepares from records the person may already see: dates, statuses, counts, care
     plan entries and the short free text workers write on contacts, referrals and to-dos (the owner's decision of
-    2026-10-24), all masked the same way. It never sends a note's text, and never anything from a SUD counseling note.
+    2026-10-24), all masked the same way. A progress or administrative note's body is not sent.
   - Every answer names the parts of the summary it used, as links into the record, under "AI answer — check it
     against the record before you act". An answer citing something it was not given is refused.
   - It runs on the AI copilot's agreement, provider, identifier replacement, monthly limit and audit. It needs
     the copilot on, its own switch, and the agreement confirmed to cover assistant use (a fourth statement,
     recorded again under Settings › AI copilot).
+- **SUD counseling notes (42 CFR §2.11) in the AI, gated on a fifth attestation statement** (the owner's
+  decision of 2026-10-24, reversing the earlier blanket exclusion). Once an administrator records that the
+  agreement, as counsel reviewed it, covers counseling notes (Settings › AI copilot), the documentation copilot
+  may draft one and the assistant's client summary may hold the counseling notes the person is already allowed to
+  read — both through the **same** masked path (client access/restriction refusal first, identifier replacement
+  before any provider call, server-side re-identification, the caps and the audit; never raw identifiable note
+  text to the provider). Without that statement nothing changes: the copilot refuses a counseling note and no
+  summary holds one, exactly as since 1.17.0. The day summary's unsigned-note line now counts the person's own
+  counseling drafts (a count, never content).
   - It never changes a record. **Draft a note from this** opens a new note with the worker's recap in the
     copilot's box, where the copilot's own review and AI-assisted marking apply.
   - New permission *Use the AI assistant* (`ai:ask`), held by clinicians, supervisors and navigators by default.

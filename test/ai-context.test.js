@@ -79,14 +79,34 @@ test('a client brief holds the fields and the workers\' free text under cited se
   for (const body of [PROGRESS_BODY, COUNSELING_BODY]) assert.ok(!text.includes(body.split(' ')[0]), `no ${body.split(' ')[0]}`);
 });
 
-test('no SUD counseling note, nor any note text, reaches any pack; the unsigned count leaves counseling notes out', () => {
+test('without the counseling-notes attestation, no counseling note nor any note body reaches a pack; the unsigned count now counts the person\'s own counseling drafts', () => {
+  // The default harness records no agreement covering counseling notes, so a counseling note is read for no pack.
   for (const text of everyPack()) {
     assert.ok(!text.includes('COUNSELING-BODY'), 'counseling note text');
     assert.ok(!text.includes('PROGRESS-BODY'), 'progress note text');
     assert.ok(!/counsel/i.test(text), 'not even the word');
   }
+  // The count is of the person's own unsigned drafts (a count, never content): their counseling draft is now counted
+  // too (the owner's decision of 2026-10-24 reversed the old exclusion). clinUser authored all three drafts.
   const day = X.myDay(clinCtx).text;
-  assert.match(day, /2 unsigned notes; the oldest is from 2026-10-01/, 'two drafts counted: the counseling note is not');
+  assert.match(day, /3 unsigned notes; the oldest is from 2026-10-01/, 'all three drafts counted, the counseling one included');
+});
+
+test('with the agreement recorded as covering SUD counseling notes, the client pack holds the counseling note content the person may read, masked like everything else; a reader who may not read it still never sees it', () => {
+  const db = H.db;
+  const prev = db.getSetting('ai_attestation', null);
+  db.setSetting('ai_attestation', JSON.stringify({ provider: 'Anthropic', configured_provider: 'anthropic', baa: true, qsoa: true, counsel_reviewed: true, covers_assistant: true, covers_counseling: true }));
+  try {
+    // A clinician writes clinical notes (reads counseling notes): the section is present and holds the note's words.
+    const { text, sections } = X.clientBrief(clinCtx, client.id);
+    assert.ok(sections.some(s => s.id === 'client.notes'), 'the counseling-notes section is in the pack');
+    assert.match(text, /SUD counseling notes \(42 CFR Part 2\) \[client.notes\]/, 'headed and cited');
+    assert.ok(text.includes('COUNSELING-BODY'), 'the counseling note content is in the pack (deidentify masks it before it is sent)');
+    // The note belongs to clinUser and the client is in reach; a clinician may read it. A navigator (read, not write)
+    // who did not author or co-sign it may not: the counselingFilter leaves it out, so its body never appears.
+    const navText = X.clientBrief(navCtx, client.id).text;
+    assert.ok(!navText.includes('COUNSELING-BODY'), 'a navigator who may not read the counseling note never sees its body');
+  } finally { db.setSetting('ai_attestation', prev === null ? '' : prev); } // '' → attestation() reads it back as none
 });
 
 test('a client brief refuses a client off the caller\'s caseload, and audits the refusal', () => {

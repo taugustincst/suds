@@ -187,11 +187,15 @@ module.exports = define({
         if (!p || p.client_id !== clientId) { out.push(refuse('has a value the office does not accept (it is linked to a problem that is not on this client\'s problem list)', { message: 'Validation failed', fields: { problem_ids: 'names a problem that is not on this client\'s problem list' } })); break; }
       }
     }
-    // A SUD counseling note is never drafted with the AI copilot (docs/AI-COPILOT.md; the strategy's rule until
-    // counsel says otherwise): a note with copilot text cannot become one, nor a counseling note take copilot text.
+    // A SUD counseling note may include AI-copilot text only once the agreement is recorded as covering counseling
+    // notes (the fifth attestation statement, counsel-reviewed; the owner's decision of 2026-10-24). Until then the
+    // old rule stands: a note with copilot text cannot become one, nor a counseling note take copilot text. Read the
+    // attestation setting directly (no copilot import, so the rule stays usable in the sync kernel); absent it is off.
+    let counselingCovered = false;
+    try { const at = JSON.parse(db.getSetting('ai_attestation', '') || 'null'); counselingCovered = !!(at && at.covers_counseling === true); } catch { counselingCovered = false; }
     const counseling = Number(row.counseling_note ?? e.counseling_note) === 1;
     const ai = Number(row.ai_assisted) === 1 || Number(e.ai_assisted) === 1;
-    if (counseling && ai && (!c.existing || ['counseling_note', 'ai_assisted'].some(k => row[k] !== undefined && row[k] !== null && Number(row[k]) !== Number(e[k] || 0)))) {
+    if (!counselingCovered && counseling && ai && (!c.existing || ['counseling_note', 'ai_assisted'].some(k => row[k] !== undefined && row[k] !== null && Number(row[k]) !== Number(e[k] || 0)))) {
       if (fromDraft && Number(e.ai_assisted) !== 1) out.push(refuse('has a value the office does not accept (a SUD counseling note cannot include text drafted by the AI copilot: a copilot draft for this client is not in a note yet)', { message: `You asked the AI copilot for a note draft for this client in the last ${AI_DRAFT_MINUTES / 60} hours that has not been saved in a note, so this note is treated as including it, and a SUD counseling note cannot include text drafted by the AI copilot. Save the drafted note first, or write the counseling note later.`, fields: { counseling_note: 'a copilot draft for this client is not in a note yet' } }));
       else out.push(refuse('has a value the office does not accept (a SUD counseling note cannot include text drafted by the AI copilot)', { message: 'A SUD counseling note cannot include text drafted by the AI copilot', fields: { counseling_note: 'this note has AI-drafted text; a SUD counseling note is written without the copilot' } }));
     }

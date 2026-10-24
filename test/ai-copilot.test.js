@@ -518,6 +518,22 @@ test('the copilot does not draft a SUD counseling note, and a note with copilot 
   assert.equal((await clin.post('/api/notes', { client_id: clientId, kind: 'clinical', content: 'x', occurred_at: new Date().toISOString(), ai_assisted: true, counseling_note: true })).status, 400);
 });
 
+test('with the agreement recorded as covering counseling notes, the copilot drafts one and a counseling note may carry copilot text (owner decision 2026-10-24)', async () => {
+  // Record the agreement again with the fifth statement, then the gate opens.
+  assert.equal((await admin.post('/api/ai/attestation', { provider: 'Anthropic', signed_by: 'County counsel office', agreement_date: '2026-01-15', reference: 'BAA-2026-017', baa: true, qsoa: true, counsel_reviewed: true, covers_counseling: true })).status, 201);
+  fresh(); reply = () => okJson({ narrative: 'Counseling draft.', gaps: [] });
+  const before = calls.length;
+  const r = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'Session analysis.', counseling_note: true });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(calls.length, before + 1, 'the source text was sent, through the same masked path');
+  // And a note may be both AI-assisted and a counseling note now.
+  const a = await clin.post('/api/notes', { client_id: clientId, kind: 'clinical', content: 'Drafted.', occurred_at: new Date().toISOString(), ai_assisted: true, counseling_note: true });
+  assert.equal(a.status, 201, JSON.stringify(a.data));
+  assert.equal(H.db.one(`SELECT counseling_note, ai_assisted FROM notes WHERE id=?`, a.data.id).counseling_note, 1);
+  // Put the agreement back without the fifth statement for the tests that follow.
+  await attestAndEnable();
+});
+
 test('a client with an agreed restriction: the copilot refuses to send their text (security review r10, L6)', async () => {
   fresh(); reply = () => okJson({ narrative: 'Draft.', gaps: [] });
   const r0 = await clin.post('/api/clients', { first_name: 'Rhea', last_name: 'Restricted', confirm_duplicate: true });

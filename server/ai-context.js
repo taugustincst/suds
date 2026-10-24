@@ -6,9 +6,13 @@
 // version): dates, kinds, statuses, counts, the care plan's own entries, supply levels, the referral directory, and
 // the short free text workers write on those records: a contact's summary, a referral's outcome, barrier and notes,
 // a to-do's title and details. All of it goes through the copilot's identifier replacement before anything is sent,
-// like every piece of a draft. A note's content is never read for a pack, and SUD counseling notes (42 CFR §2.11)
-// are not read at all: the only notes query here counts the person's own unsigned drafts, counseling notes left out
-// of the count itself.
+// like every piece of a draft. A progress or administrative note's body is still not read for a pack (v1). SUD
+// counseling notes are read for the client pack only when the agreement is recorded as covering them
+// (AI.counselingCovered(), the fifth attestation statement — the owner's decision of 2026-10-24 reversing the old
+// blanket exclusion), and then only the counseling notes the person may already read (rules/notes.js
+// counselingFilter), their content masked by the copilot's identifier replacement like everything else. Without that
+// attestation a counseling note is read for no pack, exactly as before; the day unsigned-note count now counts the
+// person's own counseling drafts (a count, never content).
 //
 // Each pack is { text, sections: [{ id, label }] }: plain text under one heading per section, each heading carrying
 // its id ("## Contacts and visits [client.contacts]") so the answer can cite it. A section is in the pack only when
@@ -27,6 +31,7 @@ const { notFound } = require('./http');
 
 const CAP = 50;
 const CONTACTS = 10;
+const NOTES = 5;
 const SUPPLY_DAYS = 90;
 const CLOSED_REFERRAL = ['completed', 'closed', 'declined_by_client', 'declined_by_provider'];
 const OPEN_TASK = `status IN ('open','in_progress')`;
@@ -140,6 +145,23 @@ function clientBrief(ctx, clientId) {
     b.add('client.referrals', 'Open referrals', k.rows, { more: k.more, empty: 'No open referrals.' });
   }
 
+  // SUD counseling notes (42 CFR §2.11): read only when the agreement is recorded as covering them
+  // (AI.counselingCovered(), the fifth attestation statement; the owner's decision of 2026-10-24) and only the
+  // counseling notes this person may already read — a clinical read/write role, narrowed by counselingFilter to
+  // their own, their co-signed, or (for a clinician/supervisor) all. The note's own words, most recent first,
+  // capped; masked by the copilot before anything is sent. Progress and administrative note bodies are not read.
+  if (require('./ai-copilot').counselingCovered() && (may('notes:clinical:read') || may('notes:clinical:write'))) {
+    const f = require('./rules/notes').counselingFilter(u, 'n');
+    const rows = db.all(`SELECT occurred_at, status, title_enc, content_enc FROM notes n
+      WHERE n.client_id=? AND n.kind='clinical' AND n.counseling_note=1 AND n.deleted_at IS NULL AND ${f.sql}
+      ORDER BY n.occurred_at DESC LIMIT ?`, clientId, ...f.params, NOTES);
+    const k = capped(rows.map(r => {
+      const t = one(plain(r.title_enc), 120); const body = one(plain(r.content_enc), 600);
+      return body ? `${day(r.occurred_at)} (${r.status}${t ? `, ${t}` : ''}): ${body}` : '';
+    }).filter(Boolean));
+    b.add('client.notes', 'SUD counseling notes (42 CFR Part 2)', k.rows, { more: k.more, empty: 'No SUD counseling notes you can read.' });
+  }
+
   // What is coming up: open to-dos for this client that the person may see (what each is, with its title), and
   // referral appointments from today on.
   const upcoming = [];
@@ -203,9 +225,9 @@ function myDay(ctx, dateISO = LD.today()) {
     b.add('day.overdue', 'Overdue to-dos', o.rows, { more: o.more, empty: 'Nothing overdue.' });
   }
 
-  // A count and the oldest date of the person's own unsigned notes: never a note's text, and SUD counseling notes
-  // (§2.11) are not counted at all.
-  const n = db.one(`SELECT COUNT(*) n, MIN(occurred_at) oldest FROM notes WHERE author_id=? AND status='draft' AND deleted_at IS NULL AND counseling_note=0`, u.id);
+  // A count and the oldest date of the person's own unsigned notes: never a note's text. Their own counseling-note
+  // drafts are counted too (a count, never content; the owner's decision of 2026-10-24 reversing the old exclusion).
+  const n = db.one(`SELECT COUNT(*) n, MIN(occurred_at) oldest FROM notes WHERE author_id=? AND status='draft' AND deleted_at IS NULL`, u.id);
   b.add('day.unsigned', 'Your unsigned notes', n.n ? [`${n.n} unsigned note${n.n === 1 ? '' : 's'}; the oldest is from ${day(n.oldest)}`] : [], { empty: 'None.' });
   return { ...b.done(), refs: new Map([...refs].map(([id, r]) => [r, id])) };
 }

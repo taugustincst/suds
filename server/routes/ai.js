@@ -124,6 +124,10 @@ module.exports = (r) => {
       // A fourth statement, needed only for the assistant (not for drafts): the agreement covers conversational
       // assistant use (questions and record-derived summaries), not only documentation drafts.
       covers_assistant: { type: 'boolean' },
+      // A fifth statement (the owner's decision of 2026-10-24): the agreement, as counsel has reviewed it, covers SUD
+      // counseling notes (42 CFR §2.11). Without it a counseling note is never drafted and never summarised, exactly
+      // as before. With it, counseling-note content may flow through the same masked path as everything else.
+      covers_counseling: { type: 'boolean' },
     });
     const missing = {};
     if (!v.baa) missing.baa = 'Confirm that a HIPAA business associate agreement with this provider is in place.';
@@ -135,11 +139,11 @@ module.exports = (r) => {
     // drafts are refused while the server is set up for another (ai-copilot.js status(), provider_changed).
     if (!AP.current()) throw badRequest(`This server's AI provider is not one SUDS knows (${AP.configProblem()}).`);
     const a = { provider: v.provider, configured_provider: AP.id(), signed_by: v.signed_by, agreement_date: v.agreement_date, reference: v.reference, baa: true, qsoa: true, counsel_reviewed: true,
-      covers_assistant: !!v.covers_assistant, recorded_by: ctx.user.id, recorded_by_name: ctx.user.display_name || ctx.user.username, recorded_at: db.now() };
+      covers_assistant: !!v.covers_assistant, covers_counseling: !!v.covers_counseling, recorded_by: ctx.user.id, recorded_by_name: ctx.user.display_name || ctx.user.username, recorded_at: db.now() };
     db.setSetting('ai_attestation', JSON.stringify(a));
     // An agreement recorded again without the assistant statement takes the assistant off with it.
     if (!a.covers_assistant) db.setSetting('ai_assistant_enabled', '0');
-    audit.log({ user: ctx.user, action: 'ai.attestation.record', ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true, covers_assistant: a.covers_assistant } });
+    audit.log({ user: ctx.user, action: 'ai.attestation.record', ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true, covers_assistant: a.covers_assistant, covers_counseling: a.covers_counseling } });
     ctx.status = 201; return { ok: true, attestation: a };
   });
   // Withdrawing it (the agreement ended, or was never right) switches the copilot off at once.
@@ -189,17 +193,20 @@ module.exports = (r) => {
     const v = validate(ctx.body, { client_id: { type: 'string', required: true }, kind: { type: 'string', required: true, enum: ['clinical', 'admin'] },
       format: { type: 'string', enum: P.NOTE_FORMATS }, source_text: { ...text, required: true }, note_id: { type: 'string' }, counseling_note: { type: 'boolean' } });
     if (!auth.hasPerm(ctx.user, `notes:${v.kind}:write`)) throw forbidden(`You cannot author ${v.kind} notes`);
-    // A SUD counseling note (42 CFR §2.11) is never drafted with the copilot until counsel says otherwise
-    // (docs/AI-COPILOT.md, docs/market/STRATEGY.md): not one being written with the box ticked, nor a saved one.
-    const COUNSELING = 'The AI copilot is not used for SUD counseling notes (§2.11). Write this note yourself, or untick "SUD counseling note" if it is not one.';
-    if (v.counseling_note) throw badRequest(COUNSELING, { ai_error: 'counseling_note' });
+    // A SUD counseling note (42 CFR §2.11) may be drafted with the copilot only once the agreement is recorded as
+    // covering counseling notes (AI.counselingCovered(), the fifth attestation statement, counsel-reviewed; the
+    // owner's decision of 2026-10-24). Until then the old refusal stands: not one written with the box ticked, nor a
+    // saved one. Either way the source text goes to the provider only through deidentify, like every draft.
+    const COUNSELING = 'The agreement with the AI provider has not been recorded as covering SUD counseling notes (§2.11). An administrator records that under Settings → AI copilot (counsel-reviewed), or write this note yourself, or untick "SUD counseling note" if it is not one.';
+    const counselingOk = AI.counselingCovered();
+    if (v.counseling_note && !counselingOk) throw badRequest(COUNSELING, { ai_error: 'counseling_note' });
     clientFor(ctx, v.client_id, 'note');
     if (v.note_id) {
       const n = db.one(`SELECT client_id, author_id, status, kind, counseling_note FROM notes WHERE id=? AND deleted_at IS NULL`, v.note_id);
       if (!n || n.client_id !== v.client_id) throw notFound('Note not found');
       if (n.author_id !== ctx.user.id) throw forbidden('The AI copilot drafts only in your own note');
       if (n.status !== 'draft') throw badRequest('A signed note cannot be redrafted; add an addendum instead');
-      if (Number(n.counseling_note)) throw badRequest(COUNSELING, { ai_error: 'counseling_note' });
+      if (Number(n.counseling_note) && !counselingOk) throw badRequest(COUNSELING, { ai_error: 'counseling_note' });
     }
     const format = v.format || 'narrative';
     const out = await run(ctx, { clientId: v.client_id, feature: 'note', pieces: { text: v.source_text },
