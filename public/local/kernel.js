@@ -11274,8 +11274,10 @@ var require_permissions = __commonJS({
       "assignments:manage",
       "clients:read",
       "clients:list-deidentified",
-      // ai:draft (1.17.0) sends de-identified session text about a client to the AI provider (docs/AI-COPILOT.md).
+      // ai:draft (1.17.0) sends de-identified session text about a client to the AI provider (docs/AI-COPILOT.md); ai:ask
+      // (the assistant) sends de-identified summaries of records the person may see, with their question.
       "ai:draft",
+      "ai:ask",
       // county:manage decides whose signed figures a county accepts (it registers the keys they are checked with).
       "county:manage",
       // intake:read and intake:write (1.24.0) open the names and needs of everyone referred to the programme, client or not.
@@ -11292,7 +11294,7 @@ var require_permissions = __commonJS({
       if (deidentified && IDENTIFYING.includes(permission)) return `A ${role} account knows clients by client code only (de-identified), so it cannot be granted "${permission}", which would let it identify them. If this person needs to open client records, give them a role that does.`;
       if (role === "admin" && (permission === "notes:clinical:read" || permission === "notes:clinical:write")) return `An administrator reads a clinical note only by break-glass (a reason, recorded and reviewed by a supervisor), so "${permission}" cannot be granted to an administrator. Someone who also treats clients needs a clinician or supervisor account for that work.`;
       if (permission === "records:manage-others" && !defaults.includes("clients:write")) return `"${permission}" can only be granted to a role that records client work (navigator, clinician, supervisor, administrator)`;
-      if (permission === "ai:draft" && !defaults.includes("clients:write")) return `"${permission}" can only be granted to a role that documents client work (navigator, clinician, supervisor, administrator)`;
+      if ((permission === "ai:draft" || permission === "ai:ask") && !defaults.includes("clients:write")) return `"${permission}" can only be granted to a role that documents client work (navigator, clinician, supervisor, administrator)`;
       if (COUNTY_PERMS.includes(permission) && !defaults.some((p) => EXACT_COUNTS.includes(p))) return `"${permission}" can only be granted to a role that sees exact aggregate counts (finance, supervisor, administrator): the county view's figures are exact and not for publication`;
       if (permission === "clients:list-deidentified" && defaults.some((p) => IDENTIFYING.includes(p))) return `"clients:list-deidentified" is how a de-identified role (finance, read-only) lists clients by code. A ${role} already opens client records; to show them every client (not only their caseload), clients:all is the permission.`;
       return null;
@@ -11366,7 +11368,8 @@ var require_permissions = __commonJS({
       ["intake:read", "See incoming referrals", "The intake queue: every referral to the program from a hospital, jail, detox, probation or court, another provider, the person or their family, with the person's name, contact details and needs, before they are a client. Open referrals are not limited to a caseload; an accepted one is shown only to those who may open its client. Navigators, clinicians, supervisors and administrators by default."],
       ["intake:write", "Work incoming referrals", "Record a referral to the program, log attempts to reach the person, assign it, and accept it (linking or creating the client record) or close it as declined, unable to reach or referred elsewhere. Navigators, clinicians, supervisors and administrators by default."],
       ["policies:manage", "Manage policy sign-offs", "See which staff have signed the current revision of each required policy, import the PowerDMS signature or training report, and record or remove a sign-off by hand. Everyone sees their own sign-offs without it."],
-      ["ai:draft", "Use the AI documentation copilot", "Ask the AI copilot for a draft (progress note sections, assessment narratives, care plan and CalOMS suggestions) from text they give it, with identifiers replaced before it is sent. Only while an administrator has recorded the agreement with the provider and switched the copilot on. Clinicians, supervisors and navigators by default."]
+      ["ai:draft", "Use the AI documentation copilot", "Ask the AI copilot for a draft (progress note sections, assessment narratives, care plan and CalOMS suggestions) from text they give it, with identifiers replaced before it is sent. Only while an administrator has recorded the agreement with the provider and switched the copilot on. Clinicians, supervisors and navigators by default."],
+      ["ai:ask", "Use the AI assistant", "Ask the AI assistant questions about a client in their reach, their own day, or programme information. The assistant answers from record summaries the server prepares, with identifiers replaced before anything is sent, and never changes a record. Only while an administrator has recorded the agreement with the provider, confirmed it covers assistant use, and switched the assistant on. Clinicians, supervisors and navigators by default."]
     ];
     var PERMISSION_CATALOG = DEFS.map(([name, label, description]) => ({
       name,
@@ -27368,6 +27371,8 @@ var require_ai_copilot = __commonJS({
       const cap = Number(db3.getSetting("ai_monthly_cap", String(DEFAULT_CAP)));
       return {
         enabled: db3.getSetting("ai_enabled", "0") === "1",
+        // The assistant (server/ai-assistant.js): off unless switched on, even with the copilot on.
+        assistant_enabled: db3.getSetting("ai_assistant_enabled", "0") === "1",
         model: db3.getSetting("ai_model", null) || providers.defaultModel(),
         default_model: providers.defaultModel(),
         monthly_cap: Number.isInteger(cap) && cap >= 0 ? cap : DEFAULT_CAP,
@@ -27424,7 +27429,25 @@ var require_ai_copilot = __commonJS({
       else if (!s.monthly_cap) no("cap", "The AI copilot is paused for this program. Write the documentation yourself as usual.");
       else if (reserved >= s.monthly_cap) no("cap", `This program has used its ${s.monthly_cap} AI draft${s.monthly_cap === 1 ? "" : "s"} for this month. Write the documentation yourself; the limit resets on the 1st of each month.`);
       else if (cost.capReached(u)) no("cap", "This program has reached its AI spending limit for this month. Write the documentation yourself; the limit resets on the 1st of each month.");
-      return { available: !reason, reason, code, enabled: s.enabled, attested: !!s.attestation, key_configured: keyConfigured(), provider: providers.id(), model: s.model, monthly_cap: s.monthly_cap, used_this_month: used };
+      return {
+        available: !reason,
+        reason,
+        code,
+        enabled: s.enabled,
+        attested: !!s.attestation,
+        key_configured: keyConfigured(),
+        provider: providers.id(),
+        model: s.model,
+        monthly_cap: s.monthly_cap,
+        used_this_month: used,
+        assistant: assistantStatus({ available: !reason, reason, code }, s)
+      };
+    }
+    function assistantStatus(copilot, s) {
+      if (!copilot.available) return { available: false, code: copilot.code, reason: copilot.reason };
+      if (!s.assistant_enabled) return { available: false, code: "assistant_off", reason: "The AI assistant is switched off for this program (Settings \u2192 AI copilot)." };
+      if (!(s.attestation && s.attestation.covers_assistant === true)) return { available: false, code: "agreement_scope", reason: "The AI assistant is off: the agreement recorded with the AI provider has not been confirmed to cover assistant use (questions and record summaries), only documentation drafts. An administrator records that under Settings \u2192 AI copilot." };
+      return { available: true, code: null, reason: null };
     }
     var esc = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     var NOT_NAMES = /* @__PURE__ */ new Set([
@@ -27762,7 +27785,7 @@ var require_ai_copilot = __commonJS({
     function buildRequest(prompt, model) {
       const body = {
         model,
-        max_tokens: MAX_TOKENS,
+        max_tokens: prompt.max_tokens || MAX_TOKENS,
         // The rules and task are the same for every call of a feature, so they are cached; the session text is not.
         system: [{ type: "text", text: prompt.system, cache_control: { type: "ephemeral" } }],
         messages: [{ role: "user", content: prompt.user }],
@@ -27851,19 +27874,20 @@ var require_ai_copilot = __commonJS({
         Math.max(0, Math.round(ms || 0))
       );
     }
-    async function draft({ user, clientId, feature, pieces, build }) {
+    async function draft({ user, clientId, feature, pieces, build, assistant = false, ids = null, check = null }) {
       const st = status();
-      if (!st.available) throw new AiError(st.code === "cap" ? "cap" : "off", st.code === "cap" ? 429 : 409, st.reason, { ai_unavailable: st.code });
+      const gate = assistant ? st.assistant : st;
+      if (!gate.available) throw new AiError(gate.code === "cap" ? "cap" : "off", gate.code === "cap" ? 429 : 409, gate.reason, { ai_unavailable: gate.code });
       inFlight++;
       try {
-        return await sendDraft({ user, clientId, feature, pieces, build });
+        return await sendDraft({ user, clientId, feature, pieces, build, ids, check });
       } finally {
         inFlight--;
       }
     }
-    async function sendDraft({ user, clientId, feature, pieces, build }) {
+    async function sendDraft({ user, clientId, feature, pieces, build, ids: given = null, check = null }) {
       const author = db3.one(`SELECT display_name FROM users WHERE id=?`, user.id);
-      const ids = identifiersFor(clientId, author);
+      const ids = given || identifiersFor(clientId, author);
       const counts = {};
       const clean2 = {};
       for (const [k, v] of Object.entries(pieces)) {
@@ -27878,6 +27902,14 @@ var require_ai_copilot = __commonJS({
       const t0 = Date.now();
       try {
         const r = await send(prompt, model);
+        if (check) {
+          try {
+            check(r.data);
+          } catch (e) {
+            if (e instanceof AiError) e.extra = { ...e.extra, tokens: r.tokens };
+            throw e;
+          }
+        }
         recordUsage({ user, feature, model, outcome: "ok", tokens: r.tokens, ms: Date.now() - t0 });
         return { data: reidentify(r.data, ids), tokens: r.tokens, model: r.model, counts, sent_chars: prompt.user.length };
       } catch (e) {
@@ -27935,11 +27967,11 @@ var require_ai = __commonJS({
     var { decrypt: decrypt3 } = require_crypto();
     var text = { type: "string", maxLen: AI.MAX_TEXT };
     var PER_USER_PER_MINUTE = 12;
-    function clientFor(ctx, clientId, feature) {
+    function clientFor(ctx, clientId, feature, action = "ai.draft") {
       if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, clientId)) throw notFound("Client not found");
       auth3.assertClientAccess(ctx, clientId);
       if (require_disclosure().agreedRestrictions(clientId)) {
-        audit3.log({ user: ctx.user, action: "ai.draft", entity: "client", entityId: clientId, clientId, ip: ctx.ip, success: false, details: { feature, outcome: "restriction" } });
+        audit3.log({ user: ctx.user, action, entity: "client", entityId: clientId, clientId, ip: ctx.ip, success: false, details: { feature, outcome: "restriction" } });
         throw new HttpError3(409, "This client has an agreed restriction on how their information is used or shared (see their Requests tab), so the AI copilot is not used for their records. Write this yourself.", { ai_error: "restriction" });
       }
     }
@@ -27982,7 +28014,7 @@ var require_ai = __commonJS({
     module.exports = (r) => {
       r.get("/api/ai/status", auth3.requireAuth, (ctx) => {
         const st = AI.status();
-        return { ...st, can_draft: auth3.hasPerm(ctx.user, "ai:draft"), office: true };
+        return { ...st, can_draft: auth3.hasPerm(ctx.user, "ai:draft"), can_ask: auth3.hasPerm(ctx.user, "ai:ask"), office: true };
       });
       r.get("/api/ai/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), () => {
         const st = AI.settings();
@@ -28001,6 +28033,7 @@ var require_ai = __commonJS({
         const price = { type: "number", min: 0, max: COST.MAX_PRICE };
         const v = validate(ctx.body, {
           enabled: { type: "boolean" },
+          assistant_enabled: { type: "boolean" },
           model: { type: "string", maxLen: 100 },
           monthly_cap: { type: "number", integer: true, min: 0, max: 1e5 },
           price_input: price,
@@ -28016,11 +28049,19 @@ var require_ai = __commonJS({
           if (!AI.keyConfigured()) throw badRequest(AP.id() === "anthropic" ? "This server has no AI provider key (ANTHROPIC_API_KEY in its environment). Set it and restart SUDS, then switch the copilot on." : `This server has no credentials for ${AP.label()} (${AP.describe().credentials_hint} in its environment). Set them and restart SUDS, then switch the copilot on.`, { fields: { enabled: "no provider key on the server" } });
           if (AI.attestedProvider(was.attestation) !== AP.id()) throw badRequest(`The agreement recorded is with ${AP.label(AI.attestedProvider(was.attestation))}, but this server sends drafts to ${AP.label()}. Withdraw it and record the agreement with ${AP.label()} first.`, { fields: { enabled: "the agreement is with another provider" } });
         }
+        if (v.assistant_enabled === 1 && !was.assistant_enabled) {
+          if (!was.attestation) throw badRequest("Record the programme's agreement (BAA / QSOA) with the AI provider before switching the assistant on", { fields: { assistant_enabled: "needs the agreement recorded first" } });
+          if (was.attestation.covers_assistant !== true) throw badRequest("Confirm that the agreement with the AI provider covers assistant use (questions and record summaries) before switching the assistant on: record the agreement again with that statement ticked.", { fields: { assistant_enabled: "the agreement is not confirmed to cover assistant use" } });
+        }
         const changed = [];
         db3.transaction(() => {
           if (v.enabled !== void 0) {
             db3.setSetting("ai_enabled", v.enabled ? "1" : "0");
             changed.push("enabled");
+          }
+          if (v.assistant_enabled !== void 0) {
+            db3.setSetting("ai_assistant_enabled", v.assistant_enabled ? "1" : "0");
+            changed.push("assistant_enabled");
           }
           if (v.model !== void 0) {
             if (v.model) db3.setSetting("ai_model", v.model);
@@ -28037,6 +28078,7 @@ var require_ai = __commonJS({
         audit3.log({ user: ctx.user, action: "ai.settings.update", ip: ctx.ip, details: {
           changed,
           enabled: now2.enabled,
+          assistant_enabled: now2.assistant_enabled,
           model: now2.model,
           monthly_cap: now2.monthly_cap,
           price_input: now2.price_input,
@@ -28053,7 +28095,10 @@ var require_ai = __commonJS({
           reference: { type: "string", required: true, maxLen: 300 },
           baa: { type: "boolean" },
           qsoa: { type: "boolean" },
-          counsel_reviewed: { type: "boolean" }
+          counsel_reviewed: { type: "boolean" },
+          // A fourth statement, needed only for the assistant (not for drafts): the agreement covers conversational
+          // assistant use (questions and record-derived summaries), not only documentation drafts.
+          covers_assistant: { type: "boolean" }
         });
         const missing = {};
         if (!v.baa) missing.baa = "Confirm that a HIPAA business associate agreement with this provider is in place.";
@@ -28071,12 +28116,14 @@ var require_ai = __commonJS({
           baa: true,
           qsoa: true,
           counsel_reviewed: true,
+          covers_assistant: !!v.covers_assistant,
           recorded_by: ctx.user.id,
           recorded_by_name: ctx.user.display_name || ctx.user.username,
           recorded_at: db3.now()
         };
         db3.setSetting("ai_attestation", JSON.stringify(a));
-        audit3.log({ user: ctx.user, action: "ai.attestation.record", ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true } });
+        if (!a.covers_assistant) db3.setSetting("ai_assistant_enabled", "0");
+        audit3.log({ user: ctx.user, action: "ai.attestation.record", ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true, covers_assistant: a.covers_assistant } });
         ctx.status = 201;
         return { ok: true, attestation: a };
       });
@@ -28084,6 +28131,7 @@ var require_ai = __commonJS({
         const was = AI.attestation();
         db3.run(`DELETE FROM settings WHERE key='ai_attestation'`);
         db3.setSetting("ai_enabled", "0");
+        db3.setSetting("ai_assistant_enabled", "0");
         audit3.log({ user: ctx.user, action: "ai.attestation.withdraw", ip: ctx.ip, details: { had: !!was, provider: was ? was.provider : void 0, reference: was ? was.reference : void 0 } });
         return { ok: true };
       });
@@ -53384,6 +53432,7 @@ var require_auth2 = __commonJS({
         "reports:funder",
         "supplies:*",
         "ai:draft",
+        "ai:ask",
         "county:view",
         "intake:read",
         "intake:write",
@@ -53426,6 +53475,7 @@ var require_auth2 = __commonJS({
         "supplies:read",
         "supplies:receive",
         "ai:draft",
+        "ai:ask",
         "intake:read",
         "intake:write"
       ],
@@ -53462,6 +53512,7 @@ var require_auth2 = __commonJS({
         "supplies:read",
         "supplies:receive",
         "ai:draft",
+        "ai:ask",
         "intake:read",
         "intake:write"
       ],

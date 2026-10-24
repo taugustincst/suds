@@ -13,8 +13,9 @@ const PRIVILEGED_PERMISSIONS = ['users:manage', 'settings:manage', 'apikeys:mana
 // records:manage-others (1.16.0) changes, deletes and records under the name of other workers' work.
 const SENSITIVE = new Set(['export:identified', 'clients:all', 'records:manage-others', 'disclosures:override', 'notes:clinical:breakglass', 'clients:merge', 'clients:legal-hold',
   'assignments:manage', 'clients:read', 'clients:list-deidentified',
-  // ai:draft (1.17.0) sends de-identified session text about a client to the AI provider (docs/AI-COPILOT.md).
-  'ai:draft',
+  // ai:draft (1.17.0) sends de-identified session text about a client to the AI provider (docs/AI-COPILOT.md); ai:ask
+  // (the assistant) sends de-identified summaries of records the person may see, with their question.
+  'ai:draft', 'ai:ask',
   // county:manage decides whose signed figures a county accepts (it registers the keys they are checked with).
   'county:manage',
   // intake:read and intake:write (1.24.0) open the names and needs of everyone referred to the programme, client or not.
@@ -49,7 +50,7 @@ function grantProblem(role, roleDefaults, permission) {
   // Refused for the role, so a grant left from before is ignored at request time too (auth.js permsFrom).
   if (role === 'admin' && (permission === 'notes:clinical:read' || permission === 'notes:clinical:write')) return `An administrator reads a clinical note only by break-glass (a reason, recorded and reviewed by a supervisor), so "${permission}" cannot be granted to an administrator. Someone who also treats clients needs a clinician or supervisor account for that work.`;
   if (permission === 'records:manage-others' && !defaults.includes('clients:write')) return `"${permission}" can only be granted to a role that records client work (navigator, clinician, supervisor, administrator)`;
-  if (permission === 'ai:draft' && !defaults.includes('clients:write')) return `"${permission}" can only be granted to a role that documents client work (navigator, clinician, supervisor, administrator)`;
+  if ((permission === 'ai:draft' || permission === 'ai:ask') && !defaults.includes('clients:write')) return `"${permission}" can only be granted to a role that documents client work (navigator, clinician, supervisor, administrator)`;
   // The county view's figures are exact, small counts included, and not for publication: only a role that sees exact
   // aggregate counts (reports:exact or reports:funder: finance, supervisor, administrator) may hold it. Read-only's
   // reports are publication releases, and front-line roles run no submission.
@@ -128,6 +129,7 @@ const DEFS = [
   ['intake:write', 'Work incoming referrals', 'Record a referral to the program, log attempts to reach the person, assign it, and accept it (linking or creating the client record) or close it as declined, unable to reach or referred elsewhere. Navigators, clinicians, supervisors and administrators by default.'],
   ['policies:manage', 'Manage policy sign-offs', 'See which staff have signed the current revision of each required policy, import the PowerDMS signature or training report, and record or remove a sign-off by hand. Everyone sees their own sign-offs without it.'],
   ['ai:draft', 'Use the AI documentation copilot', 'Ask the AI copilot for a draft (progress note sections, assessment narratives, care plan and CalOMS suggestions) from text they give it, with identifiers replaced before it is sent. Only while an administrator has recorded the agreement with the provider and switched the copilot on. Clinicians, supervisors and navigators by default.'],
+  ['ai:ask', 'Use the AI assistant', 'Ask the AI assistant questions about a client in their reach, their own day, or programme information. The assistant answers from record summaries the server prepares, with identifiers replaced before anything is sent, and never changes a record. Only while an administrator has recorded the agreement with the provider, confirmed it covers assistant use, and switched the assistant on. Clinicians, supervisors and navigators by default.'],
 ];
 
 const PERMISSION_CATALOG = DEFS.map(([name, label, description]) => ({
