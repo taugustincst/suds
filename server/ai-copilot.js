@@ -68,6 +68,15 @@ const attestedProvider = (a) => (a && typeof a.configured_provider === 'string' 
  * never summarised). Reversed from the old blanket exclusion by the owner's decision of 2026-10-24.
  */
 const counselingCovered = () => { const a = attestation(); return !!(a && a.covers_counseling === true); };
+/**
+ * The endpoint override (SUDS_AI_BASE_URL) is where client records are actually sent — a gateway, a private
+ * endpoint, a proxy. If it changed since the agreement was recorded, where records go has changed, so the
+ * copilot is off until an administrator records the agreement again (confirming the new destination). Only
+ * checked when the attestation carries the endpoint it was recorded against (every one recorded from 1.27.1
+ * on); an older attestation is unaffected until it is recorded again.
+ */
+const currentAiEndpoint = () => process.env.SUDS_AI_BASE_URL || '';
+const endpointChanged = (a) => !!(a && Object.prototype.hasOwnProperty.call(a, 'configured_base_url') && (a.configured_base_url || '') !== currentAiEndpoint());
 
 function monthStart(now = new Date()) { return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString(); }
 // The outcomes that count as a draft against the monthly cap: the provider answered and did the work (a draft,
@@ -110,6 +119,7 @@ function status() {
   else if (!keyConfigured()) no('no_key', 'The AI copilot is not configured on this server (no provider API key). Tell your administrator.');
   else if (endpointProblem()) no('endpoint', `The AI copilot is misconfigured on this server: ${endpointProblem()}.`);
   else if (attestedProvider(s.attestation) !== providers.id()) no('provider_changed', `The AI copilot is off: the agreement recorded is with ${providers.label(attestedProvider(s.attestation))}, but this server sends drafts to ${providers.label()}. An administrator must record the agreement with ${providers.label()} (Settings → AI copilot).`);
+  else if (endpointChanged(s.attestation)) no('endpoint_changed', 'The AI copilot is off: the AI endpoint (SUDS_AI_BASE_URL) — where client records are sent — changed since the agreement was recorded. An administrator must record the agreement again to confirm the new destination (Settings → AI copilot).');
   else if (!s.monthly_cap) no('cap', 'The AI copilot is paused for this program. Write the documentation yourself as usual.');
   else if (reserved >= s.monthly_cap) no('cap', `This program has used its ${s.monthly_cap} AI draft${s.monthly_cap === 1 ? '' : 's'} for this month. Write the documentation yourself; the limit resets on the 1st of each month.`);
   else if (cost.capReached(u)) no('cap', 'This program has reached its AI spending limit for this month. Write the documentation yourself; the limit resets on the 1st of each month.');
@@ -429,6 +439,36 @@ function recordUsage({ user, feature, model, outcome, tokens = {}, ms }) {
     uuid(), db.now(), user ? user.id : null, feature, model, outcome, tokens.input_tokens || 0, tokens.output_tokens || 0, Math.max(0, Math.round(ms || 0)));
 }
 
+// ---------------------------------------------------------------- accounting of disclosures for AI egress
+// Sending a client's record content to the AI provider is a disclosure to a business associate (45 CFR
+// §164.502(e)) and, for Part 2 records, a qualified service organisation (42 CFR §2.12(c)(4)). The identifier
+// replacement masks the identifiers SUDS holds, but it is best-effort pattern masking, not a recognised
+// de-identification standard, and the underlying SUD treatment information stays protected either way — so,
+// like every other thing that leaves the programme (server/disclosure.js), each AI call is written to the
+// client's accounting of disclosures (§164.528 / §2.25). The row records the authority and the provider,
+// never the content (which is masked before sending and is never stored in the record). It is written at the
+// point of transmission — after the gate and the identifier replacement, immediately before the request is
+// sent — so a rare transport failure may record a disclosure that did not complete: the ledger errs toward
+// over-accounting, never toward a silent, unaccounted disclosure. The AI feature is office-server only, so
+// this never runs on a device. `assistant` with a day pack accounts for every client whose record was in it.
+const aiRecipient = () => `${providers.label()} (AI provider — business associate / qualified service organisation)`;
+function aiPurpose(feature) {
+  return feature === 'assistant'
+    ? 'AI assistant: a summary of records sent to the AI provider to answer a staff question (business associate use, 45 CFR §164.502(e); qualified service organisation, 42 CFR §2.12(c)(4))'
+    : `AI documentation support: a ${feature} draft prepared by the AI provider from de-identified session text (business associate / qualified service organisation)`;
+}
+function accountAiDisclosure({ user, ip = null, clientIds = [], feature, counselingNotes = false }) {
+  const ids = [...new Set((clientIds || []).filter(Boolean))];
+  if (!ids.length) return;
+  const disclosure = require('./disclosure');
+  const recipient = aiRecipient();
+  const purpose = aiPurpose(feature);
+  const what = 'De-identified client record content sent to the AI provider (client identifiers masked before sending; the content itself is never stored in this record).';
+  for (const clientId of ids) {
+    disclosure.record({ clientId, recipient, purpose, what, method: 'api', basis: 'ai_assist', source: 'ai', sourceRef: feature, counselingNotes: !!counselingNotes, user, ip });
+  }
+}
+
 /**
  * One draft: check the copilot is available, de-identify, send, put the names back. `build(clean)` makes the
  * prompt from the de-identified pieces. Returns { data, tokens, model, counts }; throws AiError. The caller
@@ -438,16 +478,16 @@ function recordUsage({ user, feature, model, outcome, tokens = {}, ms }) {
  * `ids` replaces the one client's identifiers (a day pack spans several clients); `check(data)` refuses an answer
  * before its outcome is recorded (a citation to a section that was not sent).
  */
-async function draft({ user, clientId, feature, pieces, build, assistant = false, ids = null, check = null }) {
+async function draft({ user, ip = null, clientId, feature, pieces, build, assistant = false, ids = null, check = null, accountClients = null, counselingNotes = false }) {
   const st = status();
   const gate = assistant ? st.assistant : st;
   if (!gate.available) throw new AiError(gate.code === 'cap' ? 'cap' : 'off', gate.code === 'cap' ? 429 : 409, gate.reason, { ai_unavailable: gate.code });
   // Reserved in the same turn of the event loop as the check above, before anything is awaited; released in the
   // finally below, after the outcome is in ai_usage.
   inFlight++;
-  try { return await sendDraft({ user, clientId, feature, pieces, build, ids, check }); } finally { inFlight--; }
+  try { return await sendDraft({ user, ip, clientId, feature, pieces, build, ids, check, accountClients, counselingNotes }); } finally { inFlight--; }
 }
-async function sendDraft({ user, clientId, feature, pieces, build, ids: given = null, check = null }) {
+async function sendDraft({ user, ip = null, clientId, feature, pieces, build, ids: given = null, check = null, accountClients = null, counselingNotes = false }) {
   const author = db.one(`SELECT display_name FROM users WHERE id=?`, user.id);
   const ids = given || identifiersFor(clientId, author);
   const counts = {};
@@ -458,6 +498,9 @@ async function sendDraft({ user, clientId, feature, pieces, build, ids: given = 
   }
   const prompt = build(clean);
   const model = settings().model;
+  // Account for the disclosure before the request leaves: identifiable record content (masked) is about to go
+  // to the AI provider. A day pack spans several clients (accountClients); a draft or a client brief is one.
+  accountAiDisclosure({ user, ip, clientIds: accountClients || (clientId ? [clientId] : []), feature, counselingNotes });
   const t0 = Date.now();
   try {
     const r = await send(prompt, model);
@@ -472,5 +515,5 @@ async function sendDraft({ user, clientId, feature, pieces, build, ids: given = 
   }
 }
 
-module.exports = { DEFAULT_MODEL, MODEL_ID, attestedProvider, counselingCovered, DEFAULT_CAP, MAX_TEXT, MAX_TOKENS, COUNTED, retryWait, settings, attestation, status, pending, usage, monthStart, keyConfigured, endpointProblem,
-  identifiersFor, deidentify, reidentify, buildRequest, send, draft, AiError, PATTERNS };
+module.exports = { DEFAULT_MODEL, MODEL_ID, attestedProvider, counselingCovered, endpointChanged, currentAiEndpoint, DEFAULT_CAP, MAX_TEXT, MAX_TOKENS, COUNTED, retryWait, settings, attestation, status, pending, usage, monthStart, keyConfigured, endpointProblem,
+  identifiersFor, deidentify, reidentify, buildRequest, send, draft, accountAiDisclosure, AiError, PATTERNS };

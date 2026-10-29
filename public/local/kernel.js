@@ -27455,6 +27455,8 @@ var require_ai_copilot = __commonJS({
       const a = attestation();
       return !!(a && a.covers_counseling === true);
     };
+    var currentAiEndpoint = () => proc.env.SUDS_AI_BASE_URL || "";
+    var endpointChanged = (a) => !!(a && Object.prototype.hasOwnProperty.call(a, "configured_base_url") && (a.configured_base_url || "") !== currentAiEndpoint());
     function monthStart(now2 = /* @__PURE__ */ new Date()) {
       return new Date(Date.UTC(now2.getUTCFullYear(), now2.getUTCMonth(), 1)).toISOString();
     }
@@ -27497,6 +27499,7 @@ var require_ai_copilot = __commonJS({
       else if (!keyConfigured()) no("no_key", "The AI copilot is not configured on this server (no provider API key). Tell your administrator.");
       else if (endpointProblem()) no("endpoint", `The AI copilot is misconfigured on this server: ${endpointProblem()}.`);
       else if (attestedProvider(s.attestation) !== providers.id()) no("provider_changed", `The AI copilot is off: the agreement recorded is with ${providers.label(attestedProvider(s.attestation))}, but this server sends drafts to ${providers.label()}. An administrator must record the agreement with ${providers.label()} (Settings \u2192 AI copilot).`);
+      else if (endpointChanged(s.attestation)) no("endpoint_changed", "The AI copilot is off: the AI endpoint (SUDS_AI_BASE_URL) \u2014 where client records are sent \u2014 changed since the agreement was recorded. An administrator must record the agreement again to confirm the new destination (Settings \u2192 AI copilot).");
       else if (!s.monthly_cap) no("cap", "The AI copilot is paused for this program. Write the documentation yourself as usual.");
       else if (reserved >= s.monthly_cap) no("cap", `This program has used its ${s.monthly_cap} AI draft${s.monthly_cap === 1 ? "" : "s"} for this month. Write the documentation yourself; the limit resets on the 1st of each month.`);
       else if (cost.capReached(u)) no("cap", "This program has reached its AI spending limit for this month. Write the documentation yourself; the limit resets on the 1st of each month.");
@@ -27946,18 +27949,33 @@ var require_ai_copilot = __commonJS({
         Math.max(0, Math.round(ms || 0))
       );
     }
-    async function draft({ user, clientId, feature, pieces, build, assistant = false, ids = null, check = null }) {
+    var aiRecipient = () => `${providers.label()} (AI provider \u2014 business associate / qualified service organisation)`;
+    function aiPurpose(feature) {
+      return feature === "assistant" ? "AI assistant: a summary of records sent to the AI provider to answer a staff question (business associate use, 45 CFR \xA7164.502(e); qualified service organisation, 42 CFR \xA72.12(c)(4))" : `AI documentation support: a ${feature} draft prepared by the AI provider from de-identified session text (business associate / qualified service organisation)`;
+    }
+    function accountAiDisclosure({ user, ip = null, clientIds = [], feature, counselingNotes = false }) {
+      const ids = [...new Set((clientIds || []).filter(Boolean))];
+      if (!ids.length) return;
+      const disclosure = require_disclosure();
+      const recipient = aiRecipient();
+      const purpose = aiPurpose(feature);
+      const what = "De-identified client record content sent to the AI provider (client identifiers masked before sending; the content itself is never stored in this record).";
+      for (const clientId of ids) {
+        disclosure.record({ clientId, recipient, purpose, what, method: "api", basis: "ai_assist", source: "ai", sourceRef: feature, counselingNotes: !!counselingNotes, user, ip });
+      }
+    }
+    async function draft({ user, ip = null, clientId, feature, pieces, build, assistant = false, ids = null, check = null, accountClients = null, counselingNotes = false }) {
       const st = status();
       const gate = assistant ? st.assistant : st;
       if (!gate.available) throw new AiError(gate.code === "cap" ? "cap" : "off", gate.code === "cap" ? 429 : 409, gate.reason, { ai_unavailable: gate.code });
       inFlight++;
       try {
-        return await sendDraft({ user, clientId, feature, pieces, build, ids, check });
+        return await sendDraft({ user, ip, clientId, feature, pieces, build, ids, check, accountClients, counselingNotes });
       } finally {
         inFlight--;
       }
     }
-    async function sendDraft({ user, clientId, feature, pieces, build, ids: given = null, check = null }) {
+    async function sendDraft({ user, ip = null, clientId, feature, pieces, build, ids: given = null, check = null, accountClients = null, counselingNotes = false }) {
       const author = db3.one(`SELECT display_name FROM users WHERE id=?`, user.id);
       const ids = given || identifiersFor(clientId, author);
       const counts = {};
@@ -27971,6 +27989,7 @@ var require_ai_copilot = __commonJS({
       }
       const prompt = build(clean2);
       const model = settings().model;
+      accountAiDisclosure({ user, ip, clientIds: accountClients || (clientId ? [clientId] : []), feature, counselingNotes });
       const t0 = Date.now();
       try {
         const r = await send(prompt, model);
@@ -27997,6 +28016,8 @@ var require_ai_copilot = __commonJS({
       MODEL_ID,
       attestedProvider,
       counselingCovered,
+      endpointChanged,
+      currentAiEndpoint,
       DEFAULT_CAP,
       MAX_TEXT,
       MAX_TOKENS,
@@ -28016,6 +28037,7 @@ var require_ai_copilot = __commonJS({
       buildRequest,
       send,
       draft,
+      accountAiDisclosure,
       AiError,
       PATTERNS
     };
@@ -28319,13 +28341,16 @@ var require_ai_assistant = __commonJS({
         const ok = data && typeof data.answer === "string" && data.answer.trim() && Array.isArray(data.citations) && data.citations.every((c) => c && typeof c.section === "string" && sections.has(c.section));
         if (!ok) throw new AI.AiError("unreadable", 502, "The AI assistant's answer could not be checked against the record summary it was given, so it is not shown. Ask again, or look in the record.");
       };
+      const accountClients = scope === "client" ? [clientId] : scope === "day" ? [...refs.values()] : [];
       const r = await AI.draft({
         user,
+        ip,
         clientId: scope === "client" ? clientId : null,
         feature: "assistant",
         assistant: true,
         ids,
         check,
+        accountClients,
         pieces: { pack: pack.text, conversation, question: String(question || "") },
         build: (c) => {
           const p = P2.assistantPrompt(scope);
@@ -28395,10 +28420,10 @@ var require_ai = __commonJS({
     function perUserLimit(ctx) {
       if (!require_app2().rateLimit(`ai:${ctx.user.id}`, PER_USER_PER_MINUTE, 6e4)) throw new HttpError3(429, "Too many AI requests in a minute (drafts and questions together). Read the last answer first, then try again.");
     }
-    async function run2(ctx, { clientId, feature, pieces, build, details = {} }) {
+    async function run2(ctx, { clientId, feature, pieces, build, details = {}, counselingNotes = false }) {
       perUserLimit(ctx);
       try {
-        const r = await AI.draft({ user: ctx.user, clientId, feature, pieces, build });
+        const r = await AI.draft({ user: ctx.user, ip: ctx.ip, clientId, feature, pieces, build, counselingNotes });
         audit3.log({
           user: ctx.user,
           action: "ai.draft",
@@ -28519,7 +28544,12 @@ var require_ai = __commonJS({
           // A fifth statement (the owner's decision of 2026-10-24): the agreement, as counsel has reviewed it, covers SUD
           // counseling notes (42 CFR §2.11). Without it a counseling note is never drafted and never summarised, exactly
           // as before. With it, counseling-note content may flow through the same masked path as everything else.
-          covers_counseling: { type: "boolean" }
+          covers_counseling: { type: "boolean" },
+          // A sixth statement (optional, 1.27.1): the agreement includes a term that the provider does not retain the
+          // content beyond serving the request and does not use it to train models (a zero-retention / no-training term).
+          // Recorded and shown with the agreement; not required to switch the copilot on (an administrator records what
+          // the agreement says). It is advisory evidence, never a technical control.
+          zero_retention: { type: "boolean" }
         });
         const missing = {};
         if (!v.baa) missing.baa = "Confirm that a HIPAA business associate agreement with this provider is in place.";
@@ -28539,13 +28569,17 @@ var require_ai = __commonJS({
           counsel_reviewed: true,
           covers_assistant: !!v.covers_assistant,
           covers_counseling: !!v.covers_counseling,
+          zero_retention: !!v.zero_retention,
+          // The endpoint records are sent to when the agreement was recorded (SUDS_AI_BASE_URL, blank for the provider's
+          // own API): if it changes, the copilot is off until the agreement is recorded again (ai-copilot.js endpointChanged).
+          configured_base_url: AI.currentAiEndpoint() || null,
           recorded_by: ctx.user.id,
           recorded_by_name: ctx.user.display_name || ctx.user.username,
           recorded_at: db3.now()
         };
         db3.setSetting("ai_attestation", JSON.stringify(a));
         if (!a.covers_assistant) db3.setSetting("ai_assistant_enabled", "0");
-        audit3.log({ user: ctx.user, action: "ai.attestation.record", ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true, covers_assistant: a.covers_assistant, covers_counseling: a.covers_counseling } });
+        audit3.log({ user: ctx.user, action: "ai.attestation.record", ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true, covers_assistant: a.covers_assistant, covers_counseling: a.covers_counseling, zero_retention: a.zero_retention, configured_base_url: a.configured_base_url || void 0 } });
         ctx.status = 201;
         return { ok: true, attestation: a };
       });
@@ -28622,6 +28656,7 @@ var require_ai = __commonJS({
           clientId: v.client_id,
           feature: "note",
           pieces: { text: v.source_text },
+          counselingNotes: !!v.counseling_note,
           build: (c) => P2.notePrompt({ format, kind: v.kind, text: c.text }),
           details: { format, kind: v.kind, note_id: v.note_id || void 0 }
         });

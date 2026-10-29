@@ -356,12 +356,15 @@ test('provider failures: rate limit, down, overloaded, refusal, cut off, unreada
     const r = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'Session' });
     assert.equal(r.status, 504); assert.equal(r.data.ai_error, 'timeout');
   } finally { delete process.env.SUDS_AI_TIMEOUT_MS; }
-  // Unreachable: nothing listening there.
+  // Unreachable: nothing listening at the attested endpoint. The agreement is re-recorded for this endpoint first
+  // (changing SUDS_AI_BASE_URL without re-recording the agreement now disables the copilot — endpoint_changed —
+  // which is covered on its own below); here the endpoint is the attested one, and it is simply down.
   const url = process.env.SUDS_AI_BASE_URL; process.env.SUDS_AI_BASE_URL = 'http://127.0.0.1:1';
   try {
+    await attestAndEnable();
     const r = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'Session' });
     assert.equal(r.status, 503); assert.equal(r.data.ai_error, 'unreachable');
-  } finally { process.env.SUDS_AI_BASE_URL = url; }
+  } finally { process.env.SUDS_AI_BASE_URL = url; await attestAndEnable(); }
   // A remote endpoint must be https.
   process.env.SUDS_AI_BASE_URL = 'http://ai.example.org';
   try {
@@ -581,4 +584,93 @@ test('de-identification: a client known by a participant code (1.21.0) has the c
   assert.equal(d('code mr-85-kq7, then MR 85 KQ7 again').text, 'code [CLIENT_CODE], then [CLIENT_CODE] again');
   assert.equal(d('XMR85KQ7 is another code').text, 'XMR85KQ7 is another code', 'only the whole code');
   assert.equal(d('MR85KQ7').counts.code, 1);
+});
+
+// ---------------------------------------------------------------- accounting of disclosures (1.27.1)
+test('a draft is written to the client\'s accounting of disclosures (basis ai_assist, the provider as recipient, never the content)', async () => {
+  fresh(); await attestAndEnable();
+  const { decrypt } = require('../server/crypto');
+  const disclosure = require('../server/disclosure');
+  const before = H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE client_id=? AND source='ai'`, clientId).n;
+  const c0 = calls.length;
+  reply = () => okJson({ sections: { S: 's', O: 'o', A: 'a', P: 'p' }, gaps: [] });
+  const r = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', format: 'SOAP', source_text: SESSION });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(calls.length - c0, 1, 'one request sent');
+  const rows = H.db.all(`SELECT * FROM disclosures WHERE client_id=? AND source='ai' ORDER BY rowid DESC`, clientId);
+  assert.equal(rows.length, before + 1, 'exactly one disclosure recorded for the draft');
+  const row = rows[0];
+  assert.equal(row.basis, 'ai_assist');
+  assert.equal(row.source, 'ai');
+  assert.equal(row.source_ref, 'note');
+  assert.equal(row.counseling_notes, 0);
+  assert.match(decrypt(row.recipient_enc), /provider/i, 'the recipient names the AI provider');
+  assert.ok(decrypt(row.purpose_enc).length > 0);
+  // The disclosed content never lands in the accounting row: no name, contact detail, or session text.
+  const what = decrypt(row.what_enc);
+  for (const leak of ['Maria', 'Lopez', 'Mari', 'Birch', '201-3344', 'fentanyl', 'Rosa', '91234567A']) assert.ok(!what.includes(leak), `the "what" must not contain "${leak}"`);
+  // It surfaces in the §164.528 / §2.25 accounting the client can be shown.
+  assert.ok(disclosure.accounting(clientId).disclosures.some(x => x.basis === 'ai_assist'), 'in the accounting of disclosures');
+  // It is audited as a disclosure as well as an AI draft.
+  const a = lastAudit('disclosure.record'); assert.equal(JSON.parse(a.details).basis, 'ai_assist');
+});
+
+test('a counseling-note draft marks its disclosure as SUD counseling notes (§2.11)', async () => {
+  fresh();
+  const at = await admin.post('/api/ai/attestation', { provider: 'Anthropic', signed_by: 'County counsel office', agreement_date: '2026-01-15', reference: 'BAA-2026-017', baa: true, qsoa: true, counsel_reviewed: true, covers_counseling: true });
+  assert.equal(at.status, 201, JSON.stringify(at.data));
+  await admin.put('/api/ai/settings', { enabled: true });
+  reply = () => okJson({ narrative: 'Counseling draft.', gaps: [] });
+  const r = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', counseling_note: true, source_text: 'Session' });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const row = H.db.one(`SELECT counseling_notes, basis FROM disclosures WHERE client_id=? AND source='ai' ORDER BY rowid DESC LIMIT 1`, clientId);
+  assert.equal(row.basis, 'ai_assist');
+  assert.equal(row.counseling_notes, 1);
+  await attestAndEnable(); // back to the default agreement (no counseling-note coverage) for any later test
+});
+
+test('a refused or truncated answer still accounts for the disclosure (content did leave); a blocked call does not', async () => {
+  fresh(); await attestAndEnable();
+  const base = () => H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE client_id=? AND source='ai'`, clientId).n;
+  const n0 = base();
+  reply = () => okJson({}, { stop_reason: 'refusal', content: [] });
+  const r = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'Session' });
+  assert.equal(r.status, 422, JSON.stringify(r.data)); // refused by the provider — but the content was sent
+  assert.equal(base(), n0 + 1, 'a refusal is still a disclosure (the record content was transmitted)');
+  // A call blocked before anything is sent (over the monthly cap) records no disclosure.
+  fresh(); const was = H.db.getSetting('ai_monthly_cap', '500'); H.db.setSetting('ai_monthly_cap', '0');
+  try {
+    const n1 = base();
+    const r2 = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'Session' });
+    assert.equal(r2.status, 429, JSON.stringify(r2.data));
+    assert.equal(base(), n1, 'a draft refused by the cap discloses nothing');
+  } finally { H.db.setSetting('ai_monthly_cap', was); }
+});
+
+test('changing the AI endpoint after the agreement disables the copilot until it is recorded again (endpoint_changed)', async () => {
+  fresh(); await attestAndEnable();
+  const url = process.env.SUDS_AI_BASE_URL;
+  try {
+    process.env.SUDS_AI_BASE_URL = 'http://127.0.0.1:2';
+    const st = (await clin.get('/api/ai/status')).data;
+    assert.equal(st.available, false);
+    assert.equal(st.code, 'endpoint_changed');
+    const c0 = calls.length;
+    const r = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'x' });
+    assert.equal(r.status, 409, JSON.stringify(r.data));
+    assert.equal(r.data.ai_unavailable, 'endpoint_changed');
+    assert.equal(calls.length, c0, 'nothing is sent to the moved endpoint');
+    await attestAndEnable(); // record the agreement again for the new endpoint
+    assert.equal((await clin.get('/api/ai/status')).data.available, true);
+  } finally { process.env.SUDS_AI_BASE_URL = url; await attestAndEnable(); }
+});
+
+test('the agreement records the zero-retention term and the endpoint it was recorded against', async () => {
+  fresh();
+  const a = await admin.post('/api/ai/attestation', { provider: 'Anthropic', signed_by: 'County counsel office', agreement_date: '2026-01-15', reference: 'BAA-Z', baa: true, qsoa: true, counsel_reviewed: true, zero_retention: true });
+  assert.equal(a.status, 201, JSON.stringify(a.data));
+  assert.equal(a.data.attestation.zero_retention, true);
+  assert.equal(a.data.attestation.configured_base_url, process.env.SUDS_AI_BASE_URL);
+  assert.equal(JSON.parse(lastAudit('ai.attestation.record').details).zero_retention, true);
+  await attestAndEnable(); // restore the default agreement
 });
