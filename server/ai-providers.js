@@ -41,6 +41,17 @@ const PROVIDERS = {
     model: /^claude-[a-z0-9][a-z0-9.@-]{1,62}$/, modelHint: 'a Vertex AI model id such as claude-…',
     credentials: 'GOOGLE_APPLICATION_CREDENTIALS (a service account key file)',
   },
+  // A self-hosted endpoint that speaks the Anthropic Messages API (an on-prem gateway such as LiteLLM, a model
+  // served on this machine, or a private deployment): no request leaves the programme's own infrastructure, for
+  // a 42 CFR Part 2 programme whose posture does not allow a third-party cloud. The endpoint is SUDS_AI_BASE_URL
+  // (required; https, or plain http only to this machine), the key — if the endpoint needs one — SUDS_AI_ONPREM_KEY,
+  // sent as x-api-key like the Anthropic API. The request and the Messages-API response are otherwise identical, so
+  // nothing about drafting changes; the cloud-only server-side fallback is left out (an on-prem endpoint has none).
+  onprem: {
+    label: 'On-premises model (self-hosted, Anthropic Messages API)', defaultModel: DEFAULT_MODEL,
+    model: /^[A-Za-z0-9][\w.:@/-]{1,120}$/, modelHint: 'the model id your on-prem endpoint serves',
+    credentials: 'SUDS_AI_BASE_URL (your endpoint) and, if it needs one, SUDS_AI_ONPREM_KEY',
+  },
 };
 const BEDROCK_VERSION = 'bedrock-2023-05-31';
 const VERTEX_VERSION = 'vertex-2023-10-16';
@@ -82,6 +93,8 @@ function credentialsConfigured() {
     case 'anthropic': return !!config.ai.apiKey;
     case 'bedrock': return !!(setting('AWS_ACCESS_KEY_ID') && setting('AWS_SECRET_ACCESS_KEY'));
     case 'vertex': return !!serviceAccount();
+    // The endpoint is the credential; a key is optional (an internal endpoint may need none).
+    case 'onprem': return !!process.env.SUDS_AI_BASE_URL;
     default: return false;
   }
 }
@@ -92,6 +105,7 @@ function baseUrl() {
   switch (id()) {
     case 'bedrock': return `https://bedrock-runtime.${awsRegion()}.amazonaws.com`;
     case 'vertex': { const r = vertexRegion(); return r === 'global' ? 'https://aiplatform.googleapis.com' : `https://${r}-aiplatform.googleapis.com`; }
+    case 'onprem': return ''; // no cloud default: SUDS_AI_BASE_URL is required (configProblem says so)
     default: return config.ai.baseUrl;
   }
 }
@@ -109,7 +123,8 @@ function urlProblem(value, name) {
  */
 function configProblem(model) {
   const p = current();
-  if (!p) return `SUDS_AI_PROVIDER must be anthropic, bedrock or vertex (it is "${String(id()).slice(0, 40)}")`;
+  if (!p) return `SUDS_AI_PROVIDER must be anthropic, bedrock, vertex or onprem (it is "${String(id()).slice(0, 40)}")`;
+  if (id() === 'onprem' && !process.env.SUDS_AI_BASE_URL) return 'An on-premises model needs SUDS_AI_BASE_URL set to your endpoint (for example https://ai.internal.example or http://127.0.0.1:8000)';
   if (id() === 'bedrock' && !/^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/.test(awsRegion())) return 'Amazon Bedrock needs AWS_REGION (for example us-west-2)';
   if (id() === 'vertex') {
     if (!/^[a-z][a-z0-9-]{1,30}$/.test(vertexRegion())) return 'Vertex AI needs SUDS_AI_VERTEX_REGION (a region such as us-east5, or global)';
@@ -141,6 +156,8 @@ function describe() {
  */
 function adapt(body, headers, provider = id()) {
   if (provider === 'anthropic') return { body, headers: { ...headers } };
+  // On-prem: the Messages API as-is (model stays in the body), minus the cloud-only server-side fallback.
+  if (provider === 'onprem') { const { fallbacks, ...rest } = body; const h = { ...headers }; delete h['anthropic-beta']; return { body: rest, headers: h }; } // eslint-disable-line no-unused-vars
   const { model, fallbacks, ...rest } = body; // eslint-disable-line no-unused-vars
   const h = { 'content-type': 'application/json', accept: 'application/json' };
   return { body: { anthropic_version: provider === 'bedrock' ? BEDROCK_VERSION : VERTEX_VERSION, ...rest }, headers: h };
@@ -162,6 +179,11 @@ async function request({ body, headers, model, signal }) {
   const base = baseUrl();
   if (provider === 'anthropic') {
     return fetch(`${base}/v1/messages`, { method: 'POST', headers: { ...a.headers, 'x-api-key': config.ai.apiKey }, body: payload, signal, redirect: 'error' });
+  }
+  if (provider === 'onprem') {
+    // The endpoint is SUDS_AI_BASE_URL; a key (SUDS_AI_ONPREM_KEY) is sent as x-api-key only if the endpoint needs one.
+    const key = setting('SUDS_AI_ONPREM_KEY');
+    return fetch(`${base}/v1/messages`, { method: 'POST', headers: { ...a.headers, ...(key ? { 'x-api-key': key } : {}) }, body: payload, signal, redirect: 'error' });
   }
   if (provider === 'bedrock') {
     const url = `${base}/model/${seg(model)}/invoke`;

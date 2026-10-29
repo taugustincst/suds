@@ -241,7 +241,7 @@ test('the agreement is tied to the provider it was recorded for: another provide
   const AI = require('../server/ai-copilot');
   assert.equal(AI.attestedProvider({ provider: 'Anthropic' }), 'anthropic');
   process.env.SUDS_AI_PROVIDER = 'nonsense';
-  assert.match((await admin.get('/api/ai/settings')).data.endpoint_problem, /SUDS_AI_PROVIDER must be anthropic, bedrock or vertex/);
+  assert.match((await admin.get('/api/ai/settings')).data.endpoint_problem, /SUDS_AI_PROVIDER must be anthropic, bedrock, vertex or onprem/);
   assert.equal((await admin.post('/api/ai/attestation', { provider: 'X', signed_by: 'Y', agreement_date: '2026-01-15', reference: 'Z', baa: true, qsoa: true, counsel_reviewed: true })).status, 400);
 });
 

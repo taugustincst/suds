@@ -901,7 +901,7 @@ test('SUDS 1.23.0\'s first start on a 1.22.0 database: county consents, releases
     assert.ok(db().all(`PRAGMA table_info(tasks)`).some((c) => c.name === 'note_id' && c.type === 'TEXT' && !c.notnull && c.dflt_value === null));
     // Migration 70 (released in 1.24.0): the incoming-referrals queue, two new tables, empty after the upgrade, with
     // their indexes (the shape check above compares them with a fresh install).
-    assert.equal(m69.LATEST_SCHEMA_VERSION, 73);
+    assert.equal(m69.LATEST_SCHEMA_VERSION, 74);
     for (const t of ['incoming_referrals', 'incoming_referral_attempts']) assert.equal(db().one(`SELECT COUNT(*) n FROM ${t}`).n, 0, `${t} exists and is empty`);
     // Migration 72 (PowerDMS, docs/integration/POWERDMS.md): a policy's PowerDMS link, revision and the roles asked to
     // sign it, on the existing documents; who has signed which revision, and each report imported, empty after the upgrade.

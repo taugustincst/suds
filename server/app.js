@@ -85,6 +85,7 @@ const LARGE_BODY_ROUTES = [
   /^\/api\/resources\/[^/]+\/photos(\/|$)/,  // provider pictures
   /^\/api\/imports\//,                       // OneNote / spreadsheet / data imports
   /^\/api\/policies\/report\//,              // a PowerDMS signature or training report (up to 5 MB)
+  /^\/api\/ai\/agreement-file(\/|$)/,        // the signed BAA / QSOA with the AI provider (up to 15 MB)
   /^\/api\/sync\/(push|blob)(\/|$)/,         // a local-mode device's sync payload and attachments
 ];
 // A route module may set the cap of one path of its own that is called without a session (bodyLimitFor): the county

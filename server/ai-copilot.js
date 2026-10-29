@@ -40,10 +40,14 @@ function attestation() {
   if (!raw) return null;
   try { const a = JSON.parse(raw); return a && typeof a === 'object' ? a : null; } catch { return null; }
 }
+// On-premises only: when on, the copilot refuses any provider but `onprem`, so no records go to a third-party
+// cloud — the control a 42 CFR Part 2 programme sets when its posture does not allow cloud egress at all.
+const requireOnprem = () => db.getSetting('ai_require_onprem', '0') === '1';
 function settings() {
   const cap = Number(db.getSetting('ai_monthly_cap', String(DEFAULT_CAP)));
   return {
     enabled: db.getSetting('ai_enabled', '0') === '1',
+    require_onprem: requireOnprem(),
     // The assistant (server/ai-assistant.js): off unless switched on, even with the copilot on.
     assistant_enabled: db.getSetting('ai_assistant_enabled', '0') === '1',
     model: db.getSetting('ai_model', null) || providers.defaultModel(),
@@ -114,6 +118,7 @@ function status() {
   let reason = null; let code = null;
   const no = (c, r) => { code = c; reason = r; };
   if (config.local) no('device', 'The AI copilot runs only on an office server. SUDS on this device never sends anything to an AI provider.');
+  else if (requireOnprem() && providers.id() !== 'onprem') no('cloud_blocked', 'The AI copilot is set to on-premises only for this program: it will not send records to a third-party cloud AI provider. Set the provider to your on-prem endpoint (SUDS_AI_PROVIDER=onprem), or turn off "on-premises only" in Settings → AI copilot.');
   else if (!s.attestation) no('no_agreement', 'The AI copilot is off: an administrator has not recorded the program\'s agreement (BAA / QSOA) with the AI provider.');
   else if (!s.enabled) no('off', 'The AI copilot is switched off for this program (Settings → AI copilot).');
   else if (!keyConfigured()) no('no_key', 'The AI copilot is not configured on this server (no provider API key). Tell your administrator.');
@@ -515,5 +520,5 @@ async function sendDraft({ user, ip = null, clientId, feature, pieces, build, id
   }
 }
 
-module.exports = { DEFAULT_MODEL, MODEL_ID, attestedProvider, counselingCovered, endpointChanged, currentAiEndpoint, DEFAULT_CAP, MAX_TEXT, MAX_TOKENS, COUNTED, retryWait, settings, attestation, status, pending, usage, monthStart, keyConfigured, endpointProblem,
+module.exports = { DEFAULT_MODEL, MODEL_ID, attestedProvider, counselingCovered, endpointChanged, currentAiEndpoint, requireOnprem, DEFAULT_CAP, MAX_TEXT, MAX_TOKENS, COUNTED, retryWait, settings, attestation, status, pending, usage, monthStart, keyConfigured, endpointProblem,
   identifiersFor, deidentify, reidentify, buildRequest, send, draft, accountAiDisclosure, AiError, PATTERNS };

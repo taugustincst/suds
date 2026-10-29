@@ -399,6 +399,8 @@ function attestationFields(s, a, assistant) {
       help: 'Needed only for the AI assistant. Leave it unticked if your agreement or counsel\'s review covers documentation drafts only.' },
     { name: 'covers_counseling', label: 'The agreement, as counsel has reviewed it, covers SUD counseling notes (42 CFR §2.11): the copilot may draft one, and the assistant may summarise them', type: 'checkbox', span: true, value: (a ? a.covers_counseling : undefined) || undefined,
       help: 'Leave it unticked unless your counsel has confirmed the agreement covers SUD counseling notes specifically. Until then counseling notes are never drafted by the copilot and never summarised by the assistant.' },
+    { name: 'zero_retention', label: 'The agreement includes a zero-retention / no-training term (the provider does not keep request content beyond serving it, and does not train on it)', type: 'checkbox', span: true, value: (a ? a.zero_retention : undefined) || undefined,
+      help: 'Optional, for the record only. It is evidence of what your agreement says; it is not enforced by SUDS.' },
   ];
 }
 
@@ -448,6 +450,28 @@ export async function aiSettingsTab(refresh) {
       if (!(await confirmDialog('Withdraw the agreement?', 'The AI copilot is switched off at once and cannot be switched on again until an agreement is recorded.', { danger: true, okText: 'Withdraw' }))) return;
       await del('/api/ai/attestation'); toast('Agreement withdrawn; the AI copilot is off', 'ok'); refresh();
     } }, 'Withdraw the agreement')));
+    // The signed agreement file, uploaded as evidence behind this record (stored encrypted on this server).
+    const fileInput = h('input', { type: 'file', id: 'ai-agreement-upload', accept: '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,.txt' });
+    const uploadBtn = h('button', { type: 'button', class: 'btn sm', 'data-ai-agreement-file-upload': '1', onClick: async () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) { toast('Choose a file first', 'warn'); return; }
+      if (file.size > 15 * 1024 * 1024) { toast('That file is too large (max 15 MB)', 'warn'); return; }
+      let dataUrl; try { dataUrl = await new Promise((res, rej) => { const rd = new FileReader(); rd.onload = () => res(rd.result); rd.onerror = () => rej(rd.error || new Error('read failed')); rd.readAsDataURL(file); }); }
+      catch { toast('Could not read that file', 'err'); return; }
+      try { await post('/api/ai/agreement-file', { file_url: dataUrl, filename: file.name }); toast('Agreement file uploaded', 'ok'); refresh(); }
+      catch (e) { toast(e.message || 'Upload failed', 'err'); }
+    } }, s.agreement_file ? 'Replace file' : 'Upload file');
+    agreement.append(h('div', { class: 'mt', 'data-ai-agreement-file': s.agreement_file ? 'present' : 'none' },
+      h('h3', { class: 'eyebrow' }, 'Signed agreement on file (evidence)'),
+      s.agreement_file
+        ? h('p', { class: 'small' }, `${s.agreement_file.filename || 'agreement'} · ${Math.max(1, Math.round(s.agreement_file.bytes / 1024))} KB · uploaded ${fmt.dt(s.agreement_file.uploaded_at)}. `,
+            h('a', { href: '/api/ai/agreement-file', download: s.agreement_file.filename || 'ai-agreement' }, 'Download'), ' · ',
+            h('button', { type: 'button', class: 'btn sm ghost', 'data-ai-agreement-file-remove': '1', onClick: async () => {
+              if (!(await confirmDialog('Remove the agreement file?', 'This drops the uploaded evidence; the recorded agreement stays.', { danger: true, okText: 'Remove' }))) return;
+              await del('/api/ai/agreement-file'); toast('Agreement file removed', 'ok'); refresh();
+            } }, 'Remove'))
+        : h('p', { class: 'small muted' }, 'Optional: upload the signed BAA / QSOA as evidence behind this record (PDF, Word, picture or text, up to 15 MB). It is stored encrypted on this server and never leaves it.'),
+      h('div', { class: 'field' }, h('label', { for: 'ai-agreement-upload' }, 'Signed agreement file'), fileInput), uploadBtn));
   } else {
     agreement.append(h('p', { class: 'small' }, `Record the agreement before the copilot can be switched on. This server sends drafts to ${s.provider.label}: the agreement must be with that provider. Each statement below must be true.`),
       form(attestationFields(s, null, false), { submitText: 'Record the agreement', onSubmit: async (d) => { await post('/api/ai/attestation', d); toast('Agreement recorded', 'ok'); refresh(); } }));
@@ -459,6 +483,8 @@ export async function aiSettingsTab(refresh) {
     form([
       { name: 'enabled', label: 'Switch the AI copilot on for this program', type: 'checkbox', value: s.enabled, span: true, help: a ? 'Staff with the "Use the AI documentation copilot" permission (clinicians, supervisors and navigators by default) see it in the note, assessment, care plan and CalOMS forms. While it is off they see nothing of it.' : 'Record the agreement above first. Until the copilot is on, staff see nothing of it.' },
       { name: 'assistant_enabled', label: 'Switch the AI assistant on for this program', type: 'checkbox', value: s.assistant_enabled, span: true, help: a && a.covers_assistant ? 'Staff with the "Use the AI assistant" permission (clinicians, supervisors and navigators by default) get an Assistant page: questions about a client in their reach, their own day, or program information, answered from a summary of the record. Off unless switched on, even with the copilot on.' : 'Needs the agreement confirmed to cover assistant use first (Confirm it covers the AI assistant, above), and the copilot on.' },
+      { name: 'require_onprem', label: 'On-premises only: never send records to a third-party cloud AI provider', type: 'checkbox', value: s.require_onprem, span: true,
+        help: `For a program whose Part 2 posture does not allow cloud egress. While on, the copilot and assistant run only when the provider is a self-hosted on-premises endpoint (SUDS_AI_PROVIDER=onprem); any cloud provider is refused.${s.provider.id === 'onprem' ? ' This server is set to an on-premises endpoint.' : ` This server is currently set to ${s.provider.label} (a cloud provider), so the copilot will be off while this is on.`}` },
       { name: 'model', label: 'Model', value: s.model === s.default_model ? '' : s.model, placeholder: s.default_model, help: `Blank for the default (${s.default_model}). Another model id from ${s.provider.label} can be entered (${s.provider.model_hint || 'a model id'}), for example a cheaper one; test a few drafts after changing it. See docs/AI-COPILOT.md.` },
       { name: 'monthly_cap', label: 'Most drafts per calendar month (the whole program)', type: 'number', min: 0, step: 1, value: s.monthly_cap, help: 'Once it is reached, staff write documentation themselves until the limit resets on the 1st of each month. 0 pauses the copilot.' },
       { type: 'section', label: 'Cost estimate' },

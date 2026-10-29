@@ -14,13 +14,48 @@ const AP = require('../ai-providers');
 const COST = require('../ai-cost');
 const P = require('../ai-prompts');
 const CL = require('../clinical');
-const { badRequest, forbidden, notFound, HttpError } = require('../http');
+const { badRequest, forbidden, notFound, HttpError, contentDisposition, fileHeaders } = require('../http');
 const { validate } = require('../validate');
-const { decrypt } = require('../crypto');
+const { decrypt, encrypt, uuid } = require('../crypto');
 
 const text = { type: 'string', maxLen: AI.MAX_TEXT };
 // How many drafts one person may ask for in a minute: a person reads a draft before asking for another.
 const PER_USER_PER_MINUTE = 12;
+
+// ---- the signed BAA / QSOA, uploaded as evidence behind the recorded agreement (ai_agreement_files) ----
+// Office server only, encrypted at rest, one current file at a time. The same conservative upload handling as
+// client documents (server/routes/documents.js): the declared type is attacker-chosen, so the bytes are sniffed
+// and only a PDF, Word document, picture or text file is accepted, and only those types are echoed back.
+const MAX_AGREEMENT_BYTES = 15 * 1024 * 1024;
+const AGREEMENT_EXT = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx', 'application/msword': 'doc', 'text/plain': 'txt' };
+function sniffAgreement(buf) {
+  if (buf.length > 4 && buf.toString('ascii', 0, 4) === '%PDF') return 'application/pdf';
+  if (buf.length > 3 && buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'image/jpeg';
+  if (buf.length > 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
+  if (buf.length > 12 && buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  if (buf.length > 4 && buf[0] === 0x50 && buf[1] === 0x4B && buf[2] === 0x03 && buf[3] === 0x04) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (buf.length > 8 && buf[0] === 0xD0 && buf[1] === 0xCF && buf[2] === 0x11 && buf[3] === 0xE0) return 'application/msword';
+  return null;
+}
+function agreementFromDataUrl(v) {
+  if (v != null && typeof v !== 'string') throw badRequest('The agreement file must be base64');
+  if (!v) throw badRequest('Choose the signed agreement file to upload');
+  const m = /^data:([\w.+/-]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(v); const b64 = (m ? m[2] : v).replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9+/=]+$/.test(b64)) throw badRequest('The agreement file must be base64');
+  const buf = Buffer.from(b64, 'base64'); if (!buf.length) throw badRequest('The agreement file is empty');
+  if (buf.length > MAX_AGREEMENT_BYTES) throw badRequest(`The agreement file is too large (max ${Math.round(MAX_AGREEMENT_BYTES / 1024 / 1024)} MB)`);
+  const type = sniffAgreement(buf) || (m && m[1] === 'text/plain' ? 'text/plain' : null);
+  if (!type || !AGREEMENT_EXT[type]) throw badRequest('The agreement must be a PDF, Word document, picture or text file');
+  return { b64, buf, type };
+}
+const safeAgreementType = (t) => (AGREEMENT_EXT[String(t || '').toLowerCase().split(';')[0].trim()] ? String(t).split(';')[0].trim() : 'application/octet-stream');
+/** The current (newest) uploaded agreement file row, or null. */
+const currentAgreementRow = () => db.one(`SELECT * FROM ai_agreement_files ORDER BY uploaded_at DESC, rowid DESC LIMIT 1`) || null;
+/** Its metadata for Settings and the status surface (never the bytes). */
+function agreementFileMeta() {
+  const f = currentAgreementRow();
+  return f ? { id: f.id, filename: f.filename, content_type: f.content_type, bytes: f.bytes, uploaded_at: f.uploaded_at, uploaded_by: f.uploaded_by } : null;
+}
 
 /**
  * The client exists and is in the caller's reach, and nothing the programme agreed with them stops their text
@@ -77,13 +112,46 @@ module.exports = (r) => {
   r.get('/api/ai/settings', auth.requireAuth, auth.requirePerm('settings:manage'), () => {
     const st = AI.settings();
     return { ...st, key_configured: AI.keyConfigured(), endpoint_problem: AI.endpointProblem(), custom_endpoint: !!process.env.SUDS_AI_BASE_URL, status: AI.status(), usage: AI.usage(),
-      provider: AP.describe(), attestation_provider: st.attestation ? AI.attestedProvider(st.attestation) : null };
+      provider: AP.describe(), attestation_provider: st.attestation ? AI.attestedProvider(st.attestation) : null, agreement_file: agreementFileMeta() };
+  });
+
+  // The signed agreement file (BAA / QSOA), uploaded as evidence behind the recorded agreement. Administrators
+  // only; office server only (routes/ai.js is not in the local kernel). One current file: an upload replaces it.
+  r.post('/api/ai/agreement-file', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
+    const f = agreementFromDataUrl(ctx.body && (ctx.body.file_url ?? ctx.body.file));
+    const filename = String((ctx.body && ctx.body.filename) || `ai-agreement.${AGREEMENT_EXT[f.type]}`).slice(0, 200);
+    const id = uuid();
+    db.transaction(() => {
+      db.run(`DELETE FROM ai_agreement_files`);
+      db.run(`INSERT INTO ai_agreement_files(id,filename,content_type,bytes,file_enc,uploaded_by,uploaded_at) VALUES(?,?,?,?,?,?,?)`,
+        id, filename, f.type, f.buf.length, encrypt(f.b64), ctx.user.id, db.now());
+    });
+    // The file is evidence, not PHI and not a secret: the audit entry names its type and size, never its bytes.
+    audit.log({ user: ctx.user, action: 'ai.agreement_file.upload', entity: 'ai_agreement_file', entityId: id, ip: ctx.ip, details: { filename, content_type: f.type, bytes: f.buf.length } });
+    ctx.status = 201; return { ok: true, agreement_file: agreementFileMeta() };
+  });
+  // Download the current agreement file (decrypted, served as an attachment; only known types are echoed back).
+  r.get('/api/ai/agreement-file', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
+    const row = currentAgreementRow();
+    if (!row) throw notFound('No agreement file has been uploaded');
+    let b64 = ''; try { b64 = decrypt(row.file_enc); } catch { throw new HttpError(500, 'The agreement file could not be read'); }
+    audit.log({ user: ctx.user, action: 'ai.agreement_file.download', entity: 'ai_agreement_file', entityId: row.id, ip: ctx.ip, details: { content_type: row.content_type, bytes: row.bytes } });
+    ctx.res.writeHead(200, fileHeaders(safeAgreementType(row.content_type), contentDisposition('attachment', row.filename, 'ai-agreement')));
+    ctx.res.end(Buffer.from(b64, 'base64'));
+    return null;
+  });
+  // Remove the uploaded agreement file (the agreement stays recorded; this only drops the stored evidence).
+  r.delete('/api/ai/agreement-file', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
+    const had = !!currentAgreementRow();
+    db.run(`DELETE FROM ai_agreement_files`);
+    if (had) audit.log({ user: ctx.user, action: 'ai.agreement_file.delete', entity: 'ai_agreement_file', ip: ctx.ip, details: {} });
+    return { ok: true };
   });
   // Prices (dollars per million input / output tokens, for the estimate on the This month card) and the optional
   // monthly spending limit in dollars (server/ai-cost.js): non-negative numbers, or null / blank to clear.
   r.put('/api/ai/settings', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
     const price = { type: 'number', min: 0, max: COST.MAX_PRICE };
-    const v = validate(ctx.body, { enabled: { type: 'boolean' }, assistant_enabled: { type: 'boolean' }, model: { type: 'string', maxLen: 100 }, monthly_cap: { type: 'number', integer: true, min: 0, max: 100000 },
+    const v = validate(ctx.body, { enabled: { type: 'boolean' }, assistant_enabled: { type: 'boolean' }, require_onprem: { type: 'boolean' }, model: { type: 'string', maxLen: 100 }, monthly_cap: { type: 'number', integer: true, min: 0, max: 100000 },
       price_input: price, price_output: price, monthly_cost_cap: { type: 'number', min: 0, max: COST.MAX_COST_CAP } }, { partial: true });
     if (v.model !== undefined && v.model !== null && v.model !== '' && !AP.modelOk(v.model)) throw badRequest('Validation failed', { fields: { model: `must be ${AP.current() ? AP.current().modelHint : 'a model id'} (the provider is ${AP.label()})` } });
     const was = AI.settings();
@@ -106,10 +174,11 @@ module.exports = (r) => {
       if (v.assistant_enabled !== undefined) { db.setSetting('ai_assistant_enabled', v.assistant_enabled ? '1' : '0'); changed.push('assistant_enabled'); }
       if (v.model !== undefined) { if (v.model) db.setSetting('ai_model', v.model); else db.run(`DELETE FROM settings WHERE key='ai_model'`); changed.push('model'); }
       if (v.monthly_cap !== undefined && v.monthly_cap !== null) { db.setSetting('ai_monthly_cap', String(v.monthly_cap)); changed.push('monthly_cap'); }
+      if (v.require_onprem !== undefined) { db.setSetting('ai_require_onprem', v.require_onprem ? '1' : '0'); changed.push('require_onprem'); }
       changed.push(...COST.save(v));
     });
     const now = AI.settings();
-    audit.log({ user: ctx.user, action: 'ai.settings.update', ip: ctx.ip, details: { changed, enabled: now.enabled, assistant_enabled: now.assistant_enabled, model: now.model, monthly_cap: now.monthly_cap,
+    audit.log({ user: ctx.user, action: 'ai.settings.update', ip: ctx.ip, details: { changed, enabled: now.enabled, assistant_enabled: now.assistant_enabled, require_onprem: now.require_onprem, model: now.model, monthly_cap: now.monthly_cap,
       price_input: now.price_input, price_output: now.price_output, monthly_cost_cap: now.monthly_cost_cap } });
     return { ok: true, ...now };
   });
@@ -158,9 +227,12 @@ module.exports = (r) => {
   // Withdrawing it (the agreement ended, or was never right) switches the copilot off at once.
   r.delete('/api/ai/attestation', auth.requireAuth, auth.requirePerm('settings:manage'), (ctx) => {
     const was = AI.attestation();
+    const hadFile = !!currentAgreementRow();
     db.run(`DELETE FROM settings WHERE key='ai_attestation'`);
     db.setSetting('ai_enabled', '0'); db.setSetting('ai_assistant_enabled', '0');
-    audit.log({ user: ctx.user, action: 'ai.attestation.withdraw', ip: ctx.ip, details: { had: !!was, provider: was ? was.provider : undefined, reference: was ? was.reference : undefined } });
+    // The uploaded agreement is evidence of the agreement just withdrawn; drop it with the record it stood behind.
+    db.run(`DELETE FROM ai_agreement_files`);
+    audit.log({ user: ctx.user, action: 'ai.attestation.withdraw', ip: ctx.ip, details: { had: !!was, provider: was ? was.provider : undefined, reference: was ? was.reference : undefined, agreement_file_removed: hadFile || undefined } });
     return { ok: true };
   });
 

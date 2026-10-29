@@ -949,6 +949,10 @@ const migrations = [
   // 73: server configuration from the front end (server/server-config.js): the settings an office server took only
   // from its environment until 1.27.0, set by an administrator in Settings › Server configuration; secrets encrypted.
   (d) => { createTablesFromSchema(d, safeSchema(), ['server_config'], 73); },
+  // 74: ai_agreement_files (1.28.0) — the signed BAA / QSOA with the AI provider, uploaded as evidence behind
+  //     the recorded agreement (the attestation references the current file by id). Office server only, never
+  //     synchronised; the bytes are encrypted at rest. Self-contained and idempotent, so it can be renumbered.
+  (d) => { createTablesFromSchema(d, safeSchema(), ['ai_agreement_files'], 74); },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

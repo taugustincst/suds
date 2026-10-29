@@ -665,6 +665,20 @@ CREATE TABLE IF NOT EXISTS server_config (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+-- The signed BAA / QSOA with the AI provider, uploaded as evidence behind the recorded agreement (the
+-- attestation, settings key ai_attestation, references the current file by id). Office server only, never
+-- synchronised; the file bytes are encrypted at rest (file_enc, base64 of the file). One current file at a
+-- time (the attestation points to the newest; recording or withdrawing the agreement replaces it).
+CREATE TABLE IF NOT EXISTS ai_agreement_files (
+  id TEXT PRIMARY KEY,
+  filename TEXT,
+  content_type TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  file_enc TEXT NOT NULL,
+  uploaded_by TEXT REFERENCES users(id),
+  uploaded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS referrals (
   id TEXT PRIMARY KEY,
   client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
