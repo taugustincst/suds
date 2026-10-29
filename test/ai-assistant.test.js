@@ -332,3 +332,28 @@ test('provider failures follow the copilot\'s contract: the status, the kind, no
   const last = await nav.post('/api/ai/ask', { scope: 'programme', question: 'q' });
   assert.equal(last.status, 429); assert.match(last.data.error, /Too many AI requests in a minute/);
 });
+
+// ---------------------------------------------------------------- accounting of disclosures (1.27.1)
+test('the assistant accounts for each client whose record was in the pack; programme facts disclose nothing', async () => {
+  await assistantOn(); fresh();
+  const n = (id) => H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE client_id=? AND source='ai'`, id).n;
+  // Client scope: exactly one disclosure for that client, under the AI basis, never counseling notes by default.
+  reply = () => okJson({ answer: 'ok', citations: [{ section: 'client.header' }] });
+  const b = n(maria);
+  assert.equal((await nav.post('/api/ai/ask', { scope: 'client', client_id: maria, question: 'Brief me' })).status, 200);
+  assert.equal(n(maria), b + 1, 'client scope: one disclosure for the client');
+  const row = H.db.one(`SELECT basis, source, source_ref, counseling_notes FROM disclosures WHERE client_id=? AND source='ai' ORDER BY rowid DESC LIMIT 1`, maria);
+  assert.equal(row.basis, 'ai_assist'); assert.equal(row.source_ref, 'assistant'); assert.equal(row.counseling_notes, 0);
+  // Programme scope: no client record is sent, so nothing is written to any accounting.
+  fresh(); reply = () => okJson({ answer: 'stock info', citations: [] });
+  const total0 = H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE source='ai'`).n;
+  assert.equal((await nav.post('/api/ai/ask', { scope: 'programme', question: 'Naloxone stock?' })).status, 200);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE source='ai'`).n, total0, 'programme facts disclose nothing');
+  // Day scope: one disclosure per distinct client the pack named (the audit records which; zero if it names none).
+  fresh(); reply = () => okJson({ answer: 'ok', citations: [] });
+  const before = H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE source='ai'`).n;
+  assert.equal((await nav.post('/api/ai/ask', { scope: 'day', question: 'What is overdue?' })).status, 200);
+  const ids = JSON.parse(lastAudit('ai.ask').details).client_ids || [];
+  const added = H.db.one(`SELECT COUNT(*) n FROM disclosures WHERE source='ai'`).n - before;
+  assert.equal(added, new Set(ids).size, 'day scope: one disclosure per distinct client in the pack');
+});

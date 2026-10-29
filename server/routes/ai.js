@@ -45,10 +45,10 @@ function perUserLimit(ctx) {
  * Ask for one draft and audit it, whatever happens. `details` are the feature's own (format, kind, note id):
  * never text. A failure is answered with the reason and the form stays as the author left it.
  */
-async function run(ctx, { clientId, feature, pieces, build, details = {} }) {
+async function run(ctx, { clientId, feature, pieces, build, details = {}, counselingNotes = false }) {
   perUserLimit(ctx);
   try {
-    const r = await AI.draft({ user: ctx.user, clientId, feature, pieces, build });
+    const r = await AI.draft({ user: ctx.user, ip: ctx.ip, clientId, feature, pieces, build, counselingNotes });
     audit.log({ user: ctx.user, action: 'ai.draft', entity: 'client', entityId: clientId, clientId, ip: ctx.ip,
       details: { feature, ...details, model: r.model, outcome: 'ok', input_tokens: r.tokens.input_tokens, output_tokens: r.tokens.output_tokens, identifiers_replaced: r.counts, sent_chars: r.sent_chars } });
     return r;
@@ -128,6 +128,11 @@ module.exports = (r) => {
       // counseling notes (42 CFR §2.11). Without it a counseling note is never drafted and never summarised, exactly
       // as before. With it, counseling-note content may flow through the same masked path as everything else.
       covers_counseling: { type: 'boolean' },
+      // A sixth statement (optional, 1.27.1): the agreement includes a term that the provider does not retain the
+      // content beyond serving the request and does not use it to train models (a zero-retention / no-training term).
+      // Recorded and shown with the agreement; not required to switch the copilot on (an administrator records what
+      // the agreement says). It is advisory evidence, never a technical control.
+      zero_retention: { type: 'boolean' },
     });
     const missing = {};
     if (!v.baa) missing.baa = 'Confirm that a HIPAA business associate agreement with this provider is in place.';
@@ -139,11 +144,15 @@ module.exports = (r) => {
     // drafts are refused while the server is set up for another (ai-copilot.js status(), provider_changed).
     if (!AP.current()) throw badRequest(`This server's AI provider is not one SUDS knows (${AP.configProblem()}).`);
     const a = { provider: v.provider, configured_provider: AP.id(), signed_by: v.signed_by, agreement_date: v.agreement_date, reference: v.reference, baa: true, qsoa: true, counsel_reviewed: true,
-      covers_assistant: !!v.covers_assistant, covers_counseling: !!v.covers_counseling, recorded_by: ctx.user.id, recorded_by_name: ctx.user.display_name || ctx.user.username, recorded_at: db.now() };
+      covers_assistant: !!v.covers_assistant, covers_counseling: !!v.covers_counseling, zero_retention: !!v.zero_retention,
+      // The endpoint records are sent to when the agreement was recorded (SUDS_AI_BASE_URL, blank for the provider's
+      // own API): if it changes, the copilot is off until the agreement is recorded again (ai-copilot.js endpointChanged).
+      configured_base_url: AI.currentAiEndpoint() || null,
+      recorded_by: ctx.user.id, recorded_by_name: ctx.user.display_name || ctx.user.username, recorded_at: db.now() };
     db.setSetting('ai_attestation', JSON.stringify(a));
     // An agreement recorded again without the assistant statement takes the assistant off with it.
     if (!a.covers_assistant) db.setSetting('ai_assistant_enabled', '0');
-    audit.log({ user: ctx.user, action: 'ai.attestation.record', ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true, covers_assistant: a.covers_assistant, covers_counseling: a.covers_counseling } });
+    audit.log({ user: ctx.user, action: 'ai.attestation.record', ip: ctx.ip, details: { provider: a.provider, configured_provider: a.configured_provider, signed_by: a.signed_by, agreement_date: a.agreement_date, reference: a.reference, baa: true, qsoa: true, counsel_reviewed: true, covers_assistant: a.covers_assistant, covers_counseling: a.covers_counseling, zero_retention: a.zero_retention, configured_base_url: a.configured_base_url || undefined } });
     ctx.status = 201; return { ok: true, attestation: a };
   });
   // Withdrawing it (the agreement ended, or was never right) switches the copilot off at once.
@@ -209,7 +218,7 @@ module.exports = (r) => {
       if (Number(n.counseling_note) && !counselingOk) throw badRequest(COUNSELING, { ai_error: 'counseling_note' });
     }
     const format = v.format || 'narrative';
-    const out = await run(ctx, { clientId: v.client_id, feature: 'note', pieces: { text: v.source_text },
+    const out = await run(ctx, { clientId: v.client_id, feature: 'note', pieces: { text: v.source_text }, counselingNotes: !!v.counseling_note,
       build: (c) => P.notePrompt({ format, kind: v.kind, text: c.text }), details: { format, kind: v.kind, note_id: v.note_id || undefined } });
     // The note the draft was asked for is AI-assisted from now on, whatever the browser later sends (security review
     // of 1.17.0, L1): signing it then needs the author's review statement. The ai.draft audit entry above, with

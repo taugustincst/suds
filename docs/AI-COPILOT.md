@@ -63,12 +63,18 @@ administrator, under Settings → Users & permissions. And the client must be on
    signed for the programme, the date, the agreement's reference, and three confirmations (a BAA covering
    this use; it includes Part 2 QSOA terms; counsel has reviewed this use). All three are required. A fourth
    statement records that the agreement covers conversational **assistant** use, and a fifth that it covers
-   **SUD counseling notes** (§2.11), each unlocking that use only when ticked (the owner's decision of 2026-10-24). The
-   record is audited (`ai.attestation.record`: provider, signer, date, reference, and the provider the server
-   was set up for). The screen says which provider this server sends drafts to, so the agreement recorded is
+   **SUD counseling notes** (§2.11), each unlocking that use only when ticked (the owner's decision of 2026-10-24).
+   An optional sixth statement records that the agreement includes a **zero-retention / no-training** term (the
+   provider does not keep the content beyond serving the request and does not train on it); it is advisory
+   evidence kept with the agreement, never a technical control. The record is audited (`ai.attestation.record`:
+   provider, signer, date, reference, the provider the server was set up for, and the endpoint it was recorded
+   against). The screen says which provider this server sends drafts to, so the agreement recorded is
    with that provider. **The agreement is tied to that provider** (since 1.17.1): if the server is later set up
    for another (`SUDS_AI_PROVIDER` changed), drafts are refused (`provider_changed`) and the copilot cannot be
-   switched on until the agreement with the new provider is recorded (withdraw the old one first). An agreement
+   switched on until the agreement with the new provider is recorded (withdraw the old one first). It is tied
+   the same way to the **endpoint** records are sent to (since 1.27.1): if `SUDS_AI_BASE_URL` changes after the
+   agreement was recorded — where records actually go has changed — drafts are refused (`endpoint_changed`)
+   until the agreement is recorded again to confirm the new destination. An agreement
    recorded before 1.17.1 counts as one with Anthropic, the only provider then.
 4. **Switch it on** under *Copilot settings*. It cannot be switched on without the agreement and the key.
    Choose the monthly cap (below).
@@ -254,10 +260,22 @@ the text sent is still PHI and, for a Part 2 programme, Part 2 information. What
   masked.
 
 Staff are told this in each copilot panel: leave out what the note does not need, and never paste another
-client's information. The legal basis for sending the rest is the BAA/QSOA, not the masking.
+client's information. The legal basis for sending the rest is the BAA/QSOA, not the masking — and, because the
+masking is not de-identification, every send is written to the client's accounting of disclosures (below), the
+same as any other time information leaves the programme.
 
 ## What is recorded
 
+* **Accounting of disclosures** (`disclosures` table, `source` `ai`, `basis` `ai_assist`; audited as
+  `disclosure.record`): because sending record content to the provider is a disclosure to a business associate
+  / qualified service organisation, each call writes one row to every affected client's accounting of
+  disclosures (§164.528 / §2.25) — one per client for a draft or a client brief, one for each client a day
+  pack named, none for programme-only facts. The row names the authority and the provider as the recipient;
+  it **never** holds the content (which is masked before sending and is not stored). It is written at the
+  point of transmission, so a rare transport failure can record a disclosure that did not complete: the ledger
+  errs toward over-accounting rather than a silent, unaccounted disclosure. A draft of a SUD counseling note
+  (§2.11) marks its row as counseling notes. The AI feature is office-server only, so this is never written on
+  a device.
 * **Audit log** (`ai.draft`, one entry per call, success or failure): who, which client (`client_id`), the
   feature (`note`, `asam`, `careplan`, `caloms`), the note format and kind or the assessment id, the model,
   the outcome, input and output token counts, the number of identifiers replaced by kind, and how many
@@ -380,7 +398,9 @@ and names come back through its `reidentify`. There is no second masking path.
 - As with the copilot, other names typed into a question are sent as written. The page says never to type
   another client's information.
 - **The summaries are still protected health information and Part 2 information**, sent to the provider under the
-  BAA and QSOA. Replacing identifiers lowers the risk; it is not de-identification.
+  BAA and QSOA. Replacing identifiers lowers the risk; it is not de-identification. Because of that, each ask is
+  written to the accounting of disclosures of every client whose record was in the summary — one for a client
+  brief, one for each client a day summary named, none for program-only facts (see *What is recorded*).
 
 **Answers cite the summary.** Each answer names the sections of the summary it used. SUDS refuses an answer that cites a
 section that was not sent: it is recorded as `unreadable` and never shown (a 502). The page shows every answer under

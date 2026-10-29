@@ -86,8 +86,11 @@ async function ask({ user, ip = null, scope, clientId = null, question, turns = 
       && data.citations.every(c => c && typeof c.section === 'string' && sections.has(c.section));
     if (!ok) throw new AI.AiError('unreadable', 502, 'The AI assistant\'s answer could not be checked against the record summary it was given, so it is not shown. Ask again, or look in the record.');
   };
+  // Every client whose record went into the pack is accounted for in their accounting of disclosures: one for a
+  // client brief, each client a day pack names, none for programme facts (no client record is sent).
+  const accountClients = scope === 'client' ? [clientId] : scope === 'day' ? [...refs.values()] : [];
   const r = await AI.draft({
-    user, clientId: scope === 'client' ? clientId : null, feature: 'assistant', assistant: true, ids, check,
+    user, ip, clientId: scope === 'client' ? clientId : null, feature: 'assistant', assistant: true, ids, check, accountClients,
     pieces: { pack: pack.text, conversation, question: String(question || '') },
     build: (c) => {
       const p = P.assistantPrompt(scope);
