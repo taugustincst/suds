@@ -674,3 +674,81 @@ test('the agreement records the zero-retention term and the endpoint it was reco
   assert.equal(JSON.parse(lastAudit('ai.attestation.record').details).zero_retention, true);
   await attestAndEnable(); // restore the default agreement
 });
+
+// ---------------------------------------------------------------- the signed agreement file (1.28.0)
+test('the signed agreement file: an admin uploads/replaces it (stored encrypted), downloads it, sees it in settings; others cannot', async () => {
+  fresh(); await attestAndEnable();
+  const { decrypt } = require('../server/crypto');
+  const pdf = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF');
+  const pdfUrl = 'data:application/pdf;base64,' + pdf.toString('base64');
+  assert.equal((await clin.post('/api/ai/agreement-file', { file_url: pdfUrl, filename: 'baa.pdf' })).status, 403, 'only an administrator uploads');
+  const up = await admin.post('/api/ai/agreement-file', { file_url: pdfUrl, filename: 'baa.pdf' });
+  assert.equal(up.status, 201, JSON.stringify(up.data));
+  assert.equal(up.data.agreement_file.filename, 'baa.pdf');
+  assert.equal(up.data.agreement_file.content_type, 'application/pdf');
+  assert.equal(up.data.agreement_file.bytes, pdf.length);
+  const row = H.db.one(`SELECT * FROM ai_agreement_files`);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM ai_agreement_files`).n, 1, 'one current file');
+  assert.notEqual(row.file_enc, pdf.toString('base64'), 'stored as ciphertext, not plaintext base64');
+  assert.equal(decrypt(row.file_enc), pdf.toString('base64'), 'decrypts to the uploaded bytes');
+  assert.equal((await admin.get('/api/ai/settings')).data.agreement_file.filename, 'baa.pdf');
+  const dl = await admin.get('/api/ai/agreement-file');
+  assert.equal(dl.status, 200);
+  assert.match(dl.headers.get('content-type') || '', /application\/pdf/);
+  assert.match(dl.headers.get('content-disposition') || '', /attachment/);
+  assert.ok(String(dl.data).startsWith('%PDF'), 'the bytes come back');
+  assert.equal((await clin.get('/api/ai/agreement-file')).status, 403, 'only an administrator downloads');
+  // Replacing it keeps exactly one row.
+  const png = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0]);
+  assert.equal((await admin.post('/api/ai/agreement-file', { file_url: 'data:image/png;base64,' + png.toString('base64'), filename: 'baa.png' })).status, 201);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM ai_agreement_files`).n, 1);
+  assert.equal(H.db.one(`SELECT content_type FROM ai_agreement_files`).content_type, 'image/png');
+  await admin.del('/api/ai/agreement-file');
+});
+
+test('the agreement file rejects a type that is not a document/picture/text; withdrawing the agreement removes it', async () => {
+  fresh(); await attestAndEnable();
+  const junk = 'data:application/octet-stream;base64,' + Buffer.from('MZ this is not a document').toString('base64');
+  assert.equal((await admin.post('/api/ai/agreement-file', { file_url: junk, filename: 'x.exe' })).status, 400);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM ai_agreement_files`).n, 0, 'nothing stored for a rejected upload');
+  assert.equal((await admin.post('/api/ai/agreement-file', { file_url: 'data:application/pdf;base64,' + Buffer.from('%PDF-1.4 x').toString('base64') })).status, 201);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM ai_agreement_files`).n, 1);
+  assert.equal((await admin.del('/api/ai/attestation')).status, 200);
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM ai_agreement_files`).n, 0, 'removed with the withdrawn agreement');
+  await attestAndEnable(); // restore
+});
+
+// ---------------------------------------------------------------- on-premises model (1.28.0)
+test('on-premises provider: a draft runs against a self-hosted Messages-API endpoint; "on-premises only" blocks a cloud provider', async () => {
+  fresh();
+  const origProvider = process.env.SUDS_AI_PROVIDER;
+  try {
+    // A cloud provider (the default anthropic) with "on-premises only" on → refused, nothing sent.
+    await attestAndEnable();
+    H.db.setSetting('ai_require_onprem', '1');
+    let st = (await clin.get('/api/ai/status')).data;
+    assert.equal(st.available, false);
+    assert.equal(st.code, 'cloud_blocked');
+    const c0 = calls.length;
+    const blocked = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', source_text: 'x' });
+    assert.equal(blocked.status, 409, JSON.stringify(blocked.data));
+    assert.equal(blocked.data.ai_unavailable, 'cloud_blocked');
+    assert.equal(calls.length, c0, 'nothing is sent to a cloud provider');
+    // Point the server at a self-hosted on-prem endpoint (still the local fake) and record the agreement for it.
+    process.env.SUDS_AI_PROVIDER = 'onprem';
+    await attestAndEnable();
+    st = (await clin.get('/api/ai/status')).data;
+    assert.equal(st.available, true, JSON.stringify(st));
+    reply = () => okJson({ sections: { S: 's', O: 'o', A: 'a', P: 'p' }, gaps: [] });
+    const ok = await clin.post('/api/ai/draft/note', { client_id: clientId, kind: 'clinical', format: 'SOAP', source_text: 'Session' });
+    assert.equal(ok.status, 200, JSON.stringify(ok.data));
+    assert.equal(calls[calls.length - 1].path, '/v1/messages', 'posted to the on-prem Messages API path');
+    // The cloud-only server-side fallback is not sent to an on-prem endpoint.
+    assert.equal(calls[calls.length - 1].body.fallbacks, undefined);
+    assert.equal(calls[calls.length - 1].headers['anthropic-beta'], undefined);
+  } finally {
+    H.db.setSetting('ai_require_onprem', '0');
+    if (origProvider === undefined) delete process.env.SUDS_AI_PROVIDER; else process.env.SUDS_AI_PROVIDER = origProvider;
+    await attestAndEnable();
+  }
+});

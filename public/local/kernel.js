@@ -7466,6 +7466,20 @@ CREATE TABLE IF NOT EXISTS server_config (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+-- The signed BAA / QSOA with the AI provider, uploaded as evidence behind the recorded agreement (the
+-- attestation, settings key ai_attestation, references the current file by id). Office server only, never
+-- synchronised; the file bytes are encrypted at rest (file_enc, base64 of the file). One current file at a
+-- time (the attestation points to the newest; recording or withdrawing the agreement replaces it).
+CREATE TABLE IF NOT EXISTS ai_agreement_files (
+  id TEXT PRIMARY KEY,
+  filename TEXT,
+  content_type TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  file_enc TEXT NOT NULL,
+  uploaded_by TEXT REFERENCES users(id),
+  uploaded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS referrals (
   id TEXT PRIMARY KEY,
   client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
@@ -14602,7 +14616,8 @@ var require_sync_tables = __commonJS({
         "policy_ack_imports",
         // server_config (migration 73, server/server-config.js): this office server's own configuration, its secrets among
         // it (an AI provider's key). Never on a device.
-        "server_config"
+        "server_config",
+        "ai_agreement_files"
       ],
       // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
       // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
@@ -14637,6 +14652,7 @@ var require_sync_tables = __commonJS({
         policy_acknowledgements: [],
         policy_ack_imports: [],
         server_config: ["value_enc"],
+        ai_agreement_files: ["file_enc"],
         idempotency_keys: ["response_enc"]
       },
       // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
@@ -14750,7 +14766,8 @@ var require_sync_tables = __commonJS({
         ["policy_acknowledgements", "user_id"],
         ["policy_acknowledgements", "recorded_by"],
         ["policy_ack_imports", "imported_by"],
-        ["server_config", "updated_by"]
+        ["server_config", "updated_by"],
+        ["ai_agreement_files", "uploaded_by"]
       ]
     };
     module.exports.user_ref_cols = [...new Set(module.exports.user_refs.map(([, c]) => c))];
@@ -27115,6 +27132,19 @@ var require_ai_providers = __commonJS({
         model: /^claude-[a-z0-9][a-z0-9.@-]{1,62}$/,
         modelHint: "a Vertex AI model id such as claude-\u2026",
         credentials: "GOOGLE_APPLICATION_CREDENTIALS (a service account key file)"
+      },
+      // A self-hosted endpoint that speaks the Anthropic Messages API (an on-prem gateway such as LiteLLM, a model
+      // served on this machine, or a private deployment): no request leaves the programme's own infrastructure, for
+      // a 42 CFR Part 2 programme whose posture does not allow a third-party cloud. The endpoint is SUDS_AI_BASE_URL
+      // (required; https, or plain http only to this machine), the key — if the endpoint needs one — SUDS_AI_ONPREM_KEY,
+      // sent as x-api-key like the Anthropic API. The request and the Messages-API response are otherwise identical, so
+      // nothing about drafting changes; the cloud-only server-side fallback is left out (an on-prem endpoint has none).
+      onprem: {
+        label: "On-premises model (self-hosted, Anthropic Messages API)",
+        defaultModel: DEFAULT_MODEL,
+        model: /^[A-Za-z0-9][\w.:@/-]{1,120}$/,
+        modelHint: "the model id your on-prem endpoint serves",
+        credentials: "SUDS_AI_BASE_URL (your endpoint) and, if it needs one, SUDS_AI_ONPREM_KEY"
       }
     };
     var BEDROCK_VERSION = "bedrock-2023-05-31";
@@ -27154,6 +27184,9 @@ var require_ai_providers = __commonJS({
           return !!(setting("AWS_ACCESS_KEY_ID") && setting("AWS_SECRET_ACCESS_KEY"));
         case "vertex":
           return !!serviceAccount();
+        // The endpoint is the credential; a key is optional (an internal endpoint may need none).
+        case "onprem":
+          return !!proc.env.SUDS_AI_BASE_URL;
         default:
           return false;
       }
@@ -27167,6 +27200,9 @@ var require_ai_providers = __commonJS({
           const r = vertexRegion();
           return r === "global" ? "https://aiplatform.googleapis.com" : `https://${r}-aiplatform.googleapis.com`;
         }
+        case "onprem":
+          return "";
+        // no cloud default: SUDS_AI_BASE_URL is required (configProblem says so)
         default:
           return config2.ai.baseUrl;
       }
@@ -27184,7 +27220,8 @@ var require_ai_providers = __commonJS({
     }
     function configProblem(model) {
       const p = current2();
-      if (!p) return `SUDS_AI_PROVIDER must be anthropic, bedrock or vertex (it is "${String(id()).slice(0, 40)}")`;
+      if (!p) return `SUDS_AI_PROVIDER must be anthropic, bedrock, vertex or onprem (it is "${String(id()).slice(0, 40)}")`;
+      if (id() === "onprem" && !proc.env.SUDS_AI_BASE_URL) return "An on-premises model needs SUDS_AI_BASE_URL set to your endpoint (for example https://ai.internal.example or http://127.0.0.1:8000)";
       if (id() === "bedrock" && !/^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/.test(awsRegion())) return "Amazon Bedrock needs AWS_REGION (for example us-west-2)";
       if (id() === "vertex") {
         if (!/^[a-z][a-z0-9-]{1,30}$/.test(vertexRegion())) return "Vertex AI needs SUDS_AI_VERTEX_REGION (a region such as us-east5, or global)";
@@ -27215,6 +27252,12 @@ var require_ai_providers = __commonJS({
     }
     function adapt(body, headers, provider = id()) {
       if (provider === "anthropic") return { body, headers: { ...headers } };
+      if (provider === "onprem") {
+        const { fallbacks: fallbacks2, ...rest2 } = body;
+        const h2 = { ...headers };
+        delete h2["anthropic-beta"];
+        return { body: rest2, headers: h2 };
+      }
       const { model, fallbacks, ...rest } = body;
       const h = { "content-type": "application/json", accept: "application/json" };
       return { body: { anthropic_version: provider === "bedrock" ? BEDROCK_VERSION : VERTEX_VERSION, ...rest }, headers: h };
@@ -27227,6 +27270,10 @@ var require_ai_providers = __commonJS({
       const base = baseUrl();
       if (provider === "anthropic") {
         return fetch(`${base}/v1/messages`, { method: "POST", headers: { ...a.headers, "x-api-key": config2.ai.apiKey }, body: payload, signal, redirect: "error" });
+      }
+      if (provider === "onprem") {
+        const key = setting("SUDS_AI_ONPREM_KEY");
+        return fetch(`${base}/v1/messages`, { method: "POST", headers: { ...a.headers, ...key ? { "x-api-key": key } : {} }, body: payload, signal, redirect: "error" });
       }
       if (provider === "bedrock") {
         const url = `${base}/model/${seg(model)}/invoke`;
@@ -27434,10 +27481,12 @@ var require_ai_copilot = __commonJS({
         return null;
       }
     }
+    var requireOnprem = () => db3.getSetting("ai_require_onprem", "0") === "1";
     function settings() {
       const cap = Number(db3.getSetting("ai_monthly_cap", String(DEFAULT_CAP)));
       return {
         enabled: db3.getSetting("ai_enabled", "0") === "1",
+        require_onprem: requireOnprem(),
         // The assistant (server/ai-assistant.js): off unless switched on, even with the copilot on.
         assistant_enabled: db3.getSetting("ai_assistant_enabled", "0") === "1",
         model: db3.getSetting("ai_model", null) || providers.defaultModel(),
@@ -27494,6 +27543,7 @@ var require_ai_copilot = __commonJS({
         reason = r;
       };
       if (config2.local) no("device", "The AI copilot runs only on an office server. SUDS on this device never sends anything to an AI provider.");
+      else if (requireOnprem() && providers.id() !== "onprem") no("cloud_blocked", 'The AI copilot is set to on-premises only for this program: it will not send records to a third-party cloud AI provider. Set the provider to your on-prem endpoint (SUDS_AI_PROVIDER=onprem), or turn off "on-premises only" in Settings \u2192 AI copilot.');
       else if (!s.attestation) no("no_agreement", "The AI copilot is off: an administrator has not recorded the program's agreement (BAA / QSOA) with the AI provider.");
       else if (!s.enabled) no("off", "The AI copilot is switched off for this program (Settings \u2192 AI copilot).");
       else if (!keyConfigured()) no("no_key", "The AI copilot is not configured on this server (no provider API key). Tell your administrator.");
@@ -28018,6 +28068,7 @@ var require_ai_copilot = __commonJS({
       counselingCovered,
       endpointChanged,
       currentAiEndpoint,
+      requireOnprem,
       DEFAULT_CAP,
       MAX_TEXT,
       MAX_TOKENS,
@@ -28404,11 +28455,41 @@ var require_ai = __commonJS({
     var COST = require_ai_cost();
     var P2 = require_ai_prompts();
     var CL = require_clinical();
-    var { badRequest, forbidden, notFound, HttpError: HttpError3 } = require_http();
+    var { badRequest, forbidden, notFound, HttpError: HttpError3, contentDisposition, fileHeaders } = require_http();
     var { validate } = require_validate();
-    var { decrypt: decrypt3 } = require_crypto();
+    var { decrypt: decrypt3, encrypt: encrypt3, uuid: uuid2 } = require_crypto();
     var text = { type: "string", maxLen: AI.MAX_TEXT };
     var PER_USER_PER_MINUTE = 12;
+    var MAX_AGREEMENT_BYTES = 15 * 1024 * 1024;
+    var AGREEMENT_EXT = { "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx", "application/msword": "doc", "text/plain": "txt" };
+    function sniffAgreement(buf) {
+      if (buf.length > 4 && buf.toString("ascii", 0, 4) === "%PDF") return "application/pdf";
+      if (buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255) return "image/jpeg";
+      if (buf.length > 8 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71) return "image/png";
+      if (buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+      if (buf.length > 4 && buf[0] === 80 && buf[1] === 75 && buf[2] === 3 && buf[3] === 4) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      if (buf.length > 8 && buf[0] === 208 && buf[1] === 207 && buf[2] === 17 && buf[3] === 224) return "application/msword";
+      return null;
+    }
+    function agreementFromDataUrl(v) {
+      if (v != null && typeof v !== "string") throw badRequest("The agreement file must be base64");
+      if (!v) throw badRequest("Choose the signed agreement file to upload");
+      const m = /^data:([\w.+/-]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(v);
+      const b643 = (m ? m[2] : v).replace(/\s+/g, "");
+      if (!/^[A-Za-z0-9+/=]+$/.test(b643)) throw badRequest("The agreement file must be base64");
+      const buf = import_buffer.Buffer.from(b643, "base64");
+      if (!buf.length) throw badRequest("The agreement file is empty");
+      if (buf.length > MAX_AGREEMENT_BYTES) throw badRequest(`The agreement file is too large (max ${Math.round(MAX_AGREEMENT_BYTES / 1024 / 1024)} MB)`);
+      const type = sniffAgreement(buf) || (m && m[1] === "text/plain" ? "text/plain" : null);
+      if (!type || !AGREEMENT_EXT[type]) throw badRequest("The agreement must be a PDF, Word document, picture or text file");
+      return { b64: b643, buf, type };
+    }
+    var safeAgreementType = (t) => AGREEMENT_EXT[String(t || "").toLowerCase().split(";")[0].trim()] ? String(t).split(";")[0].trim() : "application/octet-stream";
+    var currentAgreementRow = () => db3.one(`SELECT * FROM ai_agreement_files ORDER BY uploaded_at DESC, rowid DESC LIMIT 1`) || null;
+    function agreementFileMeta() {
+      const f = currentAgreementRow();
+      return f ? { id: f.id, filename: f.filename, content_type: f.content_type, bytes: f.bytes, uploaded_at: f.uploaded_at, uploaded_by: f.uploaded_by } : null;
+    }
     function clientFor(ctx, clientId, feature, action = "ai.draft") {
       if (!db3.one(`SELECT 1 FROM clients WHERE id=? AND deleted_at IS NULL`, clientId)) throw notFound("Client not found");
       auth3.assertClientAccess(ctx, clientId);
@@ -28468,14 +28549,57 @@ var require_ai = __commonJS({
           status: AI.status(),
           usage: AI.usage(),
           provider: AP.describe(),
-          attestation_provider: st.attestation ? AI.attestedProvider(st.attestation) : null
+          attestation_provider: st.attestation ? AI.attestedProvider(st.attestation) : null,
+          agreement_file: agreementFileMeta()
         };
+      });
+      r.post("/api/ai/agreement-file", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const f = agreementFromDataUrl(ctx.body && (ctx.body.file_url ?? ctx.body.file));
+        const filename = String(ctx.body && ctx.body.filename || `ai-agreement.${AGREEMENT_EXT[f.type]}`).slice(0, 200);
+        const id = uuid2();
+        db3.transaction(() => {
+          db3.run(`DELETE FROM ai_agreement_files`);
+          db3.run(
+            `INSERT INTO ai_agreement_files(id,filename,content_type,bytes,file_enc,uploaded_by,uploaded_at) VALUES(?,?,?,?,?,?,?)`,
+            id,
+            filename,
+            f.type,
+            f.buf.length,
+            encrypt3(f.b64),
+            ctx.user.id,
+            db3.now()
+          );
+        });
+        audit3.log({ user: ctx.user, action: "ai.agreement_file.upload", entity: "ai_agreement_file", entityId: id, ip: ctx.ip, details: { filename, content_type: f.type, bytes: f.buf.length } });
+        ctx.status = 201;
+        return { ok: true, agreement_file: agreementFileMeta() };
+      });
+      r.get("/api/ai/agreement-file", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const row = currentAgreementRow();
+        if (!row) throw notFound("No agreement file has been uploaded");
+        let b643 = "";
+        try {
+          b643 = decrypt3(row.file_enc);
+        } catch {
+          throw new HttpError3(500, "The agreement file could not be read");
+        }
+        audit3.log({ user: ctx.user, action: "ai.agreement_file.download", entity: "ai_agreement_file", entityId: row.id, ip: ctx.ip, details: { content_type: row.content_type, bytes: row.bytes } });
+        ctx.res.writeHead(200, fileHeaders(safeAgreementType(row.content_type), contentDisposition("attachment", row.filename, "ai-agreement")));
+        ctx.res.end(import_buffer.Buffer.from(b643, "base64"));
+        return null;
+      });
+      r.delete("/api/ai/agreement-file", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
+        const had = !!currentAgreementRow();
+        db3.run(`DELETE FROM ai_agreement_files`);
+        if (had) audit3.log({ user: ctx.user, action: "ai.agreement_file.delete", entity: "ai_agreement_file", ip: ctx.ip, details: {} });
+        return { ok: true };
       });
       r.put("/api/ai/settings", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
         const price = { type: "number", min: 0, max: COST.MAX_PRICE };
         const v = validate(ctx.body, {
           enabled: { type: "boolean" },
           assistant_enabled: { type: "boolean" },
+          require_onprem: { type: "boolean" },
           model: { type: "string", maxLen: 100 },
           monthly_cap: { type: "number", integer: true, min: 0, max: 1e5 },
           price_input: price,
@@ -28514,6 +28638,10 @@ var require_ai = __commonJS({
             db3.setSetting("ai_monthly_cap", String(v.monthly_cap));
             changed.push("monthly_cap");
           }
+          if (v.require_onprem !== void 0) {
+            db3.setSetting("ai_require_onprem", v.require_onprem ? "1" : "0");
+            changed.push("require_onprem");
+          }
           changed.push(...COST.save(v));
         });
         const now2 = AI.settings();
@@ -28521,6 +28649,7 @@ var require_ai = __commonJS({
           changed,
           enabled: now2.enabled,
           assistant_enabled: now2.assistant_enabled,
+          require_onprem: now2.require_onprem,
           model: now2.model,
           monthly_cap: now2.monthly_cap,
           price_input: now2.price_input,
@@ -28585,10 +28714,12 @@ var require_ai = __commonJS({
       });
       r.delete("/api/ai/attestation", auth3.requireAuth, auth3.requirePerm("settings:manage"), (ctx) => {
         const was = AI.attestation();
+        const hadFile = !!currentAgreementRow();
         db3.run(`DELETE FROM settings WHERE key='ai_attestation'`);
         db3.setSetting("ai_enabled", "0");
         db3.setSetting("ai_assistant_enabled", "0");
-        audit3.log({ user: ctx.user, action: "ai.attestation.withdraw", ip: ctx.ip, details: { had: !!was, provider: was ? was.provider : void 0, reference: was ? was.reference : void 0 } });
+        db3.run(`DELETE FROM ai_agreement_files`);
+        audit3.log({ user: ctx.user, action: "ai.attestation.withdraw", ip: ctx.ip, details: { had: !!was, provider: was ? was.provider : void 0, reference: was ? was.reference : void 0, agreement_file_removed: hadFile || void 0 } });
         return { ok: true };
       });
       r.post("/api/ai/ask", auth3.requireAuth, auth3.requirePerm("ai:ask"), async (ctx) => {
@@ -53777,6 +53908,8 @@ var require_app2 = __commonJS({
       // OneNote / spreadsheet / data imports
       /^\/api\/policies\/report\//,
       // a PowerDMS signature or training report (up to 5 MB)
+      /^\/api\/ai\/agreement-file(\/|$)/,
+      // the signed BAA / QSOA with the AI provider (up to 15 MB)
       /^\/api\/sync\/(push|blob)(\/|$)/
       // a local-mode device's sync payload and attachments
     ];
@@ -56825,6 +56958,12 @@ var require_db = __commonJS({
       // from its environment until 1.27.0, set by an administrator in Settings › Server configuration; secrets encrypted.
       (d) => {
         createTablesFromSchema(d, safeSchema(), ["server_config"], 73);
+      },
+      // 74: ai_agreement_files (1.28.0) — the signed BAA / QSOA with the AI provider, uploaded as evidence behind
+      //     the recorded agreement (the attestation references the current file by id). Office server only, never
+      //     synchronised; the bytes are encrypted at rest. Self-contained and idempotent, so it can be renumbered.
+      (d) => {
+        createTablesFromSchema(d, safeSchema(), ["ai_agreement_files"], 74);
       }
     ];
     var PERF_INDEXES_47 = [

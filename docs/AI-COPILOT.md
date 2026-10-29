@@ -79,8 +79,17 @@ administrator, under Settings → Users & permissions. And the client must be on
 4. **Switch it on** under *Copilot settings*. It cannot be switched on without the agreement and the key.
    Choose the monthly cap (below).
 
+**The signed agreement, uploaded as evidence** (1.28.0, optional). Under *Agreement with the AI provider* an
+administrator can upload the signed BAA / QSOA itself (PDF, Word, picture or text, up to 15 MB) so the record
+rests on the filed document, not only the attested statements. It is stored **encrypted at rest on the office
+server** (`ai_agreement_files.file_enc`, rotated by key rotation like every encrypted column), never
+synchronised to a device, and downloadable by administrators (`GET /api/ai/agreement-file`); uploads, downloads
+and removals are audited (`ai.agreement_file.*`, type and size only, never the bytes). One file is kept at a
+time — an upload replaces the previous one. It is evidence, not a technical control: the gate still rests on the
+attested statements and the provider match.
+
 **Withdrawing the agreement** (it ended, or was recorded in error) switches the copilot off at once
-(`ai.attestation.withdraw`).
+(`ai.attestation.withdraw`) and removes the uploaded agreement file with it.
 
 ### Settings
 
@@ -128,7 +137,17 @@ the server's environment, not in Settings (`server/ai-providers.js`).
 | `anthropic` (default) | Anthropic's API, `POST /v1/messages` | `ANTHROPIC_API_KEY` | `SUDS_AI_BASE_URL` | `claude-opus-5-5` |
 | `bedrock` | Amazon Bedrock InvokeModel, `POST /model/{model id}/invoke`, signed with AWS Signature Version 4 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` for temporary credentials | `AWS_REGION` (or `AWS_DEFAULT_REGION`), required; `SUDS_AI_BASE_URL` (for example a VPC endpoint) | `anthropic.claude-opus-5-5` |
 | `vertex` | Google Cloud Vertex AI, `POST /v1/projects/{project}/locations/{region}/publishers/anthropic/models/{model}:rawPredict` | `GOOGLE_APPLICATION_CREDENTIALS`: the path of a service account key file (JSON), readable only by the SUDS service | `SUDS_AI_VERTEX_REGION` (for example `us-east5`, or `global`), required; `SUDS_AI_VERTEX_PROJECT` (else the key file's `project_id`); `SUDS_AI_BASE_URL` | `claude-opus-5-5` |
+| `onprem` (1.28.0) | A self-hosted endpoint that speaks the Anthropic Messages API (an on-prem gateway such as LiteLLM, a model served on this machine, or a private deployment), `POST {SUDS_AI_BASE_URL}/v1/messages`. No request leaves the programme's own infrastructure. | `SUDS_AI_ONPREM_KEY` (optional; sent as `x-api-key` only if your endpoint needs one) | `SUDS_AI_BASE_URL`, **required** (https, or plain http only to this machine); the model id is whatever your endpoint serves | `claude-opus-5-5` |
 
+* **On-premises (`onprem`)**: for a programme whose Part 2 posture does not allow sending records to a
+  third-party cloud at all. Point `SUDS_AI_BASE_URL` at your own endpoint (a gateway such as LiteLLM, a model
+  on this machine, or a private deployment) that speaks the Anthropic Messages API; SUDS sends the identical
+  request there and reads the identical response, so nothing about drafting changes. A key is sent (as
+  `x-api-key`) only if you set `SUDS_AI_ONPREM_KEY`. To make it a hard rule, turn on **On-premises only**
+  (Settings → AI copilot, or `ai_require_onprem`): while it is on, the copilot and assistant run only with the
+  `onprem` provider and refuse any cloud provider (`cloud_blocked`), so no records can go to a third party even
+  by misconfiguration. Record the agreement as covering on-prem use; a BAA/QSOA may still apply if your endpoint
+  is operated by a vendor.
 * **Model ids differ by provider.** On Bedrock, enter the model id or cross-region inference profile id your AWS
   console shows for the Claude model you have access to (`anthropic.claude-…`, `us.anthropic.claude-…`); many
   regions accept only an inference profile. On Vertex AI, the model id from Model Garden (`claude-…`). Settings

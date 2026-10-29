@@ -175,7 +175,7 @@ module.exports = {
     'policy_acknowledgements', 'policy_ack_imports',
     // server_config (migration 73, server/server-config.js): this office server's own configuration, its secrets among
     // it (an AI provider's key). Never on a device.
-    'server_config'],
+    'server_config', 'ai_agreement_files'],
   // The encrypted columns of the tables that never synchronise (server_only above, per_database below), declared
   // like a synchronised table's: key rotation finds every _enc column by itself, and test/sync.test.js checks this
   // list against the schema, so a table with PHI is always either synchronised or deliberately kept apart.
@@ -191,6 +191,7 @@ module.exports = {
     incoming_referrals: ['referrer_name_enc', 'referrer_phone_enc', 'referrer_email_enc', 'reason_enc', 'first_name_enc', 'last_name_enc', 'dob_enc', 'phone_enc', 'notes_enc', 'outcome_reason_enc'],
     incoming_referral_attempts: ['notes_enc'],
     policy_acknowledgements: [], policy_ack_imports: [], server_config: ['value_enc'],
+    ai_agreement_files: ['file_enc'],
     idempotency_keys: ['response_enc'],
   },
   // Kept by each database for itself and never synchronised in either direction: idempotency_keys holds
@@ -228,7 +229,7 @@ module.exports = {
     ['county_connect_tokens', 'created_by'], ['county_connect_tokens', 'revoked_by'], ['county_connection', 'updated_by'], ['county_connect_sends', 'sent_by'],
     ['passkeys', 'user_id'], ['signature_evidence', 'user_id'], ['webauthn_challenges', 'user_id'],
     ['incoming_referrals', 'assigned_to'], ['incoming_referrals', 'closed_by'], ['incoming_referrals', 'created_by'], ['incoming_referral_attempts', 'user_id'],
-    ['policy_acknowledgements', 'user_id'], ['policy_acknowledgements', 'recorded_by'], ['policy_ack_imports', 'imported_by'], ['server_config', 'updated_by'],
+    ['policy_acknowledgements', 'user_id'], ['policy_acknowledgements', 'recorded_by'], ['policy_ack_imports', 'imported_by'], ['server_config', 'updated_by'], ['ai_agreement_files', 'uploaded_by'],
   ],
 };
 // Every column name above that points at users(id), for remapping a single pushed row.
