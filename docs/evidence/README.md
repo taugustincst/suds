@@ -13,10 +13,16 @@ signed tags, the flake register's entries) and whether each is in force today.
 
 **What is not here.** Nothing on this page is a certification, attestation or audit. SUDS has none of those ([../security/README.md](../security/README.md)). Items that are not in place are listed as **owner-pending** or **county**, not answered "yes".
 
-**Version.** It describes 1.27.0: the commit "Release 1.27.0", a feature release with server configuration from the
-browser and the AI assistant (migration 73, the permission `ai:ask`), seven days after 1.26.0 on a recorded **owner
-exception** to the 28 days between feature releases (not a security fix), with an SBOM of its own, `sbom-1.27.0`
-([../RELEASE.md](../RELEASE.md), *Record: 1.27.0*; tagged `v1.27.0` and released, immutable and Latest, 2026-10-24, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.26.1, a
+**Version.** It describes 1.28.0: the commit "Release 1.28.0", a feature release that hardens the AI copilot and
+assistant — every call that sends record content to the AI provider is written to the client's accounting of
+disclosures (basis `ai_assist`); the signed BAA/QSOA can be uploaded as evidence (migration 74, `ai_agreement_files`,
+office-server-only); and a new on-premises model provider with an "on-premises only" control avoids any third-party
+cloud — five days after 1.27.0 on a recorded **owner exception** to the 28 days between feature releases (not a
+security fix), with an SBOM of its own, `sbom-1.28.0` ([../RELEASE.md](../RELEASE.md), *Record: 1.28.0*; the "Release
+1.28.0" stamp, for the owner to tag and run through the gate). 1.27.0, a feature release with server configuration
+from the browser and the AI assistant (migration 73, the permission `ai:ask`), seven days after 1.26.0 on a recorded
+**owner exception** (not a security fix), has `sbom-1.27.0` ([../RELEASE.md](../RELEASE.md), *Record: 1.27.0*; tagged
+`v1.27.0` and released, immutable and Latest, 2026-10-24, [RELEASE-HANDOFF.md](RELEASE-HANDOFF.md)). 1.26.1, a
 security patch of 1.26.0 (the sign-in race, the ZIP expansion cap, the malformed cookie and the rest found by the
 vendor's own code evaluation of 1.26.0), no policy exception, has `sbom-1.26.1` (*Record: 1.26.1*; tagged `v1.26.1` and released, 2026-10-24, in
 the same push as `v1.27.0`). 1.26.0, a feature release with PowerDMS policy sign-offs
@@ -78,6 +84,7 @@ and that was never published.)
 
 | File | What it is | How to check it |
 | --- | --- | --- |
+| [sbom-1.28.0.cdx.json](sbom-1.28.0.cdx.json) | CycloneDX 1.5 software bill of materials for 1.28.0 (generated from the "Release 1.28.0" stamp; the release is tagged on the commit that adds it, and the Release carries it as an asset), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject) | `node scripts/sbom.js --ref <the Release 1.28.0 commit>` reproduces it |
 | [sbom-1.27.0.cdx.json](sbom-1.27.0.cdx.json) | CycloneDX 1.5 software bill of materials for 1.27.0 (generated from the "Release 1.27.0" stamp; the release is tagged on the commit that adds it, and the Release carries it as an asset), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject) | `node scripts/sbom.js --ref <the Release 1.27.0 commit>` reproduces it |
 | [sbom-1.26.1.cdx.json](sbom-1.26.1.cdx.json) | CycloneDX 1.5 software bill of materials for 1.26.1 (generated from the "Release 1.26.1" stamp; the release is tagged on the commit that adds it, and the Release carries it as an asset), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject) | `node scripts/sbom.js --ref <the Release 1.26.1 commit>` reproduces it |
 | [sbom-1.26.0.cdx.json](sbom-1.26.0.cdx.json) | CycloneDX 1.5 software bill of materials for 1.26.0 (generated from the "Release 1.26.0" stamp; the release is tagged on the commit that adds it, and the Release carries it as an asset), with the Windows server zip's pinned inputs (the Node.js win-x64 zip, WinSW and postject) | `node scripts/sbom.js --ref <the Release 1.26.0 commit>` reproduces it |
