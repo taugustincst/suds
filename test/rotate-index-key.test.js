@@ -87,6 +87,18 @@ test('rotation succeeds once the audit head has been checkpointed, and re-seals 
   assert.equal((await admin.get('/api/admin/audit/verify')).data.ok, true);
 });
 
+test('the keyed boundary (SEC-2026-002) is re-sealed under the new key, so the chain still verifies', () => {
+  audit.sealHeadAtStart();                         // pin the boundary if one is not already pinned
+  const boundary = audit.keyedBoundary();
+  assert.ok(boundary !== null, 'a boundary is pinned');
+  const oldKey = config.indexKey;
+  const newKey = require('node:crypto').createHash('sha256').update('rotated-boundary-key').digest();
+  rotateIndexKey(newKey);
+  assert.equal(audit.keyedBoundary(), boundary, 'the boundary verifies under the new key, with the same id');
+  assert.equal(audit.keyedBoundary({ key: oldKey }), null, 'and no longer under the old key');
+  assert.equal(audit.verifyChain().ok, true);
+});
+
 test('a chain that already fails is not re-signed', () => {
   H.asAttacker(() => H.db.run(`UPDATE audit_log SET details='tampered' WHERE id=(SELECT MIN(id) FROM audit_log WHERE details IS NOT NULL)`));
   const another = require('node:crypto').createHash('sha256').update('third-key').digest();

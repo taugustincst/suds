@@ -20,6 +20,39 @@ function matches(stored, payload, key = config.indexKey) {
 }
 const payloadOf = (r) => [r.at, r.user_id || '', r.username || '', r.action, r.entity || '', r.entity_id || '', r.client_id || '', r.ip || '', r.success ? 1 : 0, r.details || '', r.prev_hash].join('|');
 
+// ---- keyed boundary ----
+// matches() still accepts a plain (unkeyed) SHA-256 for rows written before keyed hashing, so an attacker
+// with database-file access but no index key could downgrade a keyed row: rewrite its content, recompute an
+// unkeyed hash and the chain after it, and the walk would accept it. The boundary closes that: the id of the
+// last legacy row is sealed with the index key, and any row above it must be keyed ('v2:'). An attacker
+// cannot move the boundary forward (they cannot forge its keyed seal) to make a downgraded row legitimate.
+// They could delete the boundary setting, but a keyed boundary that has vanished while the head is also gone
+// is what the external audit anchor (AUDIT_ANCHOR_DIR) is for; deleting only the head is now caught (checkHead).
+function sealBoundary(id, key = config.indexKey) { return crypto.createHmac('sha256', key).update(`keyedboundary|${id}`).digest('hex'); }
+function setBoundary(id, key = config.indexKey) {
+  db.setSetting('audit_keyed_boundary_id', String(id));
+  db.setSetting('audit_keyed_boundary_seal', sealBoundary(id, key));
+}
+/** The sealed legacy/keyed boundary id, or null when none is pinned or it does not verify under `key`. */
+function keyedBoundary({ key = config.indexKey } = {}) {
+  const idRaw = db.getSetting('audit_keyed_boundary_id', null);
+  const seal = db.getSetting('audit_keyed_boundary_seal', null);
+  if (idRaw === null || seal === null) return null;
+  const expected = sealBoundary(Number(idRaw), key);
+  if (typeof seal !== 'string' || expected.length !== seal.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(seal))) return null;
+  return Number(idRaw);
+}
+/**
+ * Pin the boundary once if it is not already pinned: the highest id of any unkeyed row (0 when the chain is
+ * keyed-native, i.e. started on 1.24 or later). New rows are always keyed, so the boundary never advances.
+ * Idempotent; run at every server start (sealHeadAtStart) and re-sealed under the new key by key rotation.
+ */
+function ensureBoundary({ key = config.indexKey } = {}) {
+  if (keyedBoundary({ key }) !== null) return;
+  const lastLegacy = db.one(`SELECT MAX(id) m FROM audit_log WHERE hash NOT LIKE '${KEYED_PREFIX}%'`);
+  setBoundary(lastLegacy && lastLegacy.m ? lastLegacy.m : 0, key);
+}
+
 function log({ user, action, entity, entityId, clientId, ip, success = true, details }) {
   const prev = db.one(`SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`);
   const prevHash = prev ? prev.hash : 'GENESIS';
@@ -73,8 +106,10 @@ function seal(last, rowCount, key) {
  */
 function advanceHead({ key = config.indexKey, quiet = false } = {}) {
   const h = checkHead({ key });
-  if (!h.checkpointed) return checkpoint({ key });
+  // Truncation (including a head seal that has vanished over a surviving boundary) is never sealed over: it
+  // is left for verification to report. Checked before the first-seal branch so a deleted head is not re-sealed.
   if (h.truncated) { if (!quiet) console.error(`[suds] the audit head was not advanced: ${h.reason}`); return null; }
+  if (!h.checkpointed) return checkpoint({ key });
   const last = db.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
   if (!last || last.id === h.checkpointId) return null;
   const rows = Number(db.getSetting('audit_head_rows', 0)) + db.one(`SELECT COUNT(*) n FROM audit_log WHERE id > ? AND id <= ?`, h.checkpointId, last.id).n;
@@ -88,6 +123,7 @@ function advanceHead({ key = config.indexKey, quiet = false } = {}) {
  * first ('audit.started'), since an empty chain has no head to seal. Returns the checkpoint, or null when one existed.
  */
 function sealHeadAtStart() {
+  ensureBoundary();
   if (db.getSetting('audit_head', null) && Number(db.getSetting('audit_head_id', 0))) return null;
   if (!db.one(`SELECT 1 FROM audit_log LIMIT 1`)) log({ user: { username: 'system' }, action: 'audit.started' });
   return checkpoint();
@@ -97,7 +133,13 @@ function checkHead({ key = config.indexKey } = {}) {
   const head = db.getSetting('audit_head', null);
   const lastId = Number(db.getSetting('audit_head_id', 0));
   const rowCount = Number(db.getSetting('audit_head_rows', 0));
-  if (!head || !lastId) return { checkpointed: false };
+  if (!head || !lastId) {
+    // A started server always pins both the head (sealHeadAtStart) and the keyed boundary. A missing head
+    // while the boundary still verifies therefore means the head seal was removed — tampering, not a chain
+    // that was simply never sealed (which has no boundary either). Never auto-re-sealed (advanceHead).
+    if (keyedBoundary({ key }) !== null && db.one(`SELECT 1 FROM audit_log LIMIT 1`)) return { checkpointed: false, truncated: true, reason: 'the sealed audit head is missing' };
+    return { checkpointed: false };
+  }
   const out = { checkpointed: true, checkpointId: lastId, checkpointAt: db.getSetting('audit_head_at', null) };
   const max = db.one(`SELECT MAX(id) m FROM audit_log`).m || 0;
   if (lastId > max) return { ...out, truncated: true, reason: `the newest ${lastId - max} entries since the checkpoint are gone` };
@@ -121,6 +163,9 @@ const VERIFY_BATCH = 5000;
  */
 function* walk({ key, afterId = 0, prevHash = null, batch = VERIFY_BATCH }) {
   let anchoredAt = null; let checked = 0;
+  // A row above the sealed boundary that is not keyed is a downgrade (see keyedBoundary); null when no
+  // boundary is pinned, where the walk falls back to accepting legacy rows anywhere as before.
+  const boundary = keyedBoundary({ key });
   for (;;) {
     const rows = db.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, batch);
     if (!rows.length) break;
@@ -128,7 +173,8 @@ function* walk({ key, afterId = 0, prevHash = null, batch = VERIFY_BATCH }) {
     if (anchoredAt === null) anchoredAt = rows[0].id;
     for (const r of rows) {
       checked++;
-      if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
+      const downgraded = boundary !== null && r.id > boundary && !String(r.hash).startsWith(KEYED_PREFIX);
+      if (downgraded || r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
       prevHash = r.hash;
     }
     afterId = rows[rows.length - 1].id;
@@ -222,6 +268,10 @@ function resignChain(newKey) {
   return maintenance('index key rotation: re-sign the audit chain', () => resignRows(newKey));
 }
 function resignRows(newKey) {
+  // The boundary seal (if one is pinned) carries the old key's HMAC; capture its id now, under the current
+  // key, to re-seal it under the new key at the end. Never pin a new one here — a chain with a boundary but
+  // no head reads as tampered, and resignChain has already refused a chain that does not verify.
+  const boundaryId = keyedBoundary();
   const upd = db.get().prepare(`UPDATE audit_log SET prev_hash=?, hash=? WHERE id=?`);
   let prevHash = null; let afterId = 0; let resigned = 0;
   for (;;) {
@@ -246,6 +296,9 @@ function resignRows(newKey) {
   if (!after.ok) throw new Error(`The audit chain does not verify under the new key after re-signing (first bad entry ${after.firstBadId})`);
   const hadHead = db.getSetting('audit_head', null);
   if (hadHead) checkpoint({ key: newKey });
+  // Re-seal the boundary under the new key (its id is unchanged — re-signing never turns a keyed row legacy
+  // or the reverse). Only when one was already pinned; never created here.
+  if (boundaryId !== null) setBoundary(boundaryId, newKey);
   // Every hash changed, and the verified marker was sealed under the old key: the next check walks it all.
   clearVerifiedMarker();
   const pinned = verifyChain({ key: newKey });
@@ -321,4 +374,4 @@ async function scheduledVerify({ full = false, batch } = {}) {
   return r;
 }
 
-module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, advanceHead, checkHead, sealHeadAtStart, CHECKPOINT_EVERY };
+module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, advanceHead, checkHead, sealHeadAtStart, ensureBoundary, keyedBoundary, CHECKPOINT_EVERY };

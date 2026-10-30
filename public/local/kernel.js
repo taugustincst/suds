@@ -9321,6 +9321,26 @@ var require_audit = __commonJS({
       return stored.length === expected.length && crypto3.timingSafeEqual(import_buffer.Buffer.from(stored), import_buffer.Buffer.from(expected));
     }
     var payloadOf = (r) => [r.at, r.user_id || "", r.username || "", r.action, r.entity || "", r.entity_id || "", r.client_id || "", r.ip || "", r.success ? 1 : 0, r.details || "", r.prev_hash].join("|");
+    function sealBoundary(id, key = config2.indexKey) {
+      return crypto3.createHmac("sha256", key).update(`keyedboundary|${id}`).digest("hex");
+    }
+    function setBoundary(id, key = config2.indexKey) {
+      db3.setSetting("audit_keyed_boundary_id", String(id));
+      db3.setSetting("audit_keyed_boundary_seal", sealBoundary(id, key));
+    }
+    function keyedBoundary({ key = config2.indexKey } = {}) {
+      const idRaw = db3.getSetting("audit_keyed_boundary_id", null);
+      const seal3 = db3.getSetting("audit_keyed_boundary_seal", null);
+      if (idRaw === null || seal3 === null) return null;
+      const expected = sealBoundary(Number(idRaw), key);
+      if (typeof seal3 !== "string" || expected.length !== seal3.length || !crypto3.timingSafeEqual(import_buffer.Buffer.from(expected), import_buffer.Buffer.from(seal3))) return null;
+      return Number(idRaw);
+    }
+    function ensureBoundary({ key = config2.indexKey } = {}) {
+      if (keyedBoundary({ key }) !== null) return;
+      const lastLegacy = db3.one(`SELECT MAX(id) m FROM audit_log WHERE hash NOT LIKE '${KEYED_PREFIX}%'`);
+      setBoundary(lastLegacy && lastLegacy.m ? lastLegacy.m : 0, key);
+    }
     function log({ user, action, entity, entityId, clientId, ip, success = true, details }) {
       const prev = db3.one(`SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`);
       const prevHash = prev ? prev.hash : "GENESIS";
@@ -9373,17 +9393,18 @@ var require_audit = __commonJS({
     }
     function advanceHead({ key = config2.indexKey, quiet = false } = {}) {
       const h = checkHead({ key });
-      if (!h.checkpointed) return checkpoint({ key });
       if (h.truncated) {
         if (!quiet) console.error(`[suds] the audit head was not advanced: ${h.reason}`);
         return null;
       }
+      if (!h.checkpointed) return checkpoint({ key });
       const last = db3.one(`SELECT id, hash FROM audit_log ORDER BY id DESC LIMIT 1`);
       if (!last || last.id === h.checkpointId) return null;
       const rows = Number(db3.getSetting("audit_head_rows", 0)) + db3.one(`SELECT COUNT(*) n FROM audit_log WHERE id > ? AND id <= ?`, h.checkpointId, last.id).n;
       return seal2(last, rows, key);
     }
     function sealHeadAtStart() {
+      ensureBoundary();
       if (db3.getSetting("audit_head", null) && Number(db3.getSetting("audit_head_id", 0))) return null;
       if (!db3.one(`SELECT 1 FROM audit_log LIMIT 1`)) log({ user: { username: "system" }, action: "audit.started" });
       return checkpoint();
@@ -9392,7 +9413,10 @@ var require_audit = __commonJS({
       const head = db3.getSetting("audit_head", null);
       const lastId = Number(db3.getSetting("audit_head_id", 0));
       const rowCount = Number(db3.getSetting("audit_head_rows", 0));
-      if (!head || !lastId) return { checkpointed: false };
+      if (!head || !lastId) {
+        if (keyedBoundary({ key }) !== null && db3.one(`SELECT 1 FROM audit_log LIMIT 1`)) return { checkpointed: false, truncated: true, reason: "the sealed audit head is missing" };
+        return { checkpointed: false };
+      }
       const out2 = { checkpointed: true, checkpointId: lastId, checkpointAt: db3.getSetting("audit_head_at", null) };
       const max2 = db3.one(`SELECT MAX(id) m FROM audit_log`).m || 0;
       if (lastId > max2) return { ...out2, truncated: true, reason: `the newest ${lastId - max2} entries since the checkpoint are gone` };
@@ -9406,6 +9430,7 @@ var require_audit = __commonJS({
     function* walk({ key, afterId = 0, prevHash = null, batch = VERIFY_BATCH }) {
       let anchoredAt = null;
       let checked = 0;
+      const boundary = keyedBoundary({ key });
       for (; ; ) {
         const rows = db3.all(`SELECT * FROM audit_log WHERE id > ? ORDER BY id ASC LIMIT ?`, afterId, batch);
         if (!rows.length) break;
@@ -9413,7 +9438,8 @@ var require_audit = __commonJS({
         if (anchoredAt === null) anchoredAt = rows[0].id;
         for (const r of rows) {
           checked++;
-          if (r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
+          const downgraded = boundary !== null && r.id > boundary && !String(r.hash).startsWith(KEYED_PREFIX);
+          if (downgraded || r.prev_hash !== prevHash || !matches(r.hash, payloadOf(r), key)) return { ok: false, checked, firstBadId: r.id, anchoredAt };
           prevHash = r.hash;
         }
         afterId = rows[rows.length - 1].id;
@@ -9481,6 +9507,7 @@ var require_audit = __commonJS({
       return maintenance("index key rotation: re-sign the audit chain", () => resignRows(newKey));
     }
     function resignRows(newKey) {
+      const boundaryId = keyedBoundary();
       const upd = db3.get().prepare(`UPDATE audit_log SET prev_hash=?, hash=? WHERE id=?`);
       let prevHash = null;
       let afterId = 0;
@@ -9505,6 +9532,7 @@ var require_audit = __commonJS({
       if (!after.ok) throw new Error(`The audit chain does not verify under the new key after re-signing (first bad entry ${after.firstBadId})`);
       const hadHead = db3.getSetting("audit_head", null);
       if (hadHead) checkpoint({ key: newKey });
+      if (boundaryId !== null) setBoundary(boundaryId, newKey);
       clearVerifiedMarker();
       const pinned = verifyChain({ key: newKey });
       if (!pinned.ok) throw new Error(`The audit head does not verify under the new key after re-sealing (${pinned.reason || `first bad entry ${pinned.firstBadId}`})`);
@@ -9560,7 +9588,7 @@ var require_audit = __commonJS({
       }
       return r;
     }
-    module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, advanceHead, checkHead, sealHeadAtStart, CHECKPOINT_EVERY };
+    module.exports = { log, maintenance, verifyChain, verifyChainAsync, verifiedMarker, resignChain, scheduledVerify, purge, purgeTombstones, checkpoint, advanceHead, checkHead, sealHeadAtStart, ensureBoundary, keyedBoundary, CHECKPOINT_EVERY };
   }
 });
 
