@@ -275,14 +275,14 @@ test('migration 46: a preferred name with no search index gets one; a written in
   d.close(); d.open(dbPath);
   const idx = (id) => db().one(`SELECT preferred_name_idx i FROM clients WHERE id=?`, id).i;
   assert.equal(idx(ids.missing), M.preferredNameIndex('Annie'), 'filled in from the decrypted name');
-  assert.equal(idx(ids.written), 'kept-as-written', 'an index already written is left alone');
+  assert.equal(idx(ids.written), M.preferredNameIndex('Nita'), 'migration 46 leaves a written index alone; migration 75 (per-column subkeys) re-derives it from the decrypted name');
   assert.equal(idx(ids.none), null, 'no name, no index');
   assert.equal(idx(ids.unreadable), null, 'a row that cannot be decrypted keeps what it had');
   assert.equal(db().getSetting('schema_version'), String(d.LATEST_SCHEMA_VERSION));
   // A second run changes nothing.
   db().setSetting('schema_version', '45'); // the schema before migration 46, whatever comes after it
   d.close(); d.open(dbPath);
-  assert.equal(idx(ids.missing), M.preferredNameIndex('Annie')); assert.equal(idx(ids.written), 'kept-as-written');
+  assert.equal(idx(ids.missing), M.preferredNameIndex('Annie')); assert.equal(idx(ids.written), M.preferredNameIndex('Nita'));
   for (const id of Object.values(ids)) db().run(`DELETE FROM clients WHERE id=?`, id);
 });
 
@@ -901,7 +901,7 @@ test('SUDS 1.23.0\'s first start on a 1.22.0 database: county consents, releases
     assert.ok(db().all(`PRAGMA table_info(tasks)`).some((c) => c.name === 'note_id' && c.type === 'TEXT' && !c.notnull && c.dflt_value === null));
     // Migration 70 (released in 1.24.0): the incoming-referrals queue, two new tables, empty after the upgrade, with
     // their indexes (the shape check above compares them with a fresh install).
-    assert.equal(m69.LATEST_SCHEMA_VERSION, 74);
+    assert.equal(m69.LATEST_SCHEMA_VERSION, 75);
     for (const t of ['incoming_referrals', 'incoming_referral_attempts']) assert.equal(db().one(`SELECT COUNT(*) n FROM ${t}`).n, 0, `${t} exists and is empty`);
     // Migration 72 (PowerDMS, docs/integration/POWERDMS.md): a policy's PowerDMS link, revision and the roles asked to
     // sign it, on the existing documents; who has signed which revision, and each report imported, empty after the upgrade.

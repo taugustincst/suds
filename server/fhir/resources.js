@@ -10,6 +10,7 @@ const db = require('../db');
 const options = require('../options');
 const disclosure = require('../disclosure');
 const { decrypt, blindIndex } = require('../crypto');
+const M = require('../clients-model');
 const { SYS, PART2_SECURITY, FhirError, dateClause, refId } = require('./common');
 
 const US_CORE = 'http://hl7.org/fhir/us/core/StructureDefinition/';
@@ -356,9 +357,9 @@ const DEFS = {
         if (sys && sys !== SYS.clientCode) return { sql: '0', params: [] }; // SUDS can only look up its own client code
         return { sql: `_code = ?`, params: [val] };
       }),
-      family: (values) => orClause(values, v => ({ sql: `_fam = ?`, params: [blindIndex(v)] })),
-      given: (values) => orClause(values, v => ({ sql: `_giv = ?`, params: [blindIndex(String(v).trim().toLowerCase())] })),
-      birthdate: (values) => orClause(values, v => { if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new FhirError(400, 'birthdate is searchable by exact date (YYYY-MM-DD) only; dates of birth are stored encrypted', { code: 'invalid' }); return { sql: `_dob = ?`, params: [blindIndex(v)] }; }),
+      family: (values) => orClause(values, v => ({ sql: `_fam = ?`, params: [M.idxLast(v)] })),
+      given: (values) => orClause(values, v => ({ sql: `_giv = ?`, params: [M.idxFirst(v)] })),
+      birthdate: (values) => orClause(values, v => { if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new FhirError(400, 'birthdate is searchable by exact date (YYYY-MM-DD) only; dates of birth are stored encrypted', { code: 'invalid' }); return { sql: `_dob = ?`, params: [M.idxDob(v)] }; }),
     },
     identifying: ['_id', 'identifier', 'family', 'given', 'birthdate'],
   },

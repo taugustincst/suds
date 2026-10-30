@@ -18,7 +18,7 @@ function suggestClient(ctx, hints) {
   for (const code of hints.codes || []) { const c = db.one(`SELECT id FROM clients WHERE client_code=? AND deleted_at IS NULL`, code); if (c && auth.canAccessClient(ctx.user, c.id)) return c.id; }
   for (const name of hints.names || []) {
     const parts = name.split(/[,\s]+/).filter(Boolean); if (parts.length < 2) continue;
-    const a = blindIndex(parts.join('')), b = blindIndex([...parts].reverse().join(''));
+    const a = M.idxFull(parts.join(''), ''), b = M.idxFull([...parts].reverse().join(''), '');
     const c = db.one(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, a, b); if (c && auth.canAccessClient(ctx.user, c.id)) return c.id;
   }
   return null;

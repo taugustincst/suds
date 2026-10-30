@@ -953,6 +953,31 @@ const migrations = [
   //     the recorded agreement (the attestation references the current file by id). Office server only, never
   //     synchronised; the bytes are encrypted at rest. Self-contained and idempotent, so it can be renumbered.
   (d) => { createTablesFromSchema(d, safeSchema(), ['ai_agreement_files'], 74); },
+  // 75: per-column blind-index subkeys (independent evaluation, item 4). The name/identity indexes used the
+  //     index key directly for every column, so equal values shared an index across columns (a surname that
+  //     matched a first name, a DOB string that matched a phone). Each now folds under its own purpose
+  //     (server/crypto.js blindIndex, clients-model). Re-derive every client's six changed indexes from the
+  //     decrypted values with the same function the writes, the search and key rotation use, and the incoming
+  //     referral surname index likewise. A row that cannot be decrypted keeps the indexes it had. No schema change.
+  (d) => {
+    const { decrypt } = require('./crypto');
+    const M = require('./clients-model');
+    const IR = require('./incoming-referrals');
+    const cols = ['last_name_idx', 'full_name_idx', 'first_name_idx', 'preferred_name_idx', 'dob_idx', 'phone_idx'];
+    const upd = d.prepare(`UPDATE clients SET ${cols.map(c => `${c}=?`).join(', ')} WHERE id=?`);
+    for (const c of d.prepare(`SELECT id, first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc FROM clients`).all()) {
+      let plain;
+      try { plain = { first_name: decrypt(c.first_name_enc), last_name: decrypt(c.last_name_enc), preferred_name: decrypt(c.preferred_name_enc), dob: decrypt(c.dob_enc), phone: decrypt(c.phone_enc) }; }
+      catch { continue; }
+      const idx = M.clientIndexes(plain);
+      upd.run(...cols.map(k => idx[k]), c.id);
+    }
+    const rupd = d.prepare(`UPDATE incoming_referrals SET last_name_idx=? WHERE id=?`);
+    for (const r of d.prepare(`SELECT id, last_name_enc FROM incoming_referrals WHERE last_name_enc IS NOT NULL`).all()) {
+      let last; try { last = decrypt(r.last_name_enc); } catch { continue; }
+      rupd.run(IR.lastNameIndex(last), r.id);
+    }
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];

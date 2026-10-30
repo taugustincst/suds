@@ -2,6 +2,18 @@
 const db = require('./db');
 const { encrypt, decrypt, blindIndex, foldText, uuid } = require('./crypto');
 
+// Per-column blind indexes (independent evaluation, item 4): each identity column folds the same value but
+// under its own purpose, so equal values no longer share an index across columns (a surname that matches a
+// first name, a DOB string that matches a phone). Writes, the search reads, the reindex in db.js migration 75
+// and key rotation (scripts/rotate-index-key.js) all go through these, so a column's writes and searches use
+// one derivation and cannot drift apart. The prefix/phonetic/part indexes keep the raw key — they separate
+// themselves by a value prefix ('pfx:'/'snd:'/'part:') and are left as they were.
+const idxLast = (v) => blindIndex(v ?? '', 'clients.last_name');
+const idxFirst = (v) => blindIndex(String(v ?? '').trim().toLowerCase(), 'clients.first_name');
+const idxFull = (last, first) => blindIndex((last ?? '') + (first ?? ''), 'clients.full_name');
+const idxDob = (v) => blindIndex(v ?? '', 'clients.dob');
+const idxPhone = (v) => blindIndex(String(v ?? '').replace(/\D/g, ''), 'clients.phone');
+
 // goals and flags are clinical narrative about a named person: encrypted like every other PHI field. So are
 // contact preferences, which are "safe contact" notes (who must not find out, when it is safe to call).
 const ENC_FIELDS = ['first_name', 'last_name', 'preferred_name', 'dob', 'phone', 'alt_phone', 'email', 'address', 'medicaid_id', 'emergency_contact', 'goals', 'flags', 'contact_preferences'];
@@ -46,15 +58,15 @@ function decryptRow(row, { deidentify = false } = {}) {
 function encryptFields(v) {
   const cols = {}; 
   for (const f of ENC_FIELDS) if (v[f] !== undefined) cols[`${f}_enc`] = v[f] === null ? null : encrypt(v[f]);
-  if (v.last_name !== undefined) cols.last_name_idx = blindIndex(v.last_name);
+  if (v.last_name !== undefined) cols.last_name_idx = idxLast(v.last_name);
   if (v.first_name !== undefined || v.last_name !== undefined) cols.full_name_idx = undefined; // computed by caller with full row
   if (v.last_name !== undefined) { cols.name_prefix_idx = namePrefixIndex(v.last_name); cols.name_phonetic_idx = namePhoneticIndex(v.last_name); }
   // The search box promises "a name"; a first name alone used to find nobody.
-  if (v.first_name !== undefined) { cols.first_name_idx = blindIndex(String(v.first_name || '').trim().toLowerCase()); cols.first_name_prefix_idx = namePrefixIndex(v.first_name); }
+  if (v.first_name !== undefined) { cols.first_name_idx = idxFirst(v.first_name); cols.first_name_prefix_idx = namePrefixIndex(v.first_name); }
   // A preferred name or street alias is how a navigator often knows someone ("Jay", "Bree").
   if (v.preferred_name !== undefined) cols.preferred_name_idx = preferredNameIndex(v.preferred_name);
-  if (v.dob !== undefined) cols.dob_idx = blindIndex(v.dob);
-  if (v.phone !== undefined) cols.phone_idx = blindIndex(String(v.phone || '').replace(/\D/g, ''));
+  if (v.dob !== undefined) cols.dob_idx = idxDob(v.dob);
+  if (v.phone !== undefined) cols.phone_idx = idxPhone(v.phone);
   // A client known by an SSP participant code (1.21.0): stored as normalised (server/participant-code.js), encrypted,
   // and found and counted by its blind index in the same domain as an anonymous visit's code.
   if (v.participant_code !== undefined) {
@@ -132,7 +144,7 @@ function searchPartTokens(word, { exact = false } = {}) {
 
 /** Blind index of a preferred name / alias, normalised the same way first_name_idx is; null when blank.
  *  Also the one place a sync push should recompute clients.preferred_name_idx from (see sync-tables importRow). */
-function preferredNameIndex(name) { const n = String(name || '').trim().toLowerCase(); return n ? blindIndex(n) : null; }
+function preferredNameIndex(name) { const n = String(name || '').trim().toLowerCase(); return n ? blindIndex(n, 'clients.preferred_name') : null; }
 
 /**
  * Every name/identity blind index of a client, from the decrypted values. The single derivation that key
@@ -142,15 +154,15 @@ function preferredNameIndex(name) { const n = String(name || '').trim().toLowerC
 function clientIndexes({ first_name, last_name, preferred_name, dob, phone } = {}) {
   const first = first_name || '', last = last_name || '';
   return {
-    last_name_idx: blindIndex(last),
-    full_name_idx: blindIndex(last + first),
+    last_name_idx: idxLast(last),
+    full_name_idx: idxFull(last, first),
     name_prefix_idx: namePrefixIndex(last),
     name_phonetic_idx: namePhoneticIndex(last),
-    first_name_idx: blindIndex(String(first).trim().toLowerCase()),
+    first_name_idx: idxFirst(first),
     first_name_prefix_idx: namePrefixIndex(first),
     preferred_name_idx: preferredNameIndex(preferred_name || ''),
-    dob_idx: blindIndex(dob || ''),
-    phone_idx: blindIndex(String(phone || '').replace(/\D/g, '')),
+    dob_idx: idxDob(dob || ''),
+    phone_idx: idxPhone(phone || ''),
   };
 }
 
@@ -191,4 +203,4 @@ function summary(row, opts) {
   return o;
 }
 
-module.exports = { ENC_FIELDS, PLAIN_FIELDS, UNASKED_FIELDS, unaskedAsNull, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes, nameParts, searchPartTokens };
+module.exports = { ENC_FIELDS, PLAIN_FIELDS, UNASKED_FIELDS, unaskedAsNull, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes, nameParts, searchPartTokens, idxLast, idxFirst, idxFull, idxDob, idxPhone };

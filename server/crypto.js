@@ -69,10 +69,24 @@ function fieldPrint(label, value, key = config.indexKey) {
 }
 
 // Deterministic blind index for equality/prefix-free search on encrypted fields.
-function blindIndex(value, key = config.indexKey) {
+// `purpose` domain-separates columns: with it, the HMAC is keyed with a per-purpose subkey (HKDF of the index
+// key), so the same value in two columns no longer produces the same index (independent evaluation, item 4).
+// Without one, the index key is used directly — the prefixed name/phonetic indexes rely on that, separating
+// themselves by a value prefix instead. A caller passing a purpose for a column must pass the identical one
+// on every write and every search, or that column stops matching; the reindex in db.js migration 75 and key
+// rotation both go through clients-model, so they stay in step.
+function blindIndex(value, purpose) {
   if (value === null || value === undefined) return null;
   const norm = foldText(value);
   if (!norm) return null;
+  // A string `purpose` domain-separates the column with a per-purpose key derived from the index key by a
+  // labelled HMAC (not hkdfSync — the browser kernel's crypto shim has no HKDF, and HMAC gives the same
+  // domain separation and runs in both). A Buffer is an explicit key — the per-install separation and
+  // brute-force properties in docs/security/ENCRYPTION-AND-KEYS.md are shown that way, and key rotation swaps
+  // config.indexKey, which the per-purpose key is derived from. Default: the index key itself.
+  const key = Buffer.isBuffer(purpose) ? purpose
+    : purpose ? crypto.createHmac('sha256', config.indexKey).update('suds/blind-index-subkey/' + purpose).digest()
+      : config.indexKey;
   return crypto.createHmac('sha256', key).update(norm).digest('hex');
 }
 

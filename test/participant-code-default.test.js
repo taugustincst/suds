@@ -109,8 +109,9 @@ test('merge: the kept record takes the name or the participant code it lacks fro
   assert.equal(k.display_name, 'Mergetest, Rosalind');
   assert.equal(k.participant_code, 'MRG1234');
   const row = H.db.one(`SELECT * FROM clients WHERE id=?`, coded);
-  assert.equal(row.last_name_idx, blindIndex('Mergetest'), 'found by surname');
-  assert.equal(row.full_name_idx, blindIndex('MergetestRosalind'));
+  const M = require('../server/clients-model');
+  assert.equal(row.last_name_idx, M.idxLast('Mergetest'), 'found by surname');
+  assert.equal(row.full_name_idx, M.idxFull('Mergetest', 'Rosalind'));
   assert.ok(ok(await admin.get('/api/clients?q=Mergetest&status=all'), 200, 'search').clients.some((c) => c.id === coded));
   // A named client kept, the coded record merged in: the kept one gets the code (and its index, for the SSP count).
   const named2 = ok(await admin.post('/api/clients', { first_name: 'Tobias', last_name: 'Mergekeep', confirm_duplicate: true }), 201, 'named2').id;

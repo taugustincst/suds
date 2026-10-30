@@ -4,6 +4,7 @@ const db = require('./db');
 const C = require('./constants');
 const { excelDate } = require('./spreadsheet');
 const { blindIndex } = require('./crypto');
+const M = require('./clients-model');
 
 const yes = (v) => v === true || /^(1|y|yes|true|x)$/i.test(String(v ?? '').trim());
 // A question somebody has to ask: a blank cell is not an answer (NULL, "Not asked"), anything else yes or no.
@@ -110,7 +111,7 @@ function resolveClient(ref, ctx, auth) {
   const s = String(ref || '').trim(); if (!s) return null;
   let rows;
   if (/^[CM]\d{2}-\d+(-D)?$/i.test(s)) rows = db.all(`SELECT id FROM clients WHERE client_code=? AND deleted_at IS NULL`, s.toUpperCase());
-  else { const parts = s.split(/[,\s]+/).filter(Boolean); if (parts.length < 2) rows = db.all(`SELECT id FROM clients WHERE last_name_idx=? AND deleted_at IS NULL`, blindIndex(parts[0])); else rows = db.all(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, blindIndex(parts.join('')), blindIndex([...parts].reverse().join(''))); }
+  else { const parts = s.split(/[,\s]+/).filter(Boolean); if (parts.length < 2) rows = db.all(`SELECT id FROM clients WHERE last_name_idx=? AND deleted_at IS NULL`, M.idxLast(parts[0])); else rows = db.all(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, M.idxFull(parts.join(''), ''), M.idxFull([...parts].reverse().join(''), '')); }
   rows = rows.filter(r => auth.canAccessClient(ctx.user, r.id));
   if (rows.length === 1) return rows[0].id; if (rows.length > 1) return 'ambiguous'; return null;
 }

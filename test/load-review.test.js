@@ -130,9 +130,9 @@ test('the kernel and key rotation derive name indexes with the same function', (
   const M = require('../server/clients-model');
   const { blindIndex } = require('../server/crypto');
   const idx = M.clientIndexes({ first_name: 'José', last_name: 'Øster', dob: '1980-01-02', phone: '(555) 010-2030' });
-  assert.equal(idx.last_name_idx, blindIndex('oster'));
-  assert.equal(idx.full_name_idx, blindIndex('osterjose'));
-  assert.equal(idx.phone_idx, blindIndex('5550102030'));
+  assert.equal(idx.last_name_idx, M.idxLast('oster'));
+  assert.equal(idx.full_name_idx, M.idxFull('oster', 'jose'));
+  assert.equal(idx.phone_idx, M.idxPhone('5550102030'));
   assert.equal(M.namePhoneticIndex('Oster'), M.namePhoneticIndex('Øster'), 'Soundex on the folded name');
   assert.equal(M.namePhoneticIndex('Петров'), blindIndex('nrm:петров'), 'non-Latin: exact normalised, not Soundex of nothing');
   assert.equal(require('../scripts/rotate-index-key').DERIVATIONS.clients.derive({ first_name_enc: 'José', last_name_enc: 'Øster', dob_enc: '1980-01-02', phone_enc: '(555) 010-2030' }).full_name_idx, idx.full_name_idx);

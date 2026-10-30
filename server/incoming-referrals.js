@@ -30,6 +30,11 @@
 const db = require('./db');
 const { encrypt, decrypt, blindIndex } = require('./crypto');
 
+// The surname blind index for the intake queue's search. Its own purpose so a referral's surname does not
+// share an index with a client's (independent evaluation, item 4); the write (toColumns), the search read
+// (routes/incoming-referrals.js) and key rotation (scripts/rotate-index-key.js) all call this one function.
+function lastNameIndex(v) { return v ? blindIndex(v, 'incoming_referrals.last_name') : null; }
+
 const SOURCE_TYPES = ['er_hospital', 'jail_reentry', 'detox', 'justice', 'other_provider', 'self', 'family_friend', 'other'];
 const SOURCE_LABELS = { er_hospital: 'Emergency department or hospital', jail_reentry: 'Jail or re-entry', detox: 'Detox or withdrawal management', justice: 'Probation, parole or court', other_provider: 'Another provider or agency', self: 'Self-referral', family_friend: 'Family or friend', other: 'Other' };
 const VIA = ['phone', 'fax', 'email', 'walk_in', 'ereferral'];
@@ -78,7 +83,7 @@ function toColumns(v) {
   const cols = {};
   for (const k of PLAIN) if (v[k] !== undefined) cols[k] = v[k];
   for (const k of ENC) if (v[k] !== undefined) cols[`${k}_enc`] = v[k] === null || v[k] === '' ? null : encrypt(String(v[k]));
-  if (v.last_name !== undefined) cols.last_name_idx = v.last_name ? blindIndex(v.last_name) : null;
+  if (v.last_name !== undefined) cols.last_name_idx = lastNameIndex(v.last_name);
   if (v.assigned_to !== undefined) cols.assigned_to = v.assigned_to || null;
   return cols;
 }
@@ -151,4 +156,4 @@ function summary(user, { days = 90, now = new Date() } = {}) {
   };
 }
 
-module.exports = { SOURCE_TYPES, SOURCE_LABELS, VIA, URGENCY, STATUSES, OPEN, CLOSE_STATUSES, ATTEMPT_METHODS, ATTEMPT_OUTCOMES, ENC, PLAIN, shape, keptHere, OFFICE_ONLY, toColumns, present, attempts, matchDetails, hoursToFirstContact, summary, median };
+module.exports = { SOURCE_TYPES, SOURCE_LABELS, VIA, URGENCY, STATUSES, OPEN, CLOSE_STATUSES, ATTEMPT_METHODS, ATTEMPT_OUTCOMES, ENC, PLAIN, shape, keptHere, OFFICE_ONLY, toColumns, present, attempts, matchDetails, hoursToFirstContact, summary, median, lastNameIndex };

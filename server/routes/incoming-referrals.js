@@ -87,7 +87,7 @@ module.exports = (r) => {
     else if (assignee === 'none') where.push('assigned_to IS NULL');
     else if (assignee) { where.push('assigned_to=?'); params.push(assignee); }
     if (urgency) { if (!IR.URGENCY.includes(urgency)) throw badRequest('Unknown urgency'); where.push('urgency=?'); params.push(urgency); }
-    if (q) { where.push(`(last_name_idx=? OR referring_org LIKE ? ESCAPE '\\')`); params.push(blindIndex(q), `%${q.replace(/[\\%_]/g, (c) => '\\' + c)}%`); }
+    if (q) { where.push(`(last_name_idx=? OR referring_org LIKE ? ESCAPE '\\')`); params.push(IR.lastNameIndex(q), `%${q.replace(/[\\%_]/g, (c) => '\\' + c)}%`); }
     const seen = visibleFilter(ctx.user); if (seen.sql !== '1=1') { where.push(seen.sql); params.push(...seen.params); }
     const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
     // Open: the urgent first, then the longest waiting. Otherwise the newest first.

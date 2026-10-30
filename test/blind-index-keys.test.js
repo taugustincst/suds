@@ -10,6 +10,7 @@ const nodeCrypto = require('node:crypto');
 const H = require('./helpers');
 const config = require('../server/config');
 const { blindIndex, encrypt, decrypt } = require('../server/crypto');
+const M = require('../server/clients-model');
 const checks = require('../server/startup-checks');
 
 test('the index key and the encryption key are distinct 256-bit keys', () => {
@@ -58,9 +59,12 @@ test('client DOB and phone indexes in the database are keyed with the index key'
     const r = await admin.post('/api/clients', { first_name: 'Ida', last_name: 'Index', dob: '1985-06-15', phone: '(916) 555-0142', confirm_duplicate: true });
     assert.equal(r.status, 201);
     const row = H.db.one(`SELECT dob_idx, phone_idx, dob_enc FROM clients WHERE id=?`, r.data.id);
-    assert.equal(row.dob_idx, blindIndex('1985-06-15', config.indexKey));
-    assert.equal(row.phone_idx, blindIndex('9165550142', config.indexKey));
+    // Each column is keyed with a per-purpose subkey of the index key (independent evaluation, item 4), so a
+    // DOB and a phone no longer share an index, and neither matches a bare index-key or encryption-key HMAC.
+    assert.equal(row.dob_idx, M.idxDob('1985-06-15'));
+    assert.equal(row.phone_idx, M.idxPhone('9165550142'));
     assert.notEqual(row.dob_idx, blindIndex('1985-06-15', config.encryptionKey));
+    assert.notEqual(row.dob_idx, row.phone_idx, 'the DOB and phone indexes are domain-separated');
     assert.equal(decrypt(row.dob_enc), '1985-06-15');
   } finally { await H.stop(); }
 });

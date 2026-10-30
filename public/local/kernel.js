@@ -8834,10 +8834,11 @@ var require_crypto = __commonJS({
     function fieldPrint2(label, value, key = config2.indexKey) {
       return crypto3.createHmac("sha256", key).update(`suds/field-print\0${label}\0${String(value ?? "")}`).digest("hex").slice(0, 12);
     }
-    function blindIndex2(value, key = config2.indexKey) {
+    function blindIndex2(value, purpose) {
       if (value === null || value === void 0) return null;
       const norm = foldText(value);
       if (!norm) return null;
+      const key = import_buffer.Buffer.isBuffer(purpose) ? purpose : purpose ? crypto3.createHmac("sha256", config2.indexKey).update("suds/blind-index-subkey/" + purpose).digest() : config2.indexKey;
       return crypto3.createHmac("sha256", key).update(norm).digest("hex");
     }
     var SCRYPT = { N: 32768, r: 8, p: 1, keylen: 64, maxmem: 64 * 1024 * 1024 };
@@ -9119,6 +9120,11 @@ var require_clients_model = __commonJS({
     init_globals_inject();
     var db3 = require_db();
     var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2, foldText, uuid: uuid2 } = require_crypto();
+    var idxLast = (v) => blindIndex2(v ?? "", "clients.last_name");
+    var idxFirst = (v) => blindIndex2(String(v ?? "").trim().toLowerCase(), "clients.first_name");
+    var idxFull = (last, first) => blindIndex2((last ?? "") + (first ?? ""), "clients.full_name");
+    var idxDob = (v) => blindIndex2(v ?? "", "clients.dob");
+    var idxPhone = (v) => blindIndex2(String(v ?? "").replace(/\D/g, ""), "clients.phone");
     var ENC_FIELDS = ["first_name", "last_name", "preferred_name", "dob", "phone", "alt_phone", "email", "address", "medicaid_id", "emergency_contact", "goals", "flags", "contact_preferences"];
     var PLAIN_FIELDS = [
       "city",
@@ -9184,19 +9190,19 @@ var require_clients_model = __commonJS({
     function encryptFields(v) {
       const cols2 = {};
       for (const f of ENC_FIELDS) if (v[f] !== void 0) cols2[`${f}_enc`] = v[f] === null ? null : encrypt3(v[f]);
-      if (v.last_name !== void 0) cols2.last_name_idx = blindIndex2(v.last_name);
+      if (v.last_name !== void 0) cols2.last_name_idx = idxLast(v.last_name);
       if (v.first_name !== void 0 || v.last_name !== void 0) cols2.full_name_idx = void 0;
       if (v.last_name !== void 0) {
         cols2.name_prefix_idx = namePrefixIndex(v.last_name);
         cols2.name_phonetic_idx = namePhoneticIndex(v.last_name);
       }
       if (v.first_name !== void 0) {
-        cols2.first_name_idx = blindIndex2(String(v.first_name || "").trim().toLowerCase());
+        cols2.first_name_idx = idxFirst(v.first_name);
         cols2.first_name_prefix_idx = namePrefixIndex(v.first_name);
       }
       if (v.preferred_name !== void 0) cols2.preferred_name_idx = preferredNameIndex(v.preferred_name);
-      if (v.dob !== void 0) cols2.dob_idx = blindIndex2(v.dob);
-      if (v.phone !== void 0) cols2.phone_idx = blindIndex2(String(v.phone || "").replace(/\D/g, ""));
+      if (v.dob !== void 0) cols2.dob_idx = idxDob(v.dob);
+      if (v.phone !== void 0) cols2.phone_idx = idxPhone(v.phone);
       if (v.participant_code !== void 0) {
         const PC = require_participant_code();
         const code = PC.normalise(v.participant_code);
@@ -9252,20 +9258,20 @@ var require_clients_model = __commonJS({
     }
     function preferredNameIndex(name) {
       const n = String(name || "").trim().toLowerCase();
-      return n ? blindIndex2(n) : null;
+      return n ? blindIndex2(n, "clients.preferred_name") : null;
     }
     function clientIndexes({ first_name, last_name, preferred_name, dob, phone } = {}) {
       const first = first_name || "", last = last_name || "";
       return {
-        last_name_idx: blindIndex2(last),
-        full_name_idx: blindIndex2(last + first),
+        last_name_idx: idxLast(last),
+        full_name_idx: idxFull(last, first),
         name_prefix_idx: namePrefixIndex(last),
         name_phonetic_idx: namePhoneticIndex(last),
-        first_name_idx: blindIndex2(String(first).trim().toLowerCase()),
+        first_name_idx: idxFirst(first),
         first_name_prefix_idx: namePrefixIndex(first),
         preferred_name_idx: preferredNameIndex(preferred_name || ""),
-        dob_idx: blindIndex2(dob || ""),
-        phone_idx: blindIndex2(String(phone || "").replace(/\D/g, ""))
+        dob_idx: idxDob(dob || ""),
+        phone_idx: idxPhone(phone || "")
       };
     }
     function codeNumber(code, prefix) {
@@ -9298,7 +9304,7 @@ var require_clients_model = __commonJS({
       o.days_to_engagement = daysToEngagement(d);
       return o;
     }
-    module.exports = { ENC_FIELDS, PLAIN_FIELDS, UNASKED_FIELDS, unaskedAsNull, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes, nameParts, searchPartTokens };
+    module.exports = { ENC_FIELDS, PLAIN_FIELDS, UNASKED_FIELDS, unaskedAsNull, decryptRow, encryptFields, nextClientCode, codeNumber, summary, daysToEngagement, uuid: uuid2, soundex, namePrefixIndex, namePhoneticIndex, preferredNameIndex, normaliseName, clientIndexes, nameParts, searchPartTokens, idxLast, idxFirst, idxFull, idxDob, idxPhone };
   }
 });
 
@@ -14827,18 +14833,18 @@ var require_sync_tables = __commonJS({
       if (t.name === "clients") {
         const M = require_clients_model();
         if (r.last_name_enc !== void 0) {
-          o.last_name_idx = crypto3.blindIndex(r.last_name_enc || "");
+          o.last_name_idx = M.idxLast(r.last_name_enc || "");
           o.name_prefix_idx = M.namePrefixIndex(r.last_name_enc || "");
           o.name_phonetic_idx = M.namePhoneticIndex(r.last_name_enc || "");
         }
-        if (r.last_name_enc !== void 0 || r.first_name_enc !== void 0) o.full_name_idx = crypto3.blindIndex((r.last_name_enc || "") + (r.first_name_enc || ""));
+        if (r.last_name_enc !== void 0 || r.first_name_enc !== void 0) o.full_name_idx = M.idxFull(r.last_name_enc || "", r.first_name_enc || "");
         if (r.first_name_enc !== void 0) {
-          o.first_name_idx = crypto3.blindIndex(String(r.first_name_enc || "").trim().toLowerCase());
+          o.first_name_idx = M.idxFirst(r.first_name_enc || "");
           o.first_name_prefix_idx = M.namePrefixIndex(r.first_name_enc || "");
         }
         if (r.preferred_name_enc !== void 0) o.preferred_name_idx = M.preferredNameIndex(r.preferred_name_enc || "");
-        if (r.dob_enc !== void 0) o.dob_idx = crypto3.blindIndex(r.dob_enc || "");
-        if (r.phone_enc !== void 0) o.phone_idx = crypto3.blindIndex(String(r.phone_enc || "").replace(/\D/g, ""));
+        if (r.dob_enc !== void 0) o.dob_idx = M.idxDob(r.dob_enc || "");
+        if (r.phone_enc !== void 0) o.phone_idx = M.idxPhone(r.phone_enc || "");
         if (r.participant_code_enc !== void 0) o.participant_code_idx = require_participant_code().index(r.participant_code_enc);
       }
       if (t.name === "interventions" && r.participant_code_enc !== void 0) o.participant_code_idx = require_interventions().participantCode(r.participant_code_enc).idx;
@@ -16062,6 +16068,7 @@ var require_dataimport = __commonJS({
     var C = require_constants();
     var { excelDate } = require_spreadsheet();
     var { blindIndex: blindIndex2 } = require_crypto();
+    var M = require_clients_model();
     var yes = (v) => v === true || /^(1|y|yes|true|x)$/i.test(String(v ?? "").trim());
     var yesNo = (v) => v === null || v === void 0 || String(v).trim() === "" ? null : yes(v);
     var LD = () => require_local_date();
@@ -16268,8 +16275,8 @@ var require_dataimport = __commonJS({
       if (/^[CM]\d{2}-\d+(-D)?$/i.test(s)) rows = db3.all(`SELECT id FROM clients WHERE client_code=? AND deleted_at IS NULL`, s.toUpperCase());
       else {
         const parts = s.split(/[,\s]+/).filter(Boolean);
-        if (parts.length < 2) rows = db3.all(`SELECT id FROM clients WHERE last_name_idx=? AND deleted_at IS NULL`, blindIndex2(parts[0]));
-        else rows = db3.all(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")));
+        if (parts.length < 2) rows = db3.all(`SELECT id FROM clients WHERE last_name_idx=? AND deleted_at IS NULL`, M.idxLast(parts[0]));
+        else rows = db3.all(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, M.idxFull(parts.join(""), ""), M.idxFull([...parts].reverse().join(""), ""));
       }
       rows = rows.filter((r) => auth3.canAccessClient(ctx.user, r.id));
       if (rows.length === 1) return rows[0].id;
@@ -17773,9 +17780,9 @@ var require_clients = __commonJS({
         clauses.push(sql);
         params.push(...p);
       };
-      if (v.dob && v.last_name) add("(c.dob_idx=? AND c.last_name_idx=?)", blindIndex2(v.dob), blindIndex2(v.last_name));
-      if (v.phone) add("c.phone_idx=?", blindIndex2(String(v.phone).replace(/\D/g, "")));
-      if (v.first_name && v.last_name) add("c.full_name_idx=?", blindIndex2((v.last_name || "") + (v.first_name || "")));
+      if (v.dob && v.last_name) add("(c.dob_idx=? AND c.last_name_idx=?)", M.idxDob(v.dob), M.idxLast(v.last_name));
+      if (v.phone) add("c.phone_idx=?", M.idxPhone(v.phone));
+      if (v.first_name && v.last_name) add("c.full_name_idx=?", M.idxFull(v.last_name, v.first_name));
       const codeIdx = v.participant_code ? require_participant_code().index(v.participant_code) : null;
       if (codeIdx) add("c.participant_code_idx=?", codeIdx);
       if (!clauses.length) return [];
@@ -17783,9 +17790,9 @@ var require_clients = __commonJS({
       return rows.map((x) => {
         const d = M.decryptRow(x);
         const reasons = [];
-        if (v.dob && v.last_name && x.dob_idx === blindIndex2(v.dob) && x.last_name_idx === blindIndex2(v.last_name)) reasons.push("same surname and date of birth");
-        if (v.phone && x.phone_idx === blindIndex2(String(v.phone).replace(/\D/g, ""))) reasons.push("same phone number");
-        if (v.first_name && v.last_name && x.full_name_idx === blindIndex2((v.last_name || "") + (v.first_name || ""))) reasons.push("same full name");
+        if (v.dob && v.last_name && x.dob_idx === M.idxDob(v.dob) && x.last_name_idx === M.idxLast(v.last_name)) reasons.push("same surname and date of birth");
+        if (v.phone && x.phone_idx === M.idxPhone(v.phone)) reasons.push("same phone number");
+        if (v.first_name && v.last_name && x.full_name_idx === M.idxFull(v.last_name, v.first_name)) reasons.push("same full name");
         if (codeIdx && x.participant_code_idx === codeIdx) reasons.push("same participant code");
         return { id: x.id, client_code: x.client_code, display_name: d.display_name, dob: d.dob, status: x.status, intake_date: x.intake_date, reasons };
       });
@@ -17837,7 +17844,7 @@ var require_clients = __commonJS({
       rules.assertWrite("clients", { id: row.id, ...rules.toColumns("clients", v) }, ctx, { existing: row });
       const enc2 = M.encryptFields(v);
       const was = M.decryptRow(row);
-      if (v.first_name !== void 0 || v.last_name !== void 0) enc2.full_name_idx = blindIndex2((v.last_name ?? was.last_name ?? "") + (v.first_name ?? was.first_name ?? ""));
+      if (v.first_name !== void 0 || v.last_name !== void 0) enc2.full_name_idx = M.idxFull(v.last_name ?? was.last_name ?? "", v.first_name ?? was.first_name ?? "");
       const cols2 = { ...enc2 };
       for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
       const keys = Object.keys(cols2).filter((k) => cols2[k] !== void 0);
@@ -17885,16 +17892,16 @@ var require_clients = __commonJS({
             searched = ["client_code"];
           } else if (/^\d{4}-\d{2}-\d{2}$/.test(q)) {
             where.push("c.dob_idx=?");
-            params.push(blindIndex2(q));
+            params.push(M.idxDob(q));
             searched = ["dob"];
           } else if (typedDob(q)) {
             const phone = /^[\d\-() .+]{7,}$/.test(q);
             where.push(phone ? "(c.dob_idx=? OR c.phone_idx=?)" : "c.dob_idx=?");
-            params.push(blindIndex2(typedDob(q)), ...phone ? [blindIndex2(q.replace(/\D/g, ""))] : []);
+            params.push(M.idxDob(typedDob(q)), ...phone ? [M.idxPhone(q)] : []);
             searched = phone ? ["dob", "phone"] : ["dob"];
           } else if (/^[\d\-() .+]{7,}$/.test(q)) {
             where.push("c.phone_idx=?");
-            params.push(blindIndex2(q.replace(/\D/g, "")));
+            params.push(M.idxPhone(q));
             searched = ["phone"];
           } else if (/^code\s+\S+$/i.test(q)) {
             const PC = require_participant_code();
@@ -17904,9 +17911,9 @@ var require_clients = __commonJS({
           } else {
             searched = ["name"];
             const parts = q.split(/[,\s]+/).filter(Boolean);
-            const idxs = parts.map((p) => blindIndex2(p));
+            const idxs = parts.map((p) => M.idxLast(p));
             const clauses = [`c.last_name_idx IN (${idxs.map(() => "?").join(",")})`, "c.full_name_idx IN (?,?)", `c.first_name_idx IN (${idxs.map(() => "?").join(",")})`, `c.preferred_name_idx IN (${idxs.map(() => "?").join(",")})`];
-            params.push(...idxs, blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")), ...parts.map((p) => blindIndex2(p.toLowerCase())), ...parts.map((p) => M.preferredNameIndex(p)));
+            params.push(...idxs, M.idxFull(parts.join(""), ""), M.idxFull([...parts].reverse().join(""), ""), ...parts.map((p) => M.idxFirst(p)), ...parts.map((p) => M.preferredNameIndex(p)));
             for (const part of parts) for (const t of M.searchPartTokens(part, { exact: ctx.query.get("exact") === "1" })) {
               clauses.push("instr(c.name_phonetic_idx, ?) > 0");
               params.push(t);
@@ -17941,7 +17948,7 @@ var require_clients = __commonJS({
             WHEN c.last_name_idx IN (${inList(idxs.length)}) OR c.first_name_idx IN (${inList(parts.length)}) OR c.preferred_name_idx IN (${inList(parts.length)})${exactParts.map(() => " OR instr(c.name_phonetic_idx, ?) > 0").join("")} THEN 1
             ${prefixes.length ? `WHEN c.name_prefix_idx IN (${inList(prefixes.length)}) OR c.first_name_prefix_idx IN (${inList(prefixes.length)})${prefixes.map(() => " OR instr(c.name_phonetic_idx, ?) > 0").join("")} THEN 2` : ""}
             ELSE 3 END)`,
-              params: [blindIndex2(parts.join("")), blindIndex2([...parts].reverse().join("")), ...idxs, ...parts.map((p) => blindIndex2(p.toLowerCase())), ...parts.map((p) => M.preferredNameIndex(p)), ...exactParts, ...prefixes, ...prefixes, ...prefixes]
+              params: [M.idxFull(parts.join(""), ""), M.idxFull([...parts].reverse().join(""), ""), ...idxs, ...parts.map((p) => M.idxFirst(p)), ...parts.map((p) => M.preferredNameIndex(p)), ...exactParts, ...prefixes, ...prefixes, ...prefixes]
             };
             if (ctx.query.get("rank") === "1") {
               const best = db3.one(`SELECT MIN(${nameTier.sql}) t FROM clients c WHERE ${where.join(" AND ")}`, ...nameTier.params, ...params);
@@ -18036,7 +18043,7 @@ var require_clients = __commonJS({
         if (v.last_name === void 0) v.last_name = "";
         const id = uuid2();
         const enc2 = M.encryptFields(v);
-        enc2.full_name_idx = blindIndex2((v.last_name || "") + (v.first_name || ""));
+        enc2.full_name_idx = M.idxFull(v.last_name, v.first_name);
         const cols2 = { id, client_code: M.nextClientCode(), ...enc2, created_by: ctx.user.id };
         for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
         if (!cols2.intake_date) cols2.intake_date = require_local_date().today();
@@ -18181,8 +18188,8 @@ var require_clients = __commonJS({
           const plain = M.decryptRow(after);
           db3.run(
             `UPDATE clients SET dob_idx=?, phone_idx=?, name_prefix_idx=?, name_phonetic_idx=?, preferred_name_idx=?, updated_at=? WHERE id=?`,
-            plain.dob ? blindIndex2(plain.dob) : null,
-            plain.phone ? blindIndex2(String(plain.phone).replace(/\D/g, "")) : null,
+            plain.dob ? M.idxDob(plain.dob) : null,
+            plain.phone ? M.idxPhone(plain.phone) : null,
             M.namePrefixIndex(plain.last_name || ""),
             M.namePhoneticIndex(plain.last_name || ""),
             M.preferredNameIndex(plain.preferred_name),
@@ -25708,18 +25715,18 @@ var require_demo = __commonJS({
             `${DEMO_PREFIX}${String(i + 1).padStart(4, "0")}`,
             encrypt3(fn),
             encrypt3(ln2),
-            blindIndex2(ln2),
-            blindIndex2(ln2 + fn),
+            M.idxLast(ln2),
+            M.idxFull(ln2, fn),
             M.namePrefixIndex(ln2),
             M.namePhoneticIndex(ln2),
-            blindIndex2(fn.trim().toLowerCase()),
+            M.idxFirst(fn),
             M.namePrefixIndex(fn),
             pref ? encrypt3(pref) : null,
             M.preferredNameIndex(pref || ""),
             encrypt3(dob),
-            blindIndex2(dob),
+            M.idxDob(dob),
             encrypt3(phone),
-            blindIndex2(phone.replace(/\D/g, "")),
+            M.idxPhone(phone),
             i % 3 === 0 ? encrypt3(`${fn.toLowerCase()}.${ln2.toLowerCase()}@example.com`) : null,
             encrypt3(`${100 + i * 7} Demo St, Apt ${i + 1}`),
             "Springfield",
@@ -41022,7 +41029,7 @@ var require_dataimport2 = __commonJS({
     }
     var C = () => require_clients();
     function nameMatches(user, rec) {
-      const all = db3.all(`SELECT id, client_code FROM clients WHERE full_name_idx=? AND deleted_at IS NULL AND merged_into IS NULL`, blindIndex2((rec.last_name || "") + (rec.first_name || "")));
+      const all = db3.all(`SELECT id, client_code FROM clients WHERE full_name_idx=? AND deleted_at IS NULL AND merged_into IS NULL`, M.idxFull(rec.last_name, rec.first_name));
       return { shown: all.filter((m) => C().mayOpen(user, m.id)), hidden: all.filter((m) => !C().mayOpen(user, m.id)) };
     }
     function duplicateCheckLimit(ctx) {
@@ -41159,7 +41166,7 @@ var require_dataimport2 = __commonJS({
                   }
                   if (same.hidden.length) hiddenDuplicates.push([id, same.hidden]);
                   const enc2 = M.encryptFields(rec);
-                  enc2.full_name_idx = blindIndex2((rec.last_name || "") + (rec.first_name || ""));
+                  enc2.full_name_idx = M.idxFull(rec.last_name, rec.first_name);
                   const cols2 = { id, client_code: M.nextClientCode(), ...enc2, created_by: ctx.user.id, intake_date: rec.intake_date || require_local_date().today() };
                   for (const f of M.PLAIN_FIELDS) if (rec[f] !== void 0 && rec[f] !== null) cols2[f] = typeof rec[f] === "boolean" ? rec[f] ? 1 : 0 : rec[f];
                   if (cols2.risk_level === void 0) cols2.risk_level = null;
@@ -42356,6 +42363,7 @@ var require_resources2 = __commonJS({
     var options = require_options();
     var disclosure = require_disclosure();
     var { decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
+    var M = require_clients_model();
     var { SYS, PART2_SECURITY, FhirError, dateClause, refId } = require_common();
     var US_CORE = "http://hl7.org/fhir/us/core/StructureDefinition/";
     var PROGRAM_ORG = "suds-program";
@@ -42783,11 +42791,11 @@ var require_resources2 = __commonJS({
             if (sys && sys !== SYS.clientCode) return { sql: "0", params: [] };
             return { sql: `_code = ?`, params: [val] };
           }),
-          family: (values) => orClause(values, (v) => ({ sql: `_fam = ?`, params: [blindIndex2(v)] })),
-          given: (values) => orClause(values, (v) => ({ sql: `_giv = ?`, params: [blindIndex2(String(v).trim().toLowerCase())] })),
+          family: (values) => orClause(values, (v) => ({ sql: `_fam = ?`, params: [M.idxLast(v)] })),
+          given: (values) => orClause(values, (v) => ({ sql: `_giv = ?`, params: [M.idxFirst(v)] })),
           birthdate: (values) => orClause(values, (v) => {
             if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new FhirError(400, "birthdate is searchable by exact date (YYYY-MM-DD) only; dates of birth are stored encrypted", { code: "invalid" });
-            return { sql: `_dob = ?`, params: [blindIndex2(v)] };
+            return { sql: `_dob = ?`, params: [M.idxDob(v)] };
           })
         },
         identifying: ["_id", "identifier", "family", "given", "birthdate"]
@@ -44014,7 +44022,7 @@ var require_imports2 = __commonJS({
       for (const name of hints2.names || []) {
         const parts = name.split(/[,\s]+/).filter(Boolean);
         if (parts.length < 2) continue;
-        const a = blindIndex2(parts.join("")), b = blindIndex2([...parts].reverse().join(""));
+        const a = M.idxFull(parts.join(""), ""), b = M.idxFull([...parts].reverse().join(""), "");
         const c = db3.one(`SELECT id FROM clients WHERE full_name_idx IN (?,?) AND deleted_at IS NULL`, a, b);
         if (c && auth3.canAccessClient(ctx.user, c.id)) return c.id;
       }
@@ -44241,6 +44249,9 @@ var require_incoming_referrals = __commonJS({
     init_globals_inject();
     var db3 = require_db();
     var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
+    function lastNameIndex(v) {
+      return v ? blindIndex2(v, "incoming_referrals.last_name") : null;
+    }
     var SOURCE_TYPES = ["er_hospital", "jail_reentry", "detox", "justice", "other_provider", "self", "family_friend", "other"];
     var SOURCE_LABELS = { er_hospital: "Emergency department or hospital", jail_reentry: "Jail or re-entry", detox: "Detox or withdrawal management", justice: "Probation, parole or court", other_provider: "Another provider or agency", self: "Self-referral", family_friend: "Family or friend", other: "Other" };
     var VIA = ["phone", "fax", "email", "walk_in", "ereferral"];
@@ -44279,7 +44290,7 @@ var require_incoming_referrals = __commonJS({
       const cols2 = {};
       for (const k of PLAIN) if (v[k] !== void 0) cols2[k] = v[k];
       for (const k of ENC) if (v[k] !== void 0) cols2[`${k}_enc`] = v[k] === null || v[k] === "" ? null : encrypt3(String(v[k]));
-      if (v.last_name !== void 0) cols2.last_name_idx = v.last_name ? blindIndex2(v.last_name) : null;
+      if (v.last_name !== void 0) cols2.last_name_idx = lastNameIndex(v.last_name);
       if (v.assigned_to !== void 0) cols2.assigned_to = v.assigned_to || null;
       return cols2;
     }
@@ -44357,7 +44368,7 @@ var require_incoming_referrals = __commonJS({
         first_contact: { days, received: recent.length, contacted: hours.length, median_hours: median(hours), within_24h: hours.filter((h) => h <= 24).length }
       };
     }
-    module.exports = { SOURCE_TYPES, SOURCE_LABELS, VIA, URGENCY, STATUSES, OPEN, CLOSE_STATUSES, ATTEMPT_METHODS, ATTEMPT_OUTCOMES, ENC, PLAIN, shape, keptHere, OFFICE_ONLY, toColumns, present, attempts, matchDetails, hoursToFirstContact, summary, median };
+    module.exports = { SOURCE_TYPES, SOURCE_LABELS, VIA, URGENCY, STATUSES, OPEN, CLOSE_STATUSES, ATTEMPT_METHODS, ATTEMPT_OUTCOMES, ENC, PLAIN, shape, keptHere, OFFICE_ONLY, toColumns, present, attempts, matchDetails, hoursToFirstContact, summary, median, lastNameIndex };
   }
 });
 
@@ -44451,7 +44462,7 @@ var require_incoming_referrals2 = __commonJS({
         }
         if (q) {
           where.push(`(last_name_idx=? OR referring_org LIKE ? ESCAPE '\\')`);
-          params.push(blindIndex2(q), `%${q.replace(/[\\%_]/g, (c) => "\\" + c)}%`);
+          params.push(IR.lastNameIndex(q), `%${q.replace(/[\\%_]/g, (c) => "\\" + c)}%`);
         }
         const seen2 = visibleFilter(ctx.user);
         if (seen2.sql !== "1=1") {
@@ -57008,6 +57019,39 @@ var require_db = __commonJS({
       //     synchronised; the bytes are encrypted at rest. Self-contained and idempotent, so it can be renumbered.
       (d) => {
         createTablesFromSchema(d, safeSchema(), ["ai_agreement_files"], 74);
+      },
+      // 75: per-column blind-index subkeys (independent evaluation, item 4). The name/identity indexes used the
+      //     index key directly for every column, so equal values shared an index across columns (a surname that
+      //     matched a first name, a DOB string that matched a phone). Each now folds under its own purpose
+      //     (server/crypto.js blindIndex, clients-model). Re-derive every client's six changed indexes from the
+      //     decrypted values with the same function the writes, the search and key rotation use, and the incoming
+      //     referral surname index likewise. A row that cannot be decrypted keeps the indexes it had. No schema change.
+      (d) => {
+        const { decrypt: decrypt3 } = require_crypto();
+        const M = require_clients_model();
+        const IR = require_incoming_referrals();
+        const cols2 = ["last_name_idx", "full_name_idx", "first_name_idx", "preferred_name_idx", "dob_idx", "phone_idx"];
+        const upd = d.prepare(`UPDATE clients SET ${cols2.map((c) => `${c}=?`).join(", ")} WHERE id=?`);
+        for (const c of d.prepare(`SELECT id, first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc FROM clients`).all()) {
+          let plain;
+          try {
+            plain = { first_name: decrypt3(c.first_name_enc), last_name: decrypt3(c.last_name_enc), preferred_name: decrypt3(c.preferred_name_enc), dob: decrypt3(c.dob_enc), phone: decrypt3(c.phone_enc) };
+          } catch {
+            continue;
+          }
+          const idx = M.clientIndexes(plain);
+          upd.run(...cols2.map((k) => idx[k]), c.id);
+        }
+        const rupd = d.prepare(`UPDATE incoming_referrals SET last_name_idx=? WHERE id=?`);
+        for (const r of d.prepare(`SELECT id, last_name_enc FROM incoming_referrals WHERE last_name_enc IS NOT NULL`).all()) {
+          let last;
+          try {
+            last = decrypt3(r.last_name_enc);
+          } catch {
+            continue;
+          }
+          rupd.run(IR.lastNameIndex(last), r.id);
+        }
       }
     ];
     var PERF_INDEXES_47 = [

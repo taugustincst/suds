@@ -46,7 +46,7 @@ before(async () => {
       const id = uuid();
       const last = `Surname${i % 400}`, first = `First${i}`;
       const enc = encryptFields({ first_name: first, last_name: last, dob: '1990-01-01', phone: `555010${String(i).padStart(4, '0')}` });
-      enc.full_name_idx = require('../../server/crypto').blindIndex(last + first);
+      enc.full_name_idx = require('../../server/clients-model').idxFull(last, first);
       const cols = {
         id, client_code: `C99-${String(i).padStart(5, '0')}`, status: i % 5 === 0 ? 'waitlist' : 'active',
         risk_level: ['low', 'moderate', 'high', 'critical'][i % 4], intake_date: '2026-01-01', created_by: workerId,

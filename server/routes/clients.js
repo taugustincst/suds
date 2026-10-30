@@ -36,9 +36,9 @@ function loadClient(ctx, id) {
 function possibleDuplicates(v, excludeId = null) {
   const clauses = []; const params = [];
   const add = (sql, ...p) => { clauses.push(sql); params.push(...p); };
-  if (v.dob && v.last_name) add('(c.dob_idx=? AND c.last_name_idx=?)', blindIndex(v.dob), blindIndex(v.last_name));
-  if (v.phone) add('c.phone_idx=?', blindIndex(String(v.phone).replace(/\D/g, '')));
-  if (v.first_name && v.last_name) add('c.full_name_idx=?', blindIndex((v.last_name || '') + (v.first_name || '')));
+  if (v.dob && v.last_name) add('(c.dob_idx=? AND c.last_name_idx=?)', M.idxDob(v.dob), M.idxLast(v.last_name));
+  if (v.phone) add('c.phone_idx=?', M.idxPhone(v.phone));
+  if (v.first_name && v.last_name) add('c.full_name_idx=?', M.idxFull(v.last_name, v.first_name));
   // The same participant code is the same person by the programme's own recipe (1.21.0).
   const codeIdx = v.participant_code ? require('../participant-code').index(v.participant_code) : null;
   if (codeIdx) add('c.participant_code_idx=?', codeIdx);
@@ -47,9 +47,9 @@ function possibleDuplicates(v, excludeId = null) {
   return rows.map(x => {
     const d = M.decryptRow(x);
     const reasons = [];
-    if (v.dob && v.last_name && x.dob_idx === blindIndex(v.dob) && x.last_name_idx === blindIndex(v.last_name)) reasons.push('same surname and date of birth');
-    if (v.phone && x.phone_idx === blindIndex(String(v.phone).replace(/\D/g, ''))) reasons.push('same phone number');
-    if (v.first_name && v.last_name && x.full_name_idx === blindIndex((v.last_name || '') + (v.first_name || ''))) reasons.push('same full name');
+    if (v.dob && v.last_name && x.dob_idx === M.idxDob(v.dob) && x.last_name_idx === M.idxLast(v.last_name)) reasons.push('same surname and date of birth');
+    if (v.phone && x.phone_idx === M.idxPhone(v.phone)) reasons.push('same phone number');
+    if (v.first_name && v.last_name && x.full_name_idx === M.idxFull(v.last_name, v.first_name)) reasons.push('same full name');
     if (codeIdx && x.participant_code_idx === codeIdx) reasons.push('same participant code');
     return { id: x.id, client_code: x.client_code, display_name: d.display_name, dob: d.dob, status: x.status, intake_date: x.intake_date, reasons };
   });
@@ -149,7 +149,7 @@ function updateClient(ctx, row, v, { reverts = null } = {}) {
   rules.assertWrite('clients', { id: row.id, ...rules.toColumns('clients', v) }, ctx, { existing: row });
   const enc = M.encryptFields(v);
   const was = M.decryptRow(row);
-  if (v.first_name !== undefined || v.last_name !== undefined) enc.full_name_idx = blindIndex((v.last_name ?? was.last_name ?? '') + (v.first_name ?? was.first_name ?? ''));
+  if (v.first_name !== undefined || v.last_name !== undefined) enc.full_name_idx = M.idxFull(v.last_name ?? was.last_name ?? '', v.first_name ?? was.first_name ?? '');
   const cols = { ...enc };
   for (const f of M.PLAIN_FIELDS) if (v[f] !== undefined) cols[f] = v[f];
   const keys = Object.keys(cols).filter(k => cols[k] !== undefined);
@@ -193,15 +193,15 @@ module.exports = (r) => {
       // So its q matches an exact client code and nothing else, and anything else finds nobody, in the same shape.
       if (deidentify && !isCode) { where.push('0'); searchRefused = 'identifier'; }
       else if (isCode) { where.push('c.client_code=?'); params.push(q.toUpperCase()); searched = ['client_code']; }
-      else if (/^\d{4}-\d{2}-\d{2}$/.test(q)) { where.push('c.dob_idx=?'); params.push(blindIndex(q)); searched = ['dob']; }
+      else if (/^\d{4}-\d{2}-\d{2}$/.test(q)) { where.push('c.dob_idx=?'); params.push(M.idxDob(q)); searched = ['dob']; }
       // A date of birth typed as every date box takes one (FL4): 7/23/1993, 7-23-93, 07231993, its two-digit year read
       // into the past. "7-23-1993" and "07231993" could be a phone number too, so those look in both.
       else if (typedDob(q)) {
         const phone = /^[\d\-() .+]{7,}$/.test(q);
-        where.push(phone ? '(c.dob_idx=? OR c.phone_idx=?)' : 'c.dob_idx=?'); params.push(blindIndex(typedDob(q)), ...(phone ? [blindIndex(q.replace(/\D/g, ''))] : []));
+        where.push(phone ? '(c.dob_idx=? OR c.phone_idx=?)' : 'c.dob_idx=?'); params.push(M.idxDob(typedDob(q)), ...(phone ? [M.idxPhone(q)] : []));
         searched = phone ? ['dob', 'phone'] : ['dob'];
       }
-      else if (/^[\d\-() .+]{7,}$/.test(q)) { where.push('c.phone_idx=?'); params.push(blindIndex(q.replace(/\D/g, ''))); searched = ['phone']; }
+      else if (/^[\d\-() .+]{7,}$/.test(q)) { where.push('c.phone_idx=?'); params.push(M.idxPhone(q)); searched = ['phone']; }
       // A participant code typed as the person gives it (1.21.0): "code ABC123", or a code-shaped word that matches one.
       else if (/^code\s+\S+$/i.test(q)) { const PC = require('../participant-code'); where.push('c.participant_code_idx=?'); params.push(PC.index(q.replace(/^code\s+/i, '')) || ''); searched = ['participant_code']; }
       else {
@@ -210,9 +210,9 @@ module.exports = (r) => {
         // misspelling ("Nguyan") still finds the person. Blind indexes cannot do prefix matching, so the
         // tolerance comes from indexing a 3-letter prefix and a Soundex code at write time.
         const parts = q.split(/[,\s]+/).filter(Boolean);
-        const idxs = parts.map(p => blindIndex(p));
+        const idxs = parts.map(p => M.idxLast(p));
         const clauses = [`c.last_name_idx IN (${idxs.map(() => '?').join(',')})`, 'c.full_name_idx IN (?,?)', `c.first_name_idx IN (${idxs.map(() => '?').join(',')})`, `c.preferred_name_idx IN (${idxs.map(() => '?').join(',')})`];
-        params.push(...idxs, blindIndex(parts.join('')), blindIndex([...parts].reverse().join('')), ...parts.map(p => blindIndex(p.toLowerCase())), ...parts.map(p => M.preferredNameIndex(p)));
+        params.push(...idxs, M.idxFull(parts.join(''), ''), M.idxFull([...parts].reverse().join(''), ''), ...parts.map(p => M.idxFirst(p)), ...parts.map(p => M.preferredNameIndex(p)));
         // A word of a compound surname ("Vasquez" for Quintero-Vasquez): its tokens sit after the whole
         // surname's code in name_phonetic_idx (clients-model namePhoneticIndex), so they are looked for in it.
         for (const part of parts) for (const t of M.searchPartTokens(part, { exact: ctx.query.get('exact') === '1' })) { clauses.push('instr(c.name_phonetic_idx, ?) > 0'); params.push(t); }
@@ -239,7 +239,7 @@ module.exports = (r) => {
             WHEN c.last_name_idx IN (${inList(idxs.length)}) OR c.first_name_idx IN (${inList(parts.length)}) OR c.preferred_name_idx IN (${inList(parts.length)})${exactParts.map(() => ' OR instr(c.name_phonetic_idx, ?) > 0').join('')} THEN 1
             ${prefixes.length ? `WHEN c.name_prefix_idx IN (${inList(prefixes.length)}) OR c.first_name_prefix_idx IN (${inList(prefixes.length)})${prefixes.map(() => ' OR instr(c.name_phonetic_idx, ?) > 0').join('')} THEN 2` : ''}
             ELSE 3 END)`,
-          params: [blindIndex(parts.join('')), blindIndex([...parts].reverse().join('')), ...idxs, ...parts.map(p => blindIndex(p.toLowerCase())), ...parts.map(p => M.preferredNameIndex(p)), ...exactParts, ...prefixes, ...prefixes, ...prefixes],
+          params: [M.idxFull(parts.join(''), ''), M.idxFull([...parts].reverse().join(''), ''), ...idxs, ...parts.map(p => M.idxFirst(p)), ...parts.map(p => M.preferredNameIndex(p)), ...exactParts, ...prefixes, ...prefixes, ...prefixes],
         };
         // ?rank=1 (the search box at the top of every page) sets a minimum: a record that only sounds like the
         // name is left out when something matched better, so a short list is not padded with look-alikes.
@@ -345,7 +345,7 @@ module.exports = (r) => {
     if (v.last_name === undefined) v.last_name = '';
     const id = uuid();
     const enc = M.encryptFields(v);
-    enc.full_name_idx = blindIndex((v.last_name || '') + (v.first_name || ''));
+    enc.full_name_idx = M.idxFull(v.last_name, v.first_name);
     const cols = { id, client_code: M.nextClientCode(), ...enc, created_by: ctx.user.id };
     for (const f of M.PLAIN_FIELDS) if (v[f] !== undefined) cols[f] = v[f];
     if (!cols.intake_date) cols.intake_date = require('../local-date').today();
@@ -520,7 +520,7 @@ module.exports = (r) => {
       const after = db.one(`SELECT * FROM clients WHERE id=?`, keep.id);
       const plain = M.decryptRow(after);
       db.run(`UPDATE clients SET dob_idx=?, phone_idx=?, name_prefix_idx=?, name_phonetic_idx=?, preferred_name_idx=?, updated_at=? WHERE id=?`,
-        plain.dob ? blindIndex(plain.dob) : null, plain.phone ? blindIndex(String(plain.phone).replace(/\D/g, '')) : null,
+        plain.dob ? M.idxDob(plain.dob) : null, plain.phone ? M.idxPhone(plain.phone) : null,
         M.namePrefixIndex(plain.last_name || ''), M.namePhoneticIndex(plain.last_name || ''), M.preferredNameIndex(plain.preferred_name), db.now(), keep.id);
       // A name taken from the duplicate (above) is searched by every name index, as a name saved on the record is.
       if (fills.last_name_enc !== undefined || fills.first_name_enc !== undefined) {

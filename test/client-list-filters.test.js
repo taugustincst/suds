@@ -34,7 +34,7 @@ before(async () => {
     for (let i = 0; i < CLIENTS; i++) {
       const id = uuid();
       const enc = encryptFields({ first_name: `F${i}`, last_name: `Load${i % 300}`, dob: '1985-03-03' });
-      enc.full_name_idx = blindIndex(`Load${i % 300}F${i}`);
+      enc.full_name_idx = require('../server/clients-model').idxFull(`Load${i % 300}`, `F${i}`);
       const cols = { id, client_code: `C77-${String(i).padStart(5, '0')}`, status: i % 10 < 3 ? 'waitlist' : 'active',
         risk_level: ['low', 'moderate', 'high', 'critical'][i % 4], primary_substance: SUBSTANCES[i % 4], mat_status: MAT[(i >> 2) % 4],
         intake_date: '2026-01-01', created_by: supId, ...enc };

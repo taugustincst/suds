@@ -270,12 +270,12 @@ function importRow(t, r, existingCols) {
     // Only recompute an index when the plaintext it derives from was actually sent; recomputing from a
     // missing field would replace a working blind index with the hash of an empty string.
     const M = require('./clients-model');
-    if (r.last_name_enc !== undefined) { o.last_name_idx = crypto.blindIndex(r.last_name_enc || ''); o.name_prefix_idx = M.namePrefixIndex(r.last_name_enc || ''); o.name_phonetic_idx = M.namePhoneticIndex(r.last_name_enc || ''); }
-    if (r.last_name_enc !== undefined || r.first_name_enc !== undefined) o.full_name_idx = crypto.blindIndex((r.last_name_enc || '') + (r.first_name_enc || ''));
-    if (r.first_name_enc !== undefined) { o.first_name_idx = crypto.blindIndex(String(r.first_name_enc || '').trim().toLowerCase()); o.first_name_prefix_idx = M.namePrefixIndex(r.first_name_enc || ''); }
+    if (r.last_name_enc !== undefined) { o.last_name_idx = M.idxLast(r.last_name_enc || ''); o.name_prefix_idx = M.namePrefixIndex(r.last_name_enc || ''); o.name_phonetic_idx = M.namePhoneticIndex(r.last_name_enc || ''); }
+    if (r.last_name_enc !== undefined || r.first_name_enc !== undefined) o.full_name_idx = M.idxFull(r.last_name_enc || '', r.first_name_enc || '');
+    if (r.first_name_enc !== undefined) { o.first_name_idx = M.idxFirst(r.first_name_enc || ''); o.first_name_prefix_idx = M.namePrefixIndex(r.first_name_enc || ''); }
     if (r.preferred_name_enc !== undefined) o.preferred_name_idx = M.preferredNameIndex(r.preferred_name_enc || '');
-    if (r.dob_enc !== undefined) o.dob_idx = crypto.blindIndex(r.dob_enc || '');
-    if (r.phone_enc !== undefined) o.phone_idx = crypto.blindIndex(String(r.phone_enc || '').replace(/\D/g, ''));
+    if (r.dob_enc !== undefined) o.dob_idx = M.idxDob(r.dob_enc || '');
+    if (r.phone_enc !== undefined) o.phone_idx = M.idxPhone(r.phone_enc || '');
     if (r.participant_code_enc !== undefined) o.participant_code_idx = require('./participant-code').index(r.participant_code_enc);
   }
   // An anonymous contact's SSP participant code is counted by its blind index, under the receiver's own key.

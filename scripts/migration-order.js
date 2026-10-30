@@ -191,6 +191,28 @@ const DEPENDENCY_CHANGES = [
       + 'not rebuild it; a database that ran 56 before is rebuilt by 60, every existing row copied as signed. '
       + 'test/migrations.test.js upgrades the 1.6.1 fixture through both to the same structure as a fresh install.',
   },
+  {
+    dependency: 'crypto.js#blindIndex', fingerprint: 'da668319abc815dd',
+    reason: '1.28.0 (migration 75, independent evaluation item 4): blindIndex now takes an optional purpose that '
+      + 'keys the HMAC with a per-column derived key, so equal values no longer share an index across columns. '
+      + 'The released migrations that call it (6, 18, 20, 26, 46) still re-derive indexes from the decrypted '
+      + 'values; a fresh install replays them to the new per-column scheme, and an upgraded install is brought to '
+      + 'the same scheme by migration 75, so both converge. test/migrations.test.js and test/name-index-migration.js pass.',
+  },
+  {
+    dependency: 'clients-model.js#clientIndexes', fingerprint: 'c5979c6cbd2d0763',
+    reason: '1.28.0 (migration 75, independent evaluation item 4): clientIndexes derives last/full/first/preferred '
+      + 'name, dob and phone indexes under per-column purposes (see crypto.js#blindIndex). Released migration 26 '
+      + 're-derives every client index through it; a fresh replay produces the new per-column values and an upgraded '
+      + 'install is reindexed to the same by migration 75, so fresh and upgraded converge (test/migrations.test.js).',
+  },
+  {
+    dependency: 'clients-model.js#preferredNameIndex', fingerprint: 'e62e90f02b2c01ef',
+    reason: '1.28.0 (migration 75, independent evaluation item 4): the preferred-name index is keyed under its own '
+      + 'purpose. Released migrations that call it (20, 26, 46) still back-fill or re-derive it from the decrypted '
+      + 'name; migration 75 reindexes an upgraded install to the same per-column value, so a fresh install and an '
+      + 'upgraded one reach the same preferred_name_idx (test/migrations.test.js, test/name-index-migration.js).',
+  },
 ];
 
 /** Tokens of JavaScript source, enough to tell code from strings, comments, templates and regular expressions. */

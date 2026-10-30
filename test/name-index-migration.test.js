@@ -33,14 +33,15 @@ test('migration 26 recomputes the name indexes of existing clients', () => {
   db.open(dbPath);
   assert.equal(db.getSetting('schema_version'), String(db.LATEST_SCHEMA_VERSION));
   const a = db.one(`SELECT * FROM clients WHERE id='0001'`);
-  assert.equal(a.last_name_idx, blindIndex('حسن'));
-  assert.equal(a.full_name_idx, blindIndex('حسنعلي'));
+  // Re-derived under the Unicode normalisation (migration 26) and the per-column subkeys (migration 75, item 4).
+  assert.equal(a.last_name_idx, M.idxLast('حسن'));
+  assert.equal(a.full_name_idx, M.idxFull('حسن', 'علي'));
   assert.equal(a.name_prefix_idx, M.namePrefixIndex('حسن'));
   assert.equal(a.name_phonetic_idx, M.namePhoneticIndex('حسن'));
-  assert.equal(a.first_name_idx, blindIndex('علي'));
-  assert.equal(a.dob_idx, blindIndex('1980-01-01'), 'unchanged values are rewritten identically');
+  assert.equal(a.first_name_idx, M.idxFirst('علي'));
+  assert.equal(a.dob_idx, M.idxDob('1980-01-01'), 're-derived under the per-column subkey');
   const o = db.one(`SELECT * FROM clients WHERE id='0002'`);
-  assert.equal(o.last_name_idx, blindIndex('Oster'));
+  assert.equal(o.last_name_idx, M.idxLast('Oster'));
   assert.equal(o.name_phonetic_idx, M.namePhoneticIndex('Oster'));
   assert.equal(db.one(`SELECT last_name_idx FROM clients WHERE id='0003'`).last_name_idx, 'kept', 'a row that cannot be decrypted keeps what it had');
 });

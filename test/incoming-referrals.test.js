@@ -76,7 +76,7 @@ test('recording one: validation, defaults, encrypted at rest, audited without PH
   for (const x of PHI) assert.ok(!raw.includes(x), `"${x}" is not stored in the clear`);
   for (const c of ['first_name_enc', 'last_name_enc', 'dob_enc', 'phone_enc', 'reason_enc', 'notes_enc', 'referrer_name_enc', 'referrer_phone_enc', 'referrer_email_enc']) assert.match(stored[c], /^v1:/, c);
   assert.equal(stored.referring_org, 'Mercy General ED', 'the organisation is not PHI');
-  assert.equal(stored.last_name_idx, require('../server/crypto').blindIndex('Intakeson'));
+  assert.equal(stored.last_name_idx, require('../server/incoming-referrals').lastNameIndex('Intakeson'));
   const row = (await nav.get(`/api/incoming-referrals/${id}`)).data.row;
   assert.equal(row.first_name, 'Teodoro'); assert.equal(row.referrer_email, 'dana@mercy.example'); assert.equal(row.assignee_name, 'ir_nav'); assert.equal(row.source_label, 'Emergency department or hospital');
   const a = audits(id);
