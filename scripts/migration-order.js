@@ -207,6 +207,20 @@ const DEPENDENCY_CHANGES = [
       + 'install is reindexed to the same by migration 75, so fresh and upgraded converge (test/migrations.test.js).',
   },
   {
+    dependency: 'crypto.js#encrypt', fingerprint: '7f9ee87766e1d022',
+    reason: '1.28.0 (independent evaluation item 2): encrypt() takes an optional third argument, the AAD that binds '
+      + 'a PHI value to its table|column|id. It is backward compatible — with no AAD (every released migration calls '
+      + 'it that way) the output is a v1 payload exactly as before, so a migration that re-encrypts produces the same '
+      + 'format it always did. test/migrations.test.js upgrades the 1.6.1 fixture to the same structure as a fresh install.',
+  },
+  {
+    dependency: 'crypto.js#decrypt', fingerprint: '3988062c80c35d3e',
+    reason: '1.28.0 (independent evaluation item 2): decrypt() takes an optional third argument, the AAD, and accepts '
+      + 'a v2 payload (sealed with one) as well as v1. With no AAD it decrypts a v1 payload exactly as before, which is '
+      + 'every value a released migration reads, so the migrations that decrypt to re-derive or re-encrypt are unchanged. '
+      + 'test/migrations.test.js upgrades the 1.6.1 fixture to the same structure as a fresh install.',
+  },
+  {
     dependency: 'clients-model.js#preferredNameIndex', fingerprint: 'e62e90f02b2c01ef',
     reason: '1.28.0 (migration 75, independent evaluation item 4): the preferred-name index is keyed under its own '
       + 'purpose. Released migrations that call it (20, 26, 46) still back-fill or re-derive it from the decrypted '

@@ -69,3 +69,28 @@ test('TOTP generates and verifies', () => {
   const secret = c.base32Encode(Buffer.from('12345678901234567890'));
   assert.equal(c.totp(secret, 59 * 1000), '287082');
 });
+
+// AAD-bound PHI ciphertext (independent evaluation, item 2): a value sealed with its table|column|id binding
+// decrypts only there, so it cannot be swapped onto another row or column.
+t0('encrypt/decrypt: v1 round-trips with no binding, as before', () => {
+  const c = require('../server/crypto'); const assert = require('node:assert');
+  const ct = c.encrypt('1990-05-01');
+  assert.match(ct, /^v1:/);
+  assert.equal(c.decrypt(ct), '1990-05-01');
+  assert.equal(c.decrypt(null), null);
+});
+t0('encrypt/decrypt: a v2 payload decrypts only with the same binding, and is tamper-evident across row/column', () => {
+  const c = require('../server/crypto'); const assert = require('node:assert');
+  const aad = c.aadFor('clients', 'dob_enc', 'client-A');
+  const ct = c.encrypt('1990-05-01', undefined, aad);
+  assert.match(ct, /^v2:/);
+  assert.equal(c.decrypt(ct, undefined, aad), '1990-05-01', 'opens in its own cell');
+  assert.throws(() => c.decrypt(ct, undefined, c.aadFor('clients', 'dob_enc', 'client-B')), /./, 'not on another row');
+  assert.throws(() => c.decrypt(ct, undefined, c.aadFor('clients', 'phone_enc', 'client-A')), /./, 'not in another column');
+  assert.throws(() => c.decrypt(ct), /bound to its row and column/, 'not without the binding at all');
+});
+t0('aadFor is stable and distinct per cell', () => {
+  const c = require('../server/crypto'); const assert = require('node:assert');
+  assert.equal(c.aadFor('notes', 'content_enc', 'n1'), c.aadFor('notes', 'content_enc', 'n1'));
+  assert.notEqual(c.aadFor('notes', 'content_enc', 'n1'), c.aadFor('notes', 'content_enc', 'n2'));
+});

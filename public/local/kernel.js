@@ -8800,25 +8800,34 @@ var require_crypto = __commonJS({
     var crypto3 = (init_crypto2(), __toCommonJS(crypto_exports));
     var config2 = require_config();
     var VERSION3 = "v1";
-    function encrypt3(plain, key = config2.encryptionKey) {
+    function encrypt3(plain, key = config2.encryptionKey, aad = null) {
       if (plain === null || plain === void 0) return null;
       const text = String(plain);
       const iv = crypto3.randomBytes(12);
       const cipher = crypto3.createCipheriv("aes-256-gcm", key, iv);
+      if (aad !== null && aad !== void 0) cipher.setAAD(import_buffer.Buffer.from(String(aad), "utf8"));
       const enc2 = import_buffer.Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
       const tag = cipher.getAuthTag();
-      return `${VERSION3}:${iv.toString("base64")}:${tag.toString("base64")}:${enc2.toString("base64")}`;
+      const version = aad !== null && aad !== void 0 ? "v2" : VERSION3;
+      return `${version}:${iv.toString("base64")}:${tag.toString("base64")}:${enc2.toString("base64")}`;
     }
-    function decrypt3(payload, key = config2.encryptionKey) {
+    function decrypt3(payload, key = config2.encryptionKey, aad = null) {
       if (payload === null || payload === void 0 || payload === "") return payload ?? null;
       const parts = String(payload).split(":");
-      if (parts.length !== 4 || parts[0] !== VERSION3) throw new Error("Unrecognized ciphertext format");
+      if (parts.length !== 4 || parts[0] !== VERSION3 && parts[0] !== "v2") throw new Error("Unrecognized ciphertext format");
       const iv = import_buffer.Buffer.from(parts[1], "base64");
       const tag = import_buffer.Buffer.from(parts[2], "base64");
       const data = import_buffer.Buffer.from(parts[3], "base64");
       const decipher = crypto3.createDecipheriv("aes-256-gcm", key, iv);
+      if (parts[0] === "v2") {
+        if (aad === null || aad === void 0) throw new Error("this field is bound to its row and column and needs that binding to decrypt");
+        decipher.setAAD(import_buffer.Buffer.from(String(aad), "utf8"));
+      }
       decipher.setAuthTag(tag);
       return import_buffer.Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
+    }
+    function aadFor(table, column, id) {
+      return `suds-phi/${table}/${column}/${id}`;
     }
     var TRANSLIT = { "\xF8": "o", "\u0142": "l", "\xDF": "ss", "\xE6": "ae", "\u0153": "oe", "\u0111": "d", "\xF0": "d", "\xFE": "th", "\u0131": "i", "\u0127": "h", "\u0140": "l", "\u0167": "t", "\u0138": "k", "\u014B": "ng", "\u017F": "s", "\u0192": "f", "\u01E5": "g", "\u0268": "i", "\u0289": "u" };
     var TRANSLIT_RE = new RegExp(`[${Object.keys(TRANSLIT).join("")}]`, "g");
@@ -8977,6 +8986,7 @@ var require_crypto = __commonJS({
     module.exports = {
       encrypt: encrypt3,
       decrypt: decrypt3,
+      aadFor,
       blindIndex: blindIndex2,
       fieldPrint: fieldPrint2,
       subkey,

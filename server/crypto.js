@@ -6,27 +6,42 @@ const config = require('./config');
 
 const VERSION = 'v1';
 
-function encrypt(plain, key = config.encryptionKey) {
+// AES-256-GCM. `aad` (independent evaluation, item 2) binds the ciphertext to where it lives — its
+// table|column|id, via aadFor() — so a value moved to another row or column no longer decrypts there, only in
+// its own place. A v1 payload carried no AAD and still decrypts with none; a v2 payload must be given the same
+// AAD it was sealed with, or GCM's tag check fails. A column moves to v2 only when its write and every read
+// pass the matching AAD together (a v2 payload read with the wrong or no AAD throws, which is the point).
+function encrypt(plain, key = config.encryptionKey, aad = null) {
   if (plain === null || plain === undefined) return null;
   const text = String(plain);
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  if (aad !== null && aad !== undefined) cipher.setAAD(Buffer.from(String(aad), 'utf8'));
   const enc = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return `${VERSION}:${iv.toString('base64')}:${tag.toString('base64')}:${enc.toString('base64')}`;
+  const version = aad !== null && aad !== undefined ? 'v2' : VERSION;
+  return `${version}:${iv.toString('base64')}:${tag.toString('base64')}:${enc.toString('base64')}`;
 }
 
-function decrypt(payload, key = config.encryptionKey) {
+function decrypt(payload, key = config.encryptionKey, aad = null) {
   if (payload === null || payload === undefined || payload === '') return payload ?? null;
   const parts = String(payload).split(':');
-  if (parts.length !== 4 || parts[0] !== VERSION) throw new Error('Unrecognized ciphertext format');
+  if (parts.length !== 4 || (parts[0] !== VERSION && parts[0] !== 'v2')) throw new Error('Unrecognized ciphertext format');
   const iv = Buffer.from(parts[1], 'base64');
   const tag = Buffer.from(parts[2], 'base64');
   const data = Buffer.from(parts[3], 'base64');
   const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  // A v2 payload was sealed with an AAD and will not open without the same one. A v1 payload never had one.
+  if (parts[0] === 'v2') {
+    if (aad === null || aad === undefined) throw new Error('this field is bound to its row and column and needs that binding to decrypt');
+    decipher.setAAD(Buffer.from(String(aad), 'utf8'));
+  }
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(data), decipher.final()]).toString('utf8');
 }
+
+/** The binding for a PHI column: its table, column and row id, so its ciphertext decrypts only in that cell. */
+function aadFor(table, column, id) { return `suds-phi/${table}/${column}/${id}`; }
 
 // Letters that Unicode does not decompose into a base letter plus an accent, so NFKD alone leaves them as
 // they are: "Øster" has to find "Oster" and "Łecki" has to find "Lecki", the way a worker types them.
@@ -210,5 +225,5 @@ function otpauthUrl(secret, account, issuer = 'SUDS') {
  */
 function keyFingerprint() { return sha256('suds-key-check:' + config.encryptionKey.toString('hex')).slice(0, 32); }
 
-module.exports = { encrypt, decrypt, blindIndex, fieldPrint, subkey, foldText, keyFingerprint, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
+module.exports = { encrypt, decrypt, aadFor, blindIndex, fieldPrint, subkey, foldText, keyFingerprint, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
   generateTotpSecret, totp, totpStep, verifyTotp, otpauthUrl, base32Encode, base32Decode };
