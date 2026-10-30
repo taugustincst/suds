@@ -27,7 +27,7 @@ test-strip distribution, and SUD navigation, and for the county and settlement f
 
 | Plan | Price | Covers |
 | --- | --- | --- |
-| **90-day pilot** | **$9,500** flat, credited in full toward year one | One programme site; onboarding, the BAA and QSOA, CalOMS code-set validation, file layout confirmed with your county |
+| **90-day pilot** | **$9,500** flat, credited in full toward year one | One programme site; onboarding, a draft BAA and QSOA (pending counsel review), CalOMS code-set validation, and the file layout agreed with your county where CalOMS applies |
 | **Program** | **$24,500** a year | One site, up to 30 staff accounts; hosting, updates, email support |
 | **Multi-Site** | **$49,500** a year | Up to 5 sites and 150 staff accounts; plus onboarding help |
 | **County-Wide** | **$98,000** a year | Unlimited sites and staff within one county; plus training and a named support contact |

@@ -58,7 +58,7 @@ programmes; (5) other states, after California references.
 | Plan | Price | Covers |
 | --- | --- | --- |
 | SUDS on this device | Free | Real use at the official address; records stay on the device |
-| 90-day pilot | $9,500 flat, credited in full | One site; onboarding, BAA and QSOA, CalOMS validation |
+| 90-day pilot | $9,500 flat, credited in full | One site; onboarding, a draft BAA and QSOA (pending counsel review), CalOMS code-set validation |
 | Program | $24,500 a year | One site, 30 staff; hosting, updates, email support |
 | Multi-Site | $49,500 a year | 5 sites, 150 staff; onboarding help |
 | County-Wide | $98,000 a year | Unlimited within one county; training, a named contact |
@@ -122,7 +122,7 @@ person. At these prices small CBOs rarely buy directly, so county sponsorship is
 | Price against small CBO budgets | County sponsorship; the free device build as the entry |
 | Hosting sold before it is proven | The drill runs before any hosted pilot is signed |
 | Single maintainer and releaser | A backup operator or code escrow; a second person from 2028 |
-| CalOMS layout owned by DHCS and the counties | "Code sets verified, layout confirmed with your county"; confirmed in the first pilot |
+| CalOMS layout owned by DHCS and the counties | "Code sets verified; file layout agreed with your county where CalOMS applies"; confirmed in the first pilot |
 | Scope creep toward an EHR | Keep the boundary in [POSITIONING.md](POSITIONING.md); qualify billing programmes out |
 
 ## 9. Measures

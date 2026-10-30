@@ -195,7 +195,7 @@ remaining release protections: required review and checks on `main`, the `v*` ta
 (RELEASE.md, *Owner: repository settings*), and a tag-signing key.**
 
 **Q. Penetration testing?** **No independent test has been done. [owner to complete]: an independent penetration
-test and its remediation.** The owner authorised a white-box penetration test of 1.23.6, made with the source; its
+test and its remediation.** The owner authorised a white-box security test of 1.23.6, made with the source; its
 two Medium findings (a consent's purpose not checked at a disclosure; a device's sync push bringing back a row the
 office had deleted) and seven Low ones are fixed in 1.24.0 with tests (CHANGELOG 1.24.0). It is not independent. On 2026-10-08
 the owner authorised a black-box test, with a code review of the deployed tag, of the vendor's own live install
