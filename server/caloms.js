@@ -238,8 +238,8 @@ function recordsForEpisode(episodeId) { return db.all(`SELECT * FROM caloms_reco
 function missingName(clientId) {
   const c = db.one(`SELECT first_name_enc, last_name_enc FROM clients WHERE id=?`, clientId);
   if (!c) return [];
-  const blank = (v) => { try { return !v || !String(decrypt(v)).trim(); } catch { return true; } };
-  return [blank(c.first_name_enc) ? 'first name' : null, blank(c.last_name_enc) ? 'last name' : null].filter(Boolean);
+  const blank = (v, col) => { try { return !v || !String(decrypt(v, undefined, require('./crypto').boundAad('clients', col, clientId))).trim(); } catch { return true; } };
+  return [blank(c.first_name_enc, 'first_name_enc') ? 'first name' : null, blank(c.last_name_enc, 'last_name_enc') ? 'last name' : null].filter(Boolean);
 }
 
 /** Everything check() needs to know about the episode a record belongs to. */
@@ -247,7 +247,7 @@ function contextFor(episode, { records = null, dob = undefined } = {}) {
   const recs = records || recordsForEpisode(episode.id);
   const adm = recs.find(r => r.record_type === 'admission') || null;
   const dis = recs.find(r => r.record_type === 'discharge') || null;
-  if (dob === undefined) { const c = db.one(`SELECT dob_enc FROM clients WHERE id=?`, episode.client_id); try { dob = c && c.dob_enc ? decrypt(c.dob_enc) : null; } catch { dob = null; } }
+  if (dob === undefined) { const c = db.one(`SELECT dob_enc FROM clients WHERE id=?`, episode.client_id); try { dob = c && c.dob_enc ? decrypt(c.dob_enc, undefined, require('./crypto').boundAad('clients', 'dob_enc', episode.client_id)) : null; } catch { dob = null; } }
   const base = { dob, missingName: missingName(episode.client_id), episode, providers: providers().map(p => p.id), today: today() };
   let admissionFatal = false;
   if (adm) admissionFatal = fatal(check(adm, { ...base, admission: null })).length > 0;
@@ -305,7 +305,7 @@ function report({ from, to, scope = () => ({ sql: '1=1', params: [] }) }) {
   const ctxOf = (episodeId) => {
     if (ctxCache.has(episodeId)) return ctxCache.get(episodeId);
     const e = db.one(`SELECT e.*, c.dob_enc FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.id=?`, episodeId);
-    let dob = null; try { dob = e.dob_enc ? decrypt(e.dob_enc) : null; } catch {}
+    let dob = null; try { dob = e.dob_enc ? decrypt(e.dob_enc, undefined, require('./crypto').boundAad('clients', 'dob_enc', e.client_id)) : null; } catch {}
     const c = contextFor(e, { dob }); ctxCache.set(episodeId, c); return c;
   };
   const rows = [];
@@ -378,8 +378,8 @@ function buildExtract({ from, to, scope, generatedBy, preview = false, submissio
   const nameOf = (clientId) => {
     if (names.has(clientId)) return names.get(clientId);
     const c = db.one(`SELECT client_code, first_name_enc, last_name_enc, dob_enc FROM clients WHERE id=?`, clientId);
-    const d = (v) => { try { return v ? decrypt(v) : ''; } catch { return ''; } };
-    const o = preview ? { client_id: c.client_code, ...PREVIEW_NAME } : { client_id: c.client_code, first_name: d(c.first_name_enc), last_name: d(c.last_name_enc), dob: d(c.dob_enc) };
+    const d = (v, col) => { try { return v ? decrypt(v, undefined, require('./crypto').boundAad('clients', col, clientId)) : ''; } catch { return ''; } };
+    const o = preview ? { client_id: c.client_code, ...PREVIEW_NAME } : { client_id: c.client_code, first_name: d(c.first_name_enc, 'first_name_enc'), last_name: d(c.last_name_enc, 'last_name_enc'), dob: d(c.dob_enc, 'dob_enc') };
     names.set(clientId, o); return o;
   };
   const admissionDate = (episodeId) => (db.one(`SELECT record_date FROM caloms_records WHERE episode_id=? AND record_type='admission'`, episodeId) || {}).record_date || '';

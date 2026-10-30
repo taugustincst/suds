@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const H = require('./helpers');
-const { decrypt, uuid, encrypt } = require('../server/crypto');
+const { decrypt, uuid, encrypt, boundAad } = require('../server/crypto');
 
 const SECRET = 'Zebra-Mercury';
 const leaks = () => H.db.all(`SELECT action, details FROM audit_log WHERE details LIKE ?`, `%${SECRET}%`);
@@ -104,7 +104,7 @@ test('migration 37: plaintext addendum, revocation, cosign, assignment, time, ex
       assert.ok(!names.includes(from), `plaintext ${t}.${from} is gone`);
       assert.ok(names.includes(to), `${t}.${to} exists`);
     }
-    const dec = (t, col, id) => { const v = db.one(`SELECT ${col} FROM ${t} WHERE id=?`, id)[col]; assert.match(v, /^v1:/, `${t}.${col} is ciphertext`); return decrypt(v); };
+    const dec = (t, col, id) => { const v = db.one(`SELECT ${col} FROM ${t} WHERE id=?`, id)[col]; assert.match(v, /^v[12]:/, `${t}.${col} is ciphertext`); return decrypt(v, undefined, boundAad(t, col, id)); };
     assert.equal(dec('clients', 'contact_preferences_enc', client), `Never call before noon, ${SECRET} reads texts`);
     assert.equal(dec('notes', 'cosign_note_enc', note), `Agree; ${SECRET} relapse noted`);
     assert.equal(dec('note_addenda', 'reason_enc', addendum), `Late entry about ${SECRET}`);
@@ -252,7 +252,7 @@ test('assignment notes and contact preferences: stored encrypted, shown on the c
   const a = await sup.post(`/api/clients/${c.id}/assignments`, { user_id: clinId, role_on_case: 'clinician', notes: `Knows ${SECRET} from the shelter` });
   assert.equal(a.status, 201, JSON.stringify(a.data));
   const cr = H.db.one(`SELECT * FROM clients WHERE id=?`, c.id);
-  assert.ok(!('contact_preferences' in cr)); assert.equal(decrypt(cr.contact_preferences_enc), `Text only; ${SECRET} checks the voicemail`);
+  assert.ok(!('contact_preferences' in cr)); assert.equal(decrypt(cr.contact_preferences_enc, undefined, boundAad('clients', 'contact_preferences_enc', c.id)), `Text only; ${SECRET} checks the voicemail`);
   const ar = H.db.one(`SELECT * FROM assignments WHERE id=?`, a.data.id);
   assert.ok(!('notes' in ar)); assert.equal(decrypt(ar.notes_enc), `Knows ${SECRET} from the shelter`);
   const got = (await sup.get(`/api/clients/${c.id}`)).data.client;

@@ -10,7 +10,7 @@
 const fs = require('node:fs');
 const config = require('../server/config');
 const db = require('../server/db');
-const { encrypt, decrypt } = require('../server/crypto');
+const { encrypt, decrypt, boundAad } = require('../server/crypto');
 const audit = require('../server/audit');
 
 /** Every `*_enc` column in the database, with the table it belongs to. */
@@ -57,7 +57,10 @@ function rotate(d, newKey) {
     for (const { table, cols } of tables) {
       for (const r of d.all(`SELECT id, ${cols.join(',')} FROM ${table}`)) {
         const sets = []; const params = [];
-        for (const c of cols) if (r[c]) { sets.push(`${c}=?`); params.push(encrypt(decrypt(r[c]), newKey)); values++; }
+        // A bound column (server/crypto.js AAD_BOUND) is re-sealed under the new key keeping its cell binding:
+        // decrypt under the old key with its AAD, re-encrypt under the new key with the same AAD. Unbound
+        // columns pass a null AAD and stay v1, exactly as before.
+        for (const c of cols) if (r[c]) { const aad = boundAad(table, c, r.id); sets.push(`${c}=?`); params.push(encrypt(decrypt(r[c], config.encryptionKey, aad), newKey, aad)); values++; }
         if (sets.length) { d.run(`UPDATE ${table} SET ${sets.join(', ')} WHERE id=?`, ...params, r.id); rows++; }
       }
     }

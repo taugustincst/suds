@@ -91,12 +91,13 @@ function assertEditable(table, ctx, existing, { deleting = false } = {}) {
   if (no && no !== 'skip') throw no.toHttp ? no.toHttp() : new (require('../http').HttpError)(403, no.message || no.reason);
 }
 function restContext(R, ctx, existing, row) {
-  const { decrypt } = require('../crypto');
+  const { decrypt, boundAad } = require('../crypto');
   const encCols = (R.sync && R.sync.enc) || [];
   return {
     user: ctx.user, existing, via: 'rest', ctx,
     changed() { return existing ? Object.keys(row).filter(k => k !== 'id' && row[k] !== undefined && String(row[k] ?? '') !== String(this.was(k) ?? '')) : Object.keys(row); },
-    was: (col) => (!existing ? undefined : existing[col] && encCols.includes(col) ? (() => { try { return decrypt(existing[col]); } catch { return null; } })() : existing[col]),
+    // A bound column (crypto.boundAad) needs its cell binding to decrypt; an unbound one ignores the null.
+    was: (col) => (!existing ? undefined : existing[col] && encCols.includes(col) ? (() => { try { return decrypt(existing[col], undefined, boundAad(R.table, col, existing.id)); } catch { return null; } })() : existing[col]),
     plain(col) { return row[col] !== undefined ? row[col] : this.was(col); },
   };
 }

@@ -17,7 +17,7 @@ const { validate } = require('../validate');
 const { encrypt, decrypt, uuid } = require('../crypto');
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const dec = (v) => { if (!v) return null; try { return decrypt(v); } catch { return null; } };
+const dec = (v, aad = null) => { if (!v) return null; try { return decrypt(v, undefined, aad); } catch { return null; } };
 const answersOf = (row) => { try { return JSON.parse(dec(row.answers_enc) || '{}'); } catch { return {}; } };
 
 function clientFor(ctx, clientId) {
@@ -201,7 +201,7 @@ module.exports = (r) => {
       const cy = cycleOf(c, assessmentsOf(c.id), on);
       for (const e of cy.due) {
         if (!['open', 'missed'].includes(e.status) || (e.status === 'missed' && e.type !== 'closeout')) continue;
-        rows.push({ client_id: c.id, client_code: c.client_code, name: [dec(c.first_name_enc), dec(c.last_name_enc)].filter(Boolean).join(' '), ...e });
+        rows.push({ client_id: c.id, client_code: c.client_code, name: [dec(c.first_name_enc, require('../crypto').boundAad('clients', 'first_name_enc', c.id)), dec(c.last_name_enc, require('../crypto').boundAad('clients', 'last_name_enc', c.id))].filter(Boolean).join(' '), ...e });
       }
     }
     const workers = new Map();

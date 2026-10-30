@@ -6,7 +6,7 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const H = require('./helpers');
-const { decrypt } = require('../server/crypto');
+const { decrypt, boundAad } = require('../server/crypto');
 
 const STALE = 'This record was changed by someone else since you opened it. Reload to see their changes.';
 let sup, nav, clientId;
@@ -56,7 +56,7 @@ test('client record: a stale save is refused and changes nothing; the conflict i
   assert.equal(c.status, 200);
   const after = H.db.one(`SELECT housing_status, goals_enc FROM clients WHERE id=?`, clientId);
   assert.equal(after.housing_status, 'shelter');
-  assert.equal(decrypt(after.goals_enc), 'Get ID back');
+  assert.equal(decrypt(after.goals_enc, undefined, boundAad('clients', 'goals_enc', clientId)), 'Get ID back');
   await lostUpdate(`/api/clients/${clientId}`, (await nav.get(`/api/clients/${clientId}`)).data.client, { insurance: 'medicaid' }, { insurance: 'private' });
 });
 

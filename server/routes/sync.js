@@ -566,7 +566,7 @@ module.exports = (r) => {
     if (t.clientCol && row[t.clientCol]) auth.assertClientAccess(ctx, row[t.clientCol]);
     const value = row[ctx.params.column];
     // Encrypted attachments are re-encrypted by the receiver, exactly as the row payload is.
-    const out = t.enc.includes(ctx.params.column) && value ? decrypt(value) : value;
+    const out = t.enc.includes(ctx.params.column) && value ? decrypt(value, undefined, require('../crypto').boundAad(t.name, ctx.params.column, row.id)) : value;
     audit.log({ user: ctx.user, action: 'sync.blob', entity: t.name, entityId: row.id, clientId: t.clientCol ? row[t.clientCol] : null, ip: ctx.ip });
     return { table: t.name, id: row.id, column: ctx.params.column, value: out, updated_at: row.updated_at };
   });

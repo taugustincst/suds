@@ -9,7 +9,7 @@
 const db = require('../db');
 const options = require('../options');
 const disclosure = require('../disclosure');
-const { decrypt, blindIndex } = require('../crypto');
+const { decrypt, blindIndex, boundAad } = require('../crypto');
 const M = require('../clients-model');
 const { SYS, PART2_SECURITY, FhirError, dateClause, refId } = require('./common');
 
@@ -17,7 +17,7 @@ const US_CORE = 'http://hl7.org/fhir/us/core/StructureDefinition/';
 const PROGRAM_ORG = 'suds-program';
 const programRef = () => ({ reference: `Organization/${PROGRAM_ORG}`, display: db.getSetting('org_name', 'SUDS program') || 'SUDS program' });
 const patientRef = (id) => ({ reference: `Patient/${id}` });
-const dec = (v) => { if (!v) return null; try { return decrypt(v); } catch { return null; } };
+const dec = (v, aad = null) => { if (!v) return null; try { return decrypt(v, undefined, aad); } catch { return null; } };
 const dt = (v) => { if (!v) return undefined; if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v; const t = Date.parse(v); return Number.isNaN(t) ? undefined : new Date(t).toISOString(); };
 const instant = (v) => { const t = Date.parse(v || ''); return Number.isNaN(t) ? undefined : new Date(t).toISOString(); };
 const label = (list, code) => code ? options.labelOf(list, code) : undefined;
@@ -77,7 +77,8 @@ function language(text) {
 }
 const GENDER = { female: 'female', male: 'male', transgender_female: 'female', transgender_male: 'male', non_binary: 'other', other: 'other' };
 function mapPatient(c) {
-  const first = dec(c.first_name_enc), last = dec(c.last_name_enc), preferred = dec(c.preferred_name_enc), dob = dec(c.dob_enc), medicaid = dec(c.medicaid_id_enc);
+  const cdec = (v, col) => dec(v, boundAad('clients', col, c.id));
+  const first = cdec(c.first_name_enc, 'first_name_enc'), last = cdec(c.last_name_enc, 'last_name_enc'), preferred = cdec(c.preferred_name_enc, 'preferred_name_enc'), dob = cdec(c.dob_enc, 'dob_enc'), medicaid = cdec(c.medicaid_id_enc, 'medicaid_id_enc');
   // A client known by a participant code (1.21.0): the code is an identifier, and a client with no name has no
   // Patient.name at all (0..* in FHIR R4 and US Core, which asks for a name only when one is known), never an empty one.
   const pcode = c.participant_code_enc ? dec(c.participant_code_enc) : null;
@@ -91,11 +92,11 @@ function mapPatient(c) {
     ],
     active: !['closed', 'inactive', 'deceased'].includes(c.status),
     name: [first || last ? { use: 'official', family: last || undefined, given: first ? [first] : undefined } : undefined, preferred ? { use: 'usual', given: [preferred] } : undefined],
-    telecom: [telecom('phone', dec(c.phone_enc), 'mobile'), telecom('phone', dec(c.alt_phone_enc), 'home'), telecom('email', dec(c.email_enc), 'home')],
+    telecom: [telecom('phone', cdec(c.phone_enc, 'phone_enc'), 'mobile'), telecom('phone', cdec(c.alt_phone_enc, 'alt_phone_enc'), 'home'), telecom('email', cdec(c.email_enc, 'email_enc'), 'home')],
     gender: GENDER[c.gender] || 'unknown',
     birthDate: /^\d{4}-\d{2}-\d{2}$/.test(dob || '') ? dob : undefined,
     deceasedBoolean: c.status === 'deceased' ? true : undefined,
-    address: [address(dec(c.address_enc), c.city, c.zip)],
+    address: [address(cdec(c.address_enc, 'address_enc'), c.city, c.zip)],
     communication: c.preferred_language ? [{ language: language(c.preferred_language), preferred: true }] : undefined,
     managingOrganization: programRef(),
   });

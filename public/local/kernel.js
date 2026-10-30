@@ -3784,11 +3784,15 @@ function createCipheriv(alg, key, iv) {
   if (alg !== "aes-256-gcm") throw new Error("Unsupported cipher " + alg);
   const parts = [];
   let tag = null;
-  return { update(d, e) {
+  let aad;
+  return { setAAD(a) {
+    aad = toU8(a);
+    return this;
+  }, update(d, e) {
     parts.push(toU8(d, e));
     return import_buffer.Buffer.alloc(0);
   }, final() {
-    const ct = gcm(toU8(key), toU8(iv)).encrypt(concat(parts));
+    const ct = gcm(toU8(key), toU8(iv), aad).encrypt(concat(parts));
     tag = import_buffer.Buffer.from(ct.subarray(ct.length - 16));
     return import_buffer.Buffer.from(ct.subarray(0, ct.length - 16));
   }, getAuthTag() {
@@ -3799,7 +3803,11 @@ function createDecipheriv(alg, key, iv) {
   if (alg !== "aes-256-gcm") throw new Error("Unsupported cipher " + alg);
   const parts = [];
   let tag = null;
-  return { setAuthTag(t) {
+  let aad;
+  return { setAAD(a) {
+    aad = toU8(a);
+    return this;
+  }, setAuthTag(t) {
     tag = toU8(t);
   }, update(d, e) {
     parts.push(toU8(d, e));
@@ -3810,7 +3818,7 @@ function createDecipheriv(alg, key, iv) {
     ct.set(data);
     ct.set(tag, data.length);
     try {
-      return import_buffer.Buffer.from(gcm(toU8(key), toU8(iv)).decrypt(ct));
+      return import_buffer.Buffer.from(gcm(toU8(key), toU8(iv), aad).decrypt(ct));
     } catch {
       throw new Error("Unsupported state or unable to authenticate data");
     }
@@ -8829,6 +8837,30 @@ var require_crypto = __commonJS({
     function aadFor(table, column, id) {
       return `suds-phi/${table}/${column}/${id}`;
     }
+    var AAD_BOUND = {
+      clients: /* @__PURE__ */ new Set([
+        "first_name_enc",
+        "last_name_enc",
+        "preferred_name_enc",
+        "dob_enc",
+        "phone_enc",
+        "alt_phone_enc",
+        "email_enc",
+        "address_enc",
+        "medicaid_id_enc",
+        "emergency_contact_enc",
+        "goals_enc",
+        "flags_enc",
+        "contact_preferences_enc"
+      ])
+    };
+    function boundAad(table, column, id) {
+      return id && AAD_BOUND[table] && AAD_BOUND[table].has(column) ? aadFor(table, column, id) : null;
+    }
+    function reseal(ct, table, column, fromId, toId) {
+      if (ct === null || ct === void 0) return ct;
+      return encrypt3(decrypt3(ct, config2.encryptionKey, boundAad(table, column, fromId)), config2.encryptionKey, boundAad(table, column, toId));
+    }
     var TRANSLIT = { "\xF8": "o", "\u0142": "l", "\xDF": "ss", "\xE6": "ae", "\u0153": "oe", "\u0111": "d", "\xF0": "d", "\xFE": "th", "\u0131": "i", "\u0127": "h", "\u0140": "l", "\u0167": "t", "\u0138": "k", "\u014B": "ng", "\u017F": "s", "\u0192": "f", "\u01E5": "g", "\u0268": "i", "\u0289": "u" };
     var TRANSLIT_RE = new RegExp(`[${Object.keys(TRANSLIT).join("")}]`, "g");
     var DIACRITICS_RE = /[\u0300-\u036f\u0591-\u05c7\u0610-\u061a\u0640\u064b-\u065f\u0670\u06d6-\u06ed\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f]/g;
@@ -8987,6 +9019,8 @@ var require_crypto = __commonJS({
       encrypt: encrypt3,
       decrypt: decrypt3,
       aadFor,
+      boundAad,
+      reseal,
       blindIndex: blindIndex2,
       fieldPrint: fieldPrint2,
       subkey,
@@ -9129,7 +9163,7 @@ var require_clients_model = __commonJS({
     "use strict";
     init_globals_inject();
     var db3 = require_db();
-    var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2, foldText, uuid: uuid2 } = require_crypto();
+    var { encrypt: encrypt3, decrypt: decrypt3, blindIndex: blindIndex2, foldText, uuid: uuid2, boundAad } = require_crypto();
     var idxLast = (v) => blindIndex2(v ?? "", "clients.last_name");
     var idxFirst = (v) => blindIndex2(String(v ?? "").trim().toLowerCase(), "clients.first_name");
     var idxFull = (last, first) => blindIndex2((last ?? "") + (first ?? ""), "clients.full_name");
@@ -9187,7 +9221,7 @@ var require_clients_model = __commonJS({
         if (k.endsWith("_enc")) {
           const plain = k.slice(0, -4);
           if (deidentify) continue;
-          out2[plain] = v ? decrypt3(v) : null;
+          out2[plain] = v ? decrypt3(v, void 0, boundAad("clients", k, row.id)) : null;
         } else if (k.endsWith("_idx")) continue;
         else out2[k] = v;
       }
@@ -9197,9 +9231,9 @@ var require_clients_model = __commonJS({
       if (!deidentify && !out2.display_name) out2.display_name = out2.participant_code ? `Participant ${out2.participant_code}` : row.client_code || "";
       return out2;
     }
-    function encryptFields(v) {
+    function encryptFields(v, id) {
       const cols2 = {};
-      for (const f of ENC_FIELDS) if (v[f] !== void 0) cols2[`${f}_enc`] = v[f] === null ? null : encrypt3(v[f]);
+      for (const f of ENC_FIELDS) if (v[f] !== void 0) cols2[`${f}_enc`] = v[f] === null ? null : encrypt3(v[f], void 0, boundAad("clients", `${f}_enc`, id));
       if (v.last_name !== void 0) cols2.last_name_idx = idxLast(v.last_name);
       if (v.first_name !== void 0 || v.last_name !== void 0) cols2.full_name_idx = void 0;
       if (v.last_name !== void 0) {
@@ -9666,15 +9700,15 @@ var require_incidents = __commonJS({
       return id;
     }
     function snapshotOf(c) {
-      const { decrypt: decrypt3 } = require_crypto();
-      const d = (v) => {
+      const { decrypt: decrypt3, boundAad } = require_crypto();
+      const d = (v, col) => {
         try {
-          return v ? decrypt3(v) : "";
+          return v ? decrypt3(v, void 0, boundAad("clients", col, c.id)) : "";
         } catch {
           return "";
         }
       };
-      const name = [d(c.first_name_enc), d(c.last_name_enc)].filter(Boolean).join(" ");
+      const name = [d(c.first_name_enc, "first_name_enc"), d(c.last_name_enc, "last_name_enc")].filter(Boolean).join(" ");
       return { client_code: c.client_code || null, client_name_enc: name ? encrypt3(name) : null };
     }
     function linkClient(incidentId, clientId) {
@@ -14821,7 +14855,7 @@ var require_sync_tables = __commonJS({
       for (const c of t.enc) {
         if (!o[c]) continue;
         try {
-          o[c] = crypto3.decrypt(o[c]);
+          o[c] = crypto3.decrypt(o[c], void 0, crypto3.boundAad(t.name, c, r.id));
         } catch {
           return null;
         }
@@ -14839,7 +14873,7 @@ var require_sync_tables = __commonJS({
     function importRow2(t, r, existingCols) {
       const o = {};
       for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith("_idx") && v !== void 0) o[k] = v;
-      for (const c of t.enc) if (o[c] !== void 0 && o[c] !== null) o[c] = crypto3.encrypt(o[c]);
+      for (const c of t.enc) if (o[c] !== void 0 && o[c] !== null) o[c] = crypto3.encrypt(o[c], void 0, crypto3.boundAad(t.name, c, o.id));
       if (t.name === "clients") {
         const M = require_clients_model();
         if (r.last_name_enc !== void 0) {
@@ -17766,7 +17800,7 @@ var require_clients = __commonJS({
     var audit3 = require_audit();
     var { badRequest, notFound, forbidden, conflict, HttpError: HttpError3 } = require_http();
     var { validate, paging } = require_validate();
-    var { blindIndex: blindIndex2, uuid: uuid2, decrypt: decrypt3, encrypt: encrypt3 } = require_crypto();
+    var { blindIndex: blindIndex2, uuid: uuid2, decrypt: decrypt3, encrypt: encrypt3, reseal } = require_crypto();
     var M = require_clients_model();
     var F = require_client_filters();
     var O = require_options();
@@ -17852,7 +17886,7 @@ var require_clients = __commonJS({
     }
     function updateClient(ctx, row, v, { reverts = null } = {}) {
       rules.assertWrite("clients", { id: row.id, ...rules.toColumns("clients", v) }, ctx, { existing: row });
-      const enc2 = M.encryptFields(v);
+      const enc2 = M.encryptFields(v, row.id);
       const was = M.decryptRow(row);
       if (v.first_name !== void 0 || v.last_name !== void 0) enc2.full_name_idx = M.idxFull(v.last_name ?? was.last_name ?? "", v.first_name ?? was.first_name ?? "");
       const cols2 = { ...enc2 };
@@ -18052,7 +18086,7 @@ var require_clients = __commonJS({
         if (v.first_name === void 0) v.first_name = "";
         if (v.last_name === void 0) v.last_name = "";
         const id = uuid2();
-        const enc2 = M.encryptFields(v);
+        const enc2 = M.encryptFields(v, id);
         enc2.full_name_idx = M.idxFull(v.last_name, v.first_name);
         const cols2 = { id, client_code: M.nextClientCode(), ...enc2, created_by: ctx.user.id };
         for (const f of M.PLAIN_FIELDS) if (v[f] !== void 0) cols2[f] = v[f];
@@ -18162,15 +18196,15 @@ var require_clients = __commonJS({
           }
           const fills = {};
           for (const col of ["dob_enc", "phone_enc", "alt_phone_enc", "email_enc", "address_enc", "medicaid_id_enc", "emergency_contact_enc", "preferred_name_enc", "goals_enc", "flags_enc", "contact_preferences_enc"]) {
-            if (!keep[col] && source[col]) fills[col] = source[col];
+            if (!keep[col] && source[col]) fills[col] = reseal(source[col], "clients", col, source.id, keep.id);
           }
           for (const col of M.PLAIN_FIELDS) if ((keep[col] === null || keep[col] === "" || keep[col] === void 0) && source[col]) fills[col] = source[col];
           const K = M.decryptRow(keep);
           const S = M.decryptRow(source);
           const named = (x) => String(x.first_name || "").trim() !== "" || String(x.last_name || "").trim() !== "";
           if (!named(K) && named(S)) {
-            fills.first_name_enc = source.first_name_enc;
-            fills.last_name_enc = source.last_name_enc;
+            fills.first_name_enc = reseal(source.first_name_enc, "clients", "first_name_enc", source.id, keep.id);
+            fills.last_name_enc = reseal(source.last_name_enc, "clients", "last_name_enc", source.id, keep.id);
           }
           if (!keep.participant_code_enc && source.participant_code_enc) {
             fills.participant_code_enc = source.participant_code_enc;
@@ -18182,7 +18216,7 @@ var require_clients = __commonJS({
           const codes = codesOf(K, S);
           let revChanges = {};
           if (keys.length) {
-            const plainFills = M.decryptRow(Object.fromEntries(keys.map((k) => [k, fills[k]])));
+            const plainFills = M.decryptRow({ id: keep.id, ...Object.fromEntries(keys.map((k) => [k, fills[k]])) });
             delete plainFills.display_name;
             delete plainFills.participant_code_idx;
             revChanges = REV.diff(K, plainFills);
@@ -19583,7 +19617,7 @@ var require_client_name = __commonJS({
       let client_name = null;
       if (x.client_id && !deidentify && (x.c_first_name_enc || x.c_last_name_enc || x.c_participant_code_enc)) {
         try {
-          client_name = M.decryptRow({ first_name_enc: x.c_first_name_enc, last_name_enc: x.c_last_name_enc, participant_code_enc: x.c_participant_code_enc || null }).display_name || null;
+          client_name = M.decryptRow({ id: x.client_id, first_name_enc: x.c_first_name_enc, last_name_enc: x.c_last_name_enc, participant_code_enc: x.c_participant_code_enc || null }).display_name || null;
         } catch {
           client_name = null;
         }
@@ -21187,10 +21221,10 @@ var require_suprt = __commonJS({
     var DAY = /^\d{4}-\d{2}-\d{2}$/;
     var addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
     var today = () => require_local_date().localDate();
-    var dec2 = (v) => {
+    var dec2 = (v, aad = null) => {
       if (!v) return null;
       try {
-        return decrypt3(v);
+        return decrypt3(v, void 0, aad);
       } catch {
         return null;
       }
@@ -21312,7 +21346,7 @@ var require_suprt = __commonJS({
         a.E_moud = c.mat_status === "active" || refs.some((x) => x === "mat_otp" || x === "mat_obot") ? "yes" : "no";
       }
       if (type === "baseline") {
-        a.F_date_of_birth = dec2(c.dob_enc);
+        a.F_date_of_birth = dec2(c.dob_enc, require_crypto().boundAad("clients", "dob_enc", c.id));
         const inList = (key, v) => v && ITEM[key].options.some((o) => o.value === v) ? v : null;
         a.F_gender = inList("F_gender", c.gender);
         a.F_race = c.race_codes || null;
@@ -21382,10 +21416,10 @@ var require_suprt2 = __commonJS({
     var { validate } = require_validate();
     var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2 } = require_crypto();
     var DAY = /^\d{4}-\d{2}-\d{2}$/;
-    var dec2 = (v) => {
+    var dec2 = (v, aad = null) => {
       if (!v) return null;
       try {
-        return decrypt3(v);
+        return decrypt3(v, void 0, aad);
       } catch {
         return null;
       }
@@ -21578,7 +21612,7 @@ var require_suprt2 = __commonJS({
           const cy = cycleOf(c, assessmentsOf(c.id), on);
           for (const e of cy.due) {
             if (!["open", "missed"].includes(e.status) || e.status === "missed" && e.type !== "closeout") continue;
-            rows.push({ client_id: c.id, client_code: c.client_code, name: [dec2(c.first_name_enc), dec2(c.last_name_enc)].filter(Boolean).join(" "), ...e });
+            rows.push({ client_id: c.id, client_code: c.client_code, name: [dec2(c.first_name_enc, require_crypto().boundAad("clients", "first_name_enc", c.id)), dec2(c.last_name_enc, require_crypto().boundAad("clients", "last_name_enc", c.id))].filter(Boolean).join(" "), ...e });
           }
         }
         const workers = /* @__PURE__ */ new Map();
@@ -21991,7 +22025,7 @@ var require_rules = __commonJS({
       if (no && no !== "skip") throw no.toHttp ? no.toHttp() : new (require_http()).HttpError(403, no.message || no.reason);
     }
     function restContext(R, ctx, existing, row) {
-      const { decrypt: decrypt3 } = require_crypto();
+      const { decrypt: decrypt3, boundAad } = require_crypto();
       const encCols = R.sync && R.sync.enc || [];
       return {
         user: ctx.user,
@@ -22001,9 +22035,10 @@ var require_rules = __commonJS({
         changed() {
           return existing ? Object.keys(row).filter((k) => k !== "id" && row[k] !== void 0 && String(row[k] ?? "") !== String(this.was(k) ?? "")) : Object.keys(row);
         },
+        // A bound column (crypto.boundAad) needs its cell binding to decrypt; an unbound one ignores the null.
         was: (col) => !existing ? void 0 : existing[col] && encCols.includes(col) ? (() => {
           try {
-            return decrypt3(existing[col]);
+            return decrypt3(existing[col], void 0, boundAad(R.table, col, existing.id));
           } catch {
             return null;
           }
@@ -22709,7 +22744,7 @@ var require_referral_links = __commonJS({
     var db3 = require_db();
     var audit3 = require_audit();
     var disclosure = require_disclosure();
-    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2, randomToken, sha256: sha2562 } = require_crypto();
+    var { encrypt: encrypt3, decrypt: decrypt3, uuid: uuid2, randomToken, sha256: sha2562, boundAad } = require_crypto();
     var { badRequest, notFound, forbidden, HttpError: HttpError3 } = require_http();
     var KINDS = ["packet", "contact_notice"];
     var TTL_HOURS = [24, 72, 168];
@@ -22732,10 +22767,10 @@ var require_referral_links = __commonJS({
       const b = (init_crypto2(), __toCommonJS(crypto_exports)).randomBytes(6);
       return "R-" + [...b].map((x) => A[x % A.length]).join("");
     }
-    var dec2 = (v) => {
+    var dec2 = (v, aad = null) => {
       if (!v) return null;
       try {
-        return decrypt3(v);
+        return decrypt3(v, void 0, aad);
       } catch {
         return null;
       }
@@ -22812,15 +22847,16 @@ var require_referral_links = __commonJS({
         });
         consentId = basis.consent.id;
         const c = db3.one(`SELECT first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc, participant_code_enc FROM clients WHERE id=?`, referral.client_id);
-        const legal = [dec2(c.first_name_enc), dec2(c.last_name_enc)].filter(Boolean).join(" ");
+        const ca = (col) => boundAad("clients", col, referral.client_id);
+        const legal = [dec2(c.first_name_enc, ca("first_name_enc")), dec2(c.last_name_enc, ca("last_name_enc"))].filter(Boolean).join(" ");
         const pcode = dec2(c.participant_code_enc);
         const message = String(v.message || "").trim().slice(0, 1e3);
         packet = {
           client: {
             name: legal || (pcode ? `Participant ${pcode}` : ""),
-            preferred_name: dec2(c.preferred_name_enc) || void 0,
-            dob: v.include_dob ? dec2(c.dob_enc) || void 0 : void 0,
-            phone: v.include_phone ? dec2(c.phone_enc) || void 0 : void 0
+            preferred_name: dec2(c.preferred_name_enc, ca("preferred_name_enc")) || void 0,
+            dob: v.include_dob ? dec2(c.dob_enc, ca("dob_enc")) || void 0 : void 0,
+            phone: v.include_phone ? dec2(c.phone_enc, ca("phone_enc")) || void 0 : void 0
           },
           reason: message || null,
           urgency: referral.urgency || "routine",
@@ -29701,7 +29737,7 @@ var require_exports = __commonJS({
         clients: {
           label: "Clients",
           columns: strip(["client_code", ...idCols, "status", "intake_date", "discharge_date", "discharge_reason", "referral_source", "referral_date", "engagement_date", "days_to_engagement", "primary_substance", "secondary_substances", "asam_level", "mat_status", "mat_medication", "risk_level", "housing_status", "insurance", "overdose_history", "naloxone_provided", "naloxone_last_date", "co_occurring_mh", "justice_involved", "pregnant_or_parenting", "city", "zip", "gender", "preferred_language", "goals", "flags"]),
-          rows: () => db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} ORDER BY c.client_code LIMIT ?`, ...cf.params, MAX_ROWS).map((x) => ({ ...M.decryptRow(x, { deidentify: !identified }), _client_id: x.id, age_band: identified ? void 0 : ageBand(x.dob_enc ? decrypt3(x.dob_enc) : null) })).map((x) => ({ ...x, days_to_engagement: M.daysToEngagement(x), goals: identified ? x.goals : x.goals_enc ? "[redacted]" : "", flags: identified ? x.flags : x.flags_enc ? "[redacted]" : "" }))
+          rows: () => db3.all(`SELECT c.* FROM clients c WHERE c.deleted_at IS NULL AND ${cf.sql} ORDER BY c.client_code LIMIT ?`, ...cf.params, MAX_ROWS).map((x) => ({ ...M.decryptRow(x, { deidentify: !identified }), _client_id: x.id, age_band: identified ? void 0 : ageBand(x.dob_enc ? decrypt3(x.dob_enc, void 0, require_crypto().boundAad("clients", "dob_enc", x.id)) : null) })).map((x) => ({ ...x, days_to_engagement: M.daysToEngagement(x), goals: identified ? x.goals : x.goals_enc ? "[redacted]" : "", flags: identified ? x.flags : x.flags_enc ? "[redacted]" : "" }))
         },
         interventions: {
           label: "Visits & services",
@@ -30853,14 +30889,14 @@ var require_caloms = __commonJS({
     function missingName(clientId) {
       const c = db3.one(`SELECT first_name_enc, last_name_enc FROM clients WHERE id=?`, clientId);
       if (!c) return [];
-      const blank = (v) => {
+      const blank = (v, col) => {
         try {
-          return !v || !String(decrypt3(v)).trim();
+          return !v || !String(decrypt3(v, void 0, require_crypto().boundAad("clients", col, clientId))).trim();
         } catch {
           return true;
         }
       };
-      return [blank(c.first_name_enc) ? "first name" : null, blank(c.last_name_enc) ? "last name" : null].filter(Boolean);
+      return [blank(c.first_name_enc, "first_name_enc") ? "first name" : null, blank(c.last_name_enc, "last_name_enc") ? "last name" : null].filter(Boolean);
     }
     function contextFor(episode, { records = null, dob = void 0 } = {}) {
       const recs = records || recordsForEpisode(episode.id);
@@ -30869,7 +30905,7 @@ var require_caloms = __commonJS({
       if (dob === void 0) {
         const c = db3.one(`SELECT dob_enc FROM clients WHERE id=?`, episode.client_id);
         try {
-          dob = c && c.dob_enc ? decrypt3(c.dob_enc) : null;
+          dob = c && c.dob_enc ? decrypt3(c.dob_enc, void 0, require_crypto().boundAad("clients", "dob_enc", episode.client_id)) : null;
         } catch {
           dob = null;
         }
@@ -30941,7 +30977,7 @@ var require_caloms = __commonJS({
         const e = db3.one(`SELECT e.*, c.dob_enc FROM episodes e JOIN clients c ON c.id=e.client_id WHERE e.id=?`, episodeId);
         let dob = null;
         try {
-          dob = e.dob_enc ? decrypt3(e.dob_enc) : null;
+          dob = e.dob_enc ? decrypt3(e.dob_enc, void 0, require_crypto().boundAad("clients", "dob_enc", e.client_id)) : null;
         } catch {
         }
         const c = contextFor(e, { dob });
@@ -31029,14 +31065,14 @@ var require_caloms = __commonJS({
       const nameOf = (clientId) => {
         if (names.has(clientId)) return names.get(clientId);
         const c = db3.one(`SELECT client_code, first_name_enc, last_name_enc, dob_enc FROM clients WHERE id=?`, clientId);
-        const d = (v) => {
+        const d = (v, col) => {
           try {
-            return v ? decrypt3(v) : "";
+            return v ? decrypt3(v, void 0, require_crypto().boundAad("clients", col, clientId)) : "";
           } catch {
             return "";
           }
         };
-        const o = preview ? { client_id: c.client_code, ...PREVIEW_NAME } : { client_id: c.client_code, first_name: d(c.first_name_enc), last_name: d(c.last_name_enc), dob: d(c.dob_enc) };
+        const o = preview ? { client_id: c.client_code, ...PREVIEW_NAME } : { client_id: c.client_code, first_name: d(c.first_name_enc, "first_name_enc"), last_name: d(c.last_name_enc, "last_name_enc"), dob: d(c.dob_enc, "dob_enc") };
         names.set(clientId, o);
         return o;
       };
@@ -41175,7 +41211,7 @@ var require_dataimport2 = __commonJS({
                     return;
                   }
                   if (same.hidden.length) hiddenDuplicates.push([id, same.hidden]);
-                  const enc2 = M.encryptFields(rec);
+                  const enc2 = M.encryptFields(rec, id);
                   enc2.full_name_idx = M.idxFull(rec.last_name, rec.first_name);
                   const cols2 = { id, client_code: M.nextClientCode(), ...enc2, created_by: ctx.user.id, intake_date: rec.intake_date || require_local_date().today() };
                   for (const f of M.PLAIN_FIELDS) if (rec[f] !== void 0 && rec[f] !== null) cols2[f] = typeof rec[f] === "boolean" ? rec[f] ? 1 : 0 : rec[f];
@@ -42372,17 +42408,17 @@ var require_resources2 = __commonJS({
     var db3 = require_db();
     var options = require_options();
     var disclosure = require_disclosure();
-    var { decrypt: decrypt3, blindIndex: blindIndex2 } = require_crypto();
+    var { decrypt: decrypt3, blindIndex: blindIndex2, boundAad } = require_crypto();
     var M = require_clients_model();
     var { SYS, PART2_SECURITY, FhirError, dateClause, refId } = require_common();
     var US_CORE = "http://hl7.org/fhir/us/core/StructureDefinition/";
     var PROGRAM_ORG = "suds-program";
     var programRef = () => ({ reference: `Organization/${PROGRAM_ORG}`, display: db3.getSetting("org_name", "SUDS program") || "SUDS program" });
     var patientRef = (id) => ({ reference: `Patient/${id}` });
-    var dec2 = (v) => {
+    var dec2 = (v, aad = null) => {
       if (!v) return null;
       try {
-        return decrypt3(v);
+        return decrypt3(v, void 0, aad);
       } catch {
         return null;
       }
@@ -42485,7 +42521,8 @@ var require_resources2 = __commonJS({
     }
     var GENDER = { female: "female", male: "male", transgender_female: "female", transgender_male: "male", non_binary: "other", other: "other" };
     function mapPatient(c) {
-      const first = dec2(c.first_name_enc), last = dec2(c.last_name_enc), preferred = dec2(c.preferred_name_enc), dob = dec2(c.dob_enc), medicaid = dec2(c.medicaid_id_enc);
+      const cdec = (v, col) => dec2(v, boundAad("clients", col, c.id));
+      const first = cdec(c.first_name_enc, "first_name_enc"), last = cdec(c.last_name_enc, "last_name_enc"), preferred = cdec(c.preferred_name_enc, "preferred_name_enc"), dob = cdec(c.dob_enc, "dob_enc"), medicaid = cdec(c.medicaid_id_enc, "medicaid_id_enc");
       const pcode = c.participant_code_enc ? dec2(c.participant_code_enc) : null;
       return prune({
         resourceType: "Patient",
@@ -42499,11 +42536,11 @@ var require_resources2 = __commonJS({
         ],
         active: !["closed", "inactive", "deceased"].includes(c.status),
         name: [first || last ? { use: "official", family: last || void 0, given: first ? [first] : void 0 } : void 0, preferred ? { use: "usual", given: [preferred] } : void 0],
-        telecom: [telecom("phone", dec2(c.phone_enc), "mobile"), telecom("phone", dec2(c.alt_phone_enc), "home"), telecom("email", dec2(c.email_enc), "home")],
+        telecom: [telecom("phone", cdec(c.phone_enc, "phone_enc"), "mobile"), telecom("phone", cdec(c.alt_phone_enc, "alt_phone_enc"), "home"), telecom("email", cdec(c.email_enc, "email_enc"), "home")],
         gender: GENDER[c.gender] || "unknown",
         birthDate: /^\d{4}-\d{2}-\d{2}$/.test(dob || "") ? dob : void 0,
         deceasedBoolean: c.status === "deceased" ? true : void 0,
-        address: [address(dec2(c.address_enc), c.city, c.zip)],
+        address: [address(cdec(c.address_enc, "address_enc"), c.city, c.zip)],
         communication: c.preferred_language ? [{ language: language(c.preferred_language), preferred: true }] : void 0,
         managingOrganization: programRef()
       });
@@ -43657,9 +43694,9 @@ var require_handoff = __commonJS({
       const { localDate } = require_budget();
       const O = require_options();
       const types = O.labelMap("INTERVENTION_TYPES"), locs = O.labelMap("LOCATIONS"), mods = O.labelMap("MODALITIES");
-      const d = (v) => {
+      const d = (v, col, id) => {
         try {
-          return v ? decrypt3(v) : "";
+          return v ? decrypt3(v, void 0, require_crypto().boundAad("clients", col, id)) : "";
         } catch {
           return "";
         }
@@ -43693,7 +43730,7 @@ var require_handoff = __commonJS({
       }
       const names = /* @__PURE__ */ new Map();
       return [...groups.values()].map((g) => {
-        if (!names.has(g._client_id)) names.set(g._client_id, { last_name: d(g._enc.last_name_enc), first_name: d(g._enc.first_name_enc), dob: d(g._enc.dob_enc), medi_cal_id: d(g._enc.medicaid_id_enc) });
+        if (!names.has(g._client_id)) names.set(g._client_id, { last_name: d(g._enc.last_name_enc, "last_name_enc", g._client_id), first_name: d(g._enc.first_name_enc, "first_name_enc", g._client_id), dob: d(g._enc.dob_enc, "dob_enc", g._client_id), medi_cal_id: d(g._enc.medicaid_id_enc, "medicaid_id_enc", g._client_id) });
         const o = { ...g, ...names.get(g._client_id) };
         delete o._enc;
         return o;
@@ -52342,7 +52379,7 @@ var require_push = __commonJS({
         let was = existing[k];
         if (t.enc.includes(k) && was) {
           try {
-            was = decrypt3(was);
+            was = decrypt3(was, void 0, require_crypto().boundAad(t.name, k, existing.id));
           } catch {
             was = null;
           }
@@ -52429,7 +52466,7 @@ var require_push = __commonJS({
         if (!e) return void 0;
         if (e[col] && this.table.enc.includes(col)) {
           try {
-            return decrypt3(e[col]);
+            return decrypt3(e[col], void 0, require_crypto().boundAad(this.table.name, col, e.id));
           } catch {
             return null;
           }
@@ -53329,7 +53366,7 @@ var require_sync = __commonJS({
         if (!row) throw require_http().notFound();
         if (t.clientCol && row[t.clientCol]) auth3.assertClientAccess(ctx, row[t.clientCol]);
         const value = row[ctx.params.column];
-        const out2 = t.enc.includes(ctx.params.column) && value ? decrypt3(value) : value;
+        const out2 = t.enc.includes(ctx.params.column) && value ? decrypt3(value, void 0, require_crypto().boundAad(t.name, ctx.params.column, row.id)) : value;
         audit3.log({ user: ctx.user, action: "sync.blob", entity: t.name, entityId: row.id, clientId: t.clientCol ? row[t.clientCol] : null, ip: ctx.ip });
         return { table: t.name, id: row.id, column: ctx.params.column, value: out2, updated_at: row.updated_at };
       });
@@ -57062,6 +57099,49 @@ var require_db = __commonJS({
           }
           rupd.run(IR.lastNameIndex(last), r.id);
         }
+      },
+      // 76: bind the client record's PHI to its cell (independent evaluation, item 2). Each of the client's thirteen
+      //     encrypted columns is re-sealed from v1 (no AAD) to v2, bound to its own table|column|id (server/crypto.js
+      //     aadFor), so a ciphertext copied to another row or column no longer decrypts there. Every reader and writer
+      //     of these columns was switched to pass crypto.boundAad in the same change (clients-model encryptFields/
+      //     decryptRow, sync transport, the FHIR Patient view, exports, CalOMS, the hand-off summary, the referral
+      //     packet, SUPRT prefill, the incident snapshot, the merge re-seal, and both key rotations). A value already
+      //     v2 (none at upgrade time) or one that cannot be decrypted is left as it is. Plaintext is unchanged, so the
+      //     blind indexes are not re-derived. No schema change.
+      (d) => {
+        const crypto3 = require_crypto();
+        const cols2 = [
+          "first_name_enc",
+          "last_name_enc",
+          "preferred_name_enc",
+          "dob_enc",
+          "phone_enc",
+          "alt_phone_enc",
+          "email_enc",
+          "address_enc",
+          "medicaid_id_enc",
+          "emergency_contact_enc",
+          "goals_enc",
+          "flags_enc",
+          "contact_preferences_enc"
+        ];
+        const upd = d.prepare(`UPDATE clients SET ${cols2.map((c) => `${c}=?`).join(", ")} WHERE id=?`);
+        for (const r of d.prepare(`SELECT id, ${cols2.join(", ")} FROM clients`).all()) {
+          const next = {};
+          let changed = false;
+          for (const c of cols2) {
+            const v = r[c];
+            if (v && String(v).startsWith("v1:")) {
+              try {
+                next[c] = crypto3.reseal(v, "clients", c, null, r.id);
+                changed = true;
+              } catch {
+                next[c] = v;
+              }
+            } else next[c] = v;
+          }
+          if (changed) upd.run(...cols2.map((c) => next[c]), r.id);
+        }
       }
     ];
     var PERF_INDEXES_47 = [
@@ -57180,7 +57260,7 @@ var require_db = __commonJS({
           for (const c of d.prepare(`SELECT id, last_name_enc, name_phonetic_idx FROM clients`).all()) {
             let last;
             try {
-              last = decrypt3(c.last_name_enc);
+              last = decrypt3(c.last_name_enc, void 0, require_crypto().boundAad("clients", "last_name_enc", c.id));
               read++;
             } catch {
               unreadable++;

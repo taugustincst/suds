@@ -39,7 +39,7 @@ function changedColumns(t, existing, raw, existingCols) {
   for (const k of existingCols) {
     if (k === 'id' || k === 'updated_at' || k === 'created_at' || k.endsWith('_idx') || raw[k] === undefined) continue;
     let was = existing[k];
-    if (t.enc.includes(k) && was) { try { was = decrypt(was); } catch { was = null; } }
+    if (t.enc.includes(k) && was) { try { was = decrypt(was, undefined, require('../crypto').boundAad(t.name, k, existing.id)); } catch { was = null; } }
     if (String(was ?? '') !== String(raw[k] ?? '')) out.push(k);
   }
   return out;
@@ -114,7 +114,7 @@ class RowContext {
   /** A column's value on the office copy, in plain text. */
   was(col) {
     const e = this.existing; if (!e) return undefined;
-    if (e[col] && this.table.enc.includes(col)) { try { return decrypt(e[col]); } catch { return null; } }
+    if (e[col] && this.table.enc.includes(col)) { try { return decrypt(e[col], undefined, require('../crypto').boundAad(this.table.name, col, e.id)); } catch { return null; } }
     return e[col];
   }
   /** A column's value after this write, in plain text. */

@@ -46,7 +46,7 @@ test('navigator creates client (auto-assigned) with encrypted PHI', async () => 
   assert.equal(r.status, 201); clientId = r.data.id;
   assert.match(r.data.client_code, /^C\d{2}-0001$/);
   const raw = H.db.one(`SELECT * FROM clients WHERE id=?`, clientId);
-  assert.ok(raw.first_name_enc.startsWith('v1:')); assert.ok(!raw.first_name_enc.includes('Jane'));
+  assert.ok(raw.first_name_enc.startsWith('v2:')); assert.ok(!raw.first_name_enc.includes('Jane')); // v2: bound to its cell (eval item 2)
   const g = await nav.get(`/api/clients/${clientId}`);
   assert.equal(g.status, 200); assert.equal(g.data.client.first_name, 'Jane'); assert.equal(g.data.client.assignments.length, 1);
 });
@@ -1058,7 +1058,7 @@ test('sync: bearer login, scoped pull, push with last-write-wins and tombstones'
   const push = await bare.post('/api/sync/push', { tables: { clients: [{ id: devId, client_code: 'M26-0001', first_name_enc: 'Dev', last_name_enc: 'Client', status: 'active', intake_date: '2026-09-10', created_at: now, updated_at: now }], notes: [{ id: noteId, client_id: devId, author_id: H.db.one(`SELECT id FROM users WHERE username='nav2'`).id, kind: 'admin', format: 'contact', content_enc: 'Offline note', occurred_at: now, status: 'draft', created_at: now, updated_at: now }] }, audit: [{ at: now, action: 'client.create', entity: 'client', entity_id: devId, client_id: devId, success: 1 }] }, B);
   assert.equal(push.status, 200); assert.equal(push.data.applied.clients, 1); assert.equal(push.data.applied.notes, 1);
   const stored = H.db.one(`SELECT first_name_enc, last_name_idx FROM clients WHERE id=?`, devId);
-  assert.ok(stored.first_name_enc.startsWith('v1:'), 're-encrypted on the server'); assert.ok(stored.last_name_idx, 'blind index recomputed');
+  assert.ok(stored.first_name_enc.startsWith('v2:'), 're-encrypted on the server, bound to the client cell (eval item 2)'); assert.ok(stored.last_name_idx, 'blind index recomputed');
   assert.ok(H.db.one(`SELECT 1 FROM assignments WHERE client_id=? AND user_id=(SELECT id FROM users WHERE username='nav2')`, devId), 'device client assigned to the syncing navigator');
   assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='device.client.create' AND client_id=?`, devId));
   const stale = await bare.post('/api/sync/push', { tables: { clients: [{ id: devId, client_code: 'M26-0001', first_name_enc: 'Older', last_name_enc: 'Client', status: 'active', created_at: now, updated_at: '2020-01-01T00:00:00.000Z' }] } }, B);
@@ -1136,7 +1136,7 @@ test('sync hardening: caseload on existing clients, tombstone limits, ownership,
   H.makeCaseloadUser('syncnav', 'navigator'); const l = await bare.post('/api/auth/login', { username: 'syncnav', password: 'StaffPassw0rd!x' }, { 'X-Sync-Client': '1' }); const B = { Authorization: 'Bearer ' + l.data.token, Cookie: '' };
   // cannot overwrite a client not on caseload even with a newer timestamp
   const r1 = await bare.post('/api/sync/push', { tables: { clients: [{ id: clientId, client_code: 'C26-0001', first_name_enc: 'Hacked', last_name_enc: 'X', status: 'active', created_at: now, updated_at: later }] } }, B);
-  assert.equal(r1.data.rejected.length, 1); assert.notEqual(require('../server/crypto').decrypt(H.db.one(`SELECT first_name_enc FROM clients WHERE id=?`, clientId).first_name_enc), 'Hacked');
+  assert.equal(r1.data.rejected.length, 1); assert.notEqual(require('../server/crypto').decrypt(H.db.one(`SELECT first_name_enc FROM clients WHERE id=?`, clientId).first_name_enc, undefined, require('../server/crypto').boundAad('clients', 'first_name_enc', clientId)), 'Hacked');
   // cannot delete another caseload's intervention; clients/notes are never hard-deleted via sync
   const iv = H.db.one(`SELECT id FROM interventions WHERE client_id=? LIMIT 1`, clientId);
   const r2 = await bare.post('/api/sync/push', { tombstones: [{ table_name: 'interventions', id: iv.id, deleted_at: later }, { table_name: 'clients', id: clientId, deleted_at: later }] }, B);
@@ -1184,7 +1184,7 @@ test('sync normalises device clock skew so a fast clock cannot win conflicts', a
   const fast = 3600_000; const deviceEditReal = now - 10_000; // 10 s before the office edit
   const r = await bare.post('/api/sync/push', { device_now: new Date(Date.now() + fast).toISOString(), tables: { clients: [{ id, client_code: 'M26-0500', first_name_enc: 'Clock', last_name_enc: 'Test', status: 'active', goals_enc: 'phone-stale', created_at: new Date(now + fast).toISOString(), updated_at: new Date(deviceEditReal + fast).toISOString() }] } }, B);
   assert.ok(Math.abs(r.data.clock_offset_ms + fast) < 5000, 'offset measured');
-  assert.equal(require('../server/crypto').decrypt(H.db.one(`SELECT goals_enc FROM clients WHERE id=?`, id).goals_enc), 'office', 'stale device edit does not win despite a fast clock');
+  assert.equal(require('../server/crypto').decrypt(H.db.one(`SELECT goals_enc FROM clients WHERE id=?`, id).goals_enc, undefined, require('../server/crypto').boundAad('clients', 'goals_enc', id)), 'office', 'stale device edit does not win despite a fast clock');
 });
 
 test('a role that must use two-step verification cannot work until it is set up', async () => {

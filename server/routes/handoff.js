@@ -46,7 +46,7 @@ function encounters(ctx, { tsP, ts }) {
   const { localDate } = require('./budget');
   const O = require('../options');
   const types = O.labelMap('INTERVENTION_TYPES'), locs = O.labelMap('LOCATIONS'), mods = O.labelMap('MODALITIES');
-  const d = (v) => { try { return v ? decrypt(v) : ''; } catch { return ''; } };
+  const d = (v, col, id) => { try { return v ? decrypt(v, undefined, require('../crypto').boundAad('clients', col, id)) : ''; } catch { return ''; } };
   const groups = new Map();
   for (const r of rows) {
     const day = String(r.occurred_at).length === 10 ? r.occurred_at : localDate(r.occurred_at);
@@ -61,7 +61,7 @@ function encounters(ctx, { tsP, ts }) {
   }
   const names = new Map();
   return [...groups.values()].map(g => {
-    if (!names.has(g._client_id)) names.set(g._client_id, { last_name: d(g._enc.last_name_enc), first_name: d(g._enc.first_name_enc), dob: d(g._enc.dob_enc), medi_cal_id: d(g._enc.medicaid_id_enc) });
+    if (!names.has(g._client_id)) names.set(g._client_id, { last_name: d(g._enc.last_name_enc, 'last_name_enc', g._client_id), first_name: d(g._enc.first_name_enc, 'first_name_enc', g._client_id), dob: d(g._enc.dob_enc, 'dob_enc', g._client_id), medi_cal_id: d(g._enc.medicaid_id_enc, 'medicaid_id_enc', g._client_id) });
     const o = { ...g, ...names.get(g._client_id) }; delete o._enc; return o;
   }).sort((a, b) => a.service_date.localeCompare(b.service_date) || a.client_code.localeCompare(b.client_code));
 }

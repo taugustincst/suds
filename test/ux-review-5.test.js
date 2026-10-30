@@ -66,7 +66,7 @@ test('a yes/no question nobody asked is stored as not asked (NULL), not "no": in
     { first_name: 'Imp', last_name: 'No', overdose_history: false },
   ] });
   assert.equal(commit.status, 200, JSON.stringify(commit.data)); assert.equal(commit.data.created, 2);
-  const byName = (last) => H.db.all(`SELECT id, last_name_enc FROM clients WHERE created_by=?`, H.db.one(`SELECT id FROM users WHERE username='admin'`).id).find(c => require('../server/crypto').decrypt(c.last_name_enc) === last).id;
+  const byName = (last) => H.db.all(`SELECT id, last_name_enc FROM clients WHERE created_by=?`, H.db.one(`SELECT id FROM users WHERE username='admin'`).id).find(c => require('../server/crypto').decrypt(c.last_name_enc, undefined, require('../server/crypto').boundAad('clients', 'last_name_enc', c.id)) === last).id;
   assert.equal(row(byName('Blank')).overdose_history, null); assert.equal(row(byName('Blank')).veteran, null);
   assert.equal(row(byName('No')).overdose_history, 0);
 

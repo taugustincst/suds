@@ -133,7 +133,7 @@ function itemsFor(type, answers = {}) {
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const addDays = (date, n) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 const today = () => require('./local-date').localDate();
-const dec = (v) => { if (!v) return null; try { return decrypt(v); } catch { return null; } };
+const dec = (v, aad = null) => { if (!v) return null; try { return decrypt(v, undefined, aad); } catch { return null; } };
 /**
  * SQL (and its parameters) for "the programme's date of `col` is after `after` (when given) and on or before
  * `through`", for a column holding bare dates and instants. An instant is UTC, so its first ten characters put an
@@ -273,7 +273,7 @@ function derive(clientId, { type, date, since = null }) {
     a.E_moud = c.mat_status === 'active' || refs.some(x => x === 'mat_otp' || x === 'mat_obot') ? 'yes' : 'no';
   }
   if (type === 'baseline') {
-    a.F_date_of_birth = dec(c.dob_enc);
+    a.F_date_of_birth = dec(c.dob_enc, require('./crypto').boundAad('clients', 'dob_enc', c.id));
     const inList = (key, v) => (v && ITEM[key].options.some(o => o.value === v) ? v : null);
     a.F_gender = inList('F_gender', c.gender);
     a.F_race = c.race_codes || null;

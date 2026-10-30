@@ -24,7 +24,7 @@
 const db = require('./db');
 const audit = require('./audit');
 const disclosure = require('./disclosure');
-const { encrypt, decrypt, uuid, randomToken, sha256 } = require('./crypto');
+const { encrypt, decrypt, uuid, randomToken, sha256, boundAad } = require('./crypto');
 const { badRequest, notFound, forbidden, HttpError } = require('./http');
 
 const KINDS = ['packet', 'contact_notice'];
@@ -49,7 +49,7 @@ const hashClaim = (id, claim) => sha256(`referral-link-claim:${id}:${claim}`);
 function newCode() { const n = require('node:crypto').randomInt(0, 1000000); return String(n).padStart(6, '0'); }
 /** A short reference both sides can quote on the phone; random, so it says nothing about the client. */
 function newReference() { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; const b = require('node:crypto').randomBytes(6); return 'R-' + [...b].map(x => A[x % A.length]).join(''); }
-const dec = (v) => { if (!v) return null; try { return decrypt(v); } catch { return null; } };
+const dec = (v, aad = null) => { if (!v) return null; try { return decrypt(v, undefined, aad); } catch { return null; } };
 
 function resourceOf(resourceId) { return db.one(`SELECT id, name, organization, category FROM resources WHERE id=?`, resourceId); }
 function resourceNames(r) { return r ? [r.name, r.organization].filter(Boolean) : []; }
@@ -111,12 +111,13 @@ function create({ referral, user, ip, v }) {
     const c = db.one(`SELECT first_name_enc, last_name_enc, preferred_name_enc, dob_enc, phone_enc, participant_code_enc FROM clients WHERE id=?`, referral.client_id);
     // A client known only by a participant code (1.21.0) is named as the app names them ("Participant CODE"), never blank:
     // the code is what the person will give the provider. The consent above covers the packet either way.
-    const legal = [dec(c.first_name_enc), dec(c.last_name_enc)].filter(Boolean).join(' ');
+    const ca = (col) => boundAad('clients', col, referral.client_id);
+    const legal = [dec(c.first_name_enc, ca('first_name_enc')), dec(c.last_name_enc, ca('last_name_enc'))].filter(Boolean).join(' ');
     const pcode = dec(c.participant_code_enc);
     const message = String(v.message || '').trim().slice(0, 1000);
     packet = {
-      client: { name: legal || (pcode ? `Participant ${pcode}` : ''), preferred_name: dec(c.preferred_name_enc) || undefined,
-        dob: v.include_dob ? dec(c.dob_enc) || undefined : undefined, phone: v.include_phone ? dec(c.phone_enc) || undefined : undefined },
+      client: { name: legal || (pcode ? `Participant ${pcode}` : ''), preferred_name: dec(c.preferred_name_enc, ca('preferred_name_enc')) || undefined,
+        dob: v.include_dob ? dec(c.dob_enc, ca('dob_enc')) || undefined : undefined, phone: v.include_phone ? dec(c.phone_enc, ca('phone_enc')) || undefined : undefined },
       reason: message || null, urgency: referral.urgency || 'routine', referred_at: referral.referred_at,
       referred_by: user.display_name || user.username, recipient: res.name,
     };

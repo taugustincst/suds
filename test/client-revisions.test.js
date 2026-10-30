@@ -178,7 +178,7 @@ test('revert follows the record\'s own rules: a name is never put back to nothin
 test('a device\'s edit is kept as a revision when its push lands (via sync), and its notice links to it', async () => {
   const id = await newClient({ phone: '916-555-0461' });
   const row = H.db.one(`SELECT * FROM clients WHERE id=?`, id);
-  const res = await C.clin.post('/api/sync/push', { device_now: new Date().toISOString(), tables: { clients: [{ id, client_code: row.client_code, first_name_enc: 'Rhea', last_name_enc: crypto.decrypt(row.last_name_enc), phone_enc: '916-555-0177', status: row.status, updated_at: new Date(Date.now() + 5000).toISOString() }] } });
+  const res = await C.clin.post('/api/sync/push', { device_now: new Date().toISOString(), tables: { clients: [{ id, client_code: row.client_code, first_name_enc: 'Rhea', last_name_enc: crypto.decrypt(row.last_name_enc, undefined, crypto.boundAad('clients', 'last_name_enc', id)), phone_enc: '916-555-0177', status: row.status, updated_at: new Date(Date.now() + 5000).toISOString() }] } });
   assert.deepEqual(res.data.rejected, []);
   const [rev] = revs(id);
   assert.equal(rev.via, 'sync'); assert.equal(rev.changed_by, U.clin);

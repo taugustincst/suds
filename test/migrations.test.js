@@ -61,13 +61,13 @@ test('migration leaves no orphaned rows', () => {
 });
 
 test('plaintext PHI is moved into encrypted columns and the plaintext column is dropped', () => {
-  const { decrypt } = require('../server/crypto');
+  const { decrypt, boundAad } = require('../server/crypto');
   const c = db().one(`SELECT * FROM clients WHERE id=?`, ids.client);
   assert.ok(!('goals' in c), 'clients.goals should be gone');
   assert.ok(!('flags' in c), 'clients.flags should be gone');
-  assert.match(c.goals_enc, /^v1:/, 'goals_enc holds ciphertext');
-  assert.equal(decrypt(c.goals_enc), 'Housing, then MAT induction');
-  assert.equal(decrypt(c.flags_enc), 'od_risk,no_voicemail');
+  assert.match(c.goals_enc, /^v2:/, 'goals_enc holds ciphertext, bound to its cell (eval item 2, migration 76)');
+  assert.equal(decrypt(c.goals_enc, undefined, boundAad('clients', 'goals_enc', c.id)), 'Housing, then MAT induction');
+  assert.equal(decrypt(c.flags_enc, undefined, boundAad('clients', 'flags_enc', c.id)), 'od_risk,no_voicemail');
 
   const n = db().one(`SELECT * FROM notes WHERE id=?`, ids.note);
   assert.ok(!('title' in n));
@@ -409,7 +409,7 @@ for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.
   const sql = fs.readFileSync(path.join(__dirname, 'fixtures', fixture), 'utf8');
   const expect = JSON.parse(/^-- expect: (.*)$/m.exec(sql)[1]);
   test(`a SUDS ${expect.version} database (schema ${expect.schema_version}) upgrades to the current schema with its records intact`, () => {
-    const { decrypt } = require('../server/crypto');
+    const { decrypt, boundAad } = require('../server/crypto');
     const fdir = fs.mkdtempSync(path.join(os.tmpdir(), `suds-migrate-${expect.version}-`));
     const fpath = path.join(fdir, 'suds.db');
     const d = new DatabaseSync(fpath);
@@ -452,9 +452,9 @@ for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.
       }
       const c = db().one(`SELECT * FROM clients WHERE id=?`, expect.client.id);
       assert.ok(c, 'the client is there');
-      assert.equal(decrypt(c.first_name_enc), expect.client.first_name);
-      assert.equal(decrypt(c.last_name_enc), expect.client.last_name);
-      assert.equal(decrypt(c.dob_enc), expect.client.dob);
+      assert.equal(decrypt(c.first_name_enc, undefined, boundAad('clients', 'first_name_enc', c.id)), expect.client.first_name);
+      assert.equal(decrypt(c.last_name_enc, undefined, boundAad('clients', 'last_name_enc', c.id)), expect.client.last_name);
+      assert.equal(decrypt(c.dob_enc, undefined, boundAad('clients', 'dob_enc', c.id)), expect.client.dob);
       const v = db().one(`SELECT * FROM interventions WHERE id=?`, expect.visit.id);
       assert.equal(decrypt(v.summary_enc), expect.visit.summary);
       assert.equal(v.naloxone_kits, expect.visit.naloxone_kits);
@@ -468,9 +468,12 @@ for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.
       // the ones migrations moved out of plaintext columns.
       let checked = 0;
       for (const { name } of db().all(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)) {
-        const enc = db().all(`PRAGMA table_info("${name}")`).map((x) => x.name).filter((x) => x.endsWith('_enc'));
-        for (const col of enc) for (const r of db().all(`SELECT "${col}" v FROM "${name}" WHERE "${col}" IS NOT NULL AND "${col}" != ''`)) {
-          assert.doesNotThrow(() => decrypt(r.v), `${name}.${col} decrypts`); checked++;
+        const colNames = db().all(`PRAGMA table_info("${name}")`).map((x) => x.name);
+        const enc = colNames.filter((x) => x.endsWith('_enc'));
+        const hasId = colNames.includes('id');
+        // A bound column (crypto.boundAad) needs its cell binding; for every other table/column boundAad is null.
+        for (const col of enc) for (const r of db().all(`SELECT ${hasId ? 'id, ' : ''}"${col}" v FROM "${name}" WHERE "${col}" IS NOT NULL AND "${col}" != ''`)) {
+          assert.doesNotThrow(() => decrypt(r.v, undefined, boundAad(name, col, r.id)), `${name}.${col} decrypts`); checked++;
         }
       }
       assert.ok(checked >= 6, `${checked} encrypted values checked`);
@@ -491,7 +494,7 @@ for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.
             // clear-text service_type with them): those values change by design, and are tested directly
             // in 'migration 71' above.
             if (t === 'caloms_records' && col === 'answers_enc') { same++; continue; }
-            assert.equal(r.v === null || r.v === '' ? r.v : decrypt(r.v), v, `${t}.${col} of ${id} after the upgrade`); same++;
+            assert.equal(r.v === null || r.v === '' ? r.v : decrypt(r.v, undefined, boundAad(t, col, id)), v, `${t}.${col} of ${id} after the upgrade`); same++;
             if (!Object.prototype.hasOwnProperty.call(before[t] || {}, col) && v) migrated++;
           }
         }
@@ -506,7 +509,7 @@ for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.
       const M = require('../server/clients-model');
       let indexed = 0; let backfilled = 0;
       for (const c of db().all(`SELECT * FROM clients`)) {
-        const plain = { first_name: c.first_name_enc && decrypt(c.first_name_enc), last_name: c.last_name_enc && decrypt(c.last_name_enc), preferred_name: c.preferred_name_enc ? decrypt(c.preferred_name_enc) : null, dob: c.dob_enc ? decrypt(c.dob_enc) : null, phone: c.phone_enc ? decrypt(c.phone_enc) : null };
+        const plain = { first_name: c.first_name_enc && decrypt(c.first_name_enc, undefined, boundAad('clients', 'first_name_enc', c.id)), last_name: c.last_name_enc && decrypt(c.last_name_enc, undefined, boundAad('clients', 'last_name_enc', c.id)), preferred_name: c.preferred_name_enc ? decrypt(c.preferred_name_enc, undefined, boundAad('clients', 'preferred_name_enc', c.id)) : null, dob: c.dob_enc ? decrypt(c.dob_enc, undefined, boundAad('clients', 'dob_enc', c.id)) : null, phone: c.phone_enc ? decrypt(c.phone_enc, undefined, boundAad('clients', 'phone_enc', c.id)) : null };
         const was = idxBefore[c.id] || {};
         for (const [col, v] of Object.entries(M.clientIndexes(plain))) {
           if (!(col in c)) continue;
@@ -529,7 +532,7 @@ for (const fixture of ['release-v1.9.4.sql', 'release-v1.11.0.sql', 'release-v1.
         assert.ok(Object.values(plainBefore).some((cols) => Object.values(cols).some((byId) => Object.values(byId).some((v) => v === null))), 'and NULLs');
         for (const u of expect.rich.unicodeClients) {
           const c = db().one(`SELECT * FROM clients WHERE id=?`, u.id);
-          assert.equal(decrypt(c.first_name_enc), u.first_name); assert.equal(decrypt(c.last_name_enc), u.last_name);
+          assert.equal(decrypt(c.first_name_enc, undefined, boundAad('clients', 'first_name_enc', c.id)), u.first_name); assert.equal(decrypt(c.last_name_enc, undefined, boundAad('clients', 'last_name_enc', c.id)), u.last_name);
           // Found by name after the upgrade, as a search would.
           assert.equal(c.last_name_idx, M.clientIndexes({ last_name: u.last_name }).last_name_idx);
         }
@@ -901,7 +904,7 @@ test('SUDS 1.23.0\'s first start on a 1.22.0 database: county consents, releases
     assert.ok(db().all(`PRAGMA table_info(tasks)`).some((c) => c.name === 'note_id' && c.type === 'TEXT' && !c.notnull && c.dflt_value === null));
     // Migration 70 (released in 1.24.0): the incoming-referrals queue, two new tables, empty after the upgrade, with
     // their indexes (the shape check above compares them with a fresh install).
-    assert.equal(m69.LATEST_SCHEMA_VERSION, 75);
+    assert.equal(m69.LATEST_SCHEMA_VERSION, 76);
     for (const t of ['incoming_referrals', 'incoming_referral_attempts']) assert.equal(db().one(`SELECT COUNT(*) n FROM ${t}`).n, 0, `${t} exists and is empty`);
     // Migration 72 (PowerDMS, docs/integration/POWERDMS.md): a policy's PowerDMS link, revision and the roles asked to
     // sign it, on the existing documents; who has signed which revision, and each report imported, empty after the upgrade.

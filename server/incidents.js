@@ -76,9 +76,9 @@ function draft({ source, sourceRef = null, title, description = '', user = null 
  * the client code and the name (re-encrypted as its own value). `c` is a clients row (code and name columns).
  */
 function snapshotOf(c) {
-  const { decrypt } = require('./crypto');
-  const d = (v) => { try { return v ? decrypt(v) : ''; } catch { return ''; } };
-  const name = [d(c.first_name_enc), d(c.last_name_enc)].filter(Boolean).join(' ');
+  const { decrypt, boundAad } = require('./crypto');
+  const d = (v, col) => { try { return v ? decrypt(v, undefined, boundAad('clients', col, c.id)) : ''; } catch { return ''; } };
+  const name = [d(c.first_name_enc, 'first_name_enc'), d(c.last_name_enc, 'last_name_enc')].filter(Boolean).join(' ');
   return { client_code: c.client_code || null, client_name_enc: name ? encrypt(name) : null };
 }
 /** Link a client to an incident with its snapshot. Returns 1 when a new link was made, 0 when it existed. */

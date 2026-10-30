@@ -9,7 +9,7 @@ const assert = require('node:assert');
 const nodeCrypto = require('node:crypto');
 const H = require('./helpers');
 const config = require('../server/config');
-const { blindIndex, encrypt, decrypt } = require('../server/crypto');
+const { blindIndex, encrypt, decrypt, boundAad } = require('../server/crypto');
 const M = require('../server/clients-model');
 const checks = require('../server/startup-checks');
 
@@ -65,6 +65,6 @@ test('client DOB and phone indexes in the database are keyed with the index key'
     assert.equal(row.phone_idx, M.idxPhone('9165550142'));
     assert.notEqual(row.dob_idx, blindIndex('1985-06-15', config.encryptionKey));
     assert.notEqual(row.dob_idx, row.phone_idx, 'the DOB and phone indexes are domain-separated');
-    assert.equal(decrypt(row.dob_enc), '1985-06-15');
+    assert.equal(decrypt(row.dob_enc, undefined, boundAad('clients', 'dob_enc', r.data.id)), '1985-06-15');
   } finally { await H.stop(); }
 });

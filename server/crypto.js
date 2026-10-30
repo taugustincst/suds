@@ -43,6 +43,24 @@ function decrypt(payload, key = config.encryptionKey, aad = null) {
 /** The binding for a PHI column: its table, column and row id, so its ciphertext decrypts only in that cell. */
 function aadFor(table, column, id) { return `suds-phi/${table}/${column}/${id}`; }
 
+// Columns whose ciphertext is bound to its cell (independent evaluation, item 2). A column is listed only once
+// every path that encrypts or decrypts it passes boundAad() and a migration has re-sealed the stored values as
+// v2; until then boundAad returns null and the column stays v1. The client record's PHI is the first set bound
+// (migration 76). Every writer and reader of these columns — the REST create/update (clients-model
+// encryptFields/decryptRow), sync transport (sync-tables exportRow/importRow), the FHIR Patient view, exports,
+// CalOMS and the merge re-seal — goes through boundAad, so the binding is consistent.
+const AAD_BOUND = {
+  clients: new Set(['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc',
+    'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc', 'contact_preferences_enc']),
+};
+/** The AAD for a PHI cell when its column is bound and the row id is known, else null (an unbound column stays v1). */
+function boundAad(table, column, id) { return id && AAD_BOUND[table] && AAD_BOUND[table].has(column) ? aadFor(table, column, id) : null; }
+/** Move a bound value between cells (a merge, or the v1→v2 migration): decrypt under the source binding, re-seal under the target's. */
+function reseal(ct, table, column, fromId, toId) {
+  if (ct === null || ct === undefined) return ct;
+  return encrypt(decrypt(ct, config.encryptionKey, boundAad(table, column, fromId)), config.encryptionKey, boundAad(table, column, toId));
+}
+
 // Letters that Unicode does not decompose into a base letter plus an accent, so NFKD alone leaves them as
 // they are: "Øster" has to find "Oster" and "Łecki" has to find "Lecki", the way a worker types them.
 const TRANSLIT = { 'ø': 'o', 'ł': 'l', 'ß': 'ss', 'æ': 'ae', 'œ': 'oe', 'đ': 'd', 'ð': 'd', 'þ': 'th', 'ı': 'i', 'ħ': 'h', 'ŀ': 'l', 'ŧ': 't', 'ĸ': 'k', 'ŋ': 'ng', 'ſ': 's', 'ƒ': 'f', 'ǥ': 'g', 'ɨ': 'i', 'ʉ': 'u' };
@@ -225,5 +243,5 @@ function otpauthUrl(secret, account, issuer = 'SUDS') {
  */
 function keyFingerprint() { return sha256('suds-key-check:' + config.encryptionKey.toString('hex')).slice(0, 32); }
 
-module.exports = { encrypt, decrypt, aadFor, blindIndex, fieldPrint, subkey, foldText, keyFingerprint, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
+module.exports = { encrypt, decrypt, aadFor, boundAad, reseal, blindIndex, fieldPrint, subkey, foldText, keyFingerprint, hashPassword, verifyPassword, hashPasswordAsync, verifyPasswordAsync, randomToken, sha256, uuid,
   generateTotpSecret, totp, totpStep, verifyTotp, otpauthUrl, base32Encode, base32Decode };

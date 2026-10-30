@@ -4,7 +4,7 @@ const auth = require('../auth');
 const audit = require('../audit');
 const { badRequest, notFound, forbidden, conflict, HttpError } = require('../http');
 const { validate, paging } = require('../validate');
-const { blindIndex, uuid, decrypt, encrypt } = require('../crypto');
+const { blindIndex, uuid, decrypt, encrypt, reseal } = require('../crypto');
 const M = require('../clients-model');
 const F = require('../client-filters');
 const O = require('../options');
@@ -147,7 +147,7 @@ function codesOf(keep, source) {
 function updateClient(ctx, row, v, { reverts = null } = {}) {
   // Contact details, and closing a client only by a discharge (the Episodes tab): the table's rules.
   rules.assertWrite('clients', { id: row.id, ...rules.toColumns('clients', v) }, ctx, { existing: row });
-  const enc = M.encryptFields(v);
+  const enc = M.encryptFields(v, row.id);
   const was = M.decryptRow(row);
   if (v.first_name !== undefined || v.last_name !== undefined) enc.full_name_idx = M.idxFull(v.last_name ?? was.last_name ?? '', v.first_name ?? was.first_name ?? '');
   const cols = { ...enc };
@@ -344,7 +344,7 @@ module.exports = (r) => {
     if (v.first_name === undefined) v.first_name = '';
     if (v.last_name === undefined) v.last_name = '';
     const id = uuid();
-    const enc = M.encryptFields(v);
+    const enc = M.encryptFields(v, id);
     enc.full_name_idx = M.idxFull(v.last_name, v.first_name);
     const cols = { id, client_code: M.nextClientCode(), ...enc, created_by: ctx.user.id };
     for (const f of M.PLAIN_FIELDS) if (v[f] !== undefined) cols[f] = v[f];
@@ -485,8 +485,11 @@ module.exports = (r) => {
       }
       // Fill gaps in the kept record from the duplicate rather than losing what was only entered once.
       const fills = {};
+      // A PHI column copied from the duplicate is re-sealed to the kept record's cell: its ciphertext is bound to
+      // its own (table, column, id), so moving the value means decrypting under the source id and re-encrypting under
+      // the kept id, never copying the ciphertext across.
       for (const col of ['dob_enc', 'phone_enc', 'alt_phone_enc', 'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'preferred_name_enc', 'goals_enc', 'flags_enc', 'contact_preferences_enc']) {
-        if (!keep[col] && source[col]) fills[col] = source[col];
+        if (!keep[col] && source[col]) fills[col] = reseal(source[col], 'clients', col, source.id, keep.id);
       }
       for (const col of M.PLAIN_FIELDS) if ((keep[col] === null || keep[col] === '' || keep[col] === undefined) && source[col]) fills[col] = source[col];
       // A client known by a participant code and no name (1.21.0) merged with the named record of the same person, either
@@ -495,7 +498,7 @@ module.exports = (r) => {
       // (server/ssp-report.js) rather than as someone else's.
       const K = M.decryptRow(keep); const S = M.decryptRow(source);
       const named = (x) => String(x.first_name || '').trim() !== '' || String(x.last_name || '').trim() !== '';
-      if (!named(K) && named(S)) { fills.first_name_enc = source.first_name_enc; fills.last_name_enc = source.last_name_enc; }
+      if (!named(K) && named(S)) { fills.first_name_enc = reseal(source.first_name_enc, 'clients', 'first_name_enc', source.id, keep.id); fills.last_name_enc = reseal(source.last_name_enc, 'clients', 'last_name_enc', source.id, keep.id); }
       if (!keep.participant_code_enc && source.participant_code_enc) { fills.participant_code_enc = source.participant_code_enc; fills.participant_code_idx = source.participant_code_idx; }
       // The earlier intake date is the one that describes when this person actually started.
       if (source.intake_date && (!keep.intake_date || source.intake_date < keep.intake_date)) fills.intake_date = source.intake_date;
@@ -508,7 +511,7 @@ module.exports = (r) => {
       const codes = codesOf(K, S);
       let revChanges = {};
       if (keys.length) {
-        const plainFills = M.decryptRow(Object.fromEntries(keys.map(k => [k, fills[k]])));
+        const plainFills = M.decryptRow({ id: keep.id, ...Object.fromEntries(keys.map(k => [k, fills[k]])) });
         delete plainFills.display_name; delete plainFills.participant_code_idx;
         revChanges = REV.diff(K, plainFills);
       }

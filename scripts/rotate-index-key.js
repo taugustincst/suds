@@ -78,7 +78,7 @@ function rotateIndexKey(newKey) {
         for (const r of db.all(`SELECT id, ${source.join(',')} FROM ${t.table}`)) {
           const plain = {};
           config.indexKey = oldKey;
-          for (const c of source) { try { plain[c] = r[c] ? decrypt(r[c]) : null; } catch { plain[c] = null; } }
+          for (const c of source) { try { plain[c] = r[c] ? decrypt(r[c], undefined, require('../server/crypto').boundAad(t.table, c, r.id)) : null; } catch { plain[c] = null; } }
           config.indexKey = newKey;
           const idx = derive(plain);
           const cols = t.cols.filter(c => c in idx);

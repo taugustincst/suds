@@ -1,6 +1,6 @@
 'use strict';
 const db = require('./db');
-const { encrypt, decrypt, blindIndex, foldText, uuid } = require('./crypto');
+const { encrypt, decrypt, blindIndex, foldText, uuid, boundAad } = require('./crypto');
 
 // Per-column blind indexes (independent evaluation, item 4): each identity column folds the same value but
 // under its own purpose, so equal values no longer share an index across columns (a surname that matches a
@@ -44,7 +44,8 @@ function decryptRow(row, { deidentify = false } = {}) {
     if (k.endsWith('_enc')) {
       const plain = k.slice(0, -4);
       if (deidentify) continue;
-      out[plain] = v ? decrypt(v) : null;
+      // Pass the cell's binding: a v2 (bound) value needs it, a v1 value ignores it (crypto.boundAad/decrypt).
+      out[plain] = v ? decrypt(v, undefined, boundAad('clients', k, row.id)) : null;
     } else if (k.endsWith('_idx')) continue;
     else out[k] = v;
   }
@@ -55,9 +56,12 @@ function decryptRow(row, { deidentify = false } = {}) {
   return out;
 }
 
-function encryptFields(v) {
-  const cols = {}; 
-  for (const f of ENC_FIELDS) if (v[f] !== undefined) cols[`${f}_enc`] = v[f] === null ? null : encrypt(v[f]);
+// `id` is the client row's id: with it, each PHI column is sealed bound to its cell (v2); without it (a caller
+// that does not yet know the id) the columns are written v1, as before. The three callers (create, update,
+// import) all know the id, so client PHI is written bound.
+function encryptFields(v, id) {
+  const cols = {};
+  for (const f of ENC_FIELDS) if (v[f] !== undefined) cols[`${f}_enc`] = v[f] === null ? null : encrypt(v[f], undefined, boundAad('clients', `${f}_enc`, id));
   if (v.last_name !== undefined) cols.last_name_idx = idxLast(v.last_name);
   if (v.first_name !== undefined || v.last_name !== undefined) cols.full_name_idx = undefined; // computed by caller with full row
   if (v.last_name !== undefined) { cols.name_prefix_idx = namePrefixIndex(v.last_name); cols.name_phonetic_idx = namePhoneticIndex(v.last_name); }

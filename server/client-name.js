@@ -11,7 +11,7 @@ function withClientName(ctx, x) {
   const deidentify = !auth.hasPerm(ctx.user, 'clients:read');
   let client_name = null;
   if (x.client_id && !deidentify && (x.c_first_name_enc || x.c_last_name_enc || x.c_participant_code_enc)) {
-    try { client_name = M.decryptRow({ first_name_enc: x.c_first_name_enc, last_name_enc: x.c_last_name_enc, participant_code_enc: x.c_participant_code_enc || null }).display_name || null; } catch { client_name = null; }
+    try { client_name = M.decryptRow({ id: x.client_id, first_name_enc: x.c_first_name_enc, last_name_enc: x.c_last_name_enc, participant_code_enc: x.c_participant_code_enc || null }).display_name || null; } catch { client_name = null; }
   }
   const out = { ...x, client_name };
   delete out.c_first_name_enc; delete out.c_last_name_enc; delete out.c_participant_code_enc;

@@ -227,6 +227,28 @@ const DEPENDENCY_CHANGES = [
       + 'name; migration 75 reindexes an upgraded install to the same per-column value, so a fresh install and an '
       + 'upgraded one reach the same preferred_name_idx (test/migrations.test.js, test/name-index-migration.js).',
   },
+  {
+    dependency: 'clients-model.js#blindIndex', fingerprint: 'bed2956d8e24d291',
+    reason: '1.28.0 (independent evaluation item 2): clients-model.js now also destructures boundAad from its crypto '
+      + 'import, so the one statement that declares blindIndex here (a re-reference of crypto.js#blindIndex, acked '
+      + 'separately) changed text but not behaviour. The released migrations that reach it (6, 18, 20, 26, 46) '
+      + 're-derive indexes exactly as before; test/migrations.test.js upgrades the fixtures to the same structure as '
+      + 'a fresh install.',
+  },
+  {
+    dependency: 'clients-model.js#foldText', fingerprint: 'bed2956d8e24d291',
+    reason: '1.28.0 (independent evaluation item 2): same import-line change as clients-model.js#blindIndex above — '
+      + 'foldText is defined in crypto.js and only re-referenced here, so its behaviour is unchanged. The released '
+      + 'migrations that reach it (6, 26) fold names exactly as before; test/migrations.test.js upgrades the fixtures '
+      + 'to the same structure as a fresh install.',
+  },
+  {
+    dependency: 'incidents.js#snapshotOf', fingerprint: '4e7f85b158276d2f',
+    reason: '1.28.0 (independent evaluation item 2): snapshotOf passes crypto.boundAad when decrypting the client '
+      + 'name for a privacy-incident snapshot. Released migration 34 runs it on v1 ciphertext, where decrypt ignores '
+      + 'the AAD, so the snapshot it writes is byte-for-byte what it was; the binding takes effect only for v2 values '
+      + 'written after migration 76. test/migrations.test.js upgrades the fixtures to the same structure as a fresh install.',
+  },
 ];
 
 /** Tokens of JavaScript source, enough to tell code from strings, comments, templates and regular expressions. */

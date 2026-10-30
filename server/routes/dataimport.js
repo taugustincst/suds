@@ -160,7 +160,7 @@ module.exports = (r) => {
               const same = rec.first_name && rec.last_name ? nameMatches(ctx.user, rec) : { shown: [], hidden: [] };
               if (skip_duplicates && same.shown.length) { skipped++; return; }
               if (same.hidden.length) hiddenDuplicates.push([id, same.hidden]);
-              const enc = M.encryptFields(rec); enc.full_name_idx = M.idxFull(rec.last_name, rec.first_name);
+              const enc = M.encryptFields(rec, id); enc.full_name_idx = M.idxFull(rec.last_name, rec.first_name);
               const cols = { id, client_code: M.nextClientCode(), ...enc, created_by: ctx.user.id, intake_date: rec.intake_date || require('../local-date').today() };
               // A yes/no cell arrives as true/false, which SQLite cannot bind: stored as 1/0 (a "no" used to fail the row).
               for (const f of M.PLAIN_FIELDS) if (rec[f] !== undefined && rec[f] !== null) cols[f] = typeof rec[f] === 'boolean' ? (rec[f] ? 1 : 0) : rec[f];

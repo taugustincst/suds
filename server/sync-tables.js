@@ -250,7 +250,7 @@ function exportRow(t, r) {
   const o = { ...r };
   for (const c of t.enc) {
     if (!o[c]) continue;
-    try { o[c] = crypto.decrypt(o[c]); }
+    try { o[c] = crypto.decrypt(o[c], undefined, crypto.boundAad(t.name, c, r.id)); }
     catch { return null; }
   }
   for (const k of Object.keys(o)) if (k.endsWith('_idx')) delete o[k];
@@ -265,7 +265,7 @@ function exportRow(t, r) {
 function importRow(t, r, existingCols) {
   const o = {};
   for (const [k, v] of Object.entries(r)) if (existingCols.includes(k) && !k.endsWith('_idx') && v !== undefined) o[k] = v;
-  for (const c of t.enc) if (o[c] !== undefined && o[c] !== null) o[c] = crypto.encrypt(o[c]);
+  for (const c of t.enc) if (o[c] !== undefined && o[c] !== null) o[c] = crypto.encrypt(o[c], undefined, crypto.boundAad(t.name, c, o.id));
   if (t.name === 'clients') {
     // Only recompute an index when the plaintext it derives from was actually sent; recomputing from a
     // missing field would replace a working blind index with the hash of an empty string.

@@ -978,6 +978,29 @@ const migrations = [
       rupd.run(IR.lastNameIndex(last), r.id);
     }
   },
+  // 76: bind the client record's PHI to its cell (independent evaluation, item 2). Each of the client's thirteen
+  //     encrypted columns is re-sealed from v1 (no AAD) to v2, bound to its own table|column|id (server/crypto.js
+  //     aadFor), so a ciphertext copied to another row or column no longer decrypts there. Every reader and writer
+  //     of these columns was switched to pass crypto.boundAad in the same change (clients-model encryptFields/
+  //     decryptRow, sync transport, the FHIR Patient view, exports, CalOMS, the hand-off summary, the referral
+  //     packet, SUPRT prefill, the incident snapshot, the merge re-seal, and both key rotations). A value already
+  //     v2 (none at upgrade time) or one that cannot be decrypted is left as it is. Plaintext is unchanged, so the
+  //     blind indexes are not re-derived. No schema change.
+  (d) => {
+    const crypto = require('./crypto');
+    const cols = ['first_name_enc', 'last_name_enc', 'preferred_name_enc', 'dob_enc', 'phone_enc', 'alt_phone_enc',
+      'email_enc', 'address_enc', 'medicaid_id_enc', 'emergency_contact_enc', 'goals_enc', 'flags_enc', 'contact_preferences_enc'];
+    const upd = d.prepare(`UPDATE clients SET ${cols.map(c => `${c}=?`).join(', ')} WHERE id=?`);
+    for (const r of d.prepare(`SELECT id, ${cols.join(', ')} FROM clients`).all()) {
+      const next = {}; let changed = false;
+      for (const c of cols) {
+        const v = r[c];
+        if (v && String(v).startsWith('v1:')) { try { next[c] = crypto.reseal(v, 'clients', c, null, r.id); changed = true; } catch { next[c] = v; } }
+        else next[c] = v;
+      }
+      if (changed) upd.run(...cols.map(c => next[c]), r.id);
+    }
+  },
 ];
 const PERF_INDEXES_47 = ['idx_assign_caseload', 'idx_interventions_sync', 'idx_interventions_dashboard', 'idx_calls_sync', 'idx_notes_list', 'idx_notes_sync', 'idx_notes_drafts', 'idx_note_addenda_note',
   'idx_clients_merged', 'idx_intervention_supplies_sync', 'idx_supply_ledger_onhand', 'idx_supply_ledger_item_created', 'idx_suprt_assessments_sync'];
@@ -1112,7 +1135,7 @@ function reindexNameParts(d) {
     d.exec('BEGIN');
     try {
       for (const c of d.prepare(`SELECT id, last_name_enc, name_phonetic_idx FROM clients`).all()) {
-        let last; try { last = decrypt(c.last_name_enc); read++; } catch { unreadable++; continue; }
+        let last; try { last = decrypt(c.last_name_enc, undefined, require('./crypto').boundAad('clients', 'last_name_enc', c.id)); read++; } catch { unreadable++; continue; }
         if (!M.nameParts(last).length) continue;
         const idx = M.namePhoneticIndex(last);
         if (idx !== c.name_phonetic_idx) { upd.run(idx, c.id); n++; }

@@ -92,7 +92,7 @@ test('sync: a device\'s coded client lands with its code re-indexed by the offic
   const row = H.db.one(`SELECT * FROM clients WHERE id=?`, id);
   assert.equal(require('../server/crypto').decrypt(row.participant_code_enc), 'KK4455');
   assert.equal(row.participant_code_idx, require('../server/participant-code').index('KK4455'));
-  assert.equal(require('../server/crypto').decrypt(row.first_name_enc), '');
+  assert.equal(require('../server/crypto').decrypt(row.first_name_enc, undefined, require('../server/crypto').boundAad('clients', 'first_name_enc', id)), '');
   const none = ok(await dev.post('/api/sync/push', { device_now: now, tables: { clients: [{ id: uuid(), client_code: 'M26-0078', status: 'active', created_at: now, updated_at: now }] } }), 200, 'push');
   assert.equal(none.rejected.length, 1);
   assert.match(none.rejected[0].reason, /is missing a required field/);
