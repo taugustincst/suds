@@ -49,7 +49,7 @@ Those are questions for counsel ([market/templates/COUNSEL-REVIEW-BRIEF.md](mark
 | 1.21.0 | Field devices and the participant-code default off unless an administrator turns them on; a 90-day window; only an administrator widens a device's scope | PLATFORM.md, *Owner decisions, conservative defaults* |
 | 1.23.1 | A stabilisation release and its commitments (feature freeze, the supported line, releases through the gate) | RELEASE.md, *Stabilisation* |
 | 1.23.6 | An administrator may change their own permissions, role and account, shipped in a patch | RELEASE.md, *Record: 1.23.6* |
-| 2026-10-02 | A white-box penetration test of 1.23.6 authorised; then "Lift the freeze and release" for its fixes (1.24.0) | RELEASE.md, *Record: 1.24.0* |
+| 2026-10-02 | A white-box security test of 1.23.6 authorised; then "Lift the freeze and release" for its fixes (1.24.0) | RELEASE.md, *Record: 1.24.0* |
 | 2026-10-03 | SUDS becomes proprietary from 1.24.1 (AugustInnovations LLC); SUDS on this device stays free for real use; 1.24.0 and earlier stay MIT for those copies | PLATFORM.md; `LICENSE`; CLAUDE.md |
 | 2026-10-03 | "The server should be launched in an exe. This is to simplify it for county IT." (the Windows server) | PLATFORM.md |
 | 2026-10-05 | "Fix everything now, freeze lifts to 1.25.0" | RELEASE.md, *Record: 1.25.0* |

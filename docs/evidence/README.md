@@ -58,7 +58,7 @@ tagged, through the gate and published. 1.24.1 makes SUDS proprietary
 migration, permission or route (*1.24.1: the licence and the evaluation fixes*, below). 1.24.0 is the stamp
 "Release 1.24.0" and the commit after it that adds its SBOM (on `main`, and published to GitHub Pages by a direct
 `gh-pages` push at the owner's request); its tag was pushed on the owner's instruction on 2026-10-05 with the others ([../RELEASE.md](../RELEASE.md),
-*Record: 1.24.0*). 1.24.0 carries the fixes of an owner-authorised white-box penetration test of 1.23.6 (a
+*Record: 1.24.0*). 1.24.0 carries the fixes of an owner-authorised white-box security test of 1.23.6 (a
 consent's purpose checked at every disclosure, an office deletion that stands against a sync push, a refused push
 to a signed note, and seven Low findings), released under a recorded security exception inside 1.23.0's 28 days,
 with incoming referrals (an intake queue, migration 70, the `intake:read` and `intake:write` permissions), possible
@@ -244,7 +244,7 @@ sandbox on 2026-10-09 and 2026-10-10. These could not be, and why:
 
 - **Documents:** [THREAT-MODEL.md](../security/THREAT-MODEL.md); [PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md).
 - **Tests:** The security review suites named in the threat model's table of fixed classes; from 1.21.0, `county-fuzz` (seeded fuzz and property tests of the county surface: the CSV import and entry form, the tidy CSV round trip, the signed-file verifier, a pasted key, the connection's request parsing; `SUDS_FUZZ_SEED` replays a run), twenty times larger in `thorough`.
-- **Status:** The threat model is the project's own, and on 1.24.0 models the county surface, SUDS Server, publication releases, field devices and the allow-list, incoming referrals and the Windows server's supply chain. An owner-authorised white-box penetration test of 1.23.6 was made with the source (not independent); its findings, M1, M2 and L1 to L7, are fixed in 1.24.0 with tests (`pentest-1236`, `security-1236-lows`, `purpose-matrix`, `audit-head-at-start`). An owner-authorised black-box and code-review test of the live install suds.systems (1.25.1) followed on 2026-10-08, run by the vendor's own development assistant (not independent): no critical, high or medium finding; its minor findings fixed in 1.25.3 with tests ([pentest-suds-systems-2026-10-08.md](pentest-suds-systems-2026-10-08.md)). **Owner-pending:** commission an independent penetration test against [PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md).
+- **Status:** The threat model is the project's own, and on 1.24.0 models the county surface, SUDS Server, publication releases, field devices and the allow-list, incoming referrals and the Windows server's supply chain. An owner-authorised white-box security test of 1.23.6 was made with the source (not independent); its findings, M1, M2 and L1 to L7, are fixed in 1.24.0 with tests (`pentest-1236`, `security-1236-lows`, `purpose-matrix`, `audit-head-at-start`). An owner-authorised black-box and code-review test of the live install suds.systems (1.25.1) followed on 2026-10-08, run by the vendor's own development assistant (not independent): no critical, high or medium finding; its minor findings fixed in 1.25.3 with tests ([pentest-suds-systems-2026-10-08.md](pentest-suds-systems-2026-10-08.md)). **Owner-pending:** commission an independent penetration test against [PEN-TEST-SCOPE.md](../security/PEN-TEST-SCOPE.md).
 
 ### Data inventory, data flows and retention
 

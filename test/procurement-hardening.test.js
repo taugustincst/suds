@@ -65,10 +65,15 @@ test('the static build ships public/procurement.json with the licensor\'s legal 
   // A security reviewer reads "multi-tenant" as shared infrastructure; each hosted customer has a server of its own.
   assert.match(j.pricing, /Hosting is single-tenant/);
   assert.doesNotMatch(j.pricing, /multi-tenant/i);
-  // The CalOMS promise is no wider than what is verified: the code sets, not the file layout (docs/compliance/CALOMS.md).
-  assert.match(j.pricing, /CalOMS code-set validation against the DHCS dictionary included; file layout confirmed with your county/);
+  // The CalOMS promise is no wider than what is verified: the code sets, not the file layout, and only where
+  // CalOMS applies (eval item 10, adopted 2026-10-30; docs/compliance/CALOMS.md).
+  assert.match(j.pricing, /CalOMS code-set validation against the DHCS dictionary; where CalOMS applies, the file layout is agreed with your county/);
   assert.doesNotMatch(j.pricing, /CalOMS extract validation/);
+  assert.doesNotMatch(j.pricing, /file layout confirmed with your county/, 'the file-layout promise is conditional, not a guarantee');
   assert.match(j.pricing, /SUDS sends nothing to DHCS/, 'the county or provider submits the CalOMS file');
+  // The agreements are not presented as counsel-reviewed until they are (eval item 10, adopted 2026-10-30).
+  assert.match(j.pricing, /draft BAA and QSOA \(pending counsel review\)/);
+  assert.doesNotMatch(j.pricing, /\bBAA and QSOA, (?:and |hosting)/, 'no bare "BAA and QSOA … included" claim');
   // The vendor's contact, a role address on the product domain (owner, 2026-10-15; 1.25.9): never a person's own.
   assert.equal(j.contact_name, 'Licensing, AugustInnovations LLC');
   assert.equal(j.contact_email, 'info@suds.systems');

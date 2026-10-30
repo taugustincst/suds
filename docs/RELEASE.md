@@ -64,7 +64,7 @@ a stabilisation release, 1.23.1, and these commitments, which hold until this se
    verify and approved release job. Until then only patch releases (1.23.x): defect and security fixes, no schema
    migration, no new or widened permission, no new route, at most 1,500 counted lines. **The owner lifted the freeze
    for 1.24.0** ("Lift the freeze and release", 2026-10-02) to release the fixes of an owner-authorised white-box
-   penetration test of 1.23.6, under point 2's one exception, a security fix: 1.24.0 is stamped 2026-10-03, two days
+   security test of 1.23.6, under point 2's one exception, a security fix: 1.24.0 is stamped 2026-10-03, two days
    after 1.23.0, with its `Security exception:` line (*Record: 1.24.0*). The next feature release, 1.25.0, comes no
    earlier than 2026-10-31, 28 days after 1.24.0, and only through the release gate.
 2. **Policy exceptions: a security fix, or the owner's recorded decision.** A release that breaks the cadence or the
@@ -231,7 +231,7 @@ attempt), so `57bf2df` was pushed to `main` and its static build to `gh-pages` d
 **Record: 1.24.0 ships under a security exception.** 1.24.0 is a feature release stamped 2026-10-03, two days after
 1.23.0 (2026-10-01), inside its 28 days and inside the feature freeze of *Stabilisation* point 1, which held 1.24.0
 until 2026-10-29. It is released under the one exception point 2 allows, a security fix: the owner authorised a
-white-box penetration test of 1.23.6, whose findings were two Medium (M1, a consent's purpose not checked at a
+white-box security test of 1.23.6, whose findings were two Medium (M1, a consent's purpose not checked at a
 disclosure, against 42 CFR 2.31(a)(4); M2, a device's sync push bringing back a row the office had deleted) and seven
 Low (L1 password strength, L2 sign-in limits keyed on the address alone, L3 a push editing a signed note counted as
 applied, L4 paging answering 500, L5 the audit head not sealed until the first housekeeping, L6 a sync session
