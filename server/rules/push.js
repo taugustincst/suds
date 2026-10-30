@@ -524,11 +524,27 @@ class PushSession {
   // free-text details kept but bounded so a device cannot write arbitrary structure (or PHI) into the trail.
   deviceAudit(rows) {
     const auditRows = (rows || []).slice(0, 5000);
+    let logged = 0;
     for (const a of auditRows) {
       if (!a || !a.action) continue;
-      db.savepoint(() => audit.log({ user: this.user, action: `device.${String(a.action).slice(0, 80)}`, entity: a.entity ? String(a.entity).slice(0, 60) : undefined, entityId: a.entity_id, clientId: a.client_id, ip: 'device', success: a.success !== 0, details: { at: a.at, device: true, ...sanitiseDetails(a.details) } }), () => {});
+      // The action is the device's own, but it must be a bounded token — never whitespace, structure, or a
+      // value a device could use to forge a server-style action or hide PHI in the action name. An allow-list
+      // would be wrong here: a device logs the same open action vocabulary the server does.
+      const action = String(a.action).trim();
+      if (!/^[\w.:-]{1,80}$/.test(action)) continue;
+      // A device may not write an audit row into a client's access trail for a client its user cannot reach:
+      // drop the client linkage (and a client entity id) when it is off caseload, and record that it was
+      // dropped — so a compromised device cannot inject entries onto another client's history under this user.
+      let clientId = a.client_id || null;
+      let entityId = a.entity_id;
+      const entity = a.entity ? String(a.entity).slice(0, 60) : undefined;
+      let clientDropped = false;
+      if (clientId && !auth.canAccessClient(this.user, clientId)) { clientId = null; clientDropped = true; }
+      if (entity === 'client' && entityId && !auth.canAccessClient(this.user, entityId)) { entityId = undefined; clientDropped = true; }
+      db.savepoint(() => audit.log({ user: this.user, action: `device.${action}`, entity, entityId, clientId, ip: 'device', success: a.success !== 0, details: { at: a.at, device: true, ...(clientDropped ? { client_dropped: true } : {}), ...sanitiseDetails(a.details) } }), () => {});
+      logged++;
     }
-    this.applied._audit = auditRows.length;
+    this.applied._audit = logged;
   }
 }
 

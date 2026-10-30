@@ -156,6 +156,34 @@ test('device audit rows are accepted but cannot inject arbitrary structure', asy
   assert.equal(details.arr, undefined);
 });
 
+test('a device audit row for an off-caseload client is logged under the user but not linked to that client', async () => {
+  // snav is caseload-restricted and not assigned to otherClientId (nav2's client). A compromised device
+  // could otherwise inject entries into another client's access trail; the linkage is dropped.
+  const r = await push(nav, { audit: [{ at: iso(Date.now()), action: 'client.view', entity: 'client', entity_id: otherClientId, client_id: otherClientId, success: 1 }] });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.audit_accepted, 1, 'the event is still recorded under the user');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action='device.client.view' AND client_id=?`, otherClientId).n, 0, 'nothing lands on the off-caseload client');
+  const row = H.db.one(`SELECT * FROM audit_log WHERE action='device.client.view' AND user_id=? ORDER BY id DESC LIMIT 1`, navId);
+  assert.ok(row && row.client_id === null && row.entity_id === null, 'client linkage dropped');
+  assert.equal(JSON.parse(row.details).client_dropped, true, 'and the drop is recorded');
+});
+
+test('a device audit row keeps its client linkage when the user is on that caseload', async () => {
+  const r = await push(nav, { audit: [{ at: iso(Date.now()), action: 'client.view', entity: 'client', entity_id: clientId, client_id: clientId, success: 1 }] });
+  assert.equal(r.status, 200);
+  assert.ok(H.db.one(`SELECT 1 FROM audit_log WHERE action='device.client.view' AND client_id=?`, clientId), 'an on-caseload client is linked as before');
+});
+
+test('a device audit row with a malformed action is dropped, not logged', async () => {
+  const r = await push(nav, { audit: [
+    { at: iso(Date.now()), action: 'has spaces and <tags>', client_id: clientId, success: 1 },
+    { at: iso(Date.now()), action: 'x'.repeat(200), client_id: clientId, success: 1 },
+  ] });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.audit_accepted, 0, 'neither malformed action was accepted');
+  assert.equal(H.db.one(`SELECT COUNT(*) n FROM audit_log WHERE action LIKE 'device.%has%' OR action LIKE 'device.xxx%'`).n, 0, 'no device row was written for the malformed actions');
+});
+
 test('a pull is paged and never inlines attachment bytes', async () => {
   const pull = (await navBearer.client.get('/api/sync/pull?since=1970-01-01T00:00:00.000Z&limit=5', navBearer.headers)).data;
   assert.ok('complete' in pull, 'the device is told whether more pages follow');

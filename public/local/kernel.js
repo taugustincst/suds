@@ -52836,12 +52836,28 @@ var require_push = __commonJS({
       // free-text details kept but bounded so a device cannot write arbitrary structure (or PHI) into the trail.
       deviceAudit(rows) {
         const auditRows = (rows || []).slice(0, 5e3);
+        let logged = 0;
         for (const a of auditRows) {
           if (!a || !a.action) continue;
-          db3.savepoint(() => audit3.log({ user: this.user, action: `device.${String(a.action).slice(0, 80)}`, entity: a.entity ? String(a.entity).slice(0, 60) : void 0, entityId: a.entity_id, clientId: a.client_id, ip: "device", success: a.success !== 0, details: { at: a.at, device: true, ...sanitiseDetails(a.details) } }), () => {
+          const action = String(a.action).trim();
+          if (!/^[\w.:-]{1,80}$/.test(action)) continue;
+          let clientId = a.client_id || null;
+          let entityId = a.entity_id;
+          const entity = a.entity ? String(a.entity).slice(0, 60) : void 0;
+          let clientDropped = false;
+          if (clientId && !auth3.canAccessClient(this.user, clientId)) {
+            clientId = null;
+            clientDropped = true;
+          }
+          if (entity === "client" && entityId && !auth3.canAccessClient(this.user, entityId)) {
+            entityId = void 0;
+            clientDropped = true;
+          }
+          db3.savepoint(() => audit3.log({ user: this.user, action: `device.${action}`, entity, entityId, clientId, ip: "device", success: a.success !== 0, details: { at: a.at, device: true, ...clientDropped ? { client_dropped: true } : {}, ...sanitiseDetails(a.details) } }), () => {
           });
+          logged++;
         }
-        this.applied._audit = auditRows.length;
+        this.applied._audit = logged;
       }
     };
     function push(user, payload, field = null) {
