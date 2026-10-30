@@ -28,7 +28,21 @@ hosted yet).
 | **Try it free** | SUDS on this device: https://taugustincst.github.io/suds/ |
 | **Contact** | Licensing, AugustInnovations LLC, info@suds.systems; security reports: [SECURITY.md](SECURITY.md) |
 
-## What's new in 1.27.0
+## What's new in 1.28.0
+
+* **Every AI call is accounted for as a disclosure.** Sending a client's (identifier-masked) record content to the AI
+  provider is now written to that client's accounting of disclosures (§164.528 / §2.25), like every other time
+  information leaves the programme — the one egress that previously recorded only usage counts
+  ([CHANGELOG.md](CHANGELOG.md); [docs/AI-COPILOT.md](docs/AI-COPILOT.md)).
+* **The signed BAA/QSOA, uploaded as evidence** (Settings › AI copilot), stored encrypted on the office server and
+  never synced; the agreement is now tied to the endpoint it was recorded against, and records an optional
+  zero-retention term.
+* **On-premises AI, and "on-premises only"**: a self-hosted model endpoint (`SUDS_AI_PROVIDER=onprem`) with no
+  third-party cloud egress, and a program control that refuses any cloud provider so records cannot leave the premises.
+* **Migration 74** runs at start-up (one office-server table, `ai_agreement_files`); released on a recorded owner
+  exception to the 28 days between feature releases ([docs/RELEASE.md](docs/RELEASE.md), *Record: 1.28.0*).
+
+## What was new in 1.27.0
 
 * **The AI assistant** (off until switched on): staff ask about a client before a visit, about their own day, or about
   program information, and get an answer from a summary of the record that names the parts it used, each a link into

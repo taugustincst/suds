@@ -1,6 +1,6 @@
 # SUDS business plan
 
-**Owner:** AugustInnovations LLC. **As of:** 17 October 2026, SUDS 1.25.9.
+**Owner:** AugustInnovations LLC. **As of:** 29 October 2026, SUDS 1.28.0.
 **What this is:** the plan in one place: where SUDS stands, who buys it, what is sold, the order of work, the budget,
 the risks and the measures. The detail behind each part is in the documents named in the last section. Figures marked
 *estimate* are planning numbers, not quotes or forecasts. Nothing here is a claim to a buyer; the buyer documents say

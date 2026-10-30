@@ -564,6 +564,24 @@ fixes apply to it (H1, H2 and M1 are older than 1.26.0), and no 1.25.x patch is 
 and no customer is known to run 1.25.x, so whether to publish 1.25.10 is the owner's decision, recorded here when made.
 Its tag is owed ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
+**Record: 1.28.0 is a feature release on the owner's exception.** 1.28.0, stamped 2026-10-29, is a feature release
+five days after 1.27.0 (released 2026-10-24), inside the 28 days between feature releases, which would allow it from
+2026-11-21. The `Owner exception:` line in its CHANGELOG quotes the owner's instruction of 2026-10-29 in the
+development session ("Fold everything into 1.28.0; prepare the stamp candidate and merge"); it is not a security fix,
+and `release.yml` still publishes it only when the owner runs it with `policy_exception`. It carries:
+- every AI call that sends record content written to the client's accounting of disclosures (`server/ai-copilot.js`
+  through `server/disclosure.js`; basis `ai_assist`, source `ai`), the one AI egress that previously recorded only
+  usage counts;
+- the signed BAA/QSOA uploaded as evidence (migration 74, `ai_agreement_files`, office-server-only, encrypted, never
+  synced; routes `POST/GET/DELETE /api/ai/agreement-file`, administrators), the agreement tied to the endpoint it was
+  recorded against, and an optional zero-retention statement;
+- an on-premises model provider (`SUDS_AI_PROVIDER=onprem`, speaking the Anthropic Messages API to a self-hosted
+  endpoint) and an "on-premises only" control (`ai_require_onprem`) that refuses any cloud provider (`cloud_blocked`).
+
+No new permission; the AI feature stays off until an administrator switches it on. The de-identification it applies is
+documented as best-effort masking, not a recognised de-identification standard, which is why the disclosure accounting
+above is recorded. It folds in the AI-disclosures-accounting fix that would otherwise have been a 1.27.1 patch.
+
 **Record: 1.27.0 is a feature release on the owner's exception.** 1.27.0, stamped 2026-10-24, is a feature release
 seven days after 1.26.0 (stamped and released 2026-10-17), inside the 28 days between feature releases, which would
 allow it from 2026-11-14. It carries:
@@ -617,9 +635,9 @@ Its tag is owed ([evidence/RELEASE-HANDOFF.md](evidence/RELEASE-HANDOFF.md)).
 
 | Line | Gets | For how long |
 | --- | --- | --- |
-| **The latest minor** (today 1.27.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
-| **The previous minor** (today 1.26.x, until 30 days after 1.27.0's release date: the date of its tag `v1.27.0`, 2026-10-24, so to 2026-11-23) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.26` is made from `v1.26.1`'s line when the first backport is needed) | **30 days** after the next minor's release date, then none |
-| Anything older (today 1.25.x and before: once 1.27.0 is released, 1.25.x stops being the previous minor, whatever is left of its 30 days after 1.26.0, which ran to about 2026-11-16; 1.27.0's early release, on the owner's exception, shortens them; 1.24.x stopped when 1.26.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
+| **The latest minor** (today 1.28.x) | Every fix: defects and security, as patch releases on that line | Until the next minor is released |
+| **The previous minor** (today 1.27.x, until 30 days after 1.28.0's release date: the date of its tag `v1.28.0`, so to about 2026-11-28) | **Security fixes only**, as a patch on that line, where the fix applies to it, released from its `maint/X.Y` branch (since 1.17.0: *Backports*, below; `maint/1.27` is made from `v1.27.0`'s line when the first backport is needed) | **30 days** after the next minor's release date, then none |
+| Anything older (today 1.26.x and before: once 1.28.0 is released, 1.26.x stops being the previous minor, whatever is left of its 30 days after 1.27.0; 1.28.0's early release, on the owner's exception, shortens them; 1.25.x stopped when 1.27.0 was released) | Nothing: upgrade to the latest minor ([Upgrading an existing install](#upgrading-an-existing-install)) | — |
 
 Security fixes are announced as a GitHub Security Advisory and an *Advisory* note at the top of the release's
 CHANGELOG section, naming the affected versions (as 1.15.4 did); programmes with a support agreement are told
@@ -782,6 +800,7 @@ The exceptions in one place (each also at the top of its GitHub Release notes, w
 | 1.26.0 | the 28 days between feature releases (a feature release twelve days after 1.25.0; migration 72, the permission `policies:manage`, routes under `/api/policies/`); not a security fix, so no `Security exception:` line — the first `Owner exception:` line, under *Stabilisation* point 2 as the owner revised it on 2026-10-17. Tagged by the owner's business assistant on the owner's instruction; the tag's own run stopped at the gate as designed, and the second run, given `policy_exception`, released it on 2026-10-17, approved with the owner's account at the owner's direction (*Record: 1.26.0*) | PowerDMS policy links and staff sign-offs, on the owner's instruction of 2026-10-17 ("Release now", then the choice to change the control and release) (*Record: 1.26.0*, above) | owner (`policy_exception`, *Record: 1.26.0*, above) |
 | 1.26.1 | none of the release policy's rules (a security patch within the patch rules: no migration, permission or route, 330 lines). Released when ready, as a security fix is (*Release cadence*); its `release.yml` run publishes it once `v1.26.1` is pushed and the run is approved | the fixes of the vendor's own code evaluation of 1.26.0: the sign-in race, the ZIP expansion cap, the malformed cookie, the field-by-field sync merge, uploads parsed off the main thread, the replay re-check and four small faults (*Record: 1.26.1*, above) | no exception to approve |
 | 1.27.0 | the 28 days between feature releases (a feature release seven days after 1.26.0; migration 73, the permission `ai:ask`, routes under `/api/admin/server-config` and `POST /api/ai/ask`); not a security fix, so no `Security exception:` line — the second `Owner exception:` line (*Record: 1.27.0*). Its `release.yml` run publishes it only when the owner runs it with `policy_exception`, after `v1.26.1` in the same push | server configuration from the browser, the clearer settings pages and the AI assistant (*Record: 1.27.0*, above) | the owner's `policy_exception` on the tag's release run |
+| 1.28.0 | the 28 days between feature releases (a feature release five days after 1.27.0; migration 74, no new permission, routes under `POST/GET/DELETE /api/ai/agreement-file`); not a security fix — the third `Owner exception:` line (*Record: 1.28.0*), quoting the owner's instruction of 2026-10-29 in the development session. Its `release.yml` run publishes it only when the owner runs it with `policy_exception` | the AI privacy hardening: disclosure accounting for every AI call, the uploaded signed agreement, and the on-premises model option (*Record: 1.28.0*, above) | the owner's `policy_exception` on the tag's release run |
 
 **Record: 1.23.0 ships under a policy exception, published without a tag.** 1.23.0 is a feature release inside
 1.22.0's 28 days, on the same instruction of the owner ("Implement all recommendations to make this as useful as

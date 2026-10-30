@@ -2,6 +2,47 @@
 
 All notable changes to SUDS are documented here. The project follows semantic versioning.
 
+## 1.28.0 — 2026-10-29
+
+A feature release that hardens the AI copilot/assistant's privacy posture and gives a programme a path to use it
+with no third-party cloud at all. **Migration 74** (schema version 74): one new office-server-only table,
+`ai_agreement_files`, applied automatically at start-up; take a backup first, as before any upgrade. New routes
+`POST/GET/DELETE /api/ai/agreement-file` (administrators); no new permission. The AI feature stays off until an
+administrator switches it on.
+
+Owner exception: released five days after 1.27.0, inside the 28 days between feature releases, on the owner's
+decision of 2026-10-29 ("Fold everything into 1.28.0; prepare the stamp candidate and merge", given in the
+development session); not a security fix. The release workflow still refuses it until the owner runs it with
+`policy_exception` ([docs/RELEASE.md](docs/RELEASE.md), *Record: 1.28.0*).
+
+### Added
+
+- **Every AI call is written to the accounting of disclosures.** Sending a client's (identifier-masked) record
+  content to the AI provider is a disclosure to a business associate / qualified service organisation, so it is
+  now recorded in each affected client's accounting of disclosures (§164.528 / §2.25) like every other egress —
+  one row per draft or client brief, one per client a day summary named, none for programme-only facts (new
+  system basis `ai_assist`, source `ai`; the row records the authority and the provider, never the content). A
+  counseling-note draft marks its row as §2.11. Before this, the AI path was the one egress that recorded only
+  usage counts, not a disclosure (`server/ai-copilot.js`; `docs/AI-COPILOT.md`, *What is recorded*).
+- **The signed agreement, uploaded as evidence.** An administrator can upload the signed BAA / QSOA with the AI
+  provider under Settings › AI copilot; it is stored encrypted on the office server (`ai_agreement_files`,
+  migration 74), never synced, downloadable by administrators, replaced on re-upload and removed when the
+  agreement is withdrawn, so the record rests on a filed document, not only attested statements. The agreement
+  also records an optional zero-retention / no-training statement, and is now tied to the endpoint it was
+  recorded against: changing `SUDS_AI_BASE_URL` disables the copilot (`endpoint_changed`) until it is recorded
+  again, as a provider change already did.
+- **An on-premises model option, and "on-premises only".** A new provider `onprem` (`SUDS_AI_PROVIDER=onprem`)
+  sends to a self-hosted endpoint that speaks the Anthropic Messages API (`SUDS_AI_BASE_URL`, optional
+  `SUDS_AI_ONPREM_KEY`), so no request leaves the programme's own infrastructure. An **On-premises only**
+  program control (Settings › AI copilot) refuses any cloud provider (`cloud_blocked`) so records cannot go to a
+  third party by misconfiguration — for a 42 CFR Part 2 programme whose posture does not allow cloud egress.
+
+### Changed
+
+- The de-identification the AI feature applies is documented, in the app and the docs, as best-effort pattern
+  masking and **not** a recognised de-identification standard (HIPAA Safe Harbor or expert determination); the
+  accounting of disclosures above follows from that.
+
 ## 1.27.0 — 2026-10-24
 
 SHA-256 of suds-v1.27.0.zip: 0782bd299c14363957d4fc3e0e2605f6c259d82547ba897b5ce60bf09ece8e72

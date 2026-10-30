@@ -75,7 +75,9 @@ they must sign and whether they have, and a supervisor imports PowerDMS's signat
 switches it on under the AI copilot's agreement: a worker asks about a client before a visit, their own day, or
 programme information (supplies by site, the referral directory), and every answer names the parts of the record it
 used, to check before acting. It never changes a record and never reads a note's text
-([../AI-COPILOT.md](../AI-COPILOT.md), *The assistant*).
+([../AI-COPILOT.md](../AI-COPILOT.md), *The assistant*). 1.28.0 records every AI call in the client's accounting of
+disclosures, lets your administrator upload the signed BAA/QSOA as evidence, and adds an on-premises model option so a
+programme can use the AI with no third-party cloud at all ("on-premises only").
 A referral network partner organisations join (beyond the
 1.17.0 one-time secure links) is planned and not scheduled ([STRATEGY.md](STRATEGY.md)). Choose SUDS for what it does
 today.

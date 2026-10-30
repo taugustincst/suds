@@ -1,7 +1,7 @@
 # SUDS technical specifications
 
 The facts an IT, security or procurement reviewer asks for first, one line each, with the document that gives the
-detail. Version 1.27.0 (October 2026). Where a line and its source document disagree, the source document is right,
+detail. Version 1.28.0 (October 2026). Where a line and its source document disagree, the source document is right,
 and the line is a defect to report.
 
 ## Product
@@ -12,7 +12,7 @@ and the line is a defect to report.
 | What it is not | An EHR; a Drug Medi-Cal billing system; an eMAR or e-prescribing system ([SCOPE.md](SCOPE.md)) |
 | Vendor and licence | AugustInnovations LLC; proprietary, source visible. SUDS on this device is free for real use at its official address; the office server needs a signed agreement after a 90-day evaluation with fictional data ([../LICENSE](../LICENSE)) |
 | Clients | The web app only, in any current browser; it can be added to the home screen on phones. There are no native apps ([PLATFORM.md](PLATFORM.md)) |
-| Release cadence | Patches at most weekly (security fixes when ready); at most one feature release every 28 days, unless the owner records an exception (1.26.0 and 1.27.0; never called a security fix); each release ships its own SBOM and checksums ([RELEASE.md](RELEASE.md)) |
+| Release cadence | Patches at most weekly (security fixes when ready); at most one feature release every 28 days, unless the owner records an exception (1.26.0, 1.27.0 and 1.28.0; never called a security fix); each release ships its own SBOM and checksums ([RELEASE.md](RELEASE.md)) |
 
 ## Ways to run it
 
@@ -42,7 +42,7 @@ The server is one Node.js process with one SQLite database. It scales up, not ou
 | Server | Node.js 22 (≥ 22.13) built-ins only (`node:sqlite`, `node:crypto`, `node:http`). **No runtime npm packages** ([architecture/README.md](architecture/README.md)) |
 | Web app | Vanilla JavaScript modules with no build step and no third-party scripts, under a strict Content Security Policy |
 | Browser offline engine | A committed, reproducible bundle with seven small pinned libraries and SQLite (WebAssembly), all listed in the SBOM ([WEB_APP.md](WEB_APP.md)) |
-| SBOM | CycloneDX 1.5 for every release ([evidence/sbom-1.27.0.cdx.json](evidence/sbom-1.27.0.cdx.json)) |
+| SBOM | CycloneDX 1.5 for every release ([evidence/sbom-1.28.0.cdx.json](evidence/sbom-1.28.0.cdx.json)) |
 | Release integrity | Zip SHA-256 published in two channels; immutable GitHub Releases; a release run that waits for an approval ([security/OPERATIVE-CONTROLS.md](security/OPERATIVE-CONTROLS.md)) |
 
 ## Security
